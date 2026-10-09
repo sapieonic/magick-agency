@@ -1,11 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-// PORT NOTE (magick-agency): ported from core test/unit/analytics/posthog.test.ts@4850d1d9.
-// Kept: the "lifecycle" (6), "identity & grouping" (1) and "environment tagging" (3)
-// describes, which test the shared client transport. Core drove them through AI-call
-// emitters (`trackCallCompleted`, `trackCallInitiated`, `trackBatchCompleted`) that are
-// not carried; here they drive the same transport through the WebRTC trackers, the only
-// emitters this module keeps. Every other describe tests an uncarried tracker (listed in
-// PORTING.md, Lane C). Mock specifiers changed for the new paths.
+// The "lifecycle", "identity & grouping" and "environment tagging" describes test the
+// shared client transport, driven through the WebRTC trackers, the only emitters this
+// module has.
 
 const mocks = vi.hoisted(() => ({
   capture: vi.fn(),
@@ -64,7 +60,7 @@ function makeWebrtcRecord(): WebRtcCallRecord {
   } as unknown as WebRtcCallRecord;
 }
 
-/** Stand-in for core's `trackCallCompleted(makeCallRecord())`. */
+/** Emits a completed-call event through the WebRTC tracker. */
 function emitCompleted(): void {
   trackWebrtcCallCompleted({
     callId: 'wc-1', tenantId: 'tenant-1', accountId: 'account-1',

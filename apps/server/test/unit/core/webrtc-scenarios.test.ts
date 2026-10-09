@@ -1,84 +1,26 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// PORT NOTE (magick-agency): ported from core test/unit/core/webrtc-scenarios.test.ts@4850d1d9
-// (15 cases, `it.each` rows expanded → 13). Mock specifiers follow the new paths (logger →
-// @magick-agency/observability, webrtc-call repository → @magick-agency/db agency-call
-// repository, account settings → the @magick-agency/db repository, whose
-// `getWebrtcMaxDurationSeconds` replaces the `webrtc_max_duration_seconds` flag mock: null = 1800);
-// the settlement-dispatcher and feature-flag mocks are gone (no longer imported).
+// FIXTURE: a call is dialled through the dialer's entry point `createBridgedCall` with the
+// browser socket borrowed at dial time (the fake has `off`), or `createUnboundBridgedCall` for
+// a browser that "never attaches"; carrier progress is VoiceLink's (`handleVoicelinkStatus`
+// `ringing` / `answer` / `hangup`, plus the `start` frame that opens its relay); calls end via
+// `forceEndWithOutcome('att-1', 'ended_by_user')`. There is no billing settlement: cases
+// assert the terminal row and `trackWebrtcCallCompleted` instead.
 //
-// FIXTURE (every surviving case): core drove these scenarios through the softphone
-// (`createCall` + the owned `attachBrowserLeg`, both deleted) on VoBiz (`handleVobizStatus` /
-// `handleVobizAnswer`, deleted). Here a call is dialled through the agency entry point
-// `createBridgedCall` with the browser socket borrowed at dial time (the fake gains `off`), or
-// `createUnboundBridgedCall` where core's browser "never attaches"; carrier progress is VoiceLink's
-// (`handleVoicelinkStatus` `ringing` / `answer` / `hangup`, plus the `start` frame that opens its
-// relay); `forceEndByUser(callId)` (deleted) is `forceEndWithOutcome('att-1', 'ended_by_user')`.
-// Settlement assertions are removed (agency never settles, plan §9) and `triggerDequeue`
-// assertions are removed (the bridge no longer calls it); where a case needed a replacement it is
-// named below.
-//
-// DELETED (2):
-//  - 'a single end path calls triggerDequeue() once' — `triggerDequeue` (core's AI SQS queue) is
-//    removed from the bridge; the case asserts nothing else.
-//  - 'Scenario R5: manager teardown is recording-URL-independent — a recorded call ends/settles
-//    even though the manager never persists a recording URL' — its premise is false on VoiceLink:
-//    the bridge persists the carrier's recording URL from `call.ended` (covered by
-//    webrtc-bridge-manager.test.ts's late `call.completed` recording cases).
-//
-// MODIFIED (13, every surviving case; each beyond the FIXTURE above):
-//  - 'drives the full chain with status transitions, relay, settlement, slot release, analytics' —
-//    no browser token is minted for a borrowed leg (assertion dropped); the relay is VoiceLink's
-//    transcoded `media` frames (core asserted VoBiz's verbatim L16 `playAudio` of a 4-char
-//    payload): a real 20ms frame goes each way and exactly one frame must come out, of the
-//    transcoded length (A-law 120-160 B, PCM16 480-640 B) and not silent; the answered
-//    VoiceLink hangup defers to the carrier's `call.ended`, which is driven; the carrier leg is torn
-//    down by closing the PSTN socket (VoiceLink's only hangup) rather than `adapter.endCall`;
-//    settlement → the terminal row (completed, talk 42) and `trackWebrtcCallCompleted`.
-//  - 'PSTN answers but browser never attaches → max-duration callback ends + hangs up provider' —
-//    `createUnboundBridgedCall` (no browser leg); answered by the `start` frame; the max-duration
-//    hangup of an answered VoiceLink call closes the PSTN socket and finalizes on the 45s
-//    confirmation timeout (the pending timers are run), so "hangs up provider" is the PSTN socket
-//    closing rather than `adapter.endCall`; settlement → terminal row + analytics.
-//  - 'after answer, a {event:stop} on the PSTN leg tears the call down' — answered by the VoiceLink
-//    `answer` webhook + `start` frame; settlement → `trackWebrtcCallCompleted` (completed).
-//  - 'settles, releases slots, hangs up provider, and removes the session for an answered call' —
-//    answered by the VoiceLink `answer` webhook; settlement → `trackWebrtcCallCompleted` (already
-//    asserted).
-//  - 'browser close + carrier hangup → exactly one settlement / one slot release' — the borrowed
-//    socket's close defers (answered VoiceLink), and the carrier `call.ended` is the confirmation
-//    that finalizes; "one settlement" → exactly one terminal row write (`ended_at`), alongside the
-//    release / analytics counts core already asserted.
-//  - 'forceEndByUser twice → second is a no-op (session already gone)' — still answered (by the
-//    VoiceLink `answer` webhook), but an answered VoiceLink hangup holds the session in `ending`
-//    until the carrier confirms, so the carrier's `call.ended` is driven between the two calls
-//    (and the session asserted gone) before the second, which then returns false as core's did.
-//    Settlement → `trackWebrtcCallCompleted` once.
-//  - 'rawCallStatus no-answer → status no_answer, connected=false', 'rawCallStatus busy → status
-//    busy, connected=false', 'rawCallStatus cancel → status canceled, connected=false' (the
-//    `it.each` rows) — the raw status rides VoiceLink's terminal webhook (`call.ended` with
-//    `call.callStatus`, classified by `classifyVoicelinkOutcome`, which maps the three to the same
-//    statuses) instead of VoBiz's `rawCallStatus`; settlement → the terminal row (status, talk 0).
-//  - 'Scenario R1: full recorded-call happy path — record:true threads <Record> opts yet
-//    end/settlement/slots are unchanged' → retitled 'Scenario R1: full recorded-call happy path —
-//    record:true sets the dial request's enableRecording yet end/slots are unchanged', and
-//    'Scenario R2: non-recorded call — record omitted leaves <Record> opts off but the lifecycle
-//    still settles' → retitled 'Scenario R2: non-recorded call — record omitted leaves the dial
-//    request's enableRecording off but the lifecycle still ends' (titles follow the assertions:
-//    no <Record> options and no settlement on agency) — the recording wiring is the dial request's
-//    `enableRecording` / `maxDuration` (core: the answer XML's `enableRecording` /
-//    `recordingCallbackUrl` / `recordingMaxLengthSeconds`; VoiceLink has no recording callback
-//    URL); the answered hangup is confirmed by the carrier's `call.ended`; R1's relay uses the
-//    real-frame check below and its browser token assertion is dropped (borrowed leg);
-//    settlement and `triggerDequeue` → the terminal row (completed, talk 30 / 12) and
-//    `trackWebrtcCallCompleted`; R1's `endCall('pcid-1')` → the PSTN socket closing.
-//  - 'Scenario R3: …' — the busy hangup is VoiceLink's pre-answer `call.ended` with
-//    `callStatus: 'BUSY'`; settlement → the terminal row (busy, talk 0). Its "no <Record> XML"
-//    assertion is kept but holds by construction (VoiceLink never renders answer XML).
-//  - 'Scenario R4: max-duration override flows into the recording cap (3600 instead of 1800)' — the
-//    override comes from `account_settings.webrtc_max_duration_seconds` (plan §3.2) instead of the
-//    flag; VoiceLink's recording cap is the dial request (`maxDuration` + `enableRecording`), not the
-//    VoBiz answer XML's `<Record>` options.
+// VoiceLink specifics the scenarios account for:
+//  - no browser token is minted for a borrowed leg;
+//  - the relay is VoiceLink's transcoded `media` frames: a real 20ms frame goes each way and
+//    exactly one frame must come out, of the transcoded length (A-law 120-160 B, PCM16
+//    480-640 B) and not silent;
+//  - an answered VoiceLink hangup defers to the carrier's `call.ended`, which the cases drive;
+//    the carrier leg is torn down by closing the PSTN socket (VoiceLink's only hangup);
+//  - a max-duration hangup of an answered call closes the PSTN socket and finalizes on the 45s
+//    confirmation timeout (the pending timers are run);
+//  - the raw status for unanswered outcomes rides VoiceLink's terminal webhook (`call.ended`
+//    with `call.callStatus`, classified by `classifyVoicelinkOutcome`);
+//  - recording is wired through the dial request's `enableRecording` / `maxDuration`; VoiceLink
+//    has no recording callback URL and never renders answer XML;
+//  - the max-duration override comes from `account_settings.webrtc_max_duration_seconds`.
 
 // ---------------------------------------------------------------------------
 // Multi-step lifecycle scenarios over the REAL WebRtcBridgeManager.
@@ -97,7 +39,7 @@ vi.mock('../../../src/config/index.js', () => ({
     telephony: {
       vobiz: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/vobiz' },
       plivo: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/plivo' },
-      // PORT NOTE: the bridge reads VoiceLink's base (the default provider is now VoiceLink).
+      // the bridge reads VoiceLink's base (the default provider is now VoiceLink).
       voicelink: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/voicelink' },
     },
   },
@@ -113,8 +55,8 @@ const { mockRepo } = vi.hoisted(() => ({
 vi.mock('@magick-agency/db/repositories/agency-call.repository', () => ({
   webrtcCallRepository: mockRepo,
 }));
-// Governance recording ceiling read in createCall; null ⇒ inherit true (no ceiling).
-// PORT NOTE: the max duration is read here too (null ⇒ the 1800 default).
+// Governance recording ceiling read at dial; null ⇒ inherit true (no ceiling).
+// The max duration is read here too (null ⇒ the 1800 default).
 const { mockAccountSettings } = vi.hoisted(() => ({
   mockAccountSettings: {
     getAllowRecording: vi.fn().mockResolvedValue(null),
@@ -158,7 +100,7 @@ import { WebRtcBridgeManager } from '../../../src/core/webrtc-bridge-manager.js'
 import { encodeAlaw, decodeAlaw } from '../../../src/utils/audio.js';
 
 // ── Fake WebSocket ───────────────────────────────────────────────────────
-// PORT NOTE: `off` added — a borrowed socket's listeners are removed at detach.
+// `off` added — a borrowed socket's listeners are removed at detach.
 function fakeWs() {
   const handlers: Record<string, ((...a: any[]) => void)[]> = {};
   return {
@@ -199,10 +141,10 @@ const PARAMS = {
   callerId: '+14155550100',
   destinationPhone: '+14155550199',
 };
-/** PORT NOTE: the agency back-references every bridge call carries. */
+/** the agency back-references every bridge call carries. */
 const AGENCY = { campaignId: 'camp-1', agencyAttemptId: 'att-1' };
 
-// PORT NOTE: `as any` (type-only) — this tsconfig typechecks tests; `eventType` is a string here.
+// `as any` (type-only) — this tsconfig typechecks tests; `eventType` is a string here.
 const ev = (eventType: string, metadata: Record<string, unknown> = {}) => ({
   providerCallId: 'pcid-1',
   callId: 'call-1',
@@ -211,12 +153,12 @@ const ev = (eventType: string, metadata: Record<string, unknown> = {}) => ({
   metadata,
 }) as any;
 
-/** PORT NOTE: VoiceLink webhook bodies (the parser spreads the raw body into `metadata`). */
+/** VoiceLink webhook bodies (the parser spreads the raw body into `metadata`). */
 const VL_RINGING = { event: 'call.ringing', call: { id: 'pcid-1', status: 'ringing' } };
 const VL_ANSWERED = { event: 'call.answered', call: { id: 'pcid-1', status: 'answered' } };
 const VL_ENDED = { event: 'call.ended', call: { id: 'pcid-1', status: 'ended' } };
 
-/** PORT NOTE: VoiceLink's A-law 8kHz `start` frame — negotiates media and opens the relay. */
+/** VoiceLink's A-law 8kHz `start` frame — negotiates media and opens the relay. */
 function negotiateVoicelink(pstn: ReturnType<typeof fakeWs>): void {
   pstn.emit('message', JSON.stringify({
     event: 'start',
@@ -225,8 +167,7 @@ function negotiateVoicelink(pstn: ReturnType<typeof fakeWs>): void {
 }
 
 /**
- * PORT NOTE: real 20ms frames for the relay checks. Core relayed VoBiz's L16 verbatim, so a
- * 4-char payload proved the relay; VoiceLink transcodes (PCM16 16k ⇄ A-law 8k), so the frames
+ * Real 20ms frames for the relay checks. VoiceLink transcodes (PCM16 16k ⇄ A-law 8k), so the frames
  * must be real audio for the output length and level to mean anything.
  */
 function pcm16kFrame(): string {
@@ -269,7 +210,7 @@ function expectRelaysBothWays(browser: ReturnType<typeof fakeWs>, pstn: ReturnTy
   expect(peak(new Int16Array(pcm.buffer, pcm.byteOffset, pcm.byteLength / 2))).toBeGreaterThan(6400);
 }
 
-/** PORT NOTE: core's `forceEndByUser(callId)` — the same `localHangup`, keyed on the attempt. */
+/** ends the call by attempt id via `localHangup` with the `ended_by_user` outcome. */
 const endByUser = (mgr: WebRtcBridgeManager) => mgr.forceEndWithOutcome('att-1', 'ended_by_user');
 
 beforeEach(() => {
@@ -306,13 +247,13 @@ const updateStatuses = () => mockRepo.update.mock.calls.map((c) => c[1]?.status)
 // Scenario 1 — Happy path end-to-end
 // ───────────────────────────────────────────────────────────────────────────
 describe('Scenario: happy path (ring → answer → bridge → user hangup)', () => {
-  it('drives the full chain with status transitions, relay, settlement, slot release, analytics', async () => {
+  it('drives the full chain with status transitions, relay, terminal row, slot release, analytics', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-24T00:00:00.000Z'));
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
 
-    // PORT NOTE: borrowed browser socket at dial time; no browser token is minted for it.
+    // borrowed browser socket at dial time; no browser token is minted for it.
     const browser = fakeWs();
     const record = await mgr.createBridgedCall({ ...PARAMS, ...AGENCY, browserSocket: browser as any });
     expect(record.id).toBe('call-1');
@@ -324,7 +265,7 @@ describe('Scenario: happy path (ring → answer → bridge → user hangup)', ()
     expect(browser.sent).toContainEqual({ event: 'status', status: 'ringing' });
 
     // 2. answer
-    // PORT NOTE: VoiceLink has no answer XML; `answer` arrives as a status event.
+    // VoiceLink has no answer XML; `answer` arrives as a status event.
     await mgr.handleVoicelinkStatus('call-1', ev('answer', VL_ANSWERED));
     const session = mgr.getSession('call-1')!;
     expect(session.status).toBe('in_progress');
@@ -334,12 +275,12 @@ describe('Scenario: happy path (ring → answer → bridge → user hangup)', ()
     // 3. attach PSTN leg (both legs now connected)
     const pstn = fakeWs();
     mgr.attachPstnLeg('call-1', pstn as any);
-    negotiateVoicelink(pstn); // PORT NOTE: VoiceLink media is ready only after `start`.
+    negotiateVoicelink(pstn); // VoiceLink media is ready only after `start`.
     expect(session.bothLegsConnected).toBe(true);
     expect(browser.sent).toContainEqual({ event: 'status', status: 'in_progress' });
 
     // 4. relay both directions
-    // PORT NOTE: core asserted VoBiz's verbatim L16 frames; VoiceLink transcodes both ways, so
+    // VoiceLink transcodes both ways, so
     // a real 20ms frame goes in and one correctly-sized, non-silent frame must come out.
     expectRelaysBothWays(browser, pstn);
 
@@ -347,15 +288,14 @@ describe('Scenario: happy path (ring → answer → bridge → user hangup)', ()
     vi.advanceTimersByTime(42_000);
     const ended = await endByUser(mgr);
     expect(ended).toBe(true);
-    // PORT NOTE: an answered VoiceLink hangup settles on the carrier's `call.ended`.
+    // An answered VoiceLink hangup finalizes on the carrier's `call.ended`.
     await mgr.handleVoicelinkStatus('call-1', ev('hangup', VL_ENDED));
 
     // terminal status persisted as completed with talk_time>0
     expect(updateStatuses()).toContain('completed');
     expect(lastUpdate().talk_time_seconds).toBe(42);
 
-    // PORT NOTE: core asserted the settlement dispatch here (agency never settles); the
-    // terminal row above and the analytics event below carry the same facts.
+    // The terminal row above and the analytics event below carry the terminal facts.
 
     // slots released once each
     expect(cm.concurrencyGuard.release).toHaveBeenCalledTimes(1);
@@ -368,7 +308,7 @@ describe('Scenario: happy path (ring → answer → bridge → user hangup)', ()
 
     // browser notified of end + carrier leg hung up
     expect(browser.sent).toContainEqual({ event: 'ended', reason: 'ended_by_user' });
-    // PORT NOTE: VoiceLink's only hangup is closing the provider WS (core: `endCall('pcid-1')`).
+    // VoiceLink's only hangup is closing the provider WS (not `adapter.endCall`).
     expect(pstn.readyState).toBe(3);
 
     // audit trail: initiating + ended
@@ -395,14 +335,13 @@ describe('Scenario: carrier hangup before answer', () => {
     await mgr.createBridgedCall({ ...PARAMS, ...AGENCY, browserSocket: fakeWs() as any });
     await mgr.handleVoicelinkStatus('call-1', ev('ringing', VL_RINGING));
     // carrier hangup BEFORE any answer
-    // PORT NOTE: VoiceLink's terminal webhook carrying the raw status (core: VoBiz `rawCallStatus`).
+    // VoiceLink's terminal webhook carrying the raw status .
     await mgr.handleVoicelinkStatus('call-1', ev('hangup', {
       event: 'call.ended', call: { id: 'pcid-1', callStatus: raw },
     }));
 
     expect(updateStatuses()).toContain(expectedStatus);
-    // PORT NOTE: core asserted the settlement dispatch (status, talk_time_seconds: 0); agency
-    // never settles, and the terminal row carries the same two facts.
+    // The terminal row carries the status and zero talk time.
     expect(lastUpdate()).toMatchObject({ status: expectedStatus, talk_time_seconds: 0 });
     expect(mockAnalytics.trackWebrtcCallCompleted).toHaveBeenCalledWith(expect.objectContaining({
       status: expectedStatus, connected: false,
@@ -421,12 +360,12 @@ describe('Scenario: max-duration guard ends a one-legged call', () => {
     vi.useFakeTimers();
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
-    // PORT NOTE: an unbound dial is the "browser never attaches" call.
+    // an unbound dial is the "browser never attaches" call.
     await mgr.createUnboundBridgedCall({ ...PARAMS, ...AGENCY }); // arms a 1800s max-duration timer
 
     const pstn = fakeWs();
     mgr.attachPstnLeg('call-1', pstn as any);
-    negotiateVoicelink(pstn); // PORT NOTE: the VoiceLink answer anchor.
+    negotiateVoicelink(pstn); // the VoiceLink answer anchor.
     const session = mgr.getSession('call-1')!;
     expect(session.bothLegsConnected).toBe(false); // no browser leg
     expect(session.answeredAt).not.toBeNull();
@@ -435,7 +374,7 @@ describe('Scenario: max-duration guard ends a one-legged call', () => {
     await vi.advanceTimersByTimeAsync(1_800_000);
 
     // the max-duration callback runs endCall as fire-and-forget; allow microtasks
-    // PORT NOTE: on VoiceLink it closes the PSTN leg and arms the 45s carrier-confirmation
+    // on VoiceLink it closes the PSTN leg and arms the 45s carrier-confirmation
     // fallback; running the pending timers fires that and finalizes.
     await vi.runOnlyPendingTimersAsync();
 
@@ -444,7 +383,7 @@ describe('Scenario: max-duration guard ends a one-legged call', () => {
     expect(mockAnalytics.trackWebrtcCallCompleted).toHaveBeenCalledWith(expect.objectContaining({
       status: 'completed', endedBy: 'system', connected: true,
     }));
-    // PORT NOTE: provider hung up by closing the VoiceLink WS (core: `endCall('pcid-1')`).
+    // provider hung up by closing the VoiceLink WS (not `adapter.endCall`).
     expect(pstn.readyState).toBe(3);
   });
 });
@@ -471,7 +410,6 @@ describe("Scenario: PSTN 'stop' event ends the call", () => {
 
     expect(mgr.getSession('call-1')).toBeUndefined();
     expect(updateStatuses()).toContain('completed');
-    // PORT NOTE: core asserted the settlement dispatch (completed, webrtc_call).
     expect(mockAnalytics.trackWebrtcCallCompleted).toHaveBeenCalledWith(expect.objectContaining({
       status: 'completed',
     }));
@@ -483,7 +421,7 @@ describe("Scenario: PSTN 'stop' event ends the call", () => {
 // Scenario 6 — Graceful shutdown mid-call
 // ───────────────────────────────────────────────────────────────────────────
 describe('Scenario: graceful shutdown mid-call', () => {
-  it('settles, releases slots, hangs up provider, and removes the session for an answered call', async () => {
+  it('finalizes, releases slots, hangs up provider, and removes the session for an answered call', async () => {
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
     await mgr.createBridgedCall({ ...PARAMS, ...AGENCY, browserSocket: fakeWs() as any });
@@ -496,8 +434,7 @@ describe('Scenario: graceful shutdown mid-call', () => {
     expect(mgr.getSession('call-1')).toBeUndefined();
     // answered → completed on shutdown
     expect(updateStatuses()).toContain('completed');
-    // PORT NOTE: core asserted the settlement dispatch here; the analytics event below
-    // carries the same terminal facts.
+    // The analytics event below carries the terminal facts.
     expect(mockAnalytics.trackWebrtcCallCompleted).toHaveBeenCalledWith(expect.objectContaining({
       status: 'completed', endedBy: 'system',
     }));
@@ -511,7 +448,7 @@ describe('Scenario: graceful shutdown mid-call', () => {
 // Scenario 7 — Idempotent teardown (two end paths race)
 // ───────────────────────────────────────────────────────────────────────────
 describe('Scenario: idempotent teardown across two end paths', () => {
-  it('browser close + carrier hangup → exactly one settlement / one slot release', async () => {
+  it('browser close + carrier hangup → exactly one terminal write / one slot release', async () => {
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
     const browser = fakeWs();
@@ -522,7 +459,7 @@ describe('Scenario: idempotent teardown across two end paths', () => {
     mgr.attachPstnLeg('call-1', pstn as any);
 
     // First end path: browser socket closes (fires endCall, browser_hangup)
-    // PORT NOTE: a borrowed socket's close is `agent_disconnected`, and on an answered
+    // a borrowed socket's close is `agent_disconnected`, and on an answered
     // VoiceLink call it enters `ending` and waits for the carrier.
     browser.emit('close');
     // Second end path: carrier hangup webhook arrives after teardown started
@@ -533,7 +470,7 @@ describe('Scenario: idempotent teardown across two end paths', () => {
     await Promise.resolve();
 
     // endHandled guard → exactly one of each
-    // PORT NOTE: core counted settlement dispatches; here, terminal row writes.
+    // Terminal row writes.
     expect(mockRepo.update.mock.calls.filter((c) => c[1]?.ended_at)).toHaveLength(1);
     expect(cm.concurrencyGuard.release).toHaveBeenCalledTimes(1);
     expect(cm.accountConcurrencyGuard.release).toHaveBeenCalledTimes(1);
@@ -541,20 +478,19 @@ describe('Scenario: idempotent teardown across two end paths', () => {
     expect(mgr.getSession('call-1')).toBeUndefined();
   });
 
-  it('forceEndByUser twice → second is a no-op (session already gone)', async () => {
+  it('ending by user twice → second is a no-op (session already gone)', async () => {
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
     await mgr.createBridgedCall({ ...PARAMS, ...AGENCY, browserSocket: fakeWs() as any });
     await mgr.handleVoicelinkStatus('call-1', ev('answer', VL_ANSWERED));
 
     expect(await endByUser(mgr)).toBe(true);
-    // PORT NOTE: an answered VoiceLink hangup holds the session in `ending` until the carrier
-    // confirms; core's VoBiz hangup finalized at once. The confirmation is driven here, so
-    // the second call meets the same "session already gone" state core's did.
+    // an answered VoiceLink hangup holds the session in `ending` until the carrier
+    // confirms. The confirmation is driven here, so
+    // the second call meets the "session already gone" state.
     await mgr.handleVoicelinkStatus('call-1', ev('hangup', VL_ENDED));
     expect(mgr.getSession('call-1')).toBeUndefined();
     expect(await endByUser(mgr)).toBe(false);
-    // PORT NOTE: core counted settlement dispatches.
     expect(mockAnalytics.trackWebrtcCallCompleted).toHaveBeenCalledTimes(1);
     expect(cm.concurrencyGuard.release).toHaveBeenCalledTimes(1);
   });
@@ -565,13 +501,12 @@ describe('Scenario: idempotent teardown across two end paths', () => {
 //
 // These exercise the recording feature as MULTI-STEP lifecycles over the real
 // manager (not the single-assertion unit cases in webrtc-bridge-manager.test.ts).
-// The invariant under test: recording is orthogonal to teardown/settlement/
-// slot-release — opting in must change ONLY the answer-XML <Record> options
-// (enableRecording / recordingCallbackUrl / recordingMaxLengthSeconds), never
-// the terminal status, billing (talk_time), or concurrency bookkeeping.
+// The invariant under test: recording is orthogonal to teardown/slot-release —
+// opting in must change ONLY the dial request's recording options
+// (enableRecording / maxDuration), never the terminal status, talk_time, or
+// concurrency bookkeeping.
 // ───────────────────────────────────────────────────────────────────────────
 describe('recording lifecycle scenarios', () => {
-  // PORT NOTE: core read the VoBiz answer XML's <Record> options (`generateAnswerResponse`);
   // VoiceLink requests (and caps) recording on the dial itself.
   const dialRequest = () => mockAdapter.initiateCall.mock.calls.at(-1)![0];
 
@@ -582,14 +517,14 @@ describe('recording lifecycle scenarios', () => {
     const mgr = new WebRtcBridgeManager(cm as any, null);
 
     // create with recording requested
-    // PORT NOTE: borrowed browser socket at dial; no token is minted for it (core: `token` truthy).
+    // borrowed browser socket at dial; no token is minted for it.
     const browser = fakeWs();
     const record = await mgr.createBridgedCall({ ...PARAMS, ...AGENCY, browserSocket: browser as any, record: true });
     expect(record.id).toBe('call-1');
     // intent persisted on the row
     expect(mockRepo.create.mock.calls[0]![0].recording_requested).toBe(true);
-    // PORT NOTE: the dial request carries the recording wiring (core: the answer XML's <Record>
-    // options; VoiceLink has no recording callback URL — the URL arrives on `call.ended`).
+    // the dial request carries the recording wiring (VoiceLink has no recording
+    // callback URL — the URL arrives on `call.ended`).
     expect(dialRequest().enableRecording).toBe(true);
     expect(dialRequest().maxDuration).toBe(1800);
 
@@ -610,20 +545,19 @@ describe('recording lifecycle scenarios', () => {
     // talk 30s, user hangs up
     vi.advanceTimersByTime(30_000);
     expect(await endByUser(mgr)).toBe(true);
-    // PORT NOTE: an answered VoiceLink hangup settles on the carrier's `call.ended`.
+    // An answered VoiceLink hangup finalizes on the carrier's `call.ended`.
     await mgr.handleVoicelinkStatus('call-1', ev('hangup', VL_ENDED));
 
-    // terminal/settlement/slots are IDENTICAL to a non-recorded happy path
+    // terminal status/slots are IDENTICAL to a non-recorded happy path
     expect(updateStatuses()).toContain('completed');
     expect(lastUpdate().talk_time_seconds).toBe(30);
-    // PORT NOTE: core asserted the settlement dispatch (completed, talk 30) and one
-    // `triggerDequeue`; agency never settles and has no AI queue.
+    // The terminal analytics event carries the completed status and talk time.
     expect(mockAnalytics.trackWebrtcCallCompleted).toHaveBeenCalledWith(expect.objectContaining({
       status: 'completed', talkTimeSeconds: 30,
     }));
     expect(cm.concurrencyGuard.release).toHaveBeenCalledTimes(1);
     expect(cm.accountConcurrencyGuard.release).toHaveBeenCalledTimes(1);
-    // PORT NOTE: VoiceLink's only hangup is closing the provider WS (core: `endCall('pcid-1')`).
+    // VoiceLink's only hangup is closing the provider WS (not `adapter.endCall`).
     expect(pstn.readyState).toBe(3);
     expect(mgr.getSession('call-1')).toBeUndefined();
   });
@@ -640,7 +574,7 @@ describe('recording lifecycle scenarios', () => {
     await mgr.handleVoicelinkStatus('call-1', ev('ringing', VL_RINGING));
     await mgr.handleVoicelinkStatus('call-1', ev('answer', VL_ANSWERED));
 
-    // PORT NOTE: the dial request (core: the answer XML options; no callback URL to check).
+    // the dial request (there is no callback URL to check).
     expect(dialRequest().enableRecording).toBe(false);
     // max-length is still resolved (used to cap the future <Record> if any), but no callback URL
     expect(dialRequest().maxDuration).toBe(1800);
@@ -654,7 +588,6 @@ describe('recording lifecycle scenarios', () => {
 
     expect(updateStatuses()).toContain('completed');
     expect(lastUpdate().talk_time_seconds).toBe(12);
-    // PORT NOTE: core asserted the settlement dispatch (completed, talk 12).
     expect(mockAnalytics.trackWebrtcCallCompleted).toHaveBeenCalledWith(expect.objectContaining({
       status: 'completed', talkTimeSeconds: 12,
     }));
@@ -662,7 +595,7 @@ describe('recording lifecycle scenarios', () => {
     expect(cm.accountConcurrencyGuard.release).toHaveBeenCalledTimes(1);
   });
 
-  it('Scenario R3: recorded call never answered — busy hangup settles at 0 talk-time and no <Record> XML is ever emitted', async () => {
+  it('Scenario R3: recorded call never answered — busy hangup finalizes at 0 talk-time and no answer XML is ever emitted', async () => {
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
 
@@ -677,14 +610,13 @@ describe('recording lifecycle scenarios', () => {
 
     // unanswered → busy, 0 talk-time
     expect(updateStatuses()).toContain('busy');
-    // PORT NOTE: core asserted the settlement dispatch (busy, talk 0); the terminal row
-    // carries the same facts.
+    // The terminal row carries the busy status and zero talk time.
     expect(lastUpdate()).toMatchObject({ status: 'busy', talk_time_seconds: 0 });
     expect(mockAnalytics.trackWebrtcCallCompleted).toHaveBeenCalledWith(expect.objectContaining({
       status: 'busy', connected: false,
     }));
     // answer XML never rendered → recording opt-in never produced a <Record> directive
-    // PORT NOTE: VoiceLink never renders answer XML at all, so this holds by construction.
+    // VoiceLink never renders answer XML at all, so this holds by construction.
     expect(mockAdapter.generateAnswerResponse).not.toHaveBeenCalled();
 
     // recording opt-in didn't break the unanswered slot release
@@ -694,8 +626,7 @@ describe('recording lifecycle scenarios', () => {
   });
 
   it('Scenario R4: max-duration override flows into the recording cap (3600 instead of 1800)', async () => {
-    // override the flag-resolved max duration for this createCall only
-    // PORT NOTE: the override is the account's `webrtc_max_duration_seconds` (plan §3.2).
+    // override the max duration for this dial only: the account's `webrtc_max_duration_seconds`.
     mockAccountSettings.getWebrtcMaxDurationSeconds.mockResolvedValueOnce(3600);
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
@@ -704,7 +635,7 @@ describe('recording lifecycle scenarios', () => {
     // the override is stamped on the session and capped into <Record>
     expect(mgr.getSession('call-1')!.maxDurationSeconds).toBe(3600);
 
-    // PORT NOTE: VoiceLink has no answer XML; its recording is requested, and capped, on
+    // VoiceLink has no answer XML; its recording is requested, and capped, on
     // the dial itself.
     expect(mockAdapter.initiateCall).toHaveBeenCalledWith(expect.objectContaining({
       maxDuration: 3600,

@@ -1,10 +1,3 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core
-// test/unit/agency/agency-dialer-lineage.test.ts@4850d1d9 (5 cases → 5). Deleted: none.
-// Modified (no case changed meaning):
-//  - mock/import specifiers follow the path rule (logger → `@magick-agency/observability`;
-//    break-manager / timers / abandonment-predicate → `@magick-agency/domain/*`);
-//  - the campaign fixture drops `sip_connection_id` (SIP deleted, plan §5; the dialer
-//    no longer passes `sipConnectionId`, docs/seams.md §3.1). No assertion read it.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
@@ -70,7 +63,7 @@ import type { DialCommand } from '../../../src/agency/dial-dispatcher.js';
 
 const CAMPAIGN = {
   id: 'camp-child', name: 'Q3 Winback — Retry 1', telephony_provider: 'vobiz',
-  record_calls: false, analysis_profile_id: null, // PORT NOTE: `sip_connection_id` dropped (SIP deleted)
+  record_calls: false, analysis_profile_id: null,
   disposition_catalog: [], wrapup_seconds: 0, wrapup_auto_return: true,
   retry_policy: {}, abandon_announcement_id: null,
 } as any;

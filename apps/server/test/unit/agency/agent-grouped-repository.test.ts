@@ -1243,7 +1243,7 @@ describe('`resolved_timezone` is read from the RESOLVED zone, never the stored c
     expect(page.resolved_timezone).not.toBe(GARBAGE);
   });
 
-  it('serves a resolvable zone verbatim, for each zoned dimension', async () => {
+  it('serves a resolvable zone unchanged, for each zoned dimension', async () => {
     // The other half of the pair: 'UTC' must not be a constant the mapper always
     // answers. A real zone comes back unchanged, and the buckets of every zoned
     // dimension are cut in it.

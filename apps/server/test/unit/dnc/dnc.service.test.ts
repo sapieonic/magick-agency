@@ -145,7 +145,7 @@ describe('add — outcomes an operator can reconcile', () => {
     expect(mocks.insertMany.mock.calls[0]![0].phones).toEqual(['+15551230001']);
   });
 
-  it('echoes the input verbatim so the caller can point at the offending row', async () => {
+  it('echoes the input unchanged so the caller can point at the offending row', async () => {
     const summary = await service.add({
       tenantId: TENANT,
       phoneNumbers: ['+1 (555) 123-0001'],
@@ -196,8 +196,8 @@ describe('add — outcomes an operator can reconcile', () => {
     });
 
     /**
-     * `POST /internal/agency/dnc` returns this to core as a receipt for the write,
-     * and core is being changed to compare it against what it sent and treat a
+     * `POST /internal/agency/dnc` returns this to the caller as a receipt for the write,
+     * so the caller can compare it against what it sent and treat a
      * mismatch as "not landed". The route cannot produce that receipt unless the
      * service carries the row's scope out — before this it carried only
      * `entry_id`, so the route echoed its own request body instead and the
@@ -230,15 +230,15 @@ describe('add — outcomes an operator can reconcile', () => {
     });
 
     // The row is tenant-wide. Reporting the requested campaign here would tell
-    // core the number is suppressed in one campaign when it is suppressed in all.
+    // the dialer runtime the number is suppressed in one campaign when it is suppressed in all.
     expect(summary.results[0]!.campaign_id).toBeNull();
   });
 
-  it('defaults the scope to tenant-wide — the scope core\'s Redis set can express', async () => {
+  it('defaults the scope to tenant-wide — the scope the dial-time check can express', async () => {
     await service.add({ tenantId: TENANT, phoneNumbers: ['+15551230001'], source: 'agent' });
 
     const input = mocks.insertMany.mock.calls[0]![0] as Record<string, unknown>;
-    // §2.3: only tenant-wide rows reach core. A silently account-scoped default
+    // Only tenant-wide rows reach the dial-time check. A silently account-scoped default
     // would produce entries that never propagate to the dial-time check.
     expect(input['account_id']).toBeNull();
     expect(input['campaign_id']).toBeNull();

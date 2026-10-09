@@ -1,4 +1,3 @@
-// PORT NOTE (magick-agency): ported from master test/unit/cache/redis-cache-invalidation-order.test.ts@a1f0756a — verbatim, import specifiers remapped only.
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('@magick-agency/observability/metrics/platform', () => ({

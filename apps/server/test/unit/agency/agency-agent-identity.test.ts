@@ -138,8 +138,7 @@ describe('resolveAgentNames is declared ONCE', () => {
     // has almost certainly re-declared one, which the case above would also catch
     // — but this is the assertion that says WHERE the shared binding is supposed
     // to be reaching.
-    // Phase 8: both consumers now exist at master's paths, so the loop is master's verbatim
-    // (B2 had filtered on `existsSync` and pinned the count at 0 until they landed).
+    // Both consumers exist at these paths, so every one is asserted.
     for (const consumer of [
       'api/routes/proxy-agency-campaigns.routes.ts',
       'api/routes/proxy-agency-performance.routes.ts',

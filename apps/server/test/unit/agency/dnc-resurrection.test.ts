@@ -69,7 +69,7 @@ beforeEach(() => {
 
 describe('the retry decisions that resurrect a contact', () => {
   it('an agent_disconnected under its cap resolves to pending, on the DEFAULT policy', () => {
-    // `null` is the ordinary case, not an edge one: master never sends
+    // `null` is the ordinary case, not an edge one: the public API layer never sends
     // `retry_policy`, so every campaign in the field runs `DEFAULT_RETRY_POLICY`.
     const decision = resolveRetryDecision(null, 'agent_disconnected', new Date(), 1);
     expect(decision.contactState, 'DEFAULT_RETRY_POLICY.agent_disconnected is 5min ×3').toBe('pending');

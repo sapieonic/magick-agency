@@ -1,60 +1,29 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): master `test/unit/agency/agency-proxy-path-traversal.test.ts`
- * @a1f0756a. Source 83 cases → ported 83. Counted: campaigns 6 routes × `it.each(ESCAPES)` 6 = 36,
- * lifecycle `it.each` 4, untouched `it.each` 4; agent 4 routes × 6 = 24, plus 2 `it`; bare-slash
- * 2 `it` + `it.each` 4 + 4 + 3.
- *
- * Harness changes, and only these:
- *  - `proxyToCore` → `callCore` (`src/api/core-dispatch.js`), mocked under master's
- *    `proxyToCore` name so every assertion stays master's; the `resolveCoreApiKey` mock and its
- *    `beforeEach` re-arm are gone with the key (the hop is in-process). `callCore` keeps
- *    master's `isUnsafeCorePath` refusal (same check, same 400 body), so the chokepoint the
- *    last block reasons about is unchanged;
- *  - `auditLogger` → `platformAuditLogger` (`src/audit/platform/audit-logger.js`);
- *  - the logger mock is a partial over `@magick-agency/observability`;
- *  - the `require-capability` mock is gone with governance (plan §3.2);
- *  - the s3 mock's `getFileBuffer` is core's `getFile` (B14);
- *  - `user.repository` is `@magick-agency/db/repositories/user.repository`;
- *  - `PERMISSION_MATRIX` / `ROLE_HIERARCHY` come from `@magick-agency/contracts/rbac`.
- *
- * MODIFIED (61):
- *  - "<route>: refuses %s without calling core" — all 60 expansions (campaigns 36, agent 24):
- *    the `expect(mocks.resolveCoreApiKey).not.toHaveBeenCalled()` line is dropped, there being
- *    no core key to decrypt; the `proxyToCore`-never-called assertion, which carries the
- *    property, is kept;
- *  - "is a real escalation because the two routes have different floors": the campaign-read
- *    floor is asserted under its agency name, `agency.campaigns.read` (master's
- *    `proxy.contact_lists.read`; the rename is in `@magick-agency/contracts/rbac`). Same floor,
- *    `viewer`. Comments naming the old permission are master's record.
- * DELETED: none. NEW: none.
- */
-
 /**
  * ─── NO AGENCY PROXY ROUTE LETS A PARAM ESCAPE ITS PATH SEGMENT ─────────────
  *
  * `helpers/passthrough.ts` rejects a path-escaping param for the 99 declarative
  * proxy routes, and its comment explains why rejecting beats encoding. The
- * hand-written proxy routes — the ones that build a core path by interpolating
+ * hand-written proxy routes — the ones that build an internal path by interpolating
  * `request.params.x` themselves — never went through it, so the guard the shared
- * helper enforces was exactly the guard they bypassed.
+ * helper enforces was exactly the guard they bypass.
  *
  * ── What this closes, stated precisely ────────────────────────────────────
  *
  * find-my-way routes on the ENCODED path and hands the handler a
  * percent-DECODED param, so `%2F` arrives as a real `/`.
  *
- * **The `..` traversal was already closed.** `proxyToCore` and
- * `coreInternalRequest` refuse any path that does not survive a WHATWG parse
+ * **The `..` traversal was already closed.** `callCore` (mocked here as
+ * `proxyToCore`) refuses any path that does not survive a WHATWG parse
  * unchanged (`src/proxy/safe-core-path.ts`) — `..`, `%2e%2e`, `.%2e`,
  * `.<TAB>.`, `#`, `\\`. The last block in this file asserts that directly, so
  * nobody reads the cases above as a claim the textbook traversal was reachable.
  *
  * What the parse check deliberately allows is a **bare extra slash**, because a
- * path with no dot segments is an ordinary core path. That is the live hole, and
- * the last block proves it end to end: a `viewer` reaching core's agency attempt
+ * path with no dot segments is an ordinary internal path. That is the live hole, and
+ * the last block proves it end to end: a `viewer` reaching the agency attempt
  * read and its recording BYTES through `GET /proxy/agency/campaigns/:id`, whose
  * floor is two levels below the attempt read's and which asks for no recording
  * capability at all.
@@ -65,17 +34,16 @@ import Fastify, { type FastifyInstance } from 'fastify';
  * later inherits it. A file per plugin-hook property keeps that claim assertable
  * for both plugins in one place, next to the reason it is a hook — and the two
  * route suites are about what their routes forward, not about what never reaches
- * core at all.
+ * the internal handler at all.
  *
  * ── What each case asserts, and why the second half matters ─────────────────
  *
- * A 4xx alone proves nothing: core could have been called and answered the 4xx
- * itself, which is what would happen with the guard removed and core refusing the
- * traversed path. So every case also asserts `proxyToCore` and
- * `resolveCoreApiKey` were never touched. That is the property the guard buys —
- * the refusal is MASTER'S, raised before the tenant's core key is decrypted and
- * before any core status is recorded that `errorMaskHook` could mistake for a
- * forwarded one.
+ * A 4xx alone proves nothing: the internal handler could have been called and answered
+ * the 4xx itself, which is what would happen with the guard removed and the handler
+ * refusing the traversed path. So every case also asserts `proxyToCore` (the mocked
+ * `callCore`) was never touched. That is the property the guard buys — the refusal is
+ * the public API layer's, raised before any handler status is recorded that
+ * `errorMaskHook` could mistake for a forwarded one.
  *
  * ── The guard here is the CHARACTER CLASS, not a uuid check ─────────────────
  *
@@ -115,7 +83,7 @@ vi.mock('../../../src/auth/session.middleware.js', () => ({ sessionMiddleware: a
 vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
   tenantContextMiddleware: async () => {},
 }));
-// PORT NOTE (magick-agency): master's `require-capability` mock is gone with governance.
+// There is no `require-capability` mock: governance does not exist here.
 // `rbac.middleware.js` and `roles.js` are deliberately NOT mocked. The traversal
 // cases run as `tenant_owner`, which clears every floor, so a real RBAC layer
 // cannot make them pass for the wrong reason — and the escalation proof at the
@@ -154,15 +122,15 @@ async function buildApp(plugin: Plugin): Promise<FastifyInstance> {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // A 200 on every call, so a case that DOES reach core fails on the "never
+  // A 200 on every call, so a case that DOES reach the handler fails on the "never
   // called" assertion rather than on an unrelated error path.
   mocks.proxyToCore.mockResolvedValue({ status: 200, body: {}, headers: new Headers() });
 });
 
 /** The four characters that let a decoded param break out of its segment. */
 const ESCAPES: Array<[string, string]> = [
-  ['a traversal into another core surface', 'x%2F..%2F..%2Fknowledge-bases'],
-  ['a traversal into core internals', 'a%2F..%2F..%2F..%2Finternal%2Faudit-logs'],
+  ['a traversal into another internal surface', 'x%2F..%2F..%2Fknowledge-bases'],
+  ['a traversal into internal-only routes', 'a%2F..%2F..%2F..%2Finternal%2Faudit-logs'],
   ['a bare encoded slash', 'a%2Fb'],
   ['a query truncation', 'a%3Fadmin=1'],
   ['a fragment truncation', 'a%23frag'],
@@ -182,21 +150,20 @@ describe('proxy-agency-campaigns: no param escapes its segment', () => {
   ];
 
   for (const [routeName, url] of cases) {
-    it.each(ESCAPES)(`${routeName}: refuses %s without calling core`, async (_label, id) => {
+    it.each(ESCAPES)(`${routeName}: refuses %s without calling the internal handler`, async (_label, id) => {
       const app = await buildApp(proxyAgencyCampaignsRoutes);
 
       const res = await app.inject({ method: 'GET', url: url(id) });
 
       expect(res.statusCode).toBe(400);
       expect(mocks.proxyToCore).not.toHaveBeenCalled();
-      // PORT NOTE (magick-agency): master's `resolveCoreApiKey` not-called line is dropped (no key).
       await app.close();
     });
   }
 
   /**
    * The lifecycle writes, which are the worse half: a traversal on a POST aims a
-   * WRITE at a core surface nobody granted.
+   * WRITE at an internal surface nobody granted.
    */
   it.each(['start', 'pause', 'resume', 'stop'])('lifecycle %s: refuses a traversal', async (action) => {
     const app = await buildApp(proxyAgencyCampaignsRoutes);
@@ -243,21 +210,20 @@ describe('proxy-agency-agent: no param escapes its segment', () => {
   ];
 
   for (const [routeName, method, url] of cases) {
-    it.each(ESCAPES)(`${routeName}: refuses %s without calling core`, async (_label, id) => {
+    it.each(ESCAPES)(`${routeName}: refuses %s without calling the internal handler`, async (_label, id) => {
       const app = await buildApp(proxyAgencyAgentRoutes);
 
       const res = await app.inject({ method: method as 'POST', url: url(id) });
 
       expect(res.statusCode).toBe(400);
       expect(mocks.proxyToCore).not.toHaveBeenCalled();
-      // PORT NOTE (magick-agency): master's `resolveCoreApiKey` not-called line is dropped (no key).
       await app.close();
     });
   }
 
   /**
    * A refused traversal must leave no audit row either. These routes write one on
-   * a successful core call, and a row for an action that never happened is worse
+   * a successful internal call, and a row for an action that never happened is worse
    * than no row: it is a false entry on the trail a compliance question reads.
    */
   it('writes no audit row for a refused traversal', async () => {
@@ -283,17 +249,17 @@ describe('proxy-agency-agent: no param escapes its segment', () => {
 /**
  * ─── WHY THE GUARD IS NOT REDUNDANT WITH `isUnsafeCorePath` ─────────────────
  *
- * `proxyToCore` and `coreInternalRequest` already refuse a path that does not
+ * `callCore` (mocked here as `proxyToCore`) already refuses a path that does not
  * survive a WHATWG parse unchanged (`src/proxy/safe-core-path.ts`), and that
  * chokepoint is strictly stronger than a per-character check against the
  * DOT-SEGMENT family: it catches `..`, `%2e%2e`, `.%2e`, `.<TAB>.`, `#` and `\`.
- * So the classic `x%2F..%2F..%2Fknowledge-bases` traversal never reached core in
- * this repository — it was already a 400 from inside the proxy client.
+ * So the classic `x%2F..%2F..%2Fknowledge-bases` traversal never reached the internal handler —
+ * it was already a 400 from inside `callCore`.
  *
  * What that chokepoint deliberately does NOT refuse is a **bare extra slash**. A
  * path with no dot segments survives the parse byte-for-byte, so
  * `/agency-campaigns/c/attempts/a` is allowed — and it has to be, because it is a
- * perfectly ordinary core path. It is only dangerous when a caller put those
+ * perfectly ordinary internal path. It is only dangerous when a caller put those
  * extra segments there through a param.
  *
  * That is a real privilege escalation on this plugin, because its routes do not
@@ -303,9 +269,9 @@ describe('proxy-agency-agent: no param escapes its segment', () => {
  *   GET .../campaigns/:id/attempts/:aId      → `agency.supervise`  (ACCOUNT_ADMIN, 30)
  *                                              + `agency.recording` for the media
  *
- * and the first one interpolates `:id` as the LAST segment of the core path. So a
+ * and the first one interpolates `:id` as the LAST segment of the internal path. So a
  * `viewer` sending `:id = c%2Fattempts%2Fa` built `/agency-campaigns/c/attempts/a`
- * — core's agency attempt read — through a route floored two levels below it, and
+ * — the agency attempt read — through a route floored two levels below it, and
  * `:id = c%2Fattempts%2Fa%2Frecording` reached the recording BYTES with no
  * `agency.recording` capability anywhere in the request. The second one is the C2
  * gap this whole surface was built to close ("the capability gated enabling
@@ -330,7 +296,6 @@ describe('the bare-slash escalation the parse-based chokepoint cannot see', () =
 
   /** The floors this case turns on, pinned against the real matrix. */
   it('is a real escalation because the two routes have different floors', () => {
-    // PORT NOTE (magick-agency): master's `proxy.contact_lists.read`, under its agency name.
     expect(PERMISSION_MATRIX['agency.campaigns.read']).toBe('viewer');
     expect(PERMISSION_MATRIX['agency.supervise']).toBe('account_admin');
     expect(ROLE_HIERARCHY['viewer']).toBeLessThan(ROLE_HIERARCHY['account_admin']);

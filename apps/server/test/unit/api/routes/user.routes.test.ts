@@ -75,7 +75,7 @@ vi.mock('@magick-agency/db/repositories/account.repository', () => ({
   accountRepository: mocks.accountRepository,
 }));
 vi.mock('../../../../src/cache/redis-cache.js', () => ({
-  // Q5 (Manas, 2026-10-09): revocation deletes go through `delForRevocation` (retried, reports
+  // Q5: revocation deletes go through `delForRevocation` (retried, reports
   // failure); this double forwards to the `del` mock and reports success, so the assertions on
   // `del` still observe the key.
   redisCache: { ...mocks.redisCache, delForRevocation: async (...k: string[]) => { await mocks.redisCache.del(...k); return true; } },

@@ -9,7 +9,7 @@ import {
 } from '../../../src/agency/agency-agent-identity.js';
 
 /**
- * **The GROUPED read** — `GET /proxy/agency/agents/grouped-stats`, phase 02a of
+ * **The GROUPED read** — `GET /proxy/agency/agents/grouped-stats`, in
  * the supervisor console.
  *
  * Its two sibling files cover the rest of the plugin:
@@ -34,26 +34,22 @@ import {
  *     carries an agent id), so a supervisor's contribution chart comes back
  *     empty. NOT applied to an agent-grouped page, departed colleagues are served
  *     under `inactive_omitted: 0` — a payload that states, falsely, that nothing
- *     was hidden (R3).
- *  3. **Either omission counter missing on any path.** Master invented
+ *     was hidden.
+ *  3. **Either omission counter missing on any path.** The public API layer invented
  *     `inactive_omitted` AND `unattributed_omitted`; the client declares them
  *     required and computes `total_groups <= rows.length + inactive_omitted`
  *     with the first, so an absent key makes that `n <= NaN`, which is `false`,
  *     and a truncation note renders on an untruncated page. This regressed on
  *     the roster's degrade path once already, which is why the newer field is
  *     asserted on the same paths rather than only where it is non-zero.
- *  4. **The two counters folded into one.** R4: a departure and an id master
+ *  4. **The two counters folded into one.** A departure and an id the public API layer
  *     cannot account for are different facts, and one number for both reports a
  *     stranger as a departed colleague. Withholding the second is the other half
  *     of the same defect — rows vanish, no counter moves, and the contribution
  *     screen's claim that the gap IS the departed agents' work is false.
- *  5. **A credential that names nobody reading the floor broken out by person.**
- *     `rbac.middleware.ts` returns early — ALLOWING — when
- *     `request.apiKeyTenantId && !request.user`, so `agency.supervise` is never
- *     evaluated for a userless platform key.
- *  6. **Master growing an opinion about `group_by`.** The vocabulary, the
- *     two-dimension cap and the timezone rule are core's. A second parser in
- *     master is a second definition of the same enum, and the copy that drifts is
+ *  5. **The public API layer growing an opinion about `group_by`.** The vocabulary, the
+ *     two-dimension cap and the timezone rule are the internal handler's. A second parser in
+ *     the public API layer is a second definition of the same enum, and the copy that drifts is
  *     the one no query exercises.
  *
  * ── And the one that is not a failure at all ─────────────────────────────────
@@ -74,7 +70,7 @@ const OTHER_ACCOUNT = '88888888-8888-4888-8888-888888888888';
  *
  * ⚠️ Every other id in this file is digits-and-hyphens, so `.toUpperCase()` is a
  * NO-OP on them and a case-folding assertion built on one passes whether or not
- * anything folds — MAG-106's shape. Caught by mutating the fold away and watching
+ * anything folds. Caught by mutating the fold away and watching
  * the case test stay green.
  */
 const CASED_AGENT = 'aabbccdd-eeff-4aab-8bcd-eeffaabbccdd';
@@ -92,7 +88,7 @@ const STRANGER = '44444444-4444-4444-8444-444444444444';
  * Added to `MEMBERSHIPS` rather than reusing one of the two above, because
  * `group_by=agent` yields one row per person and the case being pinned is a row
  * whose two flags disagree — which needs a row of its own beside an agreeing one.
- * Adding a membership is inert for every other test here: rows come from core's
+ * Adding a membership is inert for every other test here: rows come from the internal handler's
  * mocked body, and `MEMBERSHIPS` only ever filters them.
  */
 const SECOND_AGENT = '77777777-7777-4777-8777-777777777777';
@@ -105,16 +101,12 @@ const mocks = vi.hoisted(() => ({
   findAnyByUsersAndTenant: vi.fn(),
   findDisplayNamesInTenant: vi.fn(),
   hooksRan: [] as string[],
-  /**
-   * PORT NOTE (magick-agency): replaces master's `requireCapability` double (governance is
-   * gone, plan §3.2). The plugin-level refusal case drives `tenantContextMiddleware` instead.
-   */
+  /** The plugin-level refusal case drives `tenantContextMiddleware`. */
   refuseTenantContext: false,
 }));
 
-// PORT NOTE (magick-agency): master mocked `proxyToCore` (`src/proxy/core-client.js`) and
-// `resolveCoreApiKey`; the hop is `callCore` (`src/api/core-dispatch.ts`) now and there is no
-// key to resolve. The mock keeps master's variable name so every assertion on it is master's.
+// The hop is `callCore` (`src/api/core-dispatch.ts`), mocked as `mocks.proxyToCore`; there is
+// no key to resolve.
 vi.mock('../../../src/api/core-dispatch.js', () => ({ callCore: mocks.proxyToCore }));
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/observability')>()),
@@ -135,8 +127,6 @@ vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
     return undefined;
   },
 }));
-// PORT NOTE (magick-agency): master's `governance/require-capability.js` double is gone with the
-// gate (the route registers no capability hook).
 vi.mock('@magick-agency/db/repositories/membership.repository', () => ({
   membershipRepository: {
     findAnyByUserAndTenant: mocks.findAnyByUserAndTenant,
@@ -163,9 +153,6 @@ interface Caller {
   role?: MembershipRole;
   /** `undefined` models a request with NO `X-Account-Id`. */
   accountId?: string | undefined;
-  // PORT NOTE (magick-agency): master's `apiKeyOnly` / `apiKeyWithCreator` shapes are deleted
-  // with platform API keys (decision #5), and `maskErrors` with master's `errorMaskHook`, which
-  // is not ported (plan §1, one error union): the cases that mounted it are listed in PORTING.md.
 }
 
 async function buildApp(caller: Caller = {}): Promise<FastifyInstance> {
@@ -188,45 +175,39 @@ async function buildApp(caller: Caller = {}): Promise<FastifyInstance> {
   return app;
 }
 
-/**
- * Core answered a refusal, recorded the way the real proxy records it.
- *
- * PORT NOTE (magick-agency): master's helper also called `recordCoreErrorStatus(status)`
- * (`src/utils/log-context.js`), the AsyncLocalStorage flag `errorMaskHook` read. Neither is
- * ported (plan §1: one error union, no mask), so the helper only stubs core's answer.
- */
+/** The internal handler answered a refusal; the helper stubs the internal handler's answer. */
 async function coreRefuses(status: number, body: unknown): Promise<void> {
   mocks.proxyToCore.mockImplementation(async () => ({ status, body }));
 }
 
-// ─── Fixtures, in core's contract shape (D3/D4) ─────────────────────────────
+// ─── Fixtures, in the internal handler's contract shape (D3/D4) ─────────────────────────────
 //
-// The eight metrics AND `rates_reportable` are always present, because master
+// The eight metrics AND `rates_reportable` are always present, because the public API layer
 // SPREADS these rows: a fixture carrying only the fields the assertions read
 // could not catch an enrichment that REBUILT the row instead.
 //
 // The two reportability flags are the fields that prove that reasoning was worth
-// stating — and both were missing from here. They appear NOWHERE in master's own
-// `src/` or `test/` for this route, because master owns no arithmetic on this
+// stating — and both were missing from here. They appear NOWHERE in the public API layer's own
+// `src/` or `test/` for this route, because the public API layer owns no arithmetic on this
 // payload and they ride the row spread; that is precisely what makes them the
 // keys a rebuild would drop in silence, with the visible symptom a 100%
 // conversion rate printed as a NUMBER beside a named person.
 //
 // `success_rate_reportable` is the second of them, added after review found that
 // `rates_reportable` gates on DIALS while the conversion rate divides by
-// CONNECTS. It is core's per-metric answer and master must carry it untouched for
+// CONNECTS. It is the internal handler's per-metric answer and the public API layer must carry it untouched for
 // exactly the same reason as the first.
 //
 // `key` carries a member if and only if its dimension is in `group_by`, which is
 // the property the route reads to decide whether it is looking at people.
 
 /**
- * Core's minimum rate denominator, mirrored HERE and nowhere in `src/`.
+ * The internal handler's minimum rate denominator, mirrored HERE and nowhere in `src/`.
  *
- * Master owns no arithmetic on this payload and must not start: the flags below
- * are core's answers and they ride the row spread. This constant exists only so
+ * The public API layer owns no arithmetic on this payload and must not start: the flags below
+ * are the internal handler's answers and they ride the row spread. This constant exists only so
  * the fixtures can be internally consistent — a fixture is a claim about what
- * core emits, and a test may not assert a shape core cannot produce.
+ * the internal handler emits, and a test may not assert a shape the internal handler cannot produce.
  */
 const CORE_MIN_RATE_DENOMINATOR = 20;
 
@@ -240,7 +221,7 @@ const CORE_MIN_RATE_DENOMINATOR = 20;
  * ── The flags are DERIVED from the overrides, not defaulted beside them ─────
  * `rates_reportable` gates on `attempts`, `success_rate_reportable` on
  * `connected`, and deriving them is what keeps `metrics({ attempts: 3 })` a shape
- * core could actually emit. Hardcoding `success_rate_reportable: true` would let
+ * the internal handler could actually emit. Hardcoding `success_rate_reportable: true` would let
  * `metrics({ attempts: 3, rates_reportable: false })` — which this file already
  * uses twice — produce a row whose conversion-rate flag contradicts its own dial
  * flag, and the console reads that flag to decide whether to print a percentage
@@ -267,7 +248,7 @@ function metrics(overrides: Record<string, unknown> = {}) {
     ...base,
     rates_reportable: ratesReportable,
     /*
-      `rates_reportable` AND the CONNECT floor — core's own definition, and
+      `rates_reportable` AND the CONNECT floor — the internal handler's own definition, and
       strictly stronger, because `connected <= attempts` always.
     */
     success_rate_reportable:
@@ -306,8 +287,8 @@ function hourRow(dayOfWeek: number, hourOfDay: number, overrides: Record<string,
 
 /**
  * `group_by=agent,day` — the per-agent trend, and the only shape in this file
- * that is BOTH agent-grouped (so master REBUILDS the row) and cut in a timezone
- * (so `resolved_timezone` is a string rather than a null). Core names it as a
+ * that is BOTH agent-grouped (so the public API layer REBUILDS the row) and cut in a timezone
+ * (so `resolved_timezone` is a string rather than a null). The internal handler names it as a
  * first-class screen: "`agent`+`campaign` for contribution,
  * `day_of_week`+`hour_of_day` for best hours, `agent`+`day` for a trend".
  *
@@ -329,21 +310,21 @@ function dispositionRow(code: string | null, overrides: Record<string, unknown> 
 }
 
 /**
- * Which grouped dimensions are cut in a TIMEZONE — core's
- * `GROUP_DIMENSION_NEEDS_ZONE` (`magic-voice-core/src/agency/agent-record.ts`),
- * mirrored here for the same reason {@link CORE_MIN_RATE_DENOMINATOR} is: master
+ * Which grouped dimensions are cut in a TIMEZONE — the internal handler's
+ * `GROUP_DIMENSION_NEEDS_ZONE` (`src/agency/agent-record.ts`),
+ * mirrored here for the same reason {@link CORE_MIN_RATE_DENOMINATOR} is: the public API layer
  * owns no arithmetic on this payload and must not start. It exists only so the
  * fixtures can be internally consistent.
  */
 const GROUPED_DIMENSIONS_NEEDING_A_ZONE = new Set(['day', 'day_of_week', 'hour_of_day']);
 
 /**
- * The zone the buckets were ACTUALLY cut in (E3) — `COALESCE(z.name, 'UTC')`,
+ * The zone the buckets were ACTUALLY cut in — `COALESCE(z.name, 'UTC')`,
  * read back out of the same `LEFT JOIN pg_timezone_names` the grouping used.
  *
  * Deliberately NOT `'UTC'`. `UTC` is what that join falls back to when it
- * resolves nothing, so a fixture carrying it cannot tell a value master carried
- * from one master manufactured — and a helpful default in this hop is the exact
+ * resolves nothing, so a fixture carrying it cannot tell a value the public API layer carried
+ * from one the public API layer manufactured — and a helpful default in this hop is the exact
  * defect the field exists to prevent. `Asia/Kolkata` is also the case the
  * contract argues from: five and a half hours from where a UTC fallback would
  * draw the connect peak, with a quietly wrong rostering decision as the only
@@ -359,26 +340,26 @@ function groupedBody(
   /*
     Both page-level fields below are DERIVED from `group_by`, which is the rule
     `metrics()` follows for the reportability flags: a fixture is a claim about
-    what core emits, and a test may not assert a shape core cannot produce.
+    what the internal handler emits, and a test may not assert a shape the internal handler cannot produce.
 
-    `resolved_timezone` (E3) is a STRING when any grouped dimension is zoned and
+    `resolved_timezone` is a STRING when any grouped dimension is zoned and
     `null` otherwise — and that null is a fact, not a gap: it says nothing on
     this page was cut in a zone. An ABSENT key means something different again (a
-    core that predates the field), on which E3 rules the surface renders the
-    matrix with NO hour-axis label and says so. Three states, and master has to
+    the internal handler that predates the field), on which the surface renders the
+    matrix with NO hour-axis label and says so. Three states, and the public API layer has to
     keep them distinguishable.
 
-    `campaign_id` follows from the same fact, for D5's and E2's reason: a zoned
+    `campaign_id` follows from the same fact: a zoned
     dimension is REFUSED (`timezone_ambiguous`) unless exactly one campaign is in
-    scope, and E2 makes that filter required rather than optional — a pooled
+    scope, and that filter is required rather than optional — a pooled
     best-hours read is a 400. So a fixture that grouped by hour with
-    `campaign_id: null` is a page core answers 400 for, and asserting it as a 200
-    body would be asserting a shape core cannot emit.
+    `campaign_id: null` is a page the internal handler answers 400 for, and asserting it as a 200
+    body would be asserting a shape the internal handler cannot emit.
 
-    D5's other remedy — grouping BY `campaign`, so each row carries its own
+    The other remedy — grouping BY `campaign`, so each row carries its own
     campaign's zone — IS modelled, and it is the case the derivation below exists
     for. That read is a 200 spanning every campaign in the account, and its rows
-    are cut in as many zones as those campaigns have. E3's field is page-level, so
+    are cut in as many zones as those campaigns have. The field is page-level, so
     on that page there is no single zone to name and the honest value is `null`.
 
     `null` therefore carries ONE meaning — *this page has no single zone* — and it
@@ -413,13 +394,13 @@ function groupedBody(
   };
   /*
     The zone is derived from the MERGED `campaign_id`, after overrides, and it
-    mirrors core's predicate exactly: `campaignId !== undefined && zoned`.
+    mirrors the internal handler's predicate exactly: `campaignId !== undefined && zoned`.
 
     Not from `!groupBy.includes('campaign')`, which is a proxy that agrees for
     every shape above and DIVERGES on one: `group_by=campaign,hour_of_day` WITH a
-    campaign filter is one campaign, therefore one zone, and core emits a string
-    for it. A fixture deriving from the proxy would assert `null` on a page core
-    answers with a zone — a shape core cannot emit, which is the thing these
+    campaign filter is one campaign, therefore one zone, and the internal handler emits a string
+    for it. A fixture deriving from the proxy would assert `null` on a page the internal handler
+    answers with a zone — a shape the internal handler cannot emit, which is the thing these
     fixtures exist to never do. Reading the merged value also means a case that
     overrides `campaign_id` gets a zone consistent with it for free.
   */
@@ -478,8 +459,7 @@ describe('the floor, pinned against PERMISSION_MATRIX', () => {
   it('and it is NOT any viewer-floored read that a pivot table resembles', () => {
     // A grouped aggregate reads like "analytics" more than the roster does, and
     // when `agent` is grouped it is a per-person scorecard.
-    // PORT NOTE (magick-agency): master looped over `proxy.analytics.read`, `proxy.stats.read` and
-    // `proxy.contact_lists.read`. The last is `agency.campaigns.read` here; the first two have no
+    // `agency.campaigns.read` is checked; `proxy.analytics.read` and `proxy.stats.read` have no
     // agency twin, so they are asserted ABSENT (neither can be picked by mistake).
     for (const permission of ['agency.campaigns.read'] as const) {
       expect(PERMISSION_MATRIX[permission]).toBe('viewer');
@@ -516,13 +496,13 @@ describe('the floor, pinned against PERMISSION_MATRIX', () => {
 });
 
 describe('the account scope is a predicate, not a filter', () => {
-  it('refuses a request with no account, before decrypting the core key', async () => {
+  it('refuses a request with no account, before calling the internal handler', async () => {
     /**
-     * The locked decision, and R5 as CORRECTED: this is defence in depth rather
-     * than the only guard — core's own `authMiddleware` answers 400 `Missing
-     * required header: x-mgkvc-account` before any core handler runs. What
-     * master's check buys is a named code the console can act on, and the fact
-     * that no per-tenant core API key is decrypted and no S2S round trip is spent
+     * This is defence in depth rather
+     * than the only guard — the internal handler's own `authMiddleware` answers 400 `Missing
+     * required header: x-mgkvc-account` before any internal handler handler runs. What
+     * the public API layer's check buys is a named code the console can act on, and the fact
+     * that no handler call is spent
      * on a request that cannot succeed. The second half is the assertion below.
      */
     const app = await buildApp({ accountId: undefined });
@@ -532,12 +512,10 @@ describe('the account scope is a predicate, not a filter', () => {
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ code: 'account_scope_required' });
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
-    // PORT NOTE (magick-agency): master also asserted `resolveCoreApiKey` untouched; there is no
-    // per-tenant core key in-process.
     await app.close();
   });
 
-  it('forwards the account it was given to core', async () => {
+  it('forwards the account it was given to the internal handler', async () => {
     const app = await buildApp();
 
     await app.inject({ method: 'GET', url: `${GROUPED}?group_by=agent` });
@@ -571,7 +549,7 @@ describe('the query whitelist', () => {
     await app.close();
   });
 
-  it('refuses an unknown param with a 400, and makes NO core call', async () => {
+  it('refuses an unknown param with a 400, and makes NO the internal handler call', async () => {
     // `bucket` is the realistic mistake: it is a legitimate param on the
     // per-agent stats routes next door, and this route groups rather than buckets.
     const app = await buildApp();
@@ -584,19 +562,18 @@ describe('the query whitelist', () => {
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ code: 'unknown_query_params' });
     // `tz` is on this list deliberately: D5 rules that there is NO `tz` parameter
-    // in 02a — a time dimension is refused by core unless the zone is unambiguous
+    // in 02a — a time dimension is refused by the internal handler unless the zone is unambiguous
     // — so a client reaching for one must be told it does not exist rather than
     // have it silently dropped and get UTC buckets for an Asia/Kolkata campaign.
     expect(res.json().details.unknown).toEqual(['bucket', 'tz']);
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
-    // PORT NOTE (magick-agency): `resolveCoreApiKey` assertion dropped (no core key in-process).
     await app.close();
   });
 
-  it('refuses agent_user_id — the tenancy boundary is master\'s memberships', async () => {
+  it('refuses agent_user_id — the tenancy boundary is the public API layer\'s memberships', async () => {
     /**
-     * Not accepted on either service. Core has no user table, so `agent_user_id`
-     * is an opaque string it cannot tenancy-check, and master's `memberships` is
+     * Not accepted on either service. The internal handler has no user table, so `agent_user_id`
+     * is an opaque string it cannot tenancy-check, and the public API layer's `memberships` is
      * the only place that boundary can exist — which makes a caller-supplied
      * filter on it a tenancy decision taken from the query string. Filtering to
      * one person is the per-agent record's job, where the id is proved against
@@ -629,9 +606,9 @@ describe('the query whitelist', () => {
   it('forwards group_by UNPARSED, and has no opinion about its vocabulary', async () => {
     /**
      * The vocabulary, the 1-or-2-dimension cap, the canonicalisation of the order
-     * and the timezone rule are core's, because core is where the rows are
-     * grouped. A second parser in master would be a second definition of the same
-     * enum and the copy that drifts is the one no query exercises. So master must
+     * and the timezone rule are the internal handler's, because the internal handler is where the rows are
+     * grouped. A second parser in the public API layer would be a second definition of the same
+     * enum and the copy that drifts is the one no query exercises. So the public API layer must
      * pass even obvious nonsense through — the refusal has to come from the
      * service that did the grouping.
      */
@@ -645,24 +622,24 @@ describe('the query whitelist', () => {
       });
 
       // A blank value is dropped by `forwardAllowedQuery` (it is what a cleared
-      // form field posts), and `group_by`'s required-ness is core's to enforce —
-      // so the call is still made and core answers.
+      // form field posts), and `group_by`'s required-ness is the internal handler's to enforce —
+      // so the call is still made and the internal handler answers.
       const forwarded = mocks.proxyToCore.mock.calls[0]![0].query;
       expect(forwarded['group_by']).toBe(value === '' ? undefined : value);
     }
     await app.close();
   });
 
-  it('forwards core\'s own refusal byte-identically, details included', async () => {
+  it('forwards the internal handler\'s own refusal byte-identically, details included', async () => {
     /**
-     * Core's REAL wire shape, which this fixture used to get wrong: the body is
+     * The internal handler's REAL wire shape: the body is
      * `{ error: 'Validation failed', code, details: [issues] }` — `details` is the
      * ARRAY of `{ param, code?, message }` issues
-     * (`magic-voice-core/src/api/routes/agency-agents.routes.ts` lifts the first
+     * (`src/api/routes/agency-agents.routes.ts` lifts the first
      * coded issue into `code` and keeps the whole list), not a `{ field: [msg] }`
      * map, and the `message` lives on the issue rather than at the top level.
      *
-     * A fixture that asserts a shape core cannot emit proves nothing about the
+     * A fixture that asserts a shape the internal handler cannot emit proves nothing about the
      * hop, and this one is the shape the console actually parses.
      */
     const coreBody = {
@@ -692,44 +669,32 @@ describe('the query whitelist', () => {
     await app.close();
   });
 
-  // PORT NOTE (magick-agency): master's describe is "and those refusals survive errorMaskHook,
-  // which is a separate claim". The mask is not ported (plan §1), so the four refusal cases and
-  // the 92-day case assert the remaining half of the claim — the client receives core's code,
-  // message and details — on an app without the mask; the "harness can really mask" control is
-  // deleted (there is nothing to mask).
-  describe('and those refusals reach the client, which is a separate claim', () => {
+    describe('and those refusals reach the client, which is a separate claim', () => {
     /**
-     * ⚠️ **The case above does not test the mask, and its docstring used to say it
-     * did** — "`details` is what keeps them forwardable rather than masked into
-     * 'contact support'". The app it builds mounts no `onSend` hook at all, so
-     * nothing there could have been masked and the sentence was untested.
+     * The case above covers the refusal body. These cases assert the other half:
+     * the client receives the internal handler's code, message and details intact.
+     * (This app builds no error-mask hook here, so what is asserted is the route's own
+     * half of the claim.)
      *
-     * These cases mount `errorMaskHook` as `index.ts` mounts it globally, and the
-     * harness enters the log context and records core's status the way the real
-     * proxy does — without both, `sawCoreErrorStatus` is false, the core-4xx
-     * branch is never taken, and every assertion here would pass whatever the
-     * allow-list contained.
-     *
-     * ── What forwards these, and why the allow-list entry earns its keep ──────
-     * `isStructuredClientError` forwards a body with a non-null `details`, and
-     * core attaches `details` to every grouped refusal — so TODAY these survive on
-     * shape. The allow-list entry makes forwarding depend on the CODE instead,
-     * which is the pattern `malformed_cursor` and
-     * `profile_in_use_by_agency_campaign` are already on for the same stated
-     * reason: the rescue is a field core owns and could trim, the console keys its
-     * 400 handling off `code`, and a masked refusal is invisible — the status stays
-     * right and only the explanation is destroyed.
+     * ── What forwards these ───────────────────────────────────────────────────
+     * In production `isStructuredClientError` forwards a body with a non-null `details`,
+     * and the internal handler attaches `details` to every grouped refusal — so these
+     * survive on shape. The allow-list entry makes forwarding depend on the CODE instead,
+     * which is the pattern `malformed_cursor` and `profile_in_use_by_agency_campaign`
+     * are already on for the same reason: the rescue is a field the internal handler
+     * owns and could trim, the console keys its 400 handling off `code`, and a masked
+     * refusal is invisible — the status stays right and only the explanation is destroyed.
      */
     const REFUSALS: ReadonlyArray<readonly [string, string]> = [
       ['timezone_ambiguous', 'group_by'],
       ['too_many_dimensions', 'group_by'],
     ];
 
-    it.each(REFUSALS)('%s survives with core\'s details attached', async (code, param) => {
+    it.each(REFUSALS)('%s survives with the internal handler\'s details attached', async (code, param) => {
       await coreRefuses(400, {
         error: 'Validation failed',
         code,
-        details: [{ param, code, message: 'the remedy, in core\'s own words' }],
+        details: [{ param, code, message: 'the remedy, in the handler\'s own words' }],
       });
       const app = await buildApp();
 
@@ -751,7 +716,7 @@ describe('the query whitelist', () => {
       await coreRefuses(400, {
         error: 'Validation failed',
         code,
-        message: 'the remedy, in core\'s own words',
+        message: 'the remedy, in the handler\'s own words',
       });
       const app = await buildApp();
 
@@ -759,21 +724,21 @@ describe('the query whitelist', () => {
 
       expect(res.statusCode).toBe(400);
       expect(res.json().code).toBe(code);
-      expect(res.json().message).toBe('the remedy, in core\'s own words');
+      expect(res.json().message).toBe('the remedy, in the handler\'s own words');
       await app.close();
     });
 
     it('the 92-day window refusal forwards on `details` ALONE, having no code', async () => {
       /**
        * The third refusal the review grouped with the two above, and it is NOT the
-       * same case: core's window cap pushes a plain
+       * same case: the internal handler's window cap pushes a plain
        * `{ param: 'from', message: 'the window must be at most 92 days …' }` issue
        * with **no `code` member at all**
-       * (`magic-voice-core/src/agency/agent-record.ts`, in both
-       * `parseRosterQuery` and `parseGroupedStatsQuery`), so the body core sends
+       * (`src/agency/agent-record.ts`, in both
+       * `parseRosterQuery` and `parseGroupedStatsQuery`), so the body the internal handler sends
        * carries `details` and no `code`. There is therefore nothing to allow-list,
-       * and inventing a master-side code for it would be a second vocabulary for
-       * core's own refusal.
+       * and inventing a public-API-layer code for it would be a second vocabulary for
+       * the internal handler's own refusal.
        *
        * What survives it is the structured-error rule, asserted here so the
        * asymmetry is recorded rather than rediscovered.
@@ -855,7 +820,7 @@ describe('the query whitelist', () => {
       expect(res.statusCode).toBe(400);
       expect(res.json()).toMatchObject({ code: 'invalid_include_inactive' });
       // Field-level feedback for the client. What keeps the refusal READABLE is
-      // that it is raised before any core call has recorded a status, so
+      // that it is raised before any internal handler call has recorded a status, so
       // `errorMaskHook` leaves a route's own 400 alone.
       expect(res.json().details).toHaveProperty('include_inactive');
       expect(mocks.proxyToCore).not.toHaveBeenCalled();
@@ -894,7 +859,7 @@ describe('the query whitelist', () => {
   });
 });
 
-describe('when `agent` IS grouped, master filters and names the rows', () => {
+describe('when `agent` IS grouped, the public API layer filters and names the rows', () => {
   it('drops revoked members by default and counts them', async () => {
     const app = await buildApp();
 
@@ -921,7 +886,7 @@ describe('when `agent` IS grouped, master filters and names the rows', () => {
     await app.close();
   });
 
-  it('never shows a user who was never in this tenant, under EITHER flag (R4)', async () => {
+  it('never shows a user who was never in this tenant, under EITHER flag', async () => {
     // The third state. `include_inactive` means "show me the people who left",
     // not "show me ids you cannot account for", and the count is deliberately NOT
     // folded into `inactive_omitted` — reporting a stranger as a departed
@@ -1025,7 +990,7 @@ describe('when `agent` IS grouped, master filters and names the rows', () => {
   });
 
   it('puts agent_name on the ROW, not inside the grouping key', async () => {
-    // `key` is the grouping identity core computed; a name master looked up is
+    // `key` is the grouping identity the internal handler computed; a name the public API layer looked up is
     // not part of it. Writing it into `key` would also change what a client uses
     // as a row identity, which is the one thing on this payload that has to be
     // stable across reads.
@@ -1100,18 +1065,18 @@ describe('when `agent` IS grouped, master filters and names the rows', () => {
     await app.close();
   });
 
-  it('does NOT recompute total_groups, group_by or anything else core sent', async () => {
+  it('does NOT recompute total_groups, group_by or anything else the internal handler sent', async () => {
     /**
-     * R1 still binds: `total_groups` is core's pre-`limit`, post-scope count of
+     * R1 still binds: `total_groups` is the internal handler's pre-`limit`, post-scope count of
      * groups, `rows.length` is what survived, and `inactive_omitted` is what
-     * master hid. Three independent facts, and no "showing X of Y" fraction is
+     * the public API layer hid. Three independent facts, and no "showing X of Y" fraction is
      * derivable from them — a default read legitimately returns 1 row,
      * `total_groups: 7` and `inactive_omitted: 1`.
      *
      * Asserted as a whole-body equality so a SPREAD is distinguished from a
      * reconstruction: `from`/`to`, `campaign_id`, the echoed canonical `group_by`,
-     * `sort`/`order`/`limit` and every metric have to arrive exactly as core
-     * wrote them, including fields core adds after this was written.
+     * `sort`/`order`/`limit` and every metric have to arrive exactly as the internal handler
+     * wrote them, including fields the internal handler adds after this was written.
      */
     const app = await buildApp();
 
@@ -1124,7 +1089,7 @@ describe('when `agent` IS grouped, master filters and names the rows', () => {
       unattributed_omitted: 0,
     });
     expect(res.json().total_groups).toBe(7);
-    // The echo is core's canonical order, not the order the request used.
+    // The echo is the internal handler's canonical order, not the order the request used.
     expect(res.json().group_by).toEqual(['agent']);
     await app.close();
   });
@@ -1133,7 +1098,7 @@ describe('when `agent` IS grouped, master filters and names the rows', () => {
     /**
      * House rule: `0` means measured-and-zero, `null` means no denominator. A
      * read that broke it is how a supervisor comes to see "0% conversion" against
-     * an agent who connected nothing. Master must not touch them — and the
+     * an agent who connected nothing. The public API layer must not touch them — and the
      * reachable shape is `connected: 0` with `attempts >= 1`, since `COUNT(*)`
      * over an inner-joined `GROUP BY` filtered on `dialed_at IS NOT NULL` cannot
      * emit a zero-attempt group.
@@ -1149,7 +1114,7 @@ describe('when `agent` IS grouped, master filters and names the rows', () => {
         connect_rate_pct: 0,
         success_rate_pct: null,
         aht_seconds: null,
-        // One attempt is far under the 20-dial floor, so the flag core computed
+        // One attempt is far under the 20-dial floor, so the flag the internal handler computed
         // is `false` here — the override keeps the fixture internally consistent
         // and gives the assertions below a row on which the field is NOT the
         // default.
@@ -1176,15 +1141,15 @@ describe('when `agent` IS grouped, master filters and names the rows', () => {
 
   it('carries BOTH reportability flags through untouched, on BOTH branches', async () => {
     /**
-     * The field this phase is about, and the one no master test would have caught
-     * going missing: it appears nowhere in master's `src/` for this route, because
-     * master computes nothing on this payload and the flag rides the row spread.
+     * The field this phase is about, and the one no the public API layer test would have caught
+     * going missing: it appears nowhere in the public API layer's `src/` for this route, because
+     * the public API layer computes nothing on this payload and the flag rides the row spread.
      *
      * Both branches, because they are different code over the row. The
      * agent-grouped one REBUILDS each row to attach `agent_name`
      * (`{ ...row, agent_name }` in `enrichGroupedRowAgentNames`), which is the
      * only place on this route where a key can be lost; the pass-through one
-     * hands core's body over whole. A regression in either prints a rate as a
+     * hands the internal handler's body over whole. A regression in either prints a rate as a
      * number where the house rule says WORDS — and `AGENCY_ROSTER_MIN_RATE_DENOMINATOR`
      * exists in the console to EXPLAIN this flag, never to recompute it, so
      * there is no client-side fallback to catch it.
@@ -1253,9 +1218,9 @@ describe('when `agent` IS grouped, master filters and names the rows', () => {
   });
 });
 
-describe('unattributed_omitted: the rows master cannot account for', () => {
+describe('unattributed_omitted: the rows the public API layer cannot account for', () => {
   /**
-   * The counter R4's third state was missing.
+   * The counter for the third state: an id with no membership at all.
    *
    * A row whose agent id has no membership row of ANY status is dropped under
    * either flag, and must never be folded into `inactive_omitted` — reporting a
@@ -1266,8 +1231,8 @@ describe('unattributed_omitted: the rows master cannot account for', () => {
    * agents' work) was false and no client could tell.
    *
    * ⚠️ Reachable, despite the handler's first comment calling it unreachable.
-   * Core scoping every statement on `tenant_id` AND `account_id` rules out a
-   * FOREIGN agent, not a FORMER one: core keeps attempt history forever while a
+   * The internal handler scoping every statement on `tenant_id` AND `account_id` rules out a
+   * FOREIGN agent, not a FORMER one: the internal handler keeps attempt history forever while a
    * `memberships` row goes away with the user. And on THIS read one such id is
    * not one row — an `agent,campaign` page repeats each agent once per campaign.
    *
@@ -1306,8 +1271,8 @@ describe('unattributed_omitted: the rows master cannot account for', () => {
   });
 
   it('counts the two independently when both are on one page', async () => {
-    // Three facts, three numbers (R4): one row served, one departure, one id
-    // master cannot account for. A merge would answer 2 and 0 here — the same
+    // Three facts, three numbers: one row served, one departure, one id
+    // the public API layer cannot account for. A merge would answer 2 and 0 here — the same
     // total, and a different and false statement about what happened.
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
@@ -1353,11 +1318,11 @@ describe('unattributed_omitted: the rows master cannot account for', () => {
   it('counts ONE unaccountable agent once per ROW on an agent,campaign page', async () => {
     /**
      * The mechanism that makes this read worse than the roster, stated as
-     * arithmetic. `agent,campaign` emits one row per pair, so a single id master
+     * arithmetic. `agent,campaign` emits one row per pair, so a single id the public API layer
      * cannot account for takes N rows off the page — and the console's gap
      * sentence is wrong by all of them, not by one.
      *
-     * `total_groups` is core's pre-`limit` count and does not move, so the three
+     * `total_groups` is the internal handler's pre-`limit` count and does not move, so the three
      * facts here are 4 groups, 2 rows served, and 2 + 0 omitted. Counting people
      * rather than rows would report 1 and leave the arithmetic short by one row,
      * the same reason `inactive_omitted` counts rows.
@@ -1399,7 +1364,7 @@ describe('when `agent` is NOT grouped, the rows pass through untouched', () => {
 
   /**
    * The request has to match the fixture's own scope, or the case asserts a 200
-   * over a body core would have answered 400 for: a zoned grouping needs exactly
+   * over a body the internal handler would have answered 400 for: a zoned grouping needs exactly
    * one campaign in scope (D5, E2), and `groupedBody` derives `campaign_id` from
    * `group_by` for that reason. `day_of_week,hour_of_day` is the entry this
    * applies to.
@@ -1435,7 +1400,7 @@ describe('when `agent` is NOT grouped, the rows pass through untouched', () => {
 
   it.each(NON_AGENT_PAGES)('%s: adds NO agent_name key', async (groupBy, echoed, rows) => {
     // D9: `agent_name` is present iff `agent` is grouped. A `null` on a
-    // campaign-grouped row would be a claim that the row is about a person master
+    // campaign-grouped row would be a claim that the row is about a person the public API layer
     // could not identify, which is a different and false statement.
     const body = groupedBody(echoed, rows);
     mocks.proxyToCore.mockResolvedValue({ status: 200, body });
@@ -1451,7 +1416,7 @@ describe('when `agent` is NOT grouped, the rows pass through untouched', () => {
     // An attempt with no disposition submitted is precisely the number a
     // supervisor is looking for on this screen. Folding it into an "other" bucket
     // or dropping it hides un-dispositioned work, so the null has to survive the
-    // hop — which it only does because master spreads the row.
+    // hop — which it only does because the public API layer spreads the row.
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
       body: groupedBody(['disposition'], [dispositionRow('sale'), dispositionRow(null)]),
@@ -1489,7 +1454,7 @@ describe('when `agent` is NOT grouped, the rows pass through untouched', () => {
 
   it('an EMPTY page is not agent-grouped, and still carries the counter', async () => {
     /**
-     * `group_by=agent` over a window in which nobody dialled. Master reads
+     * `group_by=agent` over a window in which nobody dialled. The public API layer reads
      * "was `agent` grouped" off the rows, so an empty page takes the pass-through
      * branch — which is the right answer rather than a gap: there is no row to
      * filter, no name to look up and nothing omitted, so both branches agree on
@@ -1512,17 +1477,17 @@ describe('when `agent` is NOT grouped, the rows pass through untouched', () => {
   });
 });
 
-describe('resolved_timezone: E3’s additive page-level field, carried untouched', () => {
+describe('resolved_timezone: the additive page-level field, carried untouched', () => {
   /**
    * The zone the buckets were ACTUALLY cut in — `COALESCE(z.name, 'UTC')` read
-   * back out of core's `LEFT JOIN pg_timezone_names`, so it can DIFFER from
+   * back out of the internal handler's `LEFT JOIN pg_timezone_names`, so it can DIFFER from
    * `agency_campaigns.default_timezone`, and it differs precisely when the stored
    * value is garbage. That is why a client may not derive it from the campaign
    * record: doing so would print `Asia/Calcutta_typo` over columns that are in
    * fact UTC, on exactly the campaign whose zone is broken.
    *
-   * ── Master's job here is nothing, and nothing is the hard part ─────────────
-   * Master owns no arithmetic on this payload; it spreads the body. So there is
+   * ── the public API layer's job here is nothing, and nothing is the hard part ─────────────
+   * The public API layer owns no arithmetic on this payload; it spreads the body. So there is
    * no code to get right and only a shape to not lose, which puts the entire risk
    * on a REBUILD — and this route has page-level rebuilds at two different
    * altitudes, neither of which any row-level assertion in this file can see:
@@ -1532,26 +1497,26 @@ describe('resolved_timezone: E3’s additive page-level field, carried untouched
    *    that spread today, and would not survive a version that enumerated the
    *    page's keys — with every `rates_reportable` and `agent_name` assertion in
    *    this file still green.
-   *  - `withOmissionCounters` is the one place the page-level shape is MASTER'S
-   *    own construction rather than core's body handed over. It spreads too. It
-   *    is also the function a review already caught dropping a field once (the
+   *  - `withOmissionCounters` is the one place the page-level shape is the public API layer's
+   *    own construction rather than internal handler's body handed over. It spreads too. It
+   *    is also the function an earlier fix caught dropping a field once (the
    *    roster's `inactive_omitted`), which is the precedent for not assuming.
    *
    * ── Three states, not two ─────────────────────────────────────────────────
    * A string, a `null`, and ABSENT are three different instructions to the
-   * console: name the axis, nothing here was cut in a zone, and a core that
+   * console: name the axis, nothing here was cut in a zone, and an internal handler that
    * predates the field (render the matrix with no hour-axis label and say the
-   * zone could not be read). E3 forbids guessing on the third, so master must
+   * zone could not be read). Guessing on the third is forbidden, so the public API layer must
    * neither drop the null nor invent a value — both are asserted below, and the
    * null is the one a keys-enumerating rebuild loses first.
    */
 
-  it('the fixtures DERIVE it, so each one is a shape core can actually emit', () => {
+  it('the fixtures DERIVE it, so each one is a shape the internal handler can actually emit', () => {
     /**
      * The `metrics()` rule applied to a page-level field. Asserted rather than
      * trusted because every behavioural case below is only as good as the body it
      * is handed: a fixture naming a zone on an unzoned grouping, or naming one
-     * with no campaign in scope, is a page core answers 400 for — and a test
+     * with no campaign in scope, is a page the internal handler answers 400 for — and a test
      * built on it proves nothing about a payload that can exist.
      */
     for (const groupBy of [['day'], ['day_of_week', 'hour_of_day'], ['agent', 'day']]) {
@@ -1564,7 +1529,7 @@ describe('resolved_timezone: E3’s additive page-level field, carried untouched
     for (const groupBy of [['agent'], ['campaign'], ['disposition'], ['agent', 'campaign']]) {
       const page = groupedBody(groupBy, []);
       // An explicit null, never an absent key: "nothing here was cut in a zone"
-      // is an answer, and it is not the same answer as "this core has no such
+      // is an answer, and it is not the same answer as "this internal handler has no such
       // field".
       expect(page, `${groupBy} is cut in no zone`).toHaveProperty('resolved_timezone', null);
       expect(page.campaign_id).toBeNull();
@@ -1575,7 +1540,7 @@ describe('resolved_timezone: E3’s additive page-level field, carried untouched
     /**
      * `agent,day` is the only shape that is both agent-grouped and zoned, so it
      * is the only one that puts a real zone string through
-     * `enrichGroupedRowAgentNames`. Core names it as a screen ("`agent`+`day` for
+     * `enrichGroupedRowAgentNames`. The internal handler names it as a screen ("`agent`+`day` for
      * a trend"), and `GROUP_MAX_DIMENSIONS` is 2, so it is a read a supervisor can
      * actually issue rather than a shape invented for this assertion.
      */
@@ -1615,7 +1580,7 @@ describe('resolved_timezone: E3’s additive page-level field, carried untouched
 
   it('survives the PASS-THROUGH branch — group_by=day_of_week,hour_of_day', async () => {
     // The best-hours read itself (E1: one request, the default limit, 168 cells).
-    // No agent in any key, so master hands core's body over through
+    // No agent in any key, so the public API layer hands the internal handler's body over through
     // `withOmissionCounters` and never touches a row.
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
@@ -1636,15 +1601,15 @@ describe('resolved_timezone: E3’s additive page-level field, carried untouched
 
   it('is a STRING for campaign + a time dimension WHEN one campaign is filtered', async () => {
     /**
-     * The sibling of the case below, and the one that separates core's real rule
+     * The sibling of the case below, and the one that separates the internal handler's real rule
      * from a plausible proxy for it.
      *
-     * Core's predicate is `campaignId !== undefined && zoned`. A tempting
+     * The internal handler's predicate is `campaignId !== undefined && zoned`. A tempting
      * shorthand is "zoned and NOT grouped by campaign", which agrees on every
      * other shape in this file — and disagrees here: grouping BY campaign while
-     * also FILTERING to one campaign is one campaign, therefore one zone, and core
+     * also FILTERING to one campaign is one campaign, therefore one zone, and the internal handler
      * names it. A fixture built on the shorthand would assert `null` on a page
-     * core answers with a zone, which is exactly the shape these fixtures exist
+     * the internal handler answers with a zone, which is exactly the shape these fixtures exist
      * never to assert.
      */
     const app = await buildApp();
@@ -1663,7 +1628,7 @@ describe('resolved_timezone: E3’s additive page-level field, carried untouched
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.campaign_id).toBe(CAMPAIGN);
-    // One campaign in scope, so one zone — and master carries it.
+    // One campaign in scope, so one zone — and the public API layer carries it.
     expect(body.resolved_timezone).toBe(RESOLVED_TIMEZONE);
     await app.close();
   });
@@ -1703,10 +1668,10 @@ describe('resolved_timezone: E3’s additive page-level field, carried untouched
 
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    // Present and null — not absent, which would mean "this core cannot tell you".
+    // Present and null — not absent, which would mean "this internal handler cannot tell you".
     expect('resolved_timezone' in body).toBe(true);
     expect(body.resolved_timezone).toBeNull();
-    // And master has not narrowed the read to one campaign to manufacture a zone.
+    // And the public API layer has not narrowed the read to one campaign to manufacture a zone.
     expect(body.campaign_id).toBeNull();
     expect(body.rows).toHaveLength(2);
     await app.close();
@@ -1716,7 +1681,7 @@ describe('resolved_timezone: E3’s additive page-level field, carried untouched
     /**
      * The state a rebuild loses first, and the one that matters most: `null` and
      * absent are different instructions to the console (name no axis because
-     * nothing here was zoned, versus this core cannot tell you). The concrete way
+     * nothing here was zoned, versus this internal handler cannot tell you). The concrete way
      * it goes is a rebuild that copies the field as
      * `resolved_timezone: page.resolved_timezone ?? undefined` — which keeps
      * every string in this file and drops exactly this null.
@@ -1744,10 +1709,10 @@ describe('resolved_timezone: E3’s additive page-level field, carried untouched
     await app.close();
   });
 
-  it('survives the DEGRADE path, where the page shape is master’s own', async () => {
+  it('survives the DEGRADE path, where the page shape is the public API layer’s own', async () => {
     /**
      * The narrowing refuses the body and `withOmissionCounters` answers — the one
-     * place on this route where master, not core, decides which page-level keys
+     * place on this route where the public API layer, not the internal handler, decides which page-level keys
      * exist. It spreads today, so the field rides it; the counters' own case in
      * `BOTH omission counters are emitted on EVERY path` is the precedent for
      * asserting that rather than assuming it, because that is the path a review
@@ -1786,11 +1751,11 @@ describe('resolved_timezone: E3’s additive page-level field, carried untouched
     await app.close();
   });
 
-  it('does not INVENT one for a core that predates the field', async () => {
+  it('does not INVENT one for an internal handler that predates the field', async () => {
     /**
      * A state that exists for as long as the rollout takes: the field is additive
-     * on core's side, so master serves pages without it before it serves pages
-     * with it. E3 rules that an absent zone makes the surface render the matrix
+     * on the internal handler's side, so the public API layer serves pages without it before it serves pages
+     * with it. An absent zone makes the surface render the matrix
      * with no hour-axis label and SAY the zone could not be read — it does not
      * guess, and specifically does not fall back to UTC or to the reader's own
      * zone (`windowRangeReadout`'s `Intl` zone is the right answer for the window
@@ -1820,9 +1785,9 @@ describe('resolved_timezone: E3’s additive page-level field, carried untouched
     await app.close();
   });
 
-  it('is not forwarded as a QUERY param — master has no opinion to send', async () => {
+  it('is not forwarded as a QUERY param — the public API layer has no opinion to send', async () => {
     /**
-     * The read direction only. `resolved_timezone` is an ANSWER, and E3/D5 are
+     * The read direction only. `resolved_timezone` is an ANSWER, and the zone rules are
      * explicit that this phase has no `tz` parameter in either direction: a
      * caller reaching for one must be refused rather than silently given UTC
      * buckets for an Asia/Kolkata campaign. Pinned because the obvious next
@@ -1939,7 +1904,7 @@ describe('⚠️ the reconciliation asymmetry, which is NOT a bug', () => {
 describe('BOTH omission counters are emitted on EVERY path', () => {
   it('serves a 2xx body with NO row array unfiltered, rather than 500ing', async () => {
     // A body with nothing to walk. The answer to one is to hand it over
-    // untouched, not to invent a filter over rows master cannot see.
+    // untouched, not to invent a filter over rows the public API layer cannot see.
     mocks.proxyToCore.mockResolvedValue({ status: 200, body: { unexpected: true } });
     const app = await buildApp();
 
@@ -1956,7 +1921,7 @@ describe('BOTH omission counters are emitted on EVERY path', () => {
   it('but still carries BOTH counters on that degrade path', async () => {
     /**
      * ⚠️ The bug a review found on the roster, asserted here so it is not shipped
-     * twice. `inactive_omitted` exists nowhere in core's payload, so master is the
+     * twice. `inactive_omitted` exists nowhere in the internal handler's payload, so the public API layer is the
      * only thing that can ever put it there, and the client declares it REQUIRED
      * and computes with it: `total_groups <= rows.length + inactive_omitted`
      * decides whether the truncation note renders, and with the key absent that is
@@ -1967,7 +1932,7 @@ describe('BOTH omission counters are emitted on EVERY path', () => {
      * be `{ ...agentGroupedBody(), next_cursor: 12 }` — a full agent-grouped page
      * with one unreadable paging field — called "the realistic refusal". It was
      * realistic, which is exactly why it must not reach this branch: the degrade
-     * path serves rows master did NOT filter, and those rows are walkable. See
+     * path serves rows the public API layer did NOT filter, and those rows are walkable. See
      * `the membership filter is gated on the ROWS, not on the paging fields`
      * below, which pins that shape being filtered instead.
      *
@@ -1986,7 +1951,7 @@ describe('BOTH omission counters are emitted on EVERY path', () => {
     // path is likely to be missing, which is the whole reason both ride one
     // helper rather than each route remembering separately.
     expect(res.json().unattributed_omitted).toBe(0);
-    // Everything core sent is still there, unfiltered and unnamed — the two
+    // Everything the internal handler sent is still there, unfiltered and unnamed — the two
     // counters are the ONLY additions, and no row was dropped or enriched behind
     // them.
     expect(res.json()).toEqual({ ...body, inactive_omitted: 0, unattributed_omitted: 0 });
@@ -2034,7 +1999,7 @@ describe('BOTH omission counters are emitted on EVERY path', () => {
     await app.close();
   });
 
-  it('propagates a membership-read fault instead of counting 0 (R3)', async () => {
+  it('propagates a membership-read fault instead of counting 0', async () => {
     /**
      * The one degrade this route deliberately does NOT make. A name lookup fails
      * to `agent_name: null` because a name is an improvement on an id; the
@@ -2045,11 +2010,8 @@ describe('BOTH omission counters are emitted on EVERY path', () => {
      * dressed as a successful page.
      */
     mocks.findAnyByUsersAndTenant.mockRejectedValue(new Error('memberships unreachable'));
-    // PORT NOTE (magick-agency): master mounted `errorMaskHook` and also asserted the masked body
-    // (`error: 'Internal Error'`, no 'memberships unreachable'). The mask is not ported (plan §1),
-    // so this asserts the half that is the route's: the fault propagates as a 500 rather than a
-    // 200 page under `inactive_omitted: 0`. (Open item: without the mask a 500 echoes the error
-    // message; see PORTING.md.)
+    // The route's half: the fault propagates as a 500 rather than a 200 page under
+    // `inactive_omitted: 0`.
     const app = await buildApp();
 
     const res = await app.inject({ method: 'GET', url: `${GROUPED}?group_by=agent` });
@@ -2066,9 +2028,9 @@ describe('the membership filter is gated on the ROWS, not on the paging fields',
    * ⚠️ The roster's twin, and the same defect: the filter used to run only if
    * `asSpinePage(result.body)` returned a page, and that function refuses a body
    * whose `next_cursor` is not a string **or whose `limit` is not a number**.
-   * `limit` reaches core as a query param, so `'200'` is a shape it can be echoed
+   * `limit` reaches the internal handler as a query param, so `'200'` is a shape it can be echoed
    * back in — and an agent-grouped page carrying one was served **unfiltered with
-   * `inactive_omitted: 0`**, a departed agent's row present under master's own
+   * `inactive_omitted: 0`**, a departed agent's row present under the public API layer's own
    * claim that nothing was hidden.
    *
    * The gate now asks the only question this branch is about: is there a row
@@ -2110,12 +2072,12 @@ describe('an agent-grouped page whose ids are unusable is still FILTERED', () =>
    * `agent` grouped" with "is this id usable". A page whose only agent keys are
    * empty strings, nulls or numbers therefore looked NOT agent-grouped, took the
    * pass-through branch, and was served unfiltered with both counters at 0 — every
-   * row about a person master could not account for, under a payload asserting
+   * row about a person the public API layer could not account for, under a payload asserting
    * nothing was hidden.
    *
    * The branch is now chosen on the key's SHAPE
    * (`groupedRowHasAgentKey`), so these pages are filtered and their rows are
-   * dropped as R4's third state.
+   * dropped as the third state (unattributable).
    */
   const UNUSABLE: ReadonlyArray<readonly [string, unknown]> = [
     ['an empty string', ''],
@@ -2133,7 +2095,7 @@ describe('an agent-grouped page whose ids are unusable is still FILTERED', () =>
     expect(res.statusCode).toBe(200);
     // Dropped, not leaked.
     expect(res.json().rows).toEqual([]);
-    // And counted as what it is: unattributable, never a departure (R4).
+    // And counted as what it is: unattributable, never a departure.
     expect(res.json().unattributed_omitted).toBe(1);
     expect(res.json().inactive_omitted).toBe(0);
     await app.close();
@@ -2194,12 +2156,12 @@ describe('an agent-grouped page whose ids are unusable is still FILTERED', () =>
   });
 });
 
-describe('the core call carries a wall clock', () => {
+describe('the internal handler call carries a wall clock', () => {
   it('passes ROSTER_CORE_TIME_BUDGET_MS to proxyToCore', async () => {
     /**
-     * Core has **no `statement_timeout`** anywhere, and `proxyToCore` with no
-     * `timeoutMs` runs under undici's default 300s header timeout — so a core
-     * answering SLOWLY rather than failing holds master's worker, its Fastify
+     * The internal handler has **no `statement_timeout`** anywhere, and `proxyToCore` with no
+     * `timeoutMs` runs under undici's default 300s header timeout — so an internal handler
+     * answering SLOWLY rather than failing holds the public API layer's worker, its Fastify
      * connection and a socket for as long as it likes. This read is if anything
      * the more expensive of the two whole-floor reads: its row count is the
      * PRODUCT of the grouped dimensions' cardinalities, where the roster's is
@@ -2226,21 +2188,17 @@ describe('the core call carries a wall clock', () => {
     expect(ROSTER_CORE_TIME_BUDGET_MS).toBeGreaterThan(ACTIVITY_OWNERSHIP_PROBE_TIMEOUT_MS);
   });
 
-  // PORT NOTE (magick-agency): master's "surfaces an expired budget as a MASKED 500, leaking
-  // nothing" is deleted. It pinned what `errorMaskHook` (not ported, plan §1) did to a
-  // `TimeoutError` from the HTTP hop; in-process `callCore` has no transport to time out
-  // (`timeoutMs` is accepted and ignored), so neither the budget expiring nor the mask exists.
 });
 
-describe('route precedence, asserted on the CORE path each handler builds', () => {
+describe('route precedence, asserted on the internal handler path each handler builds', () => {
   /**
-   * ⚠️ MAG-106 was an assertion that passed vacuously because the route it named
-   * did not exist, so none of these cases rests on a status code. `grouped-stats`
+   * A route assertion can pass vacuously when the route it names
+   * does not exist, so none of these cases rests on a status code. `grouped-stats`
    * and `stats` are both static two-segment siblings under `/agents`, and the
    * parametric routes are three segments deep — true statements about Fastify's
    * radix router and useless ones about this repository. The evidence that
    * separates "the right handler ran" from "something answered 200" is the path
-   * the handler built for core.
+   * the handler built for the internal handler.
    */
   it('GET /agents/grouped-stats hits the GROUPED handler', async () => {
     const app = await buildApp();
@@ -2320,23 +2278,10 @@ describe('route precedence, asserted on the CORE path each handler builds', () =
   });
 });
 
-// PORT NOTE (magick-agency): master's block "a platform API key, and why this route refuses every one of them"
-// (6 cases) is deleted with platform API keys (decision #5) and the route's
-// `isPlatformApiKeyCaller` guard (deleted with them). No request here can carry a key; the RBAC
-// floor these cases also touched is pinned by "refuses agent, viewer and operator" above.
-//  - refuses a USERLESS key — now at RBAC, one layer earlier
-//  - refuses it BEFORE the account predicate, so a key cannot probe scoping
-//  - refuses it before the query whitelist too, so it cannot probe the API
-//  - ALSO refuses a key that names its creator, whose role would have passed
-//  - and the RBAC floor still answers first when the creator is below it
-//  - refuses a creator-backed key BEFORE the account predicate too
-
 describe('the plugin-level hooks reach the grouped route too', () => {
-  // PORT NOTE (magick-agency): master's title ended `→ capability` and the list held
-  // `'capability:agency'`; the governance gate is deleted (plan §3.2).
   it('runs session → tenant-context', async () => {
-    // Registered on the PLUGIN, so a route added to this file inherits all three
-    // or none. Asserted on the record each double leaves, because a hook that
+    // Registered on the PLUGIN, so a route added to this file inherits both
+    // or neither. Asserted on the record each double leaves, because a hook that
     // never ran is indistinguishable from one that ran and allowed.
     const app = await buildApp();
 
@@ -2346,9 +2291,8 @@ describe('the plugin-level hooks reach the grouped route too', () => {
     await app.close();
   });
 
-  // PORT NOTE (magick-agency): master's "is refused when the capability hook refuses",
-  // re-expressed on `tenantContextMiddleware` (the plugin-level hook that remains): a plugin
-  // hook that replies stops the route and core is never called.
+  // A plugin-level hook (`tenantContextMiddleware`) that replies stops the route, and the
+  // internal handler is never called.
   it('is refused when a plugin-level hook refuses', async () => {
     mocks.refuseTenantContext = true;
     const app = await buildApp();
@@ -2365,7 +2309,7 @@ describe('the grouped row\'s agent id, and the filter over it, without a router'
   /**
    * The two pure functions the route's whole branch rests on. Tested directly
    * because the cost of getting either wrong is invisible in a status code, and
-   * because a router test cannot cheaply reach the malformed shapes core is
+   * because a router test cannot cheaply reach the malformed shapes the internal handler is
    * capable of producing — `agent_user_id` is an opaque string to it, with no
    * user table and no FK behind the column.
    */
@@ -2390,7 +2334,7 @@ describe('the grouped row\'s agent id, and the filter over it, without a router'
   });
 
   it('survives a `key` that is not an object at all', () => {
-    // Defensive because nothing upstream can promise the shape: a body core
+    // Defensive because nothing upstream can promise the shape: a body the internal handler
     // changed must degrade, never throw inside the filter.
     expect(groupedRowAgentId({})).toBeNull();
     expect(groupedRowAgentId({ key: null })).toBeNull();
@@ -2406,11 +2350,11 @@ describe('the grouped row\'s agent id, and the filter over it, without a router'
      * page whose only agent keys were empty strings, nulls or numbers answered
      * "not agent-grouped", took the pass-through branch, and was served
      * **unfiltered with both omission counters at 0**: every row about a person
-     * master could not account for, under a payload stating nothing was hidden.
+     * the public API layer could not account for, under a payload stating nothing was hidden.
      *
      * `groupedRowHasAgentKey` asks about the KEY'S SHAPE and
      * {@link groupedRowAgentId} about the VALUE, so a present-but-unusable member
-     * chooses the filtering branch and is then dropped by it as R4's third state.
+     * chooses the filtering branch and is then dropped by it as the third state (unattributable).
      */
     it('sees the member even when its value is unusable', () => {
       expect(groupedRowHasAgentKey({ key: { agent_user_id: ACTIVE_AGENT } })).toBe(true);
@@ -2469,7 +2413,7 @@ describe('the grouped row\'s agent id, and the filter over it, without a router'
     /**
      * The other half of the M2/M11 split, at the level of one row. The page is
      * agent-grouped by shape, so the filter runs; this row cannot be attributed to
-     * anybody, so it is R4's third state — dropped under either flag and counted
+     * anybody, so it is the third state (unattributable) — dropped under either flag and counted
      * apart from the departures. What must never happen is what used to: the row
      * served, because "no usable id" was read as "not about a person".
      */
@@ -2517,7 +2461,7 @@ describe('the grouped row\'s agent id, and the filter over it, without a router'
   });
 
   it('matches ids case-insensitively, on the row AND on the membership', () => {
-    // Postgres returns `uuid` lower case; core's `agent_user_id` is an opaque
+    // Postgres returns `uuid` lower case; the internal handler's `agent_user_id` is an opaque
     // string with no `uuid` column behind it, so an upper-case id is reachable —
     // and it MATCHED in SQL (`::uuid[]`) before missing a case-sensitive `Set`,
     // which dropped a working colleague as unattributed.

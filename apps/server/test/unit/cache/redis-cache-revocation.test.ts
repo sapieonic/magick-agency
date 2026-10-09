@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
- * NEW (magick-agency), Q5 (Manas, 2026-10-09): `RedisCache.delForRevocation` — the delete a
+ * Decision Q5: `RedisCache.delForRevocation` — the delete a
  * revocation (membership removal, role change) uses. `del` logs and swallows a Redis failure;
  * this retries a bounded number of times, logs at ERROR with the keys if it still fails, and
  * reports the outcome so the route can 503 (when its retry is idempotent). The local copy is

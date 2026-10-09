@@ -23,15 +23,6 @@ import { PERMISSION_MATRIX, hasPermission, type MembershipRole } from '@magick-a
  *
  * So RBAC runs for real here (as in `proxy-agency-agent-actions.test.ts`) and the
  * cases are written per role rather than per route.
- *
- * PORT NOTE (magick-agency): ported from master `test/unit/agency/proxy-agency-staffing.routes.test.ts`
- * @a1f0756a. The core hop is `callCore` (`src/api/core-dispatch.ts`, decision B16), mocked under
- * master's variable name `mocks.proxyToCore` so every assertion on the outgoing request reads as
- * master's. Gone with what they tested: the `resolveCoreApiKey` mock and the four key-resolution
- * cases (no core API key in one process), the three system-key cases and the API-key half of the
- * caller harness (decision #5), the `timeoutMs` case (no transport to bound), the governance stub
- * (no `requireCapability`). `proxy.contact_lists.read` is `agency.campaigns.read` (same `viewer`
- * floor). See PORTING "Phase 8 — staffing".
  */
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
@@ -63,8 +54,7 @@ vi.mock('../../../src/auth/session.middleware.js', () => ({ sessionMiddleware: a
 vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
   tenantContextMiddleware: async () => {},
 }));
-// PORT NOTE (magick-agency): master's `requireCapability('agency')` stub is gone with the
-// governance gate it stubbed (the route no longer registers it; see the route's header).
+// No governance stub: the routes do not register `requireCapability`.
 vi.mock('@magick-agency/db/repositories/agency-campaign-agent.repository', async (orig) => {
   // The REAL error class is re-exported: the route branches on `instanceof`, so a
   // stubbed class would let a broken branch pass.
@@ -103,10 +93,8 @@ const PREFIX = '/proxy/agency';
 interface Caller {
   role?: MembershipRole;
   userId?: string | null;
-  // PORT NOTE (magick-agency): master's `apiKeyOnly` and `apiKeyCreatedBy` caller shapes
-  // are deleted with platform API keys (decision #5): no middleware here produces
-  // `apiKeyTenantId`. `userId: null` (a membership naming nobody) is the unattributable
-  // shape that remains, and drives `resolveMyAgentId`'s surviving branch below.
+  // `userId: null` (a membership naming nobody) is the unattributable shape; it drives
+  // `resolveMyAgentId`'s refusal branch below.
 }
 
 async function buildApp(caller: Caller = { role: 'account_admin' }): Promise<FastifyInstance> {
@@ -213,7 +201,7 @@ describe('GET /my-assignment — reachable by a BARE agent', () => {
     await app.close();
   });
 
-  it('answers 200 with a null name when core does not know the campaign', async () => {
+  it('answers 200 with a null name when the internal handler does not know the campaign', async () => {
     mocks.findActiveForUser.mockResolvedValue(assignmentRow());
     mocks.proxyToCore.mockResolvedValue({ status: 404, body: { error: 'Not Found' } });
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
@@ -228,14 +216,8 @@ describe('GET /my-assignment — reachable by a BARE agent', () => {
     await app.close();
   });
 
-  // PORT NOTE (magick-agency): DELETED — master's 'refuses a platform API key, which has no "my"'.
-  // A system key (NULL `created_by`) — decision #5: there are no platform API keys, so the shape
-  // cannot be built. The no-membership refusal it reached is `requirePermission`'s, unchanged.
-
-  // PORT NOTE (magick-agency): MODIFIED — master drove this with a creator-backed platform
-  // API key (`apiKeyCreatedBy`). Decision #5 deletes keys and `resolveMyAgentId`'s key
-  // branch; the branch that remains refuses a request whose `user` names nobody, so the
-  // caller is a membership with `userId: null`. Assertions unchanged.
+  // `resolveMyAgentId` refuses a request whose `user` names nobody, so the caller is a
+  // membership with `userId: null` (decision #5: there are no platform API keys).
   it('refuses a CREATOR-BACKED key too, not just a system one', async () => {
     /**
      * The case the assertion above could not see, and the one that is actually
@@ -329,9 +311,9 @@ describe('GET /my-assignments — the plural replacement', () => {
     await app.close();
   });
 
-  it('forwards an unrecognised status verbatim rather than mapping it to null', async () => {
-    // Core owns the campaign lifecycle. A mirror here would turn a status core
-    // added into "unknown" for the agent, about a campaign core knows perfectly
+  it('forwards an unrecognised status unchanged rather than mapping it to null', async () => {
+    // The internal handler owns the campaign lifecycle. A mirror here would turn a status the internal handler
+    // added into "unknown" for the agent, about a campaign the internal handler knows perfectly
     // well; the client renders an unrecognised status as itself.
     mocks.listActiveForUser.mockResolvedValue([assignmentRow(CAMPAIGN)]);
     mocks.proxyToCore.mockResolvedValue({
@@ -394,7 +376,7 @@ describe('GET /my-assignments — the plural replacement', () => {
     await app.close();
   });
 
-  it('nulls the labels when core does not know the campaign, without recording the error', async () => {
+  it('nulls the labels when the internal handler does not know the campaign, without recording the error', async () => {
     mocks.listActiveForUser.mockResolvedValue([assignmentRow(CAMPAIGN)]);
     mocks.proxyToCore.mockResolvedValue({ status: 404, body: { error: 'Not Found' } });
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
@@ -410,7 +392,7 @@ describe('GET /my-assignments — the plural replacement', () => {
   });
 
   it('resolves every campaign CONCURRENTLY, one lookup each', async () => {
-    // Sequential lookups would make an agent's landing page wait N core
+    // Sequential lookups would make an agent's landing page wait N internal
     // round-trips before it can render anything at all.
     mocks.listActiveForUser.mockResolvedValue([
       assignmentRow(CAMPAIGN),
@@ -469,22 +451,7 @@ describe('GET /my-assignments — the plural replacement', () => {
     await app.close();
   });
 
-  // PORT NOTE (magick-agency): DELETED — master's 'resolves the core API key ONCE for the whole
-  // fan-out'. No core API key in one process (the hop is `callCore`); the per-campaign lookup
-  // count it also asserted is covered by 'resolves every campaign CONCURRENTLY, one lookup each'.
-
-  // PORT NOTE (magick-agency): DELETED — master's 'does not resolve a key at all for an unstaffed
-  // agent'. No key; 'asks core nothing at all for an unstaffed agent' keeps the behaviour.
-
-  // PORT NOTE (magick-agency): DELETED — master's 'answers 200 with null labels when the key cannot
-  // be resolved at all'. `resolveCoreApiKeyOrNull` is gone with the key; the null-label degrade
-  // is still covered by the throw / 404 cases above.
-
-  // PORT NOTE (magick-agency): DELETED — master's 'the singular route survives an unresolvable key
-  // too'. No key; the singular route's degrade is 'still answers 200 when the campaign-name lookup
-  // fails'.
-
-  it('asks core nothing at all for an unstaffed agent', async () => {
+  it('asks the internal handler nothing at all for an unstaffed agent', async () => {
     mocks.listActiveForUser.mockResolvedValue([]);
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
 
@@ -494,14 +461,8 @@ describe('GET /my-assignments — the plural replacement', () => {
     await app.close();
   });
 
-  // PORT NOTE (magick-agency): DELETED — master's 'refuses a platform API key, which has no "my"'.
-  // A system key (NULL `created_by`) — decision #5: there are no platform API keys, so the shape
-  // cannot be built. The no-membership refusal it reached is `requirePermission`'s, unchanged.
-
-  // PORT NOTE (magick-agency): MODIFIED — master drove this with a creator-backed platform
-  // API key (`apiKeyCreatedBy`). Decision #5 deletes keys and `resolveMyAgentId`'s key
-  // branch; the branch that remains refuses a request whose `user` names nobody, so the
-  // caller is a membership with `userId: null`. Assertions unchanged.
+  // `resolveMyAgentId` refuses a request whose `user` names nobody, so the caller is a
+  // membership with `userId: null` (decision #5: there are no platform API keys).
   it('refuses a CREATOR-BACKED key too, not just a system one', async () => {
     /**
      * The case the assertion above could not see, and the one that is actually
@@ -628,9 +589,7 @@ describe('GET /my-campaigns — the staffing HISTORY, closed rows included', () 
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ assignments: [] });
-    // Nothing to look up ⇒ nothing decrypted and nothing asked of core.
-    // PORT NOTE (magick-agency): master's `expect(mocks.resolveCoreApiKey).not.toHaveBeenCalled()`
-    // is dropped with the key (there is nothing to decrypt).
+    // Nothing to look up ⇒ nothing asked of the internal handler.
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
     await app.close();
   });
@@ -639,7 +598,7 @@ describe('GET /my-campaigns — the staffing HISTORY, closed rows included', () 
     /**
      * A history repeats campaigns by construction — staffed in March, unstaffed in
      * April, staffed again in June is three rows and one campaign. Resolving per ROW
-     * would spend three identical core round trips to print the same name three
+     * would spend three identical internal-handler round trips to print the same name three
      * times, on a route an agent opens from their own console.
      */
     mocks.listAllForUser.mockResolvedValue([
@@ -659,8 +618,8 @@ describe('GET /my-campaigns — the staffing HISTORY, closed rows included', () 
     await app.close();
   });
 
-  it('still answers 200 with null labels when core is unreachable', async () => {
-    // A history is the surface MOST likely to name campaigns core has since
+  it('still answers 200 with null labels when the internal handler is unreachable', async () => {
+    // A history is the surface MOST likely to name campaigns the internal handler has since
     // deleted, so this degradation is the normal path here, not an edge case.
     mocks.listAllForUser.mockResolvedValue([closedRow(CAMPAIGN, '2026-04-01T00:00:00.000Z')]);
     mocks.proxyToCore.mockRejectedValue(new Error('core unreachable'));
@@ -746,7 +705,7 @@ describe('GET /my-campaigns — the staffing HISTORY, closed rows included', () 
     it('caps the DISTINCT campaigns it names, however many rows come back', async () => {
       /**
        * The row ceiling alone does not bound the fan-out: a full page can be a
-       * full page of distinct campaigns, and each one is a core round trip an
+       * full page of distinct campaigns, and each one is an internal-handler round trip an
        * agent is blocked on. Rows are newest-first, so the campaigns that get a
        * name are the recent ones.
        */
@@ -779,11 +738,6 @@ describe('GET /my-campaigns — the staffing HISTORY, closed rows included', () 
       await app.close();
     });
 
-    // PORT NOTE (magick-agency): DELETED — master's 'bounds each summary lookup in TIME, where there
-    // was no bound at all'. Transport-only: `callCore` has no transport and ignores `timeoutMs`
-    // (`core-dispatch.ts`); the option is still passed for call-site fidelity, but asserting it
-    // would pin a value with no effect.
-
     it('reports a full page in a HEADER, leaving the body shape untouched', async () => {
       /**
        * The customer UI reads `assignments`, and a previous defect in this exact
@@ -814,14 +768,8 @@ describe('GET /my-campaigns — the staffing HISTORY, closed rows included', () 
     });
   });
 
-  // PORT NOTE (magick-agency): DELETED — master's 'refuses a platform API key, which has no "my"'.
-  // A system key (NULL `created_by`) — decision #5: there are no platform API keys, so the shape
-  // cannot be built. The no-membership refusal it reached is `requirePermission`'s, unchanged.
-
-  // PORT NOTE (magick-agency): MODIFIED — master drove this with a creator-backed platform
-  // API key (`apiKeyCreatedBy`). Decision #5 deletes keys and `resolveMyAgentId`'s key
-  // branch; the branch that remains refuses a request whose `user` names nobody, so the
-  // caller is a membership with `userId: null`. Assertions unchanged.
+  // `resolveMyAgentId` refuses a request whose `user` names nobody, so the caller is a
+  // membership with `userId: null` (decision #5: there are no platform API keys).
   it('refuses a CREATOR-BACKED key too, not just a system one', async () => {
     /**
      * The case the assertion above could not see, and the one that is actually
@@ -951,7 +899,7 @@ describe('POST /campaigns/:id/agents', () => {
 
   it('answers 404 — not 403 — for a user who is not a member of this tenant', async () => {
     // 403 would confirm the user id exists somewhere, which is the id-oracle the
-    // RBAC rules in docs/reference/magick-master/CLAUDE.md forbid. A cross-tenant id and a nonexistent one must
+    // RBAC rules forbid. A cross-tenant id and a nonexistent one must
     // be indistinguishable.
     mocks.findByUserAndTenant.mockResolvedValue([]);
     const app = await buildApp({ role: 'account_admin' });
@@ -964,12 +912,12 @@ describe('POST /campaigns/:id/agents', () => {
 
     expect(res.statusCode).toBe(404);
     expect(mocks.assign).not.toHaveBeenCalled();
-    // Refused before any core round trip: a membership miss is master's own fact.
+    // Refused before any internal-handler round trip: a membership miss is the public API layer's own fact.
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
     await app.close();
   });
 
-  it('answers 404 campaign_not_found when core does not have the campaign', async () => {
+  it('answers 404 campaign_not_found when the internal handler does not have the campaign', async () => {
     mocks.proxyToCore.mockResolvedValue({ status: 404, body: { error: 'Not Found' } });
     const app = await buildApp({ role: 'account_admin' });
 
@@ -987,8 +935,8 @@ describe('POST /campaigns/:id/agents', () => {
     await app.close();
   });
 
-  it('forwards a core failure rather than calling it "not found"', async () => {
-    // Master could not PROVE the campaign is missing. Answering 404 for "we could
+  it('forwards an internal handler failure rather than calling it "not found"', async () => {
+    // The public API layer could not PROVE the campaign is missing. Answering 404 for "we could
     // not ask" is the confident-wrong answer this codebase keeps un-learning.
     mocks.proxyToCore.mockResolvedValue({ status: 503, body: { error: 'Service Unavailable' } });
     const app = await buildApp({ role: 'account_admin' });
@@ -1253,9 +1201,9 @@ describe('GET /campaigns/:id/agents — identity enrichment', () => {
 describe('campaign ownership is proved on ALL THREE routes, not just the write', () => {
   /**
    * ── The hole this group exists for ────────────────────────────────────────
-   * Campaign ownership is `(tenant_id, account_id)` and master holds neither —
-   * it keeps no campaign table. For one commit only `POST` established it (by
-   * round-tripping core, whose `requireOwned` compares both and answers 404),
+   * Campaign ownership is `(tenant_id, account_id)` and the public API layer holds neither —
+   * it keeps no campaign table. Only `POST` established it (by
+   * round-tripping the internal handler, whose `requireOwned` compares both and answers 404),
    * while `GET` and `DELETE` filtered on `(campaign_id, tenant_id)` alone. So an
    * `account_admin` scoped to Account A could READ Account B's staffing list —
    * names and emails included — and could UNSTAFF B's agents, while being
@@ -1263,7 +1211,7 @@ describe('campaign ownership is proved on ALL THREE routes, not just the write',
    * than the write surface guarding the same rows is backwards.
    *
    * `requirePermission` proves the caller's ROLE and never looks at the target
-   * row (docs/reference/magick-master/CLAUDE.md's RBAC section, rule 1), so nothing in the middleware chain
+   * row (RBAC rule 1: role checks never read the target row), so nothing in the middleware chain
    * could have caught this. These cases are per-route on purpose: the defect was
    * precisely that the three routes disagreed.
    */
@@ -1296,12 +1244,12 @@ describe('campaign ownership is proved on ALL THREE routes, not just the write',
   ];
 
   for (const route of ROUTES) {
-    it(`${route.name} asks core whether this caller may act on the campaign`, async () => {
+    it(`${route.name} asks the internal handler whether this caller may act on the campaign`, async () => {
       const app = await buildApp({ role: 'account_admin' });
 
       await route.inject(app);
 
-      // The account is what makes this a real check: core compares it, master
+      // The account is what makes this a real check: the internal handler compares it, the public API layer
       // cannot. A call that omitted `accountId` would pass a tenant check and
       // still leak across accounts.
       expect(mocks.proxyToCore).toHaveBeenCalledWith(
@@ -1316,8 +1264,8 @@ describe('campaign ownership is proved on ALL THREE routes, not just the write',
     });
 
     it(`${route.name} answers 404 for a campaign in another account, and touches nothing`, async () => {
-      // Core's `requireOwned` answers 404 for both "wrong account" and "no such
-      // campaign", so master cannot tell them apart — which is the non-oracle
+      // The internal handler's `requireOwned` answers 404 for both "wrong account" and "no such
+      // campaign", so the public API layer cannot tell them apart — which is the non-oracle
       // property, not a limitation.
       mocks.proxyToCore.mockResolvedValue({ status: 404, body: { error: 'Not Found' } });
       const app = await buildApp({ role: 'account_admin' });
@@ -1334,8 +1282,8 @@ describe('campaign ownership is proved on ALL THREE routes, not just the write',
       await app.close();
     });
 
-    it(`${route.name} forwards a core failure rather than calling it "not found"`, async () => {
-      // Master could not PROVE the campaign is out of scope. Answering 404 for
+    it(`${route.name} forwards an internal handler failure rather than calling it "not found"`, async () => {
+      // The public API layer could not PROVE the campaign is out of scope. Answering 404 for
       // "we could not ask" is the confident-wrong answer, and on DELETE it would
       // additionally look like a successful no-op.
       mocks.proxyToCore.mockResolvedValue({ status: 503, body: { error: 'Service Unavailable' } });
@@ -1352,7 +1300,7 @@ describe('campaign ownership is proved on ALL THREE routes, not just the write',
 
   it('the leak case, end to end: another account’s names and emails are not returned', async () => {
     // The concrete harm, asserted on the response rather than on a mock: a
-    // campaign core refuses must never come back with a staffing list attached.
+    // campaign the internal handler refuses must never come back with a staffing list attached.
     mocks.proxyToCore.mockResolvedValue({ status: 404, body: { error: 'Not Found' } });
     mocks.listActiveForCampaign.mockResolvedValue([assignmentRow()]);
     mocks.findIdentitiesInTenant.mockResolvedValue([
@@ -1407,8 +1355,8 @@ describe('path params are validated as strictly as bodies', () => {
 
       expect(res.statusCode).toBe(400);
       expect(res.json()).toMatchObject({ error: 'Validation Error' });
-      // Refused before the database AND before the core round trip — a malformed
-      // id is master's own fact and costs nothing to reject.
+      // Refused before the database AND before the internal-handler round trip — a malformed
+      // id is the public API layer's own fact and costs nothing to reject.
       expect(mocks.listActiveForCampaign).not.toHaveBeenCalled();
       expect(mocks.assign).not.toHaveBeenCalled();
       expect(mocks.unassign).not.toHaveBeenCalled();
@@ -1420,8 +1368,7 @@ describe('path params are validated as strictly as bodies', () => {
 
 describe('every staffing route carries its RBAC permission', () => {
   /**
-   * A source-text assertion, copied from `proxy-agency-route-table.test.ts` rather
-   * than reinvented, and it earns its place for the same measured reason: a guard
+   * A source-text assertion, as in `proxy-agency-route-table.test.ts`, and it earns its place for the same measured reason: a guard
    * DELETED from a route this file exercises would red above, but a route ADDED
    * without a guard would pass every case and be invisible. The registration count
    * is what catches that one.

@@ -1,7 +1,3 @@
-/*
- * PORT NOTE (magick-agency): ported from master test/unit/cache/local-cache-wiring.test.ts@a1f0756a
- * (7 cases → 7). See the notes below for the re-pointed sources.
- */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -33,14 +29,10 @@ import { resolve } from 'node:path';
  *
  * Same technique as `test/unit/api/trust-proxy-wiring.test.ts`.
  */
-// PORT NOTE (magick-agency): master wired the cache in `src/index.ts`; agency
-// initialises it in lane A's `src/api/platform.plugin.ts` (`redisCache.init(
-// opts.ctx.redis, …)`, the shared client from `AppContext`), so the source read
-// and the client identifier are re-pointed. The three subscriber cases read lane
-// A's `src/bootstrap/platform.ts`, where master's `index.ts:186-209` subscriber
-// now lives (`subscriber` for master's `cacheInvalidationSubscriber`,
-// `ctx.redis` for `redisInstance`, and `quit()` on the returned stop function for
-// master's `disconnect()` in `shutdown()`).
+// The cache is initialised in `src/api/platform.plugin.ts` (`redisCache.init(
+// opts.ctx.redis, …)`, the shared client from `AppContext`). The three subscriber cases
+// read `src/bootstrap/platform.ts`, where the invalidation subscriber lives (`subscriber`,
+// `ctx.redis`, and `quit()` on the returned stop function).
 const source = readFileSync(resolve(process.cwd(), 'src/api/platform.plugin.ts'), 'utf8');
 const bootstrap = readFileSync(resolve(process.cwd(), 'src/bootstrap/platform.ts'), 'utf8');
 
@@ -76,9 +68,8 @@ describe('local cache bootstrap wiring (src/api/platform.plugin.ts)', () => {
   });
 });
 
-// PORT NOTE (magick-agency): the schema lives in lane A's config block
-// (`src/config/blocks/platform.ts`), followed by `auditPartitionsSchema`'s doc
-// comment rather than master's `httpAgentSchema`.
+// The schema lives in the platform config block (`src/config/blocks/platform.ts`),
+// followed by `auditPartitionsSchema`.
 describe('local cache config defaults (src/config/blocks/platform.ts)', () => {
   const schema = readFileSync(resolve(process.cwd(), 'src/config/blocks/platform.ts'), 'utf8');
   const block = schema.slice(
@@ -91,8 +82,8 @@ describe('local cache config defaults (src/config/blocks/platform.ts)', () => {
     // enabling this by default would mean a role change served by an old
     // instance never reaches a new one, and the new instance serves the revoked
     // role until its TTL expires. Ship off, then enable fleet-wide.
-    // PORT NOTE (magick-agency): agency's `envBoolean` is a schema, not a
-    // factory, so the default reads `envBoolean.default(false)`.
+    // `envBoolean` is a schema, not a factory, so the default reads
+    // `envBoolean.default(false)`.
     expect(block).toMatch(/enabled:\s*envBoolean\.default\(false\)/);
   });
 

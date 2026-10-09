@@ -3,10 +3,6 @@ import { buildAnalysisPrompt, buildJsonSchema, uniqueDimensions } from '../../..
 import type { ConversationEntry } from '@magick-agency/db/models/conversation-entry.model';
 import type { AnalyticsConfig } from '@magick-agency/db/models/prompt.model';
 
-/*
- * PORT NOTE (magick-agency): ported from core test/unit/analysis/prompt-builder.test.ts
- * @4850d1d9. Cases unchanged; only module paths differ.
- */
 
 function makeConversationLog(turns: number): ConversationEntry[] {
   return Array.from({ length: turns }, (_, i) => ({

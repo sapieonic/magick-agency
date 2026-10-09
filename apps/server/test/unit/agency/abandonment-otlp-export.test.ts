@@ -4,11 +4,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Ticket 86d44par2 — the three compliance gauges had no OTel counterpart at all.
 //
 // `agency_abandonment_rate_24h` and its two terms are the numbers a regulator
-// asks for and the numbers `AD-P4-C-02`'s auto-pause is judged by, and all three
-// lived only on the prom-client registry served on :9090. Grafana Cloud is
+// asks for and the numbers the auto-pause is judged by, and all three
+// lived only on the prom-client registry's scrape endpoint. Grafana Cloud is
 // OTLP-fed, so from the place anyone actually looks they did not exist — the
 // same defect this codebase already records for `gemini_backend_breaker_open`
-// and for `agency_dnc_synced` (MAG-109).
+// and for `agency_dnc_synced`.
 //
 // Worth being precise about what that did and did not break, because the two
 // have very different compliance readings: `refreshAbandonmentWindow` hands the
@@ -18,18 +18,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // OTLP collection would export, never against "an OTel object was constructed".
 //
 // They are now one observable gauge each, feeding both the OTLP export and the
-// `:9090` scrape, so the prom-client half — and the partial-publish hazard its
+// Prometheus scrape, so the prom-client half — and the partial-publish hazard its
 // `publishedLabels` memo had to guard against — no longer exists.
 //
-// The harness mirrors `dnc-synced-dual-emit.test.ts` deliberately: `@opentelemetry/api`
-// is mocked to CAPTURE the observable callbacks, so each assertion is against what
-// a collection would emit.
-//
-// PORT NOTE (magick-agency, Phase 6): core test/unit/agency/abandonment-otlp-export.test.ts
-// @4850d1d9, verbatim. Only import/mock specifiers changed (path rule: metrics →
-// `@magick-agency/observability/metrics/agency`, `db/connection` → `@magick-agency/db`,
-// the predicate type → `@magick-agency/domain`). `dnc-synced-dual-emit.test.ts`, which
-// the comment above names, is deleted by B8 (no DNC set, no `agency_dnc_synced`).
+// The harness mocks `@opentelemetry/api` to CAPTURE the observable callbacks, so each
+// assertion is against what a collection would emit.
 // ---------------------------------------------------------------------------
 
 const { observableCallbacks, createdGauges } = vi.hoisted(() => ({
@@ -100,14 +93,14 @@ beforeEach(() => {
 describe('86d44par2 · the compliance gauges reach the OTLP pipeline', () => {
   it('registers exactly one observable gauge under each name', () => {
     // One instrument per series feeds both pipelines, so one dashboard query works
-    // against either and an existing :9090-based panel keeps meaning what it meant.
+    // against either and an existing scrape-based panel keeps meaning what it meant.
     for (const name of [RATE, ANSWERED, ABANDONED]) {
       expect(createdGauges.filter((n) => n === name), `${name} is not one OTel gauge`).toHaveLength(1);
     }
   });
 
   it('exports the rate and BOTH of its terms, not just the ratio', () => {
-    // The three-series split is the point of `AD-P2-C-06`: a bare rate cannot
+    // The three-series split is the point of the abandonment-rate split: a bare rate cannot
     // tell 1-abandoned-of-1 from 30-of-3000, and the auto-pause reads this.
     // Exporting only the ratio to OTLP would reintroduce that collapse on the
     // one pipeline the alerts are built on.

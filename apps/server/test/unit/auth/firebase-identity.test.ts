@@ -1,4 +1,3 @@
-// PORT NOTE (magick-agency): ported from master test/unit/auth/firebase-identity.test.ts@a1f0756a — verbatim, import specifiers remapped only.
 import { describe, it, expect, vi } from 'vitest';
 
 /**
@@ -102,7 +101,7 @@ describe('adoptFirebaseIdentity — the bind predicate', () => {
     /**
      * The case the stub-only predicate refused, and the most ordinary invite
      * there is after a brand-new address: *add an agent who already has a
-     * MagickVoice login*.
+     * login*.
      *
      * `POST /users/invite` reuses the existing `users` row when the address is
      * already known, writes a NEW membership against it, and `issueInvite` still

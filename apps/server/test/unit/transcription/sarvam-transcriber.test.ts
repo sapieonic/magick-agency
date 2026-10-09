@@ -1,7 +1,3 @@
-/*
- * PORT NOTE (magick-agency): ported from core test/unit/transcription/sarvam-transcriber.test.ts
- * @4850d1d9. Cases unchanged; only the logger mock path differs.
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@magick-agency/observability', async (importOriginal) => ({

@@ -1,24 +1,15 @@
-/* PORT NOTE (magick-agency): ported from master test/unit/api/routes/super-admin-accounts.test.ts@a1f0756a
- * (26 cases → 19, plus 5 equivalence cases ported from core
- * test/unit/api/routes/feature-flags-internal.test.ts@4850d1d9 "Internal S2S — provider concurrency
- * control plane" and 14 NEW equivalence cases for core's handler now running in-process).
- *
- * HOP COLLAPSE: master's tests mocked `coreInternalRequest`; core's `GET/PUT /internal/account-concurrency`
- * and `/utilization` now run inside the super-admin route, so the same behaviours are asserted against
- * `providerConcurrencyRepository` (getAllocation / switchToLegacy / replaceProviderBreakdown),
+/* The account-concurrency handlers run in-process inside the super-admin route, so the
+ * behaviours are asserted against `providerConcurrencyRepository`
+ * (getAllocation / switchToLegacy / replaceProviderBreakdown),
  * `accountSettingsRepository.invalidate`, the `seams/concurrency-control.ts` seam (stubbed with
- * `setConcurrencyControl`), core's `auditLogger` row and master's super-admin audit row. `it` names are
- * master's / core's, verbatim, even where they still say "core".
+ * `setConcurrencyControl`), the `concurrency.allocation.updated` audit_logs row (`coreAuditLog`)
+ * and the super-admin audit row.
  *
- * Deleted (7): "should report unavailable rather than fabricate a limit when core returns 404" (a core
- * non-200 has no in-process counterpart: `getAllocation` returns an allocation or throws, and the throw is
- * the two cases after it); "rejects unknown providers before calling core" (telephony-provider catalog
- * check, deleted with the catalog); both `retry-sync` cases (no second service to re-sync); all three
- * `provider_concurrency_unsynced_accounts refresh` cases (drift gauge deleted — nothing to drift).
- * Changed: `invalidateConcurrencyAllocation` (master's broadcast-cap cache, deleted) assertions become
- * core's own invalidations; the success body is core's allocation (`total_concurrency`; there is no
- * `max_concurrent_calls` on `AccountConcurrencyAllocation`); the GET detail has no `providers` catalog.
- * Core's `callManager.triggerDequeue()` assertion is dropped (AI call queue; no counterpart).
+ * `getAllocation` returns an allocation or throws, and the throw is the "unavailable" cases.
+ * The success body is the allocation (`total_concurrency`; there is no `max_concurrent_calls`
+ * on `AccountConcurrencyAllocation`); the GET detail has no `providers` catalog. There is no
+ * telephony-provider catalog check, no `retry-sync` route (no second service to re-sync) and
+ * no drift gauge.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -37,18 +28,16 @@ const mocks = vi.hoisted(() => ({
   phoneAssignmentRepo: {
     findAvailableForAccount: vi.fn(),
   },
-  // PORT NOTE (magick-agency): core's repositories, now called in-process
-  // (core's test mocked the same three methods plus `accountSettingsRepository.invalidate`).
+  // The concurrency repositories, called in-process.
   concurrencyRepo: {
     getAllocation: vi.fn(),
     replaceProviderBreakdown: vi.fn(),
     switchToLegacy: vi.fn(),
   },
   invalidateAccountSettings: vi.fn(),
-  // core's `auditLogger` (the `concurrency.allocation.updated` audit_logs row).
+  // The `concurrency.allocation.updated` audit_logs row.
   coreAuditLog: vi.fn(),
-  // The seam that replaces core's `callManager.accountConcurrencyGuard` /
-  // `providerConcurrencyGuard`.
+  // The seam over the account and provider concurrency guards.
   control: {
     invalidateAccountLimit: vi.fn(),
     invalidateProviderLimits: vi.fn(),
@@ -98,7 +87,7 @@ vi.mock('../../../../src/audit/audit-logger.js', () => ({
   auditLogger: { log: mocks.coreAuditLog },
 }));
 vi.mock('../../../../src/cache/redis-cache.js', () => ({
-  // Q5 (Manas, 2026-10-09): revocation deletes report success here.
+  // Q5: revocation deletes report success here.
   redisCache: { del: vi.fn(), delForRevocation: vi.fn().mockResolvedValue(true) },
 }));
 vi.mock('../../../../src/invites/invite-issuer.js', () => ({
@@ -183,11 +172,10 @@ describe('super-admin account concurrency routes', () => {
       expect(res.json()).toEqual({ accounts: [] });
     });
 
-    it('should return accounts with concurrency from core', async () => {
+    it('should return accounts with their concurrency', async () => {
       mocks.tenantRepo.findById.mockResolvedValue({ id: 'tenant-1' });
       mocks.accountRepo.findByTenantId.mockResolvedValue([makeAccount()]);
-      // PORT NOTE (magick-agency): core's `GET /internal/account-concurrency` body
-      // is now `providerConcurrencyRepository.getAllocation`, called in-process.
+      // The allocation is `providerConcurrencyRepository.getAllocation`, called in-process.
       mocks.concurrencyRepo.getAllocation.mockResolvedValue(
         allocation({ mode: 'legacy_total', version: 1, total_concurrency: 10 }),
       );
@@ -208,7 +196,7 @@ describe('super-admin account concurrency routes', () => {
       expect(mocks.concurrencyRepo.getAllocation).toHaveBeenCalledWith('tenant-1', 'acc-1');
     });
 
-    it('returns the provider breakdown and derived total from provider-aware core', async () => {
+    it('returns the provider breakdown and derived total from the provider-aware allocation', async () => {
       mocks.tenantRepo.findById.mockResolvedValue({ id: 'tenant-1' });
       mocks.accountRepo.findByTenantId.mockResolvedValue([makeAccount()]);
       mocks.concurrencyRepo.getAllocation.mockResolvedValue(allocation({
@@ -230,10 +218,7 @@ describe('super-admin account concurrency routes', () => {
       });
     });
 
-    // PORT NOTE (magick-agency): "should report unavailable rather than fabricate a
-    // limit when core returns 404" is deleted — see the file header.
-
-    it('should report unavailable when the internal core request fails', async () => {
+    it('should report unavailable when the allocation read fails', async () => {
       mocks.tenantRepo.findById.mockResolvedValue({ id: 'tenant-1' });
       mocks.accountRepo.findByTenantId.mockResolvedValue([makeAccount()]);
       mocks.concurrencyRepo.getAllocation.mockRejectedValue(new Error('No core connection'));
@@ -243,7 +228,7 @@ describe('super-admin account concurrency routes', () => {
       expect(res.json().accounts[0]).toMatchObject({ max_concurrent_calls: null, concurrency_status: 'unavailable' });
     });
 
-    it('should report unavailable when core throws', async () => {
+    it('should report unavailable when the allocation read throws', async () => {
       mocks.tenantRepo.findById.mockResolvedValue({ id: 'tenant-1' });
       mocks.accountRepo.findByTenantId.mockResolvedValue([makeAccount()]);
       mocks.concurrencyRepo.getAllocation.mockRejectedValue(new Error('Connection refused'));
@@ -321,7 +306,7 @@ describe('super-admin account concurrency routes', () => {
       expect(res.json().message).toBe('Account not found');
     });
 
-    it('should proxy update to core and return result', async () => {
+    it('should apply the update and return the result', async () => {
       mocks.tenantRepo.findById.mockResolvedValue({ id: 'tenant-1' });
       mocks.accountRepo.findById.mockResolvedValue(makeAccount({ tenant_id: 'tenant-1' }));
       mocks.concurrencyRepo.getAllocation.mockResolvedValue(allocation({ version: 2, total_concurrency: 5 }));
@@ -329,15 +314,12 @@ describe('super-admin account concurrency routes', () => {
 
       const res = await app.inject({ method: 'PUT', url, payload: validBody });
       expect(res.statusCode).toBe(200);
-      // PORT NOTE (magick-agency): the body is core's allocation, whose total is
-      // `total_concurrency` (master read core's extra `max_concurrent_calls`).
+      // The body is the allocation, whose total is `total_concurrency`.
       expect(res.json().total_concurrency).toBe(15);
-      // PORT NOTE (magick-agency): master's `invalidateConcurrencyAllocation`
-      // (broadcast-cap cache) is deleted; core's settings-row invalidation is the
-      // in-process cache that must be busted.
+      // The settings-row invalidation is the in-process cache that must be busted.
       expect(mocks.invalidateAccountSettings).toHaveBeenCalledWith('tenant-1', 'acc-1');
 
-      // core's `PUT /internal/account-concurrency` body, now the repository write:
+      // The repository write:
       // the legacy body is translated with the CURRENT version.
       expect(mocks.concurrencyRepo.switchToLegacy).toHaveBeenLastCalledWith({
         tenant_id: 'tenant-1', account_id: 'acc-1', expected_version: 2, max_concurrent_calls: 15,
@@ -366,11 +348,11 @@ describe('super-admin account concurrency routes', () => {
       }));
     });
 
-    it('does not bust the cached allocation when core rejects the write', async () => {
+    it('does not bust the cached allocation when the write is rejected', async () => {
       mocks.tenantRepo.findById.mockResolvedValue({ id: 'tenant-1' });
       mocks.accountRepo.findById.mockResolvedValue(makeAccount({ tenant_id: 'tenant-1' }));
       mocks.concurrencyRepo.getAllocation.mockResolvedValue(allocation({ version: 2, total_concurrency: 5 }));
-      // core's 409: the versioned write lost the optimistic lock.
+      // The 409: the versioned write lost the optimistic lock.
       mocks.concurrencyRepo.switchToLegacy.mockRejectedValue(new ConcurrencyAllocationVersionConflictError(3));
       const res = await app.inject({ method: 'PUT', url, payload: validBody });
       expect(res.statusCode).toBe(409);
@@ -379,7 +361,7 @@ describe('super-admin account concurrency routes', () => {
       expect(mocks.control.invalidateProviderLimits).not.toHaveBeenCalled();
     });
 
-    it('should return 500 when core is unavailable', async () => {
+    it('should return 503 when the allocation is unavailable', async () => {
       mocks.tenantRepo.findById.mockResolvedValue({ id: 'tenant-1' });
       mocks.accountRepo.findById.mockResolvedValue(makeAccount({ tenant_id: 'tenant-1' }));
       mocks.concurrencyRepo.getAllocation.mockRejectedValue(new Error('No core connection'));
@@ -389,7 +371,7 @@ describe('super-admin account concurrency routes', () => {
       expect(res.json().message).toBe('Current concurrency allocation is unavailable');
     });
 
-    it('proxies a validated provider breakdown to the provider-aware core route', async () => {
+    it('writes a validated provider breakdown through the provider-aware path', async () => {
       mocks.tenantRepo.findById.mockResolvedValue({ id: 'tenant-1' });
       mocks.accountRepo.findById.mockResolvedValue(makeAccount({ tenant_id: 'tenant-1' }));
       mocks.phoneAssignmentRepo.findAvailableForAccount.mockResolvedValue([
@@ -421,18 +403,12 @@ describe('super-admin account concurrency routes', () => {
         }),
       }));
     });
-
-    // PORT NOTE (magick-agency): "rejects unknown providers before calling core"
-    // is deleted with the telephony-provider catalog — see the file header.
   });
-
-  // PORT NOTE (magick-agency): `POST …/concurrency/retry-sync` (2 cases) is
-  // deleted with the route — see the file header.
 
   describe('GET /super-admin/tenants/:id/accounts/:accountId/concurrency', () => {
     const url = '/super-admin/tenants/tenant-1/accounts/acc-1/concurrency';
 
-    it('combines allocation, utilization, and the Master provider catalog', async () => {
+    it('combines allocation, utilization, and has no provider catalog', async () => {
       mocks.tenantRepo.findById.mockResolvedValue({ id: 'tenant-1' });
       mocks.accountRepo.findById.mockResolvedValue(makeAccount({ tenant_id: 'tenant-1' }));
       mocks.concurrencyRepo.getAllocation.mockResolvedValue(allocation({
@@ -447,8 +423,8 @@ describe('super-admin account concurrency routes', () => {
         allocation: { total_concurrency: 50 },
         utilization: { total: { in_use: 17 } },
       });
-      // PORT NOTE (magick-agency): master's `providers` catalog (and
-      // `entitlements` / `synchronization`) are removed from the contract.
+      // The `providers` catalog (and `entitlements` / `synchronization`) are not in the
+      // contract.
       expect(res.json()).not.toHaveProperty('providers');
       expect(res.json()).not.toHaveProperty('entitlements');
       expect(res.json()).not.toHaveProperty('synchronization');
@@ -456,19 +432,11 @@ describe('super-admin account concurrency routes', () => {
   });
 });
 
-// PORT NOTE (magick-agency): master's `provider_concurrency_unsynced_accounts
-// refresh` describe (3 cases) is deleted with the drift gauge — see the header.
-
 /**
- * Ported from core test/unit/api/routes/feature-flags-internal.test.ts@4850d1d9,
- * describe "Internal S2S — provider concurrency control plane" (5 cases → 5).
- * Core called `PUT /internal/account-concurrency` / `GET …/utilization` with the
- * S2S token; the same handler now runs inside the super-admin route, so the
- * cases go through `PUT|GET /super-admin/tenants/t1/accounts/a1/concurrency`.
- * `callManager.accountConcurrencyGuard` / `providerConcurrencyGuard` are the seam;
- * `triggerDequeue` has no counterpart and its assertion is dropped. The provider
- * breakdown now also passes master's routed-number check, so every allocated
- * provider has a route in `beforeEach`.
+ * The provider concurrency control plane: the cases go through
+ * `PUT|GET /super-admin/tenants/t1/accounts/a1/concurrency`. The account and provider
+ * concurrency guards are the seam. The provider breakdown also passes the routed-number
+ * check, so every allocated provider has a route in `beforeEach`.
  */
 describe('Internal S2S — provider concurrency control plane', () => {
   let app: ReturnType<typeof Fastify>;
@@ -602,12 +570,11 @@ describe('Internal S2S — provider concurrency control plane', () => {
 });
 
 /**
- * NEW (magick-agency): equivalence cases for core `PUT /internal/account-concurrency`
- * (`internal.routes.ts:366-450`) and `GET …/utilization` (`:325-364`) running
- * in-process behind the super-admin route — the properties core's handler had that
- * no core or master test pinned, or that the collapse could break.
+ * Equivalence cases for the account-concurrency `PUT` and `GET …/utilization` handlers
+ * running in-process behind the super-admin route — the properties the internal handler
+ * has that the cases above do not pin.
  */
-describe('in-process core concurrency handler (equivalence)', () => {
+describe('in-process concurrency handler (equivalence)', () => {
   let app: ReturnType<typeof Fastify>;
   const url = '/super-admin/tenants/t1/accounts/a1/concurrency';
   const breakdownBody = {
@@ -648,7 +615,7 @@ describe('in-process core concurrency handler (equivalence)', () => {
     await app.close();
   });
 
-  it('invalidates in core\'s order: settings row cache → account guard limit → provider guard limits', async () => {
+  it('invalidates in order: settings row cache → account guard limit → provider guard limits', async () => {
     const res = await app.inject({ method: 'PUT', url, payload: breakdownBody });
 
     expect(res.statusCode).toBe(200);
@@ -674,7 +641,7 @@ describe('in-process core concurrency handler (equivalence)', () => {
     expect(mocks.concurrencyRepo.switchToLegacy).toHaveBeenCalledWith({
       tenant_id: 't1', account_id: 'a1', expected_version: 1, max_concurrent_calls: 15,
     });
-    // A legacy write never reads the drain count (core only checked it on a
+    // A legacy write never reads the drain count (it is only checked on a
     // legacy → provider migration).
     expect(mocks.control.getDistributedAccountCount).not.toHaveBeenCalled();
     const settingsAt = mocks.invalidateAccountSettings.mock.invocationCallOrder[0]!;
@@ -709,7 +676,7 @@ describe('in-process core concurrency handler (equivalence)', () => {
     expect(mocks.control.getDistributedAccountCount).not.toHaveBeenCalled();
   });
 
-  it('503 and 409 drain refusals write master\'s failed-audit row and nothing else', async () => {
+  it('503 and 409 drain refusals write the super-admin failed-audit row and nothing else', async () => {
     mocks.control.getDistributedAccountCount.mockResolvedValueOnce({ status: 'unavailable' });
     const unavailable = await app.inject({ method: 'PUT', url, payload: breakdownBody });
     expect(unavailable.statusCode).toBe(503);
@@ -743,7 +710,7 @@ describe('in-process core concurrency handler (equivalence)', () => {
     expect(mocks.invalidateAccountSettings).not.toHaveBeenCalled();
   });
 
-  it('a version conflict answers core\'s 409 with current_version and writes the failed-audit row', async () => {
+  it('a version conflict answers 409 with current_version and writes the failed-audit row', async () => {
     mocks.concurrencyRepo.getAllocation.mockResolvedValue(breakdownAllocation);
     mocks.concurrencyRepo.replaceProviderBreakdown.mockRejectedValue(new ConcurrencyAllocationVersionConflictError(7));
 
@@ -765,7 +732,7 @@ describe('in-process core concurrency handler (equivalence)', () => {
     expect(mocks.control.invalidateAccountLimit).not.toHaveBeenCalled();
   });
 
-  it('an unexpected throw in the in-process half answers 500 and writes master\'s failed-audit row (master did on every core non-2xx)', async () => {
+  it('an unexpected throw in the in-process half answers 500 and writes the super-admin failed-audit row', async () => {
     mocks.concurrencyRepo.getAllocation.mockResolvedValue(breakdownAllocation);
     mocks.concurrencyRepo.replaceProviderBreakdown.mockRejectedValue(new Error('connection terminated'));
 
@@ -782,7 +749,7 @@ describe('in-process core concurrency handler (equivalence)', () => {
     expect(mocks.coreAuditLog).not.toHaveBeenCalled();
   });
 
-  it('writes core\'s concurrency.allocation.updated audit_logs row with the super admin\'s email as actor', async () => {
+  it('writes the concurrency.allocation.updated audit_logs row with the super admin\'s email as actor', async () => {
     const res = await app.inject({ method: 'PUT', url, payload: breakdownBody });
 
     expect(res.statusCode).toBe(200);
@@ -800,14 +767,14 @@ describe('in-process core concurrency handler (equivalence)', () => {
         change_reason: 'Purchased carrier capacity',
       },
     });
-    // ...and master's own super-admin row after it.
+    // ...and the super-admin row after it.
     expect(mocks.auditLog).toHaveBeenCalledWith(expect.objectContaining({
       action: 'update_account_concurrency',
       details: { tenant_id: 't1', before: legacyAllocation, after: breakdownAllocation },
     }));
   });
 
-  it('the legacy flat body records master\'s fixed change_reason on core\'s row', async () => {
+  it('the legacy flat body records the fixed change_reason on the audit_logs row', async () => {
     const res = await app.inject({ method: 'PUT', url, payload: { max_concurrent_calls: 15 } });
 
     expect(res.statusCode).toBe(200);

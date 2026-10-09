@@ -9,16 +9,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * extends a lock that still exists, preventing resurrection of an expired and
  * reconciled lock, which would double-count against the counter.
  *
- * §6b of docs/reference/magic-voice-core/docs/escalate-to-human-transfer-design.md: "The concurrency slot is
- * actually held now. Both guards gained `extendLock`, and the transfer extends
- * to the destination's `max_transfer_seconds` + grace — the same problem the
- * WebRTC bridge solves with its TTL override."
+ * Both guards have `extendLock`, so a long-running call (e.g. a transfer extended
+ * to the destination's `max_transfer_seconds` + grace) keeps its concurrency slot
+ * held — the same problem the WebRTC bridge solves with its TTL override.
  */
 
 // ─── Global mocks ───────────────────────────────────────────────────────────
 
-// PORT: the guards import `Traced` from the same package as `logger`; core's suite used
-// the real tracing module, so the factory forwards the real decorator.
+// The guards import `Traced` from the same package as `logger`, so the factory
+// forwards the real tracing decorator.
 vi.mock('@magick-agency/observability', async () => ({
   Traced: (await import('@magick-agency/observability/tracing')).Traced,
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },

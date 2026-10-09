@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 
 /*
- * NEW (magick-agency, Phase 8), no source twin: the equivalence test for
+ * Tests for
  * `src/agency/dnc-availability.ts`, the stats route's `runtime.dnc.appliedVersion`
  * after the DNC collapse (decision B8).
  *
- * Core's health strip read the tenant's Redis set version and `campaignHealth`
+ * The health strip used to read the tenant's Redis set version and `campaignHealth`
  * diagnosed `dnc_unavailable` on `null`, because that is exactly when the pre-dial gate
  * halted. The set is gone; the gate is `DncRegistry.check` and halts only on
  * `unavailable`. The claim under test: **the probe answers `null` exactly when `check`

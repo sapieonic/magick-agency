@@ -23,7 +23,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../src/config/index.js', () => ({
-  config: { brand: { name: 'Magick Agency', accent: '#7c5cfc' }, consoleBaseUrl: 'https://app.test' }, // PORT NOTE (magick-agency): master `cusuiBaseUrl`
+  config: { brand: { name: 'Magick Agency', accent: '#7c5cfc' }, consoleBaseUrl: 'https://app.test' },
 }));
 vi.mock('@magick-agency/db/repositories/user.repository', () => ({
   userRepository: { findAddressableMembersInAccount: mocks.findAddressableMembersInAccount },

@@ -14,7 +14,7 @@ import {
 } from '../../../src/agency/spine-filters.js';
 
 // ---------------------------------------------------------------------------
-// MAG-159 — query parsing for the supervisor read surface.
+// Query parsing for the supervisor read surface.
 //
 // The rule this file exists to hold: on THIS surface an empty result set is
 // read as a fact about the campaign ("we never dialled anyone", "nothing was
@@ -104,8 +104,7 @@ describe('enum validation', () => {
     expect(parseAttemptFilters({ outcome: 'canceled' }).ok).toBe(true);
     // And on the contacts side, where it is the retry selector's dimension.
     expect(parseContactFilters({ last_outcome: 'canceled' }).ok).toBe(true);
-    // Not silently accepted as a near-miss: `cancelled` (the British spelling,
-    // which master's own `NON_BILLABLE_STATUSES` happens to use) is NOT this
+    // Not silently accepted as a near-miss: `cancelled` (the British spelling) is NOT this
     // outcome, and a filter that quietly matched nothing would read as "no such
     // calls" rather than "no such outcome".
     expect(parseAttemptFilters({ outcome: 'cancelled' }).ok).toBe(false);

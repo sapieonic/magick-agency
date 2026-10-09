@@ -17,7 +17,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Two properties therefore get assertions here rather than comments:
 //
 //   1. Every writer of `agency_agent_sessions.state` appends to the log. The four
-//      methods below are the only writers in core — the callers are the three
+//      methods below are the only writers — the callers are the three
 //      session routes, the dialer's bridge and release paths, the wrap-up manager,
 //      the two presence paths in `runtime.ts`, and the startup reaper, and every
 //      one of them goes through one of these four.
@@ -180,7 +180,7 @@ describe('setState records the transition it just performed', () => {
 // ─── the event carries the MUTATION's instant, not the INSERT's ─────────────
 
 describe('`at` comes from the statement that performed the transition', () => {
-  it('projects clock_timestamp() from every mutation and inserts it verbatim', async () => {
+  it('projects clock_timestamp() from every mutation and inserts it unchanged', async () => {
     await agencyAgentSessionRepository.setState('sess-1', 'on_call');
     // Migration 105 gives `at` a `DEFAULT now()`. Leaning on it would stamp the
     // event when the LOG write ran — a different statement, a different round
@@ -386,7 +386,7 @@ describe('joinOrRehydrate', () => {
 
   it('never leaks the log-only columns onto the returned session record', async () => {
     // `AgencyAgentSessionRecord` is spread into the bootstrap payload, so an extra
-    // field here becomes a contract nobody agreed to and one master would start
+    // field here becomes a contract nobody agreed to and one the public API layer would start
     // depending on.
     serve([session({ from_state: 'offline' })]);
     const result = await agencyAgentSessionRepository.joinOrRehydrate(PARAMS);

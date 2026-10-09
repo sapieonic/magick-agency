@@ -66,15 +66,6 @@ vi.mock('@magick-agency/observability', () => ({
 
 import { sendInviteEmail, inviteSignInUrl } from '../../../src/notifications/invite-mailer.js';
 
-/*
- * PORT NOTE (magick-agency): ported from master
- * test/unit/notifications/invite-mailer.test.ts@a1f0756a. Config key
- * `cusuiBaseUrl` → `consoleBaseUrl` (env `CONSOLE_BASE_URL`) in every case, and
- * the skipped-mail warning names `CONSOLE_BASE_URL`. Logger mock re-pointed at
- * `@magick-agency/observability` (the specifier the mailer imports). No case
- * deleted.
- */
-
 /** Replace the mocked config wholesale; the module reads it per call. */
 function setConfig(next: Record<string, unknown>) {
   for (const key of Object.keys(mocks.config)) delete mocks.config[key];
@@ -116,7 +107,7 @@ describe('inviteSignInUrl', () => {
      * Not dead code. It is what a caller with no token to offer must produce,
      * and it is the strictly safer of the two wrong answers: `/agency/login` has
      * no Sign Up tab, so it cannot create a stray tenant — where a claim page
-     * with nothing to claim is simply broken. It is also what cusui's own copy
+     * with nothing to claim is simply broken. It is also what the console's own copy
      * of this rule produces, which is why the two agree in every reachable
      * state.
      */
@@ -174,7 +165,7 @@ describe('inviteSignInUrl', () => {
   it('strips a RUN of trailing slashes, not just one', async () => {
     /**
      * The strip is `/\/+$/`, plural, and the single-slash case above cannot tell
-     * it from `/\/$/`. A run is not a contrived input: `CUSUI_BASE_URL` is set by
+     * it from `/\/$/`. A run is not a contrived input: `CONSOLE_BASE_URL` is set by
      * hand per environment, and a value assembled from a prefix plus a path
      * ("https://app.example.com/" + "/") is how one arrives. The consequence of
      * the singular form is a doubled path slash in an email —
@@ -234,7 +225,7 @@ describe('inviteSignInUrl', () => {
        *     `''`, `'/'`, `'//'` and `'///'` are all REJECTED by that schema, so
        *     `loadConfig` refuses to boot with one.
        *   - via the parameter: `inviteSignInUrl`'s `baseUrl` override is NOT
-       *     validated, and it is the only way in — but master's caller
+       *     validated, and it is the only way in — but the caller
        *     (`invite-issuer.ts`) passes no override at all, so nothing in this
        *     service can reach it.
        *
@@ -294,7 +285,7 @@ describe('sendInviteEmail', () => {
      * `mailjet.client.ts` returns a boolean, having already logged the
      * `MessageUUID`s it received. The field stays on the union rather than being
      * dropped because it is the natural home for the id once the send moves onto
-     * `platformEmail` — where a message gets a durable row in core.
+     * `platformEmail` — where a message gets a durable row.
      */
     configured();
     await expect(sendInviteEmail(input)).resolves.toEqual({ sent: true, messageId: null });
@@ -344,7 +335,7 @@ describe('sendInviteEmail', () => {
 
   it('ignores platformEmail entirely — it is a reserved seam, not the transport', async () => {
     /**
-     * The header used to specify `PLATFORM_EMAIL_CONNECTION_ID` (core's
+     * The header used to specify `PLATFORM_EMAIL_CONNECTION_ID` (a
      * Resend-backed provider) as the transport, and the schema still carries the
      * block. Setting it must change NOTHING: an operator who configures it and
      * sees invites start working would reasonably conclude it is wired up, and
@@ -397,7 +388,7 @@ describe('sendInviteEmail', () => {
   it('refuses to send an invite with no link in it', async () => {
     /**
      * The email's entire job is to carry the join URL. A configured transport plus
-     * no `CUSUI_BASE_URL` would otherwise mean sending a real person a message with
+     * no `CONSOLE_BASE_URL` would otherwise mean sending a real person a message with
      * nothing actionable in it, which is worse than sending nothing.
      *
      * Reported as `not_configured` rather than `failed`: the missing thing is a
@@ -483,7 +474,7 @@ describe('sendInviteEmail', () => {
      *
      * The config guard logs at DEBUG, deliberately — warning on the expected path
      * trains operators to ignore the log. The link guard logs at WARN, because a
-     * configured transport with no `CUSUI_BASE_URL` is a genuine misconfiguration
+     * configured transport with no `CONSOLE_BASE_URL` is a genuine misconfiguration
      * somebody should fix.
      *
      * Reverse the order and every unconfigured deployment emits a WARN per invite

@@ -4,49 +4,35 @@ import type { MembershipRole } from '@magick-agency/contracts/rbac';
 import { hasPermission } from '@magick-agency/contracts/rbac';
 
 /*
- * PORT NOTE (magick-agency, Phase 8): master `test/unit/agency/proxy-agency-agent-actions.test.ts`
- * @a1f0756a. Source 61 cases (57 `it` + one `it.each` of 4 rows) → ported 55.
- *
- * Harness changes, and only these:
- *  - `proxyToCore` → `callCore` (`src/api/core-dispatch.js`), mocked under master's
- *    `proxyToCore` name so every assertion stays master's; the `resolveCoreApiKey` mock and its
- *    `beforeEach` re-arm are gone with the key (the hop is in-process);
- *  - `auditLogger` → `platformAuditLogger` (`src/audit/platform/audit-logger.js`);
+ * Harness notes:
+ *  - `callCore` (`src/api/core-dispatch.js`) is mocked as `mocks.proxyToCore`; the hop is
+ *    in-process, so there is no API key to resolve;
+ *  - the audit logger is `platformAuditLogger` (`src/audit/platform/audit-logger.js`);
  *  - the logger mock is a partial over `@magick-agency/observability`;
- *  - the `require-capability` mock is gone with governance (the route registers no
- *    `requireCapability('agency')`; plan §3.2);
- *  - `MembershipRole` / `hasPermission` come from `@magick-agency/contracts/rbac`;
- *  - `Caller.apiKeyOnly` / `Caller.apiKeyCreatedBy` and their two `buildApp` branches are gone
- *    with platform API keys (decision #5): no request here can carry `apiKeyTenantId`.
+ *  - the route registers no capability gate;
+ *  - platform API keys do not exist in this app, so no request here carries an API-key
+ *    caller: a creator-backed shape (a user AND a membership) is just a signed-in person,
+ *    whom `resolveAgencyActor` attributes; its no-user `missing_actor` arm is pinned in
+ *    `agency-actor.test.ts`.
  *
- * DELETED (6), each only about a platform-API-key caller, which does not exist (decision #5):
- *  - session create: "refuses an unattributable caller here rather than spending a round trip",
- *    "refuses a CREATOR-BACKED key, which would otherwise act AS the creator";
- *  - disposition: "refuses an unattributable caller (API key, no user) without calling core",
- *    "refuses a CREATOR-BACKED key, which would disposition in the creator's name";
- *  - notes: "refuses an unattributable caller without spending a round trip",
- *    "refuses a CREATOR-BACKED key on notes too".
- *  A creator-backed shape (a user AND a membership) is here just a signed-in person, whom
- *  `resolveAgencyActor` correctly attributes; its no-user `missing_actor` arm is pinned in
- *  `agency-actor.test.ts`.
- * MODIFIED (1), Q8 (Manas, 2026-10-09): "proxies for a supervisor, body and metric template
- *  intact" — the body now also carries the supervisor's actor (`agent_user_id`, `on_behalf`),
- *  which core's `requireOwnedSession` needs to let a supervisor act on another agent's session.
- * NEW (7), Q8: every session route forwards the authenticated actor (6-row `it.each`), and a
- *  client-supplied actor on `break` is overwritten. Source 61 → 55 ported + 7 new = 62.
+ * decision Q8: "proxies for a supervisor, body and metric template intact" —
+ *  the body also carries the supervisor's actor (`agent_user_id`, `on_behalf`), which the
+ *  internal handler's `requireOwnedSession` needs to let a supervisor act on another
+ *  agent's session. Every session route forwards the authenticated actor (6-row
+ *  `it.each`), and a client-supplied actor on `break` is overwritten.
  */
 
 /**
- * `AD-P2-M-01` — the disposition and notes proxies, and specifically the actor
+ * The disposition and notes proxies, and specifically the actor
  * attribution that makes them enforceable.
  *
  * The interesting property is a **split** one: "is the reserved agent" is a fact
- * only core holds, "supervises" is a fact only master holds, and the rule needs
- * both. So these tests assert exactly master's half — that it attributes every
+ * only the internal handler holds, "supervises" is a fact only the public API layer holds, and the rule needs
+ * both. So these tests assert exactly the public API layer's half — that it attributes every
  * action to the authenticated user, never to a client-supplied id, and asserts
- * `on_behalf` from RBAC and nothing else. Whether core then *allows* the action
- * is core's test (`AD-P2-C-04`); what master must never do is let core decide
- * against a body master did not author.
+ * `on_behalf` from RBAC and nothing else. Whether the internal handler then *allows* the action
+ * is the internal handler's test (its own suite); what the public API layer must never do is let the internal handler decide
+ * against a body the public API layer did not author.
  *
  * RBAC is deliberately NOT stubbed here (unlike the sibling campaign-route
  * suite): the operator-vs-account_admin distinction is the thing under test.
@@ -70,7 +56,6 @@ vi.mock('../../../src/auth/session.middleware.js', () => ({ sessionMiddleware: a
 vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
   tenantContextMiddleware: async () => {},
 }));
-// PORT NOTE (magick-agency): master's `require-capability` mock is gone with governance.
 // The station-token route imports this for its URL rewrite; irrelevant here.
 vi.mock('../../../src/api/routes/proxy-agency-station.routes.js', () => ({
   rewriteStationWsUrl: (u: string) => u,
@@ -83,8 +68,7 @@ const PREFIX = '/proxy/agency';
 interface Caller {
   role?: MembershipRole;
   userId?: string | null;
-  // PORT NOTE (magick-agency): master's `apiKeyOnly` / `apiKeyCreatedBy` are gone with
-  // platform API keys (decision #5).
+  // No API-key caller shapes: platform API keys do not exist in this app.
 }
 
 async function buildApp(caller: Caller = { role: 'agent' }): Promise<FastifyInstance> {
@@ -104,7 +88,7 @@ async function buildApp(caller: Caller = { role: 'agent' }): Promise<FastifyInst
   return app;
 }
 
-/** The body master actually sent to core on the single proxied call. */
+/** The body the public API layer actually sent to the internal handler on the single proxied call. */
 function sentBody(): Record<string, unknown> {
   expect(mocks.proxyToCore).toHaveBeenCalledTimes(1);
   return mocks.proxyToCore.mock.calls[0]![0].body as Record<string, unknown>;
@@ -115,23 +99,21 @@ beforeEach(() => {
   mocks.proxyToCore.mockResolvedValue({ status: 200, body: { attempt_id: 'attempt-1' } });
 });
 
-describe('session create — who is joining (`MAG-118`)', () => {
+describe('session create — who is joining', () => {
   const CAMPAIGN = '00000000-0000-4000-8000-000000000001';
 
   /**
    * ── Why this group exists ─────────────────────────────────────────────────
-   * Core's `POST /agency/sessions` hard-requires `agent_user_id`; master's
-   * `createSessionSchema` named only `campaign_id`/`session_id`, Zod stripped the
-   * unknown key, and the handler forwarded `parsed.data` — so **every join 400'd
-   * and no agent could reach a campaign.** Master was correct by core's frozen
-   * `AgencyCreateSessionRequest`, which never declared the field either; core's
-   * handler had departed from core's own contract.
+   * The internal handler's `POST /agency/sessions` hard-requires `agent_user_id`. If the public
+   * API layer's `createSessionSchema` named only `campaign_id`/`session_id`, Zod would strip the
+   * unknown key and the handler would forward `parsed.data` — so **every join would 400
+   * and no agent could reach a campaign.**
    *
-   * Nothing observed it. The route-table suite asserts routing and guards but not
-   * bodies, this file exercised only the attempt-scoped actions, and core's own
-   * tests supplied the field themselves. Both services were internally consistent
-   * and together described a system that could not work — so the pin has to be on
-   * the **body master sends**, which is the only artefact either side shares.
+   * Nothing else would observe it. The route-table suite asserts routing and guards but not
+   * bodies, and the internal handler's own tests supply the field themselves. Both layers
+   * would be internally consistent and together describe a system that could not work — so
+   * the pin has to be on the **body the public API layer sends**, which is the only artefact
+   * both sides share.
    */
   it('sends the authenticated user as agent_user_id', async () => {
     const app = await buildApp({ role: 'agent' });
@@ -146,7 +128,7 @@ describe('session create — who is joining (`MAG-118`)', () => {
 
   it('never lets the browser name the agent', async () => {
     // A client-asserted id would let anyone go available as a colleague — and
-    // then take their calls. Zod strips the unknown key and master overwrites
+    // then take their calls. Zod strips the unknown key and the public API layer overwrites
     // from the session, so the claim cannot survive either way.
     const app = await buildApp({ role: 'agent' });
     await app.inject({
@@ -173,9 +155,7 @@ describe('session create — who is joining (`MAG-118`)', () => {
     await app.close();
   });
 
-  // PORT NOTE (magick-agency): DELETED "refuses an unattributable caller here rather than spending a round trip" — platform API keys do not exist (decision #5).
 
-  // PORT NOTE (magick-agency): DELETED "refuses a CREATOR-BACKED key, which would otherwise act AS the creator" — platform API keys do not exist (decision #5).
 
 });
 
@@ -218,10 +198,9 @@ describe('disposition — actor attribution', () => {
 
   it('does NOT set on_behalf for an operator', async () => {
     // `agency.supervise` floors at `account_admin` (30); an operator is 20.
-    // The Phase 2 backlog's acceptance (d) says an operator should be able to
-    // act on an agent's behalf — that line predates the freeze that introduced
-    // `on_behalf` and contradicts the design, core's contract and the UX spec,
-    // all three of which put this at `account_admin`. This test pins the
+    // An operator might be expected to be able to act on an agent's behalf, but
+    // `on_behalf` is an `account_admin` capability by design, in the internal handler's
+    // contract and in the UX. This test pins the
     // ratified floor; if the floor is ever deliberately lowered, this is the
     // test that should be made to fail on purpose.
     const app = await buildApp({ role: 'operator', userId: 'user-operator' });
@@ -254,11 +233,9 @@ describe('disposition — actor attribution', () => {
     await app.close();
   });
 
-  // PORT NOTE (magick-agency): DELETED "refuses an unattributable caller (API key, no user) without calling core" — platform API keys do not exist (decision #5).
 
-  // PORT NOTE (magick-agency): DELETED "refuses a CREATOR-BACKED key, which would disposition in the creator's name" — platform API keys do not exist (decision #5).
 
-  it('surfaces core validation errors — status, code and allowed_codes — intact', async () => {
+  it('surfaces the internal handler validation errors — status, code and allowed_codes — intact', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 400,
       body: {
@@ -286,7 +263,7 @@ describe('disposition — actor attribution', () => {
     await app.close();
   });
 
-  it('surfaces core 403 not_your_attempt rather than flattening it', async () => {
+  it('surfaces the internal handler 403 not_your_attempt rather than flattening it', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 403,
       body: { error: 'Forbidden', code: 'not_your_attempt', message: 'Not your attempt' },
@@ -305,8 +282,8 @@ describe('disposition — actor attribution', () => {
   });
 });
 
-describe('disposition — platform audit trail (`MAG-70`)', () => {
-  it('audits the disposition on a 2xx from core, without the free-text notes', async () => {
+describe('disposition — platform audit trail', () => {
+  it('audits the disposition on a 2xx from the internal handler, without the free-text notes', async () => {
     const app = await buildApp({ role: 'agent' });
     const res = await app.inject({
       method: 'POST',
@@ -349,7 +326,7 @@ describe('disposition — platform audit trail (`MAG-70`)', () => {
     await app.close();
   });
 
-  it('does NOT audit a disposition core rejected (4xx)', async () => {
+  it('does NOT audit a disposition the internal handler rejected (4xx)', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 400,
       body: { error: 'Validation failed', code: 'unknown_disposition_code', message: 'bad code' },
@@ -366,7 +343,7 @@ describe('disposition — platform audit trail (`MAG-70`)', () => {
     await app.close();
   });
 
-  it('does NOT audit a disposition core failed on (5xx)', async () => {
+  it('does NOT audit a disposition the internal handler failed on (5xx)', async () => {
     mocks.proxyToCore.mockResolvedValue({ status: 500, body: { error: 'Internal' } });
     const app = await buildApp({ role: 'agent' });
     const res = await app.inject({
@@ -383,19 +360,19 @@ describe('disposition — platform audit trail (`MAG-70`)', () => {
 
 describe('disposition — where "another agent cannot" is actually enforced', () => {
   /**
-   * Worth stating because it is easy to assume otherwise: master's RBAC cannot
+   * Worth stating because it is easy to assume otherwise: the public API layer's RBAC cannot
    * express acceptance (b). `agency.attempts.dispose` floors at `agent` (5), and
    * the hierarchy is linear over *minimum* roles, so **every** role at or above
    * `agent` — viewer included — holds it. That is deliberate (D6: supervisors
    * and admins can take calls themselves to cover or demo).
    *
    * So "another agent cannot disposition this attempt" is not a permission
-   * question at all. It is core's ownership check, and master's only job is to
-   * (1) attribute truthfully so core can make it, and (2) not flatten the answer.
+   * question at all. It is the internal handler's ownership check, and the public API layer's only job is to
+   * (1) attribute truthfully so the internal handler can make it, and (2) not flatten the answer.
    * Both are asserted above.
    */
   it.each(['agent', 'viewer', 'operator', 'account_admin'] as MembershipRole[])(
-    'lets %s through to core — the ownership check is core\'s, not the matrix\'s',
+    'lets %s through to the internal handler — the ownership check is the internal handler\'s, not the matrix\'s',
     async (role) => {
       const app = await buildApp({ role, userId: `user-${role}` });
       const res = await app.inject({
@@ -413,7 +390,7 @@ describe('disposition — where "another agent cannot" is actually enforced', ()
 
 describe('force-available — the override an agent must not hold', () => {
   /**
-   * `AD-P2-C-02` made `POST /sessions/:id/available` refuse while a disposition
+   * An earlier change made `POST /sessions/:id/available` refuse while a disposition
    * is outstanding, and that refusal is the only thing making a required
    * disposition required. `force-available` is the override, so the floor on it
    * is load-bearing: an `agent` who could call it would skip every disposition
@@ -435,7 +412,7 @@ describe('force-available — the override an agent must not hold', () => {
     expect(reach).toEqual(['account_admin', 'tenant_admin', 'tenant_owner']);
   });
 
-  it('403s an agent at the route, and never reaches core', async () => {
+  it('403s an agent at the route, and never reaches the internal handler', async () => {
     const app = await buildApp({ role: 'agent' });
     const res = await app.inject({
       method: 'POST',
@@ -472,7 +449,7 @@ describe('force-available — the override an agent must not hold', () => {
     expect(res.statusCode).toBe(200);
     const call = mocks.proxyToCore.mock.calls[0]![0];
     expect(call.path).toBe('/agency/sessions/session-1/force-available');
-    // Q8 (Manas, 2026-10-09): the supervisor's actor rides with the reason, so core can let
+    // decision Q8: the supervisor's actor rides with the reason, so the internal handler can let
     // `agency.supervise` act on another agent's session on this route (and only this one).
     expect(call.body).toEqual({ reason: 'agent left their desk', agent_user_id: 'user-supervisor', on_behalf: true });
     expect(call.metricPath).toBe('/agency/sessions/:id/force-available');
@@ -508,7 +485,7 @@ describe('break/cancel — the queued-break take-back', () => {
     await app.close();
   });
 
-  it('surfaces core 409 break_already_applied intact', async () => {
+  it('surfaces the internal handler 409 break_already_applied intact', async () => {
     // The console's whole remedy depends on this code: "your break already
     // started — go available when you're ready" versus a red support message.
     mocks.proxyToCore.mockResolvedValue({
@@ -529,7 +506,7 @@ describe('break/cancel — the queued-break take-back', () => {
 });
 
 describe('notes', () => {
-  it('proxies to core /notes with the actor attached', async () => {
+  it('proxies to the internal handler /notes with the actor attached', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
       body: { attempt_id: 'attempt-1', notes: 'asked to call back', updated_at: '2026-08-11T00:00:00.000Z' },
@@ -613,23 +590,21 @@ describe('notes', () => {
     await agentApp.close();
   });
 
-  // PORT NOTE (magick-agency): DELETED "refuses an unattributable caller without spending a round trip" — platform API keys do not exist (decision #5).
 
-  // PORT NOTE (magick-agency): DELETED "refuses a CREATOR-BACKED key on notes too" — platform API keys do not exist (decision #5).
 
 });
 
-describe('mark-DNC — proxying and attribution (`MAG-107`)', () => {
+describe('mark-DNC — proxying and attribution', () => {
   /**
-   * This route had zero behavioural coverage before `MAG-107` — its only
+   * This route had zero behavioural coverage before the actor attribution was added — its only
    * reference was a route-table registration test run under a wide-open RBAC
    * stub (`proxy-agency-route-table.test.ts`), which proves the router matches
    * the path and nothing about what the handler does with a request. These
    * tests close that gap for the ordinary proxying behaviour; the case that
-   * matters most for `MAG-107` is the last one below.
+   * matters most is the last one below.
    */
 
-  it('proxies to core with the validated body, and returns core\'s status/body verbatim', async () => {
+  it('proxies to the internal handler with the validated body, and returns the internal handler\'s status/body unchanged', async () => {
     const app = await buildApp({ role: 'agent' });
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
@@ -656,7 +631,7 @@ describe('mark-DNC — proxying and attribution (`MAG-107`)', () => {
     const res = await app.inject({ method: 'POST', url: `${PREFIX}/attempts/attempt-1/dnc` });
 
     expect(res.statusCode).toBe(200);
-    // The actor is master's and is always sent (`MAG-107`); both *caller* fields
+    // The actor is the public API layer's and is always sent; both *caller* fields
     // are optional, which is what this case is about.
     expect(sentBody()).toEqual({ agent_user_id: AGENT_USER });
     await app.close();
@@ -672,7 +647,7 @@ describe('mark-DNC — proxying and attribution (`MAG-107`)', () => {
 
     // Exhaustive on purpose: `extra` must not survive, and neither must anything
     // else this route was not asked to send. The actor is the one addition, and
-    // it is master's own (`MAG-107`) rather than a forwarded caller field.
+    // it is the public API layer's own rather than a forwarded caller field.
     expect(sentBody()).toEqual({
       reason: 'asked not to be called',
       disposition_code: 'do_not_call',
@@ -701,7 +676,7 @@ describe('mark-DNC — proxying and attribution (`MAG-107`)', () => {
     await app.close();
   });
 
-  it('attributes the suppression to the authenticated agent (`MAG-107`)', async () => {
+  it('attributes the suppression to the authenticated agent', async () => {
     /**
      * ── This case used to assert the OPPOSITE, on purpose ────────────────────
      *
@@ -712,9 +687,9 @@ describe('mark-DNC — proxying and attribution (`MAG-107`)', () => {
      * rather than a silent change**. That is what happened; this is the update
      * it was written to force, not a rewrite that made an inconvenient test pass.
      *
-     * The blocker was real and is gone: core's `AgencyDncRequest` carried no
+     * The blocker was real and is gone: the internal handler's `AgencyDncRequest` carried no
      * field for an actor to land in, so sending one would have been inventing a
-     * name the ratified contract did not declare. `MAG-106` made it
+     * name the contract did not declare. It now
      * `extends AgencyActorFields`.
      */
     const app = await buildApp({ role: 'agent' });
@@ -730,13 +705,13 @@ describe('mark-DNC — proxying and attribution (`MAG-107`)', () => {
     // clobbered them would still satisfy the assertion above.
     expect(body['reason']).toBe('customer asked');
     // An ordinary agent does not supervise, so `on_behalf` is omitted rather
-    // than sent as `false`: core's rule branches on presence.
+    // than sent as `false`: the internal handler's rule branches on presence.
     expect('on_behalf' in body).toBe(false);
     await app.close();
   });
 
   it('never takes the actor from the browser', async () => {
-    // The security half, and the reason this is master's fact rather than a
+    // The security half, and the reason this is the public API layer's fact rather than a
     // client's: a browser that could name the agent could file a suppression —
     // a compliance record — under a colleague's id.
     const app = await buildApp({ role: 'agent' });
@@ -750,10 +725,10 @@ describe('mark-DNC — proxying and attribution (`MAG-107`)', () => {
     await app.close();
   });
 
-  it('forwards a campaign scope through to core', async () => {
+  it('forwards a campaign scope through to the internal handler', async () => {
     // The pin on the strip. `dncSchema` declared only `reason` and
     // `disposition_code`, so Zod deleted `scope` and this route answered 200
-    // having asked core for no scope at all. Assert the field ARRIVES, because
+    // having asked the internal handler for no scope at all. Assert the field ARRIVES, because
     // the failure mode is a field that silently does not.
     const app = await buildApp({ role: 'agent' });
     await app.inject({
@@ -771,8 +746,8 @@ describe('mark-DNC — proxying and attribution (`MAG-107`)', () => {
   });
 
   it('forwards absent scope as absent rather than defaulting it here', async () => {
-    // "Absent means campaign" is core's default to apply, not master's to
-    // materialise. Master normalising it would put a second copy of the default
+    // "Absent means campaign" is the internal handler's default to apply, not the public API layer's to
+    // materialise. The public API layer normalising it would put a second copy of the default
     // in a second repo, and the two would drift without either side erroring.
     const app = await buildApp({ role: 'agent' });
     await app.inject({
@@ -806,14 +781,14 @@ describe('mark-DNC — the tenant-wide escalation needs `agency.dnc.manage`', ()
    * the route's own `agency.dnc.write` (`agent`): `agency.dnc.manage`
    * (`account_admin`), the same floor `DELETE /dnc/:id` uses.
    *
-   * These assert master's enforcement specifically, because the console also
+   * These assert the public API layer's enforcement specifically, because the console also
    * hides the escalation behind this permission — and a hidden button proves
    * nothing about a crafted request. The interesting cases are therefore the
    * ones where the caller holds `agency.dnc.write` and sends `'tenant'`
    * anyway, which is precisely what a browser can do by hand.
    */
 
-  it('403s an agent escalating to tenant scope, and never reaches core', async () => {
+  it('403s an agent escalating to tenant scope, and never reaches the internal handler', async () => {
     const app = await buildApp({ role: 'agent' });
     const res = await app.inject({
       method: 'POST',
@@ -824,7 +799,7 @@ describe('mark-DNC — the tenant-wide escalation needs `agency.dnc.manage`', ()
     expect(res.statusCode).toBe(403);
     // Nothing was written anywhere: the refusal precedes the proxy call, which
     // is also what keeps the error mask from flattening it (a route's own 4xx
-    // must land before any core call records a status).
+    // must land before any internal handler call records a status).
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
     await app.close();
   });
@@ -905,7 +880,7 @@ describe('mark-DNC — the tenant-wide escalation needs `agency.dnc.manage`', ()
 
 describe('mark-DNC — attribution, continued', () => {
   it('marks on_behalf for a supervisor suppressing on an agent\'s attempt', async () => {
-    // A plain mark-DNC has no ownership rule at core, so `on_behalf` changes
+    // A plain mark-DNC has no ownership rule at the internal handler, so `on_behalf` changes
     // nothing there today. It is still sent, because the compliance record
     // should say whether the person who suppressed the number was acting for
     // someone else — and because a rule added later must not find the field
@@ -922,8 +897,8 @@ describe('mark-DNC — attribution, continued', () => {
   });
 });
 
-describe('mark-DNC — platform audit trail (`MAG-70`)', () => {
-  it('audits the suppression on a 2xx from core, with scope but NO phone number', async () => {
+describe('mark-DNC — platform audit trail', () => {
+  it('audits the suppression on a 2xx from the internal handler, with scope but NO phone number', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
       body: {
@@ -954,12 +929,12 @@ describe('mark-DNC — platform audit trail (`MAG-70`)', () => {
       resource_id: 'entry-9',
       details: { attempt_id: 'attempt-1', scope: 'campaign' },
     });
-    // The number core echoed back must never reach the audit row.
+    // The number the internal handler echoed back must never reach the audit row.
     expect(JSON.stringify(mocks.auditLog.mock.calls[0]![0])).not.toContain('+15551230001');
     await app.close();
   });
 
-  it('omits resource_id when core\'s response carries no entry_id', async () => {
+  it('omits resource_id when the internal handler\'s response carries no entry_id', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
       body: { attempt_id: 'attempt-1', dnc_recorded: true },
@@ -996,7 +971,7 @@ describe('mark-DNC — platform audit trail (`MAG-70`)', () => {
     await app.close();
   });
 
-  it('does NOT audit when core refuses the suppression (4xx)', async () => {
+  it('does NOT audit when the internal handler refuses the suppression (4xx)', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 422,
       body: { error: 'Unprocessable', message: 'contact already suppressed elsewhere' },
@@ -1009,7 +984,7 @@ describe('mark-DNC — platform audit trail (`MAG-70`)', () => {
     await app.close();
   });
 
-  it('does NOT audit when core fails the suppression (5xx)', async () => {
+  it('does NOT audit when the internal handler fails the suppression (5xx)', async () => {
     mocks.proxyToCore.mockResolvedValue({ status: 500, body: { error: 'Internal' } });
     const app = await buildApp({ role: 'agent' });
     const res = await app.inject({ method: 'POST', url: `${PREFIX}/attempts/attempt-1/dnc` });
@@ -1019,7 +994,7 @@ describe('mark-DNC — platform audit trail (`MAG-70`)', () => {
     await app.close();
   });
 
-  it('does NOT audit a request the tenant-scope gate itself refused (403, before core)', async () => {
+  it('does NOT audit a request the tenant-scope gate itself refused (403, before the internal handler)', async () => {
     const app = await buildApp({ role: 'agent' });
     const res = await app.inject({
       method: 'POST',
@@ -1033,8 +1008,8 @@ describe('mark-DNC — platform audit trail (`MAG-70`)', () => {
   });
 });
 
-// Q8 (Manas, 2026-10-09). NEW (magick-agency): master sent no actor on the session routes,
-// so core's `requireOwnedSession` could not tell the session's agent from a colleague.
+// decision Q8. The public API layer sent no actor on the session routes,
+// so the internal handler's `requireOwnedSession` could not tell the session's agent from a colleague.
 describe('Q8: session routes forward the authenticated actor', () => {
   it.each([
     ['station-token', {}, 'agent'],

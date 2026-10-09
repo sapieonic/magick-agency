@@ -1,49 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// PORT NOTE (magick-agency): ported from core test/unit/core/webrtc-bridge-manager.test.ts@4850d1d9
-// (77 cases → 53). Full ledger in PORTING.md (Lane C). In short:
+// FIXTURE: a call is dialled through the dialer's entry point, `createBridgedCall`, with the
+// browser socket borrowed at dial time (`dial()` below), on VoiceLink (the only carrier), and
+// ended via `forceEndWithOutcome(ATTEMPT, 'ended_by_user')` (a `localHangup` under that outcome).
+// `getWebrtcMaxDurationSeconds` -> null resolves to the 1800 default.
+// There is no billing settlement; cases assert the terminal row write / slot release / analytics
+// event instead.
 //
-// FIXTURE (every surviving case): core created calls through the softphone's
-// `createCall` (deleted, plan §5) on VoBiz (the old default provider, deleted) and
-// attached the browser through the owned `attachBrowserLeg` (deleted). Here a call is
-// dialled through the agency entry point, `createBridgedCall`, with the browser socket
-// borrowed at dial time (`dial()` below), on VoiceLink (the only carrier), and
-// `forceEndByUser` (deleted) is `forceEndWithOutcome(ATTEMPT, 'ended_by_user')` — the same
-// `localHangup` under the same outcome. Mock specifiers follow the new paths;
-// `getWebrtcMaxDurationSeconds` → null replaces the flag mock's 1800 (same resolved value).
-// Settlement assertions are removed (agency never settles, plan §9) and replaced by the
-// terminal row write / slot release / analytics event the same case already observes.
+// VoiceLink specifics: recording is requested through the dial request's `enableRecording`;
+// an answered teardown is deferred to the carrier's `call.ended` (the `ending` cases); the relay
+// transcodes (the 'a payload exactly at the limit is still relayed' case).
 //
-// DELETED (24): 'relays browser→PSTN as L16 playAudio and PSTN→browser as media',
-// 'ignores a VoBiz start frame (must not run the A-law format check and tear down)',
-// 'does not set mediaStreamUrl for VoBiz', VoBiz webhooks: 'ringing status flips state and
-// notifies the browser', 'answer anchors talk time and returns the <Stream> answer XML',
-// 'maps an unanswered busy hangup to status=busy'; handleVobizStatus hangup mapping (6):
-// 'answered hangup → completed (the normal "callee hung up after talking" path)',
-// 'unanswered no-answer → no_answer', 'unanswered cancel → canceled', 'unanswered unknown raw
-// status → failed', 'error event → failed with TELEPHONY_ERROR and provider hangup',
-// 'unknown callId is a safe no-op'; browser WS token verification (owned leg, 3): 'accepts a
-// matching token', 'rejects and closes on a wrong token', 'accepts when the token key is
-// missing (degraded)'; browser leg re-attach (owned leg, 2): 'ends the call if the socket
-// already closed during async token verify', 'a superseded socket closing does not end the
-// live call'; 'VoBiz skips the provider-token check (degrades to unguessable-call-id guard)';
-// BYOC (6): 'BYOC unconfigured → platform adapter, NULL credential in the insert', "BYOC
-// caller ID → pinned in the INSERT and dialled on that number's credential", 'platform caller
-// ID on a tenant that HOLDS a credential → stays on the platform account', 'credential that
-// cannot be loaded → no row, no dial, slots released', 'answer XML is rendered by the PINNED
-// credential, not a fresh resolve', 'hangs up on the account the call was PLACED on, even
-// after the credential is revoked mid-call'.
-//
-// Q6 (Manas, 2026-10-09): MODIFIED 'returns true for every purpose when the stored key is
-// missing (get→null)' → returns FALSE; NEW (4): 'WebRtcBridgeManager ws tokens — Q6 legitimate
-// paths' (live call, post-end webhook grace, SET failed at mint, Redis absent/erroring).
-//
-// MODIFIED beyond the fixture (each marked `PORT NOTE` inline): the three recording cases
-// (VoBiz answer XML → the dial request's `enableRecording`), both max-duration cases and the
-// two `ending` cases (VoiceLink defers an answered teardown to the carrier), the endCall,
-// gracefulShutdown and PostHog cases (settlement / `triggerDequeue` assertions), and
-// 'a payload exactly at the limit is still relayed' (VoBiz verbatim relay → VoiceLink
-// transcode).
+// Q6: the ws-token check returns FALSE when the stored key is missing (get -> null); the
+// 'WebRtcBridgeManager ws tokens — Q6 legitimate paths' describe covers a live call, the
+// post-end webhook grace, a SET that failed at mint, and Redis absent/erroring.
 
 // ---------------------------------------------------------------------------
 // Self-contained mock harness (project convention: no shared test utilities).
@@ -138,7 +108,7 @@ function decodedPeak(pcmBuf: Buffer): number {
 }
 
 // ── Fake WebSocket ───────────────────────────────────────────────────────
-// PORT NOTE: `off` added — a borrowed socket's listeners are removed at detach.
+// Includes `off`: a borrowed socket's listeners are removed at detach.
 function fakeWs() {
   const handlers: Record<string, ((...a: any[]) => void)[]> = {};
   return {
@@ -182,7 +152,7 @@ const PARAMS = {
 const VL_PARAMS = { ...PARAMS, provider: 'voicelink' as const };
 const ATTEMPT = 'att-1';
 
-/** PORT NOTE: the agency entry point in place of core's `createCall` + `attachBrowserLeg`. */
+/** The dialer's entry point: dial with the browser socket borrowed. */
 async function dial(
   mgr: WebRtcBridgeManager,
   params: Record<string, unknown> = VL_PARAMS,
@@ -196,7 +166,7 @@ async function dial(
   });
   return { record, browser };
 }
-/** PORT NOTE: core's `forceEndByUser(callId)`. */
+/** Ends the call as the user (`ended_by_user`). */
 const endByUser = (mgr: WebRtcBridgeManager) => mgr.forceEndWithOutcome(ATTEMPT, 'ended_by_user');
 
 function negotiateVoicelink(pstn: ReturnType<typeof fakeWs>): void {
@@ -235,8 +205,8 @@ beforeEach(() => {
   mockAccountSettings.getWebrtcMaxDurationSeconds.mockResolvedValue(null);
 });
 
-describe('WebRtcBridgeManager.createCall', () => {
-  it('acquires shared slots, persists, and places the VoBiz leg', async () => {
+describe('WebRtcBridgeManager dial', () => {
+  it('acquires shared slots, persists, and places the carrier leg', async () => {
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
 
@@ -249,8 +219,7 @@ describe('WebRtcBridgeManager.createCall', () => {
     expect(cm.concurrencyGuard.tryAcquire).toHaveBeenCalledWith(expect.any(String), 1860);
     expect(mockRepo.create).toHaveBeenCalledTimes(1);
     expect(record.id).toBe('call-1');
-    // PORT NOTE: core also asserted the browser token `createCall` returned; a
-    // borrowed leg mints none (pinned in the bridged suite).
+    // A borrowed leg mints no browser token (pinned in the bridged suite).
 
     const initArg = mockAdapter.initiateCall.mock.calls[0]![0];
     expect(initArg.from).toBe('+14155550100');
@@ -314,8 +283,8 @@ describe('WebRtcBridgeManager max-duration timer', () => {
     const onFire = (timer as unknown as { _onTimeout: () => void })._onTimeout;
     clearTimeout(timer as NodeJS.Timeout);
     onFire();
-    // PORT NOTE: an ANSWERED VoiceLink call defers its teardown to the carrier's
-    // `call.ended` (core's VoBiz fixture finalized at once); confirm it here.
+    // an ANSWERED VoiceLink call defers its teardown to the carrier's
+    // `call.ended`; confirm it here.
     if (opts.confirm) {
       await vi.waitFor(() => expect(mgr.getSession(callId)?.ending).toBe(true));
       await carrierEnded(mgr);
@@ -554,7 +523,7 @@ describe('WebRtcBridgeManager media relay — VoiceLink (A-law transcode)', () =
     expect(mgr.getSession('call-1')!.answeredAt).toBeNull(); // not answered until start
   });
 
-  it('user hangup defers settlement until carrier call.ended (ending state), then finalizes', async () => {
+  it('user hangup defers finalization until carrier call.ended (ending state), then finalizes', async () => {
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
     const { browser } = await dial(mgr, VL_PARAMS);
@@ -571,7 +540,7 @@ describe('WebRtcBridgeManager media relay — VoiceLink (A-law transcode)', () =
     expect(s).toBeDefined();
     expect(s!.ending).toBe(true);
     expect(s!.endHandled).toBe(false);
-    // PORT NOTE: core asserted no settlement yet; here nothing terminal has happened —
+    // Nothing terminal has happened yet —
     // no slot released and no terminal analytics event.
     expect(cm.concurrencyGuard.release).not.toHaveBeenCalled();
     expect(mockAnalytics.trackWebrtcCallCompleted).not.toHaveBeenCalled();
@@ -650,7 +619,7 @@ describe('WebRtcBridgeManager media relay — VoiceLink (A-law transcode)', () =
       // User hangs up → ending, nothing terminal yet.
       await endByUser(mgr);
       expect(mgr.getSession('call-1')!.ending).toBe(true);
-      // PORT NOTE: core asserted no settlement; here no terminal analytics event.
+      // No terminal analytics event yet.
       expect(mockAnalytics.trackWebrtcCallCompleted).not.toHaveBeenCalled();
 
       // Carrier never confirms; the fallback fires → finalize once. 45s,
@@ -685,7 +654,7 @@ describe('WebRtcBridgeManager media relay — VoiceLink (A-law transcode)', () =
       await carrierEnded(mgr);
       // …then the (now-cleared) 45s fallback window elapses — must be a no-op.
       await vi.advanceTimersByTimeAsync(45_000);
-      // PORT NOTE: core counted settlements; here the terminal write and the release.
+      // Exactly one terminal write and one release.
       const terminal = mockRepo.update.mock.calls.filter((c: any[]) => c[1]?.ended_at !== undefined);
       expect(terminal).toHaveLength(1);
       expect(cm.concurrencyGuard.release).toHaveBeenCalledTimes(1);
@@ -717,11 +686,9 @@ describe('WebRtcBridgeManager media relay — VoiceLink (A-law transcode)', () =
   });
 });
 
-// PORT NOTE: core's 'WebRtcBridgeManager VoBiz webhooks' describe. The three recording
-// cases are about the dial-time recording intent and the governance ceiling, which is
-// generic; core observed it through VoBiz's answer XML (`<Record>`), which no longer
-// exists. The same intent reaches the carrier as the dial request's `enableRecording`.
-describe('WebRtcBridgeManager VoBiz webhooks', () => {
+// The three recording cases are about the dial-time recording intent and the governance
+// ceiling. The intent reaches the carrier as the dial request's `enableRecording`.
+describe('WebRtcBridgeManager recording intent', () => {
   it('does not request recording by default (no <Record> options)', async () => {
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
@@ -770,10 +737,9 @@ describe('WebRtcBridgeManager.endCall', () => {
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
     await dial(mgr);
-    // PORT NOTE: core answered the VoBiz call first so it ended `completed` with a
-    // settlement. A VoiceLink answered call would defer to the carrier, so this case
+    // A VoiceLink answered call would defer to the carrier, so this case
     // ends the unanswered call (finalized at once) and asserts the terminal write, the
-    // release and the self-heal wake; `triggerDequeue` (AI SQS queue) is gone.
+    // release and the self-heal wake.
 
     const first = await endByUser(mgr);
     expect(first).toBe(true);
@@ -810,7 +776,7 @@ describe('WebRtcBridgeManager.gracefulShutdown', () => {
 
     expect(mgr.getActiveCount()).toBe(0);
     expect(mockAdapter.endCall).toHaveBeenCalledWith('pcid-1');
-    // PORT NOTE: core asserted the settlement payload; here the terminal row.
+    // The terminal row.
     expect(mockRepo.update).toHaveBeenCalledWith('call-1', expect.objectContaining({
       status: 'canceled', outcome: 'service_shutdown',
     }));
@@ -864,8 +830,7 @@ describe('WebRtcBridgeManager PostHog analytics', () => {
   it('webrtc_call_completed: connected=true + ended_by=remote on answered carrier hangup', async () => {
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
     await dial(mgr);
-    // PORT NOTE: core drove `handleVobizAnswer` + a VoBiz `completed` hangup; this is
-    // the VoiceLink answer + `call.ended` of an answered call.
+    // The VoiceLink answer + `call.ended` of an answered call.
     await mgr.handleVoicelinkStatus('call-1', {
       providerCallId: 'pcid-1', callId: 'call-1', eventType: 'answer', timestamp: new Date(), metadata: {},
     });
@@ -981,8 +946,7 @@ describe('WebRtcBridgeManager oversized-frame gate (MAX_MEDIA_FRAME_BYTES)', () 
   });
 
   it('a payload exactly at the limit is still relayed (boundary is exclusive)', async () => {
-    // PORT NOTE: core used VoBiz's verbatim relay to assert the boundary payload
-    // passes through unchanged. VoiceLink transcodes, so the observable is that a
+    // VoiceLink transcodes, so the observable is that a
     // frame IS relayed (the gate let it in) rather than its bytes.
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
     const { browser } = await dial(mgr, VL_PARAMS);
@@ -1009,8 +973,7 @@ describe('WebRtcBridgeManager.verifyWsToken — fail-open under Redis degradatio
     }
   });
 
-  // Q6 (Manas, 2026-10-09): MODIFIED from core's "returns true for every purpose when the
-  // stored key is missing (get→null)". Redis answered and holds no token: refused, because
+  // Q6: Redis answered and holds no token: refused, because
   // every token this bridge verifies is stored before the leg it guards can exist.
   it('returns FALSE for every purpose when Redis answers and the stored key is missing (Q6)', async () => {
     const redis = { get: vi.fn().mockResolvedValue(null), set: vi.fn(), del: vi.fn() };
@@ -1047,7 +1010,7 @@ describe('WebRtcBridgeManager.verifyWsToken — fail-open under Redis degradatio
 });
 
 /**
- * Q6 (Manas, 2026-10-09). NEW (magick-agency): the legitimate paths that used to lean on the
+ * Q6: the legitimate paths that used to lean on the
  * missing-key accept, each kept working explicitly, through a real dial on an in-memory Redis.
  */
 function memoryRedis() {
@@ -1106,7 +1069,7 @@ describe('WebRtcBridgeManager ws tokens — Q6 legitimate paths', () => {
     expect(await mgr.verifyWsToken('call-1', webhook, 'webhook')).toBe(false);
   });
 
-  it('a token whose SET failed at mint (Redis down then, up now) keeps core\'s accept, live and through the grace', async () => {
+  it('a token whose SET failed at mint (Redis down then, up now) is accepted, live and through the grace', async () => {
     const redis = memoryRedis();
     redis.failSet = true;
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, redis as any);
@@ -1151,7 +1114,6 @@ describe('WebRtcBridgeManager VoiceLink PSTN stop / browser-close edges', () => 
     expect(persisted.some((u: any) => u.status === 'no_answer')).toBe(true);
     // Never anchored answered → 0 talk time (unbilled).
     expect(persisted.some((u: any) => u.talk_time_seconds === 0)).toBe(true);
-    // PORT NOTE: core asserted a zero-talk-time settlement; the terminal row above is it.
   });
 
   it('browser leg closing during the VoiceLink `ending` window does not double-finalize', async () => {

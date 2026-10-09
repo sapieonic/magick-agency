@@ -7,25 +7,18 @@ import {
 } from '../../../src/agency/agency-activity.js';
 
 /*
- * PORT NOTE (magick-agency): master @ a1f0756a `test/unit/agency/proxy-agency-campaign-activity.routes.test.ts`.
- *
- * The route's two hops are collapsed (decision B16; lane B2's B7):
- *  - the ownership probe is `callCore` (`../../../src/api/core-dispatch.js`), mocked under
- *    master's `proxyToCore` variable name so the assertions stay master's;
- *  - core's half of the trail is no longer `coreInternalRequest('/audit-logs')` but lane B2's
- *    in-process read: `auditRepository.findFiltered` on `audit_logs`
+ * The route reads two stores in-process (decision B16):
+ *  - the ownership probe is `callCore` (`../../../src/api/core-dispatch.js`), mocked as
+ *    `mocks.proxyToCore`;
+ *  - the dialer's half of the trail is `auditRepository.findFiltered` on `audit_logs`
  *    (`@magick-agency/db/repositories/audit.repository`) plus `getAuditRetentionHorizon`
  *    (`src/audit/audit-retention.ts`). Both are mocked here (`coreFindFiltered`,
- *    `retentionHorizon`) and `coreRead(...)` replaces master's `coreBody(...)` S2S stub.
- *    Master's `platform_audit_log` half is `@magick-agency/db/repositories/platform/audit.repository`.
+ *    `retentionHorizon`) and `coreRead(...)` stubs them together.
+ *    The platform half is `platform_audit_log`, via `@magick-agency/db/repositories/platform/audit.repository`.
  *
- * Assertions master made on the S2S query string (`query: { tenant_id, campaign_id,
- * event_type, from, to, limit, with_total, before_at }`) are re-expressed on
- * `findFiltered`'s options (`tenantId`, `accountId`, `campaignId`, `eventTypes`, `from`,
- * `to`, `limit`, `withTotal`, `before`). Deleted cases (each named in PORTING
- * `p8-campaigns`) asserted only an HTTP-hop property: the degraded `partial` reads, the
- * 424 refusal, `recordCoreErrors`, and every page/probe timeout. The real-Postgres twin of
- * the service is `test/integration/agency/agency-activity-service.test.ts` (lane B2).
+ * Filters are asserted on `findFiltered`'s options (`tenantId`, `accountId`, `campaignId`,
+ * `eventTypes`, `from`, `to`, `limit`, `withTotal`, `before`). The real-Postgres twin of
+ * the service is `test/integration/agency/agency-activity-service.test.ts`.
  */
 
 const TENANT = 'tenant-1';
@@ -44,7 +37,7 @@ function uuidFor(n: number): string {
 }
 
 /**
- * One FULL export page — `limit + 1` master rows, which is what keeps the
+ * One FULL export page — `limit + 1` the public API layer rows, which is what keeps the
  * merge's `hasMore` true. A loop fed only these can be ended by the row ceiling
  * or the wall-clock budget and by nothing else, which is the point: it isolates
  * the guard under test from the stream simply running out.
@@ -107,8 +100,6 @@ vi.mock('../../../src/auth/session.middleware.js', () => ({ sessionMiddleware: a
 vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
   tenantContextMiddleware: async () => {},
 }));
-// PORT NOTE (magick-agency): master's `require-capability` mock is gone with governance
-// (the route registers no `requireCapability('agency')`; plan §3.2).
 vi.mock('../../../src/rbac/rbac.middleware.js', () => ({ requirePermission: () => async () => {} }));
 vi.mock('../../../src/config/index.js', () => ({ config: mocks.config }));
 
@@ -124,7 +115,7 @@ async function buildApp(): Promise<FastifyInstance> {
     (request as { tenantId?: string }).tenantId = TENANT;
     (request as { accountId?: string }).accountId = 'account-1';
     (request as { user?: { id: string } }).user = { id: 'user-1' };
-    // Deliberately different from `accountId`. (Master's degraded path scoped by this
+    // Deliberately different from `accountId`. (the public API layer's degraded path scoped by this
     // MEMBERSHIP account; that path is gone, and nothing on this route may read it now —
     // the Dialer half is scoped by the campaign row's own account.)
     (request as { membership?: { account_id: string | null } }).membership = { account_id: 'account-9' };
@@ -144,7 +135,7 @@ function campaignOk() {
 
 /**
  * A disposition row. `resource_id` is the ATTEMPT id, not the campaign — the
- * trap MAG-158 names, and the reason the filter is `campaign_id`.
+ * trap, and the reason the filter is `campaign_id`.
  */
 function dispositionRow() {
   return {
@@ -188,9 +179,8 @@ function coreAutoPause() {
 }
 
 /**
- * PORT NOTE (magick-agency): master's `coreBody(logs, overrides)` built core's S2S
- * `GET /internal/audit-logs` response. Its two halves now come from two in-process reads,
- * so this stubs both: `findFiltered`'s `{ rows, total }` and the retention horizon.
+ * The trail's two halves come from two in-process reads, so this stubs both:
+ * `findFiltered`'s `{ rows, total }` and the retention horizon.
  */
 function coreRead(
   logs: unknown[],
@@ -223,16 +213,16 @@ describe('GET /proxy/agency/campaigns/:id/activity', () => {
     app.inject({ method: 'GET', url: `${PREFIX}/campaigns/${CAMPAIGN}/activity${query}` });
 
   /**
-   * MAG-158 acceptance 3, and the assertion the ticket asks for by name.
+   * The merged trail carries rows from both stores.
    *
    * A test that only checked "200 with rows" would pass against a route that
-   * returns master's half. So this pins ONE ROW FROM EACH STORE, and the two
+   * returns the public API layer's half. So this pins ONE ROW FROM EACH STORE, and the two
    * chosen are the ones neither store can produce alone: `auto_paused` with its
-   * measured rate exists only in core, `agency_disposition.created` only in
-   * master. It also pins a naive `resource_id = campaignId` filter as broken —
+   * measured rate exists only in the internal handler, `agency_disposition.created` only in
+   * the public API layer. It also pins a naive `resource_id = campaignId` filter as broken —
    * the disposition's `resource_id` is an attempt id.
    */
-  it('returns core-only and master-only rows in one merged, time-ordered payload', async () => {
+  it('returns dialer-only and platform-only rows in one merged, time-ordered payload', async () => {
     mocks.auditFind.mockResolvedValue({ logs: [dispositionRow(), dncRow()], total: 2 });
     coreRead([coreAutoPause()]);
 
@@ -283,7 +273,6 @@ describe('GET /proxy/agency/campaigns/:id/activity', () => {
       expect.objectContaining({ tenantId: TENANT, campaignId: CAMPAIGN }),
     );
     expect(mocks.auditFind.mock.calls[0]![0]).not.toHaveProperty('resourceId');
-    // PORT NOTE (magick-agency): was the S2S query `{ tenant_id, campaign_id }`.
     expect(mocks.coreFindFiltered).toHaveBeenCalledWith(
       expect.objectContaining({ tenantId: TENANT, campaignId: CAMPAIGN }),
     );
@@ -295,7 +284,7 @@ describe('GET /proxy/agency/campaigns/:id/activity', () => {
    * row, so without this a supervisor could name another tenant's campaign and
    * enumerate its audit rows.
    */
-  it('verifies the campaign before either read, and forwards core\'s refusal verbatim', async () => {
+  it('verifies the campaign before either read, and forwards the internal handler\'s refusal unchanged', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 404,
       body: { error: 'Not Found', message: 'Campaign not found' },
@@ -310,17 +299,16 @@ describe('GET /proxy/agency/campaigns/:id/activity', () => {
   });
 
   /**
-   * Core stamps its rows with the campaign's OWN account, and core types that
+   * The internal handler stamps its rows with the campaign's OWN account, and the internal handler types that
    * column `VARCHAR(100)` with a literal `'default'` fallback — so it can differ
    * from the request header. Querying with the header would return nothing and
-   * read as "core recorded nothing about this campaign".
+   * read as "the dialer recorded nothing about this campaign".
    *
-   * PORT NOTE (magick-agency): the column is a `uuid` now (no `'default'`), but the rule
-   * is lane B2's carry-forward: `ActivityQuery.accountId` is the campaign ROW's account,
+   * The column is a `uuid` (no `'default'`), but the rule stands: `ActivityQuery.accountId` is the campaign ROW's account,
    * read after the ownership proof, never the header (`account-1`) or the membership
    * (`account-9`). The value is distinct from both so neither can pass by coincidence.
    */
-  it('queries core with the account from the campaign, not from the request header', async () => {
+  it('queries the internal handler with the account from the campaign, not from the request header', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
       body: { id: CAMPAIGN, name: 'Q3', account_id: 'account-7' },
@@ -334,11 +322,6 @@ describe('GET /proxy/agency/campaigns/:id/activity', () => {
     );
   });
 
-  // PORT NOTE (magick-agency): DELETED — "serves master's rows with partial: true on %s"
-  // (3 rows: a rejection, a network failure, a body of the wrong shape). The Dialer half
-  // is a direct `audit_logs` read (B7): there is no HTTP status, transport or untrusted
-  // body to degrade around, and a failing read propagates (lane B2 "Activity service").
-
   /**
    * Absent means "the client forgot to read it"; false means "we checked". On a
    * surface whose failure mode is looking complete while being short, the
@@ -350,10 +333,6 @@ describe('GET /proxy/agency/campaigns/:id/activity', () => {
     expect(body).toHaveProperty('partial', false);
     expect(body).toHaveProperty('partial_reason', null);
   });
-
-  // PORT NOTE (magick-agency): DELETED — "swallows core's failure without recording it for
-  // the error mask" asserted `recordCoreErrors: false` on the S2S call. There is no hop and
-  // no error mask (plan §1, one union).
 
   it('passes the action and period filters to both stores', async () => {
     await get(
@@ -368,7 +347,6 @@ describe('GET /proxy/agency/campaigns/:id/activity', () => {
         to: new Date('2026-08-31T00:00:00.000Z'),
       }),
     );
-    // PORT NOTE (magick-agency): was the S2S query `event_type=a,b&from=…&to=…`.
     expect(mocks.coreFindFiltered).toHaveBeenCalledWith(
       expect.objectContaining({
         eventTypes: ['agency_campaign.paused', 'dnc_entry.created'],
@@ -391,27 +369,26 @@ describe('GET /proxy/agency/campaigns/:id/activity', () => {
 
     expect(body.total).toBe(42);
     expect(mocks.auditFind.mock.calls[0]![0]).not.toHaveProperty('withTotal');
-    // PORT NOTE (magick-agency): was "no `with_total` on the S2S query"; the in-process read
-    // states the default explicitly (lane B2: `withTotal: !query.skipTotal`).
+    // The in-process read states the default explicitly (`withTotal: !query.skipTotal`).
     expect(mocks.coreFindFiltered.mock.calls[0]![0]).toMatchObject({ withTotal: true });
   });
 
   /**
-   * `total: null` from core is "not counted" — what it answers to
+   * `total: null` from the internal handler is "not counted" — what it answers to
    * `with_total=false` — and it is a different fact from a body that carried no
-   * total at all. Folded together, the skipped count would be read as core's
-   * page length and ADDED to master's, producing a confident figure that is
+   * total at all. Folded together, the skipped count would be read as the internal handler's
+   * page length and ADDED to the public API layer's, producing a confident figure that is
    * simply wrong. The rows are untouched either way, which is what makes the
    * wrong number hard to notice.
    */
-  it('reads core\'s explicit null total as uncounted, not as a count of its rows', async () => {
+  it('reads the internal handler\'s explicit null total as uncounted, not as a count of its rows', async () => {
     mocks.auditFind.mockResolvedValue({ logs: [dispositionRow()], total: 5 });
     coreRead([coreAutoPause()], { total: null });
 
     const body = (await get()).json();
 
     expect(body.total).toBeNull();
-    // Not a degraded read — core answered, and every row it sent is here.
+    // Not a degraded read — the internal handler answered, and every row it sent is here.
     expect(body.partial).toBe(false);
     expect(body.rows).toHaveLength(2);
   });
@@ -454,27 +431,21 @@ describe('GET /proxy/agency/campaigns/:id/activity', () => {
         before: { createdAt: new Date('2026-08-01T12:00:00.000Z'), id: MASTER_DISPOSITION_ID },
       }),
     );
-    // Core contributed nothing to page one, so it has no position yet and must
+    // The internal handler contributed nothing to page one, so it has no position yet and must
     // not be sent a keyset it never earned.
     expect(mocks.coreFindFiltered.mock.calls[0]![0]).not.toHaveProperty('before');
   });
 
-  it('rejects a page size that would overrun core\'s own request cap', async () => {
+  it('rejects a page size that would overrun the internal handler\'s own request cap', async () => {
     const res = await get('?limit=100');
 
     expect(res.statusCode).toBe(400);
   });
 
-  // PORT NOTE (magick-agency): DELETED — "drops only the unreadable row, keeping the rest of
-  // core's half". It pinned per-row skipping of an untrusted S2S body (`timestamp:
-  // 'not-a-date'`); the rows are now read from a `timestamptz` column and cannot carry one.
-  //
-  // MODIFIED — "serves master's rows when core is unreachable for the ownership probe too"
-  // is now the opposite outcome, for the reason in the route's `requireOwnedCampaign`: the
-  // in-process probe answers or throws (a wiring defect), there is no unverified scoping to
-  // fall back to (lane B2 deleted it), and an unproven campaign must reach NEITHER store
-  // (B2 carry-forward: prove ownership BEFORE the activity read).
-  it('serves master\'s rows when core is unreachable for the ownership probe too', async () => {
+  // The ownership probe answers or throws (a wiring defect) — there is no unverified
+  // scoping to fall back to, and an unproven campaign must reach NEITHER store (prove
+  // ownership BEFORE the activity read), as in the route's `requireOwnedCampaign`.
+  it('serves the public API layer\'s rows when the internal handler is unreachable for the ownership probe too', async () => {
     mocks.auditFind.mockResolvedValue({ logs: [dispositionRow()], total: 1 });
     mocks.proxyToCore.mockRejectedValue(new Error('core handlers are not registered'));
 
@@ -486,12 +457,12 @@ describe('GET /proxy/agency/campaigns/:id/activity', () => {
   });
 
   /**
-   * Core validates the period too, but master maps any core `>= 400` to
-   * `partial: core_error` — so without master's own check the supervisor is told
+   * The internal handler validates the period too, but the public API layer maps any internal handler `>= 400` to
+   * `partial: core_error` — so without the public API layer's own check the supervisor is told
    * the voice service is broken when they simply picked the dates backwards,
    * and is sent to the wrong remedy.
    */
-  it('refuses an inverted date range as the caller\'s error, not a core outage', async () => {
+  it('refuses an inverted date range as the caller\'s error, not an internal handler outage', async () => {
     const res = await get('?from=2026-08-31T00:00:00.000Z&to=2026-08-01T00:00:00.000Z');
 
     expect(res.statusCode).toBe(400);
@@ -503,11 +474,10 @@ describe('GET /proxy/agency/campaigns/:id/activity', () => {
   /**
    * The filter's vocabulary travels with the data it filters.
    *
-   * CusUI used to hold its own copy of these names, which nothing could check —
-   * master is not a dependency of that repository. The two pinned below are the
-   * pair that proves the served list spans BOTH stores: `auto_paused` is core's
+   * The console would otherwise hold its own copy of these names, which nothing could check. The two pinned below are the
+   * pair that proves the served list spans BOTH stores: `auto_paused` is the internal handler's
    * alone (and is the row a compliance reviewer came for), `agency_disposition
-   * .created` is master's alone. A list drawn from one catalog would drop one of
+   * .created` is the public API layer's alone. A list drawn from one catalog would drop one of
    * them and still look like a working feature.
    */
   it('serves the action vocabulary, spanning both stores', async () => {
@@ -516,17 +486,13 @@ describe('GET /proxy/agency/campaigns/:id/activity', () => {
     const values = res.json().available_actions.map((a: { value: string }) => a.value);
     expect(values).toContain('agency_campaign.auto_paused');
     expect(values).toContain('agency_disposition.created');
-    // Scheduler actions are in master's catalog and carry no campaign — offering
+    // Scheduler actions are in the public API layer's catalog and carry no campaign — offering
     // them would be a control that always returns nothing on this screen.
     expect(values).not.toContain('schedule.created');
     expect(res.json().available_actions[0]).toMatchObject({
       value: expect.any(String), label: expect.any(String), group: expect.any(String),
     });
   });
-
-  // PORT NOTE (magick-agency): DELETED — "still serves the vocabulary when core is
-  // unreachable": there is no unreachable-core state; the vocabulary is served on every
-  // 200 (previous case).
 
   /**
    * The ordering a keyset walk needs is an opt-in, and the activity path takes
@@ -545,10 +511,6 @@ describe('GET /proxy/agency/campaigns/:id/activity', () => {
     expect(options).toMatchObject({ keysetOrder: true });
     expect(options).not.toHaveProperty('before');
   });
-
-  // PORT NOTE (magick-agency): DELETED — "bounds the ownership probe rather than letting it
-  // run to core's global timeout" asserted `timeoutMs: ACTIVITY_OWNERSHIP_PROBE_TIMEOUT_MS`
-  // on the probe. It bounded undici's socket; `callCore` has none (route PORT NOTE).
 
   it('refuses a cursor whose id is not a uuid, rather than letting Postgres 22P02', async () => {
     const cursor = Buffer.from(
@@ -597,11 +559,6 @@ describe('GET /proxy/agency/campaigns/:id/activity.csv', () => {
     expect(lines[2]).toContain('agency_campaign.auto_paused');
   });
 
-  // PORT NOTE (magick-agency): DELETED — "refuses rather than writing a file missing core's
-  // half" (424 `partial_trail_unavailable`). `fetchActivityPage` cannot return a page
-  // missing core's half any more (B7: always `partial: false`); a failing read throws, and
-  // "still refuses when core actually fails mid-export" below pins that no file results.
-
   it('applies the same filters as the screen', async () => {
     await get('?action=dnc_entry.created&from=2026-08-01T00:00:00.000Z');
 
@@ -615,10 +572,10 @@ describe('GET /proxy/agency/campaigns/:id/activity.csv', () => {
 
   /**
    * The export is draining a trail, not rendering one, and each page costs a
-   * master SELECT plus an S2S round trip plus an identity lookup — in series. At
+   * the public API layer SELECT plus an ownership probe plus an identity lookup — in series. At
    * the screen's page size a full 5000-row export was ~51 of those trips; at 500
    * it is ~10. The `+ 1` is the merge's extra row, and it is what has to stay
-   * inside core's request cap.
+   * inside the internal handler's request cap.
    */
   it('pages the export coarsely rather than at the screen page size', async () => {
     await get();
@@ -652,7 +609,7 @@ describe('GET /proxy/agency/campaigns/:id/activity.csv', () => {
   /**
    * A skipped count must not read as a degraded one. `total: null` is what both
    * situations report, so `partial` is the only key that separates them — and an
-   * export that mistook "not counted" for "core is missing" would 424 every
+   * export that mistook "not counted" for "the dialer half is missing" would 424 every
    * time, i.e. the feature would never produce a file at all.
    */
   it('does not mistake an uncounted page for a partial one', async () => {
@@ -719,16 +676,16 @@ describe('GET /proxy/agency/campaigns/:id/activity.csv', () => {
 
   /**
    * The row ceiling bounds how much is written, not how long the writing takes.
-   * A core that answers slowly rather than failing keeps this loop legal and
+   * An internal handler that answers slowly rather than failing keeps this loop legal and
    * unbounded, holding a Fastify connection, a Postgres client and a socket for
-   * as long as core cares to take — and a compliance export is exactly the
+   * as long as the internal handler cares to take — and a compliance export is exactly the
    * request an operator retries when nothing comes back, so the slow case
    * multiplies itself.
    *
    * The clock is driven from inside the read, so the deadline is exercised by
    * the loop rather than by a timer racing it.
    */
-  it('stops at the wall-clock budget rather than running as long as core takes', async () => {
+  it('stops at the wall-clock budget rather than running as long as the internal handler takes', async () => {
     let now = Date.now();
     vi.spyOn(Date, 'now').mockImplementation(() => now);
     // Full pages every time, so nothing but the deadline can end this loop.
@@ -776,12 +733,6 @@ describe('GET /proxy/agency/campaigns/:id/activity.csv', () => {
     expect(res.headers['x-activity-truncated']).toBeUndefined();
   });
 
-  // PORT NOTE (magick-agency): DELETED — "bounds every core call by what is left of the
-  // budget" and "reports a deadline that fires mid-page as time_limit, not as a 424". Both
-  // drove the per-page `coreTimeoutMs` hand-down and the `core_deadline` abort of the S2S
-  // read; `fetchActivityPage` takes no timeout in-process. The between-pages budget is
-  // still pinned by "stops at the wall-clock budget…" above.
-
   /**
    * The reverse mistake, and the worse one: a real outage reported as a time
    * limit hands over a short compliance file during exactly the failure the 424
@@ -789,11 +740,10 @@ describe('GET /proxy/agency/campaigns/:id/activity.csv', () => {
    * export, not truncate it — including after pages have already been assembled.
    */
   //
-  // PORT NOTE (magick-agency): MODIFIED. A failing Dialer read now throws out of
-  // `fetchActivityPage` (no `partial` page), so the refusal is the error handler's 500
-  // rather than master's 424 — the invariant kept is the one this case exists for: no
-  // short file is handed over after pages were already assembled.
-  it('still refuses when core actually fails mid-export, rather than calling it a time limit', async () => {
+  // A failing Dialer read throws out of `fetchActivityPage` (no `partial` page), so the
+  // refusal is the error handler's 500 — the invariant is: no short file is handed over
+  // after pages were already assembled.
+  it('still refuses when the internal handler actually fails mid-export, rather than calling it a time limit', async () => {
     const nextPage = pagesOfFullRows();
     mocks.auditFind.mockImplementation(async () => ({ logs: nextPage(), total: null }));
 
@@ -811,12 +761,6 @@ describe('GET /proxy/agency/campaigns/:id/activity.csv', () => {
     expect(res.headers['content-type']).toContain('application/json');
     expect(res.headers['x-activity-rows']).toBeUndefined();
   });
-
-  // PORT NOTE (magick-agency): DELETED — "never hands the first page an already-expired
-  // timeout" (the `ACTIVITY_EXPORT_MIN_PAGE_TIMEOUT_MS` floor), "bounds the ownership probe
-  // separately from the export budget" (`ACTIVITY_OWNERSHIP_PROBE_TIMEOUT_MS`) and "refuses
-  // the export when the ownership probe itself times out". All three bounded an HTTP socket;
-  // in-process there is no page or probe timeout to floor, separate, or expire.
 
   /**
    * `actor` carries tenant-controlled display names, and this is the file that
@@ -874,7 +818,7 @@ describe('GET /proxy/agency/campaigns/:id/activity.csv', () => {
 
       expect(res.body).toContain('# Campaign: Q3 collections (id: camp-1)');
       expect(res.body).toContain(`# Tenant: ${TENANT}`);
-      // `campaignOk()` stamps `account_id: 'account-1'` — the account core's
+      // `campaignOk()` stamps `account_id: 'account-1'` — the account the internal handler's
       // rows were actually scoped to, not the request's own `X-Account-Id`.
       expect(res.body).toContain('# Account: account-1');
     });
@@ -920,8 +864,8 @@ describe('GET /proxy/agency/campaigns/:id/activity.csv', () => {
       ['partition_bound', '2026-05-01T00:00:00.000Z', 'source: partition_bound'],
       ['unbounded', null, 'unbounded — the dialer reports no retention horizon'],
       ['unknown', null, 'unknown (source: unknown)'],
-    ])('reports the %s retention source core carried on the page', async (source, earliest, expectedText) => {
-      // PORT NOTE (magick-agency): the horizon is `getAuditRetentionHorizon`'s now.
+    ])('reports the %s retention source the internal handler carried on the page', async (source, earliest, expectedText) => {
+      // The horizon is `getAuditRetentionHorizon`'s.
       coreRead([], { retention: { earliest_retained_at: earliest, source } });
 
       const res = await get();
@@ -929,10 +873,6 @@ describe('GET /proxy/agency/campaigns/:id/activity.csv', () => {
       expect(res.body).toContain(expectedText);
     });
 
-    // PORT NOTE (magick-agency): DELETED — "says retention is unknown when core carried no
-    // retention field at all". The retention now comes from `getAuditRetentionHorizon`,
-    // which always answers (its own failure is the `unknown` sentinel, pinned by the
-    // `unknown` row above), so a page without one cannot occur.
 
     /**
      * The comma-split hole the preamble's own doc comment claimed to close and

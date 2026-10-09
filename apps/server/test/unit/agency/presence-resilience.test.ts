@@ -1,51 +1,41 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core
-// test/unit/agency/presence-resilience.test.ts@4850d1d9 (16 cases → 14). The suite still
-// drives the REAL bridge (lane C's port) — on VoiceLink, because VoBiz is deleted.
+// The suite drives the REAL bridge, on VoiceLink.
 //
-// DELETED (2), softphone (plan §5): 'T-B5: an owned socket still closes at teardown and
-// still hangs up on close', 'T-B5: destroy() still CLOSES an owned browser socket' — both
-// built the owned leg with `createCall` + `attachBrowserLeg`, which lane C deleted.
-//
-// MODIFIED (each marked `PORT NOTE` inline):
-//  - harness: mock specifiers follow the path rule; the settlement-dispatcher mock is gone
-//    (settlement deleted); the account-settings mock gains `getWebrtcMaxDurationSeconds`
-//    → null (= 1800, the flag value core's mock returned); the campaign fixture is
-//    `voicelink` and drops `sip_connection_id`; the call-row double drops it too.
+// Harness notes:
+//  - the account-settings mock answers `getWebrtcMaxDurationSeconds` with null (the
+//    bridge's 1800 default); the campaign fixture is `voicelink`.
 //  - `dialAndBridge`: the PSTN attach is followed by VoiceLink's `start` frame — the
-//    answer and media negotiation on this carrier (VoBiz answered on the attach). Every
-//    case that bridges goes through it.
+//    answer and media negotiation on this carrier. Every case that bridges goes
+//    through it.
 //  - 'resumes the same call, with audio flowing again on the new socket': the relayed
-//    payload is a real 20ms tone (VoiceLink transcodes; 'QUJD' produced no frame). Same
-//    assertion: exactly one more carrier frame. ADDED: the leg was not closed and the
-//    session is not `ending` after the original deadline.
-//  - 'holds the call instead of hanging up, …': ADDED `pstn.closeCalls === 0` and
+//    payload is a real 20ms tone (VoiceLink transcodes; a short dummy payload produces
+//    no frame). Exactly one more carrier frame is expected, and the leg is not closed
+//    and the session is not `ending` after the original deadline.
+//  - 'holds the call instead of hanging up, …': asserts `pstn.closeCalls === 0` and
 //    `ending === false`. On VoiceLink an answered hangup is a WS close plus `ending` (the
-//    session stays in the map), so core's `getSession` / `endCall` checks alone also pass
-//    on a call hung up on the drop. Mutation-checked: with the grace removed
-//    (`browserCloseGraceMs: 0` in the dialer) the added line is the one that reds.
-//  - 'settles the call agent_disconnected and holds the release the agent missed': core's
-//    `expect(mockAdapter.endCall).toHaveBeenCalledWith('pcid-1')` (VoBiz's REST hangup)
-//    becomes "the carrier leg was closed" (VoiceLink's only hangup), and the carrier's
-//    `call.ended` is driven before the settled attempt is read (an answered VoiceLink
-//    hangup waits for it). Every other assertion unchanged.
+//    session stays in the map), so `getSession` / `endCall` checks alone also pass
+//    on a call hung up on the drop. With the grace removed
+//    (`browserCloseGraceMs: 0` in the dialer) these lines are the ones that red.
+//  - 'settles the call agent_disconnected and holds the release the agent missed': the
+//    hangup is asserted as "the carrier leg was closed" (VoiceLink's only hangup), and the
+//    carrier's `call.ended` is driven before the settled attempt is read (an answered
+//    VoiceLink hangup waits for it).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 
 // ---------------------------------------------------------------------------
-// AD-P2-C-07 — presence resilience.
+// Presence resilience.
 //
 // **This file drives the REAL bridge, not a double**, and that is the whole
 // point of it. The deferred-hangup window is armed inside
 // `WebRtcBridgeManager`'s borrowed-socket close handler and disarmed by its
 // re-attach entry point; a fake bridge would let every assertion here pass
-// against a window that does not exist. §16.6's second question — "is the
-// property true where it is CONSUMED, not only where it is implemented?" — is
-// answered by wiring the real `AgencyDialer` to the real `WebRtcBridgeManager`
+// against a window that does not exist. The property has to hold where it is
+// CONSUMED, not only where it is implemented, so the test wires the real `AgencyDialer` to the real `WebRtcBridgeManager`
 // over a real `StationRegistry` and a real `AgentStateMachine`, and driving the
 // whole thing from a socket close.
 //
 // The one double is Redis, and it is a RECORDING double rather than a stub,
-// because §15.9 assigns core one behavioural claim at this tier: exercising the
+// because the claim at this tier is behavioural: exercising the
 // deferred hangup writes no Redis key at all. That is only observable if
 // something is watching the wire.
 // ---------------------------------------------------------------------------
@@ -75,10 +65,10 @@ const { repos } = vi.hoisted(() => ({
     contact: {
       unclaim: vi.fn().mockResolvedValue(undefined),
       markState: vi.fn().mockResolvedValue(undefined),
-      // Returns the POST-bump budget (`AD-P3-C-01`). A number, not undefined: the
+      // Returns the POST-bump budget (the post-bump attempt budget). A number, not undefined: the
       // dial path decides the retry from whatever this returns.
       chargeAttempt: vi.fn().mockResolvedValue(1),
-      // The OUR-FAULT ledger (`AD-P3-C-09`). An agent-side drop before the bridge
+      // The OUR-FAULT ledger. An agent-side drop before the bridge
       // charges THIS instead of `chargeAttempt`, so failure mode 5 below can
       // assert the customer's allowance was never touched.
       chargeOurFaultAttempt: vi.fn().mockResolvedValue(1),
@@ -105,9 +95,8 @@ vi.mock('@magick-agency/db/repositories/agency-call.repository', () => ({
 }));
 
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
-  // PORT NOTE: + `getWebrtcMaxDurationSeconds` → null, i.e. the bridge's 1800 default
-  // (lane C: the max duration moved from the `webrtc_max_duration_seconds` flag to the
-  // account-settings column; core's flag mock below answered 1800 for it).
+  // `getWebrtcMaxDurationSeconds` → null, i.e. the bridge's 1800 default (the max
+  // duration is an account-settings column).
   accountSettingsRepository: {
     getAllowRecording: vi.fn().mockResolvedValue(null),
     getWebrtcMaxDurationSeconds: vi.fn().mockResolvedValue(null),
@@ -125,8 +114,7 @@ vi.mock('../../../src/telephony/factory.js', () => ({
   TelephonyProviderRegistry: class { get() { return mockAdapter; } },
 }));
 
-// PORT NOTE: core mocked `src/webhooks/settlement-dispatcher.js` here. The bridge's
-// settlement dispatch is deleted (plan §5, lane C), so there is nothing to mock.
+// The bridge has no settlement dispatch, so there is nothing to mock for it.
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn() } }));
 vi.mock('../../../src/analytics/posthog.js', () => ({
   trackWebrtcCallInitiated: vi.fn(),
@@ -181,12 +169,9 @@ class StationSocket extends EventEmitter {
 }
 
 /**
- * The carrier leg. Answering = attaching this, exactly as VoBiz's <Stream> does.
- *
- * PORT NOTE: VoBiz is deleted (lane C). On VoiceLink the leg attaching is not yet the
+ * The carrier leg. On VoiceLink the leg attaching is not yet the
  * answer: the carrier's `start` frame on this socket is — it anchors `answered_at` and
- * negotiates media — so {@link dialAndBridge} sends it right after the attach, which is
- * the same instant VoBiz's `<Stream>` connect reported.
+ * negotiates media — so {@link dialAndBridge} sends it right after the attach.
  */
 class PstnSocket extends EventEmitter {
   readyState = 1;
@@ -286,7 +271,6 @@ function fakeWrapup() {
 
 const CAMPAIGN = {
   id: 'camp-1', name: 'Q3 Renewals', tenant_id: 't1', account_id: 'a1',
-  // PORT NOTE: VoiceLink (VoBiz deleted, lane C); `sip_connection_id` dropped (SIP deleted).
   telephony_provider: 'voicelink', record_calls: false,
   analysis_profile_id: null, caller_ids: ['+14155550100'],
   disposition_catalog: [], wrapup_seconds: 0, wrapup_auto_return: true,
@@ -326,9 +310,7 @@ async function attachStation(stations: StationRegistry, sessionId: string, ws: S
 }
 
 /**
- * Dial, then answer the carrier by attaching its media leg (VoBiz's `<Stream>`).
- *
- * PORT NOTE: on VoiceLink, by attaching the leg and then sending its `start` frame
+ * Dial, then answer the carrier: attach its media leg and send its `start` frame
  * (see {@link PstnSocket}).
  */
 async function dialAndBridge(world: ReturnType<typeof makeWorld>, callId = 'call-1') {
@@ -339,7 +321,7 @@ async function dialAndBridge(world: ReturnType<typeof makeWorld>, callId = 'call
   await world.dialer.executeDial(makeCmd());
   const pstn = new PstnSocket();
   world.bridge.attachPstnLeg(callId, pstn as any);
-  negotiateVoicelink(pstn); // PORT NOTE: VoiceLink's answer + media negotiation.
+  negotiateVoicelink(pstn); // VoiceLink's answer + media negotiation.
   // The lifecycle listener is async (`void ... .catch`), so let its microtasks run.
   await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
   return pstn;
@@ -359,9 +341,8 @@ async function flush(times = 5): Promise<void> {
 }
 
 /**
- * PORT NOTE: VoiceLink's A-law 8kHz `start` frame — the answer on this carrier, and
- * what opens the relay (VoBiz was answered and media-ready on the leg's connect).
- * Same frame lane C's bridge suites send.
+ * VoiceLink's A-law 8kHz `start` frame — the answer on this carrier, and
+ * what opens the relay. Same frame the bridge suites send.
  */
 function negotiateVoicelink(pstn: PstnSocket): void {
   pstn.emit('message', JSON.stringify({
@@ -371,9 +352,8 @@ function negotiateVoicelink(pstn: PstnSocket): void {
 }
 
 /**
- * PORT NOTE: a real 20ms PCM16 16kHz tone. Core relayed VoBiz's L16 verbatim, so a
- * 3-byte payload proved the relay; VoiceLink transcodes (PCM16 16k → A-law 8k), so the
- * audio has to be real for exactly one carrier frame to come out (lane C's helper).
+ * A real 20ms PCM16 16kHz tone. VoiceLink transcodes (PCM16 16k → A-law 8k), so the
+ * audio has to be real for exactly one carrier frame to come out.
  */
 function pcm16kToneFrame(): string {
   const pcm = new Int16Array(320); // 20ms @16k = 640 bytes
@@ -382,9 +362,9 @@ function pcm16kToneFrame(): string {
 }
 
 /**
- * PORT NOTE: the carrier's `call.ended` for an ANSWERED VoiceLink call. Its hangup
- * waits in `ending` for this confirmation (VoBiz finalized at once), so a case that
- * asserts the settled attempt drives it — lane C's bridge suites do the same.
+ * The carrier's `call.ended` for an ANSWERED VoiceLink call. Its hangup
+ * waits in `ending` for this confirmation, so a case that
+ * asserts the settled attempt drives it, as the bridge suites do.
  */
 async function carrierConfirmsEnd(world: ReturnType<typeof makeWorld>, callId = 'call-1'): Promise<void> {
   await world.bridge.handleVoicelinkStatus(callId, {
@@ -404,7 +384,6 @@ beforeEach(() => {
     caller_id: i.caller_id, destination_phone: i.destination_phone,
     provider: i.provider, status: 'initiating', provider_call_id: null,
     answered_at: null, ended_at: null, duration_seconds: null, talk_time_seconds: null,
-    // PORT NOTE: `sip_connection_id: null` dropped — the column is not in the baseline.
     campaign_id: i.campaign_id ?? null, agency_attempt_id: i.agency_attempt_id ?? null,
   }));
   mockAdapter.initiateCall.mockResolvedValue({ providerCallId: 'pcid-1' });
@@ -415,10 +394,10 @@ afterEach(() => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// The §6.1 trap. Core's arm of §15.9's division of labour.
+// The deferred hangup is not a lease: the voice engine's side of the contract.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P2-C-07 · the deferred hangup is not a lease', () => {
+describe('the deferred hangup is not a lease', () => {
   it('writes no Redis key at all — arming and expiring the window are Redis-silent', async () => {
     vi.useFakeTimers();
     const world = makeWorld();
@@ -487,7 +466,7 @@ describe('AD-P2-C-07 · the deferred hangup is not a lease', () => {
 // The five failure modes, each proven by its own test (acceptance (a)).
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P2-C-07 · failure mode 1 — heartbeat loss while idle', () => {
+describe('failure mode 1 — heartbeat loss while idle', () => {
   it('an idle agent whose socket goes is written offline immediately, not left to the lease', async () => {
     const world = makeWorld();
     const ws = new StationSocket();
@@ -526,14 +505,14 @@ describe('AD-P2-C-07 · failure mode 1 — heartbeat loss while idle', () => {
   });
 });
 
-describe('AD-P2-C-07 · failure mode 2 — the socket drops mid-call', () => {
+describe('failure mode 2 — the socket drops mid-call', () => {
   it('holds the call instead of hanging up, and does not overwrite the on_call lease', async () => {
     vi.useFakeTimers();
     const world = makeWorld();
     const ws = new StationSocket();
     await attachStation(world.stations, 's1', ws);
     await world.agents.set('s1', 'available', { leaseMs: AGENT_LEASE_MS.available });
-    const pstn = await dialAndBridge(world); // PORT NOTE: kept for the VoiceLink hangup check below
+    const pstn = await dialAndBridge(world); // kept for the VoiceLink hangup check below
 
     expect((await world.agents.get('s1'))?.state).toBe('on_call');
 
@@ -546,7 +525,7 @@ describe('AD-P2-C-07 · failure mode 2 — the socket drops mid-call', () => {
     // The call is still live: no terminal write, no carrier hangup.
     expect(world.bridge.getSession('call-1'), 'the call was torn down on the drop').toBeDefined();
     expect(mockAdapter.endCall).not.toHaveBeenCalled();
-    // PORT NOTE: on VoiceLink an answered hangup is NOT `endCall` (it closes the provider WS
+    // On VoiceLink an answered hangup is NOT `endCall` (it closes the provider WS
     // and parks the session in `ending`, still in the map), so the two lines above would
     // also pass on a call hung up on the drop. These two say it on this carrier.
     expect(pstn.closeCalls, 'the carrier leg was hung up on the drop').toBe(0);
@@ -561,7 +540,7 @@ describe('AD-P2-C-07 · failure mode 2 — the socket drops mid-call', () => {
   });
 });
 
-describe('AD-P2-C-07 · failure mode 3 — reconnect INSIDE the window', () => {
+describe('failure mode 3 — reconnect INSIDE the window', () => {
   it('resumes the same call, with audio flowing again on the new socket', async () => {
     vi.useFakeTimers();
     const world = makeWorld();
@@ -589,7 +568,7 @@ describe('AD-P2-C-07 · failure mode 3 — reconnect INSIDE the window', () => {
 
     // ── Audio intact. Not "the call object still exists" — audio. ────────────
     const framesBefore = pstn.frames.length;
-    // PORT NOTE: a real 20ms tone instead of 'QUJD' — VoiceLink transcodes, so only
+    // A real 20ms tone — VoiceLink transcodes, so only
     // real audio yields exactly one carrier frame (see `pcm16kToneFrame`).
     second.emit('message', JSON.stringify({ event: 'media', media: { payload: pcm16kToneFrame() } }));
     expect(
@@ -603,26 +582,25 @@ describe('AD-P2-C-07 · failure mode 3 — reconnect INSIDE the window', () => {
     await vi.advanceTimersByTimeAsync(DEFERRED_HANGUP_MS * 2);
     expect(world.bridge.getSession('call-1'), 'the disarmed window fired anyway').toBeDefined();
     expect(mockAdapter.endCall).not.toHaveBeenCalled();
-    // PORT NOTE: the VoiceLink twins of the two lines above — see failure mode 2.
+    // The VoiceLink twins of the two lines above — see failure mode 2.
     expect(pstn.closeCalls, 'the disarmed window hung up the carrier leg').toBe(0);
     expect(world.bridge.getSession('call-1')!.ending, 'the disarmed window started a hangup').toBe(false);
   });
 });
 
-describe('AD-P2-C-07 · failure mode 4 — reconnect OUTSIDE the window', () => {
+describe('failure mode 4 — reconnect OUTSIDE the window', () => {
   it('settles the call agent_disconnected and holds the release the agent missed', async () => {
     vi.useFakeTimers();
     const world = makeWorld();
     const first = new StationSocket();
     await attachStation(world.stations, 's1', first);
     await world.agents.set('s1', 'available', { leaseMs: AGENT_LEASE_MS.available });
-    const pstn = await dialAndBridge(world); // PORT NOTE: the leg is kept (see below)
+    const pstn = await dialAndBridge(world); // the leg is kept (see below)
 
     first.drop();
     await vi.advanceTimersByTimeAsync(DEFERRED_HANGUP_MS + 100);
-    // PORT NOTE: the expired window hung up the carrier leg. VoBiz's hangup was the
-    // adapter's `endCall` REST call; VoiceLink's ONLY hangup mechanism is closing the
-    // provider WS (`localHangup`, answered arm), and the answered call then settles on
+    // The expired window hung up the carrier leg. VoiceLink's ONLY hangup
+    // mechanism is closing the provider WS (`localHangup`, answered arm), and the answered call then settles on
     // the carrier's `call.ended`. So the hangup is asserted as the leg being closed —
     // and still open before the window ran out would have been a hangup on the drop —
     // and the confirmation is driven before the settled attempt is read.
@@ -658,7 +636,7 @@ describe('AD-P2-C-07 · failure mode 4 — reconnect OUTSIDE the window', () => 
   });
 });
 
-describe('AD-P2-C-07 · failure mode 5 — the drop lands DURING the ring', () => {
+describe('failure mode 5 — the drop lands DURING the ring', () => {
   it('holds a pre-answer attempt through the window and settles it on expiry', async () => {
     vi.useFakeTimers();
     const world = makeWorld();
@@ -690,7 +668,7 @@ describe('AD-P2-C-07 · failure mode 5 — the drop lands DURING the ring', () =
     expect(terminal?.status).toBe('canceled');
     expect(repos.contact.markState).toHaveBeenCalled();
 
-    // ── `AD-P3-C-09` criteria 1 and 4 — the unit-level twin of the standing
+    // ── our-fault ledger rules — the unit-level twin of the standing
     // integration case in `chaos/network-drop-during-ring.test.ts` ───────────
     //
     // This assertion used to stop at "markState was called", which is true of
@@ -711,7 +689,7 @@ describe('AD-P2-C-07 · failure mode 5 — the drop lands DURING the ring', () =
   });
 });
 
-describe('AD-P2-C-07 · failure mode 6 — the process restarted', () => {
+describe('failure mode 6 — the process restarted', () => {
   /** A runtime is what owns the rehydration rule, so drive the real one. */
   function makeRuntime() {
     const redis = new RecordingRedis();
@@ -773,16 +751,10 @@ describe('AD-P2-C-07 · failure mode 6 — the process restarted', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// The regression bar (T-B5) and the guard the window is NOT (T-B7).
+// The regression bar and the guard the window is NOT.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P2-C-07 · the owned browser dialer is untouched', () => {
-  // PORT NOTE: core's two cases 'T-B5: an owned socket still closes at teardown and still
-  // hangs up on close' and 'T-B5: destroy() still CLOSES an owned browser socket' are
-  // DELETED. Both drove the softphone's owned leg through `createCall` +
-  // `attachBrowserLeg`, which are deleted with the softphone (plan §5; lane C deleted the
-  // bridge's own twins of them). The third case below keeps the owned-leg refusal.
-
+describe('the owned browser dialer is untouched', () => {
   it('refuses to re-attach onto an owned browser leg', async () => {
     // The re-attach entry point takes no token. Letting it reach an owned call
     // would hand anyone who learned the correlation id a seat in the audio.
@@ -797,7 +769,7 @@ describe('AD-P2-C-07 · the owned browser dialer is untouched', () => {
   });
 });
 
-describe('AD-P2-C-07 · the supersession guard is not the window (T-B7)', () => {
+describe('the supersession guard is not the window ', () => {
   it('a superseded socket closing neither ends the call nor arms a window', async () => {
     // Two mechanisms that look alike and are not. This one resolves which of two
     // SIMULTANEOUSLY OPEN sockets owns the call; it says nothing about a socket

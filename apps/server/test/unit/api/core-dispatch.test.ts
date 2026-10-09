@@ -8,25 +8,24 @@ import { callCore, getCoreHandlers, setCoreHandlers } from '../../../src/api/cor
 import { buildCoreHandlers } from '../../../src/api/core-handlers.js';
 
 /**
- * NEW (magick-agency, Phase 8): `callCore`, the in-process master → core hop (decision B16;
- * lead ruling: "approved, with a static resolution test; tenancy from lane A's context only,
- * never client headers").
+ * `callCore`, the in-process hop from the public API layer to the internal handler instance
+ * (decision B16: tenancy comes from the tenant-context only, never client headers).
  *
- * 1. **Static resolution.** Every core path a master handler hands `callCore` is read from the
- *    SOURCE with the TypeScript parser (every file under `src/` that imports `core-dispatch`),
- *    and each must resolve to a route the private core instance registers — enumerated from
- *    that instance's own `onRoute` hook. A typo, a renamed core route or a path that core never
- *    had would otherwise be a 404 at run time that every mocked unit suite stays green on
- *    (master's suites mocked `proxyToCore`). The reverse is checked too: a core handler no call
- *    site reaches is listed with its reason, so dead surface is a decision.
- * 2. **Tenancy.** `callCore` writes core's tenant/account headers from its typed arguments
- *    (which every call site fills from `request.tenantId` / `request.accountId`, i.e. lane A's
- *    tenant-context), AFTER any extra headers — so nothing a caller forwards can name a
- *    different tenant to core's handler. The end-to-end half (a browser sending core's headers
- *    or another tenant's id through the real app) is
+ * 1. **Static resolution.** Every internal path a public-API handler hands `callCore` is read
+ *    from the source text with the TypeScript parser (every file under `src/` that imports
+ *    `core-dispatch`), and each must resolve to a route the private internal handler instance
+ *    registers — enumerated from that instance's own `onRoute` hook. A typo, a renamed route
+ *    or a path that never existed would otherwise be a 404 at run time that every mocked unit
+ *    suite stays green on. The reverse is checked too: an internal handler no call site
+ *    reaches is listed with its reason, so dead surface is a decision.
+ * 2. **Tenancy.** `callCore` writes the internal tenant/account headers from its typed
+ *    arguments (which every call site fills from `request.tenantId` / `request.accountId`,
+ *    i.e. the tenant-context), AFTER any extra headers — so nothing a caller forwards can name
+ *    a different tenant to the internal handler. The end-to-end half (a browser sending the
+ *    internal headers or another tenant's id through the real app) is
  *    `test/integration/api/agency-tenant-isolation.test.ts`.
- * 3. The transport rules master's `proxyToCore` had and `callCore` keeps (query encoding, body
- *    gate, raw/text bodies, the traversal refusal, the wiring-defect throw).
+ * 3. The transport rules `callCore` keeps (query encoding, body gate, raw/text bodies, the
+ *    traversal refusal, the wiring-defect throw).
  */
 
 const SRC = fileURLToPath(new URL('../../../src/', import.meta.url));
@@ -41,7 +40,7 @@ function walk(dir: string): string[] {
 
 interface CallSite { file: string; line: number; method: string; path: string }
 
-/** Every `{ method?, path: '/agency…' }` object literal in a callCore-importing source file. */
+/** Every `{ method?, path: '/agency…' }` object literal in a callCore-importing file. */
 function extractCallSites(): { sites: CallSite[]; dynamic: string[]; callers: string[] } {
   const sites: CallSite[] = [];
   const dynamic: string[] = [];
@@ -102,7 +101,7 @@ const DYNAMIC_CALL_SITES: ReadonlyMap<string, string> = new Map([
     "the spine CSV export's page loop; its two callers pass literal `/agency-campaigns/${id}/attempts` and `/contacts` objects"],
 ]);
 
-/** Core handlers no master call site reaches, each with why. */
+/** Internal handlers no public-API call site reaches, each with why. */
 const UNREACHED_CORE_ROUTES: ReadonlyMap<string, string> = new Map([
   ['GET /api/v1/agency-campaigns/:_/attempts/:_/recording-url',
     "core's signed-URL minter; master never proxied it (master `error-mask.middleware.ts`, `no_recording`: \"core emits it from its recording-url route, which master does not proxy yet\"); the console plays through `/attempts/:attemptId/recording`"],
@@ -139,10 +138,10 @@ afterAll(async () => {
   await core.close();
 });
 
-describe('callCore — static resolution against the private core instance', () => {
+describe('callCore — static resolution against the private internal handler instance', () => {
   const { sites, dynamic, callers } = extractCallSites();
 
-  it('finds the master handler modules and their core paths (the extraction is not vacuous)', () => {
+  it('finds the public-API handler modules and their internal paths (the extraction is not vacuous)', () => {
     expect(callers.sort()).toEqual([
       'api/agency.plugin.ts', // installs the instance (`setCoreHandlers`); calls nothing
       'api/routes/proxy-agency-agent.routes.ts',
@@ -155,7 +154,7 @@ describe('callCore — static resolution against the private core instance', () 
     expect(coreRoutes.length).toBeGreaterThanOrEqual(20);
   });
 
-  it('every literal core path a master handler sends resolves to a registered core route', () => {
+  it('every literal internal path a public-API handler sends resolves to a registered internal route', () => {
     const unresolved = sites
       .filter((s) => !coreRoutes.some((r) => r.method === s.method && toRegex(r.url).test(`/api/v1${s.path.split('?')[0]}`)))
       .map((s) => `${s.file}:${s.line} ${s.method} ${s.path}`);
@@ -167,7 +166,7 @@ describe('callCore — static resolution against the private core instance', () 
     expect(keys.sort()).toEqual([...DYNAMIC_CALL_SITES.keys()].sort());
   });
 
-  it('every core route is reached by a call site, or listed as unreached with its reason', () => {
+  it('every internal route is reached by a call site, or listed as unreached with its reason', () => {
     const reached = (r: { method: string; url: string }) =>
       sites.some((s) => s.method === r.method && toRegex(r.url).test(`/api/v1${s.path.split('?')[0]}`));
     const unreached = coreRoutes.filter((r) => !reached(r)).map((r) => `${r.method} ${shape(r.url)}`);
@@ -203,7 +202,7 @@ describe('callCore — tenancy and transport', () => {
     await expect(callCore({ method: 'GET', path: '/agency-campaigns', tenantId: 't' })).rejects.toThrow(/not registered/);
   });
 
-  it("writes core's tenant/account headers from its arguments, after any extra header — a forwarded x-mgkvc-tenant cannot name another tenant", async () => {
+  it("writes the internal tenant/account headers from its arguments, after any extra header — a forwarded x-mgkvc-tenant cannot name another tenant", async () => {
     setCoreHandlers(stub);
     await callCore({
       method: 'GET',
@@ -217,7 +216,7 @@ describe('callCore — tenancy and transport', () => {
     expect(seen!.headers['range']).toBe('bytes=0-1');
   });
 
-  it('does not let an extra header supply an account (or originator) the context lacks — core answers its own 400', async () => {
+  it('does not let an extra header supply an account (or originator) the context lacks — the internal handler answers its own 400', async () => {
     setCoreHandlers(stub);
     await callCore({
       method: 'GET', path: '/agency-campaigns', tenantId: 't1',
@@ -228,7 +227,7 @@ describe('callCore — tenancy and transport', () => {
     expect(seen!.headers['x-mgkvc-originator']).toBeUndefined();
   });
 
-  it("encodes the query as master's URLSearchParams did and keeps JSON round-tripping (a Date arrives as its ISO string)", async () => {
+  it("encodes the query with URLSearchParams and keeps JSON round-tripping (a Date arrives as its ISO string)", async () => {
     setCoreHandlers(stub);
     const res = await callCore({ method: 'GET', path: '/agency-campaigns', tenantId: 't', query: { a: '1', b: 'x y,z' } });
     expect(seen!.url).toBe('/api/v1/agency-campaigns?a=1&b=x+y%2Cz');
@@ -254,7 +253,7 @@ describe('callCore — tenancy and transport', () => {
     expect(text.body).toBe('plain words');
   });
 
-  it("refuses a traversal path with master's exact 400, without reaching core", async () => {
+  it("refuses a traversal path with the exact 400, without reaching the internal handler", async () => {
     setCoreHandlers(stub);
     const res = await callCore({ method: 'GET', path: '/agency-campaigns/../internal', tenantId: 't' });
     expect(res.status).toBe(400);

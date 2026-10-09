@@ -2,10 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ConversationEntry } from '@magick-agency/db/models/conversation-entry.model';
 import type { AnalyticsConfig } from '@magick-agency/db/models/prompt.model';
 
-/*
- * PORT NOTE (magick-agency): ported from core test/unit/analysis/analysis.service.test.ts
- * @4850d1d9. Cases unchanged; only module paths differ.
- */
 
 const mocks = vi.hoisted(() => ({
   chatCompletionsCreate: vi.fn(),

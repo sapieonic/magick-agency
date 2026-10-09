@@ -1,36 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): ported from core test/unit/agency/campaign-config-route.test.ts@4850d1d9.
- * Mock paths re-pointed only (logger → a partial `@magick-agency/observability` mock;
- * announcement / call / account-settings / profile repositories → `@magick-agency/db/repositories/*`;
- * leaf modules → `@magick-agency/domain/*`; `contracts.js` → `@magick-agency/contracts/agency`).
- * Cases verbatim unless noted here.
- */
-
 // ---------------------------------------------------------------------------
-// AD-P3-C-08 (MAG-95) — campaign config validated at CORE's boundary.
+// Campaign config is validated at the internal handler's boundary.
 //
-// Master's AD-P3-M-04 validator runs on the proxy path only, and core's API
-// answers a tenant API key without traversing master — so every rule master
-// applies was bypassable. §16.6 question 2: the invariants are CONSUMED by
-// core's retry engine and calling-hours gate, so they have to hold here.
+// The public API layer's validator (`agency-campaign-config.ts`) runs on the
+// proxy path only, and the internal handler answers a tenant API key without
+// traversing it — so every rule it applies would be bypassable on its own. The
+// invariants are CONSUMED by the retry engine and the calling-hours gate, so
+// they have to hold here.
 //
-// ── WHY THE CASE TABLE, AND WHAT IT CAN HONESTLY CLAIM (criterion b) ────────
+// ── WHY THE CASE TABLE, AND WHAT IT CAN HONESTLY CLAIM ──────────────────────
 //
-// Criterion (b) asks that master's validator and core's agree on every case.
-// Core's unit suite cannot import master's module — separate repo, separate
-// tsconfig, and a cross-repo import would make core's suite unrunnable alone —
-// so the pairing is carried by RULES below: one row per rule in
-// `magick-master/src/agency/agency-campaign-config.ts`, each naming the master
-// rule it pairs with and the decision BOTH validators are expected to reach.
+// The two validators must agree on every case. The pairing is carried by RULES
+// below: one row per rule in `src/agency/agency-campaign-config.ts`, each naming
+// the public-API-layer rule it pairs with and the decision BOTH validators are
+// expected to reach.
 //
-// That is a real pairing and it is also the honest limit: it pins core against
-// master as master was read on 2026-08-11, not against master as it is at any
-// later moment. A change on master's side does not red this file. The genuine
-// cross-service guard is a shared fixture both suites consume, which does not
-// exist and is named in the handoff rather than implied here.
+// That is a real pairing and it is also the honest limit: it pins this validator
+// against the other as that one was read on 2026-08-11, not as it is at any later
+// moment. A change to the other validator does not red this file. A genuine
+// guard would be a shared fixture both suites consume, which does not exist.
 //
 // The three DELIBERATE divergences are tested as divergences at the bottom, so
 // they are a recorded decision rather than a gap someone later discovers.
@@ -78,7 +68,7 @@ vi.mock('@magick-agency/db/repositories/announcement.repository', () => ({
 import { agencyCampaignRoutes } from '../../../src/api/routes/agency-campaigns.routes.js';
 
 /**
- * `AD-P4-C-01` gave this plugin dependencies, for the stats route's health strip
+ * This plugin takes dependencies, for the stats route's health strip
  * only. Every test in this file exercises a DIFFERENT route, so the stubs exist
  * to satisfy the signature and are deliberately not exercised — a stub that
  * returned plausible health data here would invite an assertion about a surface
@@ -131,7 +121,7 @@ beforeEach(() => {
 // by md5 before and after.
 // ===========================================================================
 interface Case {
-  /** What the rule is, and the master rule it pairs with. */
+  /** What the rule is, and the public-API-layer rule it pairs with. */
   name: string;
   body: Record<string, unknown>;
   /** null ⇒ both validators accept. Otherwise the field both must flag. */
@@ -141,7 +131,7 @@ interface Case {
 const RULES: Case[] = [
   // ── calling_days: ISO-8601, 0 refused ────────────────────────────────────
   {
-    name: 'calling_days 0 is REFUSED, not read as Sunday (master: same)',
+    name: 'calling_days 0 is REFUSED, not read as Sunday (both validators: same)',
     body: { calling_days: [0, 1, 2] },
     rejectField: 'calling_days[0]',
   },
@@ -183,7 +173,7 @@ const RULES: Case[] = [
 
   // ── calling window ───────────────────────────────────────────────────────
   {
-    name: 'start == end is refused — core reads it as "no opening exists"',
+    name: 'start == end is refused — the voice engine reads it as "no opening exists"',
     body: { calling_window_start: '09:00', calling_window_end: '09:00' },
     rejectField: 'calling_window_end',
   },
@@ -313,7 +303,7 @@ const RULES: Case[] = [
   },
 ];
 
-describe('POST /agency-campaigns · core enforces the config rules master states', () => {
+describe('POST /agency-campaigns · the internal handler enforces the config rules the public API layer states', () => {
   for (const c of RULES) {
     it(c.name, async () => {
       const app = await makeApp();
@@ -359,10 +349,10 @@ describe('an empty disposition_catalog is a CONFIGURATION, not a mistake', () =>
     expect(campaigns.create.mock.calls[0]![0].disposition_catalog).toEqual([]);
   });
 
-  it('does not invent the three "built-in" codes on core\'s own path', async () => {
-    // Core does NOT force-merge built-ins, and must not: the empty catalog above
-    // would stop being expressible. Master applies a creation-time default on the
-    // proxy path, so a campaign created directly at core differs from one created
+  it('does not invent the three "built-in" codes on the internal handler\'s own path', async () => {
+    // The internal handler does NOT force-merge built-ins, and must not: the empty catalog above
+    // would stop being expressible. The public API layer applies a creation-time default on the
+    // proxy path, so a campaign created directly at the handler differs from one created
     // through the wizard — recorded here as intended, not discovered later.
     const app = await makeApp();
     await app.inject({
@@ -399,9 +389,9 @@ describe("the 'EST' trap", () => {
 });
 
 // ===========================================================================
-// The DEFAULT path — `AD-P3-C-01` nearly shipped inert on exactly this
+// The DEFAULT path — the retry feature nearly shipped inert on exactly this
 //
-// The empty/absent config is the ORDINARY case: master does not send
+// The empty/absent config is the ORDINARY case: the public API layer does not send
 // `retry_policy`, and every window field has a column default. So the case that
 // must not break is "a body carrying no config at all", and the case that must
 // not slip through is one where the COLUMN DEFAULT completes a broken window.
@@ -443,8 +433,8 @@ describe('PATCH /agency-campaigns/:id · the same rules, on the merged result', 
   it('refuses a patch that makes the STORED window degenerate', async () => {
     // The stored campaign is 09:00–20:00. Patching only the start to 20:00 makes
     // it 20:00–20:00. Validating the body alone sees one valid time; the campaign
-    // that results can never dial. Core can merge because it owns the row —
-    // master cannot, by design, which is why enforcement belongs here.
+    // that results can never dial. The internal handler can merge because it owns the row —
+    // the public API layer cannot, by design, which is why enforcement belongs here.
     const app = await makeApp();
     const res = await app.inject({
       method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS,
@@ -491,14 +481,14 @@ describe('PATCH /agency-campaigns/:id · the same rules, on the merged result', 
 });
 
 // ===========================================================================
-// DELIBERATE DIVERGENCES FROM MASTER
+// DELIBERATE DIVERGENCES FROM THE PUBLIC API LAYER'S VALIDATOR
 //
 // Recorded as tests so they are a decision with evidence rather than a gap.
 // Each was reached by reading `resolveRetryDecision` — the only consumer of a
-// retry-policy key — instead of copying master's list.
+// retry-policy key — instead of copying the other validator's list.
 // ===========================================================================
-describe('divergences from master, each read off the consumer', () => {
-  it("ACCEPTS 'orphaned', which master rejects and which genuinely fires", async () => {
+describe('divergences from the public API layer\'s validator, each read off the consumer', () => {
+  it("ACCEPTS 'orphaned', which the public API layer rejects and which genuinely fires", async () => {
     // `agency-dialer.ts` and `reaper.ts` both write `outcome: 'orphaned'`, and
     // `resolveRetryDecision` looks the key up in the policy. `DEFAULT_RETRY_POLICY`
     // has no entry, so WITHOUT a policy key the answer is `no_policy_for_outcome`
@@ -514,7 +504,7 @@ describe('divergences from master, each read off the consumer', () => {
     expect(res.statusCode, JSON.stringify(res.json())).toBe(201);
   });
 
-  it("ACCEPTS 'agent_disconnected', which master rejects and which genuinely fires", async () => {
+  it("ACCEPTS 'agent_disconnected', which the public API layer rejects and which genuinely fires", async () => {
     const app = await makeApp();
     const res = await app.inject({
       method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS,
@@ -527,9 +517,9 @@ describe('divergences from master, each read off the consumer', () => {
   it("REFUSES 'invalid', because suppression happens before any policy is read", async () => {
     // Replaces the case that asserted a 201 here. That test carried the standing
     // instruction "if this test ever starts failing, the paired change has landed
-    // — delete the test, do not relax it". MAG-103 is that paired change: master
-    // refuses the key in the same release and cusui stops sending it, so the two
-    // validators still agree.
+    // — delete the test, do not relax it". That paired change has landed: the public
+    // API layer refuses the key and the console stops sending it, so the two
+    // validators agree.
     const app = await makeApp();
     const res = await app.inject({
       method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS,
@@ -556,7 +546,7 @@ describe('divergences from master, each read off the consumer', () => {
 //
 // Not part of `validateAgencyCampaignConfig`'s remit (that validator owns the
 // retry/window/disposition invariants), so neither the case table above nor
-// master's paired validator covered it. Create refused an empty pool from day
+// the public API layer's paired validator covered it. Create refused an empty pool from day
 // one; PATCH accepted one, and the pacing engine then threw mid-tick out of
 // `create({ callerId: … })`'s argument list — leaking every agent reservation
 // and contact claim the tick had taken.
@@ -610,7 +600,7 @@ describe('PATCH /:id — caller_ids may not be emptied', () => {
     // `pickCallerId` then returns `''`, which is falsy, so the pacing engine takes
     // its no-caller-IDs halt and reports "has no caller IDs" about a campaign that
     // has one — a genuinely confusing thing to hand an operator. `[123]` was stored
-    // verbatim and reached the dial.
+    // as-is and reached the dial.
     const app = await makeApp();
     for (const value of [[''], ['  '], [123], [null], ['+14155550100', ''], [{}]]) {
       const res = await app.inject({

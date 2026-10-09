@@ -1,29 +1,20 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core test/unit/agency/reaper.test.ts@4850d1d9 (41 → 41).
-// Import/mock paths only (account settings, `webrtc-call.repository` → `agency-call.repository`,
-// the metric reader is core's helper at the same path, see `test/helpers/otel-metric-reader.ts`), plus part B (the real bridge), which
-// ran on VoBiz and now runs on VoiceLink (VoBiz and SIP deleted, plan §5): the `settlement-dispatcher`
-// mock is gone (module deleted); the campaign fixture says `voicelink` and drops `sip_connection_id`;
-// `intoGraceWindow` answers with VoiceLink's `start` frame on the PSTN socket (VoBiz's `<Stream>`
-// connect was the answer); 'reaps the same attempt once the window has actually lapsed' drives the
-// carrier's `call.ended` after the 30s advance, because an answered VoiceLink hangup waits in `ending`
-// for it (45s timeout) where VoBiz finalized at once (without it that case reds). No case deleted.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 
 // ---------------------------------------------------------------------------
-// AD-P2-C-08 — the periodic reaper and the no_disposition sweep.
+// The periodic reaper and the no_disposition sweep.
 //
-// Crash recovery (§6.2). `gracefulShutdown` handles SIGTERM. It does not handle
+// Crash recovery. `gracefulShutdown` handles SIGTERM. It does not handle
 // SIGKILL, OOM or a hard crash, and those strand contacts in `in_flight` (never
 // re-claimed) and attempts in non-terminal states (counted against the tick's
 // occupancy, permanently shrinking the dialing target).
 //
 // ── Why this file is shaped the way it is ─────────────────────────────────────
 //
-// The version of it that shipped with `AD-P1-C-08` contained a test named
+// An earlier version of it contained a test named
 // "only reaps attempts older than the leak threshold — never a live call" whose
-// entire body asserted `Date.now() - cutoff > 1 hour`. That is §16.6's first
-// question failing in one line: **it supplied the answer to the question it
+// entire body asserted `Date.now() - cutoff > 1 hour`. That is the
+// first review question failing in one line: **it supplied the answer to the question it
 // claimed to ask.** "Never a live call" was the claim; "the cutoff is a big
 // number" was the check. The sweep consulted nothing about liveness at all, and
 // the suite could not see it, because a large threshold was being treated as the
@@ -31,8 +22,8 @@ import { EventEmitter } from 'node:events';
 //
 // So the liveness assertions here are made against the REAL `AgencyDialer`,
 // `StationRegistry` and `WebRtcBridgeManager` (part B), not against a stubbed
-// deps object. The hardest instance of acceptance (c) is not the 30-call soak —
-// it is a call inside the `AD-P2-C-07` deferred-hangup window, whose agent socket
+// deps object. The hardest case is not the 30-call soak —
+// it is a call inside the deferred-hangup window, whose agent socket
 // is *gone* and whose carrier leg is *live*. Part B establishes from observable
 // bridge state that such a call is invisible to every liveness signal except the
 // one arm that protects it.
@@ -75,7 +66,7 @@ const { repos } = vi.hoisted(() => ({
       // retirement counter below.
       markState: vi.fn().mockResolvedValue(true),
       unclaim: vi.fn().mockResolvedValue(undefined),
-      // The OUR-FAULT ledger (`AD-P3-C-09`), separate from `attempt_count`.
+      // The OUR-FAULT ledger, separate from `attempt_count`.
       // Returns the post-bump count, which is what the bound is evaluated on —
       // `1` means "this is the first our-fault redial", so every existing case
       // below stays well inside the bound and keeps asserting the requeue.
@@ -97,8 +88,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
 
 // The retry seam is spied but NOT stubbed — the real decision runs, so a test
 // asserting the contact lands in `completed` is observing the policy's answer
-// rather than a mock's. Acceptance (b) wants the call proven; §16.6 rule 1 wants
-// the answer to come from the code under test.
+// rather than a mock's. The answer has to come from the code under test.
 const { retrySpy } = vi.hoisted(() => ({ retrySpy: vi.fn() }));
 vi.mock('../../../src/agency/retry-policy.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/agency/retry-policy.js')>();
@@ -135,8 +125,7 @@ const { mockAdapter } = vi.hoisted(() => ({
 vi.mock('../../../src/telephony/factory.js', () => ({
   TelephonyProviderRegistry: class { get() { return mockAdapter; } },
 }));
-// PORT NOTE: core mocked `src/webhooks/settlement-dispatcher.js` here; the bridge's
-// settlement dispatch is deleted (plan §5, lane C), so there is nothing to double.
+// The bridge does no settlement dispatch, so there is no dispatcher to double.
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn() } }));
 vi.mock('../../../src/analytics/posthog.js', () => ({
   trackWebrtcCallInitiated: vi.fn(),
@@ -191,7 +180,7 @@ function attemptRow(over: Record<string, unknown> = {}): any {
     id: 'att-1', contact_id: 'c1', reserved_agent_id: null, state: 'ringing',
     outcome: null, disposition_code: null, bridged_at: new Date(), ended_at: new Date(),
     wrapup_seconds: 30, campaign_disposition_catalog: [], campaign_retry_policy: null,
-    // The contact's retry budget (`AD-P3-C-01`). Deliberately NOT 0: a default of 0
+    // The contact's retry budget. Deliberately NOT 0: a default of 0
     // would make "the reaper forwards the stored count" and "the reaper forwards
     // zero" indistinguishable in every test that does not override it.
     contact_attempt_count: 2,
@@ -293,7 +282,7 @@ describe('AgencyReaper leak sweep — what it decides on', () => {
     // non-terminal attempt found AT BOOT is dead by definition"; the periodic
     // sweep called it anyway with an age cutoff, silently widening a boot-only
     // argument into a general one. An *accurate* comment whose scope a second
-    // caller exceeded — §16.6 rule 3's nastier variant, since a reviewer reads a
+    // caller exceeded — the nastier variant, since a reviewer reads a
     // correct justification and never asks whether this caller is at boot.
     await new AgencyReaper(noDeps()).sweepOnce();
     expect(repos.attempt.reapNonTerminal).not.toHaveBeenCalled();
@@ -359,7 +348,7 @@ describe('AgencyReaper leak sweep — what it decides on', () => {
     expect(repos.contact.markState).not.toHaveBeenCalled();
   });
 
-  it('reaps when the agent is held by NOBODY — §6.2s actual rule', async () => {
+  it('reaps when the agent is held by NOBODY — the actual rule', async () => {
     // "non-terminal and owned by a replica whose heartbeat is gone". A null owner
     // is that clause: the ownership key has lapsed, so no replica is renewing it.
     repos.attempt.findNonTerminalOlderThan.mockResolvedValue([
@@ -388,7 +377,7 @@ describe('AgencyReaper leak sweep — what it decides on', () => {
   it('trusts the guarded UPDATE, not its own SELECT, for what was reaped', async () => {
     // The residual race: an attempt settles normally between the SELECT and the
     // UPDATE. `reapByIds` re-checks `state`, writes nothing, and returns nothing —
-    // so no contact is requeued for a call that in fact just connected. §5.3's
+    // so no contact is requeued for a call that in fact just connected. The
     // exactly-one-writer rule, enforced rather than hoped for.
     repos.attempt.findNonTerminalOlderThan.mockResolvedValue([
       attemptRow({ id: 'raced-1', contact_id: 'c-raced' }),
@@ -420,14 +409,14 @@ describe('AgencyReaper leak sweep — what it decides on', () => {
     expect(repos.session.markAllOffline).not.toHaveBeenCalled();
   });
 
-  it('leaves 30 healthy concurrent calls entirely alone — acceptance (c)', async () => {
+  it('leaves 30 healthy concurrent calls entirely alone', async () => {
     const live = Array.from({ length: 30 }, (_, i) => `att-${i}`);
     repos.attempt.findNonTerminalOlderThan.mockResolvedValue(
       live.map((id, i) => attemptRow({ id, contact_id: `c-${i}`, reserved_agent_id: `sess-${i}` })),
     );
 
     const reaper = new AgencyReaper(noDeps({ activeAttemptIds: () => live }));
-    // Two cycles: acceptance (a) allows a leak two cycles to be caught, so a
+    // Two cycles: a leak is allowed two cycles to be caught, so a
     // healthy call must survive at least that many.
     expect(await reaper.sweepOnce()).toBe(0);
     expect(await reaper.sweepOnce()).toBe(0);
@@ -451,7 +440,7 @@ describe('AgencyReaper leak sweep — what it decides on', () => {
 
   it('requeues WITHOUT consuming the contact retry allowance', async () => {
     // A product decision, not an oversight: our crash must not spend the
-    // customer's retries. With `max_attempts: 3`, three core restarts would
+    // customer's retries. With `max_attempts: 3`, three crash restarts would
     // otherwise exhaust a contact and mark them `exhausted` having never been
     // spoken to — silent contact loss behind a plausible-looking audit trail.
     repos.attempt.reapNonTerminal.mockResolvedValue([
@@ -554,8 +543,6 @@ class MiniRedis {
 
 const CAMPAIGN = {
   id: 'camp-1', name: 'Q3 Renewals', tenant_id: 't1', account_id: 'a1',
-  // PORT NOTE: VoBiz and SIP are deleted (plan §5) — the campaign dials VoiceLink and
-  // carries no `sip_connection_id`.
   telephony_provider: 'voicelink', record_calls: false,
   analysis_profile_id: null, caller_ids: ['+14155550100'],
   disposition_catalog: [], wrapup_seconds: 0, wrapup_auto_return: true,
@@ -584,7 +571,7 @@ async function flush(times = 5): Promise<void> {
   for (let i = 0; i < times; i++) await new Promise((r) => setImmediate(r));
 }
 
-describe('AgencyReaper vs the AD-P2-C-07 deferred-hangup window', () => {
+describe('AgencyReaper vs the deferred-hangup window', () => {
   let world: {
     bridge: WebRtcBridgeManager; stations: StationRegistry; dialer: AgencyDialer;
     agents: AgentStateMachine;
@@ -630,9 +617,8 @@ describe('AgencyReaper vs the AD-P2-C-07 deferred-hangup window', () => {
       leaseMs: AGENT_LEASE_MS.reserved_predial,
     });
     await world.dialer.executeDial(makeCmd());
-    // PORT NOTE: core answered with VoBiz, where the `<Stream>` connecting IS the
-    // answer. On VoiceLink the media socket opens first and the carrier's `start`
-    // frame is the answer (lane C's bridge, `handleProviderStart`), so it is sent.
+    // On VoiceLink the media socket opens first and the carrier's `start`
+    // frame is the answer (the bridge's `handleProviderStart`), so it is sent.
     const pstn = new PstnSocket();
     world.bridge.attachPstnLeg('call-1', pstn as any);
     pstn.emit('message', JSON.stringify({
@@ -663,8 +649,8 @@ describe('AgencyReaper vs the AD-P2-C-07 deferred-hangup window', () => {
     await intoGraceWindow();
 
     // The agent's socket is gone, so `detach` deleted the Redis ownership key.
-    // This is the fact that makes the mid-grace call the hardest instance of
-    // acceptance (c): the multi-replica arm reads null here and would reap.
+    // This is the fact that makes the mid-grace call the hardest case:
+    // the multi-replica arm reads null here and would reap.
     expect(world.stations.isLocallyOwned('s1')).toBe(false);
     expect(await world.stations.ownerOf('s1')).toBeNull();
   });
@@ -706,9 +692,9 @@ describe('AgencyReaper vs the AD-P2-C-07 deferred-hangup window', () => {
       // Past DEFERRED_HANGUP_MS (8s): the call ends, the lifecycle handler settles
       // it, and the dialer drops the attempt.
       await vi.advanceTimersByTimeAsync(30_000);
-      // PORT NOTE: on VoiceLink an ANSWERED call's local hangup waits in `ending`
-      // for the carrier's `call.ended` (VoBiz finalized at once), so the carrier's
-      // confirmation is driven here — the same step lane C's bridge suites drive.
+      // On VoiceLink an ANSWERED call's local hangup waits in `ending`
+      // for the carrier's `call.ended`, so the carrier's
+      // confirmation is driven here — the same step the bridge suites drive.
       await world.bridge.handleVoicelinkStatus('call-1', {
         providerCallId: 'carrier-1', callId: 'call-1', eventType: 'hangup', timestamp: new Date(),
         metadata: { event: 'call.ended', call: { id: 'carrier-1', status: 'ended' } },
@@ -788,7 +774,7 @@ describe('AgencyReaper auto-disposition sweep', () => {
     // `requiresDisposition` is false for an empty catalog, so nothing was owed.
     // But such a campaign's contacts still park in `connected`, so they need the
     // same rescue — and stamping `no_disposition` on them would record an agent's
-    // failure to do something nobody asked of them, and would poison the Phase 3
+    // failure to do something nobody asked of them, and would poison the
     // retry decision that reads the code.
     repos.attempt.findLapsedWrapups.mockResolvedValue([
       attemptRow({ id: 'att-1', contact_id: 'c1', outcome: 'connected', campaign_disposition_catalog: [] }),
@@ -844,11 +830,10 @@ describe('AgencyReaper auto-disposition sweep', () => {
     expect(repos.contact.markState).not.toHaveBeenCalled();
   });
 
-  it('evaluates the contact against the campaign OWN retry policy — acceptance (b)', async () => {
-    // §2.4: with no disposition recorded, the outcome policy decides. Phase 2's
-    // answer is a no-op, but the seam must receive the campaign's real policy and
-    // the attempt's real outcome — a seam handed `{}` is discovered only on the
-    // day Phase 3 starts reading it (§16.6 q2: true where CONSUMED).
+  it('evaluates the contact against the campaign OWN retry policy', async () => {
+    // With no disposition recorded, the outcome policy decides. The seam must
+    // receive the campaign's real policy and the attempt's real outcome — a seam
+    // handed `{}` is discovered only on the day something starts reading it.
     const policy = { connected: { max_attempts: 0 }, no_answer: { delay_minutes: 60, max_attempts: 3 } };
     repos.attempt.findLapsedWrapups.mockResolvedValue([
       attemptRow({
@@ -863,7 +848,7 @@ describe('AgencyReaper auto-disposition sweep', () => {
     expect(retrySpy).toHaveBeenCalledTimes(1);
     // The 4th argument is `attemptsUsed`, and **2 rather than 3 is the assertion**.
     // This path does not bump the budget — the attempt was charged when it ended —
-    // so it must forward the stored count verbatim. The dial path is the mirror
+    // so it must forward the stored count unchanged. The dial path is the mirror
     // image: it bumps and forwards the post-bump value. Getting this backwards in
     // either direction silently moves `max_attempts` by one, which on a
     // compliance-sensitive dialer is an extra call to a customer who was already
@@ -912,7 +897,7 @@ describe('AgencyReaper auto-disposition sweep', () => {
 //
 // The series matters because of what an increment MEANS: a real person removed
 // from a campaign for good because our replica crashed or leaked an attempt —
-// §11's "invisible in every view", which this counter exists to end. A metric
+// invisible in every view, which this counter exists to end. A metric
 // that quietly stops, or that fires when nobody was retired, is worse than no
 // metric, because the dashboard's own description tells an operator to page on it.
 // ===========================================================================

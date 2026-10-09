@@ -1,9 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
- * NEW (magick-agency, no source): the per-account settings map that replaces
- * master's governance resolve in the session payload (plan §3.2, lead decision
- * Q3a). Reach is decided by ACTIVE memberships only: a tenant-wide membership
+ * The per-account settings map in the session payload (decision Q3a). Reach is decided by ACTIVE memberships only: a tenant-wide membership
  * (`account_id IS NULL`) reaches every live account in the tenant, an
  * account-scoped one reaches only its account, and NULL columns / a missing row
  * resolve to the documented defaults. Deleted accounts are excluded by the two
@@ -231,7 +229,7 @@ describe('resolveSettingsSafe / buildSessionPayload', () => {
     vi.clearAllMocks();
   });
 
-  it('fails open to an empty map when a read throws (master resolveGovernanceSafe posture)', async () => {
+  it('fails open to an empty map when a read throws (fail-open posture)', async () => {
     mocks.findByTenantId.mockRejectedValueOnce(new Error('db down'));
     mocks.listByTenant.mockResolvedValue([]);
 

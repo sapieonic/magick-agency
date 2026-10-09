@@ -3,10 +3,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 /**
- * PORT NOTE (magick-agency, Phase 6): master `test/unit/api/agency-reaper-wiring.test.ts`
- * @a1f0756a (4 cases → 4). Master scraped `src/index.ts`, where its boot wiring lived; the
- * same four calls now live in `src/bootstrap/agency.ts` (lane B's background-work file,
- * docs/seams.md §2), so that is the file scraped. Regexes and comments verbatim.
+ * Scrapes `src/bootstrap/agency.ts` (the background-work file, docs/seams.md), where the
+ * boot wiring lives.
  *
  * `startAgencyIngestReaper()` must actually be CALLED, and the interval must be
  * cleared on shutdown.
@@ -38,7 +36,6 @@ import { resolve } from 'node:path';
  * happened both times.
  */
 describe('src/bootstrap/agency.ts agency ingest reaper wiring', () => {
-  // PORT NOTE: master read `src/index.ts`.
   const source = readFileSync(resolve(process.cwd(), 'src/bootstrap/agency.ts'), 'utf8');
 
   it('imports the reaper starter', () => {

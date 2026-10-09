@@ -1,19 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /*
- * PORT NOTE (magick-agency, Phase 8): ported from master
- * `test/unit/api/middleware/error-mask.middleware.test.ts`@a1f0756a. Lead ruling: the mask's
- * core-forwarded 4xx branch is dropped (see the middleware's PORT NOTE), so:
- *  - the `src/utils/log-context.js` mock (`sawCoreErrorStatus`) is gone with the branch, and the
- *    `mocks.sawCoreErrorStatus.mockReturnValue(...)` lines are removed from the cases kept; the
- *    logger mock targets `@magick-agency/observability`;
- *  - DELETED: the whole "4xx forwarded from core" block — 9 cases plus two `it.each` tables
- *    (11 agency codes, 6 announcement audio codes) = 26 — and "masks a 4xx core text error
- *    (unparseable as JSON)" (1). Each asserts how a 4xx a core call recorded is masked or
- *    forwarded; there is no recorded core status in one process;
- *  - NEW (1): "passes ANY 4xx through unchanged, whatever its shape" — the dropped branch's
- *    replacement policy, with the bodies the deleted cases used.
- * Kept verbatim otherwise (16 cases).
+ * The mask has no forwarded-4xx branch: internal handlers run in the same process, so there
+ * is no recorded upstream status to mask or forward. Policy: 5xx bodies are masked, and any
+ * 4xx passes through unchanged, whatever its shape.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -39,8 +29,7 @@ beforeEach(() => {
 });
 
 describe('maskedErrorBody', () => {
-  // PORT NOTE (magick-agency, decision B17): master asserted its support
-  // address (`support@magickvoice.com`); the message now names no address.
+  // Decision B17: the message names no support address.
   it('uses Internal Error label + the generic support message for 5xx', () => {
     const body = maskedErrorBody('req-9', 502);
     expect(body).toMatchObject({ error: 'Internal Error', statusCode: 502, requestId: 'req-9' });
@@ -80,7 +69,7 @@ describe('errorMaskHook', () => {
       expect(reply.header).toHaveBeenCalledWith('x-request-id', 'rid-5');
     });
 
-    it('masks 5xx even when core was not involved', async () => {
+    it('masks 5xx even when the internal handler was not involved', async () => {
       const out = await errorMaskHook(makeRequest(), makeReply(503), JSON.stringify({ message: 'boom' }));
       expect(JSON.parse(out as string).error).toBe('Internal Error');
     });
@@ -114,7 +103,7 @@ describe('errorMaskHook', () => {
     });
   });
 
-  describe('4xx — never masked (NEW: the core-forwarded branch is dropped)', () => {
+  describe('4xx — never masked', () => {
     it('passes ANY 4xx through unchanged, whatever its shape', async () => {
       for (const [status, body] of [
         [400, { error: 'Bad Request', message: 'vobiz error 21211: invalid To number' }],
@@ -132,7 +121,7 @@ describe('errorMaskHook', () => {
     });
   });
 
-  describe('4xx we generated ourselves (not from core)', () => {
+  describe('4xx we generated ourselves (not from the internal handler)', () => {
     it('shows business errors (e.g. insufficient credits) unchanged', async () => {
       const payload = JSON.stringify({ error: 'Payment Required', message: 'Insufficient credits to initiate call' });
       const out = await errorMaskHook(makeRequest(), makeReply(402), payload);
@@ -161,7 +150,7 @@ describe('errorMaskHook', () => {
   });
 
   describe('429 rate / concurrency limits', () => {
-    it('forwards a core rate-limit body with retryAfter (not masked into support text)', async () => {
+    it('forwards an internal rate-limit body with retryAfter (not masked into support text)', async () => {
       const payload = JSON.stringify({
         error: 'Too Many Requests',
         message: 'Rate limit exceeded. Try again in 17 seconds.',
@@ -174,7 +163,7 @@ describe('errorMaskHook', () => {
       expect(mocks.logger.error).not.toHaveBeenCalled();
     });
 
-    it('forwards a core concurrency / cooldown 429 with retry_after_seconds', async () => {
+    it('forwards an internal concurrency / cooldown 429 with retry_after_seconds', async () => {
       const payload = JSON.stringify({
         error: 'Too Many Requests',
         message: 'Test call cooldown active',

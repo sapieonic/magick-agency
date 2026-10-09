@@ -1,5 +1,3 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/unit/tts/tts-file-cache.test.ts@4850d1d9.
-// Verbatim.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
 import {

@@ -1,17 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): ported from core test/unit/agency/campaign-lifecycle-route.test.ts@4850d1d9.
- * Mock paths re-pointed only (logger → a partial `@magick-agency/observability` mock;
- * announcement / call / account-settings / profile repositories → `@magick-agency/db/repositories/*`;
- * leaf modules → `@magick-agency/domain/*`; `contracts.js` → `@magick-agency/contracts/agency`).
- * Cases verbatim unless noted here. The four lifecycle handlers are pure `transitionStatus` writes (no runtime call):
- * `stopping → stopped` is the pacing leader's (Phase 6) and is not exercised here.
- */
-
 // ---------------------------------------------------------------------------
 // `POST /agency-campaigns/:id/{start,pause,resume,stop}` — the lifecycle actor.
+// The four handlers are pure `transitionStatus` writes (no runtime call); `stopping → stopped`
+// is the pacing leader's and is not exercised here.
 //
 // The repository half of migration 108 is in
 // `campaign-lifecycle-timestamps.test.ts` (the UPDATE's argument order, the
@@ -162,7 +155,7 @@ describe('the lifecycle routes read the actor from the body', () => {
       actor_user_id: 'u-'.padEnd(200, 'x'),
       actor_name: 'Manas N',
     });
-    // The asymmetry with the name below is the point. An id is an IDENTITY — master
+    // The asymmetry with the name below is the point. An id is an IDENTITY — the public API layer
     // resolves it back to a user — so a truncated one is not a shortened answer, it
     // is a DIFFERENT user. Recording that would attribute the transition to the
     // wrong human, which is precisely what the `null`-means-unknown contract exists

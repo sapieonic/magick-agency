@@ -95,7 +95,7 @@ describe('AgencyLiveConcurrencyRepository.liveByState · the query shape', () =>
     // from `AgencyAttemptRepository.countLive`; if these two predicates drift, an
     // operator reads a gauge that disagrees with the number the dialer acted on and
     // nothing anywhere goes red. Asserted as a shared substring rather than a
-    // comment claiming agreement — §16.6 rule 3.
+    // comment claiming agreement.
     await new AgencyLiveConcurrencyRepository().liveByState();
     const gaugeSql = pool.query.mock.calls[0]![0] as string;
 

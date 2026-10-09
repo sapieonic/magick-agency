@@ -54,7 +54,7 @@ describe('AgencyAttemptRepository.create — the duplicate-dial backstop', () =>
     expect(result).toBeNull();
   });
 
-  it('DERIVES attempt_number in SQL and accepts none from the caller (AD-P2-C-12)', async () => {
+  it('DERIVES attempt_number in SQL and accepts none from the caller', async () => {
     // The bug was in the DERIVATION: `contact.attempt_count + 1` collided with the
     // number an orphaned row already held, and `uq_agency_attempt_number` is total
     // rather than partial, so a reaper-recovered contact was refused on every tick
@@ -83,7 +83,7 @@ describe('AgencyAttemptRepository.create — the duplicate-dial backstop', () =>
   });
 
   it('distinguishes an attempt-number collision from the live-attempt backstop', async () => {
-    // Conflating these in one log line is what hid AD-P2-C-12 for a phase: a
+    // Conflating these in one log line is what hid the attempt-number wedge for a phase: a
     // permanent wedge and a healthy backstop produced byte-identical output. One is
     // expected under contention; the other should be vanishingly rare, and a steady
     // stream of it means numbers are colliding systematically.
@@ -219,7 +219,7 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
 
     const res = await new AgencyContactRepository().applyIngestChunk(chunk([{ phone_e164: '+911' }]));
 
-    // master needs the signal so its job counters don't double-count; a silent
+    // The roster client needs the signal so its job counters don't double-count; a silent
     // success is indistinguishable from having applied the rows twice.
     expect(res).toEqual({
       accepted: 0, duplicate_chunk: true, total_contacts: 500,
@@ -237,13 +237,13 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
   it('a REPLAY reports the counts the original application recorded', async () => {
     // ── The defect this closes ────────────────────────────────────────────────
     // The replay path rolls back before the per-row loop, so it has no counts of
-    // its own and used to return a confident `0`. master's roster client retries
-    // on 5xx and on timeout, so a chunk core COMMITTED whose response was lost in
+    // its own and used to return a confident `0`. the roster client retries
+    // on 5xx and on timeout, so a chunk the repository COMMITTED whose response was lost in
     // transit comes back here — and the operator's ingest summary then undercounts
-    // every row core refused. It can never overcount, which is exactly what makes
+    // every row it refused. It can never overcount, which is exactly what makes
     // it invisible: the import reads clean.
     //
-    // A redelivery must be indistinguishable from the response master lost.
+    // A redelivery must be indistinguishable from the response that was lost.
     replayWith({ rejected: 7, sourceRows: [3, 4, 9] });
 
     const res = await new AgencyContactRepository().applyIngestChunk(chunk([{ phone_e164: '+911' }]));
@@ -271,8 +271,8 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
     const res = await new AgencyContactRepository().applyIngestChunk(chunk([{ phone_e164: '+911' }]));
 
     expect(res.rejection_counts_unavailable).toBe(true);
-    // The wire types are unchanged — master parses these as a number and an array,
-    // and cusui is about to render them — so they stay 0/[] and the FLAG is what
+    // The wire types are unchanged — the roster client parses these as a number and an array,
+    // and the console is about to render them — so they stay 0/[] and the FLAG is what
     // says not to trust them.
     expect(res.rejected_duplicate_rows).toBe(0);
     expect(res.duplicate_source_rows).toEqual([]);
@@ -309,7 +309,7 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
   });
 
   it('reports rows the roster already held instead of hiding them in `accepted: 0`', async () => {
-    // Rows the roster already holds verbatim are refused, and master has to be
+    // Rows the roster already holds exactly are refused, and the roster client has to be
     // able to say so — before this, a bare `ON CONFLICT DO NOTHING` made "every
     // row collided" and "this chunk had no valid rows" the same answer. Since
     // 083 the collision means "you sent us these exact people again" rather than
@@ -356,7 +356,7 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
   it('does not TOUCH source_row_number at all — neither as a target nor as a write', async () => {
     // ── Two defects, one column, and the second one only CI could find ────────
     //
-    // (1) `source_row_number` is master's per-FILE line number, so keying the
+    // (1) `source_row_number` is the per-FILE line number, so keying the
     // roster on it meant a second CSV's lines 2..N collided with the first's and
     // every row of a top-up was discarded — while the operator was told it worked.
     // 083 moved the conflict target to `row_fingerprint`.
@@ -398,7 +398,7 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
   it('still reports the refused rows by their INPUT row number, with the column unwritten', async () => {
     // The property that made 085 free, asserted rather than reasoned: what the
     // operator is shown is built from the submitted contact, so it is unaffected by
-    // where — or whether — core stores the line number. If this ever started
+    // where — or whether — the line number is stored. If this ever started
     // reading the stored column it would return nothing but NULLs.
     client.query.mockImplementation(async (sql: string) => {
       if (sql.includes('agency_ingest_chunks')) return { rows: [{ id: 'm1' }], rowCount: 1 };
@@ -470,7 +470,7 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
 });
 
 describe('AgencyContactRepository.missingChunks', () => {
-  it('reports exactly the gap so master can re-send only what was lost', async () => {
+  it('reports exactly the gap so the roster client can re-send only what was lost', async () => {
     pool.query.mockResolvedValueOnce({ rows: [{ chunk_index: 0 }, { chunk_index: 2 }] });
     const missing = await new AgencyContactRepository().missingChunks('camp-1', 'job-1', 4);
 
@@ -517,10 +517,10 @@ describe('AgencyCampaignRepository.update — the allow-list', () => {
     expect(values[2]).toBe(45);
   });
 
-  it('ALLOWS abandon_announcement_id, and lets null clear it (AD-P2-C-05)', async () => {
+  it('ALLOWS abandon_announcement_id, and lets null clear it', async () => {
     // The column, the model field and the dial-time resolver all shipped before
     // anything could write it — so the apology clip was unreachable in production
-    // while every test of the playback path passed. §16.6 question 2: the property
+    // while every test of the playback path passed. The property
     // has to hold where it is CONSUMED, and it is consumed by an operator.
     pool.query.mockResolvedValueOnce({ rows: [{ id: 'camp-1' }] });
     await new AgencyCampaignRepository().update('camp-1', {
@@ -738,7 +738,7 @@ describe('AgencyContactRepository.suppressByPhone — one number, every row of i
 
   it('never touches next_attempt_at — the STATE is what takes a contact off the roster', async () => {
     // `markState` COALESCEs the column and this method preserves that by omitting
-    // it. Clearing it belongs to AD-P3-C-04; a compliance write quietly nulling a
+    // it. Clearing it belongs to a separate change; a compliance write quietly nulling a
     // column a compliance export reads is exactly the kind of untracked change the
     // route's ⚠️ comment exists to prevent.
     stubPool([{ id: 'c-1', phone_e164: '+14155550100' }]);
@@ -844,8 +844,8 @@ describe('AgencyCampaignRepository.findLiveDependentsOnAnalysisProfile', () => {
       .findLiveDependentsOnAnalysisProfile('prof-1', 't1', 'a1');
 
     const [sql, params] = pool.query.mock.calls[0]!;
-    // Not defence in depth — these rows land verbatim in a refusal body handed to a
-    // caller master gates on `calls.dialer.analytics` alone. Unscoped, the lookup
+    // Not defence in depth — these rows land as-is in a refusal body handed to a
+    // caller the public API layer gates on `calls.dialer.analytics` alone. Unscoped, the lookup
     // would report one tenant's campaign ids and statuses to another tenant's
     // admin, AND veto their edit over a dependency they can neither see nor fix.
     expect(String(sql)).toContain('tenant_id = $2');

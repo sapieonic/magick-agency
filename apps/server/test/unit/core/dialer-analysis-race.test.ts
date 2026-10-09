@@ -16,9 +16,7 @@
  *    was enqueued awaiting and only later got its recording is rescued, not expired.
  */
 /*
- * PORT NOTE (magick-agency): ported from core test/unit/core/dialer-analysis-race.test.ts
- * @4850d1d9 (4 -> 4). Only the model import path and the removed settlement fields
- * changed; the real-SQL counterpart is test/integration/flows/dialer-analysis-race.
+ * The real-SQL counterpart is test/integration/flows/dialer-analysis-race.
  */
 import { describe, it, expect } from 'vitest';
 import type { DialerAnalysisJobRecord } from '@magick-agency/db/models/dialer-analysis-job.model';

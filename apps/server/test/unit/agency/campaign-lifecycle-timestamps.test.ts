@@ -204,7 +204,7 @@ describe('last_transition_by answers "who caused the CURRENT status"', () => {
       'camp-1', ['draft'], 'running',
       { last_transition_by: { user_id: 'u-manas', name: null } },
     );
-    // Core has no user table (D3), so a name is only ever what master sent. NULL is
+    // There is no user table in the voice engine (D3), so a name is only ever what the public API layer sent. NULL is
     // a real state — an id-only actor — and it is a different fact from "nobody
     // caused this".
     expect(paramsOf()[3]).toBe('u-manas');
@@ -240,12 +240,6 @@ describe('the abandonment auto-pause is genuinely unattributed', () => {
   });
 });
 
-/*
- * PORT NOTE (magick-agency, Phase 8): the source file's last describe (7 cases), which
- * lane B1 deferred because the formatter belongs to the campaign routes. Verbatim; the
- * formatter is core `src/api/responses/agency-campaign.response.ts`@4850d1d9, ported to
- * the same path with only its contracts import re-pointed.
- */
 // ─── the wire fold ──────────────────────────────────────────────────────────
 
 describe('the two actor columns become ONE wire object', () => {

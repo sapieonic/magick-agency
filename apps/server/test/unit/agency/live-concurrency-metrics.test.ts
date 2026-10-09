@@ -30,11 +30,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // export) carries; `collectProm` renders the `:9090` Prometheus text and parses
 // it back, so both views are asserted end to end.
 //
-// PORT NOTE (magick-agency, Phase 6): core test/unit/agency/live-concurrency-metrics.test.ts
-// @4850d1d9 (19 cases → 18). Magick Agency has no OTLP exporter and no `:9090` scrape
-// at runtime: core's `src/utils/otel-sdk-config.ts` (`renderPrometheusScrape`, the
-// exporter wiring) is not ported. So:
-//   - the reader is core's `test/helpers/otel-metric-reader.ts`, ported verbatim at the same path over a real `@opentelemetry/sdk-metrics` provider (devDependency; `ScrapeMetricReader` inlined because `src/utils/otel-sdk-config.ts` is not ported);
+// Magick Agency has no OTLP exporter and no `:9090` scrape at runtime. So:
+//   - the reader is `test/helpers/otel-metric-reader.ts`, over a real `@opentelemetry/sdk-metrics` provider (devDependency; `ScrapeMetricReader` is inlined because there is no exporter wiring in the app);
 //   - `collectProm` reads that same collection and returns it in the scrape's
 //     `{ value, labels }` shape. Every case that asserted "both views" therefore
 //     asserts the one view that exists, twice; the property each case names about
@@ -83,7 +80,7 @@ async function collectOtel(): Promise<Array<{ value: number; attrs: Record<strin
 }
 
 /** Render the `:9090` scrape and parse this series back out of the text. */
-// PORT NOTE: there is no `:9090` scrape in Magick Agency (see the header). This reads
+// There is no `:9090` scrape in Magick Agency (see the header). This reads
 // the same collection `collectOtel` does, in the scrape's `{ value, labels }` shape.
 async function collectProm(): Promise<Array<{ value: number; labels: Record<string, string> }>> {
   return (await collectMetric(reader, SERIES))
@@ -104,11 +101,9 @@ beforeEach(() => {
 // Property 1 — one snapshot, both pipelines.
 // ═══════════════════════════════════════════════════════════════════════════
 
-// PORT NOTE (renamed, review fix): core's describe was 'a snapshot reaches BOTH views' and
-// its first case 'serves the series on the :9090 scrape AND in the collection OTLP exports'.
 // There is ONE view here (no exporter, no scrape — see the header), so no name claims two.
 describe('live concurrency · a snapshot reaches the metric collection', () => {
-  it('serves the series in the SDK collection (core compared the :9090 scrape with the OTLP collection)', async () => {
+  it('serves the series in the SDK collection', async () => {
     // Not a re-assertion of `metrics.test.ts` (which stubs the meter to pin
     // names): this renders what `/metrics` serves and what an export collects,
     // from the real meter, under the SAME name.
@@ -117,7 +112,6 @@ describe('live concurrency · a snapshot reaches the metric collection', () => {
     expect(await (await collectOtel()), `${SERIES} is not in the OTLP collection`).toHaveLength(1);
   });
 
-  // PORT NOTE (renamed): core's 'reports identical values on both, from one publish'.
   it('reports the published values, from one publish', async () => {
     publishLiveConcurrency([
       row({ state: 'dialing', live: 4 }),
@@ -290,7 +284,6 @@ describe('live concurrency · a campaign that leaves the snapshot leaves the exp
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('live concurrency · dials in flight vs conversations in progress', () => {
-  // PORT NOTE (renamed): core's 'resolves them to DIFFERENT series, on both views'.
   it('resolves them to DIFFERENT series', async () => {
     // The whole point of the `state` dimension. `dialing`/`ringing` is capacity
     // committed to phones that may never be answered — the quantity any future

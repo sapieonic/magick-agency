@@ -321,7 +321,7 @@ describe('the counters are the SHARED metric expressions, not a re-derivation', 
     // being protected is byte-equality of the emitted SQL; this asserts exactly
     // that, across two call sites, rather than spot-checking fragments.
     //
-    // Compared against the AGENT read rather than against the constant's source
+    // Compared against the AGENT read rather than against the constant's definition
     // text, because the constant is not exported and its raw text still contains
     // `${…}` placeholders — reading the file would compare un-interpolated template
     // syntax and pass or fail for the wrong reason.

@@ -1,5 +1,3 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/unit/tts/hash-audio-file-content.test.ts@4850d1d9.
-// Verbatim.
 import { describe, it, expect, beforeAll } from 'vitest';
 
 import crypto from 'node:crypto';
@@ -63,8 +61,8 @@ describe('hashAudioFileContent', () => {
 });
 
 describe('audio clips round-trip through writeTtsFile → readTtsPcm', () => {
-  // §5.4: writeTtsFile MUST be the only writer. readTtsPcm hardcodes a 44-byte
-  // header, so any other writer (e.g. copying decoder output verbatim, which may
+  // writeTtsFile MUST be the only writer. readTtsPcm hardcodes a 44-byte
+  // header, so any other writer (e.g. copying decoder output unchanged, which may
   // carry a LIST chunk) would have its chunk header read as audio samples.
   it('preserves samples and sample rate at a decoder-native rate', () => {
     const pcm = Buffer.alloc(200);

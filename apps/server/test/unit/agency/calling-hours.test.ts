@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// AD-P3-C-05 — calling hours in the CONTACT's timezone (§4.2, D4).
+// Calling hours in the CONTACT's timezone (D4).
 //
-// Every assertion here is an exact instant, never a range. §16.6: an
+// Every assertion here is an exact instant, never a range. An
 // approximate assertion on a clock-derived value is how a doubled fake clock
 // hid behind `toBeGreaterThan(0)`, and this module's whole output is a clock
 // derivation. `now` is a parameter, so there is nothing to fake.

@@ -1,12 +1,10 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core test/unit/agency/station-registry.test.ts@4850d1d9 (29 → 29).
-// Verbatim. Import paths only (logger → `@magick-agency/observability`). No case deleted or modified.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// Agent presence and replica ownership (§3).
+// Agent presence and replica ownership.
 //
 // The station socket is the anchor of ownership. The Redis key is written and
-// read from day one even though core is single-replica (D2), so the invariant
+// read from day one even though the runtime is single-replica (D2), so the invariant
 // "dial only on the owning replica" is exercised continuously rather than being
 // dead code that rots until someone needs it.
 // ---------------------------------------------------------------------------
@@ -148,8 +146,8 @@ describe('StationRegistry socket lifecycle', () => {
   it('closes the superseded socket with 4409, not bare', async () => {
     // A bare `close()` puts no code on the wire, so the peer reports RFC 6455's
     // 1005/1006 "no status received" — which is exactly what an ordinary network
-    // drop looks like. The console cannot act on the difference, master's proxy
-    // launders it to 1000, and nothing distinguishes a supersede anywhere. `4409`
+    // drop looks like. The console cannot act on the difference, the public API layer's proxy
+    // laundered it to 1000, and nothing distinguishes a supersede anywhere. `4409`
     // has been declared in `AgencyStationCloseCode` since the contract landed and
     // was sent by nothing.
     const reg = new StationRegistry(null, '', 'r1');
@@ -267,7 +265,7 @@ describe('StationRegistry frame delivery', () => {
 });
 
 // ---------------------------------------------------------------------------
-// `connectedBySession` — the supervisor floor's liveness column (§C.4, MAG-148).
+// `connectedBySession` — the supervisor floor's liveness column.
 //
 // The property that matters is not "does it return booleans", it is that a Redis
 // FAULT is distinguishable from an absent key. `ownerOf` deliberately conflates
@@ -342,7 +340,7 @@ describe('StationRegistry.connectedBySession', () => {
 });
 
 // ---------------------------------------------------------------------------
-// `stationPresence` — "is this agent's station held ANYWHERE" (ticket 86d44path).
+// `stationPresence` — "is this agent's station held ANYWHERE".
 //
 // The method `POST /sessions/:id/available` should always have been asking. It
 // was reading `isLocallyOwned`, an in-process `Map` lookup that answers "do *I*

@@ -2,7 +2,7 @@
  * DialerAnalysisRunner unit test.
  *
  * Constructs the runner directly with a mock transcriber + analysis service and
- * drives `run(job)`, asserting the §7 lifecycle:
+ * drives `run(job)`, asserting the job lifecycle:
  *  - happy path: fetch → transcribe → persistTranscript (BEFORE analyze) →
  *    markAnalyzing → analyze → completeWithAnalysis → metrics/posthog/audit.
  *  - transcript persisted before analysis (ordering).
@@ -19,13 +19,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /*
- * PORT NOTE (magick-agency): ported from core test/unit/core/dialer-analysis-runner.test.ts
- * @4850d1d9 (20 cases -> 21). Changes: mocks point at agency's module paths; the
- * `dialer.analysis.*` event-bus and `analysis.completed` webhook expectations are
- * removed with those features (plan §4); settlement fields leave the fixtures; the
- * call fixture is an `agency_calls` row. New case: the fetch is handed the
- * VoiceLink recording-host allow-list (and an unconfigured runner hands it an empty
- * one, i.e. fails closed).
+ * The call fixture is an `agency_calls` row. One case pins that the fetch is handed
+ * the VoiceLink recording-host allow-list (and an unconfigured runner hands it an
+ * empty one, i.e. fails closed).
  */
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -352,7 +348,7 @@ describe('DialerAnalysisRunner.run', () => {
     expect(mockJobRepo.requeueForRetry).toHaveBeenCalledWith('job-1', 5, expect.any(Number), 'AUDIO_TOO_SHORT', expect.any(String));
   });
 
-  // ── §8 pre-finalization race: in-attempt re-fetch ────────────────────────────
+  // ── pre-finalization race: in-attempt re-fetch ────────────────────────────
   // A carrier can serve `recording_url` a moment before the file is finalized, so
   // the first fetch returns truncated audio. These retries re-fetch WITHOUT burning
   // a job attempt (a late-finalizing carrier isn't a failure of the job).

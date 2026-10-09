@@ -4,18 +4,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // The DNC registry after the collapse (decision B8): `check` is an indexed read of
 // `dnc_entries` through `DncRepository.findSuppressed`, and fails CLOSED.
 //
-// PORT NOTE (magick-agency, lane B1). Ported from core
-// test/unit/agency/dnc-registry.test.ts@4850d1d9 (23 cases). KEPT verbatim: the
-// three `normalizeE164` cases (both sides of the comparison). MODIFIED: "reports
-// unverifiable for a phone it cannot normalize, without asking Redis" → without
-// asking the database. REPLACED by the cases below: the Redis-shaped `check` cases
-// ("answers suppressed for a member…", "refuses to dial when the tenant has never
-// synced", "refuses to dial when Redis throws", "…when there is no Redis at all",
-// "reads the version key and the set in one script") — the set, the version and the
-// script no longer exist. DELETED with the Redis set (not ported): the five
-// `applyDelta` cases, the six `applyReplace` cases and the three `appliedVersion`
-// cases. What the real table does (scopes, a real DB error) is asserted against
-// Postgres in test/integration/agency/dnc-registry.test.ts.
+// The `normalizeE164` cases cover both sides of the comparison. A phone that cannot be
+// normalized is reported unverifiable without asking the database. What the real table
+// does (scopes, a real DB error) is asserted against Postgres in
+// test/integration/agency/dnc-registry.test.ts.
 // ---------------------------------------------------------------------------
 
 vi.mock('@magick-agency/observability', () => ({
@@ -42,8 +34,7 @@ describe('check — every failure stops the dial', () => {
   it('answers suppressed for a number on the list and clear for one that is not', async () => {
     findSuppressed.mockResolvedValueOnce(new Set(['+14155550100']));
     expect(await registry.check(TENANT, '+14155550100', NONE)).toBe('suppressed');
-    // an EMPTY answer from a read that completed is clear — the opposite of core's
-    // empty-Redis-set case, which had to be `unavailable` (no version key)
+    // an EMPTY answer from a read that completed is clear (an empty set from a read that completed carries no ambiguity)
     findSuppressed.mockResolvedValueOnce(new Set());
     expect(await registry.check(TENANT, '+14155550100', NONE)).toBe('clear');
   });

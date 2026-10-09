@@ -1,32 +1,24 @@
 /*
- * PORT NOTE (magick-agency): ported from core test/unit/api/routes/feature-flags-internal.test.ts@4850d1d9
- * (30 cases → 22: 22 kept or modified, 8 deleted). Core's `/internal/feature-flags*` handler
- * bodies now run in-process inside master's super-admin routes
- * (`src/api/routes/super-admin-feature-flags.routes.ts`, a HOP COLLAPSE), so this suite drives
- * them through `/super-admin/feature-flags*` with a super-admin JWT. Describe/it names are kept
- * verbatim ("S2S" now means the super-admin bearer that replaced it).
- * Changes forced by the port:
+ * The feature-flag handler bodies run in-process inside the super-admin routes
+ * (`src/api/routes/super-admin-feature-flags.routes.ts`), so this suite drives them through
+ * `/super-admin/feature-flags*` with a super-admin JWT ("S2S" in the describe names means the
+ * super-admin bearer).
  *  - the actor is the authenticated super admin (`sa-1`), never a body `updated_by` (the field
  *    is not in the super-admin schema; zod strips it, so payloads still carry it harmlessly);
  *  - ids are UUIDs (`t1`, `tenant-1`, `a1` → T1 …): `feature_flag_overrides` id columns are UUID;
- *  - `whatsapp_personal` → `agency_dialer_enabled`; the two cases that need another flag shape
- *    use unregistered fixture copies of core's definitions (`test/helpers/fixture-flags.ts`)
- *    resolved through a `getFlag` fallback: `whatsapp_personal` (no account scope) for the
- *    scope-422 case, `prewarm_ring_delay_ms` (range `validate`) for the two number cases;
- *  - core's `audit_logs` row is written for ACCOUNT scope only (route PORT NOTE: the baseline's
- *    UUID `audit_logs.tenant_id/account_id` refuse core's `'global'`/`'bulk'`/`'default'`):
- *    'upserts a tenant override…' asserts the super-admin audit row and NO core row;
+ *  - the flag used is `agency_dialer_enabled`; the two cases that need another flag shape
+ *    use unregistered fixture definitions (`test/helpers/fixture-flags.ts`) resolved through a
+ *    `getFlag` fallback: `whatsapp_personal` (no account scope) for the scope-422 case,
+ *    `prewarm_ring_delay_ms` (range `validate`) for the two number cases;
+ *  - the flag audit row (`audit_logs`) is written for ACCOUNT scope only (its UUID
+ *    `tenant_id/account_id` columns refuse `'global'`/`'bulk'`/`'default'`):
+ *    'upserts a tenant override…' asserts the super-admin audit row and NO flag audit row;
  *    'captures the prior value…', 'old_value is null…' and 'deletes, invalidates, audits…' use
- *    account scope so core's row is still asserted; 'applies per tenant…' asserts the single
- *    super-admin summary row instead of core's `'bulk'` row;
- *  - every `trackFeatureFlagChanged` (PostHog) assertion is removed: no analytics module;
- *  - 'returns effective + source + defaults + overrides': master's tenant-exists check runs
+ *    account scope so the flag audit row is still asserted; 'applies per tenant…' asserts the
+ *    single super-admin summary row;
+ *  - there is no analytics module, so no `trackFeatureFlagChanged` assertions;
+ *  - 'returns effective + source + defaults + overrides': the tenant-exists check runs
  *    first, so the tenant repository is mocked to find the tenant.
- * Deleted:
- *  - 'API-key cache invalidation wiring' (3): API keys are dropped (plan §2 "not ported" list, §7 decision 5).
- *  - 'Internal S2S — provider concurrency control plane' (5): not feature-flag cases; core's
- *    `/internal/account-concurrency*` is ported into `src/api/routes/super-admin.routes.ts`
- *    via `seams/concurrency-control.ts` and belongs to that route's suite.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import jwt from 'jsonwebtoken';
@@ -42,7 +34,7 @@ const mocks = vi.hoisted(() => ({
   resolveAllWithSource: vi.fn(),
   invalidate: vi.fn(),
   auditLog: vi.fn(),
-  // PORT NOTE (magick-agency): master's half of the collapsed route.
+  // The super-admin side of the route.
   superAdminFindById: vi.fn(),
   tenantFindById: vi.fn(),
   superAdminAuditLog: vi.fn(),
@@ -85,7 +77,7 @@ vi.mock('@magick-agency/db/repositories/super-admin-audit.repository', () => ({
   superAdminAuditRepository: { log: mocks.superAdminAuditLog },
 }));
 
-// PORT NOTE (magick-agency): unregistered fixture flags, resolvable by key only.
+// Unregistered fixture flags, resolvable by key only.
 vi.mock('../../../../src/feature-flags/registry.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../../src/feature-flags/registry.js')>();
   const { FIXTURE_FLAGS } = await import('../../../helpers/fixture-flags.js');
@@ -202,15 +194,15 @@ describe('Internal S2S — Feature Flags', () => {
         flag_key: 'agency_dialer_enabled', scope_type: 'tenant', tenant_id: T1, value: true,
       }));
       expect(mocks.invalidate).toHaveBeenCalledWith({ tenantId: T1 });
-      // PORT NOTE (magick-agency): a tenant-scope change is audited in the super-admin log only
-      // (core's `audit_logs` row cannot hold a non-account scope), with the authenticated actor.
+      // A tenant-scope change is audited in the super-admin log only (the `audit_logs`
+      // row cannot hold a non-account scope), with the authenticated actor.
       expect(mocks.superAdminAuditLog).toHaveBeenCalledWith(expect.objectContaining({
         action: 'feature_flag.override.upserted', admin_id: SA_ID,
       }));
       expect(mocks.auditLog).not.toHaveBeenCalled();
     });
 
-    // N1 — old→new audit trail (spec §7).
+    // N1 — old→new audit trail.
     it('captures the prior value as old→new in audit + posthog', async () => {
       mocks.findOne.mockResolvedValue({ value: false }); // prior override was false
       await req(app, 'PUT', 'feature-flags/agency_dialer_enabled/overrides', {

@@ -1,16 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): ported from core test/unit/agency/campaign-analysis-profile-route.test.ts@4850d1d9.
- * Mock paths re-pointed only (logger → a partial `@magick-agency/observability` mock;
- * announcement / call / account-settings / profile repositories → `@magick-agency/db/repositories/*`;
- * leaf modules → `@magick-agency/domain/*`; `contracts.js` → `@magick-agency/contracts/agency`).
- * Cases verbatim unless noted here.
- */
-
 // ---------------------------------------------------------------------------
-// AD-P4-C-03 — recording + analysis opt-in, at the campaign route.
+// Recording + analysis opt-in, at the campaign route.
 //
 // Two properties, and only one of them was already true.
 //
@@ -30,9 +22,9 @@ import Fastify from 'fastify';
 //     thing that stops them drifting again.
 //
 // NOT tested here, and deliberately: the `agency.recording` / `agency.analytics`
-// GOVERNANCE capabilities. Core cannot evaluate one (see contracts.ts:1230) —
-// master owns that gate, and a guard with both operands in this repo would prove
-// nothing about the contract.
+// GOVERNANCE capabilities. The voice engine cannot evaluate one (see contracts.ts:1230) —
+// the public API layer owns that gate, and a guard with both operands in one place would
+// prove nothing about the contract.
 // ---------------------------------------------------------------------------
 
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
@@ -216,7 +208,7 @@ describe('POST /agency-campaigns · the analysis profile is preflighted (b)', ()
     expect(res.statusCode).toBe(404);
     expect(campaigns.create).not.toHaveBeenCalled();
     expect(profileRepo.findByIdScoped).toHaveBeenCalledWith('someone-elses', 't1', 'a1');
-    // The `code` is what carries this refusal past magick-master's error mask.
+    // The `code` is what carries this refusal past the public API layer's error mask.
     // Without it the body is unstructured — no code, no allow-listed label, no
     // `details` — and the mask rewrites it to "contact support and quote this
     // request id". That would lose the ONE refusal here an operator can fix in a

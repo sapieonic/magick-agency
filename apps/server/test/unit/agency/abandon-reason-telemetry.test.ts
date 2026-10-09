@@ -28,13 +28,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // would actually carry, and only a real meter can support it — so one is
 // installed before the metrics module loads.
 //
-// PORT NOTE (magick-agency, Phase 6): core test/unit/agency/abandon-reason-telemetry.test.ts
-// @4850d1d9 (26 cases → 26), every case verbatim. Modified harness only:
-//   - the metric reader is core's `test/helpers/otel-metric-reader.ts`, ported verbatim at the same path over a real `@opentelemetry/sdk-metrics` provider (devDependency; `ScrapeMetricReader` inlined because `src/utils/otel-sdk-config.ts` is not ported);
-//   - the config stub drops its `telephony.vobiz` block (VoBiz deleted; nothing on this
-//     path reads `config.telephony`) and the campaign fixture drops `sip_connection_id`
-//     (SIP deleted; not on `AgencyCampaignRecord`);
-//   - import/mock specifiers follow the path rule.
+// Harness: the metric reader is `test/helpers/otel-metric-reader.ts`, over a real
+// `@opentelemetry/sdk-metrics` provider (devDependency; `ScrapeMetricReader` is inlined).
+// Nothing on this path reads `config.telephony`, so the config stub leaves it empty.
 // ---------------------------------------------------------------------------
 
 const { reader } = await vi.hoisted(async () => {
@@ -50,7 +46,7 @@ vi.mock('@magick-agency/observability', () => ({
 vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: {}, // PORT NOTE: core's `vobiz` block removed — VoBiz is deleted (plan §5)
+    telephony: {},
   },
 }));
 
@@ -217,7 +213,6 @@ function fakeBridge() {
 
 const CAMPAIGN = {
   id: 'camp-1', name: 'Q3 Renewals', tenant_id: 't1', account_id: 'a1',
-  // PORT NOTE: `sip_connection_id: null` removed — SIP deleted, not on the campaign record.
   telephony_provider: 'voicelink', record_calls: false,
   analysis_profile_id: null, caller_ids: ['+14155550100'],
   disposition_catalog: [],
@@ -594,7 +589,7 @@ describe('each abandon reason, forced at its own branch', () => {
   /**
    * ── The rollout abort criterion, asserted rather than assumed ─────────────
    *
-   * §7.3 gates the week-long hold on "bind-latency p99 <150ms and zero bind
+   * The rollout plan gates the week-long hold on "bind-latency p99 <150ms and zero bind
    * failures", and review found that **no test referenced
    * `agency_bind_latency_seconds` at all** — so the success path could stop
    * recording it, or anchor it on the wrong instant, with the suite green and a
@@ -647,7 +642,7 @@ describe('each abandon reason, forced at its own branch', () => {
 // The our-fault retirement counter.
 //
 // Added after review, and after a falsification run proved the point: disabling
-// this counter entirely broke NO test in the whole agency suite. §11's argument
+// this counter entirely broke NO test in the whole agency suite. The argument
 // for adding it was that a contact retired by our own faults is invisible in
 // every view — shipping it untested would have left it able to become invisible
 // again without anything going red.

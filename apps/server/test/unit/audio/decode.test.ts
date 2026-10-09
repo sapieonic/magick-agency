@@ -1,7 +1,5 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/unit/audio/decode.test.ts@4850d1d9.
-// Changes: STATIC_CALL_MAX_DURATION_SECONDS import path (now @magick-agency/db/models/static-call.model);
-// type-only fix for the server tsconfig (typechecks tests, no DOM lib): the setTimeout spy's `fn: TimerHandler`
-// is typed `unknown` and its cast goes through `unknown`.
+// The setTimeout spy's `fn: TimerHandler` is typed `unknown` and its cast goes through `unknown`
+// (the server tsconfig typechecks tests and has no DOM lib).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
@@ -12,7 +10,7 @@ import { spawnSync, type ChildProcess } from 'node:child_process';
 // `decode.ts` imports the real config module, whose loader calls `process.exit(1)`
 // when required env vars are absent — which is exactly the case in CI. Mock it to
 // the one field decode actually reads, matching the convention the other
-// config-importing tests use (see tts-generator.test.ts).
+// config-importing tests use.
 // `decodeConcurrency` is deliberately ABSENT from the base mock: it exercises the
 // gate's documented fallback to 2 through a real caller, which is the shape every
 // other config-mocking suite in the repo has. The gate-specific describe below
@@ -141,7 +139,7 @@ function toneEnergy(pcm16: Buffer, sampleRate: number, freq: number): number {
   return Math.sqrt(Math.abs(s1 * s1 + s2 * s2 - coeff * s1 * s2)) / n;
 }
 
-describe.skipIf(!HAVE_DECODERS)('decodeToPcm16 — real fixtures (§9.1)', () => {
+describe.skipIf(!HAVE_DECODERS)('decodeToPcm16 — real fixtures', () => {
   it('decodes mono MP3 to mono PCM16 at its native 44100 Hz via mpg123', async () => {
     const out = await decodeToPcm16(fixture('mono-440-44100.mp3'), 'audio/mpeg');
 
@@ -185,7 +183,7 @@ describe.skipIf(!HAVE_DECODERS)('decodeToPcm16 — real fixtures (§9.1)', () =>
   });
 });
 
-describe.skipIf(!HAVE_DECODERS)('decodeToPcm16 — stereo comes out mono (§9.2)', () => {
+describe.skipIf(!HAVE_DECODERS)('decodeToPcm16 — stereo comes out mono', () => {
   // The trap the contract flags: sndfile-convert has NO -mono option, so stereo
   // WAV/OGG returns interleaved 2-channel and the JS downmix is the only thing
   // preventing a clip that plays at half speed / double duration.
@@ -238,7 +236,7 @@ describe.skipIf(!HAVE_DECODERS)('decodeToPcm16 — stereo comes out mono (§9.2)
   });
 });
 
-describe.skipIf(!HAVE_DECODERS)('decodeToPcm16 — bad input is a typed 4xx, never a 500 (§9.6)', () => {
+describe.skipIf(!HAVE_DECODERS)('decodeToPcm16 — bad input is a typed 4xx, never a 500', () => {
   it('rejects M4A/AAC bytes (no ffmpeg) with DECODE_FAILED, not a crash', async () => {
     // Sent with an accepted MIME so it gets past the validator — this is the
     // "mislabelled MIME" case as well as the AAC one.
@@ -267,7 +265,7 @@ describe.skipIf(!HAVE_DECODERS)('decodeToPcm16 — bad input is a typed 4xx, nev
   it('rejects a zero-sample WAV as EMPTY_AUDIO, not as a valid silent clip', async () => {
     // A header-only WAV: sndfile-convert happily produces a 0-frame output file
     // and exits 0. Without the zero-sample check this would be cached as a clip
-    // that streams nothing — a silent call, the exact failure mode §5.8 exists for.
+    // that streams nothing — a silent call, the exact failure mode the zero-sample check exists for.
     const header = Buffer.alloc(44);
     header.write('RIFF', 0);
     header.writeUInt32LE(36, 4);
@@ -313,7 +311,7 @@ describe('decodeToPcm16 — input guards (no decoder needed)', () => {
   });
 });
 
-describe.skipIf(!HAVE_DECODERS)('decodeToPcm16 — timeout kills the child and leaves no temp files (§9.5)', () => {
+describe.skipIf(!HAVE_DECODERS)('decodeToPcm16 — timeout kills the child and leaves no temp files', () => {
   // Counts leftovers in this file's private scratch dir. Asserting an exact 0 is
   // only meaningful because nothing else writes here.
   function tempDirCount(): number {
@@ -535,9 +533,9 @@ describe('parseWavPcm16 — external-tool WAV, so chunks must be walked', () => 
   });
 });
 
-// ── §9.6 (the partial-decode half): truncated but decodable input ────────────
+// ── the partial-decode half: truncated but decodable input ────────────
 //
-// The pre-existing §9.6 cases above all use input so damaged that decode fails
+// The cases above all use input so damaged that decode fails
 // COMPLETELY. That leaves the genuinely dangerous class untested: a file that
 // decodes fine, just to a fraction of its real content. A 90%-truncated MP3 yields
 // ~1 ms of audio, which would otherwise be cached, dialed, played as silence, and
@@ -551,7 +549,7 @@ function truncateTo(buf: Buffer, fraction: number): Buffer {
   return buf.subarray(0, Math.floor(buf.length * fraction));
 }
 
-describe.skipIf(!HAVE_DECODERS)('decodeToPcm16 — truncated-but-decodable input (§9.6)', () => {
+describe.skipIf(!HAVE_DECODERS)('decodeToPcm16 — truncated-but-decodable input', () => {
   it('rejects a 50%-truncated MP3 that would otherwise decode to a short clip', async () => {
     const err = await decodeToPcm16(truncateTo(fixture('stereo-440-880-44100.mp3'), 0.5), 'audio/mpeg').catch(
       (e) => e,

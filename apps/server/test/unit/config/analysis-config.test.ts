@@ -2,9 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { parseConfig } from '../../../src/config/load.js';
 
 /**
- * New (magick-agency): the env reader for lane D's block. Covers what core's
- * `createAnalysisService` factory tests covered through `config.ai.*` fallbacks
- * (the fallback now lives in the reader), the VoiceLink recording-host allow-list and
+ * The env reader for the analysis block. Covers the `createAnalysisService` API-key
+ * fallbacks (they live in the reader), the VoiceLink recording-host allow-list and
  * the signing secret.
  */
 const base = {
@@ -19,8 +18,8 @@ function parse(extra: Record<string, string> = {}) {
 }
 
 describe('analysis config block', () => {
-  // Manas, 2026-10-09: recording hosts default to VoiceLink's, transcript retention to
-  // core's 30 days; the row window stays unset.
+  // Recording hosts default to VoiceLink's, transcript retention to 30 days; the row
+  // window stays unset.
   it('defaults: dialer analysis off, VoiceLink recording host, no secret, row retention unset, transcripts 30 days', () => {
     const c = parse();
     expect(c.dialerAnalysis).toBeUndefined();

@@ -1,10 +1,3 @@
-/*
- * PORT NOTE (magick-agency): ported from core test/unit/utils/recording-proxy-resolve.test.ts
- * @4850d1d9 (17 cases -> 9). Deleted: every case through `resolveRecordingUrl` (the AI-call
- * binding over `CallRecord`, not carried): the 3-case `resolveRecordingUrl` describe,
- * 4 of the 5 "exhaustive edge cases" and "agrees with resolveRecordingUrl". The
- * direct-provider and `resolveClientRecordingUrl` cases are unchanged.
- */
 import { describe, it, expect } from 'vitest';
 
 // The pure resolution helpers live in a config-free module, so this test needs

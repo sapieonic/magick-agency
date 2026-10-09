@@ -2,30 +2,22 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 /*
- * PORT NOTE (magick-agency): master @ a1f0756a
- * `test/unit/agency/proxy-agency-campaign-stats-enrichment.routes.test.ts`.
- *  - The `credits_low` overlay is deleted with billing (plan §2; lane B2 "Stats enrichment":
- *    `mergeStall`, `AGENCY_STALL_PRIORITY` here, the credit-balance and rate-card reads,
- *    `creditsLowConnectsThreshold`). Its describe is deleted except its first case, which
- *    is kept as a pass-through check ("leaves stall and other_stalls untouched"); the two
- *    "survives the CREDIT half…" cases are deleted (no credit half). NEW: "never adds a
- *    credits_low stall, and issues no credit read" — the overlay's absence at the route.
+ *  - There is no `credits_low` overlay (no billing): the describe keeps one pass-through case
+ *    ("leaves stall and other_stalls untouched") and "never adds a credits_low stall, and
+ *    issues no credit read" pins the overlay's absence at the route.
  *  - The pg-pool boundary is `@magick-agency/db/connection` (the shared repositories import
- *    `../connection.js`, the same module); the fake pool keeps master's SQL-driven predicates
- *    (`m.tenant_id = $2` still matches `$2::uuid`). The credit/rate-card branches of the fake
- *    and their fixtures (`RATE`, `seededBalance`, `balanceQueryError`) are deleted with them.
- *  - `agents_peak`: no producer here or in core; master never served it either (pinned below).
- * Master's header is kept for its rationale; its credit sentences describe master.
+ *    `../connection.js`, the same module); the fake pool keeps SQL-driven predicates
+ *    (`m.tenant_id = $2` still matches `$2::uuid`).
+ *  - `agents_peak`: no producer here or in the internal handler; it is never served (pinned below).
  */
 
 /**
- * **`GET /proxy/agency/campaigns/:id/stats` must PRODUCE the two fields core
- * declares and cannot fill (MAG-148 identity half + MAG-141).**
+ * **`GET /proxy/agency/campaigns/:id/stats` must PRODUCE the two fields the internal handler
+ * declares and cannot fill.**
  *
  * ── What is deliberately NOT mocked ───────────────────────────────────────────
- * `src/agency/agency-stats-enrichment.js`, `src/db/repositories/user.repository.js`,
- * `src/db/repositories/credit-balance.repository.js` and
- * `src/credits/rate-card.service.js` are all REAL here. They are the fix. A test
+ * `src/agency/agency-stats-enrichment.js` and `src/db/repositories/user.repository.js`
+ * are REAL here. They are the fix. A test
  * that stubs the enricher passes identically before and after it exists, which is
  * the standard `proxy-agency-campaign-behavioral-capabilities.routes.test.ts` set
  * and the trap `proxy-agency-campaigns.routes.test.ts` documents about itself.
@@ -39,16 +31,12 @@ import Fastify, { type FastifyInstance } from 'fastify';
  * scoped unconditionally would pass either way and prove nothing — see the
  * "mocked pool hides SQL drift" failure mode.
  *
- * The rate is real too: no `credit_rate_cards` row is seeded, so
- * `rateCardService.getRate` falls through to `DEFAULT_RATES.agency_connected_call`
- * — the same 25mc/connect the settlement path prices against, not a fixture number.
- *
  * ── The property that is easiest to break and hardest to see ─────────────────
- * Byte-identity. With names resolving and credit healthy, master's body must be
- * core's body plus one `agent_name` key per agent row: same keys, same order,
+ * Byte-identity. With names resolving, the public API layer's body must be
+ * the internal handler's body plus one `agent_name` key per agent row: same keys, same order,
  * same values. `expect(JSON.stringify(...))` on the stripped body is the assertion,
  * not a field-by-field walk — a field-by-field walk cannot see a dropped field
- * core adds next (a core lane is adding `agents[].last_heartbeat` right now).
+ * the internal handler adds next (for example `agents[].last_heartbeat`).
  */
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
@@ -96,8 +84,6 @@ vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
 vi.mock('../../../src/rbac/rbac.middleware.js', () => ({
   requirePermission: () => async () => {},
 }));
-// PORT NOTE (magick-agency): master's `require-capability` mock is gone with governance
-// (the route registers no `requireCapability('agency')`; plan §3.2).
 // Cache is an I/O edge; a miss forces the real DB-then-DEFAULT_RATES path.
 vi.mock('../../../src/cache/redis-cache.js', () => ({
   redisCache: {
@@ -147,7 +133,7 @@ let userQueryError: Error | null = null;
 
 /**
  * A pg double whose behaviour is a FUNCTION OF THE SQL, so dropping a predicate
- * from the source changes what the tests see. It does not interpret SQL in
+ * from the SQL changes what the tests see. It does not interpret SQL in
  * general — it recognises the three statements this path issues and applies the
  * predicates those statements actually contain.
  */
@@ -178,8 +164,6 @@ function fakeQuery(sql: string, params: unknown[] = []): { rows: unknown[] } {
     return { rows };
   }
 
-  // PORT NOTE (magick-agency): master's `tenant_credit_balances` / `credit_rate_cards`
-  // branches are deleted with the credits overlay.
   return { rows: [] };
 }
 
@@ -194,7 +178,7 @@ async function buildApp(): Promise<FastifyInstance> {
   return app;
 }
 
-/** A stats body in core's real shape, with the roster core ships. */
+/** A stats body in the internal handler's real shape, with the roster the internal handler ships. */
 function coreStatsBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     campaign_id: CAMPAIGN,
@@ -220,8 +204,8 @@ function coreStatsBody(overrides: Record<string, unknown> = {}): Record<string, 
         agent_user_id: AGENT_RAVI,
         state: 'on_call',
         state_since: '2026-08-15T09:00:00.000Z',
-        // A field this repo does not know about, standing in for the
-        // `last_heartbeat` a core lane is adding right now. It must survive.
+        // A field this suite does not know about, standing in for a future
+        // `last_heartbeat`. It must survive.
         last_heartbeat: '2026-08-15T09:04:55.000Z',
         break_reason: null,
         calls_handled: 12,
@@ -273,7 +257,7 @@ beforeEach(() => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('agent_name — the field only master can fill (MAG-148)', () => {
+describe('agent_name — the field only the public API layer can fill', () => {
   it('is present on every agent row and carries the display name', async () => {
     const app = await buildApp();
     const body = await getStats(app);
@@ -316,7 +300,7 @@ describe('agent_name — the field only master can fill (MAG-148)', () => {
   });
 
   /**
-   * THE LEAK CASE. `agent_user_id` comes back from core, which holds no user
+   * THE LEAK CASE. `agent_user_id` comes back from the internal handler, which holds no user
    * table and does no tenant checking on it. Without the tenant predicate this
    * renders another tenant's employee on this tenant's dashboard.
    */
@@ -400,7 +384,7 @@ describe('agent_name — the field only master can fill (MAG-148)', () => {
   });
 
   /**
-   * A user with no `display_name` is RESOLVED — a different fact from "master
+   * A user with no `display_name` is RESOLVED — a different fact from "the public API layer
    * cannot identify this person". Collapsing the two would make a missing
    * profile field read to the console exactly like a cross-tenant miss.
    */
@@ -437,10 +421,9 @@ describe('agent_name — the field only master can fill (MAG-148)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('the credits_low stall arm — the diagnosis only master can make (MAG-141)', () => {
-  // PORT NOTE (magick-agency): MODIFIED — kept as the pass-through half of this describe:
-  // whatever stall core diagnosed reaches the client as core sent it (there is no credit
-  // input any more, so "when credit is healthy" is every request).
+describe('the credits_low stall arm — the diagnosis only the public API layer can make', () => {
+  // The pass-through half of this describe: whatever stall the internal handler diagnosed
+  // reaches the client as the internal handler sent it.
   it('leaves stall and other_stalls untouched when credit is healthy', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
@@ -458,17 +441,8 @@ describe('the credits_low stall arm — the diagnosis only master can make (MAG-
     expect(body['other_stalls']).toEqual(['outside_calling_hours']);
   });
 
-  // PORT NOTE (magick-agency): DELETED with the `credits_low` overlay (plan §2, billing):
-  // "promotes credits_low into stall when core diagnosed nothing", "reports
-  // estimated_connects_remaining as the balance floor-divided by the connect rate", "does
-  // not fire above a RAISED threshold, and does below it", "wins over a LOWER-priority core
-  // arm…", "LOSES to a higher-priority core arm…", "never discards core's arm…", "re-sorts
-  // other_stalls by the shared priority…", "does not duplicate credits_low…", "treats a
-  // missing balance row as zero…", "leaves core's diagnosis alone when the balance read
-  // throws…" (10).
-
-  // NEW (magick-agency): the overlay's absence, at the route. A zero-balance tenant used to
-  // be the case that fired it; now nothing reads a balance or a rate, and the stall core
+  // The overlay's absence, at the route. A zero-balance tenant used to
+  // be the case that fired it; now nothing reads a balance or a rate, and the stall the internal handler
   // sent (none here) is what the client gets.
   it('never adds a credits_low stall, and issues no credit read', async () => {
     const app = await buildApp();
@@ -483,7 +457,7 @@ describe('the credits_low stall arm — the diagnosis only master can make (MAG-
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('everything else passes through byte-identically', () => {
-  it('is core’s exact body once the agent_name keys are removed', async () => {
+  it('is the internal handler’s exact body once the agent_name keys are removed', async () => {
     const core = coreStatsBody();
     mocks.proxyToCore.mockResolvedValue({ status: 200, body: core, headers: new Headers() });
 
@@ -495,7 +469,7 @@ describe('everything else passes through byte-identically', () => {
     expect(JSON.stringify(stripAgentNames(body))).toBe(JSON.stringify(core));
   });
 
-  it('appends agent_name AFTER the keys core sent, leaving their order intact', async () => {
+  it('appends agent_name AFTER the keys the internal handler sent, leaving their order intact', async () => {
     const app = await buildApp();
     const body = await getStats(app);
     const row = (body['agents'] as Record<string, unknown>[])[0]!;
@@ -537,7 +511,7 @@ describe('everything else passes through byte-identically', () => {
     expect(statements).toHaveLength(0);
   });
 
-  it('does not invent an agents array core did not send', async () => {
+  it('does not invent an agents array the internal handler did not send', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
       headers: new Headers(),
@@ -551,21 +525,21 @@ describe('everything else passes through byte-identically', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('P2: core’s new success fields reach the client untouched', () => {
+describe('P2: the internal handler’s new success fields reach the client untouched', () => {
   /**
-   * Core's campaign-stats payload gains two members — `attempts_success` (a count)
-   * and `success_rate_pct` (a percentage, **nullable**). Master produces neither and
-   * has no opinion about either: they are core's arithmetic over its own
+   * The internal handler's campaign-stats payload gains two members — `attempts_success` (a count)
+   * and `success_rate_pct` (a percentage, **nullable**). The public API layer produces neither and
+   * has no opinion about either: they are the internal handler's arithmetic over its own
    * dispositions.
    *
    * ── Why this needs a test when the code needed no change ──────────────────
-   * It needed none because `enrichAgencyCampaignStats` is a SPREAD over core's
+   * It needed none because `enrichAgencyCampaignStats` is a SPREAD over the internal handler's
    * body rather than a reconstruction from a field list, and its docstring says so
-   * in as many words. That is the whole reason a new core field arrives without
+   * in as many words. That is the whole reason a new internal handler field arrives without
    * this repo being edited — and it is exactly the property a well-meaning
    * "let's be explicit about the response shape" refactor deletes. The
    * byte-identity block above proves it generically with a made-up key; this block
-   * names the two REAL fields, so the failure message points at the ticket rather
+   * names the two REAL fields, so the failure message points at the real field rather
    * than at a placeholder.
    *
    * ── `success_rate_pct: null` is the case that matters ─────────────────────
@@ -615,11 +589,8 @@ describe('P2: core’s new success fields reach the client untouched', () => {
     await app.close();
   });
 
-  // PORT NOTE (magick-agency): DELETED — "survives the CREDIT half of the enrichment too,
-  // null included": there is no credit half (no second spread to drop the fields).
-
-  it('is byte-identical to core’s body once agent_name is stripped', async () => {
-    // The generic property, restated over the real fields: master adds one key per
+  it('is byte-identical to the internal handler’s body once agent_name is stripped', async () => {
+    // The generic property, restated over the real fields: the public API layer adds one key per
     // agent row and changes nothing else, so a diff here is a transform nobody
     // intended.
     const core = coreStatsBody(WITH_SUCCESS);
@@ -647,29 +618,29 @@ describe('P2: core’s new success fields reach the client untouched', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('the OPTIONAL stats addition passes through untouched (`86d45k0bk`)', () => {
+describe('the OPTIONAL stats addition passes through untouched', () => {
   /**
-   * Core may add `attempts_retried` (a count) to its campaign-stats payload.
-   * Master produces it, defaults it and reads it nowhere, and — the part worth
+   * The internal handler may add `attempts_retried` (a count) to its campaign-stats payload.
+   * The public API layer produces it, defaults it and reads it nowhere, and — the part worth
    * stating — **tolerating its ABSENCE is the correct behaviour, not a
-   * degradation**: an older core simply does not serve the key, there is nothing
-   * for master to fill in and no default that would be true.
+   * degradation**: an older internal handler simply does not serve the key, there is nothing
+   * for the public API layer to fill in and no default that would be true.
    *
-   * This is the `P2` block above one ticket later, and it exists for the same
+   * This is the block above, extended, and it exists for the same
    * reason: the code needed no change because `enrichAgencyCampaignStats` is a
    * spread rather than a reconstruction, and that is exactly the property a
    * "let's declare the response shape" refactor deletes. Naming the real field
-   * makes the failure point at the ticket instead of at a placeholder key.
+   * makes the failure point at the real field instead of at a placeholder key.
    *
-   * ── `agents_peak` is NOT asserted here, because core does not serve it ─────
-   * The ticket specified a nullable `agents_peak` gauge beside this count and it
-   * was dropped before core implemented it: `grep -rn agents_peak` over core's
+   * ── `agents_peak` is NOT asserted here, because the internal handler does not serve it ─────
+   * A nullable `agents_peak` gauge was specified beside this count and
+   * dropped before the internal handler implemented it: `grep -rn agents_peak` over the internal handler's
    * `src/` and `test/` returns nothing, and there is no column behind it. These
    * cases used to assert its pass-through, which proved only that a spread
    * spreads — the "field this repo has never heard of" case above already proves
    * that, without implying the field exists — while keeping
    * `AgencyCampaignStatsAdditions` reading as though the console could expect it.
-   * The `null`-not-`0` rule it carried is pinned on fields core really serves:
+   * The `null`-not-`0` rule it carried is pinned on fields the internal handler really serves:
    * `success_rate_pct` in the block above, `abandonment_rate_24h_pct` on the
    * stall fixture.
    */
@@ -692,7 +663,7 @@ describe('the OPTIONAL stats addition passes through untouched (`86d45k0bk`)', (
   it('keeps a real 0 as a measurement rather than dropping the key', async () => {
     // `attempts_retried` is a COUNT, so `0` means "nothing was redialled" and is
     // an answer. Dropping it (a falsy-value filter anywhere on this hop) would
-    // make "we retried nobody" indistinguishable from "this core does not
+    // make "we retried nobody" indistinguishable from "this internal handler does not
     // measure retries" — which is the one distinction the optionality carries.
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
@@ -708,10 +679,7 @@ describe('the OPTIONAL stats addition passes through untouched (`86d45k0bk`)', (
     await app.close();
   });
 
-  // PORT NOTE (magick-agency): DELETED — "survives the CREDIT half of the enrichment too":
-  // no credit half.
-
-  it('is byte-identical to core\u2019s body once agent_name is stripped', async () => {
+  it('is byte-identical to the internal handler\u2019s body once agent_name is stripped', async () => {
     const core = coreStatsBody({ ...WITH_ADDITION });
     mocks.proxyToCore.mockResolvedValue({ status: 200, body: core, headers: new Headers() });
 
@@ -722,10 +690,10 @@ describe('the OPTIONAL stats addition passes through untouched (`86d45k0bk`)', (
     await app.close();
   });
 
-  it('tolerates it being absent — an older core ships no such key', async () => {
-    // The base fixture carries it not at all, so this is the "older core" shape.
-    // Master must not manufacture the key: `attempts_retried: 0` invented here
-    // would claim "nobody was redialled" on a core that has no opinion.
+  it('tolerates it being absent — an older internal handler ships no such key', async () => {
+    // The base fixture carries it not at all, so this is the "older internal handler" shape.
+    // The public API layer must not manufacture the key: `attempts_retried: 0` invented here
+    // would claim "nobody was redialled" on an internal handler that has no opinion.
     const app = await buildApp();
     const body = await getStats(app);
 
@@ -733,9 +701,9 @@ describe('the OPTIONAL stats addition passes through untouched (`86d45k0bk`)', (
     await app.close();
   });
 
-  it('does NOT manufacture the field core dropped', async () => {
+  it('does NOT manufacture the field the internal handler dropped', async () => {
     // The contract half of the removal above, asserted from the response rather
-    // than from the type: master invents no `agents_peak`, so a console that
+    // than from the type: the public API layer invents no `agents_peak`, so a console that
     // learned about it from a stale docstring gets no key to render, not a
     // fabricated `null` reading as "measured nothing".
     mocks.proxyToCore.mockResolvedValue({

@@ -1,21 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 
-// PORT NOTE (magick-agency): ported from core test/unit/core/webrtc-bridge-borrowed-socket-soak.test.ts@4850d1d9
-// (2 cases → 2). Mock specifiers follow the new paths (logger → @magick-agency/observability,
-// webrtc-call repository → @magick-agency/db agency-call repository, account settings → the
-// @magick-agency/db repository with `getWebrtcMaxDurationSeconds` → null = the flag mock's 1800);
-// the settlement-dispatcher and feature-flag mocks are gone (no longer imported). The default
-// provider is now VoiceLink (core: VoBiz); every attempt here is unanswered, so its hangup
-// finalizes at once on VoiceLink exactly as it did on VoBiz.
-//
-// DELETED: none.
-// MODIFIED (1): 'T-B1/T-B2: survives 300 sequential attempts with a flat listener profile' —
-// `forceEndByUser(`call-${i}`)` (deleted) → `forceEndWithOutcome(`att-${i}`, 'ended_by_user')`,
-// the same `localHangup` under the same outcome.
+// The default provider is VoiceLink; every attempt here is unanswered, so its hangup
+// finalizes at once. Each attempt ends via `forceEndWithOutcome(`att-${i}`, 'ended_by_user')`
+// (a `localHangup` under that outcome).
 
 // ---------------------------------------------------------------------------
-// T-B1/T-B2 — the borrowed-socket contract at SHIFT SCALE (§7).
+// The borrowed-socket contract at SHIFT SCALE.
 //
 // `webrtc-bridge-manager.bridged.test.ts` already pins the contract at the bar
 // the design proposed: "three sequential calls over one station socket". That
@@ -177,7 +168,7 @@ afterEach(() => {
 });
 
 describe('borrowed station socket — 8-hour shift soak', () => {
-  it('T-B1/T-B2: survives 300 sequential attempts with a flat listener profile', async () => {
+  it('survives 300 sequential attempts with a flat listener profile', async () => {
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
     const ws = new RealEmitterStation();
 
@@ -198,7 +189,7 @@ describe('borrowed station socket — 8-hour shift soak', () => {
       });
       midAttempt.push(Object.fromEntries(EVENTS.map((e) => [e, ws.listenerCount(e)])));
 
-      // PORT NOTE: core's `forceEndByUser(`call-${i}`)` — the same `localHangup`, by attempt.
+      // end the attempt via `localHangup` with the `ended_by_user` outcome.
       await mgr.forceEndWithOutcome(`att-${i}`, 'ended_by_user');
       betweenAttempts.push(Object.fromEntries(EVENTS.map((e) => [e, ws.listenerCount(e)])));
 
@@ -236,10 +227,10 @@ describe('borrowed station socket — 8-hour shift soak', () => {
     // Between attempts, only the station's own handler remains.
     expect(firstBetween).toEqual({ message: 1, close: 0, error: 0 });
 
-    // ── T-B3: Node's own leak signal never fired ──────────────────────────
+    // ── Node's own leak signal never fired ──────────────────────────
     // `process.emitWarning` dispatches on nextTick, so the capture MUST be
     // drained before it is read. Without this the assertion below is vacuous —
-    // it reads an empty array and passes no matter what happened. T-B3b is what
+    // it reads an empty array and passes no matter what happened. the detector-proof case below is what
     // caught that, and is why it exists.
     await drainWarnings();
     const maxListenerWarnings = warnings.filter((w) => w.name === 'MaxListenersExceededWarning');
@@ -248,7 +239,7 @@ describe('borrowed station socket — 8-hour shift soak', () => {
       'the bridge leaked listeners onto the borrowed socket',
     ).toEqual([]);
 
-    // ── T-B6: no session leak ────────────────────────────────────────────
+    // ── no session leak ────────────────────────────────────────────
     for (let i = 1; i <= SHIFT_ATTEMPTS; i++) {
       expect(mgr.getSession(`call-${i}`), `session call-${i} leaked`).toBeUndefined();
     }
@@ -259,7 +250,7 @@ describe('borrowed station socket — 8-hour shift soak', () => {
     expect(ws.readyState).toBe(1);
   }, 60_000);
 
-  it('T-B3b: the harness can actually observe a listener leak (detector proof)', async () => {
+  it('the harness can actually observe a listener leak (detector proof)', async () => {
     // A soak test that has never failed for the right reason is unproven. This
     // deliberately leaks on the SAME emitter type and asserts the detector
     // fires — so a future refactor that neuters the warning capture (or swaps

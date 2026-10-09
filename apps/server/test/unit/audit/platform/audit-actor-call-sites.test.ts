@@ -33,27 +33,20 @@ import { resolve, join } from 'node:path';
  * written yet.
  *
  * The repo already uses this pattern for the same class of problem —
- * `test/unit/auth/api-key-route-blocks.test.ts` — and docs/reference/magick-master/CLAUDE.md names it as one
- * of "the two guards that keep this from regressing". The comment stripper below
+ * `test/unit/auth/api-key-route-blocks.test.ts`, one of the two guards that keep
+ * this from regressing. The comment stripper below
  * is that file's, for the reason its docstring gives at length: this codebase
  * documents holes by quoting the old code, so a raw-text assertion fails on the
  * explanation and the tempting "fix" is to delete the explanation.
  */
 
 /*
- * PORT NOTE (magick-agency): ported from master
- * test/unit/audit/audit-actor-call-sites.test.ts@a1f0756a. Changes:
- *  - the guarded call is `platformAuditLogger.log({` — master's logger's name in
- *    this app (`src/audit/platform/audit-logger.ts`). The bare
- *    `auditLogger.log({` here is CORE's `audit_logs` writer, whose events carry a
- *    free-form `actor` string and none of this union, so scanning for it would
- *    flag every ported core call site;
- *  - "finds the audited call sites at all" (master: ≥ 29) was deleted in Phase 2b
- *    (nothing ported yet) and is RESTORED by lane A with floor 4 — see the case;
- *  - MODIFIED: "confines SYSTEM_AUDIT_ACTOR to background writers" expects no
- *    file: master's two (`scheduling/retry.manager.ts`,
- *    `scheduling/scheduler.service.ts`) are AI scheduling and are not ported;
- *  - the rest, including the comment stripper and its three tests, is verbatim.
+ * The guarded call is `platformAuditLogger.log({` — the platform audit logger
+ * (`src/audit/platform/audit-logger.ts`). The bare `auditLogger.log({` is the
+ * voice engine's `audit_logs` writer, whose events carry a free-form `actor`
+ * string and none of this union, so scanning for it would flag every voice-engine
+ * call site. No file is expected to use `SYSTEM_AUDIT_ACTOR` today (there are no
+ * background audit writers).
  */
 const AUDIT_LOG_CALL = 'platformAuditLogger.log({';
 
@@ -150,19 +143,10 @@ describe('every auditLogger.log call site derives its actor (86d45t7rm)', () => 
   const sites = auditCallSites();
 
   /*
-   * RESTORED by lane A (magick-agency). Master: `>= 29` over its whole tree
-   * (`grep -rn "auditLogger.log({" src` at a1f0756a: 33 matches — 32 live call
-   * sites plus one in an `audit-actor.ts` comment, which the stripper drops). Of
-   * master's 32: 4 are lane A's routes, ported here (`invites.routes.ts` 2,
-   * `user.routes.ts` 2); 18 are lane B2's agency routes (`dnc` 2,
-   * `proxy-agency-agent` 8, `proxy-agency-campaigns` 6, `proxy-agency-staffing` 2),
-   * not yet ported; 10 are the AI scheduler's (`scheduling/*`), never ported. So
-   * the floor was lane A's 4; the agency routes raise it to 22 as they land.
-   * The canary's job is unchanged: a refactor that renames the call (so the scan
-   * finds nothing and every assertion below passes vacuously) fails here.
-   *
-   * Phase 8 (magick-agency): 22 — lane A's 4 plus the agency routes, each at master's
-   * count (`dnc.routes.ts` 2, `proxy-agency-campaigns.routes.ts` 6,
+   * Canary: a refactor that renames the call (so the scan finds nothing and every
+   * assertion below passes vacuously) fails here. The floor is 22: the invite and
+   * user routes (`invites.routes.ts` 2, `user.routes.ts` 2) plus the agency routes
+   * (`dnc.routes.ts` 2, `proxy-agency-campaigns.routes.ts` 6,
    * `proxy-agency-staffing.routes.ts` 2, `proxy-agency-agent.routes.ts` 8).
    */
   it('finds the audited call sites at all', () => {
@@ -188,7 +172,7 @@ describe('every auditLogger.log call site derives its actor (86d45t7rm)', () => 
    * `system` is the strongest claim on the enum — "no principal existed" rather
    * than "I could not work out who" — so the places entitled to make it stay
    * countable. Anything request-scoped must derive instead; the ambiguity this
-   * ticket names in core's `last_transition_by` is exactly what a `system` used
+   * ticket names in the voice engine's `last_transition_by` is exactly what a `system` used
    * as a fallback would recreate here.
    */
   it('confines SYSTEM_AUDIT_ACTOR to background writers', () => {

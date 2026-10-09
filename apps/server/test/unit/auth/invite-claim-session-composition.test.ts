@@ -180,8 +180,7 @@ async function fakeQuery(sql: string, params: unknown[] = []): Promise<{ rows: u
 const mocks = vi.hoisted(() => ({
   verifyIdToken: vi.fn(),
   buildSessionPayload: vi.fn(),
-  // PORT NOTE (magick-agency): master's `resolveGovernanceSafe` is
-  // `resolveSettingsSafe` here (plan §3.2 settings map replaces governance).
+  // `resolveSettingsSafe` resolves the account settings map.
   resolveSettingsSafe: vi.fn(),
   invalidateUserCache: vi.fn(),
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -274,7 +273,7 @@ beforeEach(() => {
     updated_at: new Date(),
   });
   mocks.buildSessionPayload.mockImplementation(async (user: UserRow) => ({
-    user, tenants: [], memberships: [], settings: {}, is_new: false, // PORT NOTE (magick-agency): `governance` → `settings`
+    user, tenants: [], memberships: [], settings: {}, is_new: false,
   }));
 });
 
@@ -291,13 +290,10 @@ describe('a mismatched claim, then /auth/session with the INVITED address', () =
   });
 
   /*
-   * PORT NOTE (magick-agency): MODIFIED. At master the lookup fell through to path
-   * 4, which provisioned a fresh tenant, and the case asserted that by the fake
-   * raising PROVISIONED on `INSERT INTO users`. Agency's path 4 REFUSES with 403
-   * `no_membership` and writes nothing (plan §3.1), so the case now asserts that
-   * refusal. The fake still throws on `INSERT INTO users`, so a path 4 that wrote
-   * a user would answer 500 and red the 403 assertion. The surviving binding,
-   * which is the assertion the defect broke, is unchanged.
+   * The lookup falls through to path 4, which REFUSES with 403 `no_membership` and
+   * writes nothing, so the case asserts that refusal. The fake throws on
+   * `INSERT INTO users`, so a path 4 that wrote a user would answer 500 and red the
+   * 403 assertion.
    */
   it('does NOT let a token for the invited address take the membership over', async () => {
     /**

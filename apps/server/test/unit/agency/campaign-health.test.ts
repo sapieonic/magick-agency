@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// AD-P4-C-01 §C.2 — the health strip's diagnosis.
+// The health strip's diagnosis.
 //
 // The strip shows ONE reason. So the tests that matter are not "does each
 // condition produce a message" but:
@@ -11,8 +11,9 @@ import { describe, it, expect } from 'vitest';
 //   * does a degraded dependency produce silence rather than a guess — `null`
 //     in-use must not read as saturation, because "contact support about your
 //     limit" is the wrong instruction when we simply could not read Redis;
-//   * and does core refuse to emit the one arm it cannot know (`credits_low`),
-//     which is `AD-P4-C-04` applied to a union instead of a field.
+//   * and does it refuse to emit the one arm it cannot know (`credits_low`),
+//     which is the "never guess a value you cannot know" rule applied to a union
+//     instead of a field.
 // ---------------------------------------------------------------------------
 
 import {
@@ -76,7 +77,7 @@ function healthy(patch: Partial<CampaignHealthInputs> = {}): CampaignHealthInput
   };
 }
 
-/** Inputs that trip every diagnosis core can make, simultaneously. */
+/** Inputs that trip every diagnosis this module can make, simultaneously. */
 function everythingWrong(): CampaignHealthInputs {
   return healthy({
     campaign: campaign({
@@ -133,17 +134,14 @@ describe('the health strip shows one diagnosis, and it is the right one', () => 
     expect(codes).toEqual(byPriority);
   });
 
-  it('never emits `credits_low` — core holds no balance', () => {
-    // `AD-P4-C-04` applied to a union. Master owns the balance and inserts this
+  it('never emits `credits_low` — the voice engine holds no balance', () => {
+    // The "never guess" rule applied to a union. The public API layer owns the balance and inserts this
     // arm when proxying; a branch here would be a declared-but-unproducible code
     // that reads as reachable to the console and to the compiler.
     const emitted = new Set<AgencyStallCode>(diagnoseAll(everythingWrong()).map((s) => s.code));
     expect((emitted as Set<string>).has('credits_low')).toBe(false);
-    // PORT NOTE (magick-agency): core also asserted against `AGENCY_CORE_STALL_CODES`,
-    // the subset core could produce. That list existed to state the core-vs-master
-    // producer split and is folded into the contract's one list now
-    // (`packages/contracts/PORTING.md`): with `credits_low` removed, every code is
-    // produced here, so the priority list IS the producible set.
+    // With `credits_low` removed, every code is produced here, so the priority list IS
+    // the producible set.
     expect(AGENCY_STALL_PRIORITY as readonly string[]).not.toContain('credits_low');
     // And the split is exhaustive the other way: every code this module CAN emit is
     // in the priority list, so nothing can be emitted that the console cannot rank.
@@ -185,7 +183,7 @@ describe('evidence, and the refusals', () => {
     expect(stall).toBeNull();
   });
 
-  it('MAG-146: a limit of 0 is "no known ceiling", never saturation', () => {
+  it('a limit of 0 is "no known ceiling", never saturation', () => {
     // `agency-campaigns.routes.ts` falls `concurrencyLimit` back to `0` when the
     // `account_settings` read degrades, and the route's own comment says `0` is
     // chosen BECAUSE `saturated()` reads it as "no known ceiling" — never a real
@@ -198,7 +196,7 @@ describe('evidence, and the refusals', () => {
     // Without `limit > 0` in `saturated()`, a degraded settings read plus ANY
     // known non-zero in-use count satisfies `in_use >= 0` and the strip reports
     // `concurrency_saturated` — a diagnosis whose own header says has no action
-    // (D10/CR-2: no setter, contact support) — for a ceiling that was never
+    // (D10: no setter, contact support) — for a ceiling that was never
     // measured, let alone reached. Deleting `limit > 0` from `saturated()` must
     // turn this test red.
     const { stall, other_stalls } = campaignHealth(healthy({
@@ -209,7 +207,7 @@ describe('evidence, and the refusals', () => {
     expect(other_stalls).not.toContain('concurrency_saturated');
   });
 
-  it('MAG-146: a negative limit is unreachable through any validated write, but the guard would cover it too', () => {
+  it('a negative limit is unreachable through any validated write, but the guard would cover it too', () => {
     // `account_settings.max_concurrent_calls` has no DB-level CHECK, and the
     // sentinel's safety rests on no write path being able to produce `0` or
     // less. There are THREE such paths, not two, and the third does not get
@@ -252,7 +250,7 @@ describe('evidence, and the refusals', () => {
     expect(stall?.code).toBe('concurrency_saturated');
   });
 
-  it('MAG-146: list_exhausted_retries_pending needs retries_pending > 0, not just an empty list', () => {
+  it('list_exhausted_retries_pending needs retries_pending > 0, not just an empty list', () => {
     // Found while re-checking `diagnoseAll` for the same unasserted-guard shape
     // (ticket acceptance criterion 4). `stats.contacts_pending === 0 &&
     // stats.retries_pending > 0` has the same COVERAGE SHAPE as `saturated()`'s
@@ -263,7 +261,7 @@ describe('evidence, and the refusals', () => {
     // test green: the two tests that reach `contacts_pending: 0` both also set a
     // non-zero `retries_pending`, so nothing ever exercised the "list exhausted
     // AND nothing scheduled" case. Without the guard, a campaign with an empty
-    // list and an empty retry queue — §5.3's actual "complete", not "exhausted
+    // list and an empty retry queue — the actual "complete", not "exhausted
     // with retries pending" — would report `list_exhausted_retries_pending` with
     // `retries_pending: 0`, which is the diagnosis this guard exists to prevent.
     const { stall, other_stalls } = campaignHealth(healthy({
@@ -283,8 +281,8 @@ describe('evidence, and the refusals', () => {
   });
 
   it('does not blame staffing when nobody is on shift at all', () => {
-    // Zero agents on shift is an empty campaign, not a stalled one — §C.6 gives it
-    // its own EmptyState with the station URL to share. Reporting "dialing has
+    // Zero agents on shift is an empty campaign, not a stalled one — it gets its
+    // own empty state with the station URL to share. Reporting "dialing has
     // stalled — no agents are available" for a campaign nobody has joined sends a
     // supervisor looking for a fault that is really a setup step.
     const { stall } = campaignHealth(healthy({
@@ -348,7 +346,7 @@ describe('evidence, and the refusals', () => {
   });
 
   it('outranks calling hours over the retry diagnosis that would otherwise mask it', () => {
-    // `contacts_pending: 0` with retries scheduled is §5.3's "list exhausted".
+    // `contacts_pending: 0` with retries scheduled is "list exhausted".
     // Calling hours sits ABOVE it in `AGENCY_STALL_PRIORITY`, so a campaign shut
     // out overnight reads as shut out overnight and not as finished-but-waiting —
     // the two need different actions from the supervisor (none, versus none until
@@ -368,7 +366,7 @@ describe('evidence, and the refusals', () => {
     expect(other_stalls).toEqual(['list_exhausted_retries_pending']);
   });
 
-  it('separates "list exhausted, retries scheduled" from "complete" (§5.3)', () => {
+  it('separates "list exhausted, retries scheduled" from "complete"', () => {
     const { stall } = campaignHealth(healthy({
       stats: {
         contacts_pending: 0, retries_pending: 312, agents_live: 3,

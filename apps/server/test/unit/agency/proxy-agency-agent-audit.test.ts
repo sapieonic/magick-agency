@@ -2,21 +2,16 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 /*
- * PORT NOTE (magick-agency, Phase 8): master `test/unit/agency/proxy-agency-agent-audit.test.ts`
- * @a1f0756a. Source 8 cases → ported 8.
- *
- * Harness changes, and only these:
- *  - `proxyToCore` → `callCore` (`src/api/core-dispatch.js`), mocked under master's
- *    `proxyToCore` name so every assertion stays master's; the `resolveCoreApiKey` mock and its
- *    `beforeEach` re-arm are gone with the key (the hop is in-process);
- *  - `auditLogger` → `platformAuditLogger` (`src/audit/platform/audit-logger.js`);
+ * Harness notes:
+ *  - `callCore` (`src/api/core-dispatch.js`) is mocked as `mocks.proxyToCore`; the hop is
+ *    in-process, so there is no API key to resolve;
+ *  - the audit logger is `platformAuditLogger` (`src/audit/platform/audit-logger.js`);
  *  - the logger mock is a partial over `@magick-agency/observability`;
- *  - the `require-capability` mock is gone with governance (plan §3.2).
- * DELETED: none. MODIFIED: none. NEW: none.
+ *  - the route registers no capability gate.
  */
 
 /**
- * MAG-157: every new agency session/attempt audit row is asserted on payload.
+ * Every new agency session/attempt audit row is asserted on payload.
  * A missing `auditLogger.log` call produces `[]`/`0` and would satisfy a count.
  */
 
@@ -43,7 +38,6 @@ vi.mock('../../../src/auth/session.middleware.js', () => ({ sessionMiddleware: a
 vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
   tenantContextMiddleware: async () => {},
 }));
-// PORT NOTE (magick-agency): master's `require-capability` mock is gone with governance.
 vi.mock('../../../src/rbac/rbac.middleware.js', () => ({
   requirePermission: () => async () => {},
 }));
@@ -71,7 +65,7 @@ beforeEach(() => {
   mocks.proxyToCore.mockResolvedValue({ status: 200, body: { campaign_id: CAMPAIGN } });
 });
 
-describe('agency session and attempt audits (MAG-157)', () => {
+describe('agency session and attempt audits', () => {
   it('join audits the session against the campaign in the request', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
@@ -98,7 +92,7 @@ describe('agency session and attempt audits (MAG-157)', () => {
     await app.close();
   });
 
-  it('leave audits the session with campaign_id from core', async () => {
+  it('leave audits the session with campaign_id from the internal handler', async () => {
     const app = await buildApp();
     await app.inject({ method: 'POST', url: `${PREFIX}/sessions/${SESSION}/leave` });
     expect(mocks.auditLog).toHaveBeenCalledWith({
@@ -174,7 +168,7 @@ describe('agency session and attempt audits (MAG-157)', () => {
     await app.close();
   });
 
-  it('hang-up audits the attempt with campaign_id from core', async () => {
+  it('hang-up audits the attempt with campaign_id from the internal handler', async () => {
     const app = await buildApp();
     await app.inject({ method: 'POST', url: `${PREFIX}/attempts/${ATTEMPT}/hangup` });
     expect(mocks.auditLog).toHaveBeenCalledWith({

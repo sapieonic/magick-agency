@@ -5,16 +5,15 @@ import { recordingHostMatches } from '../../../src/utils/recording-proxy.js';
 import { hopCountTrust } from '../../../src/app.js';
 
 /**
- * NEW (magick-agency): the config rulings Manas made on 2026-10-09, each a deliberate
- * departure from the verbatim port (docs/decisions.md):
- *  - Q7/Q9 `TRUST_PROXY_HOPS` (master's setting): default 1, never 0 / blank / `true`;
+ * The config rulings recorded in docs/decisions.md:
+ *  - Q7/Q9 `TRUST_PROXY_HOPS`: default 1, never 0 / blank / `true`;
  *    `hopCountTrust` gives `request.ip` exactly N hops;
  *  - Q1 `DB_SSL_REJECT_UNAUTHORIZED` / `DB_SSL_CA`: verify by default, strict opt-out,
  *    PEM contents only; TLS parameters in `DATABASE_URL` are refused (pg would let them
  *    override the verified settings);
  *  - `VOICELINK_RECORDING_HOSTS`: unset → VoiceLink's recording host, set (even empty) →
  *    exactly that list; the real recording URL passes, lookalikes do not;
- *  - `AGENCY_TRANSCRIPT_RETENTION_DAYS`: core's 30 days by default (with core's
+ *  - `AGENCY_TRANSCRIPT_RETENTION_DAYS`: 30 days by default (with the
  *    `DIALER_TRANSCRIPT_RETENTION_DAYS` fallback); `AGENCY_RETENTION_DAYS` stays unset and
  *    floored by `RETENTION_MIN_DAYS`.
  */
@@ -37,7 +36,7 @@ function refused(extra: Record<string, string>): string[] {
 }
 
 describe('Q7/Q9: TRUST_PROXY_HOPS', () => {
-  it('defaults to 1 (master\'s default)', () => {
+  it('defaults to 1', () => {
     expect(parse().server.trustProxyHops).toBe(1);
   });
 
@@ -61,8 +60,8 @@ describe('Q7/Q9: TRUST_PROXY_HOPS', () => {
 
   it('a bare numeric trustProxy fails closed on this Fastify — why app.ts passes hopCountTrust', async () => {
     // Fastify 5.12 treats a hop COUNT as untrusted ("cannot validate the immediate peer"), so
-    // master's `trustProxy: hops` would leave request.ip at the socket peer here.
-    // Its types no longer accept a number either (hence the cast): master's literal would not compile.
+    // `trustProxy: hops` would leave request.ip at the socket peer here.
+    // Its types no longer accept a number either (hence the cast).
     const app = Fastify({ trustProxy: 1 as unknown as boolean });
     app.get('/ip', async (r) => ({ ip: r.ip }));
     const res = await app.inject({ method: 'GET', url: '/ip', remoteAddress: '10.0.0.5', headers: { 'x-forwarded-for': '203.0.113.7' } });
@@ -146,13 +145,13 @@ describe('VOICELINK_RECORDING_HOSTS', () => {
 });
 
 describe('analysis retention defaults', () => {
-  it('transcripts default to core\'s 30 days; rows are kept (no default row window)', () => {
+  it('transcripts default to 30 days; rows are kept (no default row window)', () => {
     const r = parse().retention;
     expect(r.agencyTranscriptRetentionDays).toBe(30);
     expect(r.agencyRetentionDays).toBeUndefined();
   });
 
-  it('keeps core\'s fallback order: AGENCY_TRANSCRIPT_RETENTION_DAYS, else DIALER_TRANSCRIPT_RETENTION_DAYS', () => {
+  it('keeps the fallback order: AGENCY_TRANSCRIPT_RETENTION_DAYS, else DIALER_TRANSCRIPT_RETENTION_DAYS', () => {
     expect(parse({ DIALER_TRANSCRIPT_RETENTION_DAYS: '14' }).retention.agencyTranscriptRetentionDays).toBe(14);
     expect(parse({ DIALER_TRANSCRIPT_RETENTION_DAYS: '14', AGENCY_TRANSCRIPT_RETENTION_DAYS: '7' }).retention.agencyTranscriptRetentionDays).toBe(7);
   });

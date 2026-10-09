@@ -2,29 +2,26 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
 /**
- * NEW (magick-agency, Phase 8): core's limiter is registered ONCE, at app scope (`app.ts`), as
- * core registered it — so every route is charged to a bucket — and lane A's per-route
- * `config.rateLimit` blocks are still honoured by that one registration, as master's single
- * global limiter honoured them (lane A's own `@fastify/rate-limit` registration was removed,
- * see `platform.plugin.ts`). Through the REAL app (`buildApp`, in-memory store):
- *  - `POST /super-admin/login`: master's 5/minute (`super-admin.routes.ts`) — the 6th is a 429;
+ * The rate limiter is registered ONCE, at app scope (`app.ts`), so every route is charged to a
+ * bucket — and the per-route `config.rateLimit` blocks are still honoured by that one
+ * registration (the platform plugin registers no limiter of its own, see `platform.plugin.ts`).
+ * Through the REAL app (`buildApp`, in-memory store):
+ *  - `POST /super-admin/login`: 5/minute (`super-admin.routes.ts`) — the 6th is a 429;
  *  - `GET /invites/:token` and `POST /invites/:token/claim`: `PUBLIC_INVITE_RATE_LIMIT`,
  *    20/minute per IP — the 21st is a 429, each route its own counter;
- *  - `POST /auth/session` (which had no limit before the hoist: lane C's limiter was
- *    plugin-scoped) is charged to the app-wide bucket (`x-ratelimit-limit: 200`, core's
- *    default ceiling);
+ *  - `POST /auth/session` (no per-route limit; the voice plugin's limiter is plugin-scoped)
+ *    is charged to the app-wide bucket (`x-ratelimit-limit: 200`, the default ceiling);
  *  - the probes `/healthz`, `/readyz` are exempt (`EXEMPT_PATHS`).
  * Mutation-checked: dropping `registerRateLimit` from `app.ts` reds every case but the probes'.
  *
- * Review fix (Phase 8, BLOCKING): the limiter's `tenant` bucket (core keyed any request with an
- * `x-api-key` header on `${x-mgkvc-tenant}:${hash(x-api-key)}`) is deleted with platform API
- * keys. The last describe proves, through the real app, that rotating those headers rotates no
+ * The limiter has no `tenant` bucket (a request with an `x-api-key` header was once keyed on
+ * `${x-mgkvc-tenant}:${hash(x-api-key)}`); it is gone with platform API keys. The last describe proves, through the real app, that rotating those headers rotates no
  * bucket and that a duplicated `x-api-key` is not a 500. Mutation-checked: restoring the
  * `'tenant'` branch in `budgetFor` and its key arm reds the two rotation cases. The duplicate-
  * header case does not red under that mutation: through Node's HTTP layer (and `inject`) a
- * repeated unknown header arrives JOINED into one string ("a, b"), so the array that made core's
- * `hashApiKey` throw (the deleted unit "CURRENT BEHAVIOR" case) never reaches a key generator in
- * the real stack; the case pins the end-to-end answer only.
+ * repeated unknown header arrives JOINED into one string ("a, b"), so an array value (which
+ * made a hashing key generator throw) never reaches a key generator in the real stack; the
+ * case pins the end-to-end answer only.
  */
 
 vi.hoisted(() => {
@@ -63,7 +60,7 @@ async function fire(n: number, method: 'GET' | 'POST', url: string, payload?: un
 }
 
 describe('the app-scope limiter honours the per-route limits (real app)', () => {
-  it('POST /super-admin/login keeps master\'s 5/minute: the 6th attempt is a 429', async () => {
+  it('POST /super-admin/login keeps its 5/minute: the 6th attempt is a 429', async () => {
     const statuses = await fire(6, 'POST', '/super-admin/login', {});
     expect(statuses.slice(0, 5).every((s) => s !== 429)).toBe(true);
     expect(statuses[5]).toBe(429);

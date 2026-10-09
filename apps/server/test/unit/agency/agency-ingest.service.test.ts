@@ -144,7 +144,7 @@ describe('AgencyIngestService', () => {
     });
   });
 
-  it('streams accepted contacts to core and completes the job', async () => {
+  it('streams accepted contacts to the dialer and completes the job', async () => {
     csvStream('Mobile,Name\n9876543210,Asha\n9123456780,Ravi\n');
     await service.run({ job: job() });
 
@@ -164,7 +164,7 @@ describe('AgencyIngestService', () => {
   });
 
   it('always sends a final marker, even when the row count divides evenly', async () => {
-    // Core needs an is_final call to report completeness; without a terminator
+    // The dialer needs an is_final call to report completeness; without a terminator
     // a file whose rows exactly fill its chunks would never get one.
     csvStream('Mobile\n9876543210\n');
     await service.run({ job: job() });
@@ -186,12 +186,12 @@ describe('AgencyIngestService', () => {
     expect(progress.accepted + progress.rejected).toBe(progress.rows_read);
   });
 
-  it('accumulates core-side duplicate rejections across chunks instead of discarding them', async () => {
+  it('accumulates dialer-side duplicate rejections across chunks instead of discarding them', async () => {
     // The bug this pins: `sendRosterChunk`'s return value used to be
-    // discarded at both call sites, so a chunk core reported as fully
+    // discarded at both call sites, so a chunk the dialer reported as fully
     // rejected (every row already in the roster) never moved any counter —
     // the operator's summary stayed "accepted" for a re-upload that changed
-    // nothing on core's side.
+    // nothing on the dialer's side.
     const rows = Array.from({ length: 1200 }, (_, i) => `+9198765${String(40000 + i)}`).join('\n');
     csvStream(`Mobile\n${rows}\n`);
     mocks.sendRosterChunk
@@ -207,7 +207,7 @@ describe('AgencyIngestService', () => {
     expect(completeArg.progress.core_duplicate_source_rows).toEqual([2, 3, 502, 503]);
   });
 
-  it('caps the core-duplicate sample without under-counting the running total', async () => {
+  it('caps the dialer-duplicate sample without under-counting the running total', async () => {
     // The exact total must never be capped even once the SAMPLE array is full —
     // an operator needs to know "how many", the sample is only "which ones".
     const rows = Array.from({ length: 1200 }, (_, i) => `+9198765${String(40000 + i)}`).join('\n');
@@ -226,10 +226,10 @@ describe('AgencyIngestService', () => {
   });
 
   it('an UNFLAGGED replay contributes an exact zero and leaves the summary trustworthy', async () => {
-    // This case used to be the honest ceiling of what master could know: core's
+    // This case used to be the honest ceiling of what the ingest could know: the dialer's
     // `applyIngestChunk` rolls back BEFORE re-running the per-row conflict check
     // on a replay, so it had no counts of its own and answered a confident zero
-    // it had no basis for. Core's migration 084 closed that — the counts are
+    // it had no basis for. Migration 084 closed that — the counts are
     // recorded inside the transaction that refused the rows and read back on
     // replay — so a replay reporting 0 with NO `rejection_counts_unavailable`
     // flag now genuinely means "that chunk refused nothing".
@@ -252,10 +252,10 @@ describe('AgencyIngestService', () => {
   });
 
   it('a chunk that could not report what it refused marks the whole total a lower bound', async () => {
-    // The residual case core cannot fix: a replay of a chunk applied BEFORE core's
+    // The residual case that cannot be fixed: a replay of a chunk applied BEFORE
     // migration 084 recorded nothing, and a row refused by
-    // `uq_agency_contacts_row_fingerprint` leaves no residue to recount. Core says
-    // `rejection_counts_unavailable` rather than inventing a zero, and master has
+    // `uq_agency_contacts_row_fingerprint` leaves no residue to recount. The dialer says
+    // `rejection_counts_unavailable` rather than inventing a zero, and the ingest has
     // to carry that forward — otherwise the operator reads "0 refused" for an
     // import that may have refused every row it sent.
     const rows = Array.from({ length: 700 }, (_, i) => `+9198765${String(40000 + i)}`).join('\n');
@@ -339,7 +339,7 @@ describe('AgencyIngestService', () => {
     expect(firstFlush.core_rejected_duplicate_rows).toBe(5);
   });
 
-  it('a dry run sends NOTHING to core but still reports the full summary', async () => {
+  it('a dry run sends NOTHING to the dialer but still reports the full summary', async () => {
     // This is what lets the wizard say "95% of your rows are valid" before the
     // operator commits to a campaign.
     csvStream('Mobile\n9876543210\nnotaphone\n');
@@ -385,7 +385,7 @@ describe('AgencyIngestService', () => {
     expect(mocks.repo.complete.mock.calls[0]![1].rejected_s3_key).toBeNull();
   });
 
-  it('fails the job when core reports a gap rather than dialing a partial list', async () => {
+  it('fails the job when the dialer reports a gap rather than dialing a partial list', async () => {
     csvStream('Mobile\n9876543210\n');
     mocks.sendRosterChunk
       .mockResolvedValueOnce(GOOD_CHUNK)
@@ -447,20 +447,20 @@ describe('AgencyIngestService', () => {
     expect(mocks.sendRosterChunk.mock.calls[0]![0].contacts).toHaveLength(2);
   });
 
-  // ── DNC suppression at ingest (`AD-P3-M-02`) ──────────────────────────────
+  // ── DNC suppression at ingest ──────────────────────────────
 
   describe('DNC suppression', () => {
-    it('drops a suppressed contact and never sends it to core', async () => {
+    it('drops a suppressed contact and never sends it to the dialer', async () => {
       mocks.filterSuppressed.mockResolvedValue(new Set(['+919876543210']));
       csvStream('Mobile,Name\n9876543210,Asha\n9123456780,Ravi\n');
 
       await service.run({ job: job() });
 
       const dataChunk = mocks.sendRosterChunk.mock.calls[0]![0];
-      // §2.3's implementable clause: suppressed rows "never enter the roster".
-      // Master cannot cause a core-side `state='suppressed'` row — core's
+      // The design's implementable clause: suppressed rows "never enter the roster".
+      // The ingest cannot cause a dialer-side `state='suppressed'` row — the dialer's
       // `AgencyIngestContact` has no state field — so dropping is the only reading
-      // of that sentence master can act on.
+      // of that sentence the ingest can act on.
       expect(dataChunk.contacts).toHaveLength(1);
       expect(dataChunk.contacts[0].phone_e164).toBe('+919123456780');
     });
@@ -471,7 +471,7 @@ describe('AgencyIngestService', () => {
       await service.run({ job: job() });
 
       // One query per batch, served by `idx_dnc_entries_tenant_phone` — the plain
-      // index §2.3 requires because the COALESCE unique index cannot answer a
+      // index the design requires because the COALESCE unique index cannot answer a
       // per-number lookup. Per-contact probes would be 1M queries on a 1M roster.
       expect(mocks.filterSuppressed).toHaveBeenCalledTimes(1);
       expect(mocks.filterSuppressed.mock.calls[0]![1]).toEqual([
@@ -485,7 +485,7 @@ describe('AgencyIngestService', () => {
 
       await service.run({ job: job() });
 
-      // Core's flat `dnc:{tenantId}` set cannot express account or campaign scope,
+      // The dialer's flat `dnc:{tenantId}` set cannot express account or campaign scope,
       // so ingest is the ONLY place a scoped row is ever applied. Omitting the
       // campaign from the lookup would make every campaign-scoped entry inert.
       expect(mocks.filterSuppressed.mock.calls[0]![0]).toEqual({
@@ -552,7 +552,7 @@ describe('AgencyIngestService', () => {
       await service.run({ job: job() });
 
       // Only the final marker. An empty data chunk would burn a chunk index and
-      // make core's completeness check count a chunk carrying no contacts.
+      // make the dialer's completeness check count a chunk carrying no contacts.
       expect(mocks.sendRosterChunk).toHaveBeenCalledTimes(1);
       expect(mocks.sendRosterChunk.mock.calls[0]![0].isFinal).toBe(true);
       expect(mocks.repo.complete).toHaveBeenCalledOnce();
@@ -593,7 +593,7 @@ describe('AgencyIngestService', () => {
         expect.stringContaining('Do Not Call list could not be checked'),
       );
       expect(mocks.repo.complete).not.toHaveBeenCalled();
-      // And nothing reached core — not even the rows from before the failure.
+      // And nothing reached the dialer — not even the rows from before the failure.
       expect(mocks.sendRosterChunk).not.toHaveBeenCalled();
     });
 
@@ -614,9 +614,9 @@ describe('AgencyIngestService', () => {
   /**
    * ── `mode: 'replace'` ──────────────────────────────────────────────────────
    *
-   * Core's migration 083 made a corrected re-upload MERGE rather than be
-   * refused, because core cannot tell a correction from a top-up — the two are
-   * the same request. Only master holds the file, the mapping and the operator's
+   * Migration 083 made a corrected re-upload MERGE rather than be
+   * refused, because the dialer cannot tell a correction from a top-up — the two are
+   * the same request. Only the ingest holds the file, the mapping and the operator's
    * intent, so the resolution is a mode on the import, and its whole safety
    * argument lives in this service's ordering.
    */
@@ -706,7 +706,7 @@ describe('AgencyIngestService', () => {
     });
 
     it('records the retired count immediately, not at completion', async () => {
-      // From the moment core answers, the campaign has no dialable roster of its
+      // From the moment the dialer answers, the campaign has no dialable roster of its
       // own. A process killed on the next line must still leave that number
       // where the operator can find it — recorded at completion it would be
       // missing from exactly the runs where it is the only thing that matters.
@@ -737,7 +737,7 @@ describe('AgencyIngestService', () => {
     });
 
     it('a refused replace sends NOTHING and says the roster is untouched', async () => {
-      // The gate. Core does not implement the supersede hop yet, so every
+      // The gate. The dialer does not implement the supersede hop yet, so every
       // replace fails here — and it must fail having mutated nothing, or a
       // half-built destructive path would look like it works.
       //
@@ -758,7 +758,7 @@ describe('AgencyIngestService', () => {
       expect(message).toContain('were not touched');
     });
 
-    it('distinguishes core\'s refusal from its absence, because the fixes differ', async () => {
+    it('distinguishes the dialer\'s refusal from its absence, because the fixes differ', async () => {
       csvStream('Mobile\n9876543210\n');
       mocks.supersedeRoster.mockRejectedValue(
         new RosterSupersedeError('The campaign is running.', 409, 'refused', 'campaign_dialing', 1),
@@ -774,8 +774,8 @@ describe('AgencyIngestService', () => {
       /**
        * The lie this closes. `supersedeRoster` makes up to four attempts, so
        * attempt 1 can retire 5,000 contacts and commit, lose its response, and
-       * attempt 2 be refused by core's compare-and-swap with
-       * `409 contacts_total_mismatch`. Master then reported a refusal AND told the
+       * attempt 2 be refused by the dialer's compare-and-swap with
+       * `409 contacts_total_mismatch`. The ingest then reported a refusal AND told the
        * operator their contacts were not touched — while the roster was empty and
        * `replace_superseded_contacts` sat at NULL, so the field documented as the
        * one to render loudest on a failed replace rendered nothing.
@@ -807,10 +807,10 @@ describe('AgencyIngestService', () => {
       expect(mocks.repo.recordReplaceUncertain).toHaveBeenCalledWith('job-1');
     });
 
-    it('an exhausted retry produces a real message, not a bare core error', async () => {
-      // Finding 4: `withRetry` rethrows the raw error, which is not a
+    it('an exhausted retry produces a real message, not a bare dialer error', async () => {
+      // `withRetry` rethrows the raw error, which is not a
       // RosterSupersedeError, so this used to reach the generic
-      // `unexpected_error` arm with `core returned 503 for roster supersede` and
+      // `unexpected_error` arm with a bare 503 message and
       // NOTHING about the roster. The client now wraps it, so it lands here.
       csvStream('Mobile\n9876543210\n');
       mocks.supersedeRoster.mockRejectedValue(
@@ -835,9 +835,9 @@ describe('AgencyIngestService', () => {
 
     it('treats already_applied as UNKNOWN, never as a count of zero', async () => {
       /**
-       * `already_applied: true` means core found the work done — by a previous run
+       * `already_applied: true` means the dialer found the work done — by a previous run
        * or by an attempt of this one whose response was lost. The roster IS retired
-       * and master does not know by how much. Recording
+       * and the ingest does not know by how much. Recording
        * `recordReplaceSuperseded(job.id, 0)` was the bug: a job that retired 5,000
        * contacts rendered `0`, and its failure message went on to say "your
        * previous 0 contacts were already retired".
