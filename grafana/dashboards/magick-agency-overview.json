@@ -1,0 +1,2129 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Magick Agency at a glance: the agency dialer (live attempts, throughput, compliance, pacing), voice capacity, identity and mail, analysis, and runtime health — one pane per agency deployment, filtered by environment and service. Every query selects agency's service names only.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": [
+    "magick-agency",
+    "agency-dialer"
+  ],
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Magick Agency — Overview",
+  "uid": "magick-agency-overview",
+  "version": 1,
+  "weekStart": "",
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "title": "Agency Dialer — live, throughput, compliance",
+      "type": "row",
+      "panels": []
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Agency dialer capacity, split by what it is doing. `dialing` is capacity committed to phones that may never answer; `bridged` is conversations actually earning. The split is the point: a flat concurrency number cannot tell 40 phones ringing from 40 conversations, which is the blind spot that made the 2026-09-08 pilot's bridge rate unreadable.\n\nAGGREGATED WITH `max`, NOT `sum`: the underlying SQL is fleet-wide and every replica publishes the identical series, so `sum` would report one multiple of the truth per replica. Same rule as the abandonment gauge beside it.\n\n`ringing` is a legal attempt state that nothing in the codebase writes — expect no series for it. An empty panel (rather than a zero) means the 90s staleness TTL expired and no replica is publishing: treat that as the metric being down, not the dialer idle.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 35,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "unit": "short",
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 1
+      },
+      "id": 77,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Agency Dialer — Live Attempts by State",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "max by (state) (agency_live_attempts_current{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"})",
+          "interval": "1m",
+          "legendFormat": "{{state}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "percent",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 2
+                    },
+                    {
+                      "color": "red",
+                      "value": 3
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 1
+      },
+      "id": 71,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Agency Dialer — Abandonment",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "max by (campaign_id) (agency_abandonment_rate_24h{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"})",
+          "interval": "1m",
+          "legendFormat": "24h rate {{campaign_id}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Rolling 24h abandonment rate per campaign, in percent — the compliance number. The 3% line is the usual regulatory ceiling; adjust to your jurisdiction."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "cps"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "abandoned"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*rejected.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 1
+      },
+      "id": 72,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Agency Dialer — Throughput",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(agency_answered_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "answered",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(agency_abandoned_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "abandoned",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(agency_tick_idle_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) by (reason)",
+          "interval": "1m",
+          "legendFormat": "idle tick: {{reason}}",
+          "refId": "D"
+        }
+      ],
+      "description": "Answered vs abandoned, plus why the pacing engine dialed nothing on a tick. (Core's billing-batch series is not here: agency has no billing.)"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Every pre-dial gate decision by `gate` and `action`. `cleared`/`dial` is throughput; `suppress` arms are per-contact (DNC, invalid phone, calling window); `gate=\"dnc_unavailable\"` with `action=\"halt\"` is the campaign-wide compliance halt — the DNC registry (a Postgres read of `dnc_entries`) could not answer. `agy-dnc-unavailable` pages on it. Carries `campaign_id`, not `tenant_id`, so the Tenant filter does not apply.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "cps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "id": 100,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Pre-dial Gate Outcomes",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (gate, action) (rate(agency_predial_gate_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "{{gate}} / {{action}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Dial attempts per second as they settle, by outcome (`agency_attempt_hold_seconds_count`: one observation per attempt). The agency dialer's call volume; agency has no billed-attempt counter.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "cps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "id": 101,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Settled Attempts by Outcome",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(agency_attempt_hold_seconds_count{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "THE PACING PANEL. Agent-minutes consumed per minute of wall clock, split by the outcome that consumed them — i.e. how many agents' worth of time each kind of attempt is eating right now.\n\nRead it as a budget. `connected` is the work; everything else is waiting. The 2026-09-08 pilot ran 26% talk / 60% waiting / 13% wrap-up, and the single largest waiting block was busy signals at ~37s each — which no ring timeout can shorten, because a busy phone never rings. That distinction is only visible because this is split by outcome; an aggregate 'average wait' pointed every previous analysis at the wrong lever.\n\nWhat each bucket implies: `busy`/`failed` high = carrier signalling latency (not tunable here); `no_answer` high = a ring timeout would pay, which needs a cancel-capable carrier; `canceled` high = our own teardown latency; `connected` high = talk time, and NOT waste.\n\nPer-replica histogram — aggregate with `sum(rate(...))`, never `max`. The opposite of the SQL-derived gauges on this dashboard.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "unit": "m",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "id": 78,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Agency Dialer — Where Seat Time Goes",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(agency_attempt_hold_seconds_sum{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval])) / 60",
+          "interval": "1m",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "How long ONE attempt holds an agent, from the dial to the attempt ending, by outcome. The per-attempt view of the panel beside it.\n\nThis series settles a disagreement that blocked the pacing decision twice: the code comment on `CARRIER_END_CONFIRM_TIMEOUT_SECONDS` says VoiceLink reports terminal state at dial+45-75s, while the pilot's own decomposition measured a flat ~31s. Nothing measured it, so both numbers survived. Read `no_answer`/`busy` here and the argument is over.\n\nWrap-up is deliberately EXCLUDED and has its own panel: folding it in would make the one bucket an operator must not try to shrink look like the biggest opportunity on the chart.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 17
+      },
+      "id": 79,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Agency Dialer — Attempt Hold Time by Outcome",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, outcome) (rate(agency_attempt_hold_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p50 {{outcome}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.90, sum by (le, outcome) (rate(agency_attempt_hold_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p90 {{outcome}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Dial → carrier answer, for attempts that answered. Two decisions read this one distribution:\n\n1. THE RING TIMEOUT WORTH SETTING — where the curve flattens, and what the tail beyond it would forgo. There is no ring timeout on the agency dial path today: `ringTimeoutSeconds` is populated only from a DID on the inbound path, `agency_campaigns` has no such column, and on VoiceLink the dial request accepts no such parameter at all.\n\n2. THE OVER-DIAL ARITHMETIC — §11's marginal-abandonment formula takes a flat answer rate `p`, but the real exposure of a surplus dial is how tightly two answers can CLUSTER, which is this distribution's shape. p50 near p99 means clustering is likely and over-dialing is worse than the formula says.\n\nUnder D1 a voicemail pickup is an answer like any other, so this is the carrier's view — the same view the abandonment predicate takes.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 25
+      },
+      "id": 80,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Agency Dialer — Answer Latency",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(agency_answer_latency_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.90, sum by (le) (rate(agency_answer_latency_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p90",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(agency_answer_latency_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "THE LATE-BINDING ROLLOUT GATE, finally measurable. §7.3 gates the week-long hold on 'bind-latency p99 <150ms and zero bind failures', and §11 carried that criterion as NOT INSTRUMENTED from the day the flag shipped — a refused bind was a WARN line and nothing else.\n\n⚠️ THE WHOLE BUDGET IS 1000ms (`ABANDONMENT_BRIDGE_GRACE_MS`). Every millisecond here is time the compliance predicate counts as abandonment. Measured from the CARRIER's answer instant, so it includes webhook transit — deliberately, because the predicate counts that too.\n\nREAD BOTH SERIES TOGETHER. A bind that never happened records no latency, so a rollout watching only the p99 sees it IMPROVE as binds start failing. `result` is exactly one of three: `bound` is the success; `station_lost` means the station was not there — either gone before we reached for the socket, or the `reserved` frame was refused; `bind_failed` means the socket was live and the bridge declined it, and it is the one that means ROLL THE FLAG BACK rather than slow the pacing down.\n\nNothing else appears. An earlier version of this description named `no_agent` and `refused`, neither of which the code has ever emitted, and handed `station_lost` only half its meaning — worth knowing because the Grafana validator checks metric and label NAMES, not description prose, so a query written against that text would have returned nothing and looked like a healthy rollout.\n\nABORT if p99 crosses 150ms or any non-`bound` result is sustained.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 25
+      },
+      "id": 81,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Agency Dialer — Late Bind (rollout abort criterion)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(agency_bind_latency_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p99 bind latency",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (result) (rate(agency_bind_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "{{result}}/s",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "WHY abandoned calls reached no agent. Until this shipped, a bind failure and every other cause were the same increment in `agency_abandoned_total`, and they call for opposite responses.\n\n`station_lost` — the agent's station was not there. A WORKSTATION problem: check sockets and wifi, do not touch the pacing. `bind_failed` — the socket was live and the bridge refused it: **roll the late-binding flag back.** `bridge_late` — it DID bridge, outside the 1s grace; a conversation happened and was merely late. `unattributed` — abandoned with no cause observed, which on the flag-off default path is the ordinary residual: the customer answered, an agent was bound at dial, and media never came up.\n\n⚠️ `no_agent_available` is declared and **cannot currently occur**. Pacing is strictly 1:1 and the dialer refuses to dial once the station has gone, so nothing can dial with nobody free; it is the name reserved for a future pacing controller. If it ever appears without over-dialing having shipped, that is a bug, not a pacing signal. An earlier version of this panel told you it meant \"slow the pacing down\" — and the code was then labelling every flag-off station loss with it.\n\n⚠️ A SEPARATE SERIES, not a `reason` label on `agency_abandoned_total`. Labelling that one would terminate it, and it is the compliance numerator read by the auto-pause guardrail's own cross-check. So `sum(rate(agency_abandoned_reason_total))` should TRACK `sum(rate(agency_abandoned_total))`; a persistent gap means an abandon path that reaches the compliance counter without declaring a reason.\n\n`bridge_late` is the one that is not a failure to reach anybody — the call DID bridge, outside the 1s grace. It is still an abandoned call for compliance.\n\nThis panel is diagnosis. The compliance number is `agency_abandonment_rate_24h`, which is SQL-derived and taken with `max`.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 33
+      },
+      "id": 82,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Agency Dialer — Abandonment Causes",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(agency_abandoned_reason_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval]) * 60)",
+          "interval": "1m",
+          "legendFormat": "{{reason}}/min",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "How long wrap-up actually takes, by how it ended. `AD-P4-C-01` already averages this in SQL for the supervisor view, but there was no time series — so 'wrap-up is 18.5s mean against a 30s window' stayed a one-pilot artefact nobody could re-check.\n\n`resolution` keeps it honest, for the same reason migration 088 records it: a `forced` or `agent_left` wrap-up measures an interruption, not how long write-up work takes. Only `disposition_submitted`, `auto_return` and `agent_returned` are evidence.\n\nTHIS IS THE ONLY MEASUREMENT OF THE DISPOSITION-SPEED WORK. The pilot filed ZERO of 32 dispositions by keyboard; any drop in the `disposition_submitted` series after a hotkey or keyboard map ships is the entire result. Note most wrap-ups are TIMERLESS — held on an outstanding required disposition rather than a countdown — so this measures how fast agents file, not how long a window was configured.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 33
+      },
+      "id": 83,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Agency Dialer — Wrap-up Duration",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, resolution) (rate(agency_wrapup_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p50 {{resolution}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.90, sum by (le, resolution) (rate(agency_wrapup_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p90 {{resolution}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "🚨 ALERT ON ANY SUSTAINED NON-ZERO. Each increment is a real person permanently removed from a campaign because WE failed to reach them — not because they were unavailable.\n\nThe our-fault redial ledger (`our_fault_attempts`, bound `OUR_FAULT_REDIAL_BOUND` = 3) exists so our own dropped sockets and cancelled dials do not spend a customer's retry allowance. But exhausting it writes the contact `exhausted`, and §11 records that this had NO SURFACE ANYWHERE: invisible in every view, with a plausible audit trail. This panel is that surface.\n\n`outcome` makes it actionable, and there are THREE values with three different responses. `agent_disconnected` points at agent workstations — sockets, wifi, browser crashes. `canceled` points at our own teardown paths. `orphaned` points at replica crashes and leaked attempts: it is emitted by the REAPER, not the dial site, so it arrives on a different code path and in bursts after a restart rather than as a trickle. A rise in `orphaned` alone is an infrastructure signal and nothing to do with pacing or with agents. It is simultaneously a revenue loss and a list-quality lie, so it is worth paging on rather than reviewing weekly.\n\n⚠️ The series has TWO PRODUCERS. `agency-dialer.ts` counts the dial-site retirements and `reaper.ts` counts the orphaned ones; an earlier version of this description explained only the dial site's two values, so the third would have appeared on the one panel that tells you to page with no gloss at all.\n\nRELATED OPEN QUESTION: an `abandoned` attempt does NOT currently route to this ledger — it spends the customer's own allowance at `max_attempts: 2`, so two calls we dropped retire them. Whether that is right is a repeat-dial judgement recorded in §11, and `agency_abandoned_reason_total` is the evidence for deciding it.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 41
+      },
+      "id": 84,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Agency Dialer — Contacts Retired by OUR Fault",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(agency_our_fault_retirement_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval]) * 3600)",
+          "interval": "1m",
+          "legendFormat": "{{outcome}}/hr",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Supervisor notices sent when a campaign finishes, by result. `failed` (Mailjet refused or threw), `threw` and `claim_unavailable` (the delivery ledger was unwritable) page through `agy-campaign-mail-failures`.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 41
+      },
+      "id": 105,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Campaign-Completion Emails",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (result) (increase(agency_campaign_notifications_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 49
+      },
+      "id": 2,
+      "title": "Voice, capacity and storage",
+      "type": "row",
+      "panels": []
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "none",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 50
+      },
+      "id": 10,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Active WebSocket Connections",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (type) (websocket_connections_active{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "{{type}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Open WebSockets by `type`. Only the WebRTC bridge's carrier leg is counted today (`type=\"webrtc_pstn\"`); the agent's browser leg and the station socket are not instrumented. A bridged call with no matching socket is a stuck call."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "cps"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "failure.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "partial.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 50
+      },
+      "id": 73,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Telephony Lease Release Outcomes",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(telephony_lease_release_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) by (outcome, source)",
+          "interval": "1m",
+          "legendFormat": "{{outcome}} / {{source}}",
+          "refId": "A"
+        }
+      ],
+      "description": "`failure` and `partial` both park concurrency leases — a slow leak of capacity that shows up later as calls rejected at the admission gate. Alert on the rate, not one occurrence."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "cps"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*reject.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*denied.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 50
+      },
+      "id": 67,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Provider Concurrency Admission",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(provider_concurrency_admission_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) by (provider, result)",
+          "interval": "1m",
+          "legendFormat": "{{provider}} {{result}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Provider-mode telephony admissions by outcome. Rejected admissions are dials turned away at the telephony concurrency gate — capacity is full or a lease is parked (see Telephony Lease Release Outcomes)."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Requests the rate limiter refused, by bucket and route class. `webhook`, `carrier_media` and `internal` clients cannot back off, so any sustained rate there is data loss (`agy-rate-limit-infra-rejected`, critical). `ip` holds every browser — consoles and agent stations, often many behind one office NAT (`agy-rate-limit-ip-rejected`, warning).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "cps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 58
+      },
+      "id": 102,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Rate-Limit Rejections (429)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (bucket_kind, route_class) (rate(rate_limit_rejected_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "{{bucket_kind}} / {{route_class}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*error.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*fail.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 58
+      },
+      "id": 76,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "S3 Operations",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(s3_operations_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) by (operation, status)",
+          "interval": "1m",
+          "legendFormat": "{{operation}} {{status}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(s3_operation_duration_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) by (le, operation))",
+          "interval": "1m",
+          "legendFormat": "p95 {{operation}} (s)",
+          "refId": "B"
+        }
+      ],
+      "description": "Recording, clip and contact-list storage: operations by result, and p95 duration."
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 66
+      },
+      "id": 3,
+      "title": "Identity and mail",
+      "type": "row",
+      "panels": []
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Session authentication attempts by method and status. A rising `firebase` / `invalid_token` share means the Firebase project or service account no longer matches the console (`agy-firebase-auth-rejected` pages above 50%). Super-admin sign-in has its own JWT and is not counted here.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "cps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 67
+      },
+      "id": 103,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Sign-in Attempts",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (method, status) (rate(auth_attempts_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "{{method}} {{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Invite emails by role and result, and invite claims by result. `failed` emails mean an invited floor never arrives (`agy-invite-email-failures`); `identity_already_bound` and `cross_tenant_identity` claims in bursts read as account-takeover attempts (`agy-invite-claim-identity-conflicts`).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 67
+      },
+      "id": 104,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Invites — Emails and Claims",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (role, result) (increase(invite_emails_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "email {{role}} {{result}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (result) (increase(invite_claims_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "claim {{result}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 75
+      },
+      "id": 4,
+      "title": "Analysis",
+      "type": "row",
+      "panels": []
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "none",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*fail.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*error.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 76
+      },
+      "id": 68,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Dialer Call Analysis",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(dialer_analysis_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}[$__rate_interval])) by (status)",
+          "interval": "1m",
+          "legendFormat": "dialer analysis {{status}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (status) (dialer_analysis_queue_depth{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "queue depth {{status}}",
+          "refId": "C"
+        }
+      ],
+      "description": "Dialer-call analyses by terminal status, and the analysis queue by job status. A queue that grows while completions stay flat is a wedged worker."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 76
+      },
+      "id": 69,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Dialer Analysis Latency (p95)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(dialer_analysis_duration_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) by (le, stage))",
+          "interval": "1m",
+          "legendFormat": "dialer {{stage}}",
+          "refId": "B"
+        }
+      ],
+      "description": "`stage` is fetch | transcribe | analyze — which third of the dialer analysis pipeline is slow."
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 84
+      },
+      "id": 5,
+      "title": "Runtime and telemetry",
+      "type": "row",
+      "panels": []
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Event-loop delay per export interval (the collector resets each collection). p99 for sustained lag, max for the single long block a p99 hides. Agency is one process, so a blocked loop delays every station message, pacing tick and bridged media frame. `agy-event-loop-delay-p99` warns above 0.5s for 10m.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 85
+      },
+      "id": 106,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Event-Loop Delay (p99 / max)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "max by (service_name) (nodejs_eventloop_delay_p99_seconds{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "p99 {{service_name}}",
+          "refId": "A"
+        },
+        {
+          "expr": "max by (service_name) (nodejs_eventloop_delay_max_seconds{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "max {{service_name}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Share of each export interval the event loop was busy, 0..1. Also the liveness heartbeat: `agy-service-not-reporting` fires when this series stops for a deployment that reported in the last 7 days.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 85
+      },
+      "id": 107,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Event-Loop Utilization",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "max by (service_name) (nodejs_eventloop_utilization_ratio{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "{{service_name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "V8 heap used across all spaces (`nodejs_heap_size_used_bytes`, one series per process). A climb that never comes back down is a leak; a heap near its limit shows up as event-loop delay (GC thrash).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 85
+      },
+      "id": 108,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Heap Used",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "max by (service_name) (nodejs_heap_size_used_bytes{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "{{service_name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Any series here means an agency metric has silently LOST ITS LABELS. When an instrument exceeds its cardinality limit (the OTel SDK default, 2000 attribute sets per instrument) the SDK folds every further attribute set into one `otel_metric_overflow=\"true\"` series, so per-campaign / per-tenant panels for that metric under-report without going empty. The metric name is derived from the series name with any _bucket/_sum/_count suffix stripped. Expected empty; `agy-metric-cardinality-overflow` alerts on it.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 93
+      },
+      "id": 87,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Telemetry — Cardinality-Overflow Series",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "count by (service_name, metric) (label_replace({deployment_environment=~\"$environment\", service_name=~\"$service_name\", otel_metric_overflow=\"true\"}, \"metric\", \"${1}\", \"__name__\", \"(.+?)(?:_bucket|_sum|_count)?\"))",
+          "interval": "1m",
+          "legendFormat": "{{service_name}} {{metric}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "cps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 93
+      },
+      "id": 74,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Feature Flag Evaluations",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(feature_flag_evaluations_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) by (flag, result)",
+          "interval": "1m",
+          "legendFormat": "{{flag}} = {{result}}",
+          "refId": "A"
+        }
+      ],
+      "description": "Which feature flags agency evaluates and how they resolve."
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki_datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 101
+      },
+      "id": 50,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "ERROR / FATAL Log Volume (Loki)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (service_name) (count_over_time({service_name=~\"$service_name\"} | deployment_environment=~\"$environment\" | severity_number >= 17 [$__interval]))",
+          "legendFormat": "{{service_name}}",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki_datasource}"
+          }
+        }
+      ],
+      "description": "ERROR and FATAL lines per interval, from Loki. Requires the `loki_datasource` variable (Grafana Cloud: `grafanacloud-logs`). severity_number >= 17 is OTel ERROR and above. The `agy-error-log-volume` rule pages on 10+ in 15m. Logs reach Loki only through the OTel SDK, so this is empty exactly when metrics are (OTEL_ENABLED, endpoint and OTEL_SERVICE_NAME must all be set)."
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "grafanacloud-sapieonic-prom",
+          "value": "grafanacloud-prom"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Prometheus",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource",
+        "description": "Prometheus / Mimir datasource. On Grafana Cloud this is `grafanacloud-prom`."
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "grafanacloud-sapieonic-logs",
+          "value": "grafanacloud-logs"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Loki",
+        "multi": false,
+        "name": "loki_datasource",
+        "options": [],
+        "query": "loki",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource",
+        "description": "Loki datasource, used only by the error-log panel. On Grafana Cloud this is `grafanacloud-logs`."
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "definition": "label_values(nodejs_eventloop_utilization_ratio{service_name=~\"magick-agency(-.+)?\"}, deployment_environment)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Environment",
+        "multi": false,
+        "name": "environment",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(nodejs_eventloop_utilization_ratio{service_name=~\"magick-agency(-.+)?\"}, deployment_environment)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query",
+        "allValue": ".*",
+        "description": "PRIMARY FILTER. The `deployment_environment` resource attribute (OTEL_ENVIRONMENT, falling back to NODE_ENV), listed from agency's own deployments only (its runtime gauge, one series per process)."
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "definition": "label_values(nodejs_eventloop_utilization_ratio{service_name=~\"magick-agency(-.+)?\", deployment_environment=~\"$environment\"}, service_name)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Service",
+        "multi": true,
+        "name": "service_name",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(nodejs_eventloop_utilization_ratio{service_name=~\"magick-agency(-.+)?\", deployment_environment=~\"$environment\"}, service_name)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query",
+        "allValue": "magick-agency(-.+)?",
+        "description": "Agency's deployments: magick-agency (production), magick-agency-Staging, magick-agency-Dedicated, from OTEL_SERVICE_NAME. All means `magick-agency(-.+)?` — the same regex the alert rules select (agency_service_name_regex in grafana/terraform/variables.tf; the validators keep them equal), so no other service ever appears here."
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "definition": "label_values(agency_attempt_hold_seconds_count{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}, tenant_id)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Tenant",
+        "multi": true,
+        "name": "tenant_id",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(agency_attempt_hold_seconds_count{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}, tenant_id)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query",
+        "allValue": ".*",
+        "description": "Scopes the per-tenant agency panels (those whose metric carries tenant_id). Listed from settled attempts, so a tenant appears once it has dialled."
+      }
+    ]
+  }
+}
