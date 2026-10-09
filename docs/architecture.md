@@ -43,7 +43,7 @@ TypeScript source (B2); `tsc --noEmit` covers `src` and tests in each package (B
 | `packages/db` | pg pool (`connection.ts`), shared repositories and models, the squashed baseline migration, `BASELINE.md` |
 | `packages/observability` | pino logger, log context, PII masking, OTel meter and `@Traced`, metric declarations per lane under `src/metrics/` |
 | `tooling/` | `test-env.ts` (per-worktree test DB), the Vitest decorator transform |
-| `docker/` | Dev Postgres and Redis only (`docker-compose.dev.yml`) |
+| `docker/` | Dev Postgres and Redis (`docker-compose.dev.yml`); production: the server image (`Dockerfile`, `entrypoint.sh`), nginx with both UIs (`web.Dockerfile`, `nginx.conf`) and `docker-compose.prod.yml` (see [`operations.md`](operations.md)) |
 
 **Path rule.** A ported file keeps its source-relative path (core/master `src/<path>` →
 `apps/server/src/<path>`, shared repositories → `packages/db/src/...`), so later upstream fixes

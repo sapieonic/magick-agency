@@ -23,11 +23,12 @@ packages; server 6350 unit / 1172 integration; console 4367; super-admin 366; bu
 as `sapieonic/magick-agency` (private).
 
 **Not done.** Phase 10 cutover (gate queries, copy scripts, DNC mirror, cusui link, Grafana
-selector). No production Dockerfile or compose file. No OpenTelemetry metrics or trace export.
+selector). No OpenTelemetry metrics or trace export. The production image and compose file exist
+(`docker/`) but have not run on a real host.
 Nothing has run against a real carrier, real Firebase sign-in or production data.
 
-**Needs Manas.** Ratify the plan §7 defaults and Q3; `supervisor_hold`; shutdown grace (45 s
-recommended) and in-flight pacing ticks; B15 roster supersede; Phase 0 vendor setup; the gated
+**Needs Manas.** Ratify the plan §7 defaults and Q3; `supervisor_hold`; shutdown grace (45 s,
+now in the production compose file) and in-flight pacing ticks; B15 roster supersede; Phase 0 vendor setup; the gated
 items (real VoiceLink call, real recording analysed, Playwright happy path, parity diff, dark
 pilot); cutover decisions.
 

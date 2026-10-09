@@ -76,10 +76,6 @@ against Postgres 16 and Redis 7 service containers on the same ports in another.
 
 **Deployment pieces this repo does not have yet** (found while writing this doc):
 
-- No production `Dockerfile` or compose file. `docker/` holds only the dev compose. The plan's
-  "ffmpeg in the image" and the recommended `stop_grace_period: 45s` have no file to live in;
-  six decoder-packaging tests were deleted because they read `docker/Dockerfile` (`PORTING.md`,
-  lane C tests).
 - No OpenTelemetry SDK is started. Nothing in `apps/server/src` creates a meter provider, a trace
   exporter or a `/metrics` endpoint, so the declared metrics and `@Traced` spans go to the OTel
   API's no-op implementation. Logs can be shipped over OTLP by `pino-opentelemetry-transport` when
@@ -120,19 +116,33 @@ Details and the config behind each are in [`operations.md`](operations.md).
    through them, or `X-Forwarded-For` spoofing defeats the IP rate limits (Q9).
 4. **Postgres TLS** is on only when `NODE_ENV=production`, and then the certificate is verified
    unless `DB_SSL_REJECT_UNAUTHORIZED=false` (Q1).
-5. **Migrations run before the server starts.** `pnpm migrate:up` (node-pg-migrate) is manual;
-   nothing in this repo runs it on deploy.
+5. **Migrations run before the server starts.** The image's entrypoint does this on every start
+   (`dist/migrate.js`, with the server's TLS settings); outside the image, `pnpm migrate:up`.
 6. **Production requires** `FIREBASE_PROJECT_ID` (boot refuses without it) and the VoiceLink
    fields (config refuses without them).
+7. **Stop grace at least 45 s**, or the shutdown's 30 s completion-mail drain is cut
+   (`docker/docker-compose.prod.yml` sets it).
+
+The production image and compose file (`docker/`, see [`operations.md`](operations.md)
+"Production packaging") write invariants 1–5 and 7 into their headers and enforce what they can:
+the server publishes no port, Redis runs with AOF and `noeviction`, the image is
+`NODE_ENV=production` and migrates on start, the grace is 45 s.
 
 ### Pre-deploy checklist
 
-- [ ] Redis: persistence on, `noeviction`; `REDIS_URL` points at it.
-- [ ] One replica only.
-- [ ] Proxy count known; `TRUST_PROXY_HOPS` set to it; port 3021 not reachable directly.
-- [ ] `NODE_ENV=production`; `DATABASE_URL` without TLS parameters; `DB_SSL_CA` if the database
-      uses a private CA.
-- [ ] `pnpm migrate:up` run against the target database.
+- [ ] `docker/.env.prod` filled in from `docker/.env.prod.example`, including the console's
+      `VITE_FIREBASE_*` build values.
+- [ ] Redis: persistence on, `noeviction` (the compose file's `redis` does both; an external Redis
+      must too). Its volume is backed up or at least survives a host restart.
+- [ ] One replica only: never scale `server`.
+- [ ] Proxy count known; `TRUST_PROXY_HOPS` set to it (1 = the bundled nginx alone, 2 with a TLS
+      terminator or load balancer in front); port 3021 not reachable directly (the compose file
+      publishes none).
+- [ ] TLS in front of nginx :8080; super-admin :8081 not public (loopback by default).
+- [ ] `NODE_ENV=production` (the image sets it); `DATABASE_URL` without TLS parameters; `DB_SSL_CA`
+      if the database uses a private CA.
+- [ ] First boot logs `migrations complete` before `magick-agency listening` (the entrypoint runs
+      them; a failure stops the container).
 - [ ] Firebase: agency service account in the shared project, agency domain in authorised domains,
       `FIREBASE_PROJECT_ID` + key or path set.
 - [ ] VoiceLink: account, numbers in the super-admin inventory, `VOICELINK_*` set,
@@ -141,7 +151,8 @@ Details and the config behind each are in [`operations.md`](operations.md).
 - [ ] Mailjet sender verified (SPF/DKIM); `MAILJET_*` and `CONSOLE_BASE_URL` set.
 - [ ] S3 bucket and keys (`S3_AUDIO_BUCKET`, `AWS_*`) for clips and CSV uploads.
 - [ ] Analysis: `DIALER_ANALYSIS_ENABLED`, transcriber and LLM keys, `RECORDING_URL_SIGNING_SECRET`.
-- [ ] Container stop grace at least 45 s.
+- [ ] Container stop grace at least 45 s (`stop_grace_period: 45s` in the compose file; set it
+      too on any other runtime).
 - [ ] A decision on metrics export (see "Not built").
 
 ## Recommended next steps, in order
@@ -151,9 +162,9 @@ Details and the config behind each are in [`operations.md`](operations.md).
 2. **Phase 0 vendor setup**, because it has lead time: agency VoiceLink account (ask about moving
    DIDs and recording retention), Firebase service account and authorised domain, Mailjet sender
    and domain, S3 bucket, Gemini/OpenAI keys, domain and TLS, PostHog.
-3. **Deployment packaging:** a production Dockerfile (Node 22, ffmpeg, `mpg123`, `sndfile`) and
-   compose file with `stop_grace_period`, Redis persistence and `noeviction`; restore the six
-   decoder-packaging tests against it; decide metric export.
+3. **Deployment packaging:** done (`docker/`, see [`operations.md`](operations.md) "Production
+   packaging"); the six decoder-packaging tests are restored. Left: decide metric export, and stand
+   the stack up once on a real host with the vendor accounts from step 2.
 4. **The real-world gates:** one real VoiceLink sandbox call; one real recording analysed; the
    Playwright happy path against real Firebase.
 5. **Parity and dark pilot** (plan Phase 9) on a staging copy and an internal tenant.
