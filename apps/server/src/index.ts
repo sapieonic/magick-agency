@@ -4,6 +4,7 @@ import { logger } from '@magick-agency/observability';
 import { config } from './config/index.js';
 import { buildApp } from './app.js';
 import type { AppContext } from './app-context.js';
+import { dbTlsOptions } from './db-tls.js';
 import { startPlatform } from './bootstrap/platform.js';
 import { startAgency } from './bootstrap/agency.js';
 import { startVoice } from './bootstrap/voice.js';
@@ -20,10 +21,8 @@ async function main(): Promise<void> {
     url: config.db.url,
     poolMin: config.db.poolMin,
     poolMax: config.db.poolMax,
-    ssl: config.server.env === 'production',
-    // Q1 (Manas, 2026-10-09): verify the server certificate unless explicitly opted out.
-    sslRejectUnauthorized: config.db.sslRejectUnauthorized,
-    ...(config.db.sslCa ? { sslCa: config.db.sslCa } : {}),
+    // TLS on in production, verified (Q1); shared with dist/migrate.js (`db-tls.ts`).
+    ...dbTlsOptions(config),
   });
   const redis = new Redis(config.redis.url, { keyPrefix: config.redis.keyPrefix || undefined });
   const ctx: AppContext = { config, pool, redis };
@@ -51,9 +50,12 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info({ signal }, 'shutting down');
-    await app.close().catch((err) => logger.error({ err }, 'http close failed'));
-    // Marks the HTTP-first order in the logs (docs/operations.md, "Shutdown and grace period").
-    logger.info('http closed');
+    // `http closed` marks the HTTP-first order in the logs (docs/operations.md, "Shutdown and
+    // grace period"); it is logged only when the close succeeded.
+    await app.close().then(
+      () => logger.info('http closed'),
+      (err) => logger.error({ err }, 'http close failed'),
+    );
     for (const stop of [...stops].reverse()) {
       await stop().catch((err) => logger.error({ err }, 'stop failed'));
     }

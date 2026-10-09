@@ -8,4 +8,3 @@ coverage/
 .DS_Store
 .vite/
 .test-env.local.json
-!.env.prod.example

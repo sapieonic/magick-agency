@@ -40,13 +40,16 @@ Final full run by the lead on 2026-10-09, on the tree that is now GitHub's first
 
 | Package | Lint | Unit | Integration | Build |
 |---|---|---|---|---|
-| `apps/server` | clean | 6350 (298 files) | 1172 (105 files) | OK |
+| `apps/server` | clean | 6380 (301 files)¹ | 1172 (105 files) | OK |
 | `packages/db` | clean | 409 | 417 | — |
 | `packages/domain` | clean | 50 | — | — |
 | `packages/contracts` | clean | 73 | — | — |
 | `packages/observability` | clean | 14 | — | — |
 | `apps/console` | clean | 4367 (218 files) | — | OK |
 | `apps/super-admin` | clean | 366 (24 files) | — | OK |
+
+¹ Re-run on the deployment-packaging branch: 6350 at the first commit, plus the 6 restored
+decoder-packaging tests and 24 new deployment tests (`PORTING.md` "Deployment packaging").
 
 CI (`.github/workflows/ci.yml`) runs lint, unit and build in one job and the integration suites
 against Postgres 16 and Redis 7 service containers on the same ports in another.
@@ -94,7 +97,7 @@ Manas unless stated:
 | Item | What is needed |
 |---|---|
 | `supervisor_hold` | Declared in the contract, never produced (same as core). Keep, remove or build |
-| Shutdown grace | Recommendation: `stop_grace_period: 45s` (the completion-email drain is 30 s, Docker's default grace is 10 s). And: should shutdown await an in-flight pacing tick? |
+| Shutdown grace | `stop_grace_period: 45s` is now in `docker/docker-compose.prod.yml` (the completion-email drain is 30 s, Docker's default grace is 10 s); ratify. And: should shutdown await an in-flight pacing tick? |
 | Plan §7 defaults | Ratify: re-issue invites at cutover; inbound calls play a message and hang up; abandon clip upload-only; no API keys; super-admins created fresh |
 | Plan §7 open | Existing numbers; cutover style; domain, freeze vs port tax, rollback window |
 | Q3 contracts follow-ups | Ratify the lead's five contract choices |
@@ -130,15 +133,15 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
 
 ### Pre-deploy checklist
 
-- [ ] `docker/.env.prod` filled in from `docker/.env.prod.example`, including the console's
-      `VITE_FIREBASE_*` build values.
+- [ ] `docker/.env` filled in from `docker/.env.example`, including the console's
+      `VITE_FIREBASE_*` build values; values containing `$` or ` #` single-quoted.
 - [ ] Redis: persistence on, `noeviction` (the compose file's `redis` does both; an external Redis
       must too). Its volume is backed up or at least survives a host restart.
 - [ ] One replica only: never scale `server`.
-- [ ] Proxy count known; `TRUST_PROXY_HOPS` set to it (1 = the bundled nginx alone, 2 with a TLS
-      terminator or load balancer in front); port 3021 not reachable directly (the compose file
-      publishes none).
-- [ ] TLS in front of nginx :8080; super-admin :8081 not public (loopback by default).
+- [ ] TLS terminator in front of nginx :8080; `TRUST_PROXY_HOPS=2` (terminator + nginx; one more
+      per extra proxy in front); :8080 reachable only from the terminator (loopback by default);
+      port 3021 not reachable at all (the compose file publishes none).
+- [ ] Super-admin :8081 not public (loopback by default; SSH tunnel or VPN).
 - [ ] `NODE_ENV=production` (the image sets it); `DATABASE_URL` without TLS parameters; `DB_SSL_CA`
       if the database uses a private CA.
 - [ ] First boot logs `migrations complete` before `magick-agency listening` (the entrypoint runs
@@ -147,7 +150,8 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
       `FIREBASE_PROJECT_ID` + key or path set.
 - [ ] VoiceLink: account, numbers in the super-admin inventory, `VOICELINK_*` set,
       `VOICELINK_WEBHOOK_BASE_URL` reachable by the carrier.
-- [ ] `SUPER_ADMIN_JWT_SECRET` set; first super-admin created with `scripts/create-super-admin.ts`.
+- [ ] `SUPER_ADMIN_JWT_SECRET` set; first super-admin created with `node dist/create-super-admin.js`
+      inside the server container (`operations.md` "First super-admin").
 - [ ] Mailjet sender verified (SPF/DKIM); `MAILJET_*` and `CONSOLE_BASE_URL` set.
 - [ ] S3 bucket and keys (`S3_AUDIO_BUCKET`, `AWS_*`) for clips and CSV uploads.
 - [ ] Analysis: `DIALER_ANALYSIS_ENABLED`, transcriber and LLM keys, `RECORDING_URL_SIGNING_SECRET`.

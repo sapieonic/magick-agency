@@ -1,4 +1,4 @@
-# The two UIs, served by nginx, which is also the server's one reverse proxy.
+# The two UIs, served by nginx, which is also the server's reverse proxy.
 # Build from the repo root:
 #
 #   docker build -f docker/web.Dockerfile -t magick-agency-web .
@@ -7,7 +7,8 @@
 # separately. Both Vite builds call the API on their own origin (`API_BASE` is ''
 # unless VITE_API_BASE_URL is set), and both own the root path, so each gets its
 # own nginx server block (docker/nginx.conf): the console on :8080, the
-# super-admin on :8081.
+# super-admin on :8081. nginx 1.27.3+ is required for `server ... resolve` in
+# the upstream (re-resolving the server container's address at run time).
 #
 # VITE_* values are inlined into the bundles at BUILD time, so they are build
 # args, not runtime environment. None of them is a secret (Firebase web config

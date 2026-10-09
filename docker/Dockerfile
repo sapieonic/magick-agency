@@ -2,20 +2,24 @@
 #
 #   docker build -f docker/Dockerfile -t magick-agency-server .
 #
-# Ported from core `docker/Dockerfile`@4850d1d9. PORT NOTE (magick-agency): the
-# build stage is a pnpm workspace build (esbuild bundles `apps/server` and the
+# Ported from core `docker/Dockerfile:1-30`@4850d1d9. PORT NOTE (magick-agency): the
+# build stage (core :2-7) is a pnpm workspace build (esbuild bundles `apps/server` and the
 # `@magick-agency/*` packages into dist/; `pnpm deploy` then lays out only the
 # server's production node_modules) where core ran `npm ci && npm run build`.
-# The runtime stage's apt layer is core's, verbatim. Dropped from core's runtime:
-# `src/prompts/templates` and `web-client/index.html` (AI calling, not carried),
-# port 9090 (no metrics endpoint; see docs/status.md "Not built").
+# The runtime stage's apt layer (core :12-19) is verbatim. Dropped from core's
+# runtime: `src/prompts/templates` and `web-client/index.html` (:24-25, AI calling,
+# not carried), port 9090 (:28, no metrics endpoint; docs/status.md "Not built").
+#
+# Node: `node:22-slim` tracks the 22 line. dist/migrate.js loads node-pg-migrate
+# (ESM-only) from a CJS bundle through require(esm), on by default from 22.12.
 #
 # DEPLOYMENT INVARIANTS (docs/operations.md "Deployment invariants"; the code
 # cannot enforce them):
 #   1. ONE replica. The agency runtime, the bridge's unstored-token memo, the
 #      reaper, retention and partition jobs all assume a single process (D2).
 #   2. Reachable ONLY through exactly TRUST_PROXY_HOPS proxies. Never publish
-#      port 3021; put it behind the proxy (docker/docker-compose.prod.yml does).
+#      port 3021; put it behind the proxy (docker/docker-compose.prod.yml does:
+#      TLS terminator + nginx = 2).
 #   3. NODE_ENV=production (set below) turns Postgres TLS on, and the server
 #      certificate is VERIFIED: against Node's roots, or DB_SSL_CA (the PEM text
 #      of a private CA) when set. DB_SSL_REJECT_UNAUTHORIZED=false is the only

@@ -28,6 +28,7 @@ const DOCKER = fileURLToPath(new URL('../../../../../docker/', import.meta.url))
 const read = (name: string) => readFileSync(DOCKER + name, 'utf8');
 const NGINX = read('nginx.conf');
 const COMPOSE = read('docker-compose.prod.yml');
+const ENV_EXAMPLE = read('.env.example');
 
 /** The text of the nginx `server { ... }` block that listens on `port`. */
 function serverBlock(port: number): string {
@@ -81,10 +82,8 @@ describe('docker/nginx.conf forwards every route to the server', () => {
     const consoleProxied = proxiedSegments(console8080);
     const superAdminProxied = proxiedSegments(superAdmin8081);
 
-    // `/readyz` is for the container healthcheck, which calls the server directly.
-    const internalOnly = new Set(['readyz']);
     const unrouted = [...routes].filter((s) =>
-      s === 'super-admin' ? !superAdminProxied.has(s) : !internalOnly.has(s) && !consoleProxied.has(s),
+      s === 'super-admin' ? !superAdminProxied.has(s) : !consoleProxied.has(s),
     );
     expect(unrouted.sort()).toEqual([]);
     // And the super-admin API is not exposed on the console's (public) block.
@@ -100,13 +99,25 @@ describe('docker/nginx.conf forwards every route to the server', () => {
     expect(prefixes.filter((p) => !proxied.has(p))).toEqual([]);
   });
 
-  it('passes WebSocket upgrades (station socket, PSTN media socket)', () => {
-    expect(NGINX).toMatch(/proxy_set_header Upgrade \$http_upgrade;/);
-    expect(NGINX).toMatch(/proxy_set_header Connection \$connection_upgrade;/);
+  it('passes WebSocket upgrades on the console block (station socket, PSTN media socket)', () => {
+    expect(console8080).toMatch(/proxy_set_header Upgrade \$http_upgrade;/);
+    expect(console8080).toMatch(/proxy_set_header Connection \$connection_upgrade;/);
   });
 
-  it('appends the client address to X-Forwarded-For (the one hop TRUST_PROXY_HOPS counts)', () => {
-    expect(NGINX).toMatch(/proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;/);
+  it('console block APPENDS to X-Forwarded-For: it is the second hop after the TLS terminator', () => {
+    expect(console8080).toMatch(/proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;/);
+  });
+
+  it('super-admin block OVERWRITES X-Forwarded-For: a client-sent entry cannot pick the login bucket', () => {
+    // Reached directly, so an appended header would let a client choose request.ip under
+    // TRUST_PROXY_HOPS=2 and walk past `POST /super-admin/login`'s 5/min limit.
+    expect(superAdmin8081).toMatch(/proxy_set_header X-Forwarded-For \$remote_addr;/);
+    expect(superAdmin8081).not.toMatch(/proxy_add_x_forwarded_for/);
+  });
+
+  it('re-resolves the server container at run time (a recreated server gets a new address)', () => {
+    expect(NGINX).toMatch(/^resolver 127\.0\.0\.11\b/m);
+    expect(NGINX).toMatch(/server server:3021 resolve;/);
   });
 
   it('accepts the 512 MiB roster CSV upload', () => {
@@ -124,9 +135,25 @@ describe('docker/docker-compose.prod.yml keeps the deployment invariants', () =>
     expect(service('server')).not.toMatch(/replicas/);
   });
 
-  it('runs the server in production mode with one proxy hop by default', () => {
+  it('runs the server in production mode, taking the hop count from docker/.env (2: TLS terminator + nginx)', () => {
     expect(service('server')).toMatch(/NODE_ENV: production/);
-    expect(service('server')).toMatch(/TRUST_PROXY_HOPS: \$\{TRUST_PROXY_HOPS:-1\}/);
+    expect(service('server')).toMatch(/env_file:\n\s+- \.env\n/);
+    // `environment:` beats `env_file`, so an override here would silently replace docker/.env's value.
+    expect(service('server')).not.toMatch(/TRUST_PROXY_HOPS/);
+    expect(ENV_EXAMPLE).toMatch(/^TRUST_PROXY_HOPS=2$/m);
+  });
+
+  it("publishes nginx on loopback by default (reachable only from the TLS terminator / SSH)", () => {
+    expect(service('web')).toMatch(/"\$\{CONSOLE_BIND:-127\.0\.0\.1\}:/);
+    expect(service('web')).toMatch(/"\$\{SUPER_ADMIN_BIND:-127\.0\.0\.1\}:/);
+  });
+
+  it("does not share the dev stack's project name (pnpm infra:* would recreate this Redis)", () => {
+    const dev = read('docker-compose.dev.yml').match(/^name: (\S+)$/m)?.[1];
+    const prod = COMPOSE.match(/^name: (\S+)$/m)?.[1];
+    expect(dev).toBeDefined();
+    expect(prod).toBeDefined();
+    expect(prod).not.toBe(dev);
   });
 
   it('runs Redis with AOF persistence and noeviction', () => {

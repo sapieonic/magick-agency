@@ -1,21 +1,26 @@
-# Production stack for magick-agency: the server, nginx (both UIs + the one
-# reverse proxy) and Redis. Postgres is NOT here: NODE_ENV=production turns
-# Postgres TLS on and verifies the certificate, so point DATABASE_URL at a
-# managed / TLS-enabled database (docs/operations.md, "Postgres TLS").
+# Production stack for magick-agency: the server, nginx (both UIs + the reverse
+# proxy) and Redis. Postgres is NOT here: NODE_ENV=production turns Postgres TLS
+# on and verifies the certificate, so point DATABASE_URL at a managed /
+# TLS-enabled database (docs/operations.md, "Postgres TLS").
 #
-#   cp docker/.env.prod.example docker/.env.prod     # fill it in
-#   docker compose -f docker/docker-compose.prod.yml --env-file docker/.env.prod up -d --build
+#   cp docker/.env.example docker/.env      # fill it in (git-ignored)
+#   docker compose -f docker/docker-compose.prod.yml up -d --build
 #
-# Ported in part from core `docker/docker-compose.yml`@4850d1d9 (build context,
-# env_file, depends_on health, restart policy). Everything else is NEW.
+# docker/.env is read twice, both automatically: compose loads it from this
+# directory for the ${...} values below (web build args, published ports), and
+# `env_file` hands it to the server as its environment.
+#
+# Ported in part from core `docker/docker-compose.yml:5-8,67-77,105-112`@4850d1d9
+# (build context, env_file, depends_on health, restart policy, the Redis image).
+# Everything else is NEW.
 #
 # DEPLOYMENT INVARIANTS (docs/operations.md "Deployment invariants"):
 #   1. ONE replica of `server`. Never `--scale server=N` or `deploy.replicas`:
 #      the agency runtime, the bridge's unstored-token memo and every sweep
 #      assume one process (D2).
-#   2. `server` is reachable ONLY through `web` (exactly TRUST_PROXY_HOPS=1
-#      proxy): it publishes no port. Put a load balancer / TLS terminator in
-#      front of `web` and that is a second hop: set TRUST_PROXY_HOPS=2.
+#   2. `server` is reachable ONLY through nginx: it publishes no port. nginx :8080
+#      is reachable ONLY from your TLS terminator (bound to 127.0.0.1 by default),
+#      so the chain is exactly TRUST_PROXY_HOPS=2 proxies (docker/.env.example).
 #   3. NODE_ENV=production: Postgres TLS on and verified (Node's roots, or
 #      DB_SSL_CA, the PEM text of a private CA). DB_SSL_REJECT_UNAUTHORIZED=false
 #      is the only opt-out. No TLS parameters in DATABASE_URL (refused at boot).
@@ -24,7 +29,17 @@
 #   5. stop_grace_period 45s: shutdown closes HTTP, then drains in-flight
 #      campaign-completion emails for up to 30s; Docker's default is 10s.
 #   6. Migrations run before the server starts, on every start (entrypoint.sh).
-name: magick-agency
+#
+# The project name is NOT the dev stack's (`magick-agency`, docker-compose.dev.yml):
+# sharing it would let `pnpm infra:up` / `infra:reset` recreate or remove this
+# Redis with the dev settings (no AOF, no noeviction, no volume).
+name: magick-agency-prod
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
 
 services:
   server:
@@ -33,12 +48,11 @@ services:
       dockerfile: docker/Dockerfile
     image: magick-agency-server
     env_file:
-      - .env.prod
+      - .env
     environment:
       NODE_ENV: production
       PORT: "3021"
       REDIS_URL: redis://redis:6379/0
-      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
     # No `ports:` on purpose (invariant 2).
     expose:
       - "3021"
@@ -54,6 +68,7 @@ services:
       start_period: 120s
     stop_grace_period: 45s
     restart: unless-stopped
+    logging: *logging
 
   web:
     build:
@@ -72,17 +87,16 @@ services:
         VITE_POSTHOG_ENVIRONMENT: ${VITE_POSTHOG_ENVIRONMENT:-production}
     image: magick-agency-web
     ports:
-      # Console + carrier webhooks/media. Front it with TLS (see invariant 2).
-      - "${CONSOLE_BIND:-0.0.0.0}:${CONSOLE_PORT:-8080}:8080"
+      # Console + carrier webhooks/media, for the TLS terminator only (invariant 2).
+      # A terminator on another machine: bind a private interface and firewall it.
+      - "${CONSOLE_BIND:-127.0.0.1}:${CONSOLE_PORT:-8080}:8080"
       # Super-admin: loopback by default; reach it over SSH / VPN.
       - "${SUPER_ADMIN_BIND:-127.0.0.1}:${SUPER_ADMIN_PORT:-8081}:8081"
     depends_on:
       server:
         condition: service_healthy
-        # nginx resolves `server` once, at start: restart it whenever compose
-        # recreates or restarts the server, or it keeps proxying to a stale IP.
-        restart: true
     restart: unless-stopped
+    logging: *logging
 
   redis:
     image: redis:7-alpine
@@ -97,6 +111,7 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    logging: *logging
 
 volumes:
   redisdata:

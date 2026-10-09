@@ -19,7 +19,7 @@ MagickVoice wherever possible, with every change recorded in `PORTING.md`.
 (identity, tenancy, RBAC, invites, settings, super-admin, notifications, audit), domain and data,
 voice engine, runtime, analysis, the merged API, the console and super-admin UIs. Manas's
 2026-10-09 rulings on the open questions and branding are implemented. Final run: lint clean in 7
-packages; server 6350 unit / 1172 integration; console 4367; super-admin 366; builds OK. On GitHub
+packages; server 6380 unit / 1172 integration; console 4367; super-admin 366; builds OK. On GitHub
 as `sapieonic/magick-agency` (private).
 
 **Not done.** Phase 10 cutover (gate queries, copy scripts, DNC mirror, cusui link, Grafana
