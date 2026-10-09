@@ -16,13 +16,12 @@ export interface DecodedFirebaseToken {
 }
 
 /*
- * PORT NOTE (magick-agency): `config.firebase` is optional in agency's platform
- * block (see `config/blocks/platform.ts`), so a missing block leaves Firebase
- * uninitialised and every `verifyIdToken` throws — the session middleware maps
- * that to 401, i.e. fail closed. `startPlatform` refuses to boot in production
- * without the block. `serviceAccountPath` (FIREBASE_SERVICE_ACCOUNT_PATH) is NEW:
- * the same JSON, read from a file (agency has its own service account in the
- * shared project, plan §3.1). Everything else is master's.
+ * `config.firebase` is optional in the platform config block (see
+ * `config/blocks/platform.ts`), so a missing block leaves Firebase uninitialised
+ * and every `verifyIdToken` throws — the session middleware maps that to 401,
+ * i.e. fail closed. `startPlatform` refuses to boot in production without the
+ * block. `serviceAccountPath` (FIREBASE_SERVICE_ACCOUNT_PATH) reads the
+ * service-account JSON from a file.
  */
 export async function initFirebase(config: AppConfig): Promise<void> {
   const firebase = config.firebase;

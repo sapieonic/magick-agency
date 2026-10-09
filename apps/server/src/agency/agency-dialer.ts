@@ -52,7 +52,7 @@ const log = createChildLogger({ component: 'agency-dialer' });
  * console that comes back with an empty panel and no account of the call the
  * agent was just on reads as data loss.
  *
- * In-process, like every other business timer here (§6.1). Losing these on a
+ * In-process, like every other business timer here. Losing these on a
  * restart is correct — after a restart the agent is landed in `break` and shown a
  * clean console anyway.
  */
@@ -74,14 +74,14 @@ interface LiveAttempt {
   dialedAt: Date;
   /**
    * Why this attempt reached no agent, decided at the ANSWER and read at the
-   * settle site (migration 119).
+   * settle site.
    *
    * Set here rather than re-derived below because the three causes are only
    * distinguishable in the instant they happen: by the time the attempt settles,
    * "the station was gone before we reached for it", "the send was refused" and
    * "the bridge refused the bind" all look identical — no socket and no bridge.
    * That collapse is exactly what made a bind failure indistinguishable from a
-   * genuine no-agent abandonment in the one series that counts them (§11).
+   * genuine no-agent abandonment in the one series that counts them.
    *
    * Null means no cause has been observed, NOT "not abandoned" — the settle site
    * still has to ask the predicate, and falls back to `bridge_late` (a bridge
@@ -102,10 +102,10 @@ interface LiveAttempt {
   /**
    * Mirrors the `answered_at` column — **the value we wrote**, not a second
    * derivation of it, so the settle site's abandonment predicate reads the same
-   * instant the table does (`AD-P2-C-06`). Null until the carrier answers.
+   * instant the table does. Null until the carrier answers.
    */
   answeredAt: Date | null;
-  /** Fetched once at dial; replayed verbatim so a resumed panel is identical. */
+  /** Fetched once at dial; replayed unchanged so a resumed panel is identical. */
   priors: AgencyPriorAttempt[];
   /**
    * `FLAGS.agency_late_binding` as **this replica resolved it at the moment it
@@ -156,9 +156,8 @@ interface LiveAttempt {
  * Only reachable under late binding, where a dial that rings out, is busy, fails
  * or finds an unreachable handset must reach the console as **nothing at all**
  * — no `reserved`, no `released`, no state change. That silence is the product
- * ask behind `FF_AGENCY_LATE_BINDING`, and it is exactly the ringing popup the
- * 2026-09-08 pilot found agents dismissing (and, on VoiceLink,
- * dismissing without cancelling anything).
+ * ask behind `FF_AGENCY_LATE_BINDING`: a ringing popup is one agents dismiss
+ * (and, on VoiceLink, dismiss without cancelling anything).
  *
  * ⚠️ **The question is "has the agent SEEN this call", not "did this call
  * bridge".** Those come apart in exactly one place — the `answered` arm, where
@@ -213,8 +212,8 @@ export class AgencyDialer {
   private readonly liveByAttempt = new Map<string, LiveAttempt>();
   /**
    * sessionId → the `released` frame that session's socket was not there to
-   * receive, delivered on the `ready` frame when it comes back (§ contract,
-   * `AgencyStationReadyFrame.missed_release`).
+   * receive, delivered on the `ready` frame when it comes back
+   * (`AgencyStationReadyFrame.missed_release`).
    */
   private readonly missedReleases = new Map<string, { release: AgencyMissedRelease; expiresAt: number }>();
   /**
@@ -237,7 +236,7 @@ export class AgencyDialer {
    * fails on the closed socket, `bindFailed` is set, and `abandonAnsweredCall`
    * plays an apology to a real customer and records an **`abandoned`** attempt —
    * counted in `ABANDONED_ATTEMPT_PREDICATE_SQL`, charged against the 3%
-   * regulatory ceiling and feeding the `AD-P4-C-02` auto-pause. The identical
+   * regulatory ceiling and feeding the auto-pause guardrail. The identical
    * network blip under EARLY binding produces `hangUpForBrowserClose` after
    * `DEFERRED_HANGUP_MS`, an unanswered dial, and a `canceled` attempt that harms
    * nobody. So without this timer late binding would introduce an abandonment
@@ -354,11 +353,11 @@ export class AgencyDialer {
     // ── 1. Gather EVERYTHING the panel needs, before any dial. ──────────────
     //
     // The read is LINEAGE-scoped since retry campaigns landed: a retry copies its
-    // contacts rather than sharing them (DR-2), so the previous pass's attempts
+    // contacts rather than sharing them, so the previous pass's attempts
     // hang off a different `agency_contacts` row and a `contact_id` read would
     // show the agent an empty history on exactly the calls where history matters
-    // most. `root_contact_id` is the chain head, stamped on every row by migration
-    // 112's trigger.
+    // most. `root_contact_id` is the chain head, stamped on every row by a database
+    // trigger.
     //
     // `?? cmd.contactId` is the pre-backfill fallback and is expected to be
     // unreachable: migrations run in the container entrypoint before the app
@@ -485,17 +484,17 @@ export class AgencyDialer {
       callerId: cmd.callerId,
       destinationPhone: cmd.contact.phone_e164,
       provider: cmd.campaign.telephony_provider,
-      // PORT NOTE (magick-agency): core passed `sipConnectionId: cmd.campaign.sip_connection_id`
-      // here (BYO-SIP egress). SIP is deleted (plan §5): the column is not in the baseline
-      // and `WebRtcOutboundParams` no longer carries the field (docs/seams.md §3.1).
+      // No SIP connection: there is no BYO-SIP egress, so `WebRtcOutboundParams` has no
+      // such field (`docs/seams.md`).
       record: cmd.campaign.record_calls,
       analysisProfileId: cmd.campaign.analysis_profile_id,
       initiatedBy: cmd.sessionId,
       campaignId: cmd.campaignId,
       agencyAttemptId: attemptId,
-      // `AD-P2-C-07`. Supplied by us, never chosen by the bridge — §7's one-way
-      // dependency means the bridge must stay ignorant of what an agency
-      // reconnect is worth, and the browser dialer keeps its immediate hangup.
+      // The deferred-hangup grace. Supplied by us, never chosen by the bridge — the
+      // dialer depends on the bridge and never the reverse, so the bridge must stay
+      // ignorant of what an agency reconnect is worth, and the browser dialer keeps
+      // its immediate hangup.
       //
       // Carried on the unbound dial too, even though there is nothing to detach
       // until the bind: the bridge stores it on the session at dial time and the
@@ -583,7 +582,7 @@ export class AgencyDialer {
    * With `false` the agent is told nothing, which is the point of late binding: a
    * dial that was abandoned before it was ever placed is a call the agent never
    * knew about, and a bare `released` for it is the same spurious popup the
-   * 2026-09-08 pilot found agents dismissing.
+   * agents dismiss.
    */
   private async abandonBeforeDial(
     cmd: DialCommand,
@@ -630,7 +629,7 @@ export class AgencyDialer {
     }).catch((err) => log.error({ err, attemptId: cmd.attemptId }, 'Failed to end abandoned attempt'));
 
     // The condition genuinely cleared, so `now()` is correct here — unlike an
-    // out-of-hours unclaim, which must move the clock forward (§4.2).
+    // out-of-hours unclaim, which must move the clock forward.
     await agencyContactRepository.unclaim(cmd.contactId, new Date())
       .catch((err) => log.error({ err, contactId: cmd.contactId }, 'Failed to unclaim contact'));
 
@@ -673,13 +672,13 @@ export class AgencyDialer {
       // fallback are two different instants, and the settle site's predicate
       // subtracts one from `bridged_at`: a millisecond of disagreement between the
       // counter's view and the column's is exactly the kind of drift that makes the
-      // §10 cross-check fail for a reason that is not a bug.
+      // counter-versus-table cross-check fail for a reason that is not a bug.
       const answeredAt = ev.answeredAt ?? new Date();
       live.answeredAt = answeredAt;
 
       // Dial → answer. Prices a ring timeout (where the curve flattens, and what
       // the tail beyond it would forgo) and supplies the clustering half of the
-      // over-dial arithmetic, which §11's flat `p` cannot. Observed HERE, before
+      // over-dial arithmetic, which a flat answer probability cannot. Observed HERE, before
       // the bind, so a refused bind never costs us the reading.
       const answerLatencySeconds = Math.max(0, (answeredAt.getTime() - live.dialedAt.getTime()) / 1000);
       // Tenant-scoped only: `campaign_id` is kept off the histograms (series cost).
@@ -779,8 +778,8 @@ export class AgencyDialer {
           // refused, `panelDelivered` stays false — and the `ended` arm then reads
           // `isUnannounced` as true and SUPPRESSES the `released`. The agent is
           // left staring at a contact card for a call they never heard and are
-          // never told about: the "connected but silent" complaint from the pilot
-          // debrief, manufactured by the fix for it. `hasUnannouncedAttempt` would
+          // never told about: a "connected but silent" console, manufactured by the
+          // fix for exactly that complaint. `hasUnannouncedAttempt` would
           // mis-word `/leave`'s refusal for the same reason.
           live.panelDelivered = true;
           bindFailed = !this.bridge.bindBorrowedBrowserLeg(cmd.attemptId, socket);
@@ -799,9 +798,9 @@ export class AgencyDialer {
         /**
          * ── The rollout's abort criterion, finally measurable ──────────────────
          *
-         * §7.3 gates the week-long hold on "bind-latency p99 <150ms and zero bind
-         * failures", and §11 has carried that criterion as NOT INSTRUMENTED since
-         * the flag shipped — a refused bind was a WARN line and nothing else.
+         * The late-binding rollout's abort criterion is "bind-latency p99 <150ms and
+         * zero bind failures"; without these series a refused bind is a WARN line and
+         * nothing else.
          *
          * `answeredAt` is the CARRIER's instant, not ours, so this interval
          * includes webhook transit. That is deliberate and it is the honest
@@ -879,14 +878,14 @@ export class AgencyDialer {
         only_from: ['dialing'],
       });
 
-      // The compliance DENOMINATOR (`AD-P2-C-06`), counted here and nowhere else.
+      // The compliance DENOMINATOR, counted here and nowhere else.
       // This is the only site that observes a carrier answer, and it is reached by
       // both the bridged and the abandoned path — which is what makes the ratio
       // below it meaningful. Counting on `bridged` instead would exclude every
       // abandoned call from the denominator and understate the rate.
       agencyAnsweredTotal.inc({ tenant_id: cmd.tenantId, campaign_id: cmd.campaignId });
 
-      // ── The abandoned path (`AD-P2-C-05`, design §6.2) ────────────────────
+      // ── The abandoned path ────────────────────────────────────────────────
       // A real customer is on the line RIGHT NOW and there is no agent to bridge
       // them to. Recorded before anything is played, so an attempt is never left
       // looking merely `answered` if the clip or the hangup goes wrong.
@@ -974,8 +973,8 @@ export class AgencyDialer {
       // last-non-null-wins, not first-write-wins. Passing `bridgedAt` from this site
       // would therefore *overwrite* the carrier's answer instant rather than being
       // ignored by the mechanism, collapsing the two timestamps and making the
-      // abandonment predicate vacuous — the `AD-P2-C-11` defect that returned 0 for
-      // months. What actually keeps that from happening is that this caller passes
+      // abandonment predicate vacuous — a defect that reads as a 0% rate. What
+      // actually keeps that from happening is that this caller passes
       // `ev.answeredAt` (the bridge's own anchor, undefined when there is nothing to
       // say) and nothing else. Any second caller of this write must do the same;
       // the SQL will not stop it.
@@ -983,21 +982,21 @@ export class AgencyDialer {
       // `ev.answeredAt` is still passed rather than omitted so a MISSED `answered`
       // event is back-filled with the correct instant.
       //
-      // Mirror it into our own record for the same reason (`AD-P2-C-06`): if the
+      // Mirror it into our own record for the same reason: if the
       // `answered` phase never arrived, the settle site would otherwise see
       // `answeredAt: null`, read "never answered", and skip a call the table counts.
       // `??=` so a real `answered` phase's value is never displaced.
       live.answeredAt ??= ev.answeredAt ?? null;
-      // ── `MAG-137`: this write must not RESURRECT a settled attempt ──────────
+      // ── This write must not RESURRECT a settled attempt ─────────────────────
       //
-      // It had no `only_from` while the `answered` write above it carried one, on
-      // the same row, against the same race — and the missing half is the one that
-      // can write a live state over a TERMINAL one. The orderings are ordinary
+      // It carries `only_from` just as the `answered` write above it does, on the
+      // same row, against the same race — without it, this is the write that can put
+      // a live state over a TERMINAL one. The orderings are ordinary
       // rather than exotic: lifecycle listeners are invoked fire-and-forget, so on
       // a call the customer picks up and immediately drops, the `ended` arm can
       // run to completion while this statement is still in flight. `state` then
-      // goes back to `bridged` on a row that already holds its real `outcome` and
-      // `ended_at`, and nothing anywhere goes red.
+      // would go back to `bridged` on a row that already holds its real `outcome` and
+      // `ended_at`, and nothing anywhere would go red.
       //
       // What that costs, beyond a wrong row: `agency_live_attempts_current`
       // counts on `state <> 'ended'`, so a resurrected attempt is counted live
@@ -1025,9 +1024,9 @@ export class AgencyDialer {
       // bind happens inside the `answered` arm, so that arm's own write is issued
       // BEFORE this one and normally wins the row: the incumbent state at this
       // statement is `answered` on essentially every late-bound call. A guard of
-      // `['dialing']` alone — mirroring the write above verbatim — would therefore
+      // `['dialing']` alone — mirroring the write above exactly — would therefore
       // leave every connected late-binding attempt reading `answered` for the
-      // whole conversation, which is the `AD-P2-C-11` shape with the sign flipped.
+      // whole conversation, which is the vacuous-predicate shape with the sign flipped.
       await this.agents.set(cmd.sessionId, 'on_call', {
         attemptId: cmd.attemptId,
         leaseMs: AGENT_LEASE_MS.on_call,
@@ -1041,7 +1040,7 @@ export class AgencyDialer {
         only_from: ['dialing', 'answered'],
       });
 
-      // ── `MAG-88`: the SEAM, and the site that actually parks the contact ────
+      // ── The SEAM, and the site that actually parks the contact ──────────────
       //
       // `connected` means "the conversation happened and the contact is waiting on
       // the agent's write-up". It is a HOLD, and the things that release it are the
@@ -1087,20 +1086,15 @@ export class AgencyDialer {
 
     // ── `bridged` means BRIDGED, from the bridge's own stamp ─────────────────
     //
-    // Pilot 2026-09-08. No ticket: the defect was found by tracing the pilot's
-    // own attempt rows against Loki, and the debrief is the record.
-    //
     // One local, read by the classifier and by the log line below, and its source
     // is `live.bridgedAt` — written by the `bridged` arm above and by nothing
-    // else. Both previous spellings were wrong in ways that could not be seen
-    // from here:
+    // else. Two other spellings are wrong in ways that cannot be seen from here:
     //
-    //  - the classifier was handed `bridged: ev.answered`, i.e. the CARRIER's
-    //    pickup. That labelled a cancelled ring `abandoned` (~19 phantom rows in
-    //    the 2026-09-08 pilot) and an answered-but-unbridged call `connected`
-    //    and billable (the `064836f1` shape). See `classifyAttemptOutcome`'s
-    //    header for both, and for why `answered` and `bridged` are now two
-    //    parameters that a caller cannot satisfy with one fact.
+    //  - `bridged: ev.answered`, i.e. the CARRIER's pickup, labels a cancelled
+    //    ring `abandoned` and an answered-but-unbridged call `connected` (the
+    //    ring-cancel shape). See `classifyAttemptOutcome`'s header for both, and
+    //    for why `answered` and `bridged` are two parameters that a caller cannot
+    //    satisfy with one fact.
     //  - this local was `ev.answered && (ev.talkTimeSeconds ?? 0) >= 0 &&
     //    ev.status === 'completed'`, in which the middle clause is **vacuous** —
     //    `?? 0` makes it `>= 0` against a non-negative number, so it is always
@@ -1176,8 +1170,8 @@ export class AgencyDialer {
      * Seat time for this attempt, attributed to the outcome that consumed it.
      *
      * The single number every pacing argument needed and none of them had. The
-     * `outcome` split is the whole value: the pilot's largest block of dead time
-     * was busy signals, and a busy phone never rings — so an aggregate "average
+     * `outcome` split is the whole value: if the largest block of dead time is
+     * busy signals, a busy phone never rings — so an aggregate "average
      * wait" would have pointed at a ring timeout that could not have touched it.
      *
      * Measured dial → attempt settle. ⚠️ **So `connected` here is ring + talk,
@@ -1199,13 +1193,13 @@ export class AgencyDialer {
     // No `campaign_id` on the histogram (series cost) — see metrics.ts.
     agencyAttemptHoldSeconds.observe({ tenant_id: cmd.tenantId, outcome }, holdSeconds);
 
-    // The compliance NUMERATOR (`AD-P2-C-06`). Incremented AFTER the row write, so
+    // The compliance NUMERATOR. Incremented AFTER the row write, so
     // the counter means "attempts we believe are recorded abandoned" — which is
-    // what makes the §10 cross-check able to find a write that silently did not
+    // what makes the counter-versus-table cross-check able to find a write that silently did not
     // take. Incrementing before the write would make the two agree by
     // construction, and a cross-check that cannot disagree is not a check.
     //
-    // ── Keyed on the PREDICATE, not on `outcome` (decided; §10's equality) ────
+    // ── Keyed on the PREDICATE, not on `outcome` (decided) ──────────────────
     // `outcome === 'abandoned'` is the classifier's LABEL, and it is stamped only
     // by `abandonAnsweredCall` — i.e. only when no live station owned the agent at
     // answer time. Every answered-but-never-bridged call that ended for some other
@@ -1218,7 +1212,7 @@ export class AgencyDialer {
     // their own connection failure "could not be connected to you".
     //
     // `live.bridgedAt`/`live.answeredAt` are in-process, and that is sound rather
-    // than merely tolerable-under-D2: this handler returns early unless
+    // than merely tolerable on one replica: this handler returns early unless
     // `liveByAttempt` holds the attempt, so we are by construction the replica that
     // observed both phases for it. What in-process state cannot cover is an attempt
     // settled with no live record at all — the reaper's post-crash sweep — which no
@@ -1228,7 +1222,7 @@ export class AgencyDialer {
       agencyAbandonedTotal.inc({ tenant_id: cmd.tenantId, campaign_id: cmd.campaignId });
       // ⚠️ A SEPARATE series, not a `reason` label on the two counters above.
       // Labelling a live series terminates it, and those two are the compliance
-      // numerator and denominator that the §10 cross-check and the auto-pause
+      // numerator and denominator that the cross-check and the auto-pause
       // guardrail both read. A diagnostic split does not earn that migration, so
       // it rides alongside and `sum(rate(...))` of the two should track.
       if (abandonReason) {
@@ -1238,31 +1232,30 @@ export class AgencyDialer {
       }
     }
 
-    // ── Contact release (`AD-P3-C-01`) ──────────────────────────────────────
-    // `connected` still parks the contact awaiting the agent's write-up: §2.4 gives
+    // ── Contact release ─────────────────────────────────────────────────────
+    // `connected` still parks the contact awaiting the agent's write-up: the precedence rule gives
     // a disposition precedence over the outcome policy, so evaluating the outcome
     // policy now would decide a question the disposition is entitled to answer. The
     // wrap-up route settles it, and the reaper's `no_disposition` auto-close is the
     // backstop that routes it back here.
     //
     // Everything else has no disposition coming, so the outcome policy decides —
-    // which now means a real retry rather than Phase 2's flat `completed`.
+    // which means a real retry, not a flat `completed`.
     //
-    // ── `MAG-88`: parked in `connected` FOREVER when none is owed ────────────
-    // Computed here rather than at its old site below the block, so ONE function
+    // ── Parked in `connected` FOREVER when none is owed ─────────────────────
+    // Computed here, so ONE function
     // answers "is a disposition owed" for both the contact's fate and the
     // `released` frame's `requires_disposition`. Two readings of that question is
     // how a route that demands a write-up and a console told none is needed end up
     // in the same build.
     //
-    // The defect: `connected` parks the contact awaiting an agent's write-up, and
+    // The hazard: `connected` parks the contact awaiting an agent's write-up, and
     // the ONLY things that release it are the disposition route and the reaper's
     // `no_disposition` sweep. On a campaign with an empty `disposition_catalog` —
-    // which is every campaign today, since master never sends the field, and which
-    // is a LEGITIMATE configuration meaning "outcome-driven retry, no human
-    // write-up step" — no disposition is owed, none is ever submitted, and the
-    // contact sits in `connected` until the reaper eventually auto-closes it.
-    // `MAG-88` option (1): when none is owed, let the outcome policy decide now.
+    // a LEGITIMATE configuration meaning "outcome-driven retry, no human write-up
+    // step" — no disposition is owed, none is ever submitted, and the contact would
+    // sit in `connected` until the reaper eventually auto-closed it. So when none
+    // is owed, the outcome policy decides now.
     //
     // Note the else-branch already produces the right answer without a special
     // case: `connected`'s default policy is `max_attempts: 0`, so it resolves to
@@ -1273,7 +1266,7 @@ export class AgencyDialer {
     // can land after this one — see the note at that site. Both ask the same
     // function; removing either one puts the contact back in `connected` forever.
     const needsDisposition = requiresDisposition(outcome, cmd.campaign.disposition_catalog);
-    // ── `AD-P3-C-09` / MAG-97: our fault, before the bridge ──────────────────
+    // ── Our fault, before the bridge ─────────────────────────────────────────
     //
     // An agent's station socket dropping is OUR failure. If it happened before
     // the call bridged, the customer was never spoken to — their phone may not
@@ -1283,9 +1276,9 @@ export class AgencyDialer {
     //
     // The reaper has held the opposite principle from the start: it requeues a
     // crash-orphaned contact with NO bump, because "our crash must not consume
-    // the customer's retry allowance". Same category of fault, and until now the
-    // opposite handling. This is that principle applied in the second place
-    // (criterion 4) rather than a new rule invented here.
+    // the customer's retry allowance". Same category of fault, so the same
+    // handling: this is that principle applied in the second place rather than a
+    // new rule invented here.
     //
     // ⚠️ The gate is `bridgedAt`, NOT `answeredAt`. A call the customer picked up
     // and that never bridged to an agent is an ABANDONED call — already its own
@@ -1299,16 +1292,14 @@ export class AgencyDialer {
     // replica that watched both phases. The path with no live record at all is
     // the reaper's, which charges its own our-fault ledger.
     //
-    // ── `canceled` joins the same ledger (pilot 2026-09-08) ─────────────────
+    // ── `canceled` joins the same ledger ────────────────────────────────────
     //
     // A dial we stopped before anyone picked up is not a *failure* on our side,
     // and it is not the customer's doing either — it is entirely OUR decision,
     // and it tells us nothing at all about the number. Charging it to
     // `attempt_count` retires someone we never spoke to, and at
-    // `max_attempts: 3` three cancelled rings do it silently: exactly the shape
-    // MAG-97 fixed for a dropped socket, arriving through a different door. The
-    // pilot makes it concrete — 26 agent cancels in one window, against a
-    // 2-agent floor.
+    // `max_attempts: 3` three cancelled rings do it silently: exactly the
+    // dropped-socket shape above, arriving through a different door.
     //
     // The un-charged path is also the more CONSERVATIVE one on repeat-dialling,
     // which is the half that is easy to get backwards: `OUR_FAULT_REDIAL_BOUND`
@@ -1327,10 +1318,10 @@ export class AgencyDialer {
      * ── Whose allowance pays for this attempt ───────────────────────────────
      *
      * ⚠️ **`abandoned` is deliberately NOT on this gate, and that is an OPEN
-     * QUESTION rather than a settled one** (reviewed 2026-09-10).
+     * QUESTION rather than a settled one**.
      *
-     * The case for leaving it here is on the test that pins it
-     * (`canceled-outcome-ledger.test.ts`, the `064836f1` shape): the customer
+     * The case for leaving it here is on the test that holds it
+     * (`canceled-outcome-ledger.test.ts`, the ring-cancel shape): the customer
      * picked up and was inconvenienced, so it is a real attempt against them and
      * `abandoned`'s own retry rule applies — the our-fault ledger is for calls
      * that never reached anybody.
@@ -1361,9 +1352,9 @@ export class AgencyDialer {
         last_outcome: outcome, bump_attempt: true,
       });
     } else if (ourFaultBeforeBridge) {
-      // Charged to the SEPARATE ledger. `attempt_count` is untouched — criterion
-      // 1 — and the bound below is what keeps that safe rather than free
-      // (criterion 3): without it, one flapping agent workstation redials the
+      // Charged to the SEPARATE ledger. `attempt_count` is untouched, and the
+      // bound below is what keeps that safe rather than free: without it, one
+      // flapping agent workstation redials the
       // same number forever, which is regulated.
       const ourFaultUsed = await agencyContactRepository
         .chargeOurFaultAttempt(cmd.contactId, outcome);
@@ -1380,16 +1371,15 @@ export class AgencyDialer {
       /**
        * ── The surface this ledger never had ─────────────────────────────────
        *
-       * §11 records that the our-fault ledger's bound is an unresearched
-       * placeholder AND that **nothing anywhere shows a contact retired by it** —
-       * a real person permanently removed from the list because of our dropped
-       * sockets and cancelled dials, invisible in every view. This is that
-       * surface, and it ships in the same change that adds a third producer to
-       * that ledger rather than making the invisibility worse.
+       * The our-fault ledger's bound is an unresearched placeholder
+       * (`OUR_FAULT_REDIAL_BOUND`), and without this counter **nothing anywhere shows
+       * a contact retired by it** — a real person permanently removed from the list
+       * because of our dropped sockets and cancelled dials, invisible in every view.
+       * This is that surface.
        *
-       * ⚠️ **AFTER the `markState` above, never before** (corrected by review).
-       * The first version incremented on the decision, so a rejected write would
-       * have reported a permanently retired contact that was still pending. This
+       * ⚠️ **AFTER the `markState` above, never before.** Incremented on the
+       * decision, a rejected write would report a permanently retired contact that
+       * was still pending. This
        * is the same rule the compliance counters follow one screen up and for the
        * same reason: a counter that means "we believe this was recorded" can find
        * a write that silently did not take, and one incremented on intent cannot.
@@ -1472,11 +1462,11 @@ export class AgencyDialer {
     /**
      * **Both** vocabularies, because there are two agent-initiated hang-ups and
      * they arrive under different names. The browser leg closing yields
-     * `ended_by_user`; the HTTP route added by `MAG-112` calls
+     * `ended_by_user`; the HTTP hang-up route calls
      * `forceEndWithOutcome(attemptId, 'agent_hangup')`, which reaches this handler
-     * as `ev.outcome === 'agent_hangup'`. Matching only the first meant the
-     * *supported* hang-up API classified as an ordinary `completed` release, so the
-     * agent pressed hang up and the console told them the call had simply ended —
+     * as `ev.outcome === 'agent_hangup'`. Matching only the first would classify the
+     * *supported* hang-up API as an ordinary `completed` release, so the agent
+     * would press hang up and be told the call had simply ended —
      * `releaseMessageFor` never reaching "You ended the call."
      */
     const agentHungUp = ev.outcome === 'ended_by_user' || ev.outcome === 'agent_hangup';
@@ -1487,8 +1477,8 @@ export class AgencyDialer {
     // Late binding only. This is the frame the whole change exists to remove: a
     // dial that rang out, was busy, failed or found an unreachable handset
     // produced a `released` — "Nobody answered." — for a panel that was never on
-    // the console's screen, which is the ringing popup agents spent the
-    // 2026-09-08 pilot dismissing. There is nothing to explain, because nothing
+    // the console's screen, which is the ringing popup agents dismiss. There is
+    // nothing to explain, because nothing
     // was announced.
     //
     // The missed-release record goes with it, and for a stronger reason: it is
@@ -1556,7 +1546,7 @@ export class AgencyDialer {
         autoReturn: cmd.campaign.wrapup_auto_return,
         requiresDisposition: needsDisposition,
         // PEEKED, not taken — `releaseAgent` below is the single place a queued
-        // break is consumed (`AD-P2-C-03` (a)), and taking it here would apply it
+        // break is consumed, and taking it here would apply it
         // to nothing and drop the agent's break silently. This only lets the
         // wrap-up state frame carry "break pending" through a window in which it
         // is the console's sole transition announcement.
@@ -1571,7 +1561,7 @@ export class AgencyDialer {
         readPendingBreak: () => this.breaks.peek(cmd.sessionId),
       });
       // `false` ⇒ `wrapup_seconds = 0`, so the agent goes straight to `available`
-      // (acceptance (a)). Falling through is that path.
+      // Falling through is that path.
       if (entered) return;
     }
 
@@ -1581,7 +1571,7 @@ export class AgencyDialer {
   /**
    * Return an agent to the pool, if their socket is still live.
    *
-   * **This is the single place a queued break is applied** (`AD-P2-C-03` (a)): an
+   * **This is the single place a queued break is applied**: an
    * agent who asked for a break mid-call goes to `break` here rather than
    * `available`, at the end of wrap-up, without their conversation having been
    * interrupted. Doing it here and nowhere else is what makes "queued" mean one
@@ -1610,7 +1600,7 @@ export class AgencyDialer {
     // An agent whose socket is gone must NOT return to `available` — the tick
     // would dial into them immediately and produce an abandoned call. A pending
     // break for a departed agent is dropped with them; `offline` already keeps them
-    // out of the pool, and they rehydrate into `break` anyway (D2).
+    // out of the pool, and they rehydrate into `break` anyway.
     if (!stillHere) {
       this.breaks.cancel(sessionId);
       await this.agents.set(sessionId, 'offline', { leaseMs: AGENT_LEASE_MS.available });
@@ -1644,10 +1634,10 @@ export class AgencyDialer {
   }
 
   /**
-   * A customer answered and there is no agent (`AD-P2-C-05`).
+   * A customer answered and there is no agent.
    *
    * **Why this fires even inside a deferred-hangup window, which looks like a
-   * conflict with `AD-P2-C-07` and is not.** The two mechanisms cover different
+   * conflict with the deferred hangup and is not.** The two mechanisms cover different
    * moments. The grace window exists to preserve a *conversation already in
    * progress* — the customer has been talking to someone, so 8s of silence is
    * worth trading for the chance to resume. Here nothing has been said yet:
@@ -1692,7 +1682,7 @@ export class AgencyDialer {
     await this.bridge.forceEndWithOutcome(cmd.attemptId, 'abandoned');
   }
 
-  // ─── Presence resilience (`AD-P2-C-07`) ───────────────────────────────────
+  // ─── Presence resilience ──────────────────────────────────────────────────
 
   /**
    * Is this replica still driving an attempt for this agent?
@@ -1730,12 +1720,12 @@ export class AgencyDialer {
 
   /**
    * Every attempt this replica is currently driving — the reaper's first
-   * exclusion arm (`AD-P2-C-08`).
+   * exclusion arm.
    *
    * **This is the authoritative "alive" set, and it is deliberately not derived
    * from the bridge.** An entry is written before the dial is placed and deleted
    * only when the attempt settles, so it covers `dialing` through `bridged` *and*
-   * the whole `AD-P2-C-07` deferred-hangup window — during which the agent's
+   * the whole deferred-hangup window — during which the agent's
    * socket is gone and the carrier leg is live, so a bridge session lookup or any
    * "is a browser leg attached" test would call the call bridgeless and the reaper
    * would hang up on a customer who is about to get their agent back.
@@ -1748,12 +1738,12 @@ export class AgencyDialer {
   }
 
   /**
-   * The agent hangs up the call they are on (`MAG-112`).
+   * The agent hangs up the call they are on.
    *
    * Returns `false` when this replica holds no live attempt by that id — which is
    * the honest answer for **both** "the call already ended" and "another replica
    * is bridging it", and the caller distinguishes them from the attempt row. It
-   * deliberately does not guess: the bridge session is in-process memory (§6.1),
+   * deliberately does not guess: the bridge session is in-process memory,
    * so a `true` from somewhere that does not hold it would be a fabrication.
    *
    * `agent_hangup` rather than a generic outcome because the outcome vocabulary is
@@ -1761,15 +1751,13 @@ export class AgencyDialer {
    * call, not a failure to reach anybody, and classifying it as the latter would
    * feed the contact straight back into the roster for a redial.
    *
-   * ── Why this exists at all, given the contract describes a socket frame ──────
-   * It did not, and neither did the frame. Enumerated 2026-08-12: the station
-   * socket carries exactly two `message` listeners for the duration of an attempt
-   * — this file's borrowed-leg listener via `registerBrowserLegHandlers`
-   * (`webrtc-bridge-manager.ts:975`), which acts only on `event === 'media'`, and
-   * `agency.routes.ts`'s own, which acts only on `event === 'ping'`. **A `hangup`
-   * frame fell off the end of both**, and core registered no HTTP route either, so
-   * master's proxy 404'd. Both documented paths were dead and three comments said
-   * otherwise.
+   * ── Why an HTTP route, given the contract describes a socket frame ─────────
+   * The station socket carries exactly two `message` listeners for the duration
+   * of an attempt — the borrowed-leg listener via `registerBrowserLegHandlers`
+   * (`webrtc-bridge-manager.ts`), which acts only on `event === 'media'`, and the
+   * station socket's own (`station-socket.ts`), which acts only on
+   * `event === 'ping'`. **A `hangup` frame is handled by neither**, so the
+   * hang-up is `POST /agency/attempts/:id/hangup`.
    */
   /**
    * The station socket for this session has closed. Arms the pre-bind grace when
@@ -1925,7 +1913,7 @@ export class AgencyDialer {
    * as long as this process is alive and owns the attempt, the lease never lapses,
    * however long the call runs. If the process dies, renewal stops and the lease
    * expires — which is exactly the signal we want, and the only signal a TTL can
-   * honestly give (§6.1).
+   * honestly give.
    */
   private startLeaseRenewal(attemptId: string, sessionId: string, state: 'reserved' | 'on_call'): void {
     this.stopLeaseRenewal(attemptId);

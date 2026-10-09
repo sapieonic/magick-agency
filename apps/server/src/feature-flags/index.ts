@@ -1,10 +1,6 @@
 import type Redis from 'ioredis';
 import { FeatureFlagService } from './feature-flag.service.js';
 
-// PORT NOTE (magick-agency): ported from core `src/feature-flags/index.ts`
-// (v1.123.2). `ResolvedPrewarm` is no longer exported (the prewarm resolver is
-// AI-only and removed). Everything else, including the singleton, is verbatim.
-
 export { FLAGS, getFlag, allFlags, clientExposedFlags, defineFlag, resolveEnvDefault } from './registry.js';
 export type { FlagDefinition, FlagScope, FlagType } from './registry.js';
 export { FeatureFlagService } from './feature-flag.service.js';

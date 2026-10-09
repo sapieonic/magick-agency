@@ -1,6 +1,3 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/src/storage/s3.ts@4850d1d9.
-// Only change: logger/withSpan import specifiers (now @magick-agency/observability).
-
 import type { Readable } from 'node:stream';
 import {
   S3Client,
@@ -134,23 +131,17 @@ export async function getPresignedUrl(key: string, expiresInSeconds = 900): Prom
 }
 
 /*
- * PORT NOTE (magick-agency, lane B2, decision B14): everything above is core's `src/storage/s3.ts`
- * (lane C). The two functions below are master's `getFileStream` (`magick-master
- * src/storage/s3.ts:78-98`@a1f0756a) and `headFile` (`:115-130`), the two the CSV ingest uses that
- * core's module lacks, appended with their doc comments. Changes, all forced by the one-module
- * rule: `getS3Client()` → `getClient()` and `s3Bucket!` → `audioBucket` (core's names for the same
- * client and bucket; the bucket is `config.s3.audioBucket`), and `headFile`'s
- * `s3OperationDurationSeconds.startTimer(...)`/`stopTimer()` becomes a `process.hrtime` measurement
- * `observe`d on the same histogram (agency's instrument wrappers have no `startTimer`). The two
- * metrics are declared in `packages/observability/src/metrics/agency.ts` with master's names and
- * buckets.
+ * The two functions below are the ones the CSV ingest uses (decision B14). They use the same
+ * client and bucket as the rest of this module (`getClient()`, `config.s3.audioBucket`).
+ * `headFile` measures with `process.hrtime` and `observe`s the histogram, because the
+ * instrument wrappers have no `startTimer`. The metrics are declared in
+ * `packages/observability/src/metrics/agency.ts`.
  */
 
 /**
  * Open an S3 object as a stream, without buffering it.
  *
- * Core's module has no buffering read of this shape: `getFile` concatenates the whole object,
- * which is unusable for an agency roster — a 1M-row CSV is hundreds of megabytes and this service
+ * `getFile` concatenates the whole object, which is unusable for an agency roster — a 1M-row CSV is hundreds of megabytes and this service
  * runs one process. The agency ingest pipes this straight into a streaming parser, so peak memory
  * is a few chunks rather than the file.
  *

@@ -28,8 +28,8 @@ export interface MembershipInviteStateInput {
    * `users.firebase_uid` for the member, or `null` when the user row is missing.
    *
    * NEVER put this on the wire. It is an input to the decision and nothing else:
-   * a `pending_<uuid>` stub names a row whose owner has never signed in, and the
-   * ticket is explicit that neither it nor the real uid may reach the browser.
+   * a `pending_<uuid>` stub names a row whose owner has never signed in, and
+   * neither it nor the real uid may reach the browser.
    */
   firebaseUid: string | null;
 }
@@ -41,7 +41,7 @@ export interface MembershipInviteStateInput {
  * The question this answers is **"has this person completed Firebase sign-in"**
  * — a fact about the USER, rendered once per membership row because that is the
  * shape the Team page renders. `POST /users/invite` mints a stub `users` row
- * with `firebase_uid = pending_<uuid>` for an address master has never seen, and
+ * with `firebase_uid = pending_<uuid>` for an address this server has never seen, and
  * the only things that ever replace that stub are the two adoption paths in
  * `adoptFirebaseIdentity` — so the prefix is a complete and exact record of
  * "nobody has signed in as this row yet".
@@ -82,12 +82,12 @@ export interface MembershipInviteStateInput {
  * stub. Every case the claim arm got right, the stub check already got right —
  * it only added the four ways above to get it wrong.
  *
- * ── The remaining limitation, which is the ticket's own definition ─────────
+ * ── The remaining limitation, which is the field's own definition ──────────
  * `POST /users/invite` reuses the existing `users` row when the address is
- * already known, so inviting somebody who ALREADY has a MagickVoice login reads
- * `active` from the moment the membership is written — before they have opened
- * this workspace. Under the ticket's wording ("pending vs signed up") that is
- * the correct answer, not a defect: they have signed up. What this field does
+ * already known, so inviting somebody who ALREADY has a login reads `active`
+ * from the moment the membership is written — before they have opened this
+ * workspace. Under the field's meaning ("pending vs signed up") that is the
+ * correct answer, not a defect: they have signed up. What this field does
  * NOT tell a supervisor is whether that person has ever opened, accepted, or
  * used THIS workspace. It is an identity fact, not an engagement fact, and no
  * amount of reading `membership_invites` would make it an engagement fact

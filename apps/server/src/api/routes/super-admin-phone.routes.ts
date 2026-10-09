@@ -16,34 +16,23 @@ import {
 const log = createChildLogger({ component: 'super-admin-phone-routes' });
 
 /*
- * PORT NOTE (magick-agency): master `src/api/routes/super-admin-phone.routes.ts`
- * @a1f0756a, the phone inventory and assignment routes for agency's one VoiceLink
- * account (plan §3.4). Deleted, each for its reason:
- *  - Telephony-provider writes (`POST /telephony-providers`,
- *    `PUT /telephony-providers/:id`, `describeLiveTransferStatusEffect`): the
- *    baseline seeds the single `voicelink` provider row (plan Decided #3) and
- *    migration 074's `live_transfer_enabled` (AI escalation) is not carried.
- *    `provider_id` still references `telephony_providers`, so number creation
- *    still checks it — and `GET /telephony-providers` (master's, verbatim) is
- *    kept so the super-admin console can pick that id (restored by the lead,
- *    session 3, at the super-admin UI's request).
+ * The super-admin phone inventory and assignment routes for the one VoiceLink
+ * account. Deliberately absent:
+ *  - Telephony-provider writes: the baseline seeds the single `voicelink`
+ *    provider row. `provider_id` still references `telephony_providers`, so
+ *    number creation still checks it, and `GET /telephony-providers` is kept so
+ *    the super-admin console can pick that id.
  *  - `pool_eligible` on the wire (create/update input, the create log/audit
- *    field, every response row): it marked numbers for the signup pool, and agency
- *    has no pooled number. The column stays in the schema at its default.
- *  - `invalidatePhoneCacheForNumber` / `invalidatePhoneCacheForTenant`
- *    (`proxy/phone-number-resolver.js`) and `invalidateAllMetadataCache`: they
- *    busted master's `/proxy/*` phone-resolution and metadata caches; agency has
- *    no proxy layer and no such cache.
- *  - The unassign cascade through `inboundConfigService.removeAllForTenantPhone`:
- *    it removed core's inbound routing (BYOC/inbound configs), which agency does
- *    not have (inbound to agency numbers is decision #3's play-and-hang-up). The
- *    phone lookup that existed only to feed it goes with it.
+ *    field, every response row): it marked numbers for a signup pool, and there
+ *    is no pooled number. The column stays in the schema at its default.
+ *  - Phone-resolution and metadata cache invalidation: there is no such cache.
+ *  - An inbound-routing cascade on unassign: there are no inbound configs
+ *    (inbound calls to agency numbers play a message and hang up).
  */
 
 /**
- * PORT NOTE (magick-agency): NEW. Strips `pool_eligible` from a phone row before
- * it reaches the wire (contract `PhoneNumber`, see the module note). Everything
- * else is the row master sent.
+ * Strips `pool_eligible` from a phone row before it reaches the wire (contract
+ * `PhoneNumber`, see the module note). Everything else is the row as stored.
  */
 function toWirePhoneNumber<T extends Partial<Pick<PhoneNumberRecord, 'pool_eligible'>>>(row: T): Omit<T, 'pool_eligible'> {
   const { pool_eligible: _poolEligible, ...wire } = row;
@@ -172,9 +161,6 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
     if (!phoneNumber) {
       return reply.code(404).send({ error: 'Not Found', message: 'Phone number not found' });
     }
-
-    // PORT NOTE (magick-agency): master busted the per-tenant phone-resolution
-    // cache here (`invalidatePhoneCacheForNumber`); there is none (module note).
 
     log.info({ phoneNumberId: id }, 'Phone number updated');
     void recordSuperAdminAudit({
@@ -331,9 +317,6 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
         request.superAdmin!.id,
       );
 
-      // PORT NOTE (magick-agency): master's `invalidatePhoneCacheForTenant` is
-      // deleted (module note).
-
       log.info({ phoneNumberId: id, tenantId: tenant_id }, 'Phone number assigned to tenant');
       void recordSuperAdminAudit({
         admin_id: request.superAdmin!.id,
@@ -362,10 +345,7 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
    * DELETE /super-admin/phone-numbers/:id/assign/:tenantId
    * Unassign a phone number from a tenant.
    *
-   * PORT NOTE (magick-agency): master's best-effort inbound-config cascade
-   * (`inboundConfigService.removeAllForTenantPhone`) and the phone lookup that fed
-   * it are deleted (module note), as is the `invalidatePhoneCacheForTenant` after
-   * the write.
+   * No inbound-config cascade and no cache invalidation (module note).
    */
   app.delete<{ Params: { id: string; tenantId: string } }>('/phone-numbers/:id/assign/:tenantId', async (
     request,

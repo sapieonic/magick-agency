@@ -1,9 +1,8 @@
 /**
  * CSV primitives shared by every agency export.
  *
- * A LEAF module — no imports, no I/O. Extracted from `agency-activity.ts` when
- * MAG-159 added a second and third export (attempts, roster) to MAG-158's first
- * (the activity trail).
+ * A LEAF module — no imports, no I/O. Shared by the activity-trail export
+ * (`agency-activity.ts`) and the attempts and roster exports (`agency-spine.ts`).
  *
  * ── Why extracted rather than copied ────────────────────────────────────────
  * `guardFormulaSigil` is a security control, not formatting. These files
@@ -21,7 +20,7 @@ const FORMULA_SIGIL = /^[=+\-@\t\r]/;
  *
  * A leading `=`, `+`, `-`, `@`, tab or CR makes Excel/Sheets treat the cell as a
  * formula on open. These exports carry tenant-controlled text — display names,
- * emails, agent-typed notes, verbatim CSV column values — and they are
+ * emails, agent-typed notes, uploaded CSV column values as-is — and they are
  * compliance artifacts opened outside the organisation. Prefixing an apostrophe
  * is the standard neutralisation: it is not shown as data by any spreadsheet and
  * round-trips through a CSV parser as a literal character, so the value stays

@@ -102,10 +102,10 @@ export async function issueInvite(input: IssueInviteInput): Promise<IssuedInvite
   const { role, tenantId } = input;
 
   if (!roleGetsTokenInvite(role)) {
-    // No token, no row, and `inviteSignInUrl` answers `/login` — today's exact
-    // behaviour for every non-agent role, unchanged. The mailer still runs
-    // because it is what reports `not_implemented`, and that reason is what the
-    // customer UI reads to decide whether to keep showing the hand-off panel.
+    // No token, no row, and `inviteSignInUrl` answers `/login` for every
+    // non-agent role. The mailer still runs because it is what reports
+    // `not_implemented`, and that reason is what the console reads to decide
+    // whether to keep showing the hand-off panel.
     const signInUrl = await inviteSignInUrl(role);
     const inviteEmail = await sendOrReportFailure({ email: input.email, role, tenantId, signInUrl });
     return { invite: null, signInUrl, inviteEmail };
@@ -225,7 +225,7 @@ function countInviteEmail(role: MembershipRole, result: InviteEmailResult): void
  * generic fallback. That is the right trade and worth stating: this is one word
  * of context in one sentence, and an invited agent's only route into the product
  * must not be blocked by a `tenants` lookup. The same reasoning
- * `resolveGovernanceSafe` uses for login.
+ * `resolveSettingsSafe` (`auth/session-payload.ts`) uses for login.
  */
 async function resolveTenantName(tenantId: string): Promise<string | null> {
   try {

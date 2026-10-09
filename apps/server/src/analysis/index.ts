@@ -12,10 +12,9 @@ export function createAnalysisService(config: AppConfig): PostCallAnalysisServic
 
   const provider = config.postCallAnalysis.provider;
 
-  // Resolve API key: dedicated > provider-specific. (Core's last fallback — the live
-  // pipelines' keys — has no counterpart here: the env reader in
-  // `config/blocks/analysis.ts` falls back to OPENAI_API_KEY / GEMINI_API_KEY into
-  // `postCallAnalysis.apiKey` instead.)
+  // Resolve API key: dedicated > provider-specific. (The env reader in
+  // `config/blocks/analysis.ts` already falls back to OPENAI_API_KEY / GEMINI_API_KEY
+  // when it fills `postCallAnalysis.apiKey`.)
   let apiKey: string | undefined;
   if (provider === 'azure_openai') {
     apiKey = config.postCallAnalysis.azureApiKey || config.postCallAnalysis.apiKey;
@@ -53,7 +52,6 @@ export { PostCallAnalysisService } from './analysis.service.js';
 export type { AnalysisServiceConfig } from './analysis.service.js';
 
 // Shipped custom-dimension presets — re-exported here so a consumer that already
-// imports the analysis layer finds them without knowing the file, and published
-// on `GET /api/v1/metadata` (which imports the preset module DIRECTLY, to avoid
-// dragging the analysis service into the metadata route's module graph).
+// imports the analysis layer finds them without knowing the file. A consumer that
+// must not load the analysis service imports `./dimension-presets.js` directly.
 export { KB_GROUNDING_DIMENSION, ANALYSIS_DIMENSION_PRESETS } from './dimension-presets.js';

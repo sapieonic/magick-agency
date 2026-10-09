@@ -64,8 +64,8 @@ export const PENDING_UID_PREFIX = 'pending_';
  *
  * ── The third arm, `firebase_uid = $1`, and the regression that needed it ────
  * The first version of this predicate was `starts_with(firebase_uid, 'pending_')`
- * alone, which refused the ordinary "add an agent who already has a MagickVoice
- * login" path — the most common invite there is after the brand-new address.
+ * alone, which refused the ordinary "add an agent who already has a login"
+ * path — the most common invite there is after the brand-new address.
  * `POST /users/invite` reuses the existing `users` row for a known address,
  * writes a NEW membership against it, and `issueInvite` still mails a join link.
  * That invitee's `firebase_uid` is already real, so claiming with THEIR OWN uid
@@ -300,8 +300,8 @@ export interface AdoptIdentityOptions {
  * Adopt a Firebase identity onto an existing `users` row.
  *
  * ── One statement, three separate rules, and each of them is deliberate ─────
- * This is the SQL `POST /auth/session` path 2/3 has always run, lifted out
- * verbatim so the invite-claim path can run the SAME rules rather than a second
+ * This is the SQL `POST /auth/session` path 2/3 runs, in one shared function so
+ * the invite-claim path can run the SAME rules rather than a second
  * transcription of them. The rules:
  *
  *  - **`firebase_uid` is taken, subject to {@link AdoptIdentityOptions}.** That

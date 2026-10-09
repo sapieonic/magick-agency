@@ -2,11 +2,9 @@
  * Bounded-concurrency `Promise.all`.
  *
  * `Promise.all(items.map(fn))` starts every task at once, which is fine for a
- * handful and wrong for a page: the campaign list fans out one core request per
- * job, and with a page size of 100 that is 100 simultaneous requests to core
- * from a single list load — per user, per poll. The undici pool caps sockets
- * per origin (128), so past that they queue anyway; the visible effect is
- * simply that everything else on the instance queues behind them.
+ * handful and wrong for a page: a list that fans out one request per row, at a
+ * page size of 100, makes 100 simultaneous requests from a single list load —
+ * per user, per poll — and everything else on the instance queues behind them.
  *
  * Order of results matches order of `items`, exactly like `Promise.all`.
  *
@@ -125,10 +123,7 @@ export function createSemaphore(limit: number): Semaphore {
   };
 }
 
-// ── PORT NOTE (magick-agency): appended verbatim from magic-voice-core@4850d1d9:src/utils/concurrency.ts
-// (same path in both source repos; lead decision: master's file owns the path, core's helper rides beside it
-// for lane C's clip-cache sweeper). No name collides: master exports mapWithConcurrency, Semaphore,
-// createSemaphore; core exports runWithConcurrency.
+// ── `runWithConcurrency`, used by the TTS clip-cache sweeper (`tts/tts-file-cache.ts`).
 
 /**
  * Run async tasks over a list with a bounded concurrency limit.

@@ -22,31 +22,27 @@ export const createTenantSchema = z.object({
 });
 
 /**
- * PORT NOTE (magick-agency): master's literal role list, hoisted into a const so
- * the NEW role-change schema below uses the same six (the set `ROLES` in
- * `@magick-agency/contracts/rbac` names).
+ * The assignable role list, a const so the role-change schema below uses the
+ * same six (the set `ROLES` in `@magick-agency/contracts/rbac` names).
  */
 const membershipRoleSchema = z.enum(['tenant_owner', 'tenant_admin', 'account_admin', 'operator', 'viewer', 'agent']);
 
 export const addUserToTenantSchema = z.object({
   email: z.string().email(),
-  // `agent` (Agency Dialer, design D6) — below `viewer` in ROLE_HIERARCHY, so
+  // `agent` (Agency Dialer) — below `viewer` in ROLE_HIERARCHY, so
   // assigning it grants nothing that predates the agency feature.
   role: membershipRoleSchema,
   name: z.string().min(1).max(100).optional(),
   /**
-   * PORT NOTE (magick-agency): NEW (plan §3.4 "add a user to a tenant **or
-   * account**", contract `AddUserToTenantBody.account_id`). Absent ⇒ a
-   * tenant-wide membership, master's only behaviour. `.uuid()` because
-   * `accounts.id` is a UUID column and a malformed id would otherwise reach
-   * Postgres as `22P02` (a 500 for a bad request).
+   * Add a user to a tenant **or account** (contract
+   * `AddUserToTenantBody.account_id`). Absent ⇒ a tenant-wide membership.
+   * `.uuid()` because `accounts.id` is a UUID column and a malformed id would
+   * otherwise reach Postgres as `22P02` (a 500 for a bad request).
    */
   account_id: z.string().uuid().optional(),
 });
 
-// PORT NOTE (magick-agency): master's `topupCreditsSchema` and
-// `deductCreditsSchema` are deleted with the credits routes (no credits in v1,
-// plan §3.3 / Decided S6).
+// No credit schemas: there are no credits in v1 (decision S6).
 
 export const changePasswordSchema = z.object({
   current_password: z.string().min(1, 'Current password is required'),
@@ -75,12 +71,11 @@ export const superAdminAuditQuerySchema = z.object({
 }).strict();
 
 /**
- * PORT NOTE (magick-agency): NEW — `PUT /super-admin/tenants/:id/memberships/
- * :membershipId/role` (contract `ChangeMembershipRoleBody`, plan §3.4 "change
- * roles"). The role set is the add-user one: a super admin may assign any of
- * the six, including `tenant_owner` (the tenant-side route cannot). `reason`
- * is recorded on the super-admin audit row; its bound is the flag-override
- * `reason`'s (500).
+ * `PUT /super-admin/tenants/:id/memberships/:membershipId/role` (contract
+ * `ChangeMembershipRoleBody`). The role set is the add-user one: a super admin
+ * may assign any of the six, including `tenant_owner` (the tenant-side route
+ * cannot). `reason` is recorded on the super-admin audit row; its bound is the
+ * flag-override `reason`'s (500).
  */
 export const changeMembershipRoleSchema = z.object({
   role: membershipRoleSchema,
@@ -88,15 +83,13 @@ export const changeMembershipRoleSchema = z.object({
 });
 
 /**
- * PORT NOTE (magick-agency): NEW — `PUT /super-admin/tenants/:tenantId/accounts/
- * :accountId/settings` (contract `UpdateAgencyAccountSettingsBody`, plan §3.2).
- * A PATCH: an omitted field keeps its value. `.strict()` so the one field this
+ * `PUT /super-admin/tenants/:tenantId/accounts/:accountId/settings` (contract
+ * `UpdateAgencyAccountSettingsBody`). A PATCH: an omitted field keeps its value. `.strict()` so the one field this
  * route deliberately does NOT write — `max_concurrent_calls`, which belongs to
  * the concurrency route so the guard's invalidation has one writer — is a 400
  * rather than silently ignored.
  *
- * `webrtc_max_duration_seconds` keeps core's flag bound
- * (`isWebrtcMaxDuration`, `registry.ts:104`): an integer in 60..14400.
+ * `webrtc_max_duration_seconds` is an integer in 60..14400.
  * At least one setting must be present: an empty PATCH would write nothing and
  * audit a change that did not happen.
  */
@@ -116,14 +109,14 @@ export const updateAgencyAccountSettingsSchema = z.object({
 );
 
 /**
- * PORT NOTE (magick-agency): NEW — `GET /super-admin/usage` (contract
- * `UsageCountsQuery`, plan §3.3). `[from, to)` on `agency_call_attempts.dialed_at`.
+ * `GET /super-admin/usage` (contract `UsageCountsQuery`). `[from, to)` on
+ * `agency_call_attempts.dialed_at`.
  * The ids are UUID columns, so they are validated as UUIDs here rather than
  * reaching Postgres as `22P02`. The window refinement parses dates only after
  * guarding them: `.refine` runs on a dirty result when `.datetime()` failed.
  */
 /**
- * NEW (magick-agency): the widest `[from, to)` the usage-counts read accepts.
+ * The widest `[from, to)` the usage-counts read accepts.
  * The read range-scans `idx_agency_attempts_billing` over the whole window across
  * every campaign; bounding it keeps one request from scanning the table's whole
  * history. A little over a year, so a full calendar year (366 days) fits.

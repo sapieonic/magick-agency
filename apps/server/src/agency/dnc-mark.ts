@@ -6,25 +6,17 @@ import { dncRepository, SCOPE_SENTINEL } from '../dnc/dnc.repository.js';
 const log = createChildLogger({ component: 'agency-dnc-mark' });
 
 /**
- * ─── AGENCY DIALER — AN AGENT MARKING A CONTACT DNC (`AD-P3-M-03`, MAG-106) ──
+ * ─── AGENCY DIALER — AN AGENT MARKING A CONTACT DNC ─────────────────────────
  *
- * PORT NOTE (magick-agency, decision B8 — the DNC collapse). In core this module
- * was the forward half of `POST /agency/attempts/:id/dnc`: it wrote a write-ahead
- * outbox row, POSTed to master, compared master's echoed scope against what it
- * had sent, and retried on a ladder (30s → 15 min, 30 attempts) until master
- * confirmed. Master then wrote `dnc_entries` and republished the tenant-wide ones
- * into core's versioned Redis set. All of that existed only because two services
- * with two databases had to agree. Here there is one table and one writer, so the
- * whole of it collapses to ONE transactional write of the row the dial-time check
- * reads: {@link markDnc}. Gone with it: `forwardDncMark`, `resolveDncOutboxRow`,
- * the backoff ladder, `DNC_OUTBOX_MAX_ATTEMPTS`, the `MASTER_SCOPE_MISMATCH`
- * detection (the written row is read back, so there is no echo to compare), the
- * deploy-order hazards that header described, and the outbox forwarder. The
- * `agency_dnc_outbox` TABLE stays in the schema for the rollback-window mirror to
- * master (plan §8, built later); nothing here writes it.
+ * Decision B8: the mark is ONE write of the `dnc_entries` row the dial-time check
+ * ({@link DncRegistry.check}) reads, made by {@link markDnc} inside the same
+ * transaction as the agent's attempt bookkeeping on `POST /agency/attempts/:id/dnc`
+ * (the roster suppression and the optional disposition). There is one table and one
+ * writer, so there is nothing to forward, retry or reconcile, and the written row is
+ * read back rather than echoed. The `agency_dnc_outbox` table stays in the schema
+ * unused; nothing here writes it.
  *
- * What is NOT collapsed is every decision below, because each is about the
- * customer and not about the transport.
+ * Every decision below is about the customer.
  *
  * ── The mark is CAMPAIGN-SCOPED BY DEFAULT ───────────────────────────────────
  *
@@ -67,11 +59,11 @@ const log = createChildLogger({ component: 'agency-dnc-mark' });
  * ── Transaction and failure ──────────────────────────────────────────────────
  *
  * Without `deps.client` the write is its own single transaction and failure is
- * REPORTED, never thrown (`recorded: false`): the route has already suppressed the
- * roster rows by the time this runs, and a 5xx would tell the agent nothing
- * happened when the customer in front of them has in fact been taken off the
- * roster. With `deps.client` the insert joins the CALLER's transaction (the mark
- * beside its attempt bookkeeping, decision B8) and a failure PROPAGATES so the
+ * REPORTED, never thrown (`recorded: false`): a caller that has already taken the
+ * contact off the roster must not answer a 5xx that tells the agent nothing
+ * happened. With `deps.client` — how the station DNC route calls it — the insert
+ * joins the CALLER's transaction (the mark beside its attempt bookkeeping,
+ * decision B8) and a failure PROPAGATES so the
  * caller's transaction rolls the row back with everything else; swallowing it there
  * would commit a bookkeeping write whose DNC row is missing.
  */
@@ -103,7 +95,7 @@ export interface DncMarkRequest {
   /** Free text, stored on the entry. */
   reason?: string;
   /**
-   * The user id of the human who marked it. Optional: core deliberately does NOT
+   * The user id of the human who marked it. Optional: this deliberately does NOT
    * substitute the attempt's reserved agent — on an audit record a
    * confidently-wrong actor is worse than a missing one.
    */
@@ -129,8 +121,7 @@ export interface DncMarkResult {
   /**
    * The scope of the row that is actually ON the list, read back from the row —
    * `campaign_id` is its campaign, or null for a tenant-wide entry. `null` for the
-   * whole field when nothing was written. Master used to echo this and core to
-   * compare it with what it sent; here it is the row itself, so it cannot be a
+   * whole field when nothing was written. It is the row itself, so it cannot be a
    * mirror of the request. On the `alreadyPresent` path it is the PRE-EXISTING
    * row's scope.
    */
@@ -138,11 +129,11 @@ export interface DncMarkResult {
   /**
    * Set when the request itself was refused before anything was written.
    *
-   * PORT NOTE (magick-agency, Phase 8 delta review): unreachable from the one caller today. The
-   * station DNC route (`api/routes/agency.routes.ts`) never passes an `accountId` and passes the
-   * campaign id it resolved from the attempt (never the sentinel), and answers a bad client
-   * `scope` with its own `400 invalid_dnc_scope` before calling this; it does not read this field.
-   * Kept as the guard for any future caller (`test/unit/agency/dnc-mark.test.ts`).
+   * Unreachable from the one caller today. The station DNC route
+   * (`api/routes/agency.routes.ts`) never passes an `accountId` and passes the campaign id it
+   * resolved from the attempt (never the sentinel), and answers a bad client `scope` with its
+   * own `400 invalid_dnc_scope` before calling this; it does not read this field. It is the
+   * guard for any future caller (`test/unit/agency/dnc-mark.test.ts`).
    */
   refused?: 'invalid_dnc_scope';
 }
@@ -212,8 +203,8 @@ export async function markDnc(
         tenantId: req.tenantId, campaignId: row.entry.campaign_id, entryId: row.entry.id,
         alreadyPresent: !row.created, scope: row.entry.campaign_id === null ? 'tenant' : 'campaign',
       },
-      // PORT NOTE (magick-agency, Phase 8 delta review): inside a caller's transaction the row is
-      // not committed yet — the caller's COMMIT (or ROLLBACK) decides — so the line says so.
+      // Inside a caller's transaction the row is not committed yet — the caller's COMMIT
+      // (or ROLLBACK) decides — so the line says so.
       deps.client ? 'DNC entry written (in the caller\'s transaction, not yet committed)' : 'DNC entry recorded',
     );
     return {

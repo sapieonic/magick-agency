@@ -1,12 +1,12 @@
 /**
  * Indirection to the dialer-analysis worker without a hard import dependency.
  *
- * The worker itself (`src/core/dialer-analysis-worker.ts`) is built in a separate
- * task. Call sites that want to nudge it (the retry route, the recording webhook)
- * reach it through {@link getDialerAnalysisWorker} so they compile and run today,
- * before the worker module exists: it returns `null` until the worker task calls
- * {@link setDialerAnalysisWorker} at startup. A `null` return simply means "no
- * worker to wake right now" — the worker's own poll loop still picks the job up.
+ * Call sites that want to nudge the worker (the bridge's analysis hooks, on call
+ * finalisation and on recording-ready) reach it through {@link getDialerAnalysisWorker}
+ * instead of importing `src/core/dialer-analysis-worker.ts`. It returns `null` until
+ * `initDialerAnalysisWorker` calls {@link setDialerAnalysisWorker} at startup, and
+ * again after shutdown. A `null` return simply means "no worker to wake right now" —
+ * the worker's own poll loop still picks the job up.
  */
 export interface DialerAnalysisWorkerHandle {
   wake(): void;

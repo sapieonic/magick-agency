@@ -136,7 +136,7 @@ export function parseAgentStatsQuery(query: Record<string, unknown>): FilterPars
   let bucket: AgencyStatsBucketUnit = 'day';
   if (bucketRaw !== undefined) {
     if (!(AGENT_STATS_BUCKETS as readonly string[]).includes(bucketRaw)) {
-      // The valid set is echoed, the way `validateEnum` and core's
+      // The valid set is echoed, the way `validateEnum` and the break route's
       // `unknown_break_reason` already do: a client holding a stale vocabulary
       // recovers in one round trip instead of guessing.
       issues.push({
@@ -235,7 +235,7 @@ export function bucketTruncSql(unit: AgencyStatsBucketUnit, tsExpr: string, tzEx
  * Every state at zero, and no shift.
  *
  * The shape a bucket with no events must take. **Zeros, never absent keys and
- * never an inference:** sessions that predate migration 105 have no events at all,
+ * never an inference:** sessions that predate state-event recording have no events at all,
  * and the honest answer for them is "we recorded nothing", not a duration
  * reconstructed from `state_since` (which is a snapshot, so it would attribute the
  * agent's entire history to whatever state they happen to be in now). A missing
@@ -354,7 +354,7 @@ export function parseAgentAttemptFilters(
 //
 // The same window and the same scope as the per-agent record, grouped ONE LEVEL
 // UP: per agent instead of per bucket. So everything above about how a window is
-// parsed applies verbatim, and everything about bucketing does not apply at all —
+// parsed applies unchanged, and everything about bucketing does not apply at all —
 // there is no bucket on this route, therefore no `bucket` parameter, no
 // `date_trunc`, and no campaign timezone to resolve.
 //
@@ -423,10 +423,10 @@ export const ROSTER_MAX_LIMIT = 200;
  *
  * Neither statement may carry a `LIMIT` — the benchmark needs the whole
  * pre-`limit` cohort, and {@link AgencyRosterBenchmark}'s occupancy percentiles
- * need an input that exists in neither statement alone. Core sets no
+ * need an input that exists in neither statement alone. The server sets no
  * `statement_timeout` and no `query_timeout` anywhere, so a read that runs long
  * holds a pool connection for as long as it takes — the same pool serving
- * `resolveApiKey`, the pacing tick and attempt writes. With no `LIMIT` to shed
+ * authentication, the pacing tick and attempt writes. With no `LIMIT` to shed
  * rows and no timeout to cut the statement off, the WINDOW is the only bound
  * available, which is why it is set from cost rather than inherited.
  *
@@ -470,10 +470,10 @@ export interface AgentRosterParams {
  * extra values are dropped before the vocabulary is consulted — house-wide
  * `singleParam` behaviour on every single-valued param here, not something this
  * wrapper introduces or could fix alone. It is not reachable from the browser:
- * master's `forwardAllowedQuery` comma-JOINS a repeated param, so the same URL
- * through the proxy arrives as `'a,b'` and lands in the case above as a 400. Only
- * a direct S2S caller sees the drop, and it sees the applied `sort` echoed on the
- * response either way.
+ * the public API layer's `forwardAllowedQuery` comma-JOINS a repeated param, so the
+ * same URL from the console arrives as `'a,b'` and lands in the case above as a 400.
+ * Only a direct caller of the internal handler sees the drop, and it sees the
+ * applied `sort` echoed on the response either way.
  */
 function singleEnum<T extends string>(
   param: string,
@@ -503,7 +503,7 @@ function singleEnum<T extends string>(
  * occupancy read behind it differences every transition of every agent on the
  * floor rather than of one person. That is an ~N-fold cost difference in a floor
  * of N, and neither statement here may carry a `LIMIT` (the benchmark needs the
- * whole pre-`limit` cohort) while core sets no `statement_timeout` anywhere. A
+ * whole pre-`limit` cohort) while the server sets no `statement_timeout` anywhere. A
  * whole-floor read and a one-person read are visibly different questions; giving
  * them the same bound for URL symmetry would be dressing that up as consistency.
  * The refusal names the bound, so a caller wanting a year learns to page by
@@ -512,8 +512,8 @@ function singleEnum<T extends string>(
  * ── `bucket` is NOT accepted, and neither is `agent_user_id` ─────────────────
  *
  * Not defaulted-and-ignored: both are 400s through the unknown-param check
- * master applies, because both would be a URL that reads as one question and is
- * answered as another. `agent_user_id` narrowed to named agents is phase 02's
+ * the public API layer applies, because both would be a URL that reads as one question and is
+ * answered as another. `agent_user_id` narrowed to named agents belongs to a
  * compare surface, and accepting it here would make `benchmark` mean something
  * different per request under the same name.
  *
@@ -749,7 +749,7 @@ export function sortRosterRows(
 //
 // The same window, the same scope and the same five metric expressions as the
 // roster, grouped by one or two CALLER-CHOSEN dimensions instead of by agent. So
-// everything above about how a window is parsed and refused applies verbatim, and
+// everything above about how a window is parsed and refused applies unchanged, and
 // the cap is literally the same constant.
 //
 // What is new, and it is the whole reason this parsing is here rather than in the
@@ -837,7 +837,7 @@ const GROUP_DIMENSION_NEEDS_ZONE: Record<AgencyGroupDimension, boolean> = {
 };
 
 /**
- * Whether a grouping is cut in a timezone at all — the ONE `some` that both D5's
+ * Whether a grouping is cut in a timezone at all — the ONE `some` that both the zone rule's
  * refusal and `AgencyGroupPage.resolved_timezone` read.
  *
  * Shared rather than spelled at each site because the two rules have to agree: if
@@ -851,7 +851,7 @@ const GROUP_DIMENSION_NEEDS_ZONE: Record<AgencyGroupDimension, boolean> = {
  * `some`, not `every`, and the two differ on exactly one shape: a pair holding one
  * zoned dimension beside a non-zoned one (`agent,day`). That page IS cut in a zone
  * — the zoned half needs one — so `every` would wave it through the refusal AND
- * report no zone for it. `agent-record.test.ts` pins both halves.
+ * report no zone for it. `agent-record.test.ts` asserts both halves.
  */
 export function groupByIsZoned(groupBy: readonly AgencyGroupDimension[]): boolean {
   return groupBy.some((dimension) => GROUP_DIMENSION_NEEDS_ZONE[dimension]);
@@ -882,7 +882,7 @@ export interface AgentGroupedParams {
   from: Date;
   /** EXCLUSIVE upper bound, same half-open window as {@link AgentRosterParams}. */
   to: Date;
-  /** Narrow every row to one campaign; also one of the two D5 zone remedies. */
+  /** Narrow every row to one campaign; also one of the two zone-rule remedies. */
   campaignId?: string;
   /**
    * 1..{@link GROUP_MAX_DIMENSIONS} dimensions, deduplicated and in the CANONICAL
@@ -899,14 +899,14 @@ export interface AgentGroupedParams {
  * `AgencyGroupPage.resolved_timezone`.
  *
  * True iff a zoned dimension is grouped AND the read is filtered to one campaign.
- * **Both halves, and the second is the one that is easy to lose.** D5 accepts a
+ * **Both halves, and the second is the one that is easy to lose.** The zone rule accepts a
  * time dimension on EITHER of two remedies and only one of them narrows the read
  * to a single zone: `group_by=campaign,hour_of_day` with no `campaign_id` is a
- * legal 200 spanning every campaign in the account — that remedy is the one D5's
+ * legal 200 spanning every campaign in the account — that remedy is the one the zone rule's
  * refusal message names FIRST, `campaign` plus one time dimension fits
  * {@link GROUP_MAX_DIMENSIONS} exactly, and each row is correctly cut in its own
  * campaign's zone. `agency_campaigns.default_timezone` is per campaign
- * (`VARCHAR(64) NOT NULL DEFAULT 'UTC'`, migration 072) with no account-level
+ * (`VARCHAR(64) NOT NULL DEFAULT 'UTC'`) with no account-level
  * uniqueness, so those zones genuinely differ. N zones, no page-level label,
  * `null`.
  *
@@ -914,9 +914,8 @@ export interface AgentGroupedParams {
  * makes the page name ONE of several zones as though the whole matrix were cut in
  * it, which is the confidently-wrong hour axis the field exists to prevent.
  *
- * "Exactly one campaign" reduces to "a `campaign_id` is present" for D9's reason:
- * core's house-wide `singleParam` takes `raw[0]`, so this surface accepts at most
- * one.
+ * "Exactly one campaign" reduces to "a `campaign_id` is present" because the
+ * house-wide `singleParam` takes `raw[0]`, so this surface accepts at most one.
  *
  * Pure, and here rather than in the repository, for this section's stated reason:
  * which questions this read can answer is a product rule, so it has to be
@@ -938,7 +937,7 @@ export function groupedPageHasSingleZone(
  * rather than a second 92 declared here. The cost argument is the same one, and
  * stronger: this read has no `LIMIT`-free requirement so the page IS bounded, but
  * the SCAN is not — the window is still the only thing bounding how many attempt
- * rows are aggregated, and core sets no `statement_timeout` anywhere. Two caps
+ * rows are aggregated, and the server sets no `statement_timeout` anywhere. Two caps
  * holding the same value would be two things to change and one of them would be
  * missed.
  *
@@ -952,16 +951,16 @@ export function groupedPageHasSingleZone(
  * form (`?group_by=agent&group_by=campaign`) arrives as an array and
  * {@link singleParam} takes `raw[0]`, so the second value is dropped before it is
  * seen — house-wide behaviour on every single-valued param on this surface, not
- * something introduced here, and not reachable from the browser because master's
- * `forwardAllowedQuery` comma-JOINS a repeated param into exactly the form above.
- * The applied `group_by` is echoed on the response either way, so a direct S2S
- * caller can always see what it got.
+ * something introduced here, and not reachable from the browser because the public
+ * API layer's `forwardAllowedQuery` comma-JOINS a repeated param into exactly the
+ * form above. The applied `group_by` is echoed on the response either way, so a
+ * direct caller of the internal handler can always see what it got.
  *
  * A duplicate (`agent,agent`) refuses rather than deduplicating silently: it
  * halves the dimensionality of the answer, and a caller who wrote it meant
  * something else.
  *
- * ── D5. A TIME DIMENSION NEEDS AN UNAMBIGUOUS ZONE, OR THE READ IS REFUSED ───
+ * ── A TIME DIMENSION NEEDS AN UNAMBIGUOUS ZONE, OR THE READ IS REFUSED ───────
  *
  * This is the rule most likely to be read as over-strict, so it is derived here
  * rather than asserted. Buckets are cut in the CAMPAIGN's own `default_timezone`
@@ -1025,7 +1024,7 @@ export function parseGroupedStatsQuery(query: Record<string, unknown>): AgencyGr
 
   const groupBy = parseGroupBy(singleParam(query['group_by']), issues);
 
-  // The D5 refusal. Checked only once `group_by` itself parsed: reporting an
+  // The zone-rule refusal. Checked only once `group_by` itself parsed: reporting an
   // ambiguous zone for a dimension the caller misspelled would name the wrong
   // problem, and the misspelling is already an issue on the list.
   if (groupBy.length > 0

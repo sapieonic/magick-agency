@@ -1,10 +1,10 @@
 /**
- * The attempt spine's proxy surface (MAG-159).
+ * The attempt spine's public routes.
  *
- * Core owns the data and the query; master owns the tenant-facing gate, the
- * filter whitelist and the CSV. There is deliberately **no aggregation** here —
- * unlike MAG-158's activity trail, which merges two audit stores, this is one
- * store and the proxies are thin.
+ * The internal handler owns the query; the public API layer owns the
+ * tenant-facing gate, the filter whitelist and the CSV. There is deliberately
+ * **no aggregation** here — unlike the activity trail, which merges two audit
+ * tables, this is one store and the public routes are thin.
  *
  * A LEAF module: types, constants and pure functions. No fastify, no db.
  */
@@ -12,13 +12,13 @@
 import { preambleLine, sanitizePreambleValue, toCsvLine } from './agency-csv.js';
 
 /**
- * The query params forwarded to core, per route.
+ * The query params forwarded to the internal handler, per route.
  *
  * A whitelist rather than `request.query` wholesale. Forwarding everything means
- * master cannot say what its own API accepts, and any param core later gives a
- * meaning to becomes reachable through master without anyone deciding it should
- * be — including on the CSV path, where master sets `cursor` and `limit` itself
- * and a caller-supplied one would fight it.
+ * the public API cannot say what it accepts, and any param the handler later
+ * gives a meaning to becomes reachable through it without anyone deciding it
+ * should be — including on the CSV path, where the route sets `cursor` and
+ * `limit` itself and a caller-supplied one would fight it.
  *
  * `cursor` and `limit` are on the JSON lists only, for that reason.
  */
@@ -38,7 +38,7 @@ export const ATTEMPT_QUERY_PARAMS = [
  * `last_outcome` is a fourth list filter (last attempt `outcome`) the
  * console does not currently offer as chips; keep it forwarded so a
  * URL/API client can still use it. Do not add `disposition` as an alias:
- * core's parser reads `last_disposition` only. Attempts use
+ * the handler's parser reads `last_disposition` only. Attempts use
  * `disposition_code`, not this key — do not put `last_disposition` on
  * `ATTEMPT_QUERY_PARAMS`.
  */
@@ -49,7 +49,7 @@ export const CONTACT_QUERY_PARAMS = [
 export const PAGING_QUERY_PARAMS = ['cursor', 'limit'] as const;
 
 /**
- * Read by the CSV handlers and deliberately never forwarded to core, so it has to
+ * Read by the CSV handlers and deliberately never forwarded, so it has to
  * be declared as route-consumed rather than left to read as an unknown param.
  * See {@link forwardAllowedQuery}'s `consumedByRoute`.
  */
@@ -81,20 +81,17 @@ export function unknownQueryParamsError(unknown: string[]): {
 
 /**
  * Copy the named params out of a Fastify query object into the flat
- * `Record<string, string>` the core proxy client takes, and REFUSE anything not
- * named.
+ * `Record<string, string>` `callCore` takes, and REFUSE anything not named.
  *
  * ── Named `forwardAllowedQuery`, and the ALLOWED is the whole point ─────────
- * It was `forwardQuery` until it collided with `PassthroughSpec.forwardQuery`
- * (`src/api/routes/helpers/passthrough.ts`), which forwards the query
- * **verbatim, with no allowlist and no refusal** — the opposite policy, under
- * the same name, in the same proxy layer. Two readers hit that in the same file
- * and drew opposite conclusions about what a proxy route does with an unknown
- * param. Neither name was wrong for its own function; the collision was.
+ * The query is narrowed to an allowlist and anything else is refused — the
+ * opposite of forwarding a query unchanged, so the name says which policy a
+ * reader is looking at.
  *
  * Repeats (`?outcome=a&outcome=b`) arrive as an array and are joined with a
- * comma, which is core's other accepted spelling — so a client may use either
- * form and master does not have to pick one for them.
+ * comma, which is the handler's other accepted spelling (`multiParam` splits on
+ * commas) — so a client may use either form and this layer does not have to pick
+ * one for them.
  *
  * A blank value is dropped rather than forwarded: `?phone=` is what a cleared
  * form field posts, and forwarding it would make an empty search box look like
@@ -102,30 +99,30 @@ export function unknownQueryParamsError(unknown: string[]): {
  *
  * ── Why an unknown key is a 400 and not a silent drop ──────────────────────
  *
- * The silent drop was the defect, not the whitelist. This function used to
- * iterate the ALLOWLIST and never look at the request, so a param master did not
- * know about vanished without trace — and the request still succeeded. That is
+ * The silent drop would be the defect, not the whitelist. A version that
+ * iterates the ALLOWLIST and never looks at the request lets a param it does not
+ * know about vanish without trace — and the request still succeeds. That is
  * the worst available outcome for a filter: `?phone=+91…` against a route whose
- * whitelist lacked `phone` answered **200 with the person's entire unfiltered
+ * whitelist lacked `phone` would answer **200 with the person's entire unfiltered
  * history**, presented by the console as the calls matching their search. The
  * reader gets more rows than they asked for, every one of them wrong, and
  * nothing on screen says so. A 400 is visible; a wrong answer is not.
  *
  * It is also the safer direction for the security argument the whitelist exists
- * for. An `?agent_user_id=` a client appends to a `/my-attempts` route was
- * already dropped; now it is refused, which is the same protection plus a signal.
+ * for. An `?agent_user_id=` a client appends to a `/my-attempts` route is
+ * refused rather than dropped, which is the same protection plus a signal.
  *
  * The cost, stated plainly: a client that appends anything incidental — a cache
- * buster, a `utm_*` tag, a param added by a future console before master
- * learns it — now gets a 400 rather than being quietly tolerated. That is
+ * buster, a `utm_*` tag, a param added by a future console before the server
+ * learns it — gets a 400 rather than being quietly tolerated. That is
  * acceptable here because these routes serve one first-party console over
- * hand-written calls, and a param appearing that master does not know about is
+ * hand-written calls, and a param appearing that the server does not know about is
  * far more likely to be a filter silently doing nothing than deliberate noise.
  * It would be the wrong trade on a public API.
  *
  * `consumedByRoute` names params the ROUTE ITSELF reads and therefore must not be
  * treated as unknown — `?preamble=` on the CSV exports is read by the handler and
- * deliberately never forwarded to core. Without it, strictness would 400 every
+ * deliberately never forwarded. Without it, strictness would 400 every
  * export.
  */
 export function forwardAllowedQuery(
@@ -150,13 +147,12 @@ export function forwardAllowedQuery(
   return { ok: true, query: out };
 }
 
-// ─── Wire shapes, as master reads them ──────────────────────────────────────
+// ─── Wire shapes, as the public layer reads them ────────────────────────────
 //
-// Structural mirrors of core's `AgencyAttemptRow` / `AgencyContactRow`. Master
-// and core are separate repositories with no shared package, so this is the same
-// hand-mirroring every other cross-service shape here uses. Nothing branches on
-// a missing field: the CSV writers narrow defensively, because a core that adds
-// or renames a field must degrade to a blank cell rather than throw mid-export.
+// Structural mirrors of the contracts' `AgencyAttemptRow` / `AgencyContactRow`,
+// as the handler's JSON body delivers them. Nothing branches on a missing field:
+// the CSV writers narrow defensively, because a handler change that adds or
+// renames a field must degrade to a blank cell rather than throw mid-export.
 
 export interface SpineAttemptRow {
   id: string;
@@ -166,10 +162,11 @@ export interface SpineAttemptRow {
   caller_id: string;
   agent_user_id: string | null;
   /**
-   * Added by master — core has no user table (D3), so it can only ever serve
-   * the id. `null` means either "no agent was on this attempt" or "master
-   * cannot identify that id in this tenant"; `agent_user_id` distinguishes the
-   * two, which is why both keys are always present.
+   * Added by the public layer — the attempt query reads only the dialer's
+   * tables, so the handler can only ever serve the id. `null` means either "no
+   * agent was on this attempt" or "that id cannot be identified in this tenant";
+   * `agent_user_id` distinguishes the two, which is why both keys are always
+   * present.
    */
   agent_name?: string | null;
   state: string;
@@ -213,18 +210,18 @@ export interface SpinePage<TRow> {
 }
 
 /**
- * Narrow core's untyped body into a CURSOR page, or `null` if it is not one.
+ * Narrow the handler's untyped body into a CURSOR page, or `null` if it is not one.
  *
  * ── ⚠️ Not a general "is this a page of rows" test. Do not gate a filter on it ─
  * This function refuses a body for reasons that are about PAGING — an
  * unreadable `next_cursor`, a non-numeric `limit` — and both of those are
  * properties of the drain loop below, not of the rows. A caller that only needs
  * to walk `rows` must use {@link pageRows} instead, and the difference is not
- * academic: `limit` arrives on the wire as a query param, so a core that echoes
- * the caller's `?limit=50` back as the STRING `'50'` is refused here. Gating the
- * roster's membership filter on this function is exactly that bug — a real
- * production page skipped the filter entirely and then reported
- * `inactive_omitted: 0` on a page that had hidden people. The rule is: this
+ * academic: `limit` arrives as a query param, so a handler that echoes the
+ * caller's `?limit=50` back as the STRING `'50'` is refused here. Gating the
+ * roster's membership filter on this function is exactly that bug — the page
+ * skips the filter entirely and then reports `inactive_omitted: 0` on a page
+ * that had hidden people. The rule is: this
  * function for the export drain, which reads the cursor; {@link pageRows} for
  * anything whose subject is the rows.
  *
@@ -233,8 +230,8 @@ export interface SpinePage<TRow> {
  * The distinction matters more here than the shape check does. `next_cursor`
  * has exactly two legitimate values — a string (more to read) or `null`/absent
  * (that was the last page) — and the export loop breaks on anything falsy. So
- * coercing a malformed cursor to `null`, which this used to do, means a
- * mid-drain page that came back wrong ends the export **silently and
+ * coercing a malformed cursor to `null` would mean a mid-drain page that came
+ * back wrong ends the export **silently and
  * successfully**: the file is served 200, `truncated` is null, the preamble
  * says complete, and the rows after the bad page simply are not there.
  *
@@ -270,24 +267,24 @@ export function asSpinePage<TRow>(body: unknown): SpinePage<TRow> | null {
  * The rows off a body that carries a row array, or `null` when it does not.
  *
  * ── Why this exists beside {@link asSpinePage} ──────────────────────────────
- * Every enrichment and every filter master applies to a page of rows needs one
+ * Every enrichment and every filter this layer applies to a page of rows needs one
  * fact: is there an array to walk? {@link asSpinePage} answers a strictly
  * narrower question — is this a page a CURSOR DRAIN can read — and it refuses a
  * body whose `next_cursor` is unreadable or whose `limit` is not a number.
  * Those are the right refusals for the export loop and the wrong ones for
- * everything else, because a `limit` reaches core as a query param and a core
- * that echoed it back as `'50'` would be refused for a field the filter never
- * reads.
+ * everything else, because a `limit` reaches the handler as a query param and a
+ * handler that echoed it back as `'50'` would be refused for a field the filter
+ * never reads.
  *
- * The cost of that confusion is not a missing key. On the roster the membership
- * filter was gated on `asSpinePage`, so such a page was served UNFILTERED with
+ * The cost of that confusion is not a missing key. A roster membership filter
+ * gated on `asSpinePage` serves such a page UNFILTERED with
  * `inactive_omitted: 0` — a 200 that states, falsely, that nothing was hidden,
  * which is the single outcome this feature's whole comment budget goes on
  * avoiding. Serving unfiltered is only defensible when there is genuinely no row
  * array to walk, and that is the one thing this function tests.
  *
  * An ARRAY body is refused as well as a primitive: `[1, 2]` has no `rows` member
- * and wrapping one to make room for master's counters would invent a shape
+ * and wrapping one to make room for this layer's counters would invent a shape
  * nobody declared (see `withOmissionCounters`).
  */
 export function pageRows<TRow>(body: unknown): TRow[] | null {
@@ -300,14 +297,15 @@ export function pageRows<TRow>(body: unknown): TRow[] | null {
 
 /**
  * Not the interactive page size: the export loop is draining a campaign, not
- * rendering one, and each page is an S2S round trip. Matches core's `limit`
- * ceiling, so a page cannot be silently shortened.
+ * rendering one, and each page is a handler call. Matches the handler's `limit`
+ * ceiling (`SPINE_MAX_LIMIT`, `spine-filters.ts`), so a page cannot be silently
+ * shortened.
  */
 export const SPINE_EXPORT_PAGE_SIZE = 500;
 
 /**
  * The row ceiling, and unlike the activity trail's it is a **routine** limit
- * rather than a runaway guard: Q-D is 1M contacts, so a whole-campaign export
+ * rather than a runaway guard: a campaign is sized for 1M contacts, so a whole-campaign export
  * genuinely exceeds it and the truncation notice is the normal outcome for an
  * unfiltered export rather than a rare one. That is why the header and the
  * preamble both say what to do about it (narrow the filters) instead of only
@@ -315,7 +313,10 @@ export const SPINE_EXPORT_PAGE_SIZE = 500;
  */
 export const SPINE_EXPORT_MAX_ROWS = 50_000;
 
-/** Bounds the case the row ceiling cannot: a core that answers slowly. */
+/**
+ * Bounds the case the row ceiling cannot: a drain whose pages answer slowly.
+ * Checked between pages; a page itself carries no timeout.
+ */
 export const SPINE_EXPORT_TIME_BUDGET_MS = 60_000;
 
 export const SPINE_EXPORT_MIN_PAGE_TIMEOUT_MS = 5_000;
@@ -333,13 +334,12 @@ export type SpineExportTruncation = 'row_limit' | 'deadline';
  * notes are operational content on the contact record, and "we dialled this
  * number four times and Ravi marked it Not Interested — *because the customer
  * asked us to call after 6pm*" is the answer a compliance question wants. It is
- * a decision recorded in the MAG-159 PR, not a default inherited from spreading
- * the row.
+ * a deliberate decision, not a default inherited from spreading the row.
  *
  * ── There is no `context` column, on either export ──────────────────────────
- * Core does not serve the CSV columns on a list at all — only on the
+ * The handler does not serve the CSV columns on a list at all — only on the
  * single-contact drill-down — so the exclusion is structural here rather than a
- * column somebody remembered to leave out. See core's `AgencyContactRow`.
+ * column somebody remembered to leave out. See the contracts' `AgencyContactRow`.
  */
 export const ATTEMPT_CSV_COLUMNS = [
   'attempt_id',
@@ -471,7 +471,7 @@ export function buildSpineCsvPreamble(input: SpineCsvPreambleInput): string[] {
   return [
     preambleLine(
       input.kind === 'attempts'
-        // PORT NOTE (magick-agency, decision B17): "Magick Agency" (master: "MagickVoice platform").
+        // The product name, decision B17.
         ? 'Magick Agency — campaign call-attempt export (one row per dial)'
         : 'Magick Agency — campaign contact roster export (one row per contact)',
     ),
@@ -507,20 +507,19 @@ export function buildSpineCsvPreamble(input: SpineCsvPreambleInput): string[] {
 }
 
 /**
- * Put a person's name on every attempt row (MAG-159 review).
+ * Put a person's name on every attempt row.
  *
- * ── Why this is master's job and not core's ─────────────────────────────────
- * Core has no user table (D3), so the furthest it can go is
+ * ── Why this is the public layer's job and not the query's ─────────────────
+ * The attempt query reads only the dialer's tables, so the furthest it goes is
  * `reserved_agent_id` → `agency_agent_sessions.agent_user_id`. That is already
  * the right resolution — a session id is meaningless to a supervisor — but it
  * stops at a **UUID**, and a column of UUIDs is not a column anyone can read.
- * Master is the only service that holds identity, and it already does exactly
- * this for the agent floor (`enrichAgencyCampaignStats`'s `enrichAgentNames`).
- * The review found this surface shipped without it.
+ * The public layer resolves identity, and it already does exactly this for the
+ * agent floor (`enrichAgencyCampaignStats`'s `enrichAgentNames`).
  *
  * ── Shape rules, inherited from the floor's enrichment ──────────────────────
  * One query for the whole page, never per row. The body is spread rather than
- * rebuilt, so fields core adds later still arrive. The KEY is present on every
+ * rebuilt, so fields the handler adds later still arrive. The KEY is present on every
  * row even when the lookup fails — an absent key is indistinguishable from a
  * client that forgot to read it, while a `null` is an answer. And a failure
  * degrades to nulls rather than failing the read: a name is an improvement on

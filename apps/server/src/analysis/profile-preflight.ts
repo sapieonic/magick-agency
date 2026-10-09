@@ -6,15 +6,11 @@ import type { WebRtcCallScope } from '@magick-agency/db/repositories/agency-call
 /**
  * Ready-to-send rejection for an unusable `analysis_profile_id`.
  *
- * `code` is not decoration. magick-master's error mask rewrites any core 4xx that
- * is not "structured" into "contact support and quote this request id", and
- * structured means an allow-listed `code`, an allow-listed `error` label, or a
- * `details` object. A bare `{error, message}` 404 therefore never reaches the
- * browser — and this is the one refusal here an operator can fix in a single
- * click by picking a different profile, so it is precisely the wrong one to
- * lose. Every sibling refusal in `agency-campaigns.routes.ts` already carries a
- * code (`feature_disabled`, `campaign_not_found`, `announcement_not_found`) for
- * the same reason.
+ * `code` is not decoration: the console reads refusals by `code`, and this is the
+ * one refusal here an operator can fix in a single click by picking a different
+ * profile. Every sibling refusal in `agency-campaigns.routes.ts` carries a code
+ * (`feature_disabled`, `campaign_not_found`, `announcement_not_found`) for the
+ * same reason.
  */
 export interface AnalysisPreflightError {
   status: number;
@@ -24,33 +20,26 @@ export interface AnalysisPreflightError {
 }
 
 /**
- * Request-time validation for an `analysis_profile_id` (mirrors
- * `preflightSipConnection`): checks the owning product's analysis flag is on for
- * this tenant/account, and that the profile exists, is active, and is owned by
- * them. Returns null when no profile was selected or everything is valid.
+ * Request-time validation for an `analysis_profile_id`: checks the owning
+ * product's analysis flag is on for this tenant/account, and that the profile
+ * exists, is active, and is owned by them. Returns null when no profile was
+ * selected or everything is valid.
  *
- * **This lives here, not in a route, because there are two writers.** A browser
- * dialer call carries the profile id per call (`POST /api/v1/webrtc-call`); an
- * agency call inherits it from `agency_campaigns.analysis_profile_id`, stamped
- * onto the leg at dial time. Both end up in the same column and are read back by
- * the same end-of-call gate — and that gate resolves the profile with the
- * UNSCOPED `callAnalysisProfileRepository.findById`, because by then the id is
- * treated as already-trusted. So the ownership check has to happen at every
- * write, or the one writer that skips it can point a call at another tenant's
- * profile and get that tenant's `context` and `custom_dimensions` snapshotted
- * into its analysis job. `AD-P4-C-03` (b) — "identical in shape to a dialer
- * call's" — is only true if both writers refuse the same ids.
+ * **The ownership check belongs at the write.** An agency call inherits its
+ * profile id from `agency_campaigns.analysis_profile_id`, stamped onto the leg at
+ * dial time, so a campaign write that skipped this check could point calls at
+ * another tenant's profile. The end-of-call gate (`bridge-analysis-hooks.ts`)
+ * also checks the owner before snapshotting, but only a refusal here tells the
+ * operator.
  *
  * ── Why `scope` is a parameter, and required ───────────────────────────────
  *
- * Having two writers is also why the flag cannot be hardcoded here. Analysis
- * *execution* is gated per product at the end-of-call gate (`analysisFlagFor`),
- * so a preflight that asked `dialer_call_analysis` for both writers refused an
- * agency campaign whose analysis is switched on and enabled one whose is not —
- * inconsistent in both directions, and the 403 direction locked an agency-only
- * tenant out of the very feature the flag split exists to sell them
- * (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b). Each writer knows which product it is,
- * so each says so.
+ * Analysis *execution* is gated per product at the end-of-call gate
+ * (`analysisFlagFor`), so the preflight resolves its flag through the same
+ * mapping instead of hardcoding one. A preflight asking a different flag than the
+ * gate refuses a campaign whose analysis is switched on and accepts one whose is
+ * not — inconsistent in both directions. The writer knows which product it is, so
+ * it says so.
  *
  * Required and undefaulted, for the reason the repository's `scope` is: a default
  * type-checks at every call site and audits none of them, and the wrong default
@@ -70,10 +59,8 @@ export async function preflightAnalysisProfile(
       status: 403,
       error: 'Feature Not Enabled',
       code: 'analysis_not_enabled',
-      // Naming the product the caller asked about, not the one that happens to
-      // share the machinery: "Dialer call analysis is off" on an agency campaign
-      // edit sends the operator to the softphone's settings page, which is not
-      // where the switch is.
+      // Naming the product the caller asked about, so the operator is sent to the
+      // switch that actually controls it.
       message: scope === 'agency'
         ? 'Agency call analysis is not enabled for this account.'
         : 'Dialer call analysis is not enabled for this account.',

@@ -9,24 +9,20 @@ const log = createChildLogger({ component: 'mailjet-client' });
  *
  * ── Why any bound at all ───────────────────────────────────────────────────
  *
- * `fetch` here inherited the process-wide undici default — **300 seconds** of
- * headers timeout — and every caller of this module is a fire-and-forget mailer
- * with somebody waiting behind it. The one that made this visible is
- * `agency-campaign-completion.ts`: it sends one envelope PER RECIPIENT (a
- * disclosure decision, not up for revision), so a webhook handler awaits the
- * whole supervisor roster, and one slow round could hold that handler for five
- * minutes. The fan-out was already bounded in WIDTH (`SEND_CONCURRENCY`); this is
- * the missing bound in TIME, and without it "bounded concurrency" only bounded
- * the burst, not the wait.
+ * Without one, `fetch` here inherits the process-wide undici default — **300
+ * seconds** of headers timeout. `agency-campaign-completion.ts` sends one
+ * envelope PER RECIPIENT (a disclosure decision, not up for revision), so one
+ * slow round could hold its fan-out for five minutes. The fan-out is bounded in
+ * WIDTH (`SEND_CONCURRENCY`); this is the bound in TIME, and without it "bounded
+ * concurrency" would only bound the burst, not the wait.
  *
  * ── Why it is set in the client, for every caller ──────────────────────────
  *
- * The alternative was a per-call override that only the newest caller passes. But
- * 300s is the wrong bound for all three callers, not just one: the invite mailer
- * has an HTTP request waiting on it, the bulk-dispatch job-completion mailer runs
- * on a queue consumer whose message visibility it would exhaust, and none of them
- * has a reader who benefits from a five-minute wait over a reported failure. One
- * bound in one place is fewer moving parts than three callers agreeing.
+ * 300s is the wrong bound for every caller, not just one: the invite mailer has
+ * an HTTP request waiting on it, the completion notice has a shutdown drain
+ * bounding it, and none of them has a reader who benefits from a five-minute wait
+ * over a reported failure. One bound in one place is fewer moving parts than a
+ * per-call override every caller has to remember.
  *
  * A timeout lands on the `catch` below and returns `false` — the same value a
  * refusal returns — so no caller learns a new outcome and no contract changes.
@@ -47,20 +43,18 @@ export interface SendEmailParams {
  *
  * ── Why `boolean` was not enough, and what depends on the difference ────────
  *
- * {@link sendEmail} has always collapsed three outcomes into `false`: Mailjet is
- * not configured at all, Mailjet refused the message, and the request timed out.
- * For the three fire-and-forget mailers that predate this type, that was fine —
- * every one of them logs and moves on, and none of them records anything.
+ * {@link sendEmail} collapses three outcomes into `false`: Mailjet is not
+ * configured at all, Mailjet refused the message, and the request timed out. For
+ * a mailer that logs and moves on, that is fine.
  *
- * The notification engine does record something. It CLAIMS a delivery row before
- * sending (`notification_deliveries`, migration 072) so an at-least-once trigger
- * cannot mail a digest twice, and a claimed row that fails is never retried. So
- * the three cases have to be told apart:
+ * A caller that CLAIMS a delivery row before sending (`notification_deliveries`)
+ * and never retries a claimed row that fails has to tell the three cases apart.
+ * No caller uses this form today:
  *
  *  - `unconfigured` — no transport exists, nothing was attempted, and the claim
  *    must be RELEASED. Without this case a staging environment with no Mailjet
- *    block silently burns every tenant's dedupe key for the period, and turning
- *    Mailjet on later sends nothing until the next one.
+ *    block silently burns the dedupe key, and turning Mailjet on later sends
+ *    nothing for it.
  *  - `rejected` — Mailjet answered and said no. Nothing was delivered; the row
  *    is marked `failed` with the status on it.
  *  - `timeout` / `error` — the message may or may not have been accepted. This
@@ -78,8 +72,7 @@ export type SendEmailOutcome =
  * Send an email via Mailjet Send API v3.1.
  * Uses native fetch with Basic auth. Fire-and-forget — never throws.
  *
- * The boolean form, kept as the contract every pre-existing caller was written
- * against. It is a thin projection of {@link sendEmailWithOutcome} rather than a
+ * The boolean form, the contract both current callers use. It is a thin projection of {@link sendEmailWithOutcome} rather than a
  * second implementation, so the two cannot drift; new callers that need to
  * record WHY a send failed should use the outcome form directly.
  */
@@ -93,8 +86,8 @@ export async function sendEmail(params: SendEmailParams): Promise<boolean> {
  *
  * Never throws — identical guarantee to {@link sendEmail}, and load-bearing for
  * the same reason: every caller is a mailer with somebody waiting behind it, and
- * a transport fault must not propagate into a webhook handler or a scheduled
- * run.
+ * a transport fault must not propagate into a request handler or the pacing
+ * leader's finalize path.
  */
 export async function sendEmailWithOutcome(params: SendEmailParams): Promise<SendEmailOutcome> {
   const mj = config.mailjet;
@@ -167,15 +160,13 @@ export async function sendEmailWithOutcome(params: SendEmailParams): Promise<Sen
     // retried today; the row records which.
     //
     // Detected with the shared predicate rather than
-    // `err instanceof Error && err.name === 'TimeoutError'`, which this line
-    // used to be and which missed the abort on both of its real shapes: the
-    // thrown value is a `DOMException` (so the `instanceof` can be false), and
-    // undici often delivers the reason one level down on `.cause` under an
-    // `AbortError` or `TypeError`. Every `MAILJET_TIMEOUT_MS` abort therefore
-    // fell through to `{ result: 'error' }` — and because the campaign gate
-    // released a claim on `error`, the next core webhook redelivery re-sent a
-    // campaign notice Mailjet may already have accepted. See
-    // {@link isAbortFromTimeout}.
+    // `err instanceof Error && err.name === 'TimeoutError'`, which misses the
+    // abort on both of its real shapes: the thrown value is a `DOMException` (so
+    // the `instanceof` can be false), and undici often delivers the reason one
+    // level down on `.cause` under an `AbortError` or `TypeError`. A missed
+    // `MAILJET_TIMEOUT_MS` abort would fall through to `{ result: 'error' }`, and
+    // a caller that releases a claim on `error` would then re-send a notice
+    // Mailjet may already have accepted. See {@link isAbortFromTimeout}.
     if (isAbortFromTimeout(err)) {
       return { result: 'timeout' };
     }

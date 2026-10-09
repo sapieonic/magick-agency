@@ -15,7 +15,7 @@ export interface GeminiTranscriberConfig {
   model: string;
   /** Per-window transcription request timeout (ms). Also the Files-API poll deadline. */
   timeoutMs: number;
-  /** Time-window size (seconds) for long-call chunking; each window heartbeats (M9). */
+  /** Time-window size (seconds) for long-call chunking; each window heartbeats. */
   windowSeconds: number;
   /** Explicit per-window generation ceiling; MAX_TOKENS windows split adaptively. */
   maxOutputTokens: number;
@@ -24,8 +24,7 @@ export interface GeminiTranscriberConfig {
 // Minimal structural types for the parts of @google/genai we touch. The package
 // is ESM-only, so a TYPE-position `import('@google/genai').X` fails under the
 // project's CommonJS compile (TS1542) — the runtime dynamic `import()` is fine.
-// These also make the client trivially mockable in unit tests. Lifted verbatim
-// from pdf-extractor.ts, the repo's only other Files-API consumer.
+// These also make the client trivially mockable in unit tests.
 interface GenAIFile {
   uri?: string;
   mimeType?: string;
@@ -72,8 +71,7 @@ interface RawTurn {
 }
 
 /**
- * Gemini transcriber (default, D3). Modelled directly on `src/knowledge/pdf-extractor.ts`
- * — the only existing Files-API consumer — and reuses its proven shape:
+ * Gemini transcriber (the default). Its shape:
  *
  *  - **Files API upload, never inline base64.** A 10-minute mp3 is ~5 MB; base64
  *    inflates ~33% and Gemini's request limit is ~20 MB.
@@ -89,10 +87,10 @@ interface RawTurn {
  *    audio on Google's Files API longer than needed.
  *
  * Diarization is LLM-guessed on a mono recording (the primary path today); when
- * `channelRoles` is present (a dual-channel recording, forward-looking M3) the
+ * `channelRoles` is present (a dual-channel recording, forward-looking) the
  * transcriber attributes deterministically by channel and skips diarization.
  *
- * Windowing (spec §6): long calls are chunked by time (`windowSeconds`, default
+ * Windowing: long calls are chunked by time (`windowSeconds`, default
  * 600), each window's timestamps offset by its start, and the previous window's
  * last two turns carried as context so speaker labels stay consistent across seams.
  */
@@ -489,7 +487,7 @@ function coerceRole(raw: unknown): DialerSpeakerRole {
 }
 
 /**
- * The diarization prompt (spec §6, verbatim). Getting agent vs. customer backwards
+ * The diarization prompt. Getting agent vs. customer backwards
  * inverts every per-speaker insight, so the situation is stated explicitly.
  */
 function diarizationPrompt(win: Window, contextTurns: DialerTranscriptEntry[], languageHint?: string): string {
@@ -523,7 +521,7 @@ function diarizationPrompt(win: Window, contextTurns: DialerTranscriptEntry[], l
 }
 
 /**
- * Channel-attribution prompt (M3, forward-looking). When the recording is
+ * Channel-attribution prompt (forward-looking). When the recording is
  * multi-channel with a known leg per channel, attribution is deterministic —
  * no diarization guessing.
  */
@@ -579,7 +577,7 @@ function classifyGeminiError(err: unknown, context: string): TranscriptionError 
   const message = (err as Error)?.message ?? String(err);
   const status = (err as { status?: number })?.status;
   if (status === 429 || /RESOURCE_EXHAUSTED|rate limit|quota/i.test(message)) {
-    // Retried with longer backoff and does NOT consume an attempt (M4).
+    // Retried with longer backoff and does NOT consume an attempt.
     return new TranscriptionError('RATE_LIMITED', `${context}: ${message}`);
   }
   return new TranscriptionError('TRANSCRIPTION_FAILED', `${context}: ${message}`);

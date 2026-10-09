@@ -18,17 +18,16 @@ export interface SarvamTranscriberConfig {
 }
 
 /**
- * Sarvam batch transcriber (Phase 4 alternative, D3). Indian-hosted, so it's the
- * data-residency-friendly switchable alternative to Gemini (§14.7).
+ * Sarvam batch transcriber. Indian-hosted, so it's the data-residency-friendly
+ * switchable alternative to Gemini.
  *
- * NOTE: the repo only uses Sarvam's WebSocket *streaming* STT today
- * (`sarvam-stt.client.ts`); the synchronous **batch** `POST /speech-to-text`
- * endpoint is new integration here. Kept deliberately leaner than the Gemini
- * transcriber (it is the alternative, not the shipping default) but functional.
+ * It uses Sarvam's synchronous **batch** `POST /speech-to-text` endpoint. Kept
+ * deliberately leaner than the Gemini transcriber (it is the alternative, not the
+ * shipping default) but functional.
  *
- * Assumptions / documented uncertainties (per the task — best-effort, don't block):
+ * Assumptions / documented uncertainties (best-effort):
  *  - The batch endpoint is `POST {baseUrl}/speech-to-text` with `Api-Subscription-Key`
- *    auth (mirroring the streaming client's header) and a multipart body carrying
+ *    auth and a multipart body carrying
  *    the audio `file`, the `model`, and `with_diarization: true`. The exact field
  *    names for diarization/timestamps are not pinned down in this repo, so parsing
  *    is defensive: it reads a `diarized_transcript.entries[]` shape when present and
@@ -37,7 +36,7 @@ export interface SarvamTranscriberConfig {
  *    documented heuristic maps **first speaker seen = agent** (the caller speaks
  *    first on an outbound call); all other speakers = customer. `diarizationFailed`
  *    is set when only one distinct speaker is detected.
- *  - `channelRoles` (M3) attributes by the numeric channel/speaker index when the
+ *  - `channelRoles` attributes by the numeric channel/speaker index when the
  *    batch response exposes one; otherwise it falls back to the first-speaker heuristic.
  */
 export class SarvamTranscriber implements Transcriber {

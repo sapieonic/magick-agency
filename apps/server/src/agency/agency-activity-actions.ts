@@ -4,16 +4,14 @@ import { type AuditActionGroup, type AuditActionOption } from '../audit/platform
 /**
  * The action vocabulary of the campaign activity trail — served, not mirrored.
  *
- * ── Why this is master's to publish ─────────────────────────────────────────
+ * ── Why the server publishes it ─────────────────────────────────────────────
  * The trail is a merge of two stores with different vocabularies
- * (`agency-activity.ts`), and the only process that knows BOTH halves is this
- * one. CusUI used to keep its own hand-written copy for the filter control, and
- * that copy could not be checked against anything: master is not a dependency
- * of cusui, core is not a dependency of either, and in cusui's CI only cusui is
- * checked out. So the copy drifted silently and the drift was invisible until
- * a supervisor ticked a box that could no longer match a row. Publishing the
- * list on the response it filters removes the second copy entirely — there is
- * one vocabulary and it travels with the data it describes.
+ * (`agency-activity.ts`), and the server is what knows BOTH halves. A
+ * hand-written copy in the console's filter control could not be checked
+ * against anything, so it would drift silently, invisible until a supervisor
+ * ticked a box that could no longer match a row. Publishing the list on the
+ * response it filters means there is no second copy — there is one vocabulary
+ * and it travels with the data it describes.
  *
  * ── What a client may assume ────────────────────────────────────────────────
  * This is the set of actions worth OFFERING as a filter, not a claim about what
@@ -48,7 +46,7 @@ export type ActivityActionGroup = Exclude<AuditActionGroup, 'Scheduling'>;
  * shapes was how the two lists could have drifted in the ONE thing a client
  * parses.
  *
- * ── Why `product` is omitted rather than stated on every entry (E9) ──────────
+ * ── Why `product` is omitted rather than stated on every entry ──────────────
  * The tenant-wide log spans both products, so there the axis is the answer to a
  * real question. This filter only ever renders inside one campaign, and a
  * campaign is an agency object — every row on this screen is `'agency'` by
@@ -61,13 +59,14 @@ export type ActivityActionOption =
   Omit<AuditActionOption, 'product'> & { group: ActivityActionGroup };
 
 /**
- * Master's half, taken from the frozen catalog rather than retyped.
+ * The `platform_audit_log` half, taken from the frozen catalog rather than retyped.
  *
  * `schedule.*` and `recurring_schedule.*` are deliberately excluded and the
  * exclusion is what this type states: they are scheduler events that never
  * carry a campaign scope, so offering them here would be a filter that always
- * returns nothing on this screen. Everything master writes ABOUT a campaign is
- * `agency_*` or `dnc_*`, which is why the boundary can be drawn on the prefix.
+ * returns nothing on this screen. Everything the public API layer writes ABOUT a
+ * campaign is `agency_*` or `dnc_*`, which is why the boundary can be drawn on the
+ * prefix.
  */
 type CampaignScopedAuditAction = Extract<
   PlatformAuditAction,
@@ -75,35 +74,29 @@ type CampaignScopedAuditAction = Extract<
 >;
 
 /**
- * Core's half. **This is a transcription, and it cannot be anything else.**
+ * The `audit_logs` half, written by the dialer runtime and the internal handler
+ * instance. **This is a hand-written list.** Those writers build the event type
+ * as a string (`agency_campaign.${to}`), so there is no union to import, and the
+ * honest statement of its weakness is: the check below catches this file
+ * drifting from the values here, not the writers drifting from this file.
  *
- * Core is a separate repository and is not a dependency of this one — there is
- * no module to import and nothing in master's CI that could compare the two. So
- * this list pins what master BELIEVES core writes, not what core writes, and
- * the honest statement of its weakness is: it catches this file drifting from
- * the values below, not master drifting from core. Same weakness, same shape,
- * as cusui's permission mirror — with one thing bought back, that the belief now
- * lives in ONE place instead of one per client.
+ * Re-derive it rather than trusting it:
  *
- * Re-derive it rather than trusting it, from magic-voice-core (read at v1.82.5):
+ *  - `api/routes/agency-campaigns.routes.ts` writes `agency_campaign.created` on
+ *    campaign creation.
+ *  - The same file's `transition` helper writes `agency_campaign.${to}` — so the
+ *    set is exactly that helper's call sites: `/start` and `/resume` → `running`,
+ *    `/pause` → `paused`, `/stop` → `stopping`. Note `/stop` does NOT write
+ *    `stopped`: 200 there means "accepted and draining".
+ *  - `PacingEngine.maybeFinalize` (`pacing-engine.ts`) writes the two TERMINAL
+ *    transitions, `completed` (a running campaign that ran out of work) and
+ *    `stopped` (a stopping campaign whose attempts drained). Nothing else writes
+ *    them — the leader is their single writer.
+ *  - `abandonment-guardrail.ts` writes `agency_campaign.auto_paused`.
  *
- *  - `src/api/routes/agency-campaigns.routes.ts:386` writes
- *    `agency_campaign.created` on campaign creation.
- *  - `src/api/routes/agency-campaigns.routes.ts:665`, inside the `transition`
- *    helper, writes `agency_campaign.${to}` — so the set is exactly that
- *    helper's call sites: `/start` and `/resume` → `running` (687, 700),
- *    `/pause` → `paused` (693), `/stop` → `stopping` (725). Note `/stop` does
- *    NOT write `stopped`: 200 there means "accepted and draining".
- *  - `src/agency/pacing-engine.ts:1038` (`maybeFinalize`) writes the two
- *    TERMINAL transitions, `completed` (a running campaign that ran out of
- *    work) and `stopped` (a stopping campaign whose attempts drained). Nothing
- *    else writes them — the leader is their single writer.
- *  - `src/agency/abandonment-guardrail.ts:135` writes
- *    `agency_campaign.auto_paused`.
- *
- * `paused` and `stopped` are also in master's catalog; both services writing one
- * action name is the design, not a duplicate (`source` tells the two rows
- * apart), so they appear once in the vocabulary below.
+ * `paused` and `stopped` are also in the `platform_audit_log` catalog; both
+ * stores carrying one action name is the design, not a duplicate (`source` tells
+ * the two rows apart), so they appear once in the vocabulary below.
  */
 export const CORE_AGENCY_EVENT_TYPES = [
   'agency_campaign.created',
@@ -135,15 +128,15 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   { value: 'agency_campaign.stopping', label: 'Stopping', group: 'Campaign' },
   { value: 'agency_campaign.stopped', label: 'Stopped', group: 'Campaign' },
   { value: 'agency_campaign.completed', label: 'Completed', group: 'Campaign' },
-  // Master's, not core's — see the catalog entry for why the two stores split
-  // this one the way they do. It sits at the END of the lifecycle block rather
-  // than beside `created` because that block is in the order a campaign moves
+  // A `platform_audit_log` action only — see the catalog entry for why the two
+  // stores split this one the way they do. It sits at the END of the lifecycle
+  // block rather than beside `created` because that block is in the order a campaign moves
   // through it, and authoring a retry is something that happens to a campaign
   // that has already finished.
   { value: 'agency_campaign.retry_created', label: 'Retry campaign created', group: 'Campaign' },
   { value: 'agency_disposition.created', label: 'Disposition filed', group: 'Calls' },
   { value: 'agency_attempt.hung_up', label: 'Call ended by agent', group: 'Calls' },
-  // MAG-159. A bulk export of every number on a campaign takes no permission
+  // A bulk export of every number on a campaign takes no permission
   // beyond `agency.supervise`, on the reasoning that a second gate to keep
   // aligned is a second gate to drift. Attribution is what answers the exposure
   // instead — so the export has to be visible HERE, on the campaign's own
@@ -170,13 +163,13 @@ type ServedAction = (typeof CAMPAIGN_ACTIVITY_ACTIONS)[number]['value'];
  * `satisfies` above only proves every entry is well-SHAPED; it says nothing
  * about anything missing. A new `agency_*`/`dnc_*` action added to
  * `PLATFORM_AUDIT_ACTIONS` and forgotten here is a filter that cannot select
- * rows master is already writing — so it is a type error, and
+ * rows the public API layer is already writing — so it is a type error, and
  * `test/unit/agency/agency-activity-actions.test.ts` fails on it too (vitest
  * does not type-check, so the test is what catches it in `npm test`).
  *
- * Core's half is in the same check for symmetry of failure, but it is a weaker
- * guarantee by construction: it pins this file against its own transcription
- * above, which is all a repository that cannot see core can do.
+ * The `audit_logs` half is in the same check for symmetry of failure, but it is
+ * a weaker guarantee by construction: it holds this file against its own list
+ * above, because the writers expose no union to check against.
  */
 type MissingAction = Exclude<CampaignScopedAuditAction | CoreAgencyEventType, ServedAction>;
 const _allActionsServed: MissingAction extends never ? true : MissingAction = true;

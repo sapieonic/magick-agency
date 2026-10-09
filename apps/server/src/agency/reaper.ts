@@ -29,16 +29,14 @@ const SWEEP_INTERVAL_MS = 60_000;
  * day not in-process, and it also means a dispatch that threw leaves a `queued`
  * row recoverable within two cycles rather than at the next restart.
  *
- * **It is emphatically NOT a proxy for "longer than a call could last".** It used
- * to be 2 hours standing in for §6.2's `max_ring + max_call_duration`, a formula
- * whose inputs do not exist in core — there is no `max_ring` or
- * `max_call_duration` column on any agency table. Age was therefore the *only*
- * thing protecting a live conversation, and it failed: agency calls inherit
- * `webrtc_max_duration_seconds`, whose declared ceiling is 14400s (4h), so a
- * tenant configured above 2h had healthy calls swept mid-sentence. Liveness is
- * now decided by asking who owns the attempt (see {@link AgencyReaper.sweepOnce}),
- * which is the question §6.2 actually specifies, and the age floor was shortened
- * *because* it stopped being load-bearing. Do not grow it back to compensate for
+ * **It is emphatically NOT a proxy for "longer than a call could last".** There is
+ * no `max_ring` or `max_call_duration` column on any agency table to build such a
+ * bound from, and agency calls inherit `webrtc_max_duration_seconds`, whose
+ * declared ceiling is 14400s (4h) — so an age-only guard would sweep healthy calls
+ * mid-sentence on any tenant configured above it. Liveness is decided by asking who
+ * owns the attempt (see {@link AgencyReaper.sweepOnce}), which is the question the
+ * reaper's rule actually specifies, and the age floor is short *because* it is not
+ * load-bearing. Do not grow it back to compensate for
  * something; if the ownership check is not enough, fix the ownership check.
  */
 const LEAK_THRESHOLD_MS = 5 * 60 * 1000;
@@ -62,7 +60,7 @@ export interface AgencyReaperDeps {
    * Attempt ids this replica is actively driving. `AgencyDialer.liveByAttempt`'s
    * key set — populated before the dial and deleted only when the attempt
    * settles, so it spans `dialing`/`ringing`/`answered`/`bridged` **and** the
-   * whole `AD-P2-C-07` deferred-hangup grace window.
+   * whole deferred-hangup grace window.
    */
   activeAttemptIds: () => string[];
   /**
@@ -74,7 +72,7 @@ export interface AgencyReaperDeps {
 }
 
 /**
- * Crash recovery (§6.2).
+ * Crash recovery.
  *
  * `gracefulShutdown()` handles SIGTERM. It does not handle SIGKILL, OOM, or a hard
  * crash, and those strand rows in states that are invisible to the pacing loop:
@@ -83,9 +81,9 @@ export interface AgencyReaperDeps {
  * permanently shrink the dialing target). Left alone a campaign silently loses
  * contacts and can never reach `completed`, which requires zero outstanding.
  *
- * **D2 makes the startup case trivial and it should be exploited:** with one
+ * **A single replica makes the startup case trivial and it should be exploited:** with one
  * replica, ANY non-terminal attempt found at boot is dead by definition — there is
- * no other process that could own it. When core goes multi-replica only this rule
+ * no other process that could own it. When the server goes multi-replica only this rule
  * changes, narrowing to "non-terminal and owned by a replica whose heartbeat is
  * gone".
  *
@@ -104,7 +102,7 @@ export class AgencyReaper {
    * a fabricated occupied count and dials nothing.
    */
   async reapOnStartup(): Promise<{ attempts: number; agents: number }> {
-    // `null` threshold = every non-terminal row, regardless of age (D2). No
+    // `null` threshold = every non-terminal row, regardless of age. No
     // ownership check, and none is needed: nothing can be alive yet in a process
     // that has not finished starting. This is the one caller for which
     // `reapNonTerminal`'s "dead by definition" is true.
@@ -116,7 +114,7 @@ export class AgencyReaper {
     }
 
     // Every station socket died with the process, so no agent is really available.
-    // They rehydrate into `break` on reconnect, never `available` (D2).
+    // They rehydrate into `break` on reconnect, never `available`.
     const agents = await agencyAgentSessionRepository.markAllOffline();
 
     if (attempts.length > 0 || agents > 0) {
@@ -145,7 +143,7 @@ export class AgencyReaper {
   }
 
   /**
-   * Sweep attempts that leaked in-process — acceptance (a) and (c).
+   * Sweep attempts that leaked in-process.
    *
    * **Age is a filter, not the decision.** An attempt is leaked when nothing owns
    * it, and there are two owners to ask, because there are two ways an attempt can
@@ -153,7 +151,7 @@ export class AgencyReaper {
    *
    * 1. **This replica is driving it** — `liveByAttempt`. Authoritative and free
    *    locally, and it is what makes a call inside the deferred-hangup grace
-   *    window survive: `AD-P2-C-07` drops the agent's socket and keeps the carrier
+   *    window survive: the deferred hangup drops the agent's socket and keeps the carrier
    *    leg, so such a call has no browser leg attached and would look bridgeless
    *    to any check that asked about media instead of about ownership. The entry is
    *    removed only when the attempt settles, so the grace window is covered
@@ -162,14 +160,14 @@ export class AgencyReaper {
    *    ownership key, via `ownerOf`. This is the arm that survives scale-out:
    *    `liveByAttempt` is per-process, so on the day there are two replicas a
    *    map-only check would have replica A reap replica B's live conversations.
-   *    §6.2's rule is "non-terminal and owned by a replica whose heartbeat is
+   *    The reaper's rule is "non-terminal and owned by a replica whose heartbeat is
    *    gone", and this is that clause.
    *
    * Redis is asked rather than `agency_agent_sessions.last_heartbeat` **because
    * that column is never renewed** — `AgencyAgentSessionRepository.heartbeat()`
    * exists and has no callers; the station ping renews the Redis key and the Redis
-   * lease and never touches the row. Migration 074 says so itself: *"Liveness does
-   * NOT come from this table. The authority is the Redis ownership key."* A sweep
+   * lease and never touches the row: liveness does not come from that table, the
+   * authority is the Redis ownership key. A sweep
    * built on that column would have excluded almost nothing while looking exactly
    * like a working guard.
    *
@@ -195,7 +193,7 @@ export class AgencyReaper {
     if (leaked.length === 0) return 0;
 
     // Re-guarded on `state` inside the UPDATE, so an attempt that settled between
-    // the SELECT above and this write is left alone (§5.3: the bridge lifecycle's
+    // the SELECT above and this write is left alone (the bridge lifecycle's
     // `ended` handler is the single writer of a terminal row, and this must never
     // be a second one).
     const reaped = await agencyAttemptRepository.reapByIds(leaked);
@@ -231,8 +229,7 @@ export class AgencyReaper {
   }
 
   /**
-   * Close conversations whose wrap-up lapsed with nothing written up —
-   * acceptance (b).
+   * Close conversations whose wrap-up lapsed with nothing written up.
    *
    * **Otherwise one agent closing their laptop at 5pm strands a contact forever**,
    * and nothing else in the system releases a contact from `connected`: the
@@ -249,11 +246,11 @@ export class AgencyReaper {
    *   code. `requiresDisposition` returns false for a campaign with an empty
    *   catalog, and stamping such a contact `no_disposition` would record an
    *   agent's failure to do something nobody asked of them, and would poison the
-   *   Phase 3 retry decision that reads it.
+   *   retry decision that reads it.
    *
-   *   Since MAG-88 this arm is mostly a **safety net rather than a rescue**, and
+   *   This arm is mostly a **safety net rather than a rescue**, and
    *   the difference is worth knowing before trusting it: an empty-catalog
-   *   campaign no longer parks its contacts in `connected` at bridge time, so by
+   *   campaign does not park its contacts in `connected` at bridge time, so by
    *   the time a wrap-up lapses the `ended` handler's outcome policy has normally
    *   released the contact already and this write is idempotent. What it still
    *   genuinely rescues is the contact stranded by a catalog that changed
@@ -288,8 +285,8 @@ export class AgencyReaper {
         if (!stamped) continue;
       }
 
-      // §2.4: with no disposition recorded, the OUTCOME policy decides. The
-      // auto-close is one of exactly two cases §2.4 names as falling to the outcome
+      // With no disposition recorded, the OUTCOME policy decides. The auto-close is
+      // one of exactly two cases the precedence rule names as falling to the outcome
       // policy, which is why it routes here rather than hard-coding a state.
       //
       // `contact_attempt_count` is passed WITHOUT adding one: this path does not
@@ -356,15 +353,15 @@ export class AgencyReaper {
      */
     scope: { tenantId: string; campaignId: string },
   ): Promise<void> {
-    // ── `AD-P3-C-09` / MAG-97: the bound belongs here too ───────────────────
+    // ── The our-fault bound belongs here too ─────────────────────────────────
     //
-    // Not bumping `attempt_count` was always right, and stays. What was missing
-    // is the other half: if our crashes cost the contact NOTHING, a replica
+    // Not bumping `attempt_count` is right. The other half is the bound: if our
+    // crashes cost the contact NOTHING, a replica
     // crash-looping on one contact requeues that number without limit — the same
     // unbounded repeat-dial exposure the dial path's agent-drop skip opens, and
     // it is regulated regardless of which of our faults caused it.
     //
-    // Criterion 4 asks for ONE principle applied in both places. Skipping the
+    // ONE principle applies in both places. Skipping the
     // customer's allowance while charging a separate our-fault ledger IS that
     // principle; applying it only to agent drops would leave the reaper as the
     // way around the bound.
@@ -373,8 +370,8 @@ export class AgencyReaper {
       .catch((err) => {
         log.error({ err, contactId, source }, 'Failed to charge the our-fault ledger');
         // Fail OPEN toward requeueing. A bookkeeping failure must not strand a
-        // contact: `0` requeues it, which is the pre-MAG-97 behaviour and the
-        // safe direction — the bound is a ceiling on repeat dialling, and a
+        // contact: `0` requeues it, which is the safe direction — the bound is a
+        // ceiling on repeat dialling, and a
         // single uncounted requeue cannot breach it on its own.
         return 0;
       });
@@ -404,7 +401,7 @@ export class AgencyReaper {
           return false;
         });
       /**
-       * ── The SECOND producer of our-fault retirements (added by review) ─────
+       * ── The SECOND producer of our-fault retirements ──────────────────────
        *
        * `agency_our_fault_retirement_total` shipped with the dialer as its only
        * producer, and its help claimed to count every contact retired by this
@@ -444,17 +441,17 @@ export class AgencyReaper {
     await agencyContactRepository
       // NO `bump_attempt`, and that is a product decision rather than an
       // oversight: **our crash must not consume the customer's retry allowance.**
-      // With `max_attempts: 3`, three core restarts would otherwise exhaust a
+      // With `max_attempts: 3`, three server restarts would otherwise exhaust a
       // contact and mark them `exhausted` having never been spoken to — silent
       // contact loss behind a plausible-looking audit trail.
       //
       // This used to interact with attempt-number derivation to make a recovered
-      // contact permanently undialable (AD-P2-C-12). That is fixed at the root:
+      // contact permanently undialable. That is fixed at the root:
       // `attempt_number` is now derived from the attempts table, so `attempt_count`
       // is purely the retry budget and the two can no longer diverge. Do not
       // "fix" a future numbering problem by bumping here.
       //
-      // Note for AD-P3-C-02: an orphaned attempt is not uniformly "never
+      // Note for the disposition policy: an orphaned attempt is not uniformly "never
       // happened". The reaper sweeps `ringing`/`answered`/`bridged` too, and those
       // customers' phones did ring. Reaping overwrites `state`, but `dialed_at`,
       // `answered_at` and `bridged_at` survive — so the retry policy can charge
