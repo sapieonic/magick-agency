@@ -21,6 +21,11 @@ const FORBIDDEN: Array<[label: string, pattern: RegExp]> = [
   ['an external plan item id', /\bAD-P\d/],
   ['an external design rule id', /\bDR-\d+\b/],
   ['a ClickUp task id', /\b86d[0-9a-z]{6,}\b/],
+  ['another repository\'s migration number', /\bmigrations? 0?(0[2-9]\d|[1-9]\d\d)\b|\b0\d\d['’]s\b|\bpre-0\d\d\b/i],
+  ['a file in another repository', /\b(core|master):(src|test)\//],
+  ['a cross-service contract', /\bS2S\b|agency-s2s-contract|\b[Cc]ross-repo\b/],
+  ['a multi-service framing', /\b(both|two) services\b|\beither service\b/i],
+  ['the previous product split', /\bAI product\b|\bprimary (AI )?app(lication)?\b|\b(both|two) products\b/i],
 ];
 
 /** For each pattern, text it must catch and look-alikes it must leave alone. */
@@ -50,6 +55,26 @@ const SELF_TEST: Record<string, { hits: string[]; misses: string[] }> = {
   'an external plan item id': { hits: ['AD-P4-M-02', 'AD-P1'], misses: ['LOAD-P4', 'AD-PX'] },
   'an external design rule id': { hits: ['DR-3', '(DR-12)'], misses: ['ADDR-3', 'DR-x', 'DRY-3'] },
   'a ClickUp task id': { hits: ['86d2hme6q', 'ClickUp 86d0abcdef'], misses: ['0x86d2hme6q', '86d12', 'a86d2hme6q'] },
+  "another repository's migration number": {
+    hits: ['since migration 083', 'Migration 105 added', 'migrations 064 and 060', "072's DEFAULT", '074’s index', 'pre-083 rows', 'Pre-064'],
+    misses: ['migration 0001', '0001_baseline.sql', "0001's header", 'migrations run at boot', 'port 5436', 'HTTP 404', 'a 503', 'pre-dial', 'migration 1'],
+  },
+  'a file in another repository': {
+    hits: ['// core:test/integration/agency/x.test.ts', 'master:src/db/x.ts'],
+    misses: ["id: 'core:c1'", '`master:${row.id}`', 'apps/server/test/x.ts'],
+  },
+  'a cross-service contract': {
+    hits: ['the S2S fixture', 'agency-s2s-contract.fixture.json', 'a cross-repo check', 'Cross-repo'],
+    misses: ['s2s', 'S2Sx', 'across the repo', 'cross-reference'],
+  },
+  'a multi-service framing': {
+    hits: ['both services accept', 'on either service', 'Two services stamping'],
+    misses: ['both service hooks', 'the services directory', 'two servicers'],
+  },
+  'the previous product split': {
+    hits: ['the AI product', 'the primary app', 'the primary application', 'primary AI application', 'both products', 'two products'],
+    misses: ['the AI provider', 'primary key', 'products table', 'primary applicant'],
+  },
 };
 
 const repoRoot = dirname(dirname(dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))))));
