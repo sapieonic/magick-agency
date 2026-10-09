@@ -13,16 +13,10 @@ import type * as Core from '../src/agency';
 import { AgencyApi } from '../src/index';
 
 /**
- * SNAPSHOT — copied by hand, deliberately not read at runtime.
+ * SNAPSHOT — written out by hand, deliberately not derived from the list under test.
  *
- * Source: `magic-voice-core/src/agency/agency-s2s-contract.fixture.json`,
- * key `actionErrorCodes.codes`, at core v1.123.2,
- * commit 4850d1d9ffc9eb9eab56d2ed482b9bd616edd103 (file md5
- * f96c0057067a25f6b8c633fc96acfb3e, byte-identical to master's copy at
- * a1f0756a58a63bf8a19baf74298a702f9fe7b430).
- *
- * 18 members. `agency.md` §6.2 says 16; that count predates
- * `session_on_other_campaign` and `agent_on_live_call`.
+ * 18 members; any older count of 16 predates `session_on_other_campaign` and
+ * `agent_on_live_call`.
  */
 const CORE_FIXTURE_ACTION_ERROR_CODES = [
   'missing_actor',
@@ -55,10 +49,10 @@ const _lifecycleExact: Equals<
   AgencyCampaignLifecycleErrorCode
 > = true;
 const _stationExact: Equals<(typeof AGENCY_STATION_ERROR_CODES)[number], AgencyStationErrorCode> = true;
-// The errors module re-exports core's unions rather than re-declaring them.
+// The errors module re-exports the dialer runtime's unions rather than re-declaring them.
 const _actionIsCore: Equals<AgencyActionErrorCode, Core.AgencyActionErrorCode> = true;
 const _stationIsCore: Equals<AgencyStationErrorCode, Core.AgencyStationErrorCode> = true;
-// The console-facing copy (cusui's mirror, ported) still agrees with core's.
+// The console-facing copy still agrees with the dialer runtime's.
 const _consoleActionAgrees: Equals<AgencyApi.AgencyActionErrorCode, AgencyActionErrorCode> = true;
 const _consoleStationAgrees: Equals<AgencyApi.AgencyStationErrorCode, AgencyStationErrorCode> = true;
 void [_actionExact, _rosterExact, _lifecycleExact, _stationExact, _actionIsCore, _stationIsCore,
@@ -69,7 +63,7 @@ function expectUnique(list: readonly string[]): void {
 }
 
 describe('action error codes', () => {
-  it('equal the snapshot of core’s S2S fixture, in order', () => {
+  it('equal the snapshot, in order', () => {
     expect([...AGENCY_ACTION_ERROR_CODES]).toEqual(CORE_FIXTURE_ACTION_ERROR_CODES);
   });
 
@@ -78,7 +72,7 @@ describe('action error codes', () => {
     expectUnique(AGENCY_ACTION_ERROR_CODES);
   });
 
-  it('matches the console’s ported runtime list too', () => {
+  it('matches the console’s runtime list too', () => {
     expect([...AgencyApi.AGENCY_ACTION_ERROR_CODES]).toEqual(CORE_FIXTURE_ACTION_ERROR_CODES);
   });
 
@@ -89,7 +83,7 @@ describe('action error codes', () => {
 });
 
 describe('roster refusal codes', () => {
-  it('are master’s three, in master’s order', () => {
+  it('are the three refusals, in order', () => {
     expect([...AGENCY_ROSTER_REFUSAL_CODES]).toEqual([
       'campaign_dialing',
       'attempts_live',
@@ -99,7 +93,7 @@ describe('roster refusal codes', () => {
 });
 
 describe('campaign-lifecycle codes', () => {
-  it('are the seven agency.md §6.4 names, distinct', () => {
+  it('are the seven campaign-lifecycle names, distinct', () => {
     expect([...AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES]).toEqual([
       'another_campaign_running',
       'invalid_campaign_transition',
@@ -120,7 +114,7 @@ describe('campaign-lifecycle codes', () => {
 });
 
 describe('station frame error codes', () => {
-  it('are core’s five', () => {
+  it('are the five', () => {
     expect([...AGENCY_STATION_ERROR_CODES]).toEqual([
       'unauthorized',
       'unknown_attempt',
@@ -130,7 +124,7 @@ describe('station frame error codes', () => {
     ]);
   });
 
-  it('overlap the action codes exactly where core says they do', () => {
+  it('overlap the action codes exactly where the contract says they do', () => {
     const action = new Set<string>(AGENCY_ACTION_ERROR_CODES);
     expect(AGENCY_STATION_ERROR_CODES.filter((c) => action.has(c))).toEqual([
       'not_your_attempt',

@@ -4,20 +4,20 @@ import type {
 } from '../types/agency-campaign';
 
 /**
- * The ingest summary, as arithmetic (`AD-P3-U-01` acceptance (b): *the counts
+ * The ingest summary, as arithmetic (requirement: *the counts
  * are displayed and reconcile to the file's row count*).
  *
  * ── The one thing this module exists to get right ────────────────────────────
  * **`accepted + rejected = rows_read`.** `duplicates` and DNC suppressions are
  * breakdowns *of* `rejected`, never additional addends. That is not a reading of
- * the prose — it is what master's code does: a duplicate row calls the same
+ * the prose — it is what the API's code does: a duplicate row calls the same
  * `reject()` that every other rejection calls (`agency-csv-ingest.ts`, the
  * `duplicate_phone` arm increments `duplicates` **and** `rejected`), and
  * `agency-ingest.service.ts` moves DNC-suppressed rows *across* from accepted to
- * rejected rather than counting them a third way, with migration 053 asserting
- * the invariant in the database.
+ * rejected rather than counting them a third way, and the `agency_ingest_jobs` schema documenting
+ * the invariant.
  *
- * **The UX spec's §B.4 sketch disagrees** — it shows four tiles said to
+ * **An earlier design sketch disagreed** — it shows four tiles said to
  * reconcile as `accepted + rejected + duplicates = rows read`. Built that way,
  * an operator adding the tiles up against their own spreadsheet gets a number
  * larger than their file, and the screen whose entire job is "you can trust
@@ -25,14 +25,14 @@ import type {
  * below present duplicates as a *breakdown* line, not as an addend.
  *
  * ── The one number that is NOT part of that arithmetic ───────────────────────
- * `core_rejected_duplicate_rows` counts rows **core refused on arrival** because
- * its roster already held them. `accepted`/`rejected` count what master decided
+ * `core_rejected_duplicate_rows` counts rows **the server refused on arrival** because
+ * its roster already held them. `accepted`/`rejected` count what the API decided
  * to *send*. The two are measured on opposite sides of a network hop and cannot
- * be reconciled — that disagreement is the entire signal, and `MAG-113` is the
- * record of what happens when a summary asserts an arithmetic the payload does
+ * be reconciled — that disagreement is the entire signal, and an earlier
+ * defect is the record of what happens when a summary asserts an arithmetic the payload does
  * not support. So it is rendered as its own statement, never folded into the
  * identity, and never subtracted from `accepted` to mint a "really written"
- * figure: master's own count can undercount, so any such subtraction would be an
+ * figure: The API's own count can undercount, so any such subtraction would be an
  * upper bound presented as a fact.
  */
 
@@ -50,7 +50,7 @@ export interface RejectionGroup {
   count: number;
 }
 
-/** Human copy per reason code. Mirrors master's `REJECTION_LABEL`. */
+/** Human copy per reason code. Mirrors the API's `REJECTION_LABEL`. */
 export const REJECTION_LABELS: Record<AgencyIngestReasonCode, string> = {
   missing_phone_value: 'Empty phone number',
   invalid_phone: 'Not a valid phone number',
@@ -85,19 +85,19 @@ export interface IngestSummaryModel {
   /** Compliance line, or null when nothing was suppressed. */
   dncNotice: string | null;
   /**
-   * Rows core refused on arrival. **Not** a slice of `rejected` — see the module
-   * header. `0` when nothing collided or when master served an older payload.
+   * Rows the server refused on arrival. **Not** a slice of `rejected` — see the module
+   * header. `0` when nothing collided or when the API served an older payload.
    */
   coreRefused: number;
   /**
    * Statement of the above, or null when nothing was refused.
    *
-   * Worded as a floor ("at least"), because master's count drops a chunk whose
+   * Worded as a floor ("at least"), because the API's count drops a chunk whose
    * response was lost in transit and replayed.
    */
   coreRefusedNotice: string | null;
   /**
-   * The colliding row numbers master sampled, or null when there are none.
+   * The colliding row numbers the API sampled, or null when there are none.
    *
    * Presented as examples from the start of the file and explicitly not as a
    * spread, because the cap is filled in file order — usually by chunk 0 alone.
@@ -140,8 +140,8 @@ export function buildIngestSummary(job: AgencyIngestJob): IngestSummaryModel {
   const reconciles = accepted + rejected === rowsRead;
   const rejectionRatio = rowsRead > 0 ? rejected / rowsRead : 0;
 
-  // `?? 0` / `?? []`: master serves these from migration 055 and defaults them
-  // itself, but a job row written before that migration landed has no key at
+  // `?? 0` / `?? []`: The API serves these and defaults them
+  // itself, but a job row written before these counters existed has no key at
   // all, and a summary that renders `NaN duplicates` over a real import is worse
   // than one that renders nothing.
   const coreRefused = job.core_rejected_duplicate_rows ?? 0;
@@ -202,7 +202,7 @@ export function formatCount(value: number): string {
 /**
  * Copy for a terminal job that is not `completed`.
  *
- * A cancelled ingest is the case §B.8 refuses to let go silent: some rows are
+ * A cancelled ingest is the case this module refuses to let go silent: some rows are
  * already in the roster, and an operator who is not told the number will assume
  * either all or none.
  */

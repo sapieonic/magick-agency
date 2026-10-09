@@ -11,11 +11,11 @@ import type { AgencyAttemptCallDetail } from '../../api/agencySpine';
  * ── What this file exists to prevent ────────────────────────────────────────
  * "Renders the call" was already true of a version that used exactly ONE field
  * off the attempt it fetched (`attempt_number`, for the breadcrumb leaf) and
- * showed the softphone's facts card instead — Provider, plus an `Initiated By`
+ * showed a generic call facts card instead — Provider, plus an `Initiated By`
  * that on an agency leg is the dialing session id. So a supervisor clicking a row
  * in the attempts list landed on a page carrying less agency information than the
  * row they clicked, plus a raw UUID. It was also true of a version whose failed
- * summary offered a "Try again" wired to the AI product's endpoint, and whose
+ * summary offered a "Try again" wired to `/proxy/calls/:id/retry-analysis`, and whose
  * loading and error states dropped the trail back to the campaign.
  *
  * Every assertion below is one of those, stated as behaviour rather than as
@@ -41,10 +41,9 @@ vi.mock('../../api/agencySpine', () => ({
 }));
 vi.mock('../../api/agencyCampaigns', () => ({ getAgencyCampaign: mocks.getAgencyCampaign }));
 /*
- * The AI product's call client. Mocked so "this page never calls the other
- * product's retry endpoint" is an assertion rather than an import that happens
- * not to resolve — `AnalysisStatusCard` still defaults to it for its two
- * AI-call callers.
+ * The `api/calls` client. Mocked so "this page never calls
+ * `/proxy/calls/:id/retry-analysis`" is an assertion rather than an import that
+ * happens not to resolve — `AnalysisStatusCard` still defaults to it.
  */
 vi.mock('../../api/calls', () => ({
   retryAnalysis: mocks.retryAnalysis,
@@ -56,9 +55,9 @@ vi.mock('../../components/audio/AudioWaveform', () => ({
 
 import AgencyAttemptCallPage from '../../pages/agency/AgencyAttemptCallPage';
 
-/** A UUID, as master actually serves — a fixture that looks like a name is how a raw-id render passes review. */
+/** A UUID, as the server actually serves — a fixture that looks like a name is how a raw-id render passes review. */
 const AGENT_ID = 'ac1f9d2e-1111-4222-8333-444455556666';
-/** The dialing SESSION id, which is what core writes to `webrtc_calls.initiated_by`. */
+/** The dialing SESSION id, which is what the server writes to `webrtc_calls.initiated_by`. */
 const SESSION_ID = 'bd2e8c3f-2222-4333-8444-555566667777';
 
 const ATTEMPT: AgencyAttempt = {
@@ -136,11 +135,11 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('the page carries the agency record, not the softphone’s', () => {
+describe('the page carries the agency record, not generic call facts', () => {
   it('shows who worked the call, how it was written up, and what they typed', async () => {
     renderPage();
 
-    // The field the whole surface exists for, by NAME — master resolves the id.
+    // The field the whole surface exists for, by NAME — the server resolves the id.
     expect((await screen.findByTestId('call-fact-Agent')).textContent).toContain('Ravi Menon');
     // The ATTEMPT's outcome, in the attempts list's own words.
     expect(screen.getByTestId('call-fact-Outcome').textContent).toContain('Connected');
@@ -153,7 +152,7 @@ describe('the page carries the agency record, not the softphone’s', () => {
     expect(screen.getByTestId('call-fact-Wrap-up').textContent).toContain('0:20');
   });
 
-  it('never renders the dialing session id, or any softphone-only field', async () => {
+  it('never renders the dialing session id, or any generic-only call field', async () => {
     renderPage();
     await screen.findByTestId('call-fact-Agent');
 
@@ -211,7 +210,7 @@ describe('the affordances that cannot work are not offered', () => {
   });
 
   it('does not promise a recording is coming when the account may not play them', async () => {
-    // Exactly the shape master sends: `recording_url` nulled on the capability,
+    // Exactly the shape the server sends: `recording_url` nulled on the capability,
     // `recording_requested` left true.
     mocks.isEnabled.mockImplementation((capability: string) => capability !== 'agency.recording');
     mocks.getAgencyAttemptCall.mockResolvedValue(detail({
@@ -238,7 +237,7 @@ describe('the affordances that cannot work are not offered', () => {
  *
  * `call === null` is not an edge case here. The attempt→call link is un-FK'd and
  * the two sides purge on independent windows, with the agency side deliberately
- * given the longer one (§7b), so a null call is the STEADY state for every row
+ * given the longer one, so a null call is the STEADY state for every row
  * older than the call-side window — which is to say, for the compliance rows this
  * surface was built to answer. The page used to render an empty state and nothing
  * else on it, having fetched the agent, the disposition, the notes and the wrap-up
@@ -350,7 +349,7 @@ describe('every state keeps the way back to the campaign', () => {
   });
 
   it('shows the trail on a stale link, and offers no retry that cannot work', async () => {
-    // Master forwards core's `attempt_not_found` verbatim, so the sentence is
+    // The server forwards `attempt_not_found` unchanged, so the sentence is
     // honest — and pressing Retry returns the same 404 forever.
     mocks.getAgencyAttemptCall.mockRejectedValue(Object.assign(
       new Error('Attempt not found on this campaign'),
@@ -380,7 +379,7 @@ describe('every state keeps the way back to the campaign', () => {
 describe('the analysis family follows the agency’s own entitlement', () => {
   it('hides the summary and transcript outright with agency.analytics off', async () => {
     mocks.isEnabled.mockImplementation((capability: string) => capability !== 'agency.analytics');
-    // Master strips the content fields for the same capability, so this is the
+    // The server strips the content fields for the same capability, so this is the
     // payload the page really receives.
     mocks.getAgencyAttemptCall.mockResolvedValue(detail({
       call: { ...CALL, call_analysis: null, conversation_log: null, transcript_meta: null },
@@ -473,7 +472,7 @@ describe('the disposition the agent filed', () => {
   });
 
   it('falls back to the code, and says so, when the catalog cannot name it', async () => {
-    // An older master sends no catalog; a code retired since the call was filed
+    // An older server sends no catalog; a code retired since the call was filed
     // is not in it. Either way the code is what we know, and the heading must
     // not promise a name it is not showing.
     mocks.getAgencyCampaign.mockResolvedValue({

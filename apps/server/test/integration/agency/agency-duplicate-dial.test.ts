@@ -19,7 +19,7 @@ const { agencyAttemptRepository, agencyContactRepository } = await import(
 );
 
 /**
- * Duplicate dialing — falsifying the correctness claim (§4.1, §2.1).
+ * Duplicate dialing — falsifying the correctness claim.
  *
  * The design leans on two mechanisms and is explicit that either alone has a
  * failure mode we cannot accept: the Redis leader lease is the EFFICIENCY
@@ -324,7 +324,7 @@ describe('agency duplicate-dial backstop (integration)', () => {
 
   // ── The other two live-uniqueness guarantees ──────────────────────────────
 
-  it('T-M5: only one campaign per account may be `running` (D9)', async () => {
+  it('T-M5: only one campaign per account may be `running`', async () => {
     await insertAgencyCampaign({ status: 'running' });
 
     await expect(insertAgencyCampaign({ status: 'running' })).rejects.toMatchObject({
@@ -342,10 +342,10 @@ describe('agency duplicate-dial backstop (integration)', () => {
   });
 
   it('T-M6: one live session per agent per TENANT, reusable after leaving', async () => {
-    // Widened from per-campaign by migration 092. The rule this pins is now the
-    // second assertion, not the first: the same-campaign case was already
-    // refused under 074, and a test that only covered it would stay green if 092
-    // were reverted.
+    // The index is per tenant, not per campaign. The rule this pins is the
+    // second assertion, not the first: the same-campaign case would already be
+    // refused by a per-campaign index, and a test that only covered it would stay green if the
+    // index were narrowed back.
     const campaign = await insertAgencyCampaign();
     const first = await insertAgentSession(campaign.id, { agent_user_id: uuidFor('agent-1') });
 
@@ -353,8 +353,8 @@ describe('agency duplicate-dial backstop (integration)', () => {
       insertAgentSession(campaign.id, { agent_user_id: uuidFor('agent-1') }),
     ).rejects.toMatchObject({ code: '23505', constraint: 'uq_agency_agent_live_tenant' });
 
-    // A SECOND campaign — and a second account of the same tenant, which is the
-    // case 074 explicitly allowed. `account_id` is deliberately not in the key:
+    // A SECOND campaign — and a second account of the same tenant, which a per-campaign
+    // index would allow. `account_id` is deliberately not in the key:
     // an agent moving between two accounts still has one pair of ears, and the
     // reservation CAS is keyed per session, so two live rows would be two
     // independently reservable agents.

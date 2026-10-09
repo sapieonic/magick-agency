@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * mail they asked for, and neither failure is visible from the outside. The two
  * collapse rules in particular (one user with several memberships; several users
  * with one address) exist because `memberships` permits both shapes and
- * `users.email` carries only a NON-unique index — migration 069 says so in as
+ * `users.email` carries only a NON-unique index — the baseline schema says so in as
  * many words.
  */
 
@@ -17,9 +17,7 @@ const mocks = vi.hoisted(() => ({
   findNotificationEvent: vi.fn(),
 }));
 
-// PORT NOTE (magick-agency): `audience.ts` no longer imports this repository
-// (its only reader, `resolveRoleFloorAudience`, is deleted); the mock is kept as
-// master wrote it and is inert.
+// `audience.ts` does not import this repository; the mock is inert.
 vi.mock('../../../../src/db/repositories/notification-preference.repository.js', () => ({
   notificationPreferenceRepository: {
     findNotifiableMembers: mocks.findNotifiableMembers,
@@ -87,17 +85,15 @@ beforeEach(() => {
 });
 
 /**
- * PORT NOTE (magick-agency): agency's catalog holds only
- * `agency.campaign.completed` (plan §3.5). Master's cases pin
+ * The catalog holds only `agency.campaign.completed`. These cases pin
  * `resolveEffectivePreferences`, `defaultPreferenceFor` and
- * `isEventAddressableToRole` against master's other three entries — an
- * explicit-audience immediate event and a role-floor DIGEST — and those branches
- * of `audience.ts` are kept verbatim. All three functions take the definition as
- * an argument, so master's entries are restated here, field for field from
- * master `catalog.ts:108-183`, as fixtures, and `MASTER_EVENTS` stands in for
- * master's `NOTIFICATION_EVENTS` in master's catalog order. Cases that look an
- * event up BY KEY (`applyExplicitAudiencePreferences`) use
- * `agency.campaign.completed`, the key agency's one caller passes.
+ * `isEventAddressableToRole` against further entries — an
+ * explicit-audience immediate event and a role-floor DIGEST — so those branches
+ * of `audience.ts` stay covered. All three functions take the definition as
+ * an argument, so those entries are restated here as fixtures, and
+ * `MASTER_EVENTS` lists them in order in place of the catalog's own list. Cases
+ * that look an event up BY KEY (`applyExplicitAudiencePreferences`) use
+ * `agency.campaign.completed`, the key the one caller passes.
  */
 const CAMPAIGN_DISPATCHED: NotificationEventDefinition = {
   key: 'campaign.dispatched' as NotificationEventDefinition['key'],
@@ -214,13 +210,8 @@ describe('defaultPreferenceFor', () => {
   });
 });
 
-// PORT NOTE (magick-agency): master's `resolveRoleFloorAudience` block (14
-// cases) is deleted with the function — its only caller was the credits
-// usage-digest runner (plan §3.5). See `audience.ts`.
-
 describe('applyExplicitAudiencePreferences', () => {
-  // PORT NOTE (magick-agency): master uses `campaign.completed` (not in agency's
-  // catalog); `agency.campaign.completed` is the key agency's one caller passes.
+  // `agency.campaign.completed` is the key the one caller passes.
   const EVENT = 'agency.campaign.completed';
 
   it('always sends to an address that names no platform user', () => {
@@ -285,7 +276,7 @@ describe('applyExplicitAudiencePreferences', () => {
  * hide the catalog bug for good.
  */
 const MALFORMED_DIGEST: NotificationEventDefinition = {
-  key: 'usage.digest' as NotificationEventDefinition['key'], // PORT NOTE (magick-agency): not an agency key; cast like the fixtures above
+  key: 'usage.digest' as NotificationEventDefinition['key'], // not a catalog key; cast like the fixtures above
   label: 'Usage digest',
   description: 'A digest whose catalog entry lost its cadence.',
   category: 'digests',
@@ -315,12 +306,6 @@ describe('a digest event with no default cadence', () => {
     expect(effective[0]?.frequency).toBeNull();
     expect(effective[0]?.isDefault).toBe(false);
   });
-
-  // PORT NOTE (magick-agency): master's next three cases ('drops the recipient
-  // from every cadence-narrowed run', 'still resolves the recipient when the run
-  // is not narrowed, at a NULL cadence', 'also leaves a STORED row at a null
-  // cadence, not at the stored value') drive `resolveRoleFloorAudience`, which is
-  // deleted (credits usage digest, plan §3.5).
 });
 
 describe('resolveEffectivePreferences leaves a retired row alone', () => {
@@ -428,19 +413,10 @@ describe('isEventAddressableToRole', () => {
     const event = MASTER_FIXTURES['usage.digest']!;
     expect(isEventAddressableToRole(event, 'superuser' as MembershipRole)).toBe(false);
   });
-
-  // PORT NOTE (magick-agency): master's 'is consistent with who
-  // `resolveRoleFloorAudience` actually mails' is deleted with that function
-  // (credits usage digest, plan §3.5).
 });
 
-// PORT NOTE (magick-agency): master's 'resolveRoleFloorAudience, further edges'
-// block (17 cases + 2 `it.each` rows) is deleted with the function (credits
-// usage-digest runner, plan §3.5).
-
 describe('applyExplicitAudiencePreferences, further edges', () => {
-  // PORT NOTE (magick-agency): master uses `campaign.completed` (not in agency's
-  // catalog); `agency.campaign.completed` is the key agency's one caller passes.
+  // `agency.campaign.completed` is the key the one caller passes.
   const EVENT = 'agency.campaign.completed';
 
   it('drops a member row with an empty email rather than indexing the empty key', () => {

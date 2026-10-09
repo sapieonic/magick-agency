@@ -9,10 +9,10 @@ const { agencyIngestJobRepository: repo, AGENCY_INGEST_JOB_STALE_MINUTES } = awa
 );
 
 /**
- * Every method of `AgencyIngestJobRepository` against REAL Postgres (lane B2's rule: master's
- * suite of this repository was mocked-pool only, 34 cases, so a statement the baseline cannot
- * run — a wrong column, an untyped parameter used in two contexts — was invisible).
- * `agency-ingest-job.repository.test.ts` (the ported mocked suite) and
+ * Every method of `AgencyIngestJobRepository` against REAL Postgres (a mocked-pool suite
+ * cannot see a statement the baseline cannot run — a wrong column, an untyped parameter
+ * used in two contexts).
+ * `agency-ingest-job.repository.test.ts` (the mocked suite) and
  * `repositories/agency-ingest-job-account-scope.test.ts` stay as they were; this file adds the
  * rows-come-back-right half.
  */
@@ -107,7 +107,7 @@ describe('AgencyIngestJobRepository on real Postgres', () => {
     expect(second.started_at).toEqual(first.started_at);
   });
 
-  it('updateProgress: writes counters, the core rejection fields and the undercount bit', async () => {
+  it('updateProgress: writes counters, the rejection fields and the undercount bit', async () => {
     const job = await create();
     await repo.updateProgress(job.id, PROGRESS);
 

@@ -361,7 +361,7 @@ describe('AgentPerformancePage — the populated page', () => {
   });
 
   it('resolves campaign ids in the breakdown through the staffing history', async () => {
-    // `by_campaign[]` carries ids and no names — master's contract — so without
+    // `by_campaign[]` carries ids and no names — the API's contract — so without
     // `my-campaigns` this table is a column of uuids.
     renderPage();
     const row = await screen.findByTestId('campaign-row-camp-1');
@@ -371,7 +371,7 @@ describe('AgentPerformancePage — the populated page', () => {
   it('carries the agent nav, with THIS surface marked as current', async () => {
     /**
      * The station has no escape route on purpose: clicking away drops the socket
-     * and core keeps the agent in the dialable pool for up to 45 seconds
+     * and the API keeps the agent in the dialable pool for up to 45 seconds
      * afterwards, so a reservation landing in that window bridges a customer to
      * nobody. This page holds no socket, so links out are ordinary navigation —
      * and necessary, since a full-viewport page with no navigation is a trap.
@@ -398,7 +398,7 @@ describe('AgentPerformancePage — the populated page', () => {
      * the widest tile as their whole record.
      *
      * ── The limit is OURS, and the note must not blame the server ────────────
-     * This comment used to say "core caps a stats window at 92 days". That is
+     * This comment used to say "the API caps a stats window at 92 days". That is
      * `ROSTER_MAX_WINDOW_DAYS`, the whole-floor bound; the per-agent read this
      * page calls accepts 366 (`AGENT_STATS_MAX_WINDOW_DAYS`). The copy inherited
      * the error and told an agent who worked here in March that March was
@@ -406,7 +406,7 @@ describe('AgentPerformancePage — the populated page', () => {
      *
      * So the absence is asserted, not just the presence. Matching only
      * /last month/ and /My calls/ would stay green if somebody "helpfully"
-     * restored "core caps this at 92 days; open My calls for your total" —
+     * restored "the API caps this at 92 days; open My calls for your total" —
      * which is how the wrong number got on screen the first time.
      */
     renderPage();
@@ -467,7 +467,7 @@ describe('AgentPerformancePage — null is never zero', () => {
 
   it('does not draw a zeroed occupancy breakdown', async () => {
     /**
-     * Core computes occupancy from an event log that shipped after the dialer, so
+     * The API computes occupancy from an event log that shipped after the dialer, so
      * an older session returns zeros rather than nulls. Drawing a bar from those
      * zeros claims somebody spent a shift doing nothing at all.
      */
@@ -497,7 +497,7 @@ describe('AgentPerformancePage — null is never zero', () => {
 
   it('does not draw signed-out time, or divide the shift by it', async () => {
     /**
-     * `shift_seconds` on core's side is the sum of the states EXCLUDING
+     * `shift_seconds` on the API's side is the sum of the states EXCLUDING
      * `offline`, so the bar has to be too. Half an hour on calls out of a
      * ninety-minute shift is a third of it; with six signed-out hours folded into
      * the denominator the same half hour read as 6.7%.
@@ -559,7 +559,7 @@ describe('AgentPerformancePage — null is never zero', () => {
     /**
      * The third state, and distinct from both. Nothing failed and nothing is
      * missing — the shift being broken down is zero seconds long, which is what
-     * core reports as `shift_seconds: 0`. A full-width `offline` bar would claim
+     * the API reports as `shift_seconds: 0`. A full-width `offline` bar would claim
      * a shift that was never worked.
      */
     mocks.getMyStats.mockResolvedValue(
@@ -743,10 +743,10 @@ describe('AgentPerformancePage — the staffing history', () => {
     expect(screen.getByTestId('staffing-summary').textContent).toContain('1 finished');
   });
 
-  it('renders an unrecognised campaign status verbatim rather than mapping it away', async () => {
+  it('renders an unrecognised campaign status as-is rather than mapping it away', async () => {
     /**
      * `AgencyCampaignStatusBadge` prints an unknown status as-is on purpose —
-     * that is what lets master forward core's lifecycle without this client
+     * that is what lets the API forward the API's lifecycle without this client
      * mirroring it. Pinned here so the new surface keeps the property.
      */
     mocks.getMyCampaigns.mockResolvedValue([staffing({ campaign_status: 'quiescing' })]);
@@ -756,8 +756,8 @@ describe('AgentPerformancePage — the staffing history', () => {
   });
 
   it('stands in for a null campaign name rather than leaving a hole', async () => {
-    // Master resolves the name through a best-effort core call, documented null
-    // for a core outage or a deleted campaign.
+    // The API resolves the name through a best-effort the API call, documented null
+    // for the API outage or a deleted campaign.
     mocks.getMyCampaigns.mockResolvedValue([staffing({ campaign_name: null })]);
     renderPage();
     expect(await screen.findByText('Unnamed campaign')).toBeTruthy();
@@ -793,7 +793,7 @@ describe('AgentPerformancePage — a supervisor', () => {
   });
 
   it('reads its own numbers through the my- route, never the supervisor twin', async () => {
-    // The `my-` routes take no subject: master scopes them to the caller. A page
+    // The `my-` routes take no subject: The API scopes them to the caller. A page
     // that reached for the twin here would be naming the subject of its own
     // stats read.
     mocks.useTenant.mockReturnValue(tenant({ role: 'account_admin' }));
@@ -855,10 +855,10 @@ describe('AgentPerformancePage — the staffing counters', () => {
 
   it('counts a campaign worked twice as one campaign', async () => {
     /**
-     * A staffing history repeats campaigns by construction — master's own
+     * A staffing history repeats campaigns by construction — the API's own
      * docstring: staffed in March, unstaffed in April, staffed again in June is
      * three rows and one campaign. Printing the row count under a heading reading
-     * "Campaigns you've worked" told the agent a number about master's table
+     * "Campaigns you've worked" told the agent a number about the API's table
      * rather than about their working life, and it was worst for the people with
      * the longest one.
      */
@@ -916,7 +916,7 @@ describe('AgentPerformancePage — the staffing counters', () => {
 
   it('counts live assignment ROWS, not campaigns, on that line', async () => {
     // Two current stints on one campaign is a real thing about the staffing
-    // table, and `active` is per row because master's flag is.
+    // table, and `active` is per row because the API's flag is.
     mocks.getMyCampaigns.mockResolvedValue([
       staffing({ campaign_id: 'camp-1', assigned_at: '2026-03-01T00:00:00.000Z' }),
       staffing({ campaign_id: 'camp-1', assigned_at: '2026-06-01T00:00:00.000Z' }),
@@ -934,7 +934,7 @@ describe('AgentPerformancePage — scoping the figures to one campaign', () => {
   /**
    * `by_campaign[]` and `buckets[]` are two foldings of one row set, so the
    * payload answers "which campaigns" and "which days" but never "which days on
-   * THIS campaign". Core's stats query takes `campaign_id` and master forwards
+   * THIS campaign". The API's stats query takes `campaign_id` and the API forwards
    * it, so the cross-tab is asked for by scoping the request — which is what this
    * control does.
    */
@@ -994,8 +994,8 @@ describe('AgentPerformancePage — scoping the figures to one campaign', () => {
     */
     await waitFor(() => expect(mocks.getMyStats).toHaveBeenCalledTimes(AGENT_STATS_WINDOWS.length));
 
-    // Omitted rather than sent empty: master forwards only the params it finds,
-    // and a blank `campaign_id` reaching core is a validation issue about a
+    // Omitted rather than sent empty: The API forwards only the params it finds,
+    // and a blank `campaign_id` reaching the API is a validation issue about a
     // filter nobody asked for.
     for (const call of mocks.getMyStats.mock.calls) {
       expect(call[0]).not.toHaveProperty('campaign_id');

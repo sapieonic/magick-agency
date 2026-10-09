@@ -1,7 +1,7 @@
-// `agent` is the Agency Dialer role (design D6). It sits BELOW `viewer` in
+// `agent` is the Agency Dialer role. It sits BELOW `viewer` in
 // ROLE_HIERARCHY, so it inherits nothing that existed before it — see the note
 // on ROLE_HIERARCHY in `src/rbac/roles.ts`. Mirrored in the `membership_role`
-// Postgres enum (migration 051) and in cusui's `Role` union.
+// Postgres enum and in the console's `Role` union.
 export type MembershipRole =
   | 'tenant_owner'
   | 'tenant_admin'

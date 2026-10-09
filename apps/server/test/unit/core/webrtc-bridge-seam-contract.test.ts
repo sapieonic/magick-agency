@@ -1,4 +1,4 @@
-// NEW (magick-agency, lane C): docs/seams.md §3.1. The agency runtime (Phase 6) calls the
+// docs/seams.md (the WebRtcBridgeManager seam). The dialer runtime calls the
 // bridge through exactly these members, with these signatures. Every assertion below is
 // checked by `tsc` (`pnpm lint` typechecks tests): changing a member's signature, dropping
 // one, or changing one of the exported types makes this file fail to compile. The runtime
@@ -21,21 +21,21 @@ import {
   type WebRtcRejectReason,
 } from '../../../src/core/webrtc-bridge-manager.js';
 
-/** The §3.1 member list, copied from core (magic-voice-core/src/core/webrtc-bridge-manager.ts@4850d1d9). */
+/** The seam member list. */
 interface BridgeSeam {
-  onLifecycle(listener: WebRtcLifecycleListener): () => void; // :280
-  createBridgedCall(params: WebRtcBridgedCallParams): Promise<WebRtcCallRecord>; // :445
-  createUnboundBridgedCall(params: Omit<WebRtcBridgedCallParams, 'browserSocket'>): Promise<WebRtcCallRecord>; // :494
-  bindBorrowedBrowserLeg(correlationId: string, ws: WebSocket): boolean; // :954
-  reattachBorrowedBrowserLeg(correlationId: string, ws: WebSocket): boolean; // :1028
-  forceEndWithOutcome(correlationId: string, outcome: string): Promise<boolean>; // :1064
+  onLifecycle(listener: WebRtcLifecycleListener): () => void;
+  createBridgedCall(params: WebRtcBridgedCallParams): Promise<WebRtcCallRecord>;
+  createUnboundBridgedCall(params: Omit<WebRtcBridgedCallParams, 'browserSocket'>): Promise<WebRtcCallRecord>;
+  bindBorrowedBrowserLeg(correlationId: string, ws: WebSocket): boolean;
+  reattachBorrowedBrowserLeg(correlationId: string, ws: WebSocket): boolean;
+  forceEndWithOutcome(correlationId: string, outcome: string): Promise<boolean>;
   playClipToCarrierThenHangUp(correlationId: string,
-    opts: { clipHash: string; outcome: string; status?: WebRtcCallStatus }): Promise<boolean>; // :1106
-  getActiveCallIds(): string[]; // :370
-  gracefulShutdown(): Promise<void>; // :381
+    opts: { clipHash: string; outcome: string; status?: WebRtcCallStatus }): Promise<boolean>;
+  getActiveCallIds(): string[];
+  gracefulShutdown(): Promise<void>;
 }
 
-/** Core's exported types, verbatim (`sipConnectionId` removed: seams §3.1 allows it, SIP is out). */
+/** The bridge's exported types (`sipConnectionId` is excluded: docs/seams.md allows it, SIP is out). */
 interface CoreOutboundParams {
   tenantId: string;
   accountId: string;
@@ -75,8 +75,8 @@ type CoreRejectReason =
   | 'telephony_init_failed'
   | 'station_socket_unavailable';
 
-describe('WebRtcBridgeManager — the §3.1 seam (type-level)', () => {
-  it('has exactly the §3.1 member signatures', () => {
+describe('WebRtcBridgeManager — the docs/seams.md seam (type-level)', () => {
+  it('has exactly the seam member signatures', () => {
     expectTypeOf<WebRtcBridgeManager['onLifecycle']>().toEqualTypeOf<BridgeSeam['onLifecycle']>();
     expectTypeOf<WebRtcBridgeManager['createBridgedCall']>().toEqualTypeOf<BridgeSeam['createBridgedCall']>();
     expectTypeOf<WebRtcBridgeManager['createUnboundBridgedCall']>().toEqualTypeOf<BridgeSeam['createUnboundBridgedCall']>();
@@ -91,7 +91,7 @@ describe('WebRtcBridgeManager — the §3.1 seam (type-level)', () => {
     expect(true).toBe(true);
   });
 
-  it('keeps core\'s exported types', () => {
+  it('keeps the exported types', () => {
     expectTypeOf<WebRtcOutboundParams>().toEqualTypeOf<CoreOutboundParams>();
     expectTypeOf<Omit<WebRtcBridgedCallParams, keyof CoreOutboundParams>>()
       .toEqualTypeOf<Omit<CoreBridgedCallParams, keyof CoreOutboundParams>>();

@@ -1,5 +1,5 @@
 /**
- * The opaque cursor the supervisor read surface pages by (MAG-159).
+ * The opaque cursor the supervisor read surface pages by.
  *
  * A LEAF module: no imports, no I/O. The two routes that use it and the two
  * repository methods behind them all agree on one encoding because there is one

@@ -8,23 +8,21 @@ import type { DigestFrequency } from './period.js';
  *
  * ── Why a catalog at all ───────────────────────────────────────────────────
  *
- * Before this, each mailer was a module that knew its own audience, rendered its
- * own HTML and called the transport directly. That is four private answers to
- * the same four questions (who gets this, can they decline it, has it already
- * been sent, what is it called on a settings page) — and the fourth question had
- * no answer anywhere, because there was no settings page and no way to build one
- * without enumerating the mailers by hand.
+ * A mailer that knows its own audience, renders its own HTML and calls the
+ * transport directly is a private answer to four shared questions (who gets
+ * this, can they decline it, has it already been sent, what is it called on a
+ * settings page) — and the fourth has no answer at all without an enumeration of
+ * the mailers.
  *
  * This is the enumeration. Everything else in `engine/` is a primitive that
  * takes a definition from here; adding an event is a row plus a renderer, and
  * the settings page, the preference validation and the suppression check all
  * pick it up with no further edit.
  *
- * ── The pattern is `governance/catalog.ts`, deliberately ───────────────────
+ * ── Frozen defaults in code, sparse overrides in the database ──────────────
  *
- * Frozen defaults in code, sparse overrides in the database. A user who has
- * never opened the settings page has no rows at all, and their behaviour is
- * whatever `defaultEnabled` says here. Changing a default therefore changes it
+ * A user who has never opened the settings page has no rows at all, and their
+ * behaviour is whatever `defaultEnabled` says here. Changing a default therefore changes it
  * for everybody who never expressed a preference, and for nobody who did —
  * which is the property that makes shipping a new event safe.
  *
@@ -38,14 +36,10 @@ import type { DigestFrequency } from './period.js';
  * is ever added.
  */
 
-// PORT NOTE (magick-agency): only `agency.campaign.completed` is kept (plan §3.5:
-// agency-relevant events only; see the note at the end of
-// `packages/contracts/src/api/platform/notifications.ts`). Master's
-// `campaign.dispatched` and `campaign.completed` (broadcast campaigns, mailed by
-// `job-dispatched.ts` / `job-completion.ts`) and `usage.digest` (the credits
-// usage digest) are deleted with their mailers. A stored preference row naming
-// one of them is inert by `isLiveEventKey`'s rule below — never served, never
-// validated against, never deleted.
+// One event today (see the note at the end of
+// `packages/contracts/src/api/platform/notifications.ts`). A stored preference
+// row naming any other key is inert by `isLiveEventKey`'s rule below — never
+// served, never validated against, never deleted.
 /** Stable dotted ids. Adding one is additive; renaming one orphans stored rows. */
 export const NOTIFICATION_EVENT_KEYS = [
   'agency.campaign.completed',
@@ -57,8 +51,8 @@ export type NotificationEventKey = (typeof NOTIFICATION_EVENT_KEYS)[number];
  * The only channel today.
  *
  * A column in the database and a field on a preference, but NOT an array on the
- * definition: a per-event list of channels would be four copies of `['email']`
- * that no code branches on. The seam that actually matters is the stored
+ * definition: a per-event list of channels would be copies of `['email']` that no
+ * code branches on. The seam that actually matters is the stored
  * `channel`, because that is what a second channel would need to be keyed by
  * without migrating anyone's existing preference. The definition grows a
  * `channels` field on the day there is a second value to put in it.
@@ -110,9 +104,6 @@ export interface NotificationEventDefinition {
  * FROZEN catalog — array order is display order on the settings page.
  */
 export const NOTIFICATION_EVENTS: readonly NotificationEventDefinition[] = [
-  // PORT NOTE (magick-agency): master's `campaign.dispatched` and
-  // `campaign.completed` entries (master `catalog.ts:108-129`, explicit
-  // audience, broadcast campaigns) are deleted — see `NOTIFICATION_EVENT_KEYS`.
   {
     key: 'agency.campaign.completed',
     label: 'Agency campaign finished',
@@ -120,18 +111,15 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDefinition[] = [
     category: 'agency',
     cadence: 'immediate',
     // Derived, never restated: `agency.supervise` is already this platform's
-    // answer to "who runs agency campaigns". The pre-existing mailer computes
-    // the same floor the same way; this entry is the second reader of one
-    // decision rather than a second decision.
+    // answer to "who runs agency campaigns". `agency-campaign-completion.ts`
+    // computes the same floor the same way; this entry is the second reader of
+    // one decision rather than a second decision.
     audience: { kind: 'role_floor', minimumRole: PERMISSION_MATRIX['agency.supervise'] },
     defaultEnabled: true,
   },
-  // PORT NOTE (magick-agency): master's `usage.digest` entry (master
-  // `catalog.ts:143-183`, digest cadence, `account_admin` floor, weekly default)
-  // is deleted — it is the credits usage digest and Magick Agency v1 has no
-  // credits (plan §3.3, §3.5). The `digest` cadence, `defaultFrequency` and the
-  // `campaigns` / `digests` categories stay in the types above, unchanged, because
-  // the preference shape, the validator and `audience.ts` still branch on them.
+  // No digest event exists today. The `digest` cadence, `defaultFrequency` and
+  // the `campaigns` / `digests` categories stay in the types above because the
+  // preference shape, the validator and `audience.ts` still branch on them.
 ];
 
 /**
@@ -142,9 +130,8 @@ export const NOTIFICATION_EVENTS: readonly NotificationEventDefinition[] = [
  * /notifications/preferences`) and out of the database (a stored row for a
  * retired key). A plain object literal inherits from `Object.prototype`, so
  * `EVENTS['constructor']` resolves to a truthy value and every "unknown key"
- * guard downstream of a bare index silently passes — the exact incident this
- * repo records at four lookup sites in `src/autopilot/`. A `Map` has no
- * prototype chain to walk into.
+ * guard downstream of a bare index silently passes. A `Map` has no prototype
+ * chain to walk into.
  */
 const EVENTS_BY_KEY = new Map<string, NotificationEventDefinition>(
   NOTIFICATION_EVENTS.map((event) => [event.key, event]),

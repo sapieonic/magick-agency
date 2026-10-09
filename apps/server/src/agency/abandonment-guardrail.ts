@@ -6,10 +6,10 @@ import { auditLogger } from '../audit/audit-logger.js';
 const log = createChildLogger({ component: 'agency-abandonment-guardrail' });
 
 /**
- * ─── AUTO-PAUSE ON THE ABANDONMENT CEILING (`AD-P4-C-02`) ───────────────────
+ * ─── AUTO-PAUSE ON THE ABANDONMENT CEILING ──────────────────────────────────
  *
- * **A hard guardrail, not a dashboard number.** Requirement R9 puts abandonment
- * alongside DNC and calling hours: a campaign dialing faster than its agents can
+ * **A hard guardrail, not a dashboard number.** Abandonment is a compliance
+ * control alongside DNC and calling hours: a campaign dialing faster than its agents can
  * answer is abandoning live customers, and the regulator's remedy is that it
  * stops — not that a percentage turns amber on a screen nobody is watching at
  * 2am.
@@ -18,14 +18,14 @@ const log = createChildLogger({ component: 'agency-abandonment-guardrail' });
  *
  * The rate is a rolling 24h SQL aggregate over `agency_call_attempts`, and
  * `ABANDONMENT_REFRESH_MS` (60s) already reads exactly that number, for every
- * campaign, in one grouped statement. Its own doc comment says the cadence is
- * sized so "the `AD-P4-C-02` guardrail" never acts on a rate more than that
- * stale — the seam was designed for this before either half existed.
+ * campaign, in one grouped statement. Its own doc comment sizes the cadence so
+ * this guardrail never acts on a rate more than that stale.
  *
- * The pacing tick would have been the wrong home twice over: it runs per
- * campaign every 2s, so it would multiply a table-wide aggregate by the number
- * of campaigns and the tick rate; and a campaign that has stalled for some other
- * reason stops ticking, which is exactly when a breach must still be noticed.
+ * The pacing tick would be the wrong home twice over: the leader evaluates each
+ * campaign it leads every 250 ms (`TICK_INTERVAL_MS`), so it would multiply a
+ * table-wide aggregate by the number of campaigns and the tick rate; and a
+ * campaign that has stalled for some other reason stops ticking, which is
+ * exactly when a breach must still be noticed.
  *
  * ── Four refusals, each of which was a plausible-looking bug ─────────────────
  *
@@ -37,21 +37,20 @@ const log = createChildLogger({ component: 'agency-abandonment-guardrail' });
  *    stop a campaign that has not yet abandoned anything.
  *
  * 2. **The ceiling is the campaign's, never the constant.** Reading
- *    `DEFAULT_ABANDONMENT_CEILING_PCT` here would silently ignore acceptance
- *    (d)'s per-campaign setting while still passing every test written against a
+ *    `DEFAULT_ABANDONMENT_CEILING_PCT` here would silently ignore the
+ *    per-campaign setting while still passing every test written against a
  *    default-3 campaign. The column's DEFAULT is where the constant applies.
  *
- * 3. **It never resumes.** Acceptance (c): resuming is a deliberate supervisor
+ * 3. **It never resumes.** Resuming is a deliberate supervisor
  *    action. There is no arm here that moves a campaign out of `paused`, and
  *    there must never be one — a guardrail that un-pauses when the sliding
  *    window drops back under the ceiling would restart dialing on its own, with
  *    nobody having decided anything, and would then oscillate across the
- *    threshold. This is pinned by a test rather than only by this paragraph,
+ *    threshold. This is held by a test rather than only by this paragraph,
  *    because "the absence of a feature" is the easiest property to lose.
  *
- * 4. **A single abandoned call in too coarse a sample is not a breach.** Added
- *    2026-09-11, and the only one of the four that was a LIVE defect rather than
- *    a bug avoided: `1 of 1` reads 100% and paused the campaign for good. The
+ * 4. **A single abandoned call in too coarse a sample is not a breach.** Without
+ *    it, `1 of 1` reads 100% and pauses the campaign for good. The
  *    full argument, the cases it does and does not suppress, and why a
  *    denominator floor and a Wilson bound are both worse, are on the branch
  *    itself in {@link breachedRows}.
@@ -71,11 +70,10 @@ const log = createChildLogger({ component: 'agency-abandonment-guardrail' });
  * configured at 1% gets a floor of 100 and one at 10% gets 10. A fixed number
  * would be right for exactly one ceiling.
  *
- * ⚠️ **The `ceilingPct <= 0` guard is defensive, NOT a supported setting** — an
- * earlier version of this comment claimed a zero ceiling was "a coherent thing
- * for an operator to ask for", and the tree says otherwise in two places:
- * migration `089` CHECKs `abandonment_ceiling_pct > 0`, and master's config
- * validation rejects it with the opposite rationale written out — *"a ceiling of
+ * ⚠️ **The `ceilingPct <= 0` guard is defensive, NOT a supported setting.** A
+ * zero ceiling is refused in two places: the schema CHECKs
+ * `abandonment_ceiling_pct > 0`, and the campaign-config validation
+ * (`campaign-config.ts`) rejects it with the rationale written out — *"a ceiling of
  * 0 would read as a strict setting and behave as a kill switch. An operator who
  * wants no dialing has `pause`."*
  *
@@ -125,21 +123,18 @@ export function breachedRows(rows: readonly AgencyAbandonmentWindowRow[]): Aband
     /**
      * ── Refusal 4: ONE abandoned call in a sample too coarse to measure ─────
      *
-     * Added 2026-09-11. Before it, this function read only `measured` and
-     * `ceiling_pct` and never looked at either term of the fraction — so **one
-     * abandoned call out of one answered call reads 100% and paused the
-     * campaign**, permanently, because refusal 3 above means nothing ever
-     * un-pauses it. A single dropped station socket at the wrong moment took a
-     * campaign off the air until a supervisor noticed.
+     * Reading only `measured` and `ceiling_pct`, without either term of the
+     * fraction, **one abandoned call out of one answered call reads 100% and
+     * pauses the campaign**, permanently, because refusal 3 above means nothing
+     * ever un-pauses it. A single dropped station socket at the wrong moment would
+     * take a campaign off the air until a supervisor noticed.
      *
-     * ⚠️ **The protection was already described in the codebase as though it
-     * existed.** The block comment on the gauges in `metrics.ts` justifies
-     * exporting the numerator and the denominator as separate series with "a
-     * rate alone cannot distinguish 1-abandoned-of-1 from 30-of-3000, and the
-     * auto-pause guardrail reads this: pausing a campaign because its first call
-     * of the day was abandoned would be a self-inflicted outage." The three
-     * series shipped; nothing consumed the two that make the guard safe. This is
-     * the consumer.
+     * The block comment on the gauges in `metrics.ts` justifies exporting the
+     * numerator and the denominator as separate series with "a rate alone cannot
+     * distinguish 1-abandoned-of-1 from 30-of-3000, and the auto-pause guardrail
+     * reads this: pausing a campaign because its first call of the day was
+     * abandoned would be a self-inflicted outage." This branch is what makes that
+     * true.
      *
      * **Scoped as narrowly as the pathology.** It suppresses only a breach whose
      * numerator is a SINGLE call AND whose denominator is below the point where
@@ -166,12 +161,12 @@ export function breachedRows(rows: readonly AgencyAbandonmentWindowRow[]): Aband
      * because 33 is under some separate floor.
      *
      * **But it is NOT redundant at `ceiling <= 0` or a non-finite ceiling, and
-     * there it is the only thing keeping this path correct** (caught in review;
-     * the sweep above excluded those ceilings and the division step in the proof
-     * is undefined at zero). `singleAbandonSampleFloor` short-circuits to `0`
+     * there it is the only thing keeping this path correct** (the sweep above
+     * excluded those ceilings and the division step in the proof is undefined at
+     * zero). `singleAbandonSampleFloor` short-circuits to `0`
      * there, so `answered < 0` is false, the breach is NOT suppressed, and such
      * a campaign pauses on its first abandoned call — the fail-closed direction,
-     * pinned by 'never suppresses a breach when the ceiling is non-positive'.
+     * held by 'never suppresses a breach when the ceiling is non-positive'.
      * Drop the conjunct and that test is the one and only thing that reds, which
      * is exactly how a guardrail gets silently disabled for the setting the
      * zero-ceiling branch exists to protect. (The DB `CHECK` makes a stored zero
@@ -182,10 +177,10 @@ export function breachedRows(rows: readonly AgencyAbandonmentWindowRow[]): Aband
      * ceilings the instant the numerator gate widens — at `abandoned <= 2` it
      * does work at every ceiling (at 3%: it separates `2 of 66` from `2 of 67`)
      * — so writing the rule as intended keeps that a one-token edit rather than
-     * a re-derivation. And the floor is the value cusui mirrors to decide whether
+     * a re-derivation. And the floor is the value the console mirrors to decide whether
      * to promise a supervisor the pause will happen, so it has to exist as a
      * named, exported function regardless. Both the implication and its
-     * exception are pinned in `abandonment-guardrail.test.ts`, so if the rate's
+     * exception are asserted in `abandonment-guardrail.test.ts`, so if the rate's
      * denominator ever stops being `answered` it breaks loudly.
      *
      * The alternatives were both worse and both look reasonable. A plain

@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-// PORT NOTE (magick-agency): ported from core test/unit/core/webrtc-bridge-session.test.ts@4850d1d9; only the logger mock specifier changed.
 
 // ---------------------------------------------------------------------------
 // Self-contained mock harness (project convention: no shared test utilities).
@@ -40,7 +39,7 @@ function makeSession() {
 }
 
 describe('WebRtcBridgeSession constructor + defaults', () => {
-  it('stores the constructor params verbatim on readonly fields', () => {
+  it('stores the constructor params unchanged on readonly fields', () => {
     const s = makeSession();
     expect(s.callId).toBe('call-1');
     expect(s.tenantId).toBe('t1');
@@ -303,7 +302,7 @@ describe('WebRtcBridgeSession.destroy', () => {
   });
 });
 
-// ── Borrowed browser leg (docs/agency-dialer-design.md §7) ──────────────────
+// ── Borrowed browser leg ──────────────────
 describe('WebRtcBridgeSession borrowed browser leg', () => {
   it('defaults to owning its browser socket', () => {
     expect(makeSession().browserWsOwned).toBe(true);

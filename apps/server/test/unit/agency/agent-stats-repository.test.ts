@@ -197,7 +197,7 @@ describe('the attempt buckets are cut in each campaign\'s own timezone', () => {
 
   it('scopes on the SESSION\'s tenant and account, not on the agent id alone', async () => {
     await read();
-    // `agent_user_id` is master's user id, opaque to core, and there is no
+    // `agent_user_id` is the console user's id, opaque to the voice engine, and there is no
     // campaign in this route's path to own. Without these predicates any tenant
     // could read any other tenant's agent by supplying their user id.
     expect(attemptsSql()).toContain('s.tenant_id = $4');
@@ -453,7 +453,7 @@ describe('occupancy is derived from the transition log', () => {
     // Rows equal on the ORDER BY leave DISTINCT ON free to return either one, so
     // without a tie-break the state carried into the window is not reproducible
     // between two runs of the same query. Ties exist in rows already written: the
-    // batch insert used to take migration 105's `DEFAULT now()`, which is the
+    // batch insert used to take the column's `DEFAULT now()`, which is the
     // TRANSACTION timestamp and therefore identical across a whole `markAllOffline`
     // sweep.
     expect(executable(occupancySql())).toContain('ORDER BY e.session_id, e.at DESC, e.id DESC');
@@ -488,7 +488,7 @@ describe('occupancy is derived from the transition log', () => {
     // `idx_agency_session_events_agent` is `(agent_user_id, at)`. The join is on
     // `session_id` and the range is on `at`; neither touches the leading column,
     // so without this predicate the shipped index cannot drive either read and the
-    // denormalised column migration 105 exists to carry is never read at all.
+    // denormalised column the log exists to carry is never read at all.
     // One fragment per `FROM agency_agent_session_events e`, each running up to the
     // next one, so an assertion cannot be satisfied twice by the same predicate.
     const eventReads = sql.split('agency_agent_session_events e').slice(1);
@@ -531,7 +531,7 @@ describe('occupancy is derived from the transition log', () => {
   });
 
   it('reads as zeros for a session with no events at all', async () => {
-    // Sessions predating migration 105 have no rows in the log. Zeros are the
+    // Sessions with no recorded transitions have no rows in the log. Zeros are the
     // honest answer — the alternative is reconstructing time-in-state from
     // `state_since`, a snapshot every transition overwrites.
     serve(ATTEMPT_ROWS, []);
@@ -565,7 +565,7 @@ describe('an occupancy failure never takes the rest of the record with it', () =
   /** Only the statement that reads the transition log rejects. */
   const failOccupancy = (): void => {
     pool.query.mockImplementation((sql: unknown) => (isOccupancy(sql)
-      // The realistic shape: migration 105 has not run on this database yet. It is
+      // The realistic shape: the transition-log table is absent on this database. It is
       // the same failure the WRITE path already swallows in `recordTransitions`.
       ? Promise.reject(new Error('relation "agency_agent_session_events" does not exist'))
       : Promise.resolve({ rows: ATTEMPT_ROWS })));

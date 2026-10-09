@@ -6,32 +6,27 @@ import { uuidFor } from '../setup/factories.js';
 import type { AgencyIngestContact } from '../../../src/agency/agency-csv-ingest.js';
 
 /*
- * PORT NOTE (magick-agency, Phase 8): ported from core
- * test/integration/agency/agency-ingest-route-seam.test.ts@4850d1d9 (7 `it` + 1 `it.each`
- * of 2 rows = 8). Recorded changes:
+ * of 2 rows = 8). Notes:
  *
- *  - **The seam is now in-process.** Core's `POST /internal/agency-campaigns/:id/contacts`
- *    is gone as a route: lane B2 collapsed master's S2S hop into
- *    `src/agency/agency-roster.client.ts`, whose `sendRosterChunk` runs that handler's
+ *  - **The seam is in-process.** There is no HTTP route for a contacts ingest:
+ *    `src/agency/agency-roster.client.ts`'s `sendRosterChunk` runs the handler
  *    body (`applyRosterChunkInProcess`) against the REAL repository over the REAL
- *    Postgres. So `postChunk` drives `sendRosterChunk` — the call master's ingest makes —
- *    instead of `app.inject`, and a refusal is the client's `RosterChunkError`
- *    (`status`, `message`) where core's suite read the HTTP response. The composition
+ *    Postgres. So `postChunk` drives `sendRosterChunk` — the call the public API layer's ingest
+ *    makes — instead of `app.inject`, and a refusal is the client's `RosterChunkError`
+ *    (`status`, `message`). The composition
  *    facts this file exists for (tenancy written from the campaign row, `source_row_number`
  *    landing in `csv_line_number`, `roster_complete`/`missing_chunks` composed by the
  *    handler) are all still produced by that body and asserted unchanged.
- *  - **Deleted:** "is a REAL S2S-guarded endpoint: an unauthenticated chunk writes nothing
- *    to the database" — there is no endpoint and no S2S token; the only caller is the
+ *  - There is no endpoint and no service token to guard; the only caller is the
  *    in-process ingest service, behind the console's session/RBAC chain.
  *  - The idempotency key is the client's (`rosterChunkKey`: `{ingest_job_id}-{chunk_index}`),
  *    not a free choice of the caller: every case here except two already sent exactly that;
  *    `'job-http-0'`, `'foreign-0'`, `'n-0'`/`'n-1'` keyed one-off chunks under fresh job ids
  *    and are therefore the same distinct keys.
- *  - ids: core's `'seam-tenant'` / `'seam-account'` / `'attacker-tenant'` /
+ *  - ids: the `'seam-tenant'` / `'seam-account'` / `'attacker-tenant'` /
  *    `'sibling-account'` labels are `uuidFor(label)` (the baseline types them UUID); the
  *    unknown-campaign fallback identity is a pair of fresh UUIDs.
- *  - the pool mock is `@magick-agency/db` (agency's `getPool`); core's config mock existed
- *    only to supply the S2S token and is gone with it.
+ *  - the pool mock is `@magick-agency/db` (`getPool`); no config mock is needed.
  */
 
 vi.mock('@magick-agency/db', async (importOriginal) => ({
@@ -47,16 +42,14 @@ const SEAM_TENANT = uuidFor('seam-tenant');
 const SEAM_ACCOUNT = uuidFor('seam-account');
 
 /**
- * AD-P2-X-02 arm (a) + arm (b) — the cross-service ingest seam, driven through
- * core's REAL internal HTTP route.
+ * The ingest seam, driven through the real in-process hand-off.
  *
  * ── Why this file exists next to `agency-ingest-idempotency.test.ts` ─────────
- * That file is good and its 13 cases are untouched. What it does not do is run
- * core's route: every arm calls `agencyContactRepository.applyIngestChunk`
- * directly. `POST /internal/agency-campaigns/:id/contacts` — the endpoint master
- * actually calls, and the one the ticket names — was exercised at NO tier for a
- * contacts ingest. `test/unit/agency/agency-internal-auth.test.ts` reaches the
- * path but mocks the repository away, so route→repository composition (tenancy
+ * That file covers the repository arms. What it does not do is run
+ * the hand-off: every arm calls `agencyContactRepository.applyIngestChunk`
+ * directly. The hand-off the public API layer's ingest actually calls was exercised at NO tier
+ * for a contacts ingest. A unit test reaches it
+ * but mocks the repository away, so handler→repository composition (tenancy
  * derivation, the wire→repository field rename, `roster_complete`) was never
  * observed against a real database by anything.
  *
@@ -66,11 +59,11 @@ const SEAM_ACCOUNT = uuidFor('seam-account');
  *
  *   1. **Tenancy is WRITTEN from the campaign ROW; the caller's is only
  *      COMPARED.** The body carries the caller's `tenant_id`/`account_id`
- *      (ClickUp 14ygtkj9tax) and the route refuses a mismatch with 404, but the
+ *      and the route refuses a mismatch with 404, but the
  *      persisted contacts still take the row's values. Asserted on the persisted
  *      contacts, so a route that hardcoded or mis-threaded them fails here.
  *   2. **`source_row_number` is a WIRE field that lands in a DIFFERENT COLUMN.**
- *      085 moved the CSV line to `csv_line_number` and leaves
+ *      The CSV line is stored in `csv_line_number`, which leaves
  *      `agency_contacts.source_row_number` NULL. The wire name did not move. A
  *      test that never crosses the boundary cannot notice the two diverging.
  *   3. **`roster_complete` / `missing_chunks`** are computed in the handler from
@@ -115,15 +108,15 @@ interface ChunkBody {
 }
 
 /**
- * Hand a chunk to the in-process hand-off (core's handler body), as master's ingest does.
+ * Hand a chunk to the in-process hand-off (the internal handler's body), as the public API layer's ingest does.
  *
  * The caller identity defaults to the campaign's real owner, read back from the row, so
- * every case not about ownership sends what master sends. A `body` carrying its own
+ * every case not about ownership sends what the public API layer sends. A `body` carrying its own
  * `tenant_id`/`account_id` overrides it. For an id with no row a fixed, well-formed
  * identity is sent instead, so an unknown campaign reaches the 404 rather than stopping at
  * the missing-identity 400.
  *
- * Returns `{ status, json }`, the shape core's suite read off the HTTP response: 200 with
+ * Returns `{ status, json }`, the shape an HTTP response would have: 200 with
  * the client's response, or the refusal's status with `{ message }`.
  */
 async function postChunk(campaignId: string, body: ChunkBody) {
@@ -177,7 +170,7 @@ async function contactRows(campaignId: string) {
   return rows;
 }
 
-describe('agency roster ingest — core’s handler body, in-process (integration)', () => {
+describe('agency roster ingest — the in-process handler body (integration)', () => {
   beforeEach(async () => {
     await truncateAll();
   });
@@ -189,8 +182,8 @@ describe('agency roster ingest — core’s handler body, in-process (integratio
     ['another tenant', { tenant_id: uuidFor('attacker-tenant'), account_id: SEAM_ACCOUNT }],
     ['a sibling account', { tenant_id: SEAM_TENANT, account_id: uuidFor('sibling-account') }],
   ])('refuses a chunk from %s with 404 and writes nothing to the database', async (_label, identity) => {
-    // ClickUp 14ygtkj9tax. Authenticated, well-formed, naming a real campaign —
-    // and still refused, because the S2S token proves who is calling, not which
+    // Authenticated, well-formed, naming a real campaign —
+    // and still refused, because the internal-API credential proves who is calling, not which
     // campaign they may write to. Read back from Postgres: the roster and the
     // chunk ledger are both untouched, so a later retry by the real owner with
     // the same key is not mistaken for a replay.
@@ -209,8 +202,7 @@ describe('agency roster ingest — core’s handler body, in-process (integratio
     });
 
     expect(res.statusCode).toBe(404);
-    // magick-agency: core's body also carried `code: 'campaign_not_found'`; the client
-    // surfaces the message (the body never leaves the process).
+    // The client surfaces the message (the body never leaves the process).
     expect(res.json()).toMatchObject({ message: 'Campaign not found' });
     expect(await contactCount(campaign.id)).toBe(0);
     const { rows: markers } = await getTestPool().query<{ n: string }>(
@@ -256,8 +248,8 @@ describe('agency roster ingest — core’s handler body, in-process (integratio
     for (const row of rows) {
       expect(row.tenant_id).toBe(SEAM_TENANT);
       expect(row.account_id).toBe(SEAM_ACCOUNT);
-      // 085: the wire field `source_row_number` is stored in `csv_line_number`,
-      // and the legacy column is left NULL so 073's still-live partial index
+      // The wire field `source_row_number` is stored in `csv_line_number`,
+      // and the legacy column is left NULL so `uq_agency_contacts_source_row`
       // cannot see these rows. Both halves asserted — a route that "tidied" the
       // column back in would pass an assertion on either one alone.
       expect(row.source_row_number).toBeNull();
@@ -267,13 +259,13 @@ describe('agency roster ingest — core’s handler body, in-process (integratio
     expect(rows.map((r) => r.csv_line_number)).toEqual([1, 2, 3, 4, 5]);
   });
 
-  it('the master-restart replay is refused in-process too, and the response names which layer refused it', async () => {
-    // The ticket's own sentence — kill master mid-ingest, restart, re-run,
-    // assert core's contact count is unchanged — executed against the real
+  it('the caller-restart replay is refused in-process too, and the response names which layer refused it', async () => {
+    // Kill the caller mid-ingest, restart, re-run,
+    // assert the contact count is unchanged — executed against the real
     // endpoint rather than the repository beneath it.
     const campaign = await insertAgencyCampaign();
 
-    // Run 1: master commits chunks 0 and 1, then dies before recording them.
+    // Run 1: the public API layer commits chunks 0 and 1, then dies before recording them.
     const jobOne = randomUUID();
     for (const i of [0, 1]) {
       const r = await postChunk(campaign.id, {
@@ -285,9 +277,8 @@ describe('agency roster ingest — core’s handler body, in-process (integratio
     }
     expect(await contactCount(campaign.id)).toBe(10);
 
-    // Run 2: a fresh job id (master never resumes one — asserted on master's own
-    // side in `agency-ingest-restart-contract.test.ts`, so that claim is no longer prose
-    // in a core comment). The operator re-uploads the same file from the beginning.
+    // Run 2: a fresh job id (the caller never resumes one — asserted on the caller's own
+    // side in `agency-ingest-restart-contract.test.ts`). The operator re-uploads the same file from the beginning.
     const jobTwo = randomUUID();
     const replay0 = await postChunk(campaign.id, {
       ingest_job_id: jobTwo,
@@ -300,7 +291,7 @@ describe('agency roster ingest — core’s handler body, in-process (integratio
       contacts: wireContacts(2, 5),
     });
 
-    // The count the ticket asks for: chunk 0 added nothing, chunk 2 is new work.
+    // The expected count: chunk 0 added nothing, chunk 2 is new work.
     expect(await contactCount(campaign.id)).toBe(15);
 
     // And WHICH layer earned it, over the wire. `duplicate_chunk: false` is the
@@ -322,11 +313,11 @@ describe('agency roster ingest — core’s handler body, in-process (integratio
   });
 
   it('a redelivered chunk key is answered from the ORIGINAL chunk’s recorded counts, not a fresh zero', async () => {
-    // SQS at-least-once: master's own retry re-sends the identical chunk under
-    // the SAME job id, so the chunk-key layer fires. 084's point is that the
+    // SQS at-least-once: the caller's own retry re-sends the identical chunk under
+    // the SAME job id, so the chunk-key layer fires. The point is that the
     // replay must answer with what the first application recorded, because a
     // rejected row leaves nothing behind to recount. Driven through the hand-off because
-    // this response body IS master's ingest summary.
+    // this response body IS the ingest summary.
     const campaign = await insertAgencyCampaign();
     const job = randomUUID();
 
@@ -357,8 +348,8 @@ describe('agency roster ingest — core’s handler body, in-process (integratio
       accepted: 0,
       duplicate_chunk: true,
       // Read back from the marker, NOT invented. A confident zero here is the
-      // defect 084 fixed and it would undercount master's ingest summary by
-      // every row core refused.
+      // defect the recorded counts exist to prevent, and it would undercount the ingest summary by
+      // every row the roster refused.
       rejected_duplicate_rows: 5,
       duplicate_source_rows: [1, 2, 3, 4, 5],
     });
@@ -386,7 +377,7 @@ describe('agency roster ingest — core’s handler body, in-process (integratio
 
     expect(final.json()).toMatchObject({ roster_complete: false, missing_chunks: [1] });
 
-    // Master re-sends precisely the gap and the roster closes.
+    // The public API layer re-sends precisely the gap and the roster closes.
     const gap = await postChunk(campaign.id, {
       ingest_job_id: job, chunk_index: 1, chunk_count: 3, is_final: true,
       contacts: wireContacts(1, 5),
@@ -398,7 +389,7 @@ describe('agency roster ingest — core’s handler body, in-process (integratio
   // ── (b) The null-`source_row_number` chunk ─────────────────────────────────
 
   /**
-   * **The ticket's arm (b) premise no longer holds, and this test is where that
+   * **The earlier premise no longer holds, and this test is where that
    * is written down.**
    *
    * The reopen reasoned: under a fresh job id the chunk-key layer provably
@@ -408,15 +399,15 @@ describe('agency roster ingest — core’s handler body, in-process (integratio
    * protection of any kind and duplicates outright**. Arm (b) asked for a test
    * asserting it duplicates, to pin the hole as known.
    *
-   * That was true of the tree the ticket was written against. It is not true of
-   * this one. Migration 083 re-keyed row identity onto
+   * That was true of the earlier tree. It is not true of
+   * this one. Row identity is keyed on
    * `uq_agency_contacts_row_fingerprint (campaign_id, row_fingerprint)`, where
    * `row_fingerprint = md5(phone + context + timezone)` — computed in SQL by
    * `agency_contact_row_fingerprint`, which does not reference the row number at
    * all and is NOT `STRICT`, so it returns a value even when `context` and
-   * `timezone` are both NULL. 085 then stopped writing
-   * `agency_contacts.source_row_number` entirely (the CSV line moved to
-   * `csv_line_number`), so **every** row core ingests today is NULL in the column
+   * `timezone` are both NULL. Nothing writes
+   * `agency_contacts.source_row_number` any more (the CSV line moved to
+   * `csv_line_number`), so **every** row ingested today is NULL in the column
    * arm (b) is about, and every row is nonetheless covered by the fingerprint.
    *
    * So the hole is CLOSED, and asserting that it duplicates would be a test that
@@ -445,8 +436,8 @@ describe('agency roster ingest — core’s handler body, in-process (integratio
     expect(first.json()).toMatchObject({ accepted: 5, duplicate_chunk: false });
 
     // The mechanism, asserted at the row level: no row number stored anywhere
-    // (so 073's partial index cannot see these rows), yet every row carries a
-    // fingerprint (so 083's partial index CAN). This pair is the whole reason
+    // (so `uq_agency_contacts_source_row` cannot see these rows), yet every row carries a
+    // fingerprint (so `uq_agency_contacts_row_fingerprint` CAN). This pair is the whole reason
     // the replay below is refused, and it is what a mutation would break.
     const stored = await contactRows(campaign.id);
     expect(stored).toHaveLength(5);
@@ -454,7 +445,7 @@ describe('agency roster ingest — core’s handler body, in-process (integratio
     expect(stored.every((r) => r.csv_line_number === null)).toBe(true);
     expect(stored.every((r) => typeof r.row_fingerprint === 'string' && r.row_fingerprint.length === 32)).toBe(true);
 
-    // Run 2 — master restarted, minted a FRESH job id, and re-sent the identical
+    // Run 2 — the public API layer restarted, minted a FRESH job id, and re-sent the identical
     // chunk. A new job id means a new idempotency key, so the chunk-key layer
     // provably cannot fire; `duplicate_chunk: false` below is that fact stated
     // as an assertion rather than assumed, which is what makes the refusal
@@ -469,7 +460,7 @@ describe('agency roster ingest — core’s handler body, in-process (integratio
       duplicate_chunk: false,
       rejected_duplicate_rows: 5,
     });
-    // The count the ticket cares about: 5, not 10.
+    // The expected count: 5, not 10.
     expect(await contactCount(campaign.id)).toBe(5);
     const { rows: totals } = await getTestPool().query<{ contacts_total: number }>(
       'SELECT contacts_total FROM agency_campaigns WHERE id = $1',
@@ -483,14 +474,14 @@ describe('agency roster ingest — core’s handler body, in-process (integratio
     //
     // `duplicate_source_rows` is built from the INPUT's `source_row_number`
     // (`if (c.source_row_number != null)` in `applyIngestChunk`), so a chunk that
-    // never had row numbers reports a truthful COUNT with an EMPTY list. Master's
-    // ingest summary therefore tells the operator "5 rows were refused" and
-    // cannot say which — for a CSV ingest that never happens, because master
+    // never had row numbers reports a truthful COUNT with an EMPTY list. The ingest
+    // summary therefore tells the operator "5 rows were refused" and
+    // cannot say which — for a CSV ingest that never happens, because the caller
     // always derives `source_row_number` from the file line; it happens the
-    // moment a non-CSV producer uses this endpoint, which is exactly the caller
+    // moment a non-CSV producer uses this hand-off, which is exactly the caller
     // arm (b) was worried about.
     //
-    // This is NOT a correctness hole — nothing duplicates — and it is not core's
+    // This is NOT a correctness hole — nothing duplicates — and it is not the roster's
     // to fix alone: a producer with no line numbers has no row identity to name.
     // Reported, not fixed.
     const campaign = await insertAgencyCampaign();

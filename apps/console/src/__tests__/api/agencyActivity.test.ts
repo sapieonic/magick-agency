@@ -4,8 +4,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * The CSV half of the campaign Activity API.
  *
  * What is pinned here is the truncation signal, because it is the one piece of
- * this response that is read out of HEADERS another service writes and then
- * shown to an operator verbatim. A header is not a guarantee: anything that
+ * this response that is read out of response HEADERS and then
+ * shown to an operator unchanged. A header is not a guarantee: anything that
  * does not parse as a count has to become "size unknown" before it leaves this
  * module, or it becomes copy.
  */

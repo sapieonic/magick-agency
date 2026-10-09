@@ -1,4 +1,4 @@
-/* No new tokens (§1). Tones map to the existing semantic colours. */
+/* No new tokens. Tones map to the existing semantic colours. */
 
 .group {
   display: flex;
@@ -27,7 +27,7 @@
 }
 
 .textarea {
-  /* Mono 13px per the global textarea rule (§A.7.3). */
+  /* Mono 13px per the global textarea rule. */
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.5;

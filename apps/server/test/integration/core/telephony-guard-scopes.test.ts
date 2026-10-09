@@ -11,8 +11,8 @@ import { acquireTelephonyConcurrency } from '../../../src/core/telephony-concurr
 import { releaseTelephonyLease } from '../../../src/core/telephony-release.js';
 
 /**
- * NEW (magick-agency, no single core source). The ported guards are the only
- * admitter on agency's VoiceLink account (plan §9), so this proves every refusal
+ * The concurrency guards are the only
+ * admitter on agency's VoiceLink account, so this proves every refusal
  * scope against REAL Redis (6383, non-zero db) and REAL Postgres limits (5436):
  * `account_settings.max_concurrent_calls` and `account_provider_concurrency_allocations`
  * rows, read by the real repositories — nothing is mocked.
@@ -25,8 +25,8 @@ import { releaseTelephonyLease } from '../../../src/core/telephony-release.js';
  *     over all three scopes, which increments nothing on a refusal).
  * Plus the release side: `releaseTelephonyLease` frees every scope either path took.
  *
- * Core's own guard integration suite is ported verbatim alongside, at
- * `test/integration/flows/concurrency-guards.test.ts`; it never drives the
+ * The guard integration suite at
+ * `test/integration/flows/concurrency-guards.test.ts` never drives the
  * compatibility funnel, and never refuses `global_full` or `provider_unallocated`.
  */
 
@@ -109,7 +109,7 @@ describe('telephony guard scopes against real Redis + Postgres (integration)', (
       await seedLegacy(LEGACY_ACCOUNT, 5);
       const owner = realGuards(1);
 
-      // `newlyAcquired: false` is core's verbatim answer for a legacy account on this
+      // `newlyAcquired: false` is the real guard's answer for a legacy account on this
       // path: the real provider guard's single-scope `tryAcquire` reports legacy as
       // `{ acquired, providerScoped: false, newlyAcquired: false }` and the funnel forwards it.
       await expect(acquireTelephonyConcurrency(owner, 'g-1', TENANT, LEGACY_ACCOUNT, PROVIDER))
@@ -125,7 +125,7 @@ describe('telephony guard scopes against real Redis + Postgres (integration)', (
       await seedLegacy(LEGACY_ACCOUNT, 1);
       const owner = realGuards(10);
 
-      // `newlyAcquired: false` is core's verbatim answer for a legacy account on this
+      // `newlyAcquired: false` is the real guard's answer for a legacy account on this
       // path: the real provider guard's single-scope `tryAcquire` reports legacy as
       // `{ acquired, providerScoped: false, newlyAcquired: false }` and the funnel forwards it.
       await expect(acquireTelephonyConcurrency(owner, 'a-1', TENANT, LEGACY_ACCOUNT, PROVIDER))

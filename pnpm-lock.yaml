@@ -156,6 +156,9 @@ importers:
       jsonwebtoken:
         specifier: ^9.0.3
         version: 9.0.3
+      node-pg-migrate:
+        specifier: ^8.0.4
+        version: 8.0.4(@types/pg@8.23.1)(pg@8.23.1)
       openai:
         specifier: ^4.104.0
         version: 4.104.0(ws@8.22.0)(zod@3.25.76)

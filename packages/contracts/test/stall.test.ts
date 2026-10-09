@@ -11,7 +11,7 @@ const _coreNoCredits: 'credits_low' extends AgencyStallCode ? false : true = tru
 const _consoleNoCredits: 'credits_low' extends AgencyApi.AgencyStallCode ? false : true = true;
 const _coreArmNoCredits: 'credits_low' extends AgencyStall['code'] ? false : true = true;
 const _consoleArmNoCredits: 'credits_low' extends AgencyApi.AgencyStall['code'] ? false : true = true;
-// Core's and the console's stall vocabularies agree exactly after the removal.
+// The dialer runtime's and the console's stall vocabularies agree exactly after the removal.
 const _sameCodes: Equals<AgencyStallCode, AgencyApi.AgencyStallCode> = true;
 const _armsCoverCodes: Equals<AgencyStall['code'], AgencyStallCode> = true;
 void [_coreNoCredits, _consoleNoCredits, _coreArmNoCredits, _consoleArmNoCredits, _sameCodes, _armsCoverCodes];
@@ -21,7 +21,7 @@ describe('stall vocabulary', () => {
     expect(AGENCY_STALL_PRIORITY as readonly string[]).not.toContain('credits_low');
   });
 
-  it('keeps core’s order for the remaining seven', () => {
+  it('keeps the priority order for the remaining seven', () => {
     expect([...AGENCY_STALL_PRIORITY]).toEqual([
       'auto_paused_abandonment',
       'dnc_unavailable',
@@ -33,7 +33,7 @@ describe('stall vocabulary', () => {
     ]);
   });
 
-  it('no longer exports the core-vs-master producer split', () => {
+  it('exports no separate producer-subset list', () => {
     expect(Root).not.toHaveProperty('AGENCY_CORE_STALL_CODES');
   });
 

@@ -22,8 +22,8 @@ const {
  *
  * Everything on `agency-campaigns` starts by resolving a campaign the caller owns
  * (`requireOwned`) and scoping to it. The two agent routes **cannot**: there is no
- * campaign in their paths, and `agent_user_id` is master's user id — opaque to
- * core (D3). Core cannot tell a real one from a guessed one and has no route by
+ * campaign in their paths, and `agent_user_id` is the public API layer's user id — opaque to
+ * the internal handlers. They cannot tell a real one from a guessed one and have no route by
  * which the caller proves they own it.
  *
  * So the scope is a PREDICATE on `agency_agent_sessions.tenant_id`/`account_id`,
@@ -52,7 +52,7 @@ const {
 
 const MINE = { tenantId: uuidFor('tenant-mine'), accountId: uuidFor('account-mine') };
 const THEIRS = { tenantId: uuidFor('tenant-theirs'), accountId: uuidFor('account-theirs') };
-/** The SAME opaque user id in both tenants — master ids are not globally unique to core. */
+/** The SAME opaque user id in both tenants — the public API layer's ids are not globally unique. */
 const AGENT = uuidFor('u-shared-id');
 
 const FROM = new Date('2026-08-10T00:00:00.000Z');
@@ -138,7 +138,7 @@ describe('agent record tenant isolation (integration)', () => {
     // boundary in this platform (every resource is scoped by both), and the kind of
     // half-fix that passes a tenant-only test.
     const sibling = { tenantId: MINE.tenantId, accountId: uuidFor('account-sibling') };
-    // Seeded FIRST and closed immediately: migration 093's live-session index is
+    // Seeded FIRST and closed immediately: the live-session index is
     // per (tenant_id, agent_user_id) and takes no notice of the account, so two
     // live sessions for one agent in two accounts of ONE tenant are refused by the
     // database. Closing as we go is also what production looks like.
@@ -160,7 +160,7 @@ describe('agent record tenant isolation (integration)', () => {
     //
     // An empty record must be indistinguishable from an agent who has never worked
     // here. Anything else — a 404, a distinct error, a differently-shaped payload —
-    // turns these routes into an oracle for "is this master user id real", which is
+    // turns these routes into an oracle for "is this user id real", which is
     // the only thing the opaque id could otherwise be protected by.
     await seedTenant(THEIRS, AGENT);
 
@@ -295,7 +295,7 @@ describe('agent record tenant isolation (integration)', () => {
 
     // The scope follows the session, so this DOES appear for MINE. Documented as
     // the behaviour rather than asserted as desirable: the row is impossible
-    // through any write path in core, and the assertion exists so that if someone
+    // through any write path, and the assertion exists so that if someone
     // moves the predicate onto `a.tenant_id` the change is deliberate.
     const page = await attemptsAs(MINE, AGENT);
     expect(page.rows.map((r) => r.id)).toEqual([attempt.id]);

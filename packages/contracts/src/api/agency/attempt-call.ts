@@ -1,21 +1,17 @@
 /**
  * The agency's own call detail — `GET /agency/campaigns/:id/attempts/:attemptId`
- * in cusui's terms (`/proxy/agency/...` in MagickVoice).
+ * (served under `/proxy/agency/...`).
  *
- * PORT NOTE (magick-agency): verbatim excerpt of
- * `magick-comms-cusui/src/api/agencySpine.ts:115-135` (cusui v2.96.0,
- * ee5beb4400ec1fb5fdf6049871681ae6875e8d29). In cusui these two wire shapes are
- * declared inside the API module rather than under `src/types/`; they are the
- * envelope that carries the `webrtc-call.ts` record an agency campaign call shows,
- * so they are ported beside it. Only the import paths changed.
+ * These two wire shapes are the envelope that carries the `webrtc-call.ts`
+ * record an agency campaign call shows, so they live beside it.
  */
 
 import type { AgencyAttempt } from './agency-spine';
 import type { WebRtcCallRecord } from './webrtc-call';
 
 /**
- * Why the call is or is not here. Core's own vocabulary, forwarded through
- * master untouched (`docs/agency-dialer-design.md` §7b).
+ * Why the call is or is not here. The dialer runtime's own vocabulary, forwarded through
+ * the public API layer untouched.
  *
  * The distinction between the last two is not cosmetic. The attempt→call link is
  * deliberately un-FK'd and both sides purge on independent retention windows, so

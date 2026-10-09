@@ -1,7 +1,6 @@
 /**
- * PORT NOTE (magick-agency): moved verbatim out of `logger.ts` (core `src/utils/logger.ts:132-205`
- * @4850d1d9), which re-exports `scrubMediaUrl`; `isSecretQueryKey` is now exported. The move lets
- * the OTel span hook (`apps/server/src/utils/redact-url.ts`) apply the same rule without loading
+ * The log-side URL scrubber, in its own module (`logger.ts` re-exports `scrubMediaUrl`) so the
+ * OTel span hook (`apps/server/src/utils/redact-url.ts`) can apply the same rule without loading
  * pino. That hook runs before the rest of the app, so this module must import nothing.
  */
 

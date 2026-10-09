@@ -1,12 +1,10 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/src/analytics/client.ts@4850d1d9;
-// only the logger import specifier changed.
 /**
  * Shared PostHog transport.
  *
  * Owns the single `posthog-node` client, the resolved environment tag, and the
  * low-level `capture()` primitive. Two event catalogs sit on top of this one
  * client:
- *  - `posthog.ts` — product/business events (call lifecycle, batches, IVR, …).
+ *  - `posthog.ts` — product/business events (WebRTC call lifecycle, dialer call analysis).
  *  - `llm-observability.ts` — PostHog LLM Analytics (`$ai_generation`) events.
  *
  * Keeping the transport here (rather than in either catalog) means there is

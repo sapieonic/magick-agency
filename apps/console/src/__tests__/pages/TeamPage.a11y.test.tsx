@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
-/** TeamPage — Invite Team Member dialog accessible naming (86d3nxc9j). */
+/** TeamPage — Invite Team Member dialog accessible naming. */
 const mocks = vi.hoisted(() => ({
   useTeam: vi.fn(),
   useAccounts: vi.fn(),
@@ -36,7 +36,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('TeamPage — Invite Team Member dialog accessible naming (86d3nxc9j)', () => {
+describe('TeamPage — Invite Team Member dialog accessible naming', () => {
   it('names the dialog by its visible heading and gives the close button an accessible name', () => {
     render(<MemoryRouter><TeamPage /></MemoryRouter>);
     fireEvent.click(screen.getAllByText('Invite Member')[0]!);

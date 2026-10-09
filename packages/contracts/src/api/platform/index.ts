@@ -16,7 +16,7 @@ export * from './audit';
 export * from './super-admin';
 export * from './super-admin-usage';
 
-// `auth.ts` (cusui `types/auth.ts`) and `team.ts` (cusui `types/team.ts`) both
-// declare `TenantMember`; cusui's team page uses the `team.ts` one, which adds
+// `auth.ts` (the console `types/auth.ts`) and `team.ts` (the console `types/team.ts`) both
+// declare `TenantMember`; the console's team page uses the `team.ts` one, which adds
 // `invite_state`. The explicit re-export wins over both `export *` lines.
 export type { TenantMember } from './team';

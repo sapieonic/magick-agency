@@ -16,9 +16,8 @@ import { insertAccount, insertTenant } from '../setup/factories.js';
  *      NULL never equals NULL in a unique index, which is exactly why the index
  *      COALESCEs to a sentinel; whether that arithmetic separates the two rows or
  *      collides them is a property of the index, not of any TypeScript.
- *   2. `listTenantWidePhones` must NOT return campaign-scoped numbers. It is the
- *      sole source of core's flat `dnc:{tenantId}` Redis set (§2.3), which has no
- *      way to express scope — so a campaign-scoped number leaking into it would be
+ *   2. The tenant-wide listing must NOT return campaign-scoped numbers. A tenant-wide
+ *      set has no way to express scope — so a campaign-scoped number leaking into it would be
  *      enforced at dial time across **every other campaign in the tenant**. The
  *      mark asked for one campaign and would silently suppress all of them.
  *
@@ -113,8 +112,8 @@ beforeEach(async () => {
 
   /**
    * Campaign ids are invented here rather than inserted anywhere, because there is
-   * nowhere in this database to insert them: `agency_campaigns` lives in **core's**
-   * database and `dnc_entries.campaign_id` carries no foreign key (see the header
+   * nowhere in this database to insert them: `agency_campaigns` lives in a
+   * different database and `dnc_entries.campaign_id` carries no foreign key (see the header
    * of `050_dnc.sql`). A test that needed a campaign row to exist would be
    * asserting a constraint this schema deliberately does not have.
    */
@@ -127,15 +126,9 @@ afterAll(async () => {
 });
 
 /*
- * PORT NOTE (magick-agency, lane B1; decision B8). DELETED: the source's first
- * describe, "listTenantWidePhones — the boundary that keeps core from over-blocking"
- * (5 cases: "EXCLUDES a campaign-scoped row from what core receives", "excludes an
- * account-scoped row too — the filter has two halves", "excludes a row scoped to
- * BOTH an account and a campaign", "returns a number held tenant-wide even when the
- * SAME number is also campaign-scoped", "never leaks another tenant's tenant-wide
- * rows"). Its subject, the feed into core's flat Redis set, is not ported. The
- * property it protected — a campaign-scoped mark must not become a tenant-wide
- * block — is now carried by the dial-time check itself and is asserted against the
+ * There is no feed into a separate tenant-wide set (decision B8). The
+ * property that would need protecting — a campaign-scoped mark must not become a tenant-wide
+ * block — is carried by the dial-time check itself and is asserted against the
  * real table in `agency/dnc-registry.test.ts` (a campaign row blocks that campaign
  * only). `tenantWidePhones` below reads the same rows for the cases that remain.
  */
@@ -234,8 +227,7 @@ describe('insertMany — a campaign-scoped add writes exactly its own row', () =
     expect(result.results[0]!.created).toBe(true);
     expect(result.results[0]!.entry.campaign_id).toBe(campaignId);
 
-    // PORT NOTE: the source asserted no sync version and no `dnc_sync_state` row
-    // (the table is not carried). The scope property it stood for is this:
+    // There is no sync version or `dnc_sync_state` row. The scope property is this:
     expect(await tenantWidePhones(tenantId)).toEqual([]);
   });
 
@@ -279,7 +271,7 @@ describe('insertMany — a campaign-scoped add writes exactly its own row', () =
     });
 
     // The end-to-end shape of the feature: neither write is mistaken for the
-    // other's duplicate, and only the escalation reaches core.
+    // other's duplicate, and only the escalation is tenant-wide.
     expect(scoped.results[0]!.created).toBe(true);
     expect(escalated.results[0]!.created).toBe(true);
     expect(await tenantWidePhones(tenantId)).toEqual([BOTH_SCOPES_PHONE]);
@@ -304,8 +296,8 @@ describe('deleteById — removing one scope leaves the others', () => {
 
     /**
      * The survivor check is `account_id IS NULL AND campaign_id IS NULL`, so the
-     * campaign-scoped row must NOT count as a survivor. If it did, master would
-     * skip the version bump, core would keep the number in its flat set forever,
+     * campaign-scoped row must NOT count as a survivor. If it did, the
+     * number would stay in the tenant-wide set forever,
      * and a number an operator deliberately un-suppressed would stay blocked
      * tenant-wide with the list showing it as removed.
      */
@@ -332,8 +324,6 @@ describe('deleteById — removing one scope leaves the others', () => {
     const removed = await repo.deleteById(scoped.results[0]!.entry.id, tenantId);
 
     expect(removed?.entry.campaign_id).toBe(campaignId);
-    // Publishing an SREM for a number core was never told about is a no-op on
-    // Redis but not on the watermark: it would consume a version and make the
-    // delta stream claim a change core cannot reconcile against anything.
+    // Removing a campaign-scoped row must not touch the tenant-wide rows.
   });
 });

@@ -8,7 +8,7 @@ import type { FastifyInstance } from 'fastify';
  * ## The defect
  *
  * `inviteSignInUrl` sat on the line ABOVE the `try` that wraps `sendInviteEmail`,
- * and it reads config too: `(await appConfig()).cusuiBaseUrl`, via a lazy
+ * and it reads config too: `(await appConfig()).consoleBaseUrl`, via a lazy
  * `import('../config/index.js')`. So a failure resolving config there escaped as
  * a 500 on a request whose membership had **already been written**. The
  * supervisor is told the invite failed, retries, and gets a 409 from the row the
@@ -32,7 +32,7 @@ import type { FastifyInstance } from 'fastify';
  * Adding `setupFiles` to `vitest.config.integration.ts` makes that suite green
  * again — and would hide this. A shim that supplies config is not the same fact
  * as a route that survives config being unavailable: production has no shim, and
- * `CUSUI_BASE_URL` is genuinely optional. So the guarantee is asserted here,
+ * `CONSOLE_BASE_URL` is genuinely optional. So the guarantee is asserted here,
  * directly, by making the call reject.
  *
  * Separate from `user.routes.test.ts` because that file deliberately leaves
@@ -81,7 +81,7 @@ vi.mock('@magick-agency/db/repositories/account.repository', () => ({
   accountRepository: mocks.accountRepository,
 }));
 vi.mock('../../../../src/cache/redis-cache.js', () => ({
-  // Q5 (Manas, 2026-10-09): revocation deletes go through `delForRevocation` (retried, reports
+  // Q5: revocation deletes go through `delForRevocation` (retried, reports
   // failure); this double forwards to the `del` mock and reports success, so the assertions on
   // `del` still observe the key.
   redisCache: { ...mocks.redisCache, delForRevocation: async (...k: string[]) => { await mocks.redisCache.del(...k); return true; } },
@@ -90,7 +90,7 @@ vi.mock('../../../../src/cache/redis-cache.js', () => ({
  * The mailer is mocked, and both of its exports are listed.
  *
  * A partial factory would fail the moment the route reads the export it omits —
- * the hazard this repo's CLAUDE.md records for the posthog and telephony mocks.
+ * the known hazard with partial mock factories.
  * `InviteEmailResult` is a type-only import in the route, so it needs nothing here.
  */
 vi.mock('../../../../src/notifications/invite-mailer.js', () => ({
@@ -152,7 +152,7 @@ describe('POST /invite — the mail work can never fail the invite', () => {
     // Reported as unsent rather than pretended-sent — `failed` is the honest
     // reason: the caller could not get far enough to know anything else.
     expect(body.invite_email).toEqual({ sent: false, reason: 'failed' });
-    // `null` is the value the response already documents for "no CUSUI_BASE_URL",
+    // `null` is the value the response already documents for "no CONSOLE_BASE_URL",
     // and "could not be resolved" is the same fact from the caller's side.
     expect(body.sign_in_url).toBeNull();
   });
@@ -205,7 +205,7 @@ describe('POST /invite — the mail work can never fail the invite', () => {
     expect(res.json().sign_in_url).toBe('https://app.test/login');
   });
 
-  it('reports sign_in_url as null when there is no CUSUI_BASE_URL, without failing', async () => {
+  it('reports sign_in_url as null when there is no CONSOLE_BASE_URL, without failing', async () => {
     // `inviteSignInUrl` returns `null` rather than throwing for an unset base
     // url. The KEY is still present, because a sometimes-absent key is
     // indistinguishable from one a client forgot to read.

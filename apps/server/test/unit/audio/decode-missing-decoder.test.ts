@@ -1,10 +1,9 @@
-// NEW (magick-agency, lane C): the brief's deploy-concern check — "decode must fail cleanly
-// when the decoder is missing, as core does". Core has no test for it: its decode suite
+// Deploy-concern check: decode must fail cleanly when the decoder is missing. The decode suite
 // skips the real-decode cases when the binaries are absent (`skipIf(!HAVE_DECODERS)`) and
-// `decoder-toolchain-packaging.test.ts` asserts the Dockerfile installs them (agency has no
-// Dockerfile yet; deploy is the lead's). This drives the REAL spawn path at binaries that do
-// not exist (core's own `MPG123_BIN` / `SNDFILE_CONVERT_BIN` overrides, read at import) and
-// pins that the result is core's typed `DECODE_FAILED` — never a crash, a hang or an untyped
+// `decoder-toolchain-packaging.test.ts` asserts the Dockerfile installs them (there is no
+// Dockerfile yet). This drives the REAL spawn path at binaries that do
+// not exist (the `MPG123_BIN` / `SNDFILE_CONVERT_BIN` overrides, read at import) and
+// pins that the result is the typed `DECODE_FAILED` — never a crash, a hang or an untyped
 // error — for both decoders.
 import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';

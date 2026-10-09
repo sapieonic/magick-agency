@@ -10,7 +10,7 @@ export interface AudioPlaybackOptions {
    * the AI-call path keeps: that stream is server-paced TTS over a direct socket
    * and re-basing it with latency would only add delay to a turn-taking loop.
    *
-   * A live PSTN conversation relayed through master is the other case. Its
+   * A live PSTN conversation relayed through the API is the other case. Its
    * frames arrive in 20 ms bursts whose spacing is at the mercy of two
    * WebSocket hops, so a schedule with no cushion re-bases to "now" on every
    * jitter spike and each re-base is an audible click. One cushion of a few

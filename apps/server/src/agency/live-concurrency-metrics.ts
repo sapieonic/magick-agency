@@ -13,16 +13,11 @@ import {
 const log = createChildLogger({ component: 'agency-live-concurrency-metrics' });
 
 /**
- * ─── THE DIALER'S LIVE-CONCURRENCY SIGNAL (2026-09-08 pilot, finding 4) ─────
+ * ─── THE DIALER'S LIVE-CONCURRENCY SIGNAL ───────────────────────────────────
  *
- * `calls_active_current` reads **flat 0 for the agency dialer** — it is set from
- * `CallManager`'s AI `activeSessions` map and an agency leg never enters it — so
- * the pilot ran a hundred-odd calls with the platform's only live-concurrency
- * number pinned at zero and nothing looking wrong. This publishes the missing
- * one. The full rationale for it being a separate family rather than a widening
- * of that gauge is on the metric declarations in `src/utils/metrics.ts`; the
- * short version is that adding a label to a live series terminates it and adding
- * a second writer to a map-derived value races the AI path.
+ * Publishes `agency_live_attempts_current`: the dialer's live calls per tenant,
+ * campaign and attempt state. The gauge is declared in
+ * `@magick-agency/observability/metrics/agency`.
  *
  * The sibling of `abandonment-metrics.ts` and deliberately the same shape: read
  * `agency_call_attempts` on a timer, publish a whole snapshot, let the gauge
@@ -42,7 +37,7 @@ const log = createChildLogger({ component: 'agency-live-concurrency-metrics' });
  * The label value every unrecognised `agency_call_attempts.state` folds into.
  *
  * **Be honest about the odds: this is unreachable today.**
- * `ck_agency_attempt_state` (migration 075) constrains the column to exactly
+ * `ck_agency_attempt_state` (the baseline migration) constrains the column to exactly
  * `queued|dialing|ringing|answered|bridged|ended`, and `ended` is excluded by the
  * query's own predicate — so on the current schema every row lands on a known
  * label and this constant is never used. It is not dead weight either, and what

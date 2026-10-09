@@ -1,19 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): ported from core test/unit/agency/campaign-lifecycle-route.test.ts@4850d1d9.
- * Mock paths re-pointed only (logger → a partial `@magick-agency/observability` mock;
- * announcement / call / account-settings / profile repositories → `@magick-agency/db/repositories/*`;
- * leaf modules → `@magick-agency/domain/*`; `contracts.js` → `@magick-agency/contracts/agency`).
- * Cases verbatim unless noted here. The four lifecycle handlers are pure `transitionStatus` writes (no runtime call):
- * `stopping → stopped` is the pacing leader's (Phase 6) and is not exercised here.
- */
-
 // ---------------------------------------------------------------------------
 // `POST /agency-campaigns/:id/{start,pause,resume,stop}` — the lifecycle actor.
+// The four handlers are pure `transitionStatus` writes (no runtime call); `stopping → stopped`
+// is the pacing leader's and is not exercised here.
 //
-// The repository half of migration 108 is in
+// The repository half of the lifecycle stamps is in
 // `campaign-lifecycle-timestamps.test.ts` (the UPDATE's argument order, the
 // terminal CASE, the wire fold). This file is the ROUTE half, and it exists for
 // two assertions:
@@ -118,11 +111,11 @@ describe('the lifecycle routes read the actor from the body', () => {
 
   it('threads { user_id, name } into the patch', async () => {
     repos.campaigns.findById.mockResolvedValue({ ...ROW, status: 'draft' });
-    const res = await control('start', { actor_user_id: 'u-manas', actor_name: 'Manas N' });
+    const res = await control('start', { actor_user_id: 'u-supervisor', actor_name: 'Test Supervisor' });
     expect(res.statusCode, JSON.stringify(res.json())).toBe(200);
     expect(repos.campaigns.transitionStatus).toHaveBeenCalledWith(
       'camp-1', ['draft', 'paused'], 'running',
-      { last_transition_by: { user_id: 'u-manas', name: 'Manas N' } },
+      { last_transition_by: { user_id: 'u-supervisor', name: 'Test Supervisor' } },
     );
   });
 
@@ -142,7 +135,7 @@ describe('the lifecycle routes read the actor from the body', () => {
   });
 
   it('treats a blank or wrong-typed actor id as absent, never as an actor', async () => {
-    for (const body of [{ actor_user_id: '   ' }, { actor_user_id: 42 }, { actor_name: 'Manas N' }]) {
+    for (const body of [{ actor_user_id: '   ' }, { actor_user_id: 42 }, { actor_name: 'Test Supervisor' }]) {
       vi.clearAllMocks();
       flags.isEnabled.mockResolvedValue(true);
       repos.campaigns.transitionStatus.mockResolvedValue(ROW);
@@ -160,9 +153,9 @@ describe('the lifecycle routes read the actor from the body', () => {
     repos.campaigns.findById.mockResolvedValue({ ...ROW, status: 'running' });
     const res = await control('pause', {
       actor_user_id: 'u-'.padEnd(200, 'x'),
-      actor_name: 'Manas N',
+      actor_name: 'Test Supervisor',
     });
-    // The asymmetry with the name below is the point. An id is an IDENTITY — master
+    // The asymmetry with the name below is the point. An id is an IDENTITY — the public API layer
     // resolves it back to a user — so a truncated one is not a shortened answer, it
     // is a DIFFERENT user. Recording that would attribute the transition to the
     // wrong human, which is precisely what the `null`-means-unknown contract exists
@@ -177,7 +170,7 @@ describe('the lifecycle routes read the actor from the body', () => {
   it('TRUNCATES an over-long name rather than failing the transition', async () => {
     repos.campaigns.findById.mockResolvedValue({ ...ROW, status: 'paused' });
     const res = await control('resume', {
-      actor_user_id: 'u-manas',
+      actor_user_id: 'u-supervisor',
       actor_name: 'M'.repeat(400),
     });
     // `last_transition_by_name` is VARCHAR(255); a longer value raises 22001 and
@@ -192,7 +185,7 @@ describe('the lifecycle routes read the actor from the body', () => {
 
   it('does NOT pass a lifecycle timestamp from the route any more', async () => {
     repos.campaigns.findById.mockResolvedValue({ ...ROW, status: 'paused' });
-    await control('resume', { actor_user_id: 'u-manas' });
+    await control('resume', { actor_user_id: 'u-supervisor' });
     const patch = repos.campaigns.transitionStatus.mock.calls[0]![3] as Record<string, unknown>;
     // THE fix, asserted at the site that used to be wrong: `/resume` passed
     // `{ started_at: new Date() }` and that is what overwrote the original start.
@@ -206,11 +199,11 @@ describe('the lifecycle routes read the actor from the body', () => {
   it('serves the FOLDED campaign row back, not the raw columns', async () => {
     repos.campaigns.findById.mockResolvedValue({ ...ROW, status: 'draft' });
     repos.campaigns.transitionStatus.mockResolvedValue({
-      ...ROW, last_transition_by_user_id: 'u-manas', last_transition_by_name: 'Manas N',
+      ...ROW, last_transition_by_user_id: 'u-supervisor', last_transition_by_name: 'Test Supervisor',
     });
-    const res = await control('start', { actor_user_id: 'u-manas', actor_name: 'Manas N' });
+    const res = await control('start', { actor_user_id: 'u-supervisor', actor_name: 'Test Supervisor' });
     const body = res.json();
-    expect(body.last_transition_by).toEqual({ user_id: 'u-manas', name: 'Manas N' });
+    expect(body.last_transition_by).toEqual({ user_id: 'u-supervisor', name: 'Test Supervisor' });
     expect(body).not.toHaveProperty('last_transition_by_user_id');
   });
 });

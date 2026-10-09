@@ -1,8 +1,7 @@
 /*
- * PORT NOTE (magick-agency): ported from core `src/db/repositories/dialer-analysis-job.repository.ts`
- * (v1.123.2). Changes, each in PORTING.md:
+ * Notes on this repository:
  *  - every statement targets `agency_calls` (the baseline's rename of `webrtc_calls`);
- *  - the settlement step is removed (plan §4): `claimPendingSettlements`,
+ *  - there is no settlement step: no `claimPendingSettlements`,
  *    `markSettlementSent`, `markSettlementAbandoned`, `oldestPendingSettlementAgeSeconds`
  *    and every `settlement_*` assignment are gone, as the baseline dropped the
  *    columns. `completeWithAnalysis` no longer stamps `next_attempt_at = now()`
@@ -108,7 +107,7 @@ export class DialerAnalysisJobRepository {
     return result.rows[0] ?? null;
   }
 
-  /** Support/internal listing (S2S "why is there no summary"). Scoped when tenant given. */
+  /** Support/internal listing ("why is there no summary"). Scoped when tenant given. */
   async list(opts: {
     tenant_id?: string;
     call_id?: string;
@@ -150,7 +149,7 @@ export class DialerAnalysisJobRepository {
    * The recording webhook landed: promote this call's job awaiting → queued,
    * guarded on `status='awaiting_recording'` so a duplicate webhook (C3) can't
    * re-queue a running or completed job. A short settle delay (default 0) defers
-   * the first claim past a possible pre-finalization URL (§8). Returns the updated
+   * the first claim past a possible pre-finalization URL. Returns the updated
    * job, or null when nothing was in `awaiting_recording` (duplicate/late webhook).
    */
   async markRecordingReady(callId: string, settleSeconds = 0): Promise<DialerAnalysisJobRecord | null> {

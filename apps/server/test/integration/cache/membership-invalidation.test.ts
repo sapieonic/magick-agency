@@ -1,4 +1,3 @@
-// PORT NOTE (magick-agency): ported from master test/integration/cache/membership-invalidation.test.ts@a1f0756a (3 → 3).
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import Redis from 'ioredis';
 import { TEST_REDIS_URL, assertSafeTestRedisUrl } from '../../helpers/test-redis.js';
@@ -8,13 +7,10 @@ import { TEST_REDIS_URL, assertSafeTestRedisUrl } from '../../helpers/test-redis
 // and the tenant-name-resolver (analytics). We never exercise those paths here —
 // only invalidateTenantMembershipCache — but stub them so the import is inert.
 
-// PORT NOTE (magick-agency): master's `db/connection.js` and `analytics/posthog.js`
-// stubs are removed. Agency's repositories import the package pool lazily (no
-// connection is opened on import) and there is no analytics module.
+// The repositories import the package pool lazily (no connection is opened on import)
+// and there is no analytics module, so nothing needs stubbing.
 
-// PORT NOTE (magick-agency): master pointed this at its own test Redis
-// (`redis://localhost:6381`, a port agency must never touch). Agency's guarded
-// test Redis (6383, the worktree's non-zero db) is used, and every FLUSHDB goes
+// The guarded test Redis (6383, the worktree's non-zero db) is used, and every FLUSHDB goes
 // through `assertSafeTestRedisUrl()` first.
 assertSafeTestRedisUrl();
 const RAW_REDIS_URL = TEST_REDIS_URL;

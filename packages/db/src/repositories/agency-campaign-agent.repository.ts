@@ -1,21 +1,19 @@
 import { getPool } from '../connection.js';
 
 /*
- * PORT NOTE (magick-agency): ported verbatim from master
- * `src/db/repositories/agency-campaign-agent.repository.ts` (v3.24.0). Master has
- * no separate model file; the record and input types live here, as in master.
- * Comments are master's and describe master's two-database world (core-owned
- * campaign ids, the proxy); in this app `agency_campaigns` is in the same
- * database, but the table still has no FK on `campaign_id` (baseline).
+ * There is no separate model file; the record and input types live here.
+ * Some comments below describe `campaign_id` as owned by the dialer runtime and
+ * resolved through the proxy; `agency_campaigns` is in the same database as this
+ * table, but the table still has no FK on `campaign_id` (baseline).
  */
 
 /**
- * A row of `agency_campaign_agents` (migration 060, index widened by 064) — one
+ * A row of `agency_campaign_agents` — one
  * agent's staffing on one campaign, active while `unassigned_at` is NULL. An agent
- * may hold several such rows; being LIVE on one campaign is core's session index,
+ * may hold several such rows; being LIVE on one campaign is the dialer runtime's session index,
  * not this table.
  *
- * `campaign_id` is core's, with no FK behind it (separate databases), so a row can
+ * `campaign_id` has no FK behind it (baseline), so a row can
  * legitimately outlive the campaign it names. Readers resolve the name through the
  * proxy and report what they find rather than assuming the row is stale.
  */
@@ -43,7 +41,7 @@ export interface AssignAgentInput {
 /**
  * How many times {@link AgencyCampaignAgentRepository.assign} re-runs its insert.
  *
- * Three, and the bound matters more than the number. Since migration 064 the only
+ * Three, and the bound matters more than the number. With the per-campaign index the only
  * way to consume an attempt is a concurrent *unassign* closing the very row our
  * insert just conflicted with — a supervisor unstaffing somebody in the instant
  * another supervisor staffs them onto the same campaign. That terminates after one
@@ -53,16 +51,16 @@ export interface AssignAgentInput {
 const ASSIGN_MAX_ATTEMPTS = 3;
 
 /**
- * Thrown when a second assignment cannot be created because migration 064 has not
- * been applied yet — 060's one-active-assignment-per-tenant index is still in force.
+ * Thrown when a second assignment cannot be created because the per-campaign staffing
+ * index is not present — a one-active-assignment-per-tenant index is still in force.
  *
  * A typed error rather than a generic throw because the route turns it into a 409
  * with an actionable sentence. The alternatives are both worse: a 500 tells a
- * supervisor nothing, and silently moving the agent (060's behaviour) would make the
- * result of the same request depend on which migration had run, which is the class of
+ * supervisor nothing, and silently moving the agent (the per-tenant index's behaviour) would make the
+ * result of the same request depend on which index the database had, which is the class of
  * inconsistency that is hardest to diagnose from a bug report.
  *
- * Only reachable in the window between deploying this code and applying 064 — or
+ * Only reachable against a database that lacks the per-campaign index, for example
  * after a `migrate down`. It should never be seen in a settled deployment.
  */
 export class StaffingUpgradePendingError extends Error {
@@ -76,20 +74,20 @@ export class StaffingUpgradePendingError extends Error {
     super(
       `Cannot staff user ${userId} onto campaign ${requestedCampaignId}: they are already ` +
         `active on ${currentCampaignId} and this database still enforces one campaign per ` +
-        'person (migration 064 not applied).',
+        'person (the per-campaign staffing index is not present).',
     );
     this.name = 'StaffingUpgradePendingError';
   }
 }
 
 /**
- * The name of migration 064's index. Probed rather than assumed — see
+ * The name of the per-campaign staffing index. Probed rather than assumed — see
  * {@link hasPerCampaignIndex}.
  */
 const PER_CAMPAIGN_INDEX = 'uq_agency_campaign_agent_active_campaign';
 
 /**
- * Memoized answer to "has migration 064 been applied?", cached for the process.
+ * Memoized answer to "is the per-campaign staffing index present?", cached for the process.
  *
  * A `Promise` rather than a boolean so concurrent first callers share one probe
  * instead of stampeding the catalog. Cleared on failure so a transient error does
@@ -98,35 +96,35 @@ const PER_CAMPAIGN_INDEX = 'uq_agency_campaign_agent_active_campaign';
 let perCampaignIndexProbe: Promise<boolean> | null = null;
 
 /**
- * Whether the database enforces staffing per CAMPAIGN (migration 064) or per
- * TENANT (migration 060).
+ * Whether the database enforces staffing per CAMPAIGN (the per-campaign index) or per
+ * TENANT (a one-active-assignment-per-tenant index).
  *
  * ── Why this is probed and not inferred ────────────────────────────────────
  * `assign()` uses a bare `ON CONFLICT DO NOTHING`, which matches whichever index
- * exists — that is what makes the code correct across the migration. The cost is
+ * exists — that is what makes the code correct under either index. The cost is
  * that a conflict no longer says WHICH index refused, and one situation is
  * genuinely ambiguous from row state alone:
  *
  *   insert conflicted · no live row for this campaign · a live row for another
  *
- * Under 060 that is "they are staffed elsewhere and a second assignment is not
- * expressible". Under 064 it is "the row we conflicted with was just unassigned,
+ * With the per-tenant index that is "they are staffed elsewhere and a second assignment is not
+ * expressible". With the per-campaign index it is "the row we conflicted with was just unassigned,
  * and their other campaigns have nothing to do with it" — an ordinary race, and the
  * one the retry loop exists for.
  *
- * An earlier revision read that state as the first case unconditionally, so a
- * multi-staffed agent hitting the race got a misleading 409 instead of a completed
- * assignment (found by review on PR #218). No amount of row inspection can
+ * Reading that state as the first case unconditionally would give a
+ * multi-staffed agent hitting the race a misleading 409 instead of a completed
+ * assignment. No amount of row inspection can
  * separate the two, so the schema is asked directly.
  *
- * Read from `pg_indexes` rather than from a migration count: the catalog is the
+ * Read from `pg_indexes` rather than from a migrations table: the catalog is the
  * outcome, a migrations table only records intent, and a hand-dropped index would
  * make the second lie.
  *
  * ── Failing OPEN is the safe direction ────────────────────────────────────
- * If the probe itself fails we assume 064 IS present, because that is the settled
- * state of every deployment past this release: the cost is that a genuinely pre-064
- * database reports the retry-exhaustion error instead of the tailored 409, which is
+ * If the probe itself fails we assume the per-campaign index IS present, because that is the settled
+ * state of every deployment: the cost is that a database genuinely lacking it
+ * reports the retry-exhaustion error instead of the tailored 409, which is
  * a worse message for a rare case. Assuming the opposite would hand a confident,
  * wrong "finish upgrading" 409 to every racing assign on a healthy database.
  */
@@ -188,15 +186,15 @@ export class AgencyCampaignAgentRepository {
    * Every campaign this agent is staffed on — the agent's own question, "where
    * am I supposed to be today?"
    *
-   * Plural since migration 064. It used to be singular by construction, because
-   * `uq_agency_campaign_agent_active` allowed one live row per person per tenant
-   * and assigning somebody to a second campaign silently unstaffed them from the
-   * first. That made an ordinary afternoon handover destructive and left the
-   * agent's landing page unable to express "which of my campaigns now?". The
-   * index is now per-campaign and this returns the set.
+   * Plural by design. A per-tenant staffing index would make it singular, because
+   * it would allow one live row per person per tenant and assigning somebody to a
+   * second campaign would silently unstaff them from the first. That makes an
+   * ordinary afternoon handover destructive and leaves the agent's landing page
+   * unable to express "which of my campaigns now?". The index is per-campaign and
+   * this returns the set.
    *
-   * Tenant-scoped in the same statement as the read, per rule 1 of the RBAC
-   * section in CLAUDE.md — an assignment id is not a capability and a user id
+   * Tenant-scoped in the same statement as the read, per the tenancy rule
+   * (the tenant boundary and the lookup are one statement) — an assignment id is not a capability and a user id
    * says nothing about which tenant is asking.
    *
    * `ORDER BY assigned_at ASC, id ASC` is a STABLE total order, not a ranking:
@@ -229,8 +227,8 @@ export class AgencyCampaignAgentRepository {
    * following staffing edits it has no UI to explain.
    *
    * Do not reach for this in new code: outside that back-compat route, picking
-   * one of an agent's campaigns without asking them is the bug migration 064
-   * exists to fix. Use {@link listActiveForUser}.
+   * one of an agent's campaigns without asking them is the bug the
+   * per-campaign index exists to avoid. Use {@link listActiveForUser}.
    *
    * @deprecated Use {@link listActiveForUser}.
    */
@@ -246,10 +244,10 @@ export class AgencyCampaignAgentRepository {
    * The agent's own FULL staffing history — active rows AND closed ones.
    *
    * ── Why this exists beside {@link listActiveForUser} rather than inside it ──
-   * Migration 060 closes rows (`unassigned_at`) instead of deleting them, and its
-   * header says exactly why: *"who was staffed on this campaign in March" is a
-   * question supervisors and disputes actually ask, and a delete cannot answer
-   * it.* Until this method existed nothing in the platform could ask it. Every
+   * Unassigning closes rows (`unassigned_at`) instead of deleting them, because
+   * "who was staffed on this campaign in March" is a question supervisors and
+   * disputes actually ask, and a delete cannot answer it. Until this method existed
+   * nothing could ask it. Every
    * reader — `listActiveForUser`, `listActiveForCampaign`, `findActiveForUser` —
    * carries `unassigned_at IS NULL`, so the history was being written and was
    * unreadable: storage paying for a promise no code kept.
@@ -270,8 +268,8 @@ export class AgencyCampaignAgentRepository {
    * in one transaction share a timestamp to the microsecond, and a bare
    * `assigned_at` would let equal rows come back in a different order per read.
    *
-   * Tenant-scoped in the same statement as the read, per rule 1 of CLAUDE.md's
-   * RBAC section.
+   * Tenant-scoped in the same statement as the read, per the tenancy rule
+   * (the tenant boundary and the lookup are one statement).
    *
    * ── BOUNDED, which an earlier revision of this docstring said it was not ───
    * It used to end "deliberately UNBOUNDED … a handful per campaign per year, not
@@ -282,10 +280,10 @@ export class AgencyCampaignAgentRepository {
    * so the row count only ever grows: every reassignment adds one, every
    * offboarding-and-rehire adds more, and `closeAllForUser` manufactures a closed
    * row per assignment in one statement. Nothing ever removes one — that is the
-   * entire point of migration 060 closing rather than deleting. And the only
+   * entire point of closing rather than deleting. And the only
    * caller is `GET /proxy/agency/my-campaigns`, which an `agent` — the lowest
    * privileged role there is — reaches on their own console, and which spends one
-   * core round trip per distinct campaign on the result.
+   * campaign lookup per distinct campaign on the result.
    *
    * So the nominated shape is implemented rather than described: a hard `LIMIT`
    * the caller cannot raise, and an optional `from`/`to` window on `assigned_at`
@@ -335,21 +333,21 @@ export class AgencyCampaignAgentRepository {
    *
    * ── The leak this closes ───────────────────────────────────────────────────
    * `DELETE /users/:id/membership` removed a membership and dropped a cache key,
-   * and nothing else. Nothing in master called any bulk unassign — this repository's
+   * and nothing else. Nothing called any bulk unassign — this repository's
    * only caller was the staffing route — so a departed agent stayed on every
    * supervisor's staffing list forever, and `GET /campaigns/:id/agents` went on
    * resolving them to a name and an email out of `users`. The same held for a role
    * change away from `agent`.
    *
    * ── Closing a row REVOKES NOTHING, and that is what makes this automatic ───
-   * Staffing is not authorization (migration 060's header, and the module header
+   * Staffing is not authorization (see also the module header
    * of `proxy-agency-staffing.routes.ts`): nothing consults this table to decide
    * whether a join is allowed — `agency.station.connect` does, and the membership
    * removal is what takes that away. So this is a tidy-up of a navigation list,
    * safe to do without asking, and its failure is survivable. It is emphatically
    * NOT the mechanism that ends someone's access, and it must never be made into
    * one: a caller that treats a closed row as a revocation has re-introduced the
-   * conflation 064's header spent a page separating.
+   * conflation of staffing with authorization.
    *
    * ── Returns the ROWS, not a count ─────────────────────────────────────────
    * One `agency_campaign_agent.unassigned` audit row is written per closed
@@ -451,10 +449,10 @@ export class AgencyCampaignAgentRepository {
    * Staff a user onto a campaign. Idempotent.
    *
    * ── This used to MOVE them, and no longer does ─────────────────────────────
-   * Under migration 060's per-tenant index, assigning somebody already staffed
-   * elsewhere closed that row first — so `assign()` was a two-statement
-   * transaction with a bounded retry loop around a lost-race case. Migration 064
-   * widened the index to `(tenant_id, user_id, campaign_id)`, which deletes that
+   * Under a per-tenant index, assigning somebody already staffed
+   * elsewhere would have to close that row first — a two-statement
+   * transaction with a bounded retry loop around a lost-race case. The index is
+   * `(tenant_id, user_id, campaign_id)`, which deletes that
    * whole problem rather than solving it: there is no other row to close, so
    * there is no move, so there is no race to lose and nothing to retry.
    *
@@ -482,16 +480,15 @@ export class AgencyCampaignAgentRepository {
    * `ON CONFLICT DO NOTHING` with no target matches ANY unique index on the table.
    * Naming one — `(tenant_id, user_id, campaign_id) WHERE unassigned_at IS NULL` —
    * also works, and reads better, but it couples this statement to the exact shape
-   * of migration 064's index: run it against 060's `(tenant_id, user_id)` index and
+   * of the per-campaign index: run it against a `(tenant_id, user_id)` index and
    * Postgres cannot infer an arbiter at all and raises `42P10`, which surfaces as a
    * 500 on every staffing write rather than as anything diagnosable.
    *
    * That coupling is a real hazard rather than a hypothetical one, and it bites in
-   * the direction people actually go: a code ROLLBACK past 064 leaves the wide index
-   * in place, and any release whose `assign()` names the old two-column arbiter then
-   * breaks. The bare form is immune in both directions — it is correct under 060's
-   * index and under 064's — so the code stops caring which migration has run. See
-   * migration 064's header for the rollback note.
+   * the direction people actually go: a rollback that leaves the wide index
+   * in place breaks any release whose `assign()` names the old two-column arbiter.
+   * The bare form is immune in both directions — it is correct under the per-tenant
+   * index and under the per-campaign one — so the code does not care which is present.
    *
    * The cost of the bare form is that a conflict no longer tells us WHICH index
    * refused, which is why the read-back below distinguishes the two cases itself.
@@ -535,14 +532,14 @@ export class AgencyCampaignAgentRepository {
          * cannot be made from row state, and for the bug that made when it was
          * attempted.
          *
-         *  - **064 applied (the normal case).** The insert conflicts only on this
+         *  - **Per-campaign index present (the normal case).** The insert conflicts only on this
          *    campaign, so an empty read-back means that row was just unassigned. Any
          *    other assignments this agent holds are irrelevant. Retry.
-         *  - **064 NOT applied.** 060's `(tenant_id, user_id)` index is in force and
+         *  - **Per-campaign index NOT present.** A `(tenant_id, user_id)` index is in force and
          *    they are staffed elsewhere, so a second assignment is not expressible.
          *    Retrying cannot help, and silently "moving" them would make the outcome
-         *    depend on which migration had run — the destructive behaviour 064 exists
-         *    to remove.
+         *    depend on which index the database had — the destructive behaviour the
+         *    per-campaign index exists to remove.
          */
         if (!(await hasPerCampaignIndex())) {
           const elsewhere = await pool.query<{ campaign_id: string }>(
@@ -596,7 +593,7 @@ export class AgencyCampaignAgentRepository {
    * from THIS campaign", so a stale console holding an old campaign id must not
    * be able to unstaff someone from the campaign they were since moved to. Note
    * the campaign predicate is NOT the account check — the route proves campaign
-   * ownership through core before calling this (`assertCampaignInScope`), because
+   * ownership through the dialer runtime before calling this (`assertCampaignInScope`), because
    * this table has no trustworthy account column to check against.
    */
   async unassign(

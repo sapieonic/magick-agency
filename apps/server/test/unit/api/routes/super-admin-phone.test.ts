@@ -1,38 +1,14 @@
 /*
- * PORT NOTE (magick-agency): ported from master test/unit/api/routes/super-admin-phone.test.ts@a1f0756a
- * (16 cases → 8: 1 verbatim, 4 modified, 11 deleted, 3 NEW). The route's PORT NOTE
- * deletes the unassign inbound-config cascade, `pool_eligible` on the wire, the
- * metadata/phone cache busts and the telephony-provider CRUD routes; this file
- * follows.
- *  - DELETE …/assign/:tenantId: 'cascades inbound config removal before
- *    unassigning' and 'continues with unassign even when cascade throws —
- *    best-effort' are DELETED (no cascade, no phone lookup feeding it); NEW
- *    'unassigns and answers 200 with no phone lookup and no inbound cascade' keeps
- *    the success path. The two 404 cases are MODIFIED: their
- *    `removeAllForTenantPhone` not-called assertion is dropped with the
- *    `inbound-config.service` mock (the route no longer imports it).
- *  - pool_eligible: 'POST /phone-numbers forwards pool_eligible to the repository'
- *    and 'PUT /phone-numbers/:id forwards a pool_eligible toggle to the repository'
- *    are MODIFIED into their inverse (renamed: the field is stripped, not
- *    forwarded, and never on the wire); the describe is renamed to match.
- *    'POST /phone-numbers defaults to dedicated (pool_eligible omitted) when not
- *    provided' is verbatim. NEW 'GET /phone-numbers and GET /phone-numbers/:id
- *    strip pool_eligible from every row' covers the port's `toWirePhoneNumber`.
- *  - 'PUT /super-admin/telephony-providers/:id — live_transfer_enabled': all 9
- *    cases DELETED with the route ('forwards the toggle to the repository, returns
- *    the row, and audit-logs new AND previous value', 'records the previous value
- *    of every CHANGED field, and omits unchanged ones', 'busts every tenant metadata
- *    cache when live_transfer_enabled or status is written', 'does not bust tenant
- *    metadata caches for a display_name-only edit', 'deactivating a carrier with
- *    live transfer ON warns and audits that transfers stop', 'switching the flag ON
- *    for an inactive carrier warns that it has no effect', 'deactivating a carrier
- *    whose live transfer is OFF does not warn', 'rejects a non-boolean
- *    live_transfer_enabled with 400 and writes nothing', '404s when the provider
- *    does not exist, and busts nothing'); NEW 'the telephony-provider CRUD routes
- *    are not registered' pins the deletion.
- * Mocks: `metadata-cache.js` and `inbound-config.service.js` removed (not imported
- * by the route); the telephony-provider mock keeps only the reads the port has;
- * the rest re-pointed per the path rule.
+ * Super-admin phone-number routes. There is no unassign inbound-config cascade,
+ * `pool_eligible` is never on the wire, there are no metadata/phone cache busts, and the
+ * telephony-provider routes are read-only.
+ *  - DELETE …/assign/:tenantId: unassigns and answers 200 with no phone lookup and no
+ *    inbound cascade; the two 404 cases assert nothing about a cascade.
+ *  - pool_eligible: POST and PUT strip it before the repository and never return it, and
+ *    POST defaults to dedicated when it is omitted. GET list/detail strip it from every row
+ *    (`toWirePhoneNumber`).
+ *  - the telephony-provider write routes are not registered; 'the telephony-provider CRUD
+ *    routes are not registered' pins that, and the list read is kept.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -122,7 +98,6 @@ async function buildApp() {
 describe('DELETE /super-admin/phone-numbers/:id/assign/:tenantId — cascade inbound cleanup', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  // PORT NOTE (magick-agency): NEW, replacing the two deleted cascade cases.
   it('unassigns and answers 200 with no phone lookup and no inbound cascade', async () => {
     mocks.unassign.mockResolvedValue(true);
 
@@ -156,8 +131,7 @@ describe('DELETE /super-admin/phone-numbers/:id/assign/:tenantId — cascade inb
     });
 
     expect(res.statusCode).toBe(404);
-    // PORT NOTE (magick-agency): master's `removeAllForTenantPhone` not-called
-    // assertion is dropped — there is no cascade to fire (module note).
+    // There is no cascade to fire (module note).
   });
 
   it('skips cascade when phone lookup returns null but still returns 404 from unassign', async () => {
@@ -172,15 +146,13 @@ describe('DELETE /super-admin/phone-numbers/:id/assign/:tenantId — cascade inb
     });
 
     expect(res.statusCode).toBe(404);
-    // PORT NOTE (magick-agency): `removeAllForTenantPhone` assertion dropped, as above.
   });
 });
 
 describe('phone-number pool_eligible passthrough (removed in agency)', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  // PORT NOTE (magick-agency): MODIFIED from 'POST /phone-numbers forwards
-  // pool_eligible to the repository' — the inverse: stripped, never on the wire.
+  // `pool_eligible` is stripped, never on the wire.
   it('POST /phone-numbers does not forward pool_eligible to the repository, nor return it', async () => {
     mocks.findProviderById.mockResolvedValue({ id: 'prov-1', name: 'vobiz' });
     mocks.createPhone.mockResolvedValue({ id: 'pn-new', phone_number: '+12025550100', pool_eligible: false });
@@ -226,8 +198,6 @@ describe('phone-number pool_eligible passthrough (removed in agency)', () => {
     expect(arg.pool_eligible).toBeUndefined();
   });
 
-  // PORT NOTE (magick-agency): MODIFIED from 'PUT /phone-numbers/:id forwards a
-  // pool_eligible toggle to the repository' — the inverse.
   it('PUT /phone-numbers/:id drops a pool_eligible toggle before the repository, and does not return it', async () => {
     mocks.updatePhone.mockResolvedValue({ id: 'pn-1', phone_number: '+12025550100', pool_eligible: true });
 
@@ -243,7 +213,7 @@ describe('phone-number pool_eligible passthrough (removed in agency)', () => {
     expect(res.json().phone_number).not.toHaveProperty('pool_eligible');
   });
 
-  // PORT NOTE (magick-agency): NEW — the port's `toWirePhoneNumber` on the read paths.
+  // `toWirePhoneNumber` on the read paths.
   it('GET /phone-numbers and GET /phone-numbers/:id strip pool_eligible from every row', async () => {
     const row = { id: 'pn-1', phone_number: '+12025550100', status: 'active', pool_eligible: true };
     mocks.findAllPhones.mockResolvedValue([row]);
@@ -262,10 +232,7 @@ describe('phone-number pool_eligible passthrough (removed in agency)', () => {
   });
 });
 
-// PORT NOTE (magick-agency): NEW, replacing master's 9-case
-// 'PUT /super-admin/telephony-providers/:id — live_transfer_enabled' describe (the
-// routes are deleted; see the module note).
-describe('telephony-provider CRUD (writes deleted in agency; the list is kept)', () => {
+describe('telephony-provider CRUD (writes removed; the list is kept)', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('the telephony-provider write routes are not registered', async () => {
@@ -281,8 +248,8 @@ describe('telephony-provider CRUD (writes deleted in agency; the list is kept)',
     expect(mocks.auditLog).not.toHaveBeenCalled();
   });
 
-  // NEW (lead, session 3): master's GET list is kept (verbatim) so the console can
-  // pick the seeded provider's id for POST /phone-numbers. Master had no case for it.
+  // The GET list is kept so the console can pick the seeded provider's id for
+  // POST /phone-numbers.
   it('GET /telephony-providers lists the providers and forwards ?status', async () => {
     const app = await buildApp();
     mocks.findAllProviders.mockResolvedValue([{ id: 'tp-1', name: 'voicelink' }]);

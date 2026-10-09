@@ -10,7 +10,7 @@ import {
 } from '../../utils/agencyClock';
 
 /**
- * `AD-P2-U-01` criterion (b): the countdown *matches the server's timer within a
+ * requirement: the countdown *matches the server's timer within a
  * second and does not drift over a shift*.
  *
  * These tests use explicit `now` values rather than a real clock, because the

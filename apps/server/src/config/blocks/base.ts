@@ -4,11 +4,10 @@ import type { Env } from '../env.js';
 import { resolveMetricsExportIntervalMs } from '../../utils/otel-sdk-config.js';
 
 /**
- * Lead-owned block: process, Postgres, Redis, OpenTelemetry. Key shape follows core's config
- * (`config.server`, `config.db`, `config.redis`) so ported code reads the same
- * paths.
+ * Base block: process (`config.server`), Postgres (`config.db`), Redis (`config.redis`),
+ * OpenTelemetry (`config.otel`).
  */
-/** Q1: connection-string parameters pg lets override the pool's `ssl` object. */
+/** Decision Q1: connection-string parameters pg lets override the pool's `ssl` object. */
 export const URL_TLS_PARAMS = ['ssl', 'sslmode', 'sslrootcert', 'sslcert', 'sslkey', 'sslnegotiation'] as const;
 
 /**
@@ -38,9 +37,7 @@ export const baseConfigSchema = z.object({
     env: z.enum(['development', 'test', 'production']).default('development'),
     logLevel: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
     /**
-     * Q7/Q9 (Manas, 2026-10-09): ported from master `src/config/schema.ts:25-55`@a1f0756a
-     * (`serverSchema.trustProxyHops`), verbatim, and passed to Fastify's `trustProxy` in
-     * `app.ts` as master's `src/index.ts:325-329` does. Master's reasoning, kept:
+     * Decisions Q7/Q9: passed to Fastify's `trustProxy` in `app.ts`.
      *
      * Number of reverse-proxy hops in front of this service.
      *
@@ -56,9 +53,9 @@ export const baseConfigSchema = z.object({
      * trusts exactly this many addresses, so `request.ip` is the address nginx
      * itself observed and the client cannot influence it.
      *
-     * Default 1 matches the committed `nginx.conf`, which proxies straight to
-     * 127.0.0.1:3010 with no CDN or load balancer in front. Raise it by exactly
-     * one per additional trusted proxy (2 behind Cloudflare).
+     * Default 1: one reverse proxy straight in front of the server, with no CDN or
+     * load balancer. Raise it by exactly one per additional trusted proxy (2 behind
+     * Cloudflare).
      *
      * **Both directions of being wrong are harmful, and neither is loud.** Too
      * high and proxy-addr trusts hops the client controls, re-opening the
@@ -71,9 +68,8 @@ export const baseConfigSchema = z.object({
      * deployment, and a blank `TRUST_PROXY_HOPS=` in an env file coerces to 0 —
      * allowing it would turn an empty line into a platform-wide outage.
      *
-     * (Agency: the same holds for whatever proxy fronts agency's port 3021; with the
-     * core rate limiter app-wide since Phase 8, `request.ip` keys every console
-     * user's 200/min bucket.)
+     * The rate limiter is app-wide, so `request.ip` keys every console user's
+     * 200/min bucket.
      */
     trustProxyHops: z.coerce.number().int().min(1, 'TRUST_PROXY_HOPS must be at least 1 (0 buckets every client under the proxy IP)').default(1),
   }),
@@ -94,9 +90,8 @@ export const baseConfigSchema = z.object({
     poolMin: z.coerce.number().int().min(0).default(2),
     poolMax: z.coerce.number().int().positive().default(10),
     /**
-     * Q1 (Manas, 2026-10-09): when TLS is on (`NODE_ENV=production`, `src/index.ts`), the
-     * server certificate is VERIFIED unless this is exactly `false`. Core accepted any
-     * certificate. Strict on purpose: only `true` / `false` parse, so a blank
+     * Decision Q1: when TLS is on (`NODE_ENV=production`, `src/index.ts`), the server
+     * certificate is VERIFIED unless this is exactly `false`. Strict on purpose: only `true` / `false` parse, so a blank
      * `DB_SSL_REJECT_UNAUTHORIZED=` is a boot error rather than a silent opt-out.
      */
     sslRejectUnauthorized: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
@@ -122,7 +117,7 @@ export const baseConfigSchema = z.object({
   /**
    * The OpenTelemetry SDK's settings, as `src/instrumentation.ts` resolves them. That file
    * cannot read this block: it runs before any other module, and this config's module body can
-   * `process.exit(1)` (core's rule, `src/utils/otel-sdk-config.ts` header). It reads the same
+   * `process.exit(1)` (see the `src/utils/otel-sdk-config.ts` header). It reads the same
    * variables itself, with the same lenient parsing (an unusable interval falls back to the
    * default rather than failing boot), and `test/unit/config/otel-config.test.ts` pins that the
    * two agree. Not modelled here, though the SDK side reads them: `OTEL_EXPORTER_OTLP_HEADERS`
@@ -132,7 +127,7 @@ export const baseConfigSchema = z.object({
    * NodeSDK still merges `OTEL_RESOURCE_ATTRIBUTES` over them.
    */
   otel: z.object({
-    /** Only the exact string `true`, like core. */
+    /** Only the exact string `true`. */
     enabled: z.string().optional().transform((v) => v === 'true'),
     /** Base URL; the SDK appends `/v1/traces`, `/v1/metrics` and `/v1/logs`. Blank = unset. */
     endpoint: z.string().optional().transform((v) => v || undefined),

@@ -34,7 +34,7 @@ import styles from './RosterTable.module.css';
  * ── The pinned footer is NOT the sum of the rows ──────────────────────────
  * It is a separate read of the same route grouped by `campaign` alone, and that is
  * the one thing about this screen a reader has to be told: with `agent` grouped,
- * master drops the rows of people who have since left the team and the rows it
+ * the API drops the rows of people who have since left the team and the rows it
  * could not attribute to anybody, and it has nothing to drop from a
  * campaign-grouped aggregate. So the rows can add to LESS than the footer and the
  * Share column to less than 100%. The caller renders `contributionAsymmetryNote`
@@ -90,7 +90,7 @@ export interface ContributionTableProps {
    * Open one person's figures.
    *
    * A {@link NamedAgent} rather than the whole row: that is the entire shape the
-   * shared panels need (a user id, and the name master resolved for it), so nothing
+   * shared panels need (a user id, and the name the API resolved for it), so nothing
    * about a roster row has to be invented to reach them. Optional, and a table
    * without it renders plain cells rather than dead controls.
    */
@@ -240,7 +240,7 @@ function ContributionRow({
             with a click handler would be focusable without being a control.
 
             What it hands up is a `NamedAgent` — the id off the group KEY (that is
-            where a grouped row keeps it) and the name master resolved beside it,
+            where a grouped row keeps it) and the name the API resolved beside it,
             which is the whole shape the panels behind it are built against.
           */
           <button

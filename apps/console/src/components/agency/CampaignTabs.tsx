@@ -6,7 +6,7 @@ import type { Role } from '../../types/auth';
 import styles from './CampaignTabs.module.css';
 
 /**
- * The campaign workspace's section bar (`MAG-166`).
+ * The campaign workspace's section bar.
  *
  * ── Links, not `role="tab"` ─────────────────────────────────────────────────
  * Four of these sections are separate routes with their own data, their own
@@ -48,14 +48,14 @@ export interface CampaignTabsProps {
   liveAgentCount?: number | null;
   /**
    * For `trackAgencyCampaignTabViewed`, fired on click. `string`, matching
-   * `AgencyCampaign.status` itself (core's CHECK constraint is the authority,
+   * `AgencyCampaign.status` itself (the API's CHECK constraint is the authority,
    * not this build's `AgencyCampaignStatus` enum) — narrowed to the enum via
    * `isKnownCampaignStatus` right before the event fires, and simply skipped
    * for anything else. Optional for a second reason: three of the six host
    * pages render this bar as soon as they have a campaign `id`, before their
    * own campaign fetch resolves — `campaign?.status` is `undefined` for that
    * first render, and the click event is not fired with a guessed status
-   * (see `CLAUDE.md`'s note against a hardcoded `'running'` fallback here).
+   * (no hardcoded `'running'` fallback).
    */
   campaignStatus?: string;
 }

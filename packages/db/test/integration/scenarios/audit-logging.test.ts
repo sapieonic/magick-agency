@@ -4,12 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { getTestPool, closeTestPool, truncateAll } from '../setup/test-utils.js';
 import { uuidFor } from '../setup/factories.js';
 
-// PORT NOTE (magick-agency): ported from core
-// test/integration/scenarios/audit-logging.test.ts@4850d1d9. Changes: the unused
-// `insertCall` / `insertPrompt` imports are dropped (AI call/prompt tables are
-// not carried); tenant/account labels are wrapped in `uuidFor` (UUID columns);
-// the logger mock targets `@magick-agency/observability`. Event types and
-// payloads are core's (opaque audit data).
+// Tenant/account labels are wrapped in `uuidFor` (UUID columns); the logger mock
+// targets `@magick-agency/observability`. Event types and payloads are opaque audit data.
 
 vi.mock('../../../src/connection.js', () => ({
   getPool: () => getTestPool(),
@@ -22,10 +18,9 @@ vi.mock('@magick-agency/observability', () => ({
 
 const { auditRepository: typedAuditRepository } = await import('../../../src/repositories/audit.repository.js');
 
-// PORT NOTE (magick-agency): core type-checks no test file; agency's lint does.
-// The repository types its reads as the camelCase `AuditRecord` while Postgres
-// returns snake_case rows (`audit.model.ts` documents exactly this), so these
-// assertions read the rows untyped — what core's suite did at runtime.
+// Tests are typechecked by lint. The repository types its reads as the camelCase
+// `AuditRecord` while Postgres returns snake_case rows (`audit.model.ts` documents
+// exactly this), so these assertions read the rows untyped.
 type Untyped<F extends (...a: never[]) => unknown> = (...a: Parameters<F>) => Promise<any[]>;
 const auditRepository = typedAuditRepository as unknown as Omit<typeof typedAuditRepository, 'findByCallId' | 'findByTenant'> & {
   findByCallId: Untyped<typeof typedAuditRepository.findByCallId>;
@@ -222,7 +217,7 @@ describe('Audit logging scenarios (integration)', () => {
           tenantId: uuidFor('json-t'),
           accountId: uuidFor('json-a'),
           eventType: 'call.analysis.completed',
-          eventCategory: 'analysis' as never, // core's value; not in `EventCategory` (type-only cast)
+          eventCategory: 'analysis' as never, // the dialer's value; not in `EventCategory` (type-only cast)
           severity: 'info',
           eventData: {
             model: 'gpt-4o-mini',

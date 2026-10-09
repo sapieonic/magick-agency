@@ -9,57 +9,45 @@ import type {
 } from '../models/agency-call.model.js';
 
 /*
- * PORT NOTE (magick-agency): ported from core `src/db/repositories/webrtc-call.repository.ts`
- * (v1.123.2). Changes, each in PORTING.md:
+ * Notes on this repository:
  *  - every statement targets `agency_calls` (the baseline's rename of `webrtc_calls`);
  *  - `telephony_credential_id` (BYOC) and `sip_connection_id` (SIP) are gone from
  *    the INSERT and the list projection, as the baseline dropped the columns;
  *  - the default `provider` is `'voicelink'` (VoBiz is deleted; the baseline's
  *    column default is `'voicelink'` too);
- *  - `WebRtcCallScope` is `'agency'` only — the softphone (`'dialer'`) is
- *    deleted (plan §5), and `analysisFlagFor` returns `agency_call_analysis`.
- *    `scopeClause` keeps core's body, so untyped code that omits the scope still
- *    fails closed to `campaign_id IS NULL` (see the scope unit test);
+ *  - `WebRtcCallScope` is `'agency'` only, and `analysisFlagFor` returns
+ *    `agency_call_analysis`. `scopeClause` keeps a fallback branch, so untyped code
+ *    that omits the scope fails closed to `campaign_id IS NULL` (see the scope unit test);
  *  - the flag definition comes from `@magick-agency/contracts/flags`, which the
  *    server's registry (`apps/server/src/feature-flags/registry.ts`) also reuses,
  *    because this package cannot import the server;
  *  - exported as `agencyCallRepository`, with `webrtcCallRepository` aliasing it
- *    so ported call sites compile unchanged.
- * The comment below is core's, verbatim; its file list describes core.
+ *    for call sites that use the older name.
  */
 
 /*
  * ─── What the required `scope` parameter does and does NOT audit ─────────────
  *
  * `findByIdScoped` and `listByTenant` take a required `scope`, and the compile
- * errors from adding it were the audit checklist for the read path
- * (`docs/agency-dialer-design.md` §7b). Anyone relying on that checklist should
+ * errors from adding it were the audit checklist for the read path.
+ * Anyone relying on that checklist should
  * know its edge: **it enumerates callers of these two methods, and nothing else.**
  * A reader that writes `FROM webrtc_calls` itself is invisible to it, because
  * there is no call site for the type checker to fail.
  *
- * As of this writing three modules outside this file read the table directly, and
- * all three are deliberate:
+ * As of this writing two modules outside this file read the table directly, and
+ * both are deliberate:
  *
  * - `maintenance/retention-purge.ts` — carries its own `campaign_id` predicate on
- *   every statement, because the two products purge on different windows. It is
- *   scoped; it just does not go through here.
+ *   every statement. It is scoped; it just does not go through here.
  * - `db/repositories/dialer-analysis-job.repository.ts` — the analysis worker's
- *   job-keyed reads and `analysis_status` writes. Product-agnostic on purpose:
- *   the analysis pipeline is one shared machine and a job already names exactly
- *   one call, so there is no population to scope.
- * - `db/repositories/tenant-telephony-credential.repository.ts`
- *   (`countLiveCallsByCredential`) — **the named exception.** It counts live calls
- *   across BOTH products before letting an admin revoke a carrier credential, and
- *   counting both is the correct answer: revoking strands whichever calls are on
- *   that credential, so a scoped count would under-report and wave through a
- *   revoke that kills the other product's live calls. It is a platform-zone
- *   safety check (§7b's third zone), not a product read path.
+ *   job-keyed reads and `analysis_status` writes. Unscoped on purpose: a job
+ *   already names exactly one call, so there is no population to scope.
  *
- * The rule that separates them: **scope the reads that ANSWER A PRODUCT'S
- * QUESTION; do not scope the ones that answer the platform's.** If you add a
- * reader of `webrtc_calls` anywhere, decide which of those it is — the type
- * checker will not ask you.
+ * The rule that separates them: **scope the reads that answer a question about
+ * agency calls; do not scope the ones that are about every row** (retention, the
+ * analysis job queue). If you add a reader of the table anywhere, decide which of
+ * those it is — the type checker will not ask you.
  */
 
 /** Columns the generic `update()` may write — allow-list guards against unexpected keys. */
@@ -78,8 +66,7 @@ const WEBRTC_JSON_COLUMNS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * `campaign_id` is projected deliberately. It is the scope discriminator (see
- * `docs/agency-dialer-design.md` §7b) and the list could not label — or even
+ * `campaign_id` is projected deliberately. It is the scope discriminator and the list could not label — or even
  * recognise — a foreign row without it.
  *
  * All webrtc_calls columns except the heavy analysis JSONB blobs
@@ -110,14 +97,12 @@ const WEBRTC_LIST_COLUMNS = `
 `;
 
 /**
- * Which product owns the calls a read is asking for.
+ * Which calls a read is asking for. `'agency'` is the only scope.
  *
- * `webrtc_calls` holds both products' calls and stays one table by design
- * (migration 076). This is the boundary between them
- * (`docs/agency-dialer-design.md` §7b).
+ * This is the scope boundary a read states.
  *
- * **The enum's meaning is product ownership, not the shape of the predicate.**
- * `'dialer'` happens to resolve to `campaign_id IS NULL` today, but callers must
+ * **The enum's meaning is ownership, not the shape of the predicate.**
+ * `'agency'` happens to resolve to `campaign_id IS NOT NULL` today, but callers must
  * not encode that: when agency grows an off-campaign dial mode (preview dialing,
  * agent callbacks, a manual dial from the station) those calls will be
  * agency-owned with no campaign, and the fix is one change to `scopeClause`
@@ -131,33 +116,30 @@ function scopeClause(scope: WebRtcCallScope): string {
 }
 
 /**
- * The feature flag that owns post-call analysis for a scope's product.
+ * The feature flag that owns post-call analysis for a scope.
  *
  * Beside `scopeClause` deliberately: both answer "what does this scope mean, in
  * terms of X", and the two mappings drift the moment they live in different
  * files. There is one enum, so there is one place that translates it.
  *
- * Why the mapping is needed at all: `dialer_call_analysis` used to gate agency
- * legs too, which meant a tenant enabling softphone analysis started paying for
- * transcription on every campaign call, and a tenant disabling it lost agency
- * analysis it had bought separately. `agency_call_analysis` is the agency switch
+ * Why the mapping is needed at all: post-call analysis is gated by the scope's
+ * own switch. `agency_call_analysis` is the agency switch
  * (`feature-flags/registry.ts` carries the argument, including why its default
  * stays false).
  *
  * The three consumers are the end-of-call gate (`webrtc-bridge-manager.ts`) and
- * the two request-time preflights (`analysis/profile-preflight.ts`, reached from
- * the softphone's `POST /webrtc-call` and the agency campaign writes). They must
- * agree: a preflight that accepts a profile a product's flag will not analyse
- * against is a silent no-op at end of call, and the reverse is a 403 on a
- * feature the tenant is paying for.
+ * the request-time preflight (`analysis/profile-preflight.ts`, reached from the
+ * agency campaign writes). They must agree: a preflight that accepts a profile
+ * the flag will not analyse against is a silent no-op at end of call, and the
+ * reverse is a 403 on a feature the tenant is paying for.
  *
  * Not used by `call-analysis-profiles.routes.ts`, and that is not an oversight —
- * a profile row belongs to no product, so that surface ORs the two flags. Its
- * header says why.
+ * a profile row belongs to no call, so that surface reads `agency_call_analysis`
+ * directly. Its header says so.
  */
 export function analysisFlagFor(scope: WebRtcCallScope): FlagDefinition<boolean> {
-  // PORT NOTE (magick-agency): agency product only — every call is an agency
-  // call, and `dialer_call_analysis` is not in agency's flag registry.
+  // Every call is an agency call, and `agency_call_analysis` is the only
+  // analysis flag in the registry.
   return AGENCY_FLAGS.agency_call_analysis;
 }
 
@@ -204,11 +186,8 @@ export class WebRtcCallRepository {
   /**
    * Tenant+account-scoped lookup (returns null for another tenant/account → 404).
    *
-   * Also refuses the other product's rows. Every `/api/v1/webrtc-call/*` handler
-   * reaches its record through this function, so pinning `scope: 'dialer'` there
-   * is what makes an agency call invisible and untouchable through the softphone's
-   * routes — read, recording, hangup and erasure alike
-   * (`docs/agency-dialer-design.md` §7b).
+   * Also refuses rows outside the scope (`campaign_id IS NULL` rows for
+   * `'agency'`).
    *
    * `scope` is required and has no default on purpose. A default would type-check
    * every call site immediately and silently leave them unaudited; the compile
@@ -240,13 +219,12 @@ export class WebRtcCallRepository {
   }
 
   /**
-   * One product's call history. `scope` selects which
-   * (`docs/agency-dialer-design.md` §7b) and is required — it sits ahead of the
+   * The call history for a scope. `scope` is required — it sits ahead of the
    * paging arguments precisely so it cannot be given a default.
    *
    * The scope is applied to the count query as well as the data query. Filtering
    * one and not the other is worse than filtering neither: the page shows the
-   * right rows under a total that counts the other product's calls, and the pager
+   * right rows under a total that counts out-of-scope calls, and the pager
    * runs off the end into empty pages — which looks like data loss rather than a
    * missing predicate.
    */
@@ -344,5 +322,5 @@ export class WebRtcCallRepository {
 }
 
 export const agencyCallRepository = new WebRtcCallRepository();
-/** Core's export name, kept so ported call sites compile unchanged. */
+/** The original export name, kept as an alias. */
 export const webrtcCallRepository = agencyCallRepository;

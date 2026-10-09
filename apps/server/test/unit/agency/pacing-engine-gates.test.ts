@@ -1,14 +1,12 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core test/unit/agency/pacing-engine-gates.test.ts@4850d1d9 (22 → 22).
-// Import/mock paths only, except ONE modified case (decision B8 — the scoped DNC check): 'only asks
-// the DNC set once per contact' now asserts each `check` call carries `{ accountId: 'a1', campaignId:
-// 'camp-1' }`, and the `check` stub declares the required `DncCheckScope` parameter. Mutation-checked:
-// passing a null scope from `pre-dial-gates.ts` reds it. No case deleted.
+// Decision B8 (the scoped DNC check): 'only asks the DNC set once per contact' asserts each
+// `check` call carries `{ accountId: 'a1', campaignId: 'camp-1' }`, and the `check` stub declares
+// the required `DncCheckScope` parameter. Passing a null scope from `pre-dial-gates.ts` reds it.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// AD-P3-C-05 + AD-P3-C-06 — the gates WHERE THEY ARE CONSUMED.
+// The pacing gates WHERE THEY ARE CONSUMED.
 //
-// §16.6 question 2, and the reason this file is separate from
+// The property has to hold where it is consumed, which is why this file is separate from
 // `pre-dial-gates.test.ts`: that file proves the decision table, which is worth
 // nothing if the tick ignores it. Everything here is asserted against the writes
 // the tick actually performs — `markState`, `unclaim`, `dispatch` — never against
@@ -58,7 +56,7 @@ const { repos, settings } = vi.hoisted(() => ({
       markState: vi.fn().mockResolvedValue(undefined),
     },
     attempt: { countLive: vi.fn().mockResolvedValue(0), create: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
-    // `setState` mirrors the winning reservation durably (`AD-P4-C-01`) — the
+    // `setState` mirrors the winning reservation durably — the
     // supervisor's agents-by-state breakdown cannot see `reserved` otherwise.
     session: {
       findLiveForCampaign: vi.fn().mockResolvedValue([]),
@@ -120,7 +118,7 @@ function makeStations(owned: string[]) {
 }
 
 function build(sessionIds: string[], dncAnswer: DncCheck | ((phone: string) => DncCheck) = 'clear') {
-  // PORT NOTE (B8): the collapsed registry's `check` takes a REQUIRED scope, so the
+  // Decision B8: the registry's `check` takes a REQUIRED scope, so the
   // stub declares it — the tick hands it `{ accountId, campaignId }` off the campaign.
   const check = vi.fn(async (_t: string, phone: string, _scope: DncCheckScope) =>
     (typeof dncAnswer === 'function' ? dncAnswer(phone) : dncAnswer));
@@ -283,7 +281,7 @@ describe('DNC', () => {
     expect(repos.contact.markState).toHaveBeenCalledWith('c-01', 'suppressed', {
       suppressed_reason: 'dnc',
     });
-    // Not `unclaim`: a DNC hit never returns to `pending` (§4.2).
+    // Not `unclaim`: a DNC hit never returns to `pending`.
     expect(repos.contact.unclaim).not.toHaveBeenCalled();
     // The agent is not punished for the roster's contents.
     expect(agents.set).toHaveBeenCalledWith('s1', 'available', expect.anything());
@@ -298,7 +296,7 @@ describe('DNC', () => {
 
     // `attempt_count` is the retry budget and nothing else. Charging it here would
     // exhaust a contact who was never called — the same defect class as
-    // `AD-P2-C-12`, from the other direction.
+    // the dispatch-time charge bug, from the other direction.
     expect(repos.contact.markState).toHaveBeenCalledWith('c-01', 'suppressed',
       expect.not.objectContaining({ bump_attempt: true }));
   });
@@ -386,7 +384,7 @@ describe('DNC', () => {
     await engine.tickOnce('camp-1');
 
     expect(check).toHaveBeenCalledTimes(2);
-    // PORT NOTE (B8): each check now also names the campaign's account and the
+    // Decision B8: each check also names the campaign's account and the
     // campaign, so an account- or campaign-scoped `dnc_entries` row stops the dial.
     expect(check).toHaveBeenCalledWith('t1', '+919876543201', { accountId: 'a1', campaignId: 'camp-1' });
     expect(check).toHaveBeenCalledWith('t1', '+919876543202', { accountId: 'a1', campaignId: 'camp-1' });
@@ -426,7 +424,7 @@ describe('calling hours', () => {
     // The invariant, over every way the window can refuse: a contact returned at
     // `now()` satisfies `state='pending' AND next_attempt_at <= now()` immediately,
     // and the campaign spins at 4 claims/second all night on calls it will never
-    // place (§4.2).
+    // place.
     for (const campaign of [
       CAMPAIGN,                                                       // simply closed
       { ...(CAMPAIGN as object), default_timezone: 'Not/AZone' },      // unreadable zone
@@ -561,7 +559,7 @@ describe('an unusable phone number leaves the roster', () => {
 });
 
 // ---------------------------------------------------------------------------
-// MAG-109 — the gate counter has to reach the pipeline that can alert on it.
+// The gate counter has to reach the pipeline that can alert on it.
 //
 // `agency_predial_gate_total` once existed twice: a prom-client counter that was
 // incremented, and an OTel counter that had ZERO callers. Grafana Cloud is fed by
@@ -573,7 +571,7 @@ describe('an unusable phone number leaves the roster', () => {
 // Asserted against the metric export itself rather than against "recordGate was
 // called", because the failure being pinned is a call that never reaches it.
 // ---------------------------------------------------------------------------
-describe('MAG-109 — the pre-dial gate reaches the OTLP pipeline', () => {
+describe('the pre-dial gate reaches the OTLP pipeline', () => {
   it('writes the counter once, with its labels, when a contact clears', async () => {
     vi.setSystemTime(IN_HOURS_IST);
     const metrics = await import('@magick-agency/observability/metrics/agency');

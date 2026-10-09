@@ -26,20 +26,15 @@ import { FLAGS as REGISTERED_FLAGS } from '../../../src/feature-flags/registry.j
 import { FIXTURE_FLAGS } from '../../helpers/fixture-flags.js';
 
 /*
- * PORT NOTE (magick-agency): ported from core
- * test/unit/feature-flags/flag-snapshot.test.ts@4850d1d9. The subject — the
- * snapshot reader's resolution and failure semantics — is unchanged. Changes:
- *  - the GATED flag is `agency_dialer_enabled` (registered; boolean, default
+ * Subject: the snapshot reader's resolution and failure semantics.
+ *  - The GATED flag is `agency_dialer_enabled` (registered; boolean, default
  *    false, env `FF_AGENCY_DIALER`, global+tenant+account — exactly
- *    `custom_sip`'s shape, which core chose it for), so the `resolveAll` cases
- *    still resolve it from the real registry;
- *  - every other flag core used (`knowledge_bases_enabled`,
- *    `webrtc_calls_enabled`, `gold_ii`, `max_sip_connections`,
- *    `whatsapp_personal`, `prewarm_ring_delay_ms`) is an UNREGISTERED copy of
- *    core's definition (`test/helpers/fixture-flags.ts`) — the snapshot reader
- *    resolves the definition it is handed;
- *  - mocks target the agency module specifiers (observability, the db
- *    repository, the shared metric).
+ *    `custom_sip`'s shape), so the `resolveAll` cases resolve it from the real
+ *    registry;
+ *  - every other flag (`knowledge_bases_enabled`, `webrtc_calls_enabled`, `gold_ii`,
+ *    `max_sip_connections`, `whatsapp_personal`, `prewarm_ring_delay_ms`) is an
+ *    UNREGISTERED fixture definition (`test/helpers/fixture-flags.ts`) — the
+ *    snapshot reader resolves the definition it is handed.
  */
 const FLAGS = { ...FIXTURE_FLAGS, custom_sip: REGISTERED_FLAGS.agency_dialer_enabled };
 
@@ -76,7 +71,7 @@ const CTX = { tenantId: 'tenant-1', accountId: 'acc-1' };
 // `custom_sip` is boolean, defaults false, has envVar FF_CUSTOM_SIP and permits
 // global/tenant/account scope — i.e. exactly the gated-capability shape the
 // snapshot path's failure semantics are about.
-// PORT NOTE: `agency_dialer_enabled` has that shape (see the header).
+// `agency_dialer_enabled` has that shape (see the header).
 const GATED = FLAGS.custom_sip;
 const GATED_ENV = 'FF_AGENCY_DIALER';
 

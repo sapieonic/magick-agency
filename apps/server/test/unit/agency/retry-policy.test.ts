@@ -8,7 +8,7 @@ import {
 } from '../../../src/agency/retry-policy.js';
 
 // ---------------------------------------------------------------------------
-// AD-P3-C-01 — the outcome retry policy (§2.4).
+// The outcome retry policy.
 //
 // A pure function, so there is nothing to mock and every assertion is on the
 // answer itself rather than on a call being made. Two things this file is
@@ -29,7 +29,7 @@ const NOW = new Date('2026-08-11T14:00:00.000Z');
 const MIN = 60_000;
 
 describe('the built-in default policy', () => {
-  it('is §2.4\'s block verbatim, and models every outcome except `machine`', () => {
+  it('is the documented block, and models every outcome except `machine`', () => {
     // Pinned as a whole object. These numbers are a product decision an operator
     // inherits silently when they configure nothing, so a drift in any of them is a
     // change to how often a real customer's phone rings — not an implementation
@@ -42,10 +42,10 @@ describe('the built-in default policy', () => {
       abandoned: { delay_minutes: 5, max_attempts: 2 },
       invalid: { max_attempts: 0 },
       connected: { max_attempts: 0 },
-      // `AD-P3-C-09` / MAG-97. Both were ABSENT, and their absence was the
+      // Both were ABSENT, and their absence was the
       // defect: an unmodelled key falls to `no_policy_for_outcome` → `completed`,
       // which retired a customer whose attempt died of our own dropped socket or
-      // our own restart. Master never sends `retry_policy`, so that was the
+      // our own restart. Campaigns that configure no `retry_policy` leave it empty, so that was the
       // ordinary path for every campaign, not an edge case.
       //
       // These caps are the CUSTOMER's allowance and bind only an
@@ -61,20 +61,20 @@ describe('the built-in default policy', () => {
       // instead, and the reaper's sweep selects `outcome = 'connected'` only) —
       // because the value of the key is that it is PRESENT: an absent one falls
       // to `no_policy_for_outcome` → `completed`, retiring a customer nobody
-      // spoke to, which is the MAG-97 defect verbatim.
+      // spoke to, which is exactly that defect.
       canceled: { delay_minutes: 0, max_attempts: 3 },
     });
-    // D1: with AMD off the system can never classify an outcome as `machine`, so a
+    // With AMD off the system can never classify an outcome as `machine`, so a
     // key for it would be dead configuration that looks live. Voicemail retry is
-    // disposition-driven (C-02).
+    // disposition-driven.
     expect(DEFAULT_RETRY_POLICY).not.toHaveProperty('machine');
   });
 });
 
 describe('the default applies when a campaign configures nothing', () => {
-  // ── THE ASSERTION THAT KEEPS THIS TICKET FROM SHIPPING INERT ──────────────
-  // `retry_policy` defaults to `'{}'`, core's `create` COALESCEs a missing value to
-  // `'{}'`, and master never sends the field. So if an absent key meant "no retry",
+  // ── THE ASSERTION THAT KEEPS THE DEFAULT FROM BEING INERT ──────────────────
+  // `retry_policy` defaults to `'{}'`, `create` COALESCEs a missing value to
+  // `'{}'`, and campaigns that configure nothing never send the field. So if an absent key meant "no retry",
   // every campaign that exists would retry nothing while every test that passed an
   // explicit policy stayed green — the `heartbeat()`-with-zero-callers shape.
   for (const policy of [null, {}] as const) {
@@ -133,7 +133,7 @@ describe('the attempts boundary', () => {
   it('distinguishes "ran out of tries" from "never retryable"', () => {
     // Both mean "no more dials", and collapsing them would make a supervisor's
     // dashboard lie in one direction or the other: `exhausted` says the list was
-    // worked, `completed` says the outcome was terminal by policy. §5.3 gives them
+    // worked, `completed` says the outcome was terminal by policy. They get
     // separate states for that reason.
     expect(resolveRetryDecision(policy, 'no_answer', NOW, 3).reason).toBe('max_attempts_reached');
     expect(resolveRetryDecision({ no_answer: { max_attempts: 0 } }, 'no_answer', NOW, 3).reason)
@@ -145,7 +145,7 @@ describe('the attempts boundary', () => {
 
 describe('outcomes with their own rules', () => {
   it('suppresses an invalid number rather than exhausting it, whatever the count', () => {
-    // §5.3 routes `invalid` to `suppressed`, not `exhausted`: "this number does not
+    // `invalid` routes to `suppressed`, not `exhausted`: "this number does not
     // work" and "we ran out of tries" are different facts to someone cleaning a list.
     // Checked at a count BELOW any max, so it is the outcome doing the work and not
     // the attempts arithmetic reaching the same answer by luck.
@@ -157,7 +157,7 @@ describe('outcomes with their own rules', () => {
   });
 
   it('treats a connected call as terminal, leaving the disposition to override', () => {
-    // §2.4's precedence: a disposition beats the outcome policy. This is the outcome
+    // Precedence: a disposition beats the outcome policy. This is the outcome
     // half's answer when no disposition was recorded, and it must not be `pending` —
     // re-dialling someone an agent already spoke to, because nobody wrote up the
     // call, is the worst available failure.
@@ -166,18 +166,18 @@ describe('outcomes with their own rules', () => {
     expect(decision.nextAttemptAt).toBeNull();
   });
 
-  it('MAG-103: `connected` is policy-reachable but `invalid` is not — why only one is refused', () => {
+  it('`connected` is policy-reachable but `invalid` is not — why only one is refused', () => {
     /**
-     * The distinction the MAG-103 rejection rests on, and the reason it refuses
+     * The distinction the `invalid` rejection rests on, and the reason it refuses
      * `invalid` ALONE. Both read as "fixed at 0" in the wizard, so it is tempting
      * to treat them the same and strip both. That would delete a live key.
      *
      *   - `invalid` short-circuits to `suppressed` BEFORE `policy?.[outcome]` is
-     *     read, so no rule on it can ever be observed. Refused, and cusui stops
+     *     read, so no rule on it can ever be observed. Refused, and the console stops
      *     sending it.
      *   - `connected` has no such branch: it falls through to the ordinary lookup,
      *     so a policy genuinely overrides the built-in `{max_attempts: 0}`. It
-     *     stays a valid key in both validators and cusui keeps sending it.
+     *     stays a valid key in both validators and the console keeps sending it.
      */
     const tuned = {
       invalid: { max_attempts: 5, delay_minutes: 1 },
@@ -198,12 +198,12 @@ describe('outcomes with their own rules', () => {
     expect(invalid.nextAttemptAt).toBeNull();
 
     // And the built-in default for `invalid` is equally unreachable, so removing
-    // it would change no behaviour — the recommendation attached to MAG-103.
+    // it would change no behaviour — which is why it can be dropped.
     expect(resolveRetryDecision(null, 'invalid', NOW, 1)).toEqual(invalid);
   });
 
   it('re-queues an abandoned call on the shortest delay in the policy', () => {
-    // Design §6.2 step 3. The customer picked up and reached nobody, so they are owed
+    // The customer picked up and reached nobody, so they are owed
     // another call quickly — 5 minutes, the shortest default, deliberately.
     const decision = resolveRetryDecision(null, 'abandoned', NOW, 1);
     expect(decision.contactState).toBe('pending');
@@ -217,11 +217,11 @@ describe('degenerate policies never produce an unclaimable or hot-looping contac
     // guessing "retry" here would produce a dial loop; leaving it `in_flight` would
     // block the campaign from ever completing. `completed` is the only safe answer.
     //
-    // ⚠️ This case used `orphaned` until `AD-P3-C-09` gave it a default — which is
+    // ⚠️ This case used `orphaned` until it was given a default — which is
     // the point of the fix, not a weakening of this one. `machine` is the honest
     // replacement and the ONLY remaining unmodelled key: it is declared in
-    // `AgencyAttemptOutcome` because §2.1 lists it as a legal column value, but
-    // with AMD off (D1) nothing can ever produce it. So this still exercises a
+    // `AgencyAttemptOutcome` because it is a legal column value, but
+    // with AMD off nothing can ever produce it. So this still exercises a
     // real declared outcome with no policy entry, rather than a fabricated one.
     const decision = resolveRetryDecision(null, 'machine', NOW, 1);
     expect(decision.contactState).toBe('completed');
@@ -234,7 +234,7 @@ describe('degenerate policies never produce an unclaimable or hot-looping contac
   });
 
   it('treats a missing delay as "immediately", not as a fabricated default', () => {
-    // §4.2: a retry with no delay is re-claimable on the next tick, because
+    // A retry with no delay is re-claimable on the next tick, because
     // `claimDialable`'s predicate is `next_attempt_at <= now()`. Inventing a delay
     // would be a policy decision smuggled into a null check.
     const decision = resolveRetryDecision({ busy: { max_attempts: 3 } }, 'busy', NOW, 1);
@@ -292,7 +292,7 @@ describe('degenerate policies never produce an unclaimable or hot-looping contac
 // ===========================================================================
 describe('`canceled` resolves through the our-fault bound', () => {
   it('re-queues a cancelled contact with a real delay, off an empty policy', () => {
-    // `{}` is the ordinary case — master never sends `retry_policy` — so this is
+    // `{}` is the ordinary case — campaigns that configure nothing send no `retry_policy` — so this is
     // the path production takes. The delay comes from
     // `DEFAULT_OUR_FAULT_REDIAL_DELAY_MINUTES`, NOT from
     // `DEFAULT_RETRY_POLICY.canceled.delay_minutes` (0), and asserting the exact
@@ -309,7 +309,7 @@ describe('`canceled` resolves through the our-fault bound', () => {
 
   it('retires at OUR_FAULT_REDIAL_BOUND, observably and without suppressing', () => {
     // `exhausted`, not `completed`: the list was genuinely worked. And
-    // `suppressedReason` stays null — §5.3 reserves `suppressed` for
+    // `suppressedReason` stays null — `suppressed` is reserved for
     // DNC/invalid/manual, and a reason on a non-suppressed row is one fact in two
     // columns that can disagree.
     const at = resolveOurFaultRedial(null, 'canceled', NOW, OUR_FAULT_REDIAL_BOUND);

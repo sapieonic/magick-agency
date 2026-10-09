@@ -1,11 +1,11 @@
 /**
  * Shared 429 backoff for live polls that share a tenant+API-key budget with
- * core (200 req/min). Dedicated 2026-09-07 (sreenidhi): a 143-batch static
+ * the server (200 req/min). Dedicated 2026-09-07 (sreenidhi): a 143-batch static
  * campaign 429'd GET /static-calls/batches/:id while the UI kept polling at the
  * foreground cadence, including on hidden tabs.
  *
- * Core's limiter returns `{ retryAfter, message: "Rate limit exceeded. Try again
- * in N seconds." }`. Master's proxy historically dropped the `Retry-After`
+ * The server's limiter returns `{ retryAfter, message: "Rate limit exceeded. Try again
+ * in N seconds." }`. The API's proxy historically dropped the `Retry-After`
  * header, so callers must also parse the body / message.
  */
 

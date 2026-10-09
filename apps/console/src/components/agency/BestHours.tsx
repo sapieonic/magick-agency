@@ -335,7 +335,7 @@ export function BestHours({
           matrix={matrix}
           /*
             The campaign's zone, from the payload — never the reader's, and never
-            re-derived inside the grid. E3, and the reason the prop exists.
+            re-derived inside the grid. That is the reason the prop exists.
           */
           zone={zone}
           caption={`When ${name} connects — ${AGENT_STATS_WINDOW_LABELS[

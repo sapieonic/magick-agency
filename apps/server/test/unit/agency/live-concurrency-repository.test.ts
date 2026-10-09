@@ -80,7 +80,7 @@ describe('AgencyLiveConcurrencyRepository.liveByState · the query shape', () =>
     // failures a mocked pool cannot otherwise see:
     //
     // 1. The predicate must match `uq_agency_attempt_live`'s partial-index
-    //    predicate (migration 075) byte for byte, or the planner cannot prove the
+    //    predicate byte for byte, or the planner cannot prove the
     //    index covers the query and this degrades to a scan of a table that grows
     //    for the life of the account. `$1` is opaque at plan time.
     // 2. A statement with no parameters cannot hit `42P08` — no `$n` exists to be
@@ -95,7 +95,7 @@ describe('AgencyLiveConcurrencyRepository.liveByState · the query shape', () =>
     // from `AgencyAttemptRepository.countLive`; if these two predicates drift, an
     // operator reads a gauge that disagrees with the number the dialer acted on and
     // nothing anywhere goes red. Asserted as a shared substring rather than a
-    // comment claiming agreement — §16.6 rule 3.
+    // comment claiming agreement.
     await new AgencyLiveConcurrencyRepository().liveByState();
     const gaugeSql = pool.query.mock.calls[0]![0] as string;
 

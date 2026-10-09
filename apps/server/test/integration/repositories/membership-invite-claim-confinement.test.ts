@@ -12,18 +12,16 @@ import {
 } from '../../../../../packages/db/test/integration/setup/platform-factories.js';
 import { PENDING_UID_PREFIX } from '../../../src/auth/firebase-identity.js';
 
-// PORT NOTE (magick-agency): master mocked `src/db/connection.js` to hand back
-// the test pool. Here the repositories (server-local and `@magick-agency/db`)
+// The repositories (server-local and `@magick-agency/db`)
 // share the package's pool singleton, so the suite initialises it against the
 // agency test database instead (worker-common: `initDbPool`, not a mock).
 initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
 
 /*
- * PORT NOTE (magick-agency): master does not type-check its tests; agency's lint
- * does, and `DecodedFirebaseToken` types the optional claims as `string |
- * undefined`. The `null` claims master passes (a Firebase token with no name,
+ * The lint type-checks tests, and `DecodedFirebaseToken` types the optional claims as `string |
+ * undefined`. The `null` claims (a Firebase token with no name,
  * picture or email) are kept as `null` at runtime and only typed through this
- * constant, so every bind sees exactly the value master's suite sent.
+ * constant, so every bind sees exactly the value a real token with no claim yields.
  */
 const NO_CLAIM = null as unknown as string;
 
@@ -256,7 +254,7 @@ describe('claimWithIdentity — a claim may activate only the tenant its token n
 
   it('ALLOWS an already-bound user claiming with their OWN identity, foreign memberships and all', async () => {
     /**
-     * The ordinary "add an agent who already has a MagickVoice login" invite:
+     * The ordinary "add an agent who already has a login" invite:
      * `POST /users/invite` reuses their real row, which legitimately holds
      * memberships in every workspace they belong to. Nothing changes hands, so
      * the confinement must not fire — refusing here would answer a conflict to

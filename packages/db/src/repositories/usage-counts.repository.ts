@@ -1,7 +1,7 @@
 import { getPool } from '../connection.js';
 
 /**
- * NEW (magick-agency, plan §3.3): the read behind the super-admin usage-counts
+ * The read behind the super-admin usage-counts
  * view (`GET /super-admin/usage`, contract `UsageCountsQuery` /
  * `UsageCountsResponse` in `@magick-agency/contracts/api/platform/super-admin-usage`).
  *
@@ -25,7 +25,7 @@ import { getPool } from '../connection.js';
  *
  * ── The index ──────────────────────────────────────────────────────────────
  * `idx_agency_attempts_billing (dialed_at, campaign_id) WHERE dialed_at IS NOT
- * NULL` (core 081). The range predicate on `dialed_at` implies `IS NOT NULL`, so
+ * NULL`. The range predicate on `dialed_at` implies `IS NOT NULL`, so
  * the partial index qualifies, and `dialed_at` leading makes it a range scan
  * across every campaign. Tenant/account narrowing filters inside that range.
  *

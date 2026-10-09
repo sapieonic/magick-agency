@@ -1,9 +1,8 @@
 /**
- * ─── RETRY CAMPAIGNS — THE THREE BOUNDS, FIXED ACROSS THREE REPOS ───────────
+ * ─── RETRY CAMPAIGNS — THE THREE BOUNDS ──────────────────────────────────────
  *
- * `MagickVoice-platform/docs/agency-campaign-retry-wire-contract.md` §8 pins these values so core,
- * magick-master and magick-comms-cusui agree about what is refusable. Only core
- * ENFORCES them — master and cusui echo the numbers into copy ("up to 100,000
+ * These values fix what is refusable. Only the internal handlers ENFORCE them —
+ * the public API layer and the console echo the numbers into copy ("up to 100,000
  * contacts") — which is exactly why they need one home rather than being spelled
  * at the two call sites that read them.
  *
@@ -17,8 +16,8 @@
  * number is dialled within one campaign, keyed by outcome, with
  * `OUR_FAULT_REDIAL_BOUND` sitting underneath it. This file is about RETRY
  * CAMPAIGNS: a supervisor authoring a second campaign over a subset of a first
- * one's roster. `agency.md` §7.4 records the same trap on the stats surface,
- * where `attempts_retried` already means within-campaign redials and must not be
+ * one's roster. The same trap exists on the stats surface, where
+ * `attempts_retried` already means within-campaign redials and must not be
  * reused for this.
  */
 
@@ -42,9 +41,8 @@
  * count and the cap and narrows the selector.
  *
  * If a tenant legitimately needs a larger retry the answer is chunking with
- * idempotency markers — the `agency_ingest_chunks` shape (077) the CSV path
- * already uses — not raising this number. That is a follow-up, recorded in the
- * design's §10 open questions, because the answer depends on real roster sizes.
+ * idempotency markers — the `agency_ingest_chunks` shape the CSV path
+ * already uses — not raising this number. That is a follow-up (an open question), because the answer depends on real roster sizes.
  */
 export const RETRY_MAX_SEED_ROWS = 100_000;
 
@@ -66,8 +64,7 @@ export const RETRY_MAX_SEED_ROWS = 100_000;
  * Note the deliberate asymmetry with {@link RETRY_MAX_SEED_ROWS}: that one bounds
  * a resource, this one bounds a shape. Neither is a compliance limit — the
  * regulated repeat-dial ceiling is `OUR_FAULT_REDIAL_BOUND` in `retry-policy.ts`,
- * which is per-contact-ROW and therefore resets on every copy (DR-2). The design's
- * §7.3 flags that consequence for the compliance decision; this constant does not
+ * which is per-contact-ROW and therefore resets on every copy. That consequence needs its own compliance decision; this constant does not
  * answer it and must not be mistaken for having answered it.
  */
 export const RETRY_MAX_GENERATION = 10;
@@ -85,14 +82,13 @@ export const RETRY_MAX_GENERATION = 10;
  * feeds is the one payload whose latency the whole design guards hardest.
  *
  * Lifted out of the SQL so the number the contract publishes and the number the
- * query enforces are the same token. `agency.md` §7.5 calls this the display
+ * query enforces are the same token. It is also the display
  * bound on a deep chain, alongside {@link RETRY_MAX_GENERATION}.
  */
 export const PRIOR_ATTEMPT_LIMIT = 20;
 
 /**
- * The config columns a retry campaign inherits from its parent (wire contract
- * §2 / DR-10).
+ * The config columns a retry campaign inherits from its parent.
  *
  * ── Why it lives in this leaf and not in the route that uses it ────────────
  * It was a `const` inside the route-registration closure, which made the one
@@ -123,7 +119,7 @@ export const RETRY_INHERITED_CONFIG_KEYS = [
 ] as const;
 
 /**
- * The shape a retry idempotency key must have to be accepted (migration 115).
+ * The shape a retry idempotency key must have to be accepted.
  *
  * ── Why there is a MINIMUM length at all ──────────────────────────────────
  *

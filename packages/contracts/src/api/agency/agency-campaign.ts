@@ -1,11 +1,9 @@
 /**
- * Campaign-builder types — the wire shapes master serves under
- * `/proxy/agency/{campaigns,ingest}` (`AD-P3-M-04`).
+ * Campaign-builder types — the wire shapes the public API layer serves under
+ * `/proxy/agency/{campaigns,ingest}`.
  *
- * These mirror `magick-master/src/api/routes/proxy-agency-campaigns.routes.ts`
- * and `agency-csv-ingest.ts`. They are deliberately NOT re-derived from the UX
- * spec: the spec's §B.4 summary sketch shows four counters that sum to the row
- * count, and the implementation does not work that way (see
+ * They are deliberately NOT re-derived from a design sketch of four counters
+ * that sum to the row count: the implementation does not work that way (see
  * `utils/agencyIngestSummary.ts`). Where the two disagree the wire wins, because
  * the wire is what the operator's numbers come from.
  */
@@ -41,7 +39,7 @@ export type AgencyIngestFailureCode =
   | 'unsupported_encoding'
   | 'dnc_unavailable';
 
-/** `GET /proxy/agency/ingest/limits` — served from master's constants. */
+/** `GET /proxy/agency/ingest/limits` — served from public API layer's constants. */
 export interface AgencyIngestLimits {
   max_rows: number;
   max_columns: number;
@@ -103,7 +101,7 @@ export interface AgencyIngestStartResponse {
  * **The counter contract, restated because it is the whole point of the summary
  * screen:** `accepted + rejected = rows_read`, exactly. `duplicates` — and the
  * `dnc_suppressed` entry in `rejected_by_reason` — are breakdowns *of*
- * `rejected`, never a third or fourth addend. Master's ingest service moves
+ * `rejected`, never a third or fourth addend. The public API layer's ingest service moves
  * DNC-suppressed rows from accepted to rejected for precisely this reason.
  */
 export interface AgencyIngestJob {
@@ -120,15 +118,15 @@ export interface AgencyIngestJob {
   duplicates: number;
   rejected_by_reason: Partial<Record<AgencyIngestReasonCode, number>>;
   /**
-   * Rows core's roster **refused on arrival** because it already held them.
+   * Rows the dialer runtime's roster **refused on arrival** because it already held them.
    *
    * **Independent of `accepted`/`rejected` above, and deliberately not an
-   * addend.** Those two count what master decided to *send*; this counts what
-   * core would not take. They cannot be reconciled against each other, and the
-   * summary must not try (`MAG-113`) — the whole value of the number is that it
+   * addend.** Those two count what the public API layer decided to *send*; this counts what
+   * the dialer runtime would not take. They cannot be reconciled against each other, and the
+   * summary must not try — the whole value of the number is that it
    * exposes the disagreement.
    *
-   * **A floor, not a total.** Master's own report: core's replay path answers
+   * **A floor, not a total.** The public API layer's own report: the dialer runtime's replay path answers
    * `rejected_duplicate_rows: 0` for a chunk whose original response was lost in
    * transit and retried, so this can UNDERCOUNT. It never overcounts, so a
    * non-zero value is always real.
@@ -137,8 +135,8 @@ export interface AgencyIngestJob {
   /**
    * Capped sample (20) of the colliding source row numbers.
    *
-   * **Skewed to the earliest chunks, not a spread across the file** — core caps
-   * each chunk at 20 and master stops accepting once the same cap is reached, so
+   * **Skewed to the earliest chunks, not a spread across the file** — the dialer runtime caps
+   * each chunk at 20 and the public API layer stops accepting once the same cap is reached, so
    * on a heavily-colliding re-upload chunk 0 alone typically fills it. Examples,
    * never a representative sample.
    */
@@ -156,9 +154,9 @@ export interface AgencyIngestJob {
   finished_at: string | null;
 }
 
-// ─── Campaign config (`AD-P3-U-02`) ──────────────────────────────────────────
+// ─── Campaign config ──────────────────────────────────────────
 
-/** One entry of the campaign's disposition catalog (§2.4). */
+/** One entry of the campaign's disposition catalog. */
 export interface AgencyDispositionEntry {
   code: string;
   label: string;
@@ -178,36 +176,32 @@ export interface AgencyRetryRule {
 /**
  * Outcomes the retry policy may be keyed by.
  *
- * **Not an identical mirror of master's validator** (`RETRY_POLICY_OUTCOMES`,
- * `magick-master/src/agency/agency-campaign-config.ts`) — one deliberate
- * asymmetry, restated here because an earlier version of this comment claimed
- * an identity that does not hold (`MAG-100`, reopened):
+ * **Not an identical mirror of the public API layer's validator** (`RETRY_POLICY_OUTCOMES`,
+ * in `agency-campaign-config.ts`) — one deliberate asymmetry:
  *
- * `invalid` is listed here and REFUSED by master
- * (`SUPPRESSED_BEFORE_POLICY_OUTCOMES`). Core's `resolveRetryDecision`
+ * `invalid` is listed here and REFUSED by the public API layer
+ * (`SUPPRESSED_BEFORE_POLICY_OUTCOMES`). The dialer runtime's `resolveRetryDecision`
  * suppresses that outcome before any policy is ever consulted, so a rule on it
  * can never fire — which is exactly why it stays in the union and in
  * `agencyCampaignConfigForm.FIXED_ZERO_OUTCOMES` rather than being deleted:
- * §B.6 wants the row rendered as a static "Fixed at 0" with a reason, because
+ * the row is rendered as a static "Fixed at 0" with a reason, because
  * hiding it invites the operator to assume it retries.
  * `agencyCampaignConfigForm`'s `NEVER_SENT_RETRY_OUTCOMES` strips the key on
  * the way out, so the fixed-zero row this union allows to exist can never
- * actually reach master.
+ * actually reach the public API layer.
  *
  * Everything else — including `agent_disconnected` and `orphaned` — matches
- * master's validator exactly. Those two were added here after master and core
- * already shipped them (master's `RETRY_POLICY_OUTCOMES`, core's
- * `DEFAULT_RETRY_POLICY` in `retry-policy.ts`) and a cross-repo seam audit found
- * this union had not followed. Both are genuinely produced — an agent's dropped
+ * the public API layer's validator exactly. Both are in the public API layer's `RETRY_POLICY_OUTCOMES` and the dialer runtime's
+ * `DEFAULT_RETRY_POLICY` in `retry-policy.ts`, so this union must carry them. Both are genuinely produced — an agent's dropped
  * station socket (`agent_disconnected`) and an attempt whose owning replica died
  * holding it (`orphaned`) — and both are OUR fault, not the customer's, which is
- * why the form labels them that way (`MAG-97`).
+ * why the form labels them that way.
  *
  * `canceled` is the third our-fault key, added after the 2026-09-08 pilot, and
- * it arrived the same way: core classifying it, core's `DEFAULT_RETRY_POLICY`
- * carrying it, master's `RETRY_POLICY_OUTCOMES` accepting it. A dial we stopped
+ * it arrived the same way: the dialer runtime classifying it, the dialer runtime's `DEFAULT_RETRY_POLICY`
+ * carrying it, the public API layer's `RETRY_POLICY_OUTCOMES` accepting it. A dial we stopped
  * before anyone picked up is emphatically not the customer's failure to answer,
- * so core charges it to the same `our_fault_attempts` ledger as
+ * so the dialer runtime charges it to the same `our_fault_attempts` ledger as
  * `agent_disconnected`'s pre-bridge half — which is what makes a rule keyed here
  * read (`resolveOurFaultRedial` takes the configured cap and delay) and why the
  * form treats it as an our-fault row.
@@ -225,9 +219,9 @@ export type AgencyRetryOutcome =
 
 export type AgencyRetryPolicy = Partial<Record<AgencyRetryOutcome, AgencyRetryRule>>;
 
-/** The campaign as core stores it, as far as the builder is concerned. */
+/** The campaign as the dialer runtime stores it, as far as the builder is concerned. */
 /**
- * The six values `ck_agency_campaign_status` permits (core migration 072).
+ * The six values `ck_agency_campaign_status` permits.
  *
  * `stopping` is a real, renderable state and not a transient the UI may collapse
  * into `stopped`: `POST /stop` answers 200 with `stopping`, and only the pacing
@@ -243,20 +237,16 @@ export type AgencyCampaignStatus =
   | 'completed'
   | 'stopped';
 
-// ─── The health strip's diagnoses (§C.2) ─────────────────────────────────────
+// ─── The health strip's diagnoses ─────────────────────────────────────
 //
-// Mirrored verbatim from core's `src/agency/contracts.ts`. Master proxies the
-// stats payload byte-for-byte, so core is the authority for every name and type
-// below; a rename there and not here is an `undefined` this file vouches for.
+// The public API layer proxies the stats payload byte-for-byte, so the frozen
+// contract in `../../agency` is the authority for every name and type below; a
+// rename there and not here is an `undefined` this file vouches for.
 
 /**
- * The eight conditions §C.2 ranks. The console shows the first that matches.
+ * The conditions the health strip ranks. The console shows the first that matches.
  *
- * PORT NOTE (magick-agency): cusui's mirror carried `credits_low` here as "the
- * one arm core never emits", for master to insert from its balance. Magick Agency
- * v1 has no credits (extraction plan §3.3), so the member — and its arm on
- * `AgencyStall` below — is removed, leaving seven. The console's health-strip
- * copy for it goes with it.
+ * There is no `credits_low` member: v1 has no credits, which leaves seven codes.
  */
 export type AgencyStallCode =
   | 'auto_paused_abandonment'
@@ -269,19 +259,19 @@ export type AgencyStallCode =
 
 /**
  * A diagnosis together with the evidence for it — a discriminated union rather
- * than an untyped bag, because §C.2 requires each message to name its own
+ * than an untyped bag, because each message must name its own
  * numbers and a bag would let this console read a field the producer never set,
  * rendering "NaN% is over your undefined% limit" at the moment a supervisor
  * needs the truth.
  *
- * No arm carries a pre-formatted sentence. Copy is the console's (§0.2).
+ * No arm carries a pre-formatted sentence. Copy is the console's.
  */
 export type AgencyStall =
   | {
       code: 'auto_paused_abandonment';
       /**
        * The rate AS MEASURED when the guardrail fired — **frozen**, not live
-       * (core migration 089). Labelling it as a current rate is a lie that gets
+       * (the abandonment guardrail). Labelling it as a current rate is a lie that gets
        * worse the longer the campaign sits paused.
        */
       measured_pct: number;
@@ -291,13 +281,13 @@ export type AgencyStall =
     }
   | {
       code: 'dnc_unavailable';
-      /** Per-tenant, not per-campaign: the DNC set is tenant-flat (design §2.3). */
+      /** Per-tenant, not per-campaign: the DNC set is tenant-flat. */
       tenant_wide: true;
     }
   | {
       code: 'no_agents_available';
       agents_on_shift: number;
-      /** Break codes to counts, so §C.2 can render "5 on break (Lunch)". */
+      /** Break codes to counts, so the console can render "5 on break (Lunch)". */
       on_break_by_reason: Record<string, number>;
       on_call: number;
       /** ISO-8601, or null when this campaign has never dialed. */
@@ -319,8 +309,7 @@ export type AgencyStall =
       retries_pending: number;
       next_retry_at: string | null;
     }
-  // PORT NOTE (magick-agency): the `credits_low` arm is removed — see
-  // `AgencyStallCode`.
+  // There is no `credits_low` arm — see `AgencyStallCode`.
   | {
       code: 'elevated_failure_rate';
       failed_pct: number;
@@ -329,16 +318,15 @@ export type AgencyStall =
     };
 
 /**
- * ─── THE AGENT FLOOR (§C.4) ─────────────────────────────────────────────────
+ * ─── THE AGENT FLOOR ─────────────────────────────────────────────────
  *
- * Mirrored from `magic-voice-core/src/agency/contracts.ts`. Core has served the
- * per-agent roster since core#301; until `MAG-148` this console declared only
- * `agents_live` and threw the roster away on every poll — the strip could say
+ * The per-agent roster is part of the stats payload. A console that declared only
+ * `agents_live` would throw the roster away on every poll — the strip could say
  * "5 on break" and nobody could see WHO.
  */
 
 /**
- * Core aliases this to its own `AgencyAgentState` so the payload and the writer
+ * The dialer runtime aliases this to its own `AgencyAgentState` so the payload and the writer
  * cannot drift onto two unions. Aliased here for the same reason, against the
  * copy of that union in `./agency`.
  */
@@ -347,26 +335,26 @@ export type AgencyAgentLiveState = AgencyAgentState;
 /**
  * Live agents on a campaign, counted by state.
  *
- * Core seeds **every** state with a zero, so this is a total record rather than
+ * The dialer runtime seeds **every** state with a zero, so this is a total record rather than
  * a partial one — an absent key would mean a producer bug, not "none in that
  * state", and typing it `Partial<>` here would hide that distinction.
  */
 export type AgencyAgentsByState = Record<AgencyAgentLiveState, number>;
 
 /**
- * One agent on the supervisor's floor (§C.4).
+ * One agent on the supervisor's floor.
  *
  * Three fields carry meaning that is easy to get wrong, and each wrong reading
  * produces a floor that is confidently false about a person a supervisor is
  * about to act on:
  *
- * 1. **`agent_name: null` is "master could not resolve this person"** — a
- *    deleted user, or an id from outside this tenant. Master deliberately sends
+ * 1. **`agent_name: null` is "the public API layer could not resolve this person"** — a
+ *    deleted user, or an id from outside this tenant. The public API layer deliberately sends
  *    `null` rather than a placeholder so the console can choose. The choice is
  *    a shortened `agent_user_id` (see `agentDisplayName`): never blank, and
  *    never the word "Unknown", which is indistinguishable from a real name.
  *
- * 2. **`connected: null` is "could not determine", NOT "disconnected".** Core
+ * 2. **`connected: null` is "could not determine", NOT "disconnected".** The dialer runtime
  *    resolves it from Redis and degrades to `null` on a fault. Same reasoning
  *    as `concurrency_in_use`, which this page already renders as "No data": a
  *    degraded read must never manufacture "this agent has dropped" on a screen
@@ -383,13 +371,13 @@ export interface AgencySupervisorAgent {
    */
   session_id: string;
   /**
-   * Master's user id for the person. Core never resolves it (D3) — there is no
+   * The public API layer's user id for the person. The dialer runtime never resolves it — there is no
    * user table there. Also the fallback the tile renders when `agent_name` is
    * null, so it reaches the screen either way.
    */
   agent_user_id: string;
   /**
-   * The person's name, enriched by master on the proxy hop.
+   * The person's name, enriched by the public API layer on the proxy hop.
    *
    * **`null` means unresolvable**, not "no name". See (1) above.
    */
@@ -421,14 +409,14 @@ export interface AgencySupervisorAgent {
 /**
  * What `GET /campaigns/:id/stats` actually returns today.
  *
- * The counters stay optional. That was originally because core produced neither
- * `abandoned_24h`, `answered_24h` nor `abandonment_rate_24h_pct` (`MAG-120`) —
- * **core produces all three now**, but a required field is a promise about every
- * deployed core AND master in the chain, and optionality here costs nothing: the
+ * The counters stay optional. That was originally because the dialer runtime produced neither
+ * `abandoned_24h`, `answered_24h` nor `abandonment_rate_24h_pct` —
+ * **the dialer runtime produces all three now**, but a required field is a promise about every
+ * deployed the dialer runtime AND the public API layer in the chain, and optionality here costs nothing: the
  * page reads every counter through `stats?.x` and renders an absent one as a
  * dash rather than a zero.
  *
- * The five supervisor fields below are typed as core declares them, because they
+ * The five supervisor fields below are typed as the dialer runtime declares them, because they
  * are the ones whose *shape* carries meaning — `stall: null` and
  * `concurrency_in_use: null` are load-bearing values, not absences, and widening
  * them to `| undefined` at the declaration would blur the distinction this whole
@@ -464,10 +452,10 @@ export interface AgencyCampaignStats {
    */
   abandonment_rate_24h_pct?: number | null;
 
-  // ── AD-P4-C-01 / MAG-71: the supervisor dashboard ──────────────────────────
+  // ── The supervisor dashboard ──────────────────────────
 
   /**
-   * §C.2's health strip: the single highest-priority reason this campaign is not
+   * The health strip: the single highest-priority reason this campaign is not
    * dialing, or `null` for "running normally".
    *
    * One diagnosis, not a list — a supervisor reading five simultaneous problems
@@ -479,16 +467,16 @@ export interface AgencyCampaignStats {
    * The codes that also matched, excluding the one in {@link stall}. Codes only:
    * the console renders a count and a list of names behind a disclosure.
    *
-   * Core sends these in priority order, but the console **must not rely on array
+   * The dialer runtime sends these in priority order, but the console **must not rely on array
    * order** — it sorts by `AGENCY_STALL_PRIORITY` itself, so a producer that
    * reorders cannot silently reorder what a supervisor reads.
    */
   other_stalls: AgencyStallCode[];
 
   /**
-   * The account's configured concurrency ceiling (D10 / CR-2).
+   * The account's configured concurrency ceiling.
    *
-   * A READ-OUT, never a control. Per D10 there is no tenant-facing setter, and
+   * A READ-OUT, never a control. There is no tenant-facing setter, and
    * rendering an input — or a link to one — beside the lifecycle buttons would
    * itself be an affordance claim the platform cannot honour.
    *
@@ -500,8 +488,8 @@ export interface AgencyCampaignStats {
   concurrency_limit: number;
 
   /**
-   * Live utilisation against that ceiling, **account-wide** (the same Redis
-   * counter AI calls use), or `null` when Redis could not answer.
+   * Live utilisation against that ceiling, **account-wide** (the account's Redis
+   * counter), or `null` when Redis could not answer.
    *
    * `null` is "we don't know", never 0 and never saturated. Telling a supervisor
    * to contact support about a limit we merely failed to read is the wrong
@@ -509,24 +497,24 @@ export interface AgencyCampaignStats {
    */
   concurrency_in_use: number | null;
 
-  /** The campaign's own configured ceiling the 24h rate is drawn against (§C.3). */
+  /** The campaign's own configured ceiling the 24h rate is drawn against. */
   abandonment_ceiling_pct: number;
 
-  // ── AD-P4-C-01 / MAG-148: the agent floor (§C.4) ───────────────────────────
+  // ── The agent floor ───────────────────────────
 
   /**
    * Live agents by state. **Replaces nothing** — `agents_live` stays as the
    * total, and the floor reads both.
    *
    * Optional for the same reason the counters are: a required field is a
-   * promise about every deployed core AND master in the chain, and the roster
+   * promise about every deployed the dialer runtime AND the public API layer in the chain, and the roster
    * is newer than both. Absent is "we don't know", which the floor renders as
    * a "couldn't load" note rather than as an empty floor.
    */
   agents_by_state?: AgencyAgentsByState;
 
   /**
-   * The floor itself, **unsorted**. Risk ordering is the console's (§C.4) —
+   * The floor itself, **unsorted**. Risk ordering is the console's —
    * see `utils/agencyAgentFloor.ts`.
    *
    * `[]` and `undefined` are different facts and both reach the screen
@@ -537,8 +525,8 @@ export interface AgencyCampaignStats {
 
   /**
    * Average handle time in seconds, excluding voicemail-dispositioned attempts
-   * (§C.3, D1). Core has served this all along; the floor is its first consumer
-   * here, because rank 2 ("on a call beyond 2× AHT") has no other threshold.
+   * The floor is the first consumer
+   * of it here, because rank 2 ("on a call beyond 2× AHT") has no other threshold.
    *
    * **`null` — and absent — mean there is no measurement yet.** Rank 2 does not
    * fire in either case. See `floorRisk` for why inventing a default would be
@@ -546,25 +534,25 @@ export interface AgencyCampaignStats {
    */
   aht_seconds?: number | null;
 
-  // ── AD-P4-C-01 / MAG-151: §C.3's derived figures ───────────────────────────
+  // ── The derived figures ───────────────────────────
   //
-  // Core has computed and master has proxied every field below since the
+  // The dialer runtime has computed and the public API layer has proxied every field below since the
   // supervisor payload shipped; this console declared none of them until now,
-  // which is the same producer-with-no-consumer defect MAG-148 found for
-  // `agents[]` and MAG-120 found in the opposite direction. See
+  // which is the same producer-with-no-consumer defect as `agents[]` (and its
+  // mirror image, a consumer with no producer). See
   // `utils/agencyStatsConsumers.ts` for the guard that makes the next one a
   // compile error instead of a discovery.
   //
   // Every one is optional for the reason `agents_by_state` is: required here
-  // would be a promise about every deployed core AND master in the chain.
-  // `undefined` is "this payload did not carry it", `null` is "core carried it
+  // would be a promise about every deployed the dialer runtime AND the public API layer in the chain.
+  // `undefined` is "this payload did not carry it", `null` is "the dialer runtime carried it
   // and has nothing to measure" — two different sentences on screen.
 
   /**
    * The same average as {@link aht_seconds} **with voicemail-labelled calls put
-   * back in** — §C.3's "raw figure on hover".
+   * back in** — the "raw figure on hover".
    *
-   * Core sends both rather than choosing, so this console renders both rather
+   * The dialer runtime sends both rather than choosing, so this console renders both rather
    * than choosing either. They are equal whenever nothing has been labelled
    * voicemail, which is not the same fact as "voicemail costs no time": see
    * {@link machine_connects_available}.
@@ -575,9 +563,9 @@ export interface AgencyCampaignStats {
    * Average wrap-up in seconds, **measured, never the configured allotment**.
    *
    * This is the supervisor's tuning input for the campaign's `wrapup_seconds`
-   * window, which is precisely why core refuses to average the configured
+   * window, which is precisely why the dialer runtime refuses to average the configured
    * column: doing so would hand the operator their own setting back as if it
-   * were evidence (core migration 088). Core averages only wrap-ups that
+   * were evidence. The dialer runtime averages only wrap-ups that
    * concluded normally — `forced`, `agent_left` and `campaign_stopped` are
    * excluded, because a wrap-up someone else ended measures the ender.
    */
@@ -606,12 +594,12 @@ export interface AgencyCampaignStats {
    * `no_disposition` auto-stamp on a lapsed wrap-up.
    *
    * A third bucket rather than a rounding error, and the honest caveat on
-   * {@link connect_rate_pct}: core's comment notes this population skews toward
+   * {@link connect_rate_pct}: the dialer runtime's comment notes this population skews toward
    * exactly the voicemails an agent walked away from rather than label, so
    * folding it into either neighbour would move the number in the direction
    * that looks like a coaching problem.
    *
-   * Note these calls are **inside** {@link aht_seconds}: core excludes only
+   * Note these calls are **inside** {@link aht_seconds}: the dialer runtime excludes only
    * calls labelled `voicemail`, not unlabelled ones.
    */
   unclassified_connects?: number;
@@ -637,7 +625,7 @@ export interface AgencyCampaignStats {
   // setting with no output.
   //
   // Optional for the reason every field above is: required here would be a
-  // promise about every deployed core AND master in the chain, and this pair is
+  // promise about every deployed the dialer runtime AND the public API layer in the chain, and this pair is
   // newer than both.
 
   /**
@@ -673,16 +661,16 @@ export interface AgencyCampaignStats {
    */
   success_rate_pct?: number | null;
 
-  // ── MAG-167: the two figures the redesigned workspace asked core for ───────
+  // ── The two figures the redesigned workspace asks for ───────
   //
   // Both are NICE-TO-HAVE by contract and neither has a fallback: the sub-line
   // each one fills is simply not rendered when it is absent. That is the whole
-  // reason they could ship as a separate, lower-priority half of the ticket —
+  // reason they could ship as a separate, lower-priority half of the work —
   // a screen that degrades to saying less is a screen that still works against
-  // a core or a master that predates them.
+  // a dialer runtime or a public API layer that predates them.
 
   /**
-   * Attempts placed that were RETRIES — core's `attempt_number > 1`.
+   * Attempts placed that were RETRIES — the dialer runtime's `attempt_number > 1`.
    *
    * A different question from {@link retries_pending}, which counts what is
    * QUEUED. This counts what has already been dialled, and it exists because
@@ -704,7 +692,7 @@ export interface AgencyCampaignStats {
    * exist to answer and the one `agents_live` cannot, because a stopped
    * campaign's live floor is always empty.
    *
-   * **`null` means not measured** — an older core, or a campaign that predates
+   * **`null` means not measured** — an older dialer runtime, or a campaign that predates
    * the agent event log — and must never be read as `0`. Same rule as
    * `abandonment_rate_24h_pct`, and with the same consequence if broken: a
    * campaign reported as having run with nobody on it, when the truth is that
@@ -721,9 +709,9 @@ export interface AgencyCampaign {
   /**
    * ⚠️ **There is no `description`, and one must not be added back here.**
    *
-   * Core's migration 072 declares no such column and
-   * `agencyCampaignRepository.update`'s `allowed` set does not list it, so master
-   * — a verbatim body forwarder — passed it to a write that silently dropped it.
+   * `agency_campaigns` declares no such column and
+   * `agencyCampaignRepository.update`'s `allowed` set does not list it, so the public API layer
+   * — a unchanged body forwarder — passed it to a write that silently dropped it.
    * The settings page then re-seeded from the response, which is what made it
    * self-erasing: the same save that reported success cleared the field. Adding
    * the field back to this interface is enough to make that whole loop compile
@@ -732,19 +720,19 @@ export interface AgencyCampaign {
   /**
    * The numbers a campaign dials FROM, rotated round-robin at dial time.
    *
-   * **Required on create** — core rejects an empty array, and the pacing engine
+   * **Required on create** — the dialer runtime rejects an empty array, and the pacing engine
    * throws rather than dialing without a pool. Optional here only because this
    * one interface serves reads, creates and patches.
    *
-   * Every entry must belong to `telephony_provider` (migration 072's column
-   * comment). A mixed pool dials successfully on some rotations and fails on
+   * Every entry must belong to `telephony_provider` (the `caller_ids`
+   * column comment). A mixed pool dials successfully on some rotations and fails on
    * others.
    */
   caller_ids?: string[];
   /**
    * The carrier the campaign dials through.
    *
-   * Core defaults this to `'vobiz'`, so it must be sent explicitly — agency
+   * The dialer runtime defaults this to `'vobiz'`, so it must be sent explicitly — agency
    * campaigns are VoiceLink-only, and a campaign left to the default would try
    * to dial a VoiceLink caller-ID pool through vobiz.
    */
@@ -761,7 +749,7 @@ export interface AgencyCampaign {
   /**
    * Whether the wrap-up window returns the agent to the pool on its own.
    *
-   * Core defaults it to `true` (migration 072) and reads it in
+   * The dialer runtime defaults it to `true` (`wrapup_auto_return`) and reads it in
    * `wrapup-manager.ts`: `false` holds the agent until they click, and the
    * countdown is only started when there is BOTH a window and this flag. So it
    * decides whether an agent's shift is paced by a timer or by them.
@@ -770,9 +758,9 @@ export interface AgencyCampaign {
   record_calls?: boolean;
   /**
    * Which of a contact's uploaded CSV columns are rendered, and in what order
-   * (core migration 072).
+   * (`context_display`).
    *
-   * Added on MAG-159, which is the first surface outside the agent console to
+   * The supervisor attempt views are the first surface outside the agent console to
    * render `context`. It is read there for its `hidden` list: the operator
    * marked those columns not-for-screen for the agent floor, and a supervisor
    * view has a WIDER audience than the one that rule was written about — so the
@@ -787,16 +775,16 @@ export interface AgencyCampaign {
    *
    * The campaign is the SECOND writer of `webrtc_calls.analysis_profile_id` —
    * `agency-dialer` stamps this onto the leg exactly as `POST /webrtc-call`
-   * stamps a per-call id — which is why core validates ownership on the campaign
+   * stamps a per-call id — which is why the dialer runtime validates ownership on the campaign
    * write and not only at dial time.
    *
-   * Gated by `agency.analytics` on the way IN only: master refuses a non-null
+   * Gated by `agency.analytics` on the way IN only: the public API layer refuses a non-null
    * value from a capability-off tenant and allows `null` through, so a tenant
-   * that loses the capability can still clear it (`MAG-147`).
+   * that loses the capability can still clear it.
    */
   analysis_profile_id?: string | null;
 
-  // ── MAG-167: lifecycle timestamps ─────────────────────────────────────────
+  // ── Lifecycle timestamps ─────────────────────────────────────────
   //
   // ── Why these are on the campaign row rather than derived ────────────────
   // `GET /agency/campaigns/:id/activity` carries status transitions with an
@@ -809,13 +797,13 @@ export interface AgencyCampaign {
   // 2. It is gated on `audit.read`, a different permission from
   //    `agency.supervise` — so a supervisor without it would read a campaign
   //    with no start date, which looks like a campaign that never started.
-  // 3. The trail has a server-side RETENTION HORIZON (core's retention Lambda,
-  //    not even core's config). A campaign older than it loses its own start
+  // 3. The trail has a server-side RETENTION HORIZON (the dialer runtime's retention Lambda,
+  //    not even the dialer runtime's config). A campaign older than it loses its own start
   //    time, so the summary would read "Ran for —" on exactly the historical
   //    campaigns it exists to describe.
   //
   // Optional and nullable for the reason every field on the stats payload is:
-  // `undefined` is "this master did not carry it", `null` is "core carried it
+  // `undefined` is "this public API layer did not carry it", `null` is "the dialer runtime carried it
   // and there is genuinely nothing" — and the two render differently.
 
   /**
@@ -847,16 +835,16 @@ export interface AgencyCampaign {
    */
   last_transition_by?: AgencyCampaignActor | null;
 
-  // ── Retry campaigns (wire contract §3) ────────────────────────────────────
+  // ── Retry campaigns ────────────────────────────────────
   //
   // `formatAgencyCampaignResponse` spreads the row, so these appear on every
-  // campaign payload the moment core's columns exist — a retry campaign is an
+  // campaign payload the moment the dialer runtime's columns exist — a retry campaign is an
   // ORDINARY campaign in every other respect (its own roster, its own pacing
   // leader, its own settlement, its own lifecycle), and these four columns plus
   // where its contacts came from are the entire difference.
   //
   // Optional for the reason every field on this interface is: `undefined` is
-  // "this master did not carry it", and a build that predates the feature reads
+  // "this public API layer did not carry it", and a build that predates the feature reads
   // every campaign as a non-retry, which is what it was.
 
   /** The campaign this one was seeded from, or `null` on an original. */
@@ -872,13 +860,13 @@ export interface AgencyCampaign {
   /**
    * **`0` means this is not a retry**, and it is the column default — so every
    * campaign that existed before the feature is correct without being touched.
-   * A retry of a retry is `2`, and core refuses past `RETRY_MAX_GENERATION`.
+   * A retry of a retry is `2`, and the dialer runtime refuses past `RETRY_MAX_GENERATION`.
    */
   retry_generation?: number;
   /**
    * The selector that produced this campaign's roster, **as sent**.
    *
-   * A RECORD, never re-executed (DR-5). Re-running it later would answer
+   * A RECORD, never re-executed. Re-running it later would answer
    * differently — the parent keeps moving if it is resumed — and the child's
    * roster would stop being reproducible from its own row. Typed `unknown`
    * rather than `AgencyRetrySelector` deliberately: it is whatever the operator
@@ -888,19 +876,19 @@ export interface AgencyCampaign {
   retry_selector?: unknown | null;
 }
 
-// ── Retry campaigns — the three routes' wire shapes (contract §2) ───────────
+// ── Retry campaigns — the three routes' wire shapes ───────────
 
 /**
  * `GET /proxy/agency/campaigns/:id/retry/preview`. Writes nothing.
  *
  * The preview exists because `POST .../retry` creates a campaign AND seeds a
  * roster in one transaction, and a supervisor has to be able to see the count
- * before that happens (DR-8). Preview and commit share one parser and one
- * predicate builder in core, or the preview eventually promises a count the
+ * before that happens. Preview and commit share one parser and one
+ * predicate builder in the dialer runtime, or the preview eventually promises a count the
  * commit does not deliver.
  */
 export interface AgencyRetryPreview {
-  /** How many contacts the selector matches AFTER the DR-4 exclusions. */
+  /** How many contacts the selector matches AFTER the DNC exclusion. */
   matched: number;
   by_last_outcome: Record<string, number>;
   /**
@@ -910,7 +898,7 @@ export interface AgencyRetryPreview {
    */
   by_last_disposition: Record<string, number>;
   /**
-   * Rows the selector matched that DR-4 removed, and **not decoration.**
+   * Rows the selector matched that the DNC exclusion removed, and **not decoration.**
    *
    * A supervisor who selects "everything suppressed" and gets 40 instead of 300
    * needs to be told the other 260 were DNC and invalid, or they report it as a
@@ -929,43 +917,43 @@ export interface AgencyRetryPreview {
 /** `POST /proxy/agency/campaigns/:id/retry`. */
 export interface AgencyRetryCreateRequest {
   selector: AgencyRetrySelector;
-  /** Optional; core defaults to `<parent name> — Retry <n>`. */
+  /** Optional; the dialer runtime defaults to `<parent name> — Retry <n>`. */
   name?: string;
   /**
    * Any create-route config key. Applied ON TOP of the parent's config, which
-   * the child inherits wholesale (DR-10).
+   * the child inherits wholesale.
    *
    * ⚠️ `agent_user_id` and `actor_name` are **not** here and must never be sent:
-   * master fills the actor from the authenticated session, exactly as it does
+   * the public API layer fills the actor from the authenticated session, exactly as it does
    * everywhere else. An actor the client controls is an actor the client can
    * forge.
    */
   config_overrides?: Partial<AgencyCampaign>;
   /**
    * At-most-once, minted HERE — once per opening of the retry dialog — and
-   * forwarded verbatim by master (wire contract §2).
+   * forwarded unchanged by the public API layer.
    *
    * The browser is the only layer that can mint it, and that is the whole point:
    * a key generated per REQUEST, anywhere downstream, is a different value on the
    * second attempt and protects nothing. This one has to be stable across "the
    * response never arrived, so I pressed the button again", because there is no
-   * campaign delete route in either service — a duplicate retry is a cohort of
+   * campaign delete route — a duplicate retry is a cohort of
    * real customers dialled twice, and nothing in the product can undo it.
    */
   idempotency_key?: string;
 }
 
 export interface AgencyRetryCreateResponse {
-  /** The CHILD, in full. It starts `draft` (DR-9) — creating and starting stay separate verbs. */
+  /** The CHILD, in full. It starts `draft` — creating and starting stay separate verbs. */
   campaign: AgencyCampaign;
   /**
    * `true` when this exact `idempotency_key` had ALREADY created the campaign
-   * above — core answers 200 rather than 201 and nothing was created now.
+   * above — the dialer runtime answers 200 rather than 201 and nothing was created now.
    *
    * A success, not an error: the campaign is the one this supervisor already
    * made, and the console's job is to take them to it.
    *
-   * Optional because a core that predates the field sends none, and its absence
+   * Optional because a dialer runtime that predates the field sends none, and its absence
    * means "this was a create" — which is what it was.
    */
   idempotent_replay?: boolean;
@@ -973,7 +961,7 @@ export interface AgencyRetryCreateResponse {
    * What THIS request seeded and excluded — **`null` on a replay**, because this
    * request seeded nothing. Reporting the child's roster size in a field named
    * "seeded" would be a fabricated fact about a transaction that never ran, so
-   * core sends null and the console reads the campaign instead.
+   * the dialer runtime sends null and the console reads the campaign instead.
    */
   contacts_seeded: number | null;
   /**
@@ -986,7 +974,7 @@ export interface AgencyRetryCreateResponse {
    * and handed 809 is not left to decide for themselves whether that is a
    * collapse or rows lost to a bug.
    *
-   * Optional: a core that predates the field sends none, and an absence is not a
+   * Optional: a dialer runtime that predates the field sends none, and an absence is not a
    * zero — it is "this build cannot tell you", which is why the toast says
    * nothing rather than claiming nothing was collapsed.
    */
@@ -997,10 +985,10 @@ export interface AgencyRetryCreateResponse {
 /**
  * The three `409` refusals `POST .../retry` can answer with.
  *
- * They carry only a `code`, so master allow-lists all three in the
+ * They carry only a `code`, so the public API layer allow-lists all three in the
  * campaign-lifecycle block of its error mask — **not** in
  * `AGENCY_ACTION_ERROR_CODES`, which is attempt-action codes only and is pinned
- * in four places plus the S2S fixture. Widening that union is the mistake the
+ * in several places. Widening that union is the mistake the
  * agency build made three times.
  */
 export const AGENCY_RETRY_REFUSAL_CODES = [
@@ -1049,7 +1037,7 @@ export interface AgencyCampaignLineage {
 /**
  * The person behind a campaign's current status.
  *
- * Master resolves the name; core stores only the id (it has no user table), so
+ * The public API layer resolves the name; the dialer runtime stores only the id (it has no user table), so
  * a name that could not be resolved comes back as an id-shaped string rather
  * than as an absent field. The console renders whatever it is given and invents
  * nothing — a "Unknown user" fallback would be this client asserting a fact the
@@ -1060,7 +1048,7 @@ export interface AgencyCampaignActor {
   name: string;
 }
 
-// ── Agent ↔ campaign assignment (master-native, `MAG-160`) ──────────────────
+// ── Agent ↔ campaign assignment (the public API layer-native) ──────────────────
 //
 // Staffing, **not authorization**. Joining a station stays gated on
 // `agency.station.connect` alone, so a supervisor covering a shift can still
@@ -1068,9 +1056,9 @@ export interface AgencyCampaignActor {
 // `agent`-role user — who inherits no navigation at level 5 — is sent by
 // default when they open the app.
 //
-// The rows live in master (`agency_campaign_agents`), never core: core has no
+// The rows live in the public API layer (`agency_campaign_agents`), never the dialer runtime: the dialer runtime has no
 // identity model at all (no user table, no FK, `agent_user_id` is an opaque
-// string), which is also why master is the side that can enrich a name onto one.
+// string), which is also why the public API layer is the side that can enrich a name onto one.
 
 /**
  * `GET /proxy/agency/my-assignment`.
@@ -1085,11 +1073,11 @@ export interface AgencyMyAssignment {
   /**
    * **Nullable — and this type used to deny it.**
    *
-   * Master resolves the name through a best-effort call to core and documents
-   * `null` for a core outage, a campaign deleted since the assignment was made,
+   * The public API layer resolves the name through a best-effort call to the dialer runtime and documents
+   * `null` for a dialer runtime outage, a campaign deleted since the assignment was made,
    * or a changed response shape; it has a test named for exactly that case.
    * Declared non-null here, `tsc` could not flag either render site, so a
-   * thirty-second core blip showed an agent a sentence with a hole in it and a
+   * thirty-second dialer runtime blip showed an agent a sentence with a hole in it and a
    * link reading "Go back to ".
    *
    * The id is what the redirect needs and is never null. The name is
@@ -1104,16 +1092,16 @@ export interface AgencyMyAssignment {
  * One row of `GET /proxy/agency/my-assignments` — a campaign this agent may work.
  *
  * The plural route replaces the singular `/my-assignment` (see
- * {@link AgencyMyAssignment}), because master's staffing table now allows an
+ * {@link AgencyMyAssignment}), because the public API layer's staffing table now allows an
  * agent to be staffed on several campaigns. Being LIVE on one at a time is
- * unchanged and is enforced by core's session index, not by this list: these are
+ * unchanged and is enforced by the dialer runtime's session index, not by this list: these are
  * the campaigns an agent may CHOOSE from, not the one they are on.
  */
 export interface AgencyAssignment {
   campaign_id: string;
   /**
-   * **Nullable, and every render site must guard it.** Master resolves this
-   * through a best-effort call to core and documents `null` for a core outage, a
+   * **Nullable, and every render site must guard it.** The public API layer resolves this
+   * through a best-effort call to the dialer runtime and documents `null` for a dialer runtime outage, a
    * campaign deleted since the assignment was made, or a changed response shape.
    * The id is what every link needs and is never null; the name is presentation.
    * See {@link AgencyMyAssignment} for the bug this nullability records.
@@ -1122,8 +1110,8 @@ export interface AgencyAssignment {
   /**
    * The campaign's lifecycle state, or `null` when the same best-effort lookup
    * could not resolve it. Typed as a plain `string` rather than
-   * `AgencyCampaignStatus` on purpose: master forwards whatever core says
-   * verbatim, so a status core adds arrives here before this mirror knows about
+   * `AgencyCampaignStatus` on purpose: the public API layer forwards whatever the dialer runtime says
+   * unchanged, so a status the dialer runtime adds arrives here before this mirror knows about
    * it. Render it through `AgencyCampaignStatusBadge`, which shows an
    * unrecognised status as itself instead of mapping it to a default.
    *
@@ -1144,11 +1132,11 @@ export interface AgencyMyAssignments {
 export interface AgencyAssignedAgent {
   user_id: string;
   /**
-   * Enriched by master from its own user table on the read.
+   * Enriched by the public API layer from its own user table on the read.
    *
-   * Enrichment failure must never turn a 200 into a 500 (master's
+   * Enrichment failure must never turn a 200 into a 500 (the public API layer's
    * `agency-stats-enrichment.ts` states that rule and this route follows it), so
-   * an unresolvable person still arrives — with whatever master could resolve.
+   * an unresolvable person still arrives — with whatever the public API layer could resolve.
    */
   name: string | null;
   email: string | null;

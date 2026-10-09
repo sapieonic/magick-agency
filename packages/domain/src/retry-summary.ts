@@ -1,5 +1,5 @@
 /**
- * ─── THE AGENT'S RETRY BANNER, RENDERED CORE-SIDE ───────────────────────────
+ * ─── THE AGENT'S RETRY BANNER, RENDERED SERVER-SIDE ─────────────────────────
  *
  * *Retry 1 of "Q3 Winback" — these contacts were previously voicemail, callback,
  * no answer, busy.*
@@ -8,8 +8,7 @@
  * `agency_campaigns.retry_selector`, and shipped on `AgencySessionBootstrap`. It
  * is deliberately not composed by the console from the raw selector: the copy the
  * agent reads and the query that actually produced the roster must not be able to
- * disagree, and only core holds the selector that produced it. Migration 108's
- * header makes the same argument for the lifecycle columns — this is the
+ * disagree, and only the internal handlers hold the selector that produced it. This is the
  * campaign's own fact.
  *
  * A LEAF module: pure functions over the selector and a catalog, no I/O, no
@@ -23,19 +22,17 @@ import { RETRY_NO_OUTCOME } from '@magick-agency/contracts/agency';
 /**
  * The console's outcome copy, mirrored.
  *
- * ⚠️ **A HAND-MIRRORED TABLE**, like the four the platform already carries
- * (`agency.md` §6.2/§6.4). Its twin is `ATTEMPT_OUTCOME_LABELS` in
- * `magick-comms-cusui/src/types/agency-spine.ts`, and the wire contract §4
- * requires this string to be rendered "with the console's existing outcome copy"
- * so that all three repos read the same sentence.
+ * ⚠️ **A HAND-MIRRORED TABLE**, like the other hand-mirrored unions the platform
+ * carries. Its twin is `ATTEMPT_OUTCOME_LABELS` in the console's agency-spine
+ * types, and this string is meant to be rendered "with the console's existing
+ * outcome copy" so that server and console read the same sentence.
  *
  * **Drift here is cosmetic, not functional**, which is the one thing that makes
  * a fifth mirror acceptable: nothing keys on these strings, no filter is built
  * from them, and the worst outcome is a banner reading "no answer" where the
  * Contacts tab says "No answer". That is a materially smaller failure than the
  * error-code union's, where a missing member destroys an explanation. Recorded
- * rather than hidden: if a sixth reader appears, this belongs in the S2S
- * fixture instead.
+ * rather than hidden: if a sixth reader appears, this belongs in a single shared definition instead.
  *
  * `Record<AgencyAttemptOutcome, string>` rather than a partial map, so an outcome
  * added to `contracts.ts` and forgotten here is a build error naming it — the same
@@ -86,7 +83,7 @@ const CONTACT_STATE_COPY: Record<string, string> = {
   suppressed: 'Suppressed',
 };
 
-/** Suppression copy, for the fallback arm. `dnc`/`invalid` cannot occur (DR-4). */
+/** Suppression copy, for the fallback arm. `dnc`/`invalid` cannot occur. */
 const SUPPRESSED_REASON_COPY: Record<string, string> = {
   max_attempts: 'Out of attempts',
   manual: 'Manually suppressed',
@@ -168,7 +165,7 @@ function readSelector(value: unknown): AgencyRetrySelector {
 /**
  * Render a frozen selector as the banner's second half.
  *
- * ── The order is fixed by the wire contract (§4) ───────────────────────────
+ * ── The order is fixed ──────────────────────────────────────────────────────
  *
  * Disposition labels first (from the PARENT's catalog where one exists, else the
  * raw code), then outcomes in the console's copy, then `never attempted` —
@@ -176,18 +173,18 @@ function readSelector(value: unknown): AgencyRetrySelector {
  * the selector was authored against the parent's roster, and a code the parent
  * had but the child does not would otherwise render as a bare slug.
  *
- * ── The fallback arm, which the contract does not specify ─────────────────
+ * ── The fallback arm, which the ordering rules do not specify ───────────────
  *
- * §4's three dimensions do not cover the whole selector: `state`,
+ * The three ordered dimensions (dispositions, outcomes, never attempted) do not cover the whole selector: `state`,
  * `suppressed_reason` and the two `attempt_count` bounds are legitimate selectors
  * that render to NOTHING under those rules. `{ state: ['exhausted'] }` is a
  * perfectly ordinary retry, and it would produce the banner *Retry 1 of "Q3
  * Winback" — * with a trailing dash and no reason.
  *
- * So the three contract dimensions are rendered exactly as specified, and the
- * remaining ones are appended ONLY when those three produced nothing. Core is the
- * sole producer of this string (§4 is explicit that it is built core-side), so
- * extending it for a case the contract leaves empty cannot put core out of step
+ * So the three ordered dimensions are rendered as above, and the
+ * remaining ones are appended ONLY when those three produced nothing. The server is the
+ * sole producer of this string (it is built server-side), so
+ * extending it for a case the ordered dimensions leave empty cannot put it out of step
  * with anyone — and an empty summary is the one outcome that is definitely wrong.
  *
  * The empty string remains reachable in exactly one case: a stored selector that
@@ -228,7 +225,7 @@ export function renderSelectionSummary(
 
   if (parts.length > 0) return parts.join(', ');
 
-  // ── Fallback: the dimensions §4's rules do not name ──────────────────────
+  // ── Fallback: the dimensions the ordered rules do not name ──────────────────
   const rest: string[] = [];
   for (const state of selector.state ?? []) {
     rest.push(decapitalize(copy(CONTACT_STATE_COPY, state)));

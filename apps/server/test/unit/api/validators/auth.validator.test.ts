@@ -1,4 +1,3 @@
-// PORT NOTE (magick-agency): ported from master test/unit/api/validators/auth.validator.test.ts@a1f0756a — verbatim, import specifiers remapped only.
 import { describe, it, expect } from 'vitest';
 import { sessionRequestSchema } from '../../../../src/api/validators/auth.validator.js';
 

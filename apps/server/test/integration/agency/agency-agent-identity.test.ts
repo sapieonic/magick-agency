@@ -9,10 +9,10 @@ const { enrichAssignedAgents, resolveAgentNames, enrichAgentStatsIdentity, enric
   await import('../../../src/agency/agency-agent-identity.js');
 
 /**
- * The database-touching half of `agency-agent-identity.ts` on REAL Postgres. Master's suite of
+ * The database-touching half of `agency-agent-identity.ts` on REAL Postgres. The unit suite of
  * this module is pure-function only (`foldHighestRole`), so the three enrichers and
- * `resolveAgentNames` ran their SQL (`users` JOIN `memberships`, tenant-scoped) only in route
- * tests with a fake pool. New file, no source twin.
+ * `resolveAgentNames` would otherwise run their SQL (`users` JOIN `memberships`, tenant-scoped) only in route
+ * tests with a fake pool.
  */
 
 let tenantId: string;

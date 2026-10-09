@@ -1,39 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// AD-P2-C-06 — the compliance abandonment metric.
+// The compliance abandonment metric.
 //
 // **The meter is NOT mocked here**, unlike `test/unit/utils/metrics.test.ts`.
 // That file's job is to pin instrument names and label sets; this file's job is
 // to read the values back, which a stand-in meter cannot do. Every case runs on
 // a real OTel meter provider (`startProcess`), so every assertion below is
-// against the numbers an export — or the `:9090` scrape — would see.
+// against the numbers an export would see.
 //
-// The centrepiece is `INDEPENDENCE LOCK` (do not prune). §10's cross-check is
-// only evidence if the counter and the table number are derived from DIFFERENT
-// sources — `AD-P2-C-11` is the case study: two numbers tracing back to the same
-// wrong write agreed perfectly while `T-P2d` returned 0 for months. A comment
-// asserting independence is worthless (§16.6 rule 3), so it is asserted as a
+// The centrepiece is `INDEPENDENCE LOCK` (do not prune). The cross-check between the counter and the table number is
+// only evidence if they are derived from DIFFERENT
+// sources — two numbers tracing back to the same
+// wrong write once agreed perfectly while a metric returned 0 for months. A comment
+// asserting independence is worthless, so it is asserted as a
 // behavioural difference instead: **the two must respond differently to a
 // restart**, and re-pointing either side at the other's source breaks it.
 //
-// PORT NOTE (magick-agency, Phase 6): core test/unit/agency/abandonment-metrics.test.ts
-// @4850d1d9 is split across two files. Lane B1 ported its 19 predicate/window/repository
-// cases as `abandonment-window.test.ts` (that file's header lists them); THIS file holds
-// the 9 B1 deferred to Phase 6 by name, verbatim:
-//   "removes all three series once the campaign drops out of the 24h window",
-//   "clears a published rate when the campaign goes back to having no answers",
-//   "leaves a campaign that is still in the window alone",
-//   "counters and the window respond DIFFERENTLY to a restart",
-//   "does NOT publish a rate series when the rate is null",
-//   "exports the numerator and denominator, not just the ratio",
-//   "publishes every campaign in the window, not just the first",
-//   "serves all five series on the :9090 scrape" (MODIFIED, see the case),
-//   "labels every series by tenant AND campaign".
-// The metric reader is core's `test/helpers/otel-metric-reader.ts`, ported verbatim at the same path over a real `@opentelemetry/sdk-metrics` provider (devDependency; `ScrapeMetricReader` inlined because `src/utils/otel-sdk-config.ts` is not ported). There is no
-// `:9090` scrape (`renderPrometheusScrape` is not ported), hence the one MODIFIED case.
-// The imports only B1's half used (the predicate constants, `isAbandonedAttempt`,
-// `AgencyAbandonmentRepository`) are dropped with those cases.
+// The metric reader is `test/helpers/otel-metric-reader.ts`, over a real
+// `@opentelemetry/sdk-metrics` provider (devDependency; `ScrapeMetricReader` inlined).
+// There is no HTTP scrape endpoint: the series are asserted against one collection
+// of the meter.
 // ---------------------------------------------------------------------------
 
 vi.mock('@magick-agency/observability', () => ({
@@ -44,14 +31,13 @@ vi.mock('@magick-agency/observability', () => ({
 const { pool } = vi.hoisted(() => ({ pool: { query: vi.fn(), connect: vi.fn() } }));
 vi.mock('@magick-agency/db', () => ({ getPool: () => pool }));
 
-// PORT NOTE: `renderPrometheusScrape` is not ported (see the header); the reader is
-// core's, from the ported helper.
+// The metric reader comes from the test helper.
 import type { ScrapeMetricReader } from '../../helpers/otel-metric-reader.js';
 import { collectMetric, metricValue } from '../../helpers/otel-metric-reader.js';
 
 const LABELS = { tenant_id: 't1', campaign_id: 'camp-1' };
 
-let reader: ScrapeMetricReader; // PORT NOTE: was `ScrapeMetricReader`
+let reader: ScrapeMetricReader;
 let metrics: typeof import('@magick-agency/observability/metrics/agency');
 let abandonment: typeof import('../../../src/agency/abandonment-metrics.js');
 
@@ -93,10 +79,10 @@ beforeEach(async () => {
 // Staleness. `set`-only publishing is a one-way door.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P2-C-06 · a campaign that leaves the window stops reporting', () => {
+describe('a campaign that leaves the window stops reporting', () => {
   /**
    * A gauge that is only ever `set` keeps serving its last value forever unless
-   * something removes it. That is not cosmetic here: `AD-P4-C-02`'s auto-pause and the compliance alerts read
+   * something removes it. That is not cosmetic here: the auto-pause and the compliance alerts read
    * `agency_abandonment_rate_24h`, so a campaign that stopped dialing yesterday
    * can hold a guardrail down — or trip one — on a number describing a window it
    * is no longer in. "No data" has to be reachable, not just initial.
@@ -150,7 +136,7 @@ describe('AD-P2-C-06 · a campaign that leaves the window stops reporting', () =
 // The lock the whole cross-check rests on.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P2-C-06 · INDEPENDENCE LOCK (do not prune)', () => {
+describe('INDEPENDENCE LOCK (do not prune)', () => {
   it('counters and the window respond DIFFERENTLY to a restart', async () => {
     // ── Before the restart: a shift's worth of calls, counted in process. ──
     for (let i = 0; i < 100; i++) metrics.agencyAnsweredTotal.inc(LABELS);
@@ -160,7 +146,7 @@ describe('AD-P2-C-06 · INDEPENDENCE LOCK (do not prune)', () => {
     expect(await seriesValue('agency_answered_total', LABELS)).toBe(100);
     expect(await seriesValue('agency_abandoned_total', LABELS)).toBe(3);
     expect(await seriesValue('agency_abandonment_window_abandoned_24h', LABELS)).toBe(3);
-    // Both sides agree while the process is up. This is the §10 cross-check —
+    // Both sides agree while the process is up. This is the counter-versus-table cross-check —
     // and on its own it proves nothing, which is why the restart follows.
 
     // ── The restart: fresh modules on a fresh meter provider. ──
@@ -172,7 +158,7 @@ describe('AD-P2-C-06 · INDEPENDENCE LOCK (do not prune)', () => {
     expect(
       await seriesValue('agency_abandoned_total', LABELS),
       'the abandoned counter survived a restart — it is being read from the table, '
-      + 'which makes the §10 cross-check circular',
+      + 'which makes the counter-versus-table cross-check circular',
     ).toBeUndefined();
     expect(await seriesValue('agency_answered_total', LABELS)).toBeUndefined();
 
@@ -192,7 +178,7 @@ describe('AD-P2-C-06 · INDEPENDENCE LOCK (do not prune)', () => {
 // The rate itself, and the low-sample trap the guardrail will walk into.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P2-C-06 · the rate is null on no data, never 0 and never 100', () => {
+describe('the rate is null on no data, never 0 and never 100', () => {
   it('does NOT publish a rate series when the rate is null', async () => {
     pool.query.mockResolvedValue({ rows: [dbRow({ answered: '0', abandoned: '0' })] });
     await refreshAbandonmentWindow();
@@ -231,15 +217,15 @@ describe('AD-P2-C-06 · the rate is null on no data, never 0 and never 100', () 
 // Acceptance (c): the series are on the meter the metrics port serves.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P2-C-06 (c) · the series are registered', () => {
-  it('serves all five series on the :9090 scrape', async () => {
+describe('(c) · the series are registered', () => {
+  it('serves all five series from the meter', async () => {
     // Not a re-assertion of `metrics.test.ts` (which stubs the meter and pins
     // names/labels): this renders what `/metrics` serves from the REAL meter
     // provider, which is what acceptance (c) actually claims.
     //
-    // PORT NOTE: there is no `:9090` scrape or `renderPrometheusScrape` in Magick
-    // Agency. The same claim — all five series are on the meter, with this
-    // campaign's labels, after one publish — is asserted against one collection.
+    // There is no HTTP scrape endpoint in Magick Agency. The claim — all five series
+    // are on the meter, with this campaign's labels, after one publish — is asserted
+    // against one collection.
     metrics.agencyAnsweredTotal.inc(LABELS);
     metrics.agencyAbandonedTotal.inc(LABELS);
     await refreshAbandonmentWindow();
@@ -255,7 +241,7 @@ describe('AD-P2-C-06 (c) · the series are registered', () => {
   });
 
   it('labels every series by tenant AND campaign', async () => {
-    // `campaign_id` is not optional decoration — §10's predicate is per-campaign
+    // `campaign_id` is not optional decoration — the abandonment predicate is per-campaign
     // and US TSR measures per campaign, so a series without it cannot be
     // cross-checked against the SQL or used by the guardrail.
     metrics.agencyAbandonedTotal.inc(LABELS);

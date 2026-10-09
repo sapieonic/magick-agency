@@ -1,6 +1,5 @@
 /*
- * NEW (magick-agency): no source test — the route replaces master's credit/fleet
- * usage (deleted with credits). Covers `GET /super-admin/usage`
+ * Covers `GET /super-admin/usage`
  * (`apps/server/src/api/routes/super-admin-usage-counts.routes.ts`, contract
  * `UsageCountsQuery` / `UsageCountsResponse`): `usageCountsQuerySchema`
  * validation, the filters forwarded to `usageCountsRepository.countByAccount`,

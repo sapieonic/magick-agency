@@ -1,20 +1,20 @@
 import type { AgencyCampaignRecord, AgencyContactRecord } from '../db/models/agency.model.js';
 
 /**
- * ─── AGENCY DIALER — CALLING HOURS, IN THE CUSTOMER'S TIMEZONE (§4.2, D4) ────
+ * ─── AGENCY DIALER — CALLING HOURS, IN THE CUSTOMER'S TIMEZONE ────
  *
  * **The window is evaluated in the CONTACT's timezone, not the campaign's and not
  * the server's.** A campaign configured 09:00–20:00 running from an ap-south-1
  * replica against a roster of US numbers would otherwise dial at 03:30 local, and
  * the config would look correct on every screen.
  *
- * Per D4 the contact's zone comes from a **mapped CSV column only** and is never
+ * The contact's zone comes from a **mapped CSV column only** and is never
  * inferred from the area code (NANP prefixes cross zone boundaries and number
  * portability decoupled prefix from location); absent or unusable, the campaign
  * default applies. That fallback is an honest default, not an inference.
  *
  * Pure and total. `now` is a parameter rather than an ambient `new Date()` because
- * a clock-derived instant cannot be asserted with an exact value otherwise (§16.6),
+ * a clock-derived instant cannot be asserted with an exact value otherwise,
  * and **nothing here throws** — a bad timezone string arrives from a customer CSV,
  * and a `RangeError` escaping into the pacing tick would take the whole campaign
  * down rather than the one contact. Unusable input is reported as `unresolvable`,
@@ -25,10 +25,10 @@ import type { AgencyCampaignRecord, AgencyContactRecord } from '../db/models/age
  * The column's default `'{1,2,3,4,5}'` is Mon–Fri under **both** Postgres `dow`
  * (0=Sun…6=Sat) and `isodow` (1=Mon…7=Sun), so the ambiguity is undetectable by
  * testing the default and would surface as an off-by-one on Sundays months later.
- * It is pinned here as ISO-8601, and `0` is rejected rather than read as Sunday:
+ * It is fixed here as ISO-8601, and `0` is rejected rather than read as Sunday:
  * a caller sending `0` believes `dow`, so accepting it means we and they disagree
- * about which days the campaign runs. Master's validator and cusui's day picker
- * mirror this one definition.
+ * about which days the campaign runs. The campaign-config validator and the
+ * console's day picker follow this one definition.
  */
 
 /** Everything the window predicate needs, resolved. */
@@ -55,7 +55,7 @@ export type CallingWindowState = 'open' | 'closed' | 'unresolvable';
 
 export type TimezoneSource = 'contact' | 'campaign_default';
 
-/** Which zone applies to this contact, and where it came from (D4). */
+/** Which zone applies to this contact, and where it came from. */
 export interface ResolvedCallingWindow extends CallingWindow {
   timezoneSource: TimezoneSource;
   /**
@@ -103,8 +103,8 @@ function formatterFor(timezone: string): Intl.DateTimeFormat | null {
  * CSV column saying `EST` would place every call an hour off for half the year —
  * on the daylight side, i.e. an hour earlier in the customer's morning than the
  * operator configured. `'IST'` → Asia/Calcutta (harmlessly right) and `'GMT'` →
- * UTC (right by luck); the rule cannot tell those from the dangerous one, and D4
- * already settled which way to fail: *"an inferred timezone that puts a call
+ * UTC (right by luck); the rule cannot tell those from the dangerous one, and the
+ * timezone rule above already settled which way to fail: *"an inferred timezone that puts a call
  * outside legal hours is worse than an honest default."*
  *
  * So we require the `Area/Location` form, or exactly `UTC`. Everything else falls
@@ -214,7 +214,7 @@ function validate(window: CallingWindow): ValidWindow | null {
 }
 
 /**
- * Which zone this contact's window is evaluated in (D4).
+ * Which zone this contact's window is evaluated in.
  *
  * The contact column wins when it names a zone this runtime can evaluate;
  * otherwise the campaign default, flagged so the substitution is visible.
@@ -308,7 +308,7 @@ const GAP_SCAN_STEP_MS = 5 * 60 * 1000;
  * The next instant at or after `now` at which the window is open, or null when
  * there is none.
  *
- * This is what an out-of-hours unclaim writes to `next_attempt_at` (§4.2), which
+ * This is what an out-of-hours unclaim writes to `next_attempt_at`, which
  * is why it must be the **exact** next opening and strictly in the future: with
  * `now()` the contact is re-claimed on the very next tick and a campaign whose
  * roster is all out of hours spins at 4 claims/second all night, burning agent

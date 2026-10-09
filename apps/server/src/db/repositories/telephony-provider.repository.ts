@@ -3,26 +3,17 @@ import { redisCache } from '../../cache/redis-cache.js';
 import type { TelephonyProviderRecord } from '@magick-agency/db/models/telephony-provider.model';
 
 /*
- * PORT NOTE (magick-agency): master `src/db/repositories/telephony-provider.repository.ts`
- * @a1f0756a, READS ONLY. Deleted, with their only callers (the super-admin
- * telephony-provider CRUD routes and core's live-transfer S2S read):
- *  - `create`, `update` (+ `TelephonyProviderPreviousValues`,
- *    `TelephonyProviderUpdateResult`, `pickPrevious`) and `invalidateCache` —
- *    agency has one carrier, seeded by the baseline (plan Decided #3);
- *  - `findLiveTransferEnabledNames` — live transfer is AI escalation, and
- *    migration 074's `live_transfer_enabled` column is not in the baseline, so
- *    both it and `update` would fail on real Postgres.
- * The read-through cache (keys, TTL) is master's, unchanged.
+ * Reads only: agency has one carrier, seeded by the baseline, so nothing here
+ * creates, updates or invalidates a provider row.
  */
 
 const PROVIDER_CACHE_TTL = 24 * 60 * 60; // 24 hours
 
 /**
- * Key namespace for every provider cache entry. Versioned (`v2`) by migration
- * 074: rows cached under the old `cache:telco:` keys were read before
- * `live_transfer_enabled` existed, and with a 24h TTL they would otherwise keep
- * serving a row with no flag — which the live-transfer set reads as OFF — for a
- * full day after deploy. The old keys are never read again and simply expire.
+ * Key namespace for every provider cache entry. Versioned (`v2`) so that a change
+ * to the cached row's shape can move to fresh keys instead of serving old entries
+ * for the full 24h TTL; keys under a retired version are never read and simply
+ * expire.
  */
 const KEY_PREFIX = 'cache:telco:v2';
 

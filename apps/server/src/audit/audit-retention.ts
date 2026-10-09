@@ -5,21 +5,20 @@ import { TtlCache } from '@magick-agency/db/utils/ttl-cache';
 const log = createChildLogger({ component: 'audit-retention' });
 
 /**
- * How far back the audit trail can still answer for — MAG-158 acceptance 6.
+ * How far back the audit trail can still answer for.
  *
  * ── Why this is derived, not configured ─────────────────────────────────────
- * `audit_logs` is monthly range-partitioned and `retention-purge.ts` DROPs whole
- * partitions older than the cutoff. The cutoff itself is `RETENTION_DAYS`, and
- * that value lives in the **retention Lambda**, not in this service's config —
- * core only knows `RETENTION_MIN_DAYS`, a floor on what the endpoint will
- * accept, which is not the policy and would be wrong to present as one.
+ * `audit_logs` is monthly range-partitioned and
+ * `audit/audit-partition-maintenance.ts` DROPs whole partitions older than the
+ * cutoff (`config.auditPartitions.retentionDays`). That setting is the policy,
+ * not the result: a partition survives until its whole month passes the cutoff,
+ * and nothing is dropped until the job has run.
  *
  * So the honest horizon is not a number we hold; it is the lower bound of the
  * oldest partition that still exists. That is a fact about the data rather than
  * a declaration about it, so it cannot drift from what was actually kept —
  * which is the whole point on a surface whose job is to say what it does not
- * have. Adding a second copy of `RETENTION_DAYS` here would recreate exactly
- * the stale-duplicate trap the ingest-limits route exists to avoid.
+ * have.
  *
  * ── What the answer means, precisely ────────────────────────────────────────
  * `earliest_retained_at` is the earliest timestamp for which the trail may be

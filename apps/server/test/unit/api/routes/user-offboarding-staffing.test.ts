@@ -7,7 +7,7 @@ import type { FastifyInstance } from 'fastify';
  *
  * ── The leak ────────────────────────────────────────────────────────────────
  * `DELETE /users/:id/membership` removed a membership and dropped a cache key.
- * Nothing in master called any bulk unassign — the staffing route was the
+ * Nothing called any bulk unassign — the staffing route was the
  * repository's only caller — so a departed agent stayed on every supervisor's
  * staffing list forever, and `GET /proxy/agency/campaigns/:id/agents` went on
  * resolving them to a name and an email out of `users`, a table the membership
@@ -25,7 +25,7 @@ import type { FastifyInstance } from 'fastify';
  *
  * ── And the ordering property ───────────────────────────────────────────────
  * The membership change is authoritative and the staffing close is a tidy-up of a
- * navigation list — closing a row revokes nothing (migration 060's header). So a
+ * navigation list — closing a row revokes nothing. So a
  * staffing failure must leave the membership removed and the request successful.
  * That is the last describe block, and it is the one that would otherwise be a
  * comment nobody could check.
@@ -38,7 +38,7 @@ const CAMPAIGN_A = '44444444-4444-4444-8444-444444444444';
 const CAMPAIGN_B = '55555555-5555-4555-8555-555555555555';
 const ASSIGNMENT_A = '66666666-6666-4666-8666-666666666666';
 const ASSIGNMENT_B = '77777777-7777-4777-8777-777777777777';
-const CUSUI_BASE_URL = 'https://app.example.com';
+const CONSOLE_BASE_URL = 'https://app.example.com';
 
 const mocks = vi.hoisted(() => ({
   membershipRepository: {
@@ -107,7 +107,7 @@ vi.mock('@magick-agency/db/repositories/tenant.repository', () => ({
   tenantRepository: mocks.tenantRepository,
 }));
 vi.mock('../../../../src/cache/redis-cache.js', () => ({
-  // Q5 (Manas, 2026-10-09): revocation deletes go through `delForRevocation` (retried, reports
+  // Q5: revocation deletes go through `delForRevocation` (retried, reports
   // failure); this double forwards to the `del` mock and reports success, so the assertions on
   // `del` still observe the key.
   redisCache: { ...mocks.redisCache, delForRevocation: async (...k: string[]) => { await mocks.redisCache.del(...k); return mocks.revocation.cleared; } },
@@ -115,8 +115,8 @@ vi.mock('../../../../src/cache/redis-cache.js', () => ({
 vi.mock('@magick-agency/db/repositories/agency-campaign-agent.repository', () => ({
   agencyCampaignAgentRepository: { closeAllForUser: mocks.closeAllForUser },
 }));
-// PORT NOTE (magick-agency): master's `auditLogger` is `platformAuditLogger` here,
-// and master's config key `cusuiBaseUrl` is `consoleBaseUrl` here (env `CONSOLE_BASE_URL`).
+// The audit logger is `platformAuditLogger`, and the console origin config key is
+// `consoleBaseUrl` (env `CONSOLE_BASE_URL`).
 vi.mock('../../../../src/audit/platform/audit-logger.js', () => ({
   platformAuditLogger: { log: mocks.auditLog },
 }));
@@ -127,7 +127,7 @@ vi.mock('../../../../src/notifications/invite-mailer.js', async (orig) => {
   return { inviteSignInUrl: actual.inviteSignInUrl, sendInviteEmail: mocks.sendInviteEmail };
 });
 /**
- * A configured `CUSUI_BASE_URL`, so the real `inviteSignInUrl` can produce a link
+ * A configured console base URL (`consoleBaseUrl`), so the real `inviteSignInUrl` can produce a link
  * at all.
  *
  * Without it the mailer returns `null` for every role, and the case below that
@@ -139,7 +139,7 @@ vi.mock('../../../../src/notifications/invite-mailer.js', async (orig) => {
  */
 vi.mock('../../../../src/config/index.js', () => ({
   config: {
-    consoleBaseUrl: CUSUI_BASE_URL,
+    consoleBaseUrl: CONSOLE_BASE_URL,
     // `invites` and `brand` both `.default({})` in the schema, so a real
     // deployment always has them; the mock states them for the same reason the
     // schema defaults them — `mintInviteToken` reads the TTL on every agent
@@ -728,7 +728,7 @@ describe('POST /users/invite — the mail seam is additive and cannot fail the i
     // with a signup on it safe, because the claim binds to the membership the
     // TOKEN names and so cannot create a stray tenant.
     expect(body.sign_in_url).toMatch(
-      new RegExp(`^${CUSUI_BASE_URL}/agency/join/[A-Za-z0-9_-]{43}$`),
+      new RegExp(`^${CONSOLE_BASE_URL}/agency/join/[A-Za-z0-9_-]{43}$`),
     );
     await app.close();
   });
@@ -753,7 +753,7 @@ describe('POST /users/invite — the mail seam is additive and cannot fail the i
     } finally {
       // Restored in a `finally` because the mailer caches the config OBJECT, so a
       // leaked edit would silently unconfigure every case that runs after this one.
-      mutable.consoleBaseUrl = CUSUI_BASE_URL;
+      mutable.consoleBaseUrl = CONSOLE_BASE_URL;
       await app.close();
     }
   });
@@ -809,7 +809,7 @@ describe('POST /users/invite — the mail seam is additive and cannot fail the i
   it('carries the agency door for an agent and the plain link for everyone else', async () => {
     /**
      * `inviteSignInUrl` is the REAL implementation in this suite, so this asserts
-     * the shipped rule rather than a stub. It mirrors cusui's `inviteSignInUrl`
+     * the shipped rule rather than a stub. It mirrors the console's `inviteSignInUrl`
      * (`TeamPage.tsx`) — see the mailer's docstring for why the duplication is
      * accepted for now.
      *
@@ -846,9 +846,9 @@ describe('POST /users/invite — the mail seam is additive and cannot fail the i
     // tenant while this very membership goes unclaimed. Every other role's landing
     // IS the shell.
     expect(agentUrl).toMatch(
-      new RegExp(`^${CUSUI_BASE_URL}/agency/join/[A-Za-z0-9_-]{43}$`),
+      new RegExp(`^${CONSOLE_BASE_URL}/agency/join/[A-Za-z0-9_-]{43}$`),
     );
-    expect(viewerUrl).toBe(`${CUSUI_BASE_URL}/login`);
+    expect(viewerUrl).toBe(`${CONSOLE_BASE_URL}/login`);
     expect(agentUrl).not.toBe(viewerUrl);
     // A non-agent invite writes NO invitation row. There is no claim page for a
     // `viewer` to land on, so a token for one would be a credential nothing can
@@ -881,7 +881,7 @@ describe('POST /users/invite — the mail seam is additive and cannot fail the i
 });
 
 /**
- * Q5 (Manas, 2026-10-09). NEW (magick-agency): when the revocation's Redis DEL still fails
+ * Q5: when the revocation's Redis DEL still fails
  * after its retries, the role change (idempotent on retry) answers 503 — AFTER the role write
  * and the staffing close, so the retry has nothing left undone — while the membership removal
  * (not idempotent: a retry 404s before reaching the delete) keeps its 200.

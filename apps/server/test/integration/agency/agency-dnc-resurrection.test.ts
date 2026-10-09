@@ -37,7 +37,7 @@ const { resolveOurFaultRedial, resolveRetryDecision } = await import(
  *
  * It is THIS change's defect, not an inherited one. A mark used to write a
  * tenant-wide row that reached the flat set, so step 5 caught the resurrected
- * contact at dial time. Scoping the mark removes that backstop by design (§2.3):
+ * contact at dial time. Scoping the mark removes that backstop by design:
  * for the marked contact the blast radius is strictly LARGER afterwards.
  *
  * ── Why the claim can only be made HERE ────────────────────────────────────
@@ -52,9 +52,8 @@ const { resolveOurFaultRedial, resolveRetryDecision } = await import(
  * So the assertions below read the ROW BACK, and the strongest one runs
  * `claimDialable` afterwards and requires it to return nothing.
  *
- * ⚠️ NOT RUNNABLE LOCALLY. Core's integration stack binds 5433/6380, which are
- * magick-master's DEV Postgres and Redis, and `test-utils.ts` calls `flushdb()`.
- * Written blind and owed to CI; assume unverified until CI says otherwise.
+ * ⚠️ Written without a local run: `test-utils.ts` calls `flushdb()`, so check which
+ * Redis it points at before running it. Owed to CI; assume unverified until CI says otherwise.
  */
 describe('a DNC suppression is never resurrected (integration)', () => {
   beforeEach(truncateAll);
@@ -310,7 +309,7 @@ describe('a DNC suppression is never resurrected (integration)', () => {
     // NOT in `idx_agency_contacts_dialable`'s own predicate — narrowing it would
     // mean DROP + CREATE under ACCESS EXCLUSIVE inside the startup migration
     // transaction, blocking THE hot dialing query on up to 1M rows to remove a
-    // handful of them from an index (087 records why CONCURRENTLY is unavailable).
+    // handful of them from an index (CONCURRENTLY is unavailable inside the startup migration transaction).
     //
     // That decision is only safe if the extra conjunct does not make the index
     // UNUSABLE, so it is checked against the planner rather than argued.

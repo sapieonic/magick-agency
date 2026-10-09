@@ -1,10 +1,10 @@
 import type { AgencyDispositionResponse } from '../types/agency';
 
 /**
- * The stale-submit guard (spec `bcc2890`, the seam between §A.13.6 and §A.13.7).
+ * The stale-submit guard (spec `bcc2890`, the seam between and).
  *
  * ── The leak ─────────────────────────────────────────────────────────────────
- * A disposition submit is in flight for hundreds of milliseconds, and §A.8.4
+ * A disposition submit is in flight for hundreds of milliseconds, and
  * requires a new `reserved` to win whenever one arrives. So this ordering is not
  * exotic, it is routine:
  *
@@ -12,14 +12,14 @@ import type { AgencyDispositionResponse } from '../types/agency';
  *   2. a new `reserved` arrives for **customer B** — correctly;
  *   3. **A's `400` lands.**
  *
- * Every §A.13.6 error clause then fires against the wrong contact while reading
+ * Every error clause then fires against the wrong contact while reading
  * perfectly correct in isolation. The serious one is *"the note text is
  * preserved"*: it restores **A's note into B's notes field**, where the agent may
  * save it against B. Cross-contact, silent, and undetectable afterwards — the
  * note simply looks like something the agent typed about B.
  *
  * ── Why the autosave is not the protection ───────────────────────────────────
- * §A.13.7's `localStorage` autosave is keyed by `attempt_id` and is fine. The
+ *'s `localStorage` autosave is keyed by `attempt_id` and is fine. The
  * danger is in **in-flight component state, which is keyed by nothing at all**:
  * a `notes` string in a `useState`, and a pending promise that will write to it.
  *
@@ -29,7 +29,7 @@ import type { AgencyDispositionResponse } from '../types/agency';
  * discard the whole response. No error render, no note restoration, no state
  * change of any kind, and log the discard.
  *
- * This is the same shape as the retry §A.7.1.1 forbids for hang-up ("a retry
+ * This is the same shape as the retry forbids for hang-up ("a retry
  * landing after a new `reserved` hangs up a different customer"). Written in two
  * files deliberately.
  */

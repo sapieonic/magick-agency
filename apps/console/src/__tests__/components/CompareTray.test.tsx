@@ -8,13 +8,13 @@ import type { AgencyRosterPage } from '../../types/agency-stats';
 /**
  * The compare tray — two to four people from the roster against the floor's band.
  *
- * ── E7 is the whole file ──────────────────────────────────────────────────
+ * ── The suppression rules are the whole file ─────────────────────────────
  *  1. **It issues ZERO requests.** Every API function this repo's agency surfaces use
  *     is stubbed below and asserted never called, through opening the tray, picking
  *     people and rendering the comparison. The mutation that reds it is any fetch at
  *     all — including the tempting one, a `compare_to` param on the per-agent route,
  *     which would expose that param on the AGENT's own scorecard in the same edit
- *     because master shares one query whitelist between the two.
+ *     because the server shares one query whitelist between the two.
  *  2. **It is suppressed entirely on a pooled cohort.** A pooled multi-campaign band
  *     is not a peer group, and `mixedCohortNote` above the table has already told the
  *     reader the per-person comparison is switched off there.
@@ -112,7 +112,7 @@ function totalRequests(): number {
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => cleanup());
 
-describe('CompareTray — E7, it fetches nothing', () => {
+describe('CompareTray — it fetches nothing', () => {
   it('issues no request through opening, picking and rendering', () => {
     renderTray();
     expect(totalRequests()).toBe(0);
@@ -136,7 +136,7 @@ describe('CompareTray — E7, it fetches nothing', () => {
   });
 });
 
-describe('CompareTray — E7, suppressed where a band is not a peer group', () => {
+describe('CompareTray — suppressed where a band is not a peer group', () => {
   it('renders nothing at all on the pooled all-campaigns read', () => {
     /**
      * The mutation this case exists for. `campaign_id: null` pools every campaign in
@@ -248,7 +248,7 @@ describe('CompareTray — the picker', () => {
   });
 });
 
-describe('CompareTray — E7, a withheld metric stays withheld', () => {
+describe('CompareTray — a withheld metric stays withheld', () => {
   function openWith(page: AgencyRosterPage, ...ids: string[]) {
     renderTray(page);
     fireEvent.click(screen.getByTestId('compare-tray-open'));
@@ -364,7 +364,7 @@ describe('CompareTray — the floor row', () => {
   });
 });
 
-describe('CompareTray — E10, one event on open', () => {
+describe('CompareTray — one event on open', () => {
   it('fires once, describing the PAGE rather than a request', () => {
     renderTray(rosterPage({ rows: [rosterRow(), thinRow()] }));
     fireEvent.click(screen.getByTestId('compare-tray-open'));

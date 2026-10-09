@@ -52,10 +52,10 @@ interface PendingNumberEdit {
 /**
  * Super-admin Feature Flags tab for a tenant. Scope selector (tenant /
  * per-account) drives a flag-row table; each boolean flag exposes a tri-state
- * Inherit/On/Off control. Reads core's resolve contract through master's
+ * Inherit/On/Off control. Reads the server's resolve contract through the server's
  * super-admin lane; writes thread the admin id as updated_by server-side.
  * Platform-wide defaults and cross-tenant rollout live on the global Feature
- * Flags registry, not here. UX: docs/superpowers/plans/feature-flags-ux-redesign.md.
+ * Flags registry, not here.
  */
 export function TenantFeatureFlags({ tenantId, accounts }: Props) {
   const [catalog, setCatalog] = useState<FeatureFlagCatalogEntry[]>([]);
@@ -118,7 +118,7 @@ export function TenantFeatureFlags({ tenantId, accounts }: Props) {
   );
 
   /**
-   * Sub-line describing where the inherited value comes from, driven by core's
+   * Sub-line describing where the inherited value comes from, driven by the server's
    * per-flag `source` — precise attribution of env vs global vs tenant vs
    * registry default.
    */

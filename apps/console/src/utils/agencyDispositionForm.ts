@@ -1,14 +1,14 @@
 import type { AgencyDisposition } from '../types/agency';
 
 /**
- * Disposition form logic (`AD-P2-U-01` criterion (c): *a required note blocks
+ * Disposition form logic (requirement: *a required note blocks
  * submission client-side and is also enforced server-side*).
  *
  * Pure and separate from the pad, following the house pattern set by
  * `analysisProfileForm.ts` and `escalationForm.ts` — no form library, hand-rolled
  * `useState` in the component, all the rules unit-tested here.
  *
- * **This module owns the client half only.** The server half is core's, and the
+ * **This module owns the client half only.** The server half belongs to the server, and the
  * two are not redundant: the client guard is there so an agent is never left
  * pressing a button that will fail, and the server guard is there because the
  * client's can be bypassed. Criterion (c) names both deliberately.
@@ -40,7 +40,7 @@ export type DispositionBlockReason =
  * toast: an agent must never return to `available` believing a disposition saved
  * when it did not.
  *
- * `CR-1` — always "we", never "I" (D11: a callback re-enters the roster as an
+ * Callback copy — always "we", never "I" (a shared pool: a callback re-enters the roster as an
  * ordinary pending contact and whichever agent is available takes it, so copy
  * promising the agent will make it personally is a promise the product breaks).
  */
@@ -152,7 +152,7 @@ export function buildSubmitPayload(
 }
 
 /**
- * `1`–`9` map to the first nine catalog entries **in the order core delivered
+ * `1`–`9` map to the first nine catalog entries **in the order the server delivered
  * them**.
  *
  * The catalog is never re-sorted — not by label, not by success flag, not by

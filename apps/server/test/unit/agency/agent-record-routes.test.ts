@@ -1,14 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): ported from core test/unit/agency/agent-record-routes.test.ts@4850d1d9.
- * Mock paths re-pointed only (logger → a partial `@magick-agency/observability` mock;
- * announcement / call / account-settings / profile repositories → `@magick-agency/db/repositories/*`;
- * leaf modules → `@magick-agency/domain/*`; `contracts.js` → `@magick-agency/contracts/agency`).
- * Cases verbatim unless noted here. MODIFIED: "never reaches the repository with an id longer than the column" expects
- * 414 (Fastify 5.12.5 / find-my-way 9.9.0) where core's lock (5.8.4 / 9.5.0) answered 404.
- */
 import type { FastifyReply } from 'fastify';
 
 // ---------------------------------------------------------------------------
@@ -20,22 +12,22 @@ import type { FastifyReply } from 'fastify';
 // ── The assertion this file exists for ─────────────────────────────────────
 //
 // These routes serve every phone number, note and disposition one agent has
-// touched, ACROSS campaigns. Core registers auth middleware PER ROUTE PLUGIN, not
-// globally (root CLAUDE.md), and this repository has already shipped that mistake
+// touched, ACROSS campaigns. Auth middleware is registered PER ROUTE PLUGIN, not
+// globally, and this repository has already shipped that mistake
 // once: `agencyInternalRoutes` was mounted as a sibling of `internalRoutes`,
 // inherited none of its hooks, and left the roster-ingest route reachable
-// unauthenticated (MAG-89).
+// unauthenticated.
 //
 // So the auth test asserts the middleware actually RUNS, rather than trusting that
 // the routes were declared on the right plugin. It is deliberately not a
 // status-code assertion — a route that does not exist also answers 404, which is
-// the MAG-106 trap. And the test BEFORE it asserts that the sweep covers every
-// route the plugin registers, because a sweep is only as good as its list: MAG-89
-// was a route added outside the thing that was supposed to cover it.
+// a vacuous-pass trap. And the test BEFORE it asserts that the sweep covers every
+// route the plugin registers, because a sweep is only as good as its list: that
+// bug was a route added outside the thing that was supposed to cover it.
 //
 // The second thing worth its own test is the tenant scope. Unlike every other
 // agency read, there is no campaign in these paths to run an ownership check
-// against: `agent_user_id` is master's user id, opaque to core, and core cannot
+// against: `agent_user_id` is the console user's id, opaque to the voice engine, which cannot
 // tell a real one from a guess. The scope is therefore a PREDICATE the repository
 // applies, and these tests assert the route actually hands it the caller's
 // tenant/account rather than dropping them.
@@ -112,13 +104,13 @@ const EMPTY_GROUPED = {
   from: '', to: '', campaign_id: null, group_by: ['agent'],
   // `null` on the default fixture because its grouping is zone-free. Present rather
   // than omitted: absent and null are indistinguishable to a consumer, and the
-  // verbatim test below is what pins the field surviving the route hop.
+  // unchanged-payload test below is what pins the field surviving the route hop.
   resolved_timezone: null, sort: 'key', order: 'asc', limit: 200,
   total_groups: 0, rows: [],
 };
 /** The grouped read's minimum legal query: a window plus a zone-free grouping. */
 const GROUPED_QUERY = `${WINDOW}&group_by=agent`;
-/** A real v4 UUID, so the precedence test's path segment is the shape master sends. */
+/** A real v4 UUID, so the precedence test's path segment is the shape the public API layer sends. */
 const AGENT_UUID = '9f1c3d2e-4b5a-4c6d-8e7f-0a1b2c3d4e5f';
 
 /**
@@ -126,8 +118,8 @@ const AGENT_UUID = '9f1c3d2e-4b5a-4c6d-8e7f-0a1b2c3d4e5f';
  *
  * The two tests below used to say "ALL THREE routes" and "both routes" while
  * exercising four, which a reviewer caught. The stale numbers were harmless on
- * their own; the drift is not. MAG-89 shipped an unauthenticated endpoint in this
- * repository for exactly this reason — a route was added and the list that was
+ * their own; the drift is not. An unauthenticated endpoint shipped in this
+ * repository once for exactly this reason — a route was added and the list that was
  * supposed to cover it was not — so a hand-maintained count in a title is the
  * failure mode, not a typo.
  *
@@ -157,14 +149,14 @@ const ROUTE_CASES = [
   {
     // The roster. Serving THIRTY agents' phone-touching history in one response
     // makes this the widest read on the plugin, so it is the one where inheriting
-    // the hook matters most — and inheriting it is exactly what MAG-89 got wrong on
+    // the hook matters most — and inheriting it is exactly what went wrong on
     // a sibling plugin.
     url: '/api/v1/agency-agents/stats',
     request: `stats?${WINDOW}`,
     read: () => agentStats.roster,
   },
   {
-    // The grouped read. Same plugin, same hook, and the same MAG-89 risk: it is a
+    // The grouped read. Same plugin, same hook, and the same risk: it is a
     // fourth route added to a plugin whose hook a sibling plugin once failed to
     // inherit, and `agent`-grouped rows carry every agent id on the floor.
     url: '/api/v1/agency-agents/grouped-stats',
@@ -209,18 +201,18 @@ beforeEach(() => {
   attempts.listForAgent.mockResolvedValue(EMPTY_PAGE);
 });
 
-describe('the routes are behind core auth and the dialer flag', () => {
+describe('the routes are behind the internal auth and the dialer flag', () => {
   it(`covers every route the plugin registers — ${ROUTE_CASES.length} of them`, async () => {
     // The guard on the two sweeps below, and the reason their counts are no longer
     // written by hand. Neither sweep can fail for a route it does not know about, so
     // without this test the coverage claim is only as good as whoever last added a
-    // route remembering to widen a loop — which is the MAG-89 sequence exactly.
+    // route remembering to widen a loop — which is exactly how that bug happened.
     expect(await registeredGetRoutes()).toEqual([...ROUTE_CASES].map((c) => c.url).sort());
   });
 
   it(`runs authMiddleware on all ${ROUTE_CASES.length} routes`, async () => {
     // Deliberately NOT a status-code assertion: a route that does not exist also
-    // answers 404, which is the MAG-106 trap. The spy having been CALLED is the only
+    // answers 404, which is a vacuous-pass trap. The spy having been CALLED is the only
     // observation that separates "the hook ran" from "there was nothing to run it
     // on".
     const app = await makeApp();
@@ -316,11 +308,9 @@ describe('the tenant scope reaches the repository', () => {
     const res = await app.inject({
       method: 'GET', url: `/api/v1/agency-agents/${'x'.repeat(101)}/stats?${WINDOW}`, headers: HEADERS,
     });
-    // PORT NOTE (magick-agency): core's lock resolved Fastify 5.8.4 / find-my-way 9.5.0,
-    // which answered an over-long param with 404; agency resolves Fastify 5.12.5 /
-    // find-my-way 9.9.0, which answers 414 URI Too Long for the same request. The
-    // framework still refuses it before any handler runs, which is what this case is
-    // for; the no-query assertion below is unchanged.
+    // Fastify 5.12.5 / find-my-way 9.9.0 answers 414 URI Too Long for an over-long
+    // param. The framework refuses it before any handler runs, which is what this
+    // case is for.
     expect(res.statusCode).toBe(414);
     expect(agentStats.stats).not.toHaveBeenCalled();
     await app.close();
@@ -376,7 +366,7 @@ describe('GET /:agentUserId/stats — the query vocabulary', () => {
     await app.close();
   });
 
-  it('serves the repository payload verbatim', async () => {
+  it('serves the repository payload unchanged', async () => {
     const payload = { ...EMPTY_STATS, from: '2026-08-17T00:00:00.000Z', to: '2026-08-19T00:00:00.000Z' };
     agentStats.stats.mockResolvedValue(payload);
     const app = await makeApp();
@@ -463,7 +453,7 @@ describe('a refusal by the auth middleware stops the request dead', () => {
    *
    * Every other test in this file runs with `authSpy` succeeding, so all of them
    * would still pass if the plugin's `preHandler` were a hook that logged and
-   * returned. "The middleware was called" is the right assertion for the MAG-89
+   * returned. "The middleware was called" is the right assertion for the
    * mounting mistake — a route on the wrong plugin never calls it at all — but it
    * is NOT the same claim as "an unauthenticated request cannot read an agent's
    * record". These routes serve every phone number, note and disposition one agent
@@ -646,12 +636,11 @@ describe('GET /stats — route precedence against /:agentUserId/stats', () => {
    *
    *   * If `/stats` were captured as `:agentUserId` it would answer **200** from
    *     the per-agent handler for `agentUserId = "stats"`, which is a well-formed
-   *     agent id as far as core can tell (`agent_user_id` is opaque, D3). A
+   *     agent id as far as the voice engine can tell (`agent_user_id` is opaque). A
    *     supervisor asking for the roster gets one non-existent agent's empty
    *     record, and every assertion about a 200 passes.
-   *   * If `/stats` did not exist at all it would answer **404** — and MAG-106 in
-   *     this repository was exactly an assertion that passed vacuously against a
-   *     route that was not there.
+   *   * If `/stats` did not exist at all it would answer **404** — and an assertion that passes vacuously against a
+   *     route that is not there is exactly what this file exists to keep out.
    *
    * So both directions are pinned on WHICH REPOSITORY METHOD RAN, not on a status.
    */
@@ -704,11 +693,11 @@ describe('GET /stats — route precedence against /:agentUserId/stats', () => {
      *
      * ── Where the 400 for it lives, and why not here ──────────────────────────
      *
-     * In MASTER. The frozen contract puts unknown-parameter refusal on master's
-     * `forwardAllowedQuery` / `unknownQueryParamsError` (documented at length in its
-     * `agency-spine.ts`) rather than duplicating a whitelist in core, and core's own
-     * per-agent `/stats` already behaves this way — see "is ignored on /stats, which
-     * has no such filter at all" above. So what core owes on this route is narrower
+     * In the public API layer. The frozen contract puts unknown-parameter refusal on
+     * `forwardAllowedQuery` / `unknownQueryParamsError` (documented at length in
+     * `agency-spine.ts`) rather than duplicating a whitelist here, and the per-agent
+     * `/stats` already behaves this way — see "is ignored on /stats, which
+     * has no such filter at all" above. So what this route owes is narrower
      * and is what is asserted: the value must not reach the repository, must not
      * reach the OTHER handler, and must not change the answer.
      */
@@ -857,11 +846,11 @@ describe('GET /stats — the query vocabulary refuses rather than defaults', () 
     await app.close();
   });
 
-  it('ignores `bucket` — it belongs to the per-agent record, and master refuses it', async () => {
+  it('ignores `bucket` — it belongs to the per-agent record, and the public API layer refuses it', async () => {
     // There are no date buckets on this route: a count and a duration are
-    // zone-independent, so none of the per-campaign-timezone machinery applies. Core
-    // does not whitelist query params (that is master's `unknownQueryParamsError`,
-    // per the frozen contract), so what core owes is that the value changes nothing
+    // zone-independent, so none of the per-campaign-timezone machinery applies. This route
+    // does not whitelist query params (that is the public API layer's `unknownQueryParamsError`,
+    // per the frozen contract), so what it owes is that the value changes nothing
     // — in particular that it cannot resurrect a `bucket` field on the params object
     // and reach a `date_trunc` that no longer exists on this path.
     const app = await makeApp();
@@ -893,7 +882,7 @@ describe('GET /stats — the query vocabulary refuses rather than defaults', () 
     await app.close();
   });
 
-  it('serves the repository payload verbatim, benchmark and all', async () => {
+  it('serves the repository payload unchanged, benchmark and all', async () => {
     // The route composes nothing on this surface — unlike the campaign stats route,
     // which is a two-producer payload. Everything here comes from one read, so a
     // field appearing or disappearing between the repository and the wire is a bug
@@ -926,7 +915,7 @@ describe('GET /grouped-stats — route precedence against its three siblings', (
   /**
    * A fourth route on a plugin that already has a static `/stats` and a parametric
    * `/:agentUserId/stats`, and both failure modes are invisible to a status-code
-   * assertion — which is the MAG-106 shape this file exists to keep out:
+   * assertion — which is the vacuous-pass shape this file exists to keep out:
    *
    *   * if `/grouped-stats` were captured as `:agentUserId` there is no
    *     `/:agentUserId` route to catch it, so it would 404 — and a 404 is also what
@@ -975,10 +964,10 @@ describe('GET /grouped-stats — route precedence against its three siblings', (
 
   it('does not answer `/<uuid>/grouped-stats` — the read names no agent', async () => {
     // There is deliberately no per-agent grouped route: `agent_user_id` is opaque
-    // to core (D3), so core cannot validate tenancy on a caller-supplied id, and
+    // to the voice engine, so it cannot validate tenancy on a caller-supplied id, and
     // narrowing to a person is the per-agent record's job. A 404 here is the honest
     // answer, and asserting it stops a future `/:agentUserId/grouped-stats` from
-    // appearing without the master-side membership check that would have to come
+    // appearing without the public-API-layer membership check that would have to come
     // with it.
     const app = await makeApp();
     const res = await app.inject({
@@ -1010,7 +999,7 @@ describe('GET /grouped-stats — the gate and the scope actually run', () => {
   it('hands the repository BOTH scope halves and nothing agent-shaped', async () => {
     // No path parameter on this route either, so these two headers are the only
     // thing separating one account's numbers from another's. And `agent_user_id` is
-    // not in this route's vocabulary at all: core cannot validate it, so a value
+    // not in this route's vocabulary at all: it cannot be validated here, so a value
     // that reached the params object would be a tenancy hole rather than a filter.
     const app = await makeApp();
     await app.inject({
@@ -1204,7 +1193,7 @@ describe('GET /grouped-stats — the params reach the repository as parsed', () 
     await app.close();
   });
 
-  it('serves the repository payload verbatim', async () => {
+  it('serves the repository payload unchanged', async () => {
     // The route composes nothing on this surface: everything comes from one read,
     // so a field appearing or disappearing between the repository and the wire is a
     // bug rather than a design.

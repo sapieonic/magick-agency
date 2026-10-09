@@ -7,9 +7,9 @@ import { MemoryRouter } from 'react-router-dom';
  *
  * ── The defect this pins ────────────────────────────────────────────────────
  * `POST /users/invite` writes a membership and, for a new address, a stub user
- * whose `firebase_uid` is `pending_<uuid>`; master adopts that stub on the
+ * whose `firebase_uid` is `pending_<uuid>`; The API adopts that stub on the
  * invitee's first Firebase sign-in, matched BY EMAIL. **Nothing sends that invite**
- * — master has a Mailjet transport for bulk-dispatch mail, but no transactional
+ * — the API has a Mailjet transport for bulk-dispatch mail, but no transactional
  * path was ever wired to it. The modal nevertheless said "Send Invite" and
  * "Sending...", then closed, so a supervisor had every reason to believe an email
  * was on its way and the invitee waited for one that never came.
@@ -24,7 +24,7 @@ import { MemoryRouter } from 'react-router-dom';
  * Dialer's own sign-in page instead — `/agency/login`, which has no Sign Up tab on
  * it. That last part is why the branch is worth a test of its own rather than
  * being read as a cosmetic difference: `POST /auth/session` provisions a
- * brand-new tenant for an address master does not recognise, and an invite is
+ * brand-new tenant for an address the API does not recognise, and an invite is
  * activated by matching the address the invitee signs in with, so an agent who
  * signs UP from an invite link lands in a private empty tenant while the
  * membership sits unclaimed.
@@ -98,8 +98,8 @@ beforeEach(() => {
   mocks.useGovernance.mockReturnValue({ isEnabled: () => true, loading: false });
   mocks.useFeatureFlags.mockReturnValue({ isEnabled: () => true, status: 'ready' });
   /*
-    The 201 body, as master actually sends it. `undefined` was what this mock
-    returned while the client discarded the response, and it is a shape master has
+    The 201 body, as the API actually sends it. `undefined` was what this mock
+    returned while the client discarded the response, and it is a shape the API has
     never produced — a fixture that describes nothing cannot pin anything.
   */
   mocks.inviteUser.mockResolvedValue({
@@ -117,9 +117,9 @@ afterEach(() => {
 describe('inviteSignInUrl', () => {
   it('sends an agent to the agency door', () => {
     /* Not `/login?next=/dialer`, which is what this used to be. An `agent` never
-       wants the primary app's sign-in page: its Sign Up tab would put them in a
+       wants the generic sign-in door: a Sign Up tab there would put them in a
        private empty tenant of their own — `POST /auth/session` provisions one for
-       an address master does not recognise — while the membership their supervisor
+       an address the API does not recognise — while the membership their supervisor
        created sits unclaimed. */
     expect(inviteSignInUrl('agent', 'https://app.example.com'))
       .toBe('https://app.example.com/agency/login');
@@ -146,19 +146,19 @@ describe('inviteSignInUrl', () => {
     },
   );
 
-  it('agrees with master, which computes the same rule from its own base URL', () => {
-    /* The rule is duplicated across two services that cannot import each other
-       (`master/src/notifications/invite-mailer.ts`), and the only thing keeping
+  it('agrees with the API, which computes the same rule from its own base URL', () => {
+    /* The rule is duplicated between the server's invite mailer and this client,
+       which cannot import each other, and the only thing keeping
        them honest is that both suites assert the same strings. A divergence should
        show up as two suites disagreeing rather than as an agent quietly landing on
        the wrong page.
 
        The two signatures are NOT the same width, and that is why this case names
-       the roles it does. Master takes a `MembershipRole` — all six — because it
+       the roles it does. The API takes a `MembershipRole` — all six — because it
        serves the link for whatever membership was written. This copy takes
        `InviteUserInput['role']`, which is the four roles `POST /users/invite`
        accepts (`types/team.ts`); `tenant_admin` and `tenant_owner` are not
-       invitable through this UI and are not expressible here. So master's suite
+       invitable through this UI and are not expressible here. So the API's suite
        covers those two and this one cannot, which is a coverage asymmetry rather
        than a gap: the branch under test is `agent` vs everything else, and
        "everything else" is exercised on both sides. */
@@ -234,14 +234,14 @@ describe('the hand-off panel carries what has to be passed on', () => {
   });
 });
 
-describe('the panel reads what master said about the email', () => {
+describe('the panel reads what the API said about the email', () => {
   /**
    * The response used to be discarded, and that gave the panel an expiry date it
-   * could not see: master ships `invite_email` and `sign_in_url` for exactly this
+   * could not see: The API ships `invite_email` and `sign_in_url` for exactly this
    * hand-off, so once a transport is wired up the panel would have gone on
    * insisting "we didn't email them" about an email that had just been sent.
    */
-  it('drops the hand-off entirely once master reports the invite sent', async () => {
+  it('drops the hand-off entirely once the API reports the invite sent', async () => {
     mocks.inviteUser.mockResolvedValue({
       invite_email: { sent: true },
       sign_in_url: 'https://app.example.com/login',
@@ -264,7 +264,7 @@ describe('the panel reads what master said about the email', () => {
     expect(screen.getAllByText('newbie@example.com').length).toBeGreaterThan(0);
   });
 
-  it('keeps the hand-off when master reports it could not send', async () => {
+  it('keeps the hand-off when the API reports it could not send', async () => {
     mocks.inviteUser.mockResolvedValue({
       invite_email: { sent: false, reason: 'not_configured' },
       sign_in_url: null,
@@ -289,9 +289,9 @@ describe('the panel reads what master said about the email', () => {
     expect(screen.getByTestId('invite-handoff')).toBeTruthy();
   });
 
-  it('keeps the hand-off against a master that says nothing at all', async () => {
+  it('keeps the hand-off against an API that says nothing at all', async () => {
     /**
-     * An older master, or one mid-deploy. Read as "not sent", which is the safe
+     * An older server, or one mid-deploy. Read as "not sent", which is the safe
      * direction to be wrong in: a hand-off nobody needed, rather than a hidden one
      * somebody did.
      */
@@ -302,27 +302,27 @@ describe('the panel reads what master said about the email', () => {
     expect(screen.getByTestId('invite-handoff')).toBeTruthy();
   });
 
-  it('prefers the link master served over the one derived from the browser', async () => {
+  it('prefers the link the API served over the one derived from the browser', async () => {
     /**
-     * Both compute the same rule from different inputs — master from its
-     * configured `CUSUI_BASE_URL`, this client from `window.location.origin`. The
+     * Both compute the same rule from different inputs — the API from its
+     * configured `CONSOLE_BASE_URL`, this client from `window.location.origin`. The
      * browser's origin is whatever deployment the supervisor is on, so a preview
      * build would otherwise hand out a preview link to a real new colleague.
      */
     mocks.inviteUser.mockResolvedValue({
       invite_email: { sent: false, reason: 'not_implemented' },
-      sign_in_url: 'https://app.magickvoice.test/agency/login',
+      sign_in_url: 'https://app.example.test/agency/login',
     });
 
     await invite('agent', 'agent@example.com');
 
-    expect(screen.getByText('https://app.magickvoice.test/agency/login')).toBeTruthy();
+    expect(screen.getByText('https://app.example.test/agency/login')).toBeTruthy();
     // And not the locally derived one, which under happy-dom is a localhost origin.
     expect(screen.queryByText((text) => text.startsWith('http://localhost'))).toBeNull();
   });
 
-  it('falls back to the local derivation when master has no base URL', async () => {
-    // `sign_in_url: null` means master has no `CUSUI_BASE_URL`. The client's own
+  it('falls back to the local derivation when the API has no base URL', async () => {
+    // `sign_in_url: null` means the API has no `CONSOLE_BASE_URL`. The client's own
     // derivation is then the only link that exists, and the panel is the only
     // thing that works at all.
     mocks.inviteUser.mockResolvedValue({

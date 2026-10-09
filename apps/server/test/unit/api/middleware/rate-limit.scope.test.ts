@@ -1,6 +1,6 @@
-// New in magick-agency (no core source). Proves `registerRateLimit` is scoped when registered
-// inside an encapsulated Fastify plugin (lane C's `voice.plugin.ts` registers it that way), using a
-// real Fastify app and the source's no-Redis path (`redis: null`, the plugin's in-memory store).
+// Proves `registerRateLimit` is scoped when registered inside an encapsulated Fastify plugin
+// (`voice.plugin.ts` registers it that way), using a real Fastify app and the no-Redis path
+// (`redis: null`, the plugin's in-memory store).
 // The bucket key itself is not observable from outside the plugin, so `wh:<ip>` is proven by
 // behaviour: the budget is shared across webhook paths for one IP, separate per IP, and separate
 // from the `cm:<ip>` carrier-media budget for the same IP.

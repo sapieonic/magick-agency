@@ -11,30 +11,16 @@ import type { ProfileRouteAuth } from './routes/call-analysis-profiles.routes.js
 const log = createChildLogger({ component: 'profile-route-auth' });
 
 /**
- * The real `ProfileRouteAuth` for lane D's call-analysis profile routes (Phase 8; lane D
- * shipped them refuse-all until this merge).
- *
- * In MagickVoice the console called master's `/proxy/call-analysis-profiles*`
- * (`proxy-call-analysis-profiles.routes.ts`@a1f0756a), which ran, in order:
- *  1. `sessionMiddleware`, `tenantContextMiddleware` (plugin hooks);
- *  2. a governance capability (`passthrough`'s extra preHandler runs BEFORE its permission):
- *     `requireAnyCapability('calls.dialer.analytics', 'agency.analytics')` on the list and
- *     `requireCapability('calls.dialer.analytics')` on get/create/update/delete;
- *  3. `requirePermission('proxy.prompts.read' | 'proxy.prompts.write')`;
- *  4. core's `authMiddleware` after the hop (tenant and ACCOUNT required, 400 otherwise).
- * This preHandler is that chain, collapsed:
- *  - the permissions are their agency names (`agency.analysis_profiles.read|write`, floors
- *    unchanged — `@magick-agency/contracts/rbac`);
- *  - the capability is `agency.analytics`, i.e. the account's `analyze_calls` settings column
- *    (plan §3.2), for all five routes. `calls.dialer.analytics` was the SOFTPHONE's capability,
- *    and the softphone is deleted (plan §5): kept literally, the four authoring routes would be
- *    unreachable for every account, while plan §4 has profiles as agency's analysis definition.
- *    So the list's OR reduces to its agency half and the other four take the same gate.
- *    NULL/no row = off (the documented default); a failed read fails CLOSED; refusal is
- *    master's `{ error: 'capability_disabled', capability: 'agency.analytics' }` 403;
- *  - core's account requirement keeps core's 400. It is checked ahead of the settings read
- *    (the setting is per account, so there is nothing to read without one) — in master the
- *    capability resolved at tenant level first; the request is refused either way.
+ * The `ProfileRouteAuth` for the call-analysis profile routes. One preHandler, in order:
+ *  1. `sessionMiddleware`, `tenantContextMiddleware`;
+ *  2. an account is required (400 otherwise). It is checked ahead of the settings read:
+ *     the setting is per account, so there is nothing to read without one;
+ *  3. the `agency.analytics` capability — the account's `analyze_calls` settings column —
+ *     for all five routes, since profiles are the dialer's analysis definition. NULL/no
+ *     row = off (the documented default); a failed read fails CLOSED; refusal is
+ *     `{ error: 'capability_disabled', capability: 'agency.analytics' }` 403;
+ *  4. `requirePermission('agency.analysis_profiles.read' | '.write')` (floors in
+ *     `@magick-agency/contracts/rbac`), read for GET and write otherwise.
  */
 export function platformProfileRouteAuth(): ProfileRouteAuth {
   const canRead = requirePermission('agency.analysis_profiles.read');

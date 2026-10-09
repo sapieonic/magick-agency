@@ -33,7 +33,7 @@ const { decodeKeysetCursor } = await import('@magick-agency/domain/keyset-cursor
  *     in `intervals`). Any of those becoming one-to-many multiplies an attempt.
  *     Against a fixture with ONE session per agent — which is what every existing
  *     agency suite seeds — a fan-out is arithmetically invisible.
- *   * **Dropping.** Migration 093 permits only one LIVE session per (tenant,
+ *   * **Dropping.** `uq_agency_agent_live_tenant` permits only one LIVE session per (tenant,
  *     agent), so a real agent's history is mostly CLOSED sessions
  *     (`left_at IS NOT NULL`). A predicate that only considered live sessions —
  *     which is what `idx_agency_attempts_agent`'s `WHERE state <> 'ended'` and the
@@ -42,7 +42,7 @@ const { decodeKeysetCursor } = await import('@magick-agency/domain/keyset-cursor
  *
  * The partial index case is called out explicitly below: `/stats` reads almost
  * exclusively `state = 'ended'` rows, which that index excludes **by
- * construction**. Migration 104 exists because of it, and a test that only seeded
+ * construction**. `idx_agency_attempts_agent_dialed` exists because of it, and a test that only seeded
  * live attempts would prove nothing about the read anyone actually performs.
  *
  * ── ⚠️ THIS FILE HAS NOT BEEN EXECUTED ──────────────────────────────────────
@@ -63,7 +63,7 @@ const scope = { tenantId: T, accountId: A, agentUserId: AGENT };
 /**
  * Close a session, so the next one can be created.
  *
- * Migration 093's `uq_agency_agent_live_tenant (tenant_id, agent_user_id) WHERE
+ * `uq_agency_agent_live_tenant (tenant_id, agent_user_id) WHERE
  * left_at IS NULL` refuses a second live session for one person in one tenant. So
  * "an agent with several sessions" is necessarily "several closed ones and at most
  * one open" — which is also what production looks like, and is why every helper
@@ -189,15 +189,15 @@ describe('agent stats across many sessions (integration)', () => {
   it('counts an attempt whose state the live-only partial index EXCLUDES', async () => {
     // ── The index that must not be the driver ────────────────────────────────
     //
-    // `idx_agency_attempts_agent` (migration 075) is
+    // `idx_agency_attempts_agent` is
     // `(reserved_agent_id) WHERE state <> 'ended'` — built for "what is this agent
     // on RIGHT NOW". `ended` is terminal, so an agent's RECORD is made almost
-    // entirely of rows that index cannot see; migration 104 exists precisely
-    // because widening 075 was the wrong answer.
+    // entirely of rows that index cannot see; `idx_agency_attempts_agent_dialed` exists precisely
+    // because widening it was the wrong answer.
     //
     // So the fixture is deliberately lopsided: four `ended` attempts (invisible to
-    // 075) and one `bridged` one (visible to it). A read that had somehow become
-    // dependent on 075's predicate would return 1; the honest answer is 5.
+    // it) and one `bridged` one (visible to it). A read that had somehow become
+    // dependent on its predicate would return 1; the honest answer is 5.
     const campaign = await insertAgencyCampaign({ default_timezone: 'UTC', status: 'stopped' });
     const session = await insertAgentSession(campaign.id as string, {
       agent_user_id: AGENT, joined_at: new Date('2026-08-12T08:00:00Z'),
@@ -311,8 +311,7 @@ describe('agent stats across many sessions (integration)', () => {
   });
 
   it('/attempts pages the whole cross-session history in keyset order', async () => {
-    // The spine has no driving index (migration 104's header says so and accepts
-    // it), so the ordering is a sort the planner performs. Worth one behavioural
+    // The spine has no driving index (accepted deliberately), so the ordering is a sort the planner performs. Worth one behavioural
     // check that it is `created_at DESC, id DESC` across sessions rather than
     // within each one — a per-session ordering would interleave shifts wrongly and
     // the cursor would then skip rows.

@@ -1,4 +1,3 @@
-// PORT NOTE (magick-agency): ported from core src/telephony/voicelink/voicelink.adapter.ts@4850d1d9; only the logger import specifier changed.
 import { createChildLogger } from '@magick-agency/observability';
 import type {
   TelephonyProvider,
@@ -19,29 +18,27 @@ const log = createChildLogger({ component: 'voicelink-adapter' });
  * VoiceLink telephony adapter.
  *
  * VoiceLink (Elision/Dialshree-based Indian dialer) is a lead-based outbound
- * dialer, structurally almost identical to z99: it bridges live call audio to a
- * WebSocket we own and POSTs lifecycle events to a `webhook_url` we own. The WS
- * protocol is Twilio/VoBiz-shaped JSON.
+ * dialer: it bridges live call audio to a WebSocket we own and POSTs lifecycle
+ * events to a `webhook_url` we own. The WS protocol is Twilio-shaped JSON.
  *
- * Material differences from z99 (see docs/voicelink-telephony-implementation-plan.md):
- * - Audio is **A-law 8 kHz** (`audio/alaw`), carrier-FORCED — an A-law↔PCM16
- *   codec was added to src/utils/audio.ts (resolveTelephonyAudioFormat returns
- *   `pcma` for voicelink).
+ * Carrier specifics:
+ * - Audio is **A-law 8 kHz** (`audio/alaw`), carrier-FORCED — the A-law↔PCM16
+ *   codec lives in src/utils/audio.ts.
  * - Dispatch is `POST /v1/add_lead` with the destination split into a bare
  *   `customer_number` + a SEPARATE `country_code` field (no `+`). This split is
  *   load-bearing and unique to VoiceLink — see `splitDestination`.
- * - A REAL lifecycle webhook exists (z99's is deferred) — parseWebhookEvent is
- *   implemented via parseVoicelinkWebhook.
+ * - A real lifecycle webhook exists — parseWebhookEvent is implemented via
+ *   parseVoicelinkWebhook.
  * - NO outbound coalescer — VoiceLink accepts `{event:"media", media:{payload}}`
- *   frames as emitted (handled in CallManager.sendAudioToTelephony).
+ *   frames as emitted (the WebRTC bridge sends them directly).
  */
 
 /**
  * Render a URL for logging with its secret-bearing parts replaced by `…`.
  *
- * The static media URL carries a purpose-bound media token — in the last path
- * segment (current shape) or the query string (legacy shape) — so it can never be
- * logged verbatim. What we DO want to keep is everything that makes the line worth
+ * The media URL handed to the carrier carries a purpose-bound media token — in the last path
+ * segment or the query string — so it can never be
+ * logged as-is. What we DO want to keep is everything that makes the line worth
  * having: scheme, host, route, and the callId.
  *
  * `tokenInLastSegment` is an explicit parameter rather than a guess. Both the
@@ -76,7 +73,7 @@ export class VoicelinkAdapter implements TelephonyProvider {
   /**
    * `endCall` below is a documented no-op — VoiceLink's OpenAPI spec exposes no
    * hangup endpoint at all — so a ringing leg cannot be recalled by any means
-   * this adapter has. This is the declaration the ring-cancel fix keys on.
+   * this adapter has. This is the declaration the bridge's ring-cancel warning keys on.
    *
    * `queuesOutboundDials`: `/v1/add_lead` queues the lead in the bot's outbound
    * queue (see `initiateCall`) — it is dialled when the carrier gets to it.
@@ -100,9 +97,9 @@ export class VoicelinkAdapter implements TelephonyProvider {
    * remainder; otherwise fall back to the default country code with the number
    * as-is. Either way, strip any leading zeros off the national part.
    *
-   * ⚠️ This transform is UNIQUE to VoiceLink — no other adapter splits the CC.
+   * ⚠️ This transform is specific to VoiceLink.
    * Getting it wrong produces SIP 484 (CC concatenated) / SIP 403 (leading 0) /
-   * a fake 0-duration answer (E.164). See the number-format matrix in §1.2.
+   * a fake 0-duration answer (E.164).
    */
   splitDestination(to: string): { countryCode: string; customerNumber: string } {
     const cc = (this.config.defaultCountryCode || '91').replace(/[^0-9]/g, '');
@@ -122,18 +119,18 @@ export class VoicelinkAdapter implements TelephonyProvider {
   }
 
   async initiateCall(req: OutboundCallRequest): Promise<{ providerCallId: string }> {
-    // VoiceLink dials OUT to our per-lead websocket_url; we host the WS on the
-    // shared, provider-agnostic media-stream route. The live provider call id
+    // VoiceLink dials OUT to our per-lead websocket_url. The live provider call id
     // only arrives async on the WS `start` frame / webhook, so we correlate via
     // the callId embedded in the URL path and return our callId as providerCallId.
     const host = new URL(this.config.webhookBaseUrl).host;
-    // The WebRTC bridge streams to a dedicated leg; honor its explicit URL when
-    // set, otherwise default to the shared AI media-stream route.
+    // The WebRTC bridge always passes its dedicated leg URL. The `/media-stream/:id`
+    // default is only a fallback for a caller that passes none; this service
+    // registers no such route.
     const websocket_url =
       req.mediaStreamUrl || `wss://${host}/api/v1/media-stream/${req.callId}`;
     // Honor the caller's status callback (the WebRTC bridge points this at its own
-    // /voicelink/webrtc-status route); for the AI path req.statusCallbackUrl is
-    // already the identical /voicelink/status URL, so this is equivalent there.
+    // /voicelink/webrtc-status route); the /voicelink/status default is a fallback
+    // only.
     const webhook_url =
       req.statusCallbackUrl || `https://${host}/api/v1/webhooks/voicelink/status/${req.callId}`;
 
@@ -152,20 +149,20 @@ export class VoicelinkAdapter implements TelephonyProvider {
 
     // `websocket_url` is logged because it is the field the carrier must dial back,
     // and "what URL did we actually hand the carrier" is the first question when a
-    // call answers into silence — previously unanswerable from logs. The URL embeds
-    // a media token, so its tail is redacted; `websocketUrlHasQuery` is retained as
-    // a cheap shape signal (it is NOT believed to be the cause — the live defect is
-    // the carrier fetching this URL as a plain HTTP GET instead of upgrading; see
-    // ws-static-media-url.ts and the implementation-plan doc §1.2).
+    // call answers into silence. The URL embeds a media token, so its tail is
+    // redacted; `websocketUrlHasQuery` is retained as a cheap shape signal (a query
+    // string is NOT believed to cause that symptom — the known failure is the
+    // carrier fetching this URL as a plain HTTP GET instead of upgrading).
     log.info(
       {
         callId: req.callId,
         to: req.to,
         countryCode,
         from: didNumber,
-        // A caller-supplied mediaStreamUrl is the WS-static / WebRTC shape, whose
-        // last path segment is a secret token; the default AI URL ends in the
-        // callId and must stay readable.
+        // A caller-supplied mediaStreamUrl is treated as secret-bearing in its last
+        // path segment (the bridge's leg URL carries its token in the query, which
+        // is redacted regardless); the default URL ends in the callId and must
+        // stay readable.
         websocketUrl: redactUrlTail(websocket_url, { tokenInLastSegment: Boolean(req.mediaStreamUrl) }),
         websocketUrlHasQuery: websocket_url.includes('?'),
         webhookUrlHasQuery: webhook_url.includes('?'),
@@ -215,23 +212,20 @@ export class VoicelinkAdapter implements TelephonyProvider {
   }
 
   async endCall(_providerCallId: string): Promise<void> {
-    // OPEN ITEM (flagged in the implementation plan §8.1): VoiceLink's OpenAPI
-    // spec exposes NO hangup endpoint, and a WS hangup command was not observed
-    // in the reverse-engineering captures. Safe default (same as z99): no-op —
-    // the call ends when our media-stream WebSocket closes / VoiceLink sends its
-    // `stop` frame. CallManager.forceEndCall closes the telephony WS for us, so a
-    // forced teardown (max-duration, escalation) still terminates the call. If a
-    // confirmed WS-command or REST hangup surfaces, wire it here (and, for the WS
-    // case, in CallManager.forceEndCall alongside the z99 branch). Never throws
-    // into the end path.
+    // OPEN ITEM: VoiceLink's OpenAPI spec exposes NO hangup endpoint, and a WS
+    // hangup command was not observed in the reverse-engineering captures. Safe
+    // default: no-op — the call ends when our media-stream WebSocket closes /
+    // VoiceLink sends its `stop` frame. The WebRTC bridge closes the PSTN socket on
+    // teardown, so a forced end (max duration, agent hangup) still terminates an
+    // answered call. If a confirmed WS-command or REST hangup surfaces, wire it
+    // here. Never throws into the end path.
     return;
   }
 
   async getMediaStreamConfig(_providerCallId: string): Promise<MediaStreamConfig> {
-    // Informational only — nothing consumes this at runtime (see vobiz.adapter).
-    // The authoritative A-law wiring is resolveTelephonyAudioFormat (returns
-    // `pcma`) + the per-adapter handleAudioIn decode + sendAudioToTelephony.
-    // VoiceLink's carrier forces A-law 8 kHz.
+    // Informational only — nothing consumes this at runtime. The authoritative
+    // A-law handling is in the WebRTC bridge's VoiceLink branches. VoiceLink's
+    // carrier forces A-law 8 kHz.
     return {
       type: 'websocket',
       codec: 'pcma',
@@ -247,7 +241,7 @@ export class VoicelinkAdapter implements TelephonyProvider {
     if (!event) {
       // Informational/unknown event with no state transition. The interface
       // requires a CallEvent, so surface a benign 'error'-typed event carrying
-      // the raw body; the shared route uses parseVoicelinkWebhook directly (and
+      // the raw body; the webhook route uses parseVoicelinkWebhook directly (and
       // handles null), so this branch is effectively unused in practice.
       return {
         providerCallId: callId,
@@ -267,24 +261,22 @@ export class VoicelinkAdapter implements TelephonyProvider {
   }
 
   generateAnnouncementResponse(_params: AnnouncementResponseParams): string {
-    // VoiceLink has no provider <Play>/<Speak> XML. Static/announcement calls
-    // are excluded from the provider enum (like z99), so this is never used.
+    // VoiceLink has no provider <Play>/<Speak> XML; clips are played over the
+    // media socket instead, so this is never used.
     return '';
   }
 
   generateIvrResponse(_steps: IvrStepRenderParams[]): string {
     // VoiceLink exposes neither answer/gather XML nor a documented DTMF channel,
-    // so our IVR engine can't drive it. Mirror the z99/Plivo precedent.
+    // so an IVR cannot drive it.
     throw new Error('IVR not supported for voicelink');
   }
 
   async getCallStatus(providerCallId: string): Promise<ProviderCallStatus> {
-    // NOTE: this CDR lookup is effectively dead on the hot path. VoiceLink's CDR
-    // is keyed on VoiceLink's own call_id, but `initiateCall` returns our own
-    // `req.callId` and nothing (not the media start frame, not the webhooks)
-    // overwrites the call record with VoiceLink's real `call.id`, so the id we
-    // pass here won't match a CDR row. Retaining VoiceLink's provider id would be
-    // needed to make this work; until then it just misses. Best-effort — returns
+    // NOTE: nothing calls this today. VoiceLink's CDR is keyed on VoiceLink's own
+    // call_id, but `initiateCall` returns our own `req.callId` as the
+    // providerCallId, so that id won't match a CDR row. Passing VoiceLink's
+    // provider id would be needed to make this work. Best-effort — returns
     // 'unknown' if the CDR misses.
     const cdr = await this.fetchCdr(providerCallId);
     const data = cdr?.data;
@@ -297,29 +289,21 @@ export class VoicelinkAdapter implements TelephonyProvider {
   }
 
   async getRecordingUrl(_providerCallId: string): Promise<string | null> {
-    // Returns null WITHOUT a carrier round trip, deliberately. Do NOT "restore"
-    // the CDR fetch that used to live here — three independent reasons:
+    // Returns null WITHOUT a carrier round trip, deliberately. Do NOT add a CDR
+    // fetch here — two independent reasons:
     //
-    // 1. The id handed to us is OUR OWN callId, not VoiceLink's. `initiateCall`
-    //    returns `req.callId` as the providerCallId because the carrier's real
-    //    call id only ever arrives asynchronously (WS `start` frame / webhook)
-    //    and nothing overwrites the row with it. A CDR keyed on VoiceLink's
-    //    call_id therefore CANNOT match: measured 560 CDR 404s per ~591 dequeues,
-    //    a 1:1 miss rate.
-    // 2. Even on a hit it would contribute nothing. The recording URL is already
-    //    persisted from the `call.completed` webhook body (`call.recordingUrl`,
-    //    via extractVoicelinkRecordingUrl in the /voicelink/status route) — that
-    //    is the real source of truth for this carrier.
-    // 3. It USED TO front concurrency-slot release and the next dial:
-    //    CallManager.handleCallEnd awaited it during teardown, so a
-    //    guaranteed-miss HTTP round trip throttled dial pace (a 40-slot account
-    //    occupied 5). That await is gone — the same change detached the fetch
-    //    into `CallManager.backfillRecordingUrl` (fire-and-forget) — so teardown
-    //    no longer blocks on it. Reason 3 is therefore history, not a live
-    //    constraint; reasons 1 and 2 are why this still returns null.
+    // 1. The id an adapter is handed is OUR OWN callId, not VoiceLink's.
+    //    `initiateCall` returns `req.callId` as the providerCallId because the
+    //    carrier's real call id only ever arrives asynchronously (WS `start`
+    //    frame / webhook). A CDR keyed on VoiceLink's call_id therefore CANNOT
+    //    match: measured 560 CDR 404s per ~591 lookups, a 1:1 miss rate.
+    // 2. Even on a hit it would contribute nothing. The recording URL arrives on
+    //    the `call.completed` webhook body (`call.recordingUrl`, which the bridge
+    //    persists from `/voicelink/webrtc-status`) — that is the real source of
+    //    truth for this carrier.
     //
-    // Reviving this requires capturing and persisting VoiceLink's own call id
-    // first; `fetchCdr` (still used by getCallStatus) is the mechanism.
+    // Reviving this requires passing VoiceLink's own call id; `fetchCdr` (still
+    // used by getCallStatus) is the mechanism.
     return null;
   }
 
@@ -346,8 +330,8 @@ export class VoicelinkAdapter implements TelephonyProvider {
 
   validateWebhookSignature(_rawBody: string, _signature: string): boolean {
     // VoiceLink documents no webhook signing scheme. Security relies on HTTPS
-    // transport and the non-guessable callId in the URL path — same trust model
-    // as z99/VoBiz/Twilio/Plivo/Exotel.
+    // transport and what the URL carries: the non-guessable callId and, on the
+    // bridge's route, the purpose-bound webhook token.
     return true;
   }
 }

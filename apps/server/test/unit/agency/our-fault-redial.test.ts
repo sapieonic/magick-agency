@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// `AD-P3-C-09` / MAG-97 — an agent-side drop must not consume the customer's
+// Our-fault redial — an agent-side drop must not consume the customer's
 // `max_attempts`.
 //
 // The decision has two halves and BOTH are required. Skipping the attempt charge
@@ -45,10 +45,10 @@ beforeEach(() => {
 
 // ─── criterion 5, first: the DEFAULT path is the ordinary one ───────────────
 
-describe('AD-P3-C-09 (5): the default path — no configuration supplied', () => {
+describe('the default path — no configuration supplied', () => {
   // This block comes first deliberately. `retry_policy` is `JSONB NOT NULL
-  // DEFAULT '{}'`, core COALESCEs a missing value to `'{}'`, and master never
-  // sends the field — so `null`/`{}` is what every campaign in existence runs.
+  // DEFAULT '{}'`, the dialer COALESCEs a missing value to `'{}'`, and the public API
+  // layer never sends the field — so `null`/`{}` is what every campaign in existence runs.
   // A fix that only worked under an explicit policy would be green in every
   // configured test here and inert in production.
 
@@ -94,7 +94,7 @@ describe('AD-P3-C-09 (5): the default path — no configuration supplied', () =>
 
 // ─── criterion 3: the bound, and that no operator can raise it ──────────────
 
-describe('AD-P3-C-09 (3): the bound is a ceiling an operator cannot raise', () => {
+describe('the bound is a ceiling an operator cannot raise', () => {
   it('REFUSES a policy that tries to exceed the bound — the regulated case', () => {
     // ⚠️ Do not relax this test. It is the entire reason the bound lives below
     // the policy rather than in it: a repeat-dial limit a config field can
@@ -160,7 +160,7 @@ describe('AD-P3-C-09 (3): the bound is a ceiling an operator cannot raise', () =
 
 // ─── criteria 1 & 2: the two ledgers ────────────────────────────────────────
 
-describe('AD-P3-C-09 (1): the our-fault ledger never touches attempt_count', () => {
+describe('the our-fault ledger never touches attempt_count', () => {
   it('chargeOurFaultAttempt bumps our_fault_attempts and NOTHING else', async () => {
     await new AgencyContactRepository().chargeOurFaultAttempt('c1', 'agent_disconnected');
     const sql = String(pool.query.mock.calls[0]![0]).replace(/\s+/g, ' ');
@@ -204,7 +204,7 @@ describe('AD-P3-C-09 (1): the our-fault ledger never touches attempt_count', () 
   });
 });
 
-describe('AD-P3-C-09 (2): a drop AFTER bridging does consume the attempt', () => {
+describe('a drop AFTER bridging does consume the attempt', () => {
   it('the customer-allowance resolver still governs a bridged agent drop', () => {
     // The customer was reached, so the attempt was real. This is the path the
     // dialer takes when `live.bridgedAt` is non-null — it charges `attempt_count`
@@ -234,7 +234,7 @@ describe('AD-P3-C-09 (2): a drop AFTER bridging does consume the attempt', () =>
 
 // ─── criterion 4: one principle, both places ────────────────────────────────
 
-describe('AD-P3-C-09 (4): the dial path and the reaper hold ONE principle', () => {
+describe('the dial path and the reaper hold ONE principle', () => {
   it('the reaper\'s orphaned outcome is bounded by the same function and constant', () => {
     // The reaper passes `null` policy and `'orphaned'`. If the bound lived only
     // in the dial path, a crash-looping replica would be the way around it —
@@ -259,22 +259,21 @@ describe('AD-P3-C-09 (4): the dial path and the reaper hold ONE principle', () =
 });
 
 // ===========================================================================
-// MAG-100 — the keys become REACHABLE, so the ledger split becomes load-bearing
+// The keys are REACHABLE, so the ledger split is load-bearing
 //
-// Master's `RETRY_POLICY_OUTCOMES` was missing `agent_disconnected` and
-// `orphaned`, so master 400'd both keys and NO operator could ever store a rule
-// on either through the platform. MAG-100 adds them. Two consequences, and this
-// block pins one of each:
+// The public API layer's `RETRY_POLICY_OUTCOMES` accepts `agent_disconnected` and
+// `orphaned`, so an operator can store a rule on either. Two consequences, and
+// this block pins one of each:
 //
-//   1. The key must be REAL — core must genuinely act on a rule master now
-//      accepts. Accepting a key core does not honour is worse than rejecting it,
+//   1. The key must be REAL — the dialer must genuinely act on a rule the API
+//      layer accepts. Accepting a key that is not honoured is worse than rejecting it,
 //      because the operator sees it stored and believes it configured.
-//   2. The key must NOT be a way around the our-fault bound. Until MAG-100 that
-//      was unreachable in practice; now a wizard field feeds
+//   2. The key must NOT be a way around the our-fault bound. Before the keys were
+//      accepted that was unreachable in practice; now a wizard field feeds
 //      `resolveOurFaultRedial`'s `configured`, and `min(configured, BOUND)` is
 //      the only thing standing between it and a regulated repeat-dial limit.
 // ===========================================================================
-describe('MAG-100: the new keys tune the customer ledger and NOT the our-fault bound', () => {
+describe('the new keys tune the customer ledger and NOT the our-fault bound', () => {
   it('HONOURS a configured rule on both keys, rather than storing an inert one', () => {
     // Criterion 2 — the round trip. Every assertion here is chosen so the
     // DEFAULT would give a DIFFERENT answer: `agent_disconnected` defaults to
@@ -303,10 +302,10 @@ describe('MAG-100: the new keys tune the customer ledger and NOT the our-fault b
     expect(resolveRetryDecision(policy, 'orphaned', NOW, 6).contactState).toBe('exhausted');
   });
 
-  it('a 50-attempt rule an operator can NOW save does not move the bound off 3', () => {
+  it('a 50-attempt rule an operator can save does not move the bound off 3', () => {
     /**
-     * Criterion 5. `50` is the point: it is a value the wizard will accept once
-     * MAG-100 ships, and it is far past the bound, so `min(configured, BOUND)`
+     * Criterion 5. `50` is the point: it is a value the wizard accepts,
+     * and it is far past the bound, so `min(configured, BOUND)`
      * is the only reason this contact stops being redialled. Change that `min`
      * to `max`, or drop it and use `configured` directly, and both boundary
      * assertions below go red.

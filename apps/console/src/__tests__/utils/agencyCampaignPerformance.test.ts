@@ -12,7 +12,7 @@ import {
 import type { AgencyCampaignStats } from '../../types/agency-campaign';
 
 /**
- * §C.3's derived figures (MAG-151).
+ * The performance readouts' derived figures.
  *
  * Most of what follows is one proposition in three forms: **`undefined`,
  * `null` and `0` are three different sentences**, and the whole value of these
@@ -39,7 +39,7 @@ describe('connectRateReadout', () => {
     expect(readout.known).toBe(false);
   });
 
-  it('reads core’s null as "no calls placed", not as a 0% rate', () => {
+  it('reads the API’s null as "no calls placed", not as a 0% rate', () => {
     const readout = connectRateReadout(stats({ connect_rate_pct: null }));
     expect(readout.value).toBe('No data');
     expect(readout.known).toBe(false);
@@ -141,7 +141,7 @@ describe('connectRateReadout', () => {
   });
 
   it('treats an absent availability flag as measurable, not as a warning', () => {
-    // An older core that never sent the flag has not told us voicemail is
+    // An older API that never sent the flag has not told us voicemail is
     // unrecordable, and inventing the more alarming reading is not caution.
     const readout = connectRateReadout(stats({ connect_rate_pct: 40, unclassified_connects: 0 }));
     expect(readout.caveat).toBeNull();
@@ -161,7 +161,7 @@ describe('conversionRateReadout', () => {
     expect(readout.value).not.toBe('0%');
   });
 
-  it('reads core’s null as "nothing has connected", not as a 0% conversion', () => {
+  it('reads the API’s null as "nothing has connected", not as a 0% conversion', () => {
     /**
      * The defect this pins. A campaign that has dialled a cold list all morning
      * and reached nobody has NOT failed to convert anybody — there was nothing to
@@ -260,7 +260,7 @@ describe('handleTimeReadout', () => {
     expect(handleTimeReadout(stats({ aht_seconds: null })).value).toBe('No data');
   });
 
-  it('renders §C.1’s 2:14 from core’s seconds', () => {
+  it('renders 2:14 from the API’s seconds', () => {
     const readout = handleTimeReadout(stats({ aht_seconds: 134 }));
     expect(readout.value).toBe('2:14');
     expect(readout.known).toBe(true);
@@ -347,7 +347,7 @@ describe('handleTimeReadout', () => {
   it('suppresses the comparison and explains itself when voicemail was never a disposition', () => {
     /*
      * The two averages are EQUAL here, and that is not an arbitrary fixture —
-     * it is the only shape this campaign can have. Core excludes calls
+     * it is the only shape this campaign can have. The API excludes calls
      * *labelled* voicemail; with no code in the catalog nothing is so labelled,
      * so both `AVG`s run identical predicates over identical rows.
      *
@@ -377,7 +377,7 @@ describe('handleTimeReadout', () => {
      * a flat contradiction on one card, and the caveat is the one that survives.
      */
     const measured = handleTimeReadout(stats({ aht_seconds: 134 }));
-    expect(measured.denominator).toEqual({ lead: null, rest: 'Voicemail excluded — core’s own figure' });
+    expect(measured.denominator).toEqual({ lead: null, rest: 'Voicemail excluded — the dialer’s own figure' });
 
     const unmeasured = handleTimeReadout(
       stats({ aht_seconds: 134, machine_connects: 0, machine_connects_available: false }),
@@ -488,7 +488,7 @@ describe('connectsBreakdown', () => {
 
   it('keeps a real count when the code was removed AFTER voicemails were recorded', () => {
     /*
-     * `disposition_catalog` is patchable on a live campaign, and core's two
+     * `disposition_catalog` is patchable on a live campaign, and the API's two
      * reads disagree by design: the count reads each attempt's historical
      * `disposition_code`, the availability flag reads the CURRENT catalog. Drop
      * the code from a campaign with history and the flag says `false` while the
@@ -517,14 +517,14 @@ describe('connectsBreakdown', () => {
 describe('RATE_MIN_ATTEMPTS', () => {
   /**
    * The one rule on this surface that is a decision of the console's rather
-   * than a reading of core's payload.
+   * than a reading of the API's payload.
    *
    * A rate is the figure that leaves the room — repeated in a stand-up, written
    * into a weekly summary, used to decide whether a list is worth buying again.
    * Over a handful of dials it is noise wearing a decimal point: at eight dials
    * one extra answer moves the connect rate twelve points, so the number quoted
    * on Tuesday is a different number on Wednesday for reasons that have nothing
-   * to do with the campaign. Core's arithmetic is exact; what is withheld is the
+   * to do with the campaign. The API's arithmetic is exact; what is withheld is the
    * settled air of a measurement, not the accuracy.
    */
   const rated = { connect_rate_pct: 40, success_rate_pct: 25, attempts_connected: 8 };
@@ -559,7 +559,7 @@ describe('RATE_MIN_ATTEMPTS', () => {
   it('does not withhold on a payload that never carried the dial count', () => {
     /*
      * `undefined` is "this payload did not say", exactly as it is for every
-     * other field in this module. An older core that never sent the counter has
+     * other field in this module. An older API that never sent the counter has
      * not told us the campaign is small, and blanking the screen's most-read
      * figure on the strength of a missing field would be inventing the reading
      * that costs the most.

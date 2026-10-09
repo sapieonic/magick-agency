@@ -3,7 +3,7 @@ import type { AgencyWrapupHold } from '../../types/agency';
 import styles from './WrapupTimer.module.css';
 
 /**
- * The wrap-up countdown, in the rail's right-hand region (§A.13.5, §A.13.5.1).
+ * The wrap-up countdown, in the rail's right-hand region.
  *
  * All the arithmetic is in `agencyWrapup`, which is pure so the drift properties
  * can be asserted against a clock that jumps rather than by watching a bar. This
@@ -36,13 +36,12 @@ import styles from './WrapupTimer.module.css';
  */
 const HOLD_COPY: Record<AgencyWrapupHold, string> = {
   disposition_required: 'Waiting on a disposition',
-  // PORT NOTE (magick-agency): core's second hold (CONTRACT-DIFF §1), which cusui
-  // lacked. Says who is holding, so the agent does not read it as their own
+  // The second hold. Says who is holding, so the agent does not read it as their own
   // unfinished work or as a hang.
   supervisor_hold: 'Held by your supervisor',
 };
 
-/** §A.13.5.1: never "expired", never "overdue", and never a spinner. */
+/** Never "expired", never "overdue", and never a spinner. */
 export const WRAPUP_HELD_FALLBACK_COPY = 'Waiting on a disposition';
 
 export interface WrapupTimerProps {
@@ -72,9 +71,8 @@ export function WrapupTimer({ anchor, now, dispositionSubmitted }: WrapupTimerPr
    *
    * An earlier draft returned early on `view.panel === 'held'` and *also* checked
    * `fraction !== null` further down. That made the fraction check unreachable for
-   * the held case — dead code that looked exactly like the defence §A.13.5 asks
-   * for. Mutation testing found it: forcing the track to render unconditionally
-   * and coalescing the fraction with `?? 0` — the precise defect the spec forbids —
+   * the held case — dead code that looked exactly like the defence a held state needs. Mutation testing found it: forcing the track to render unconditionally
+   * and coalescing the fraction with `?? 0` — the precise defect to avoid —
    * left all twenty tests green, because the early return got there first.
    *
    * So the branch is gone. There is now exactly one thing standing between a held
@@ -89,7 +87,7 @@ export function WrapupTimer({ anchor, now, dispositionSubmitted }: WrapupTimerPr
         legible in peripheral vision and a number is not.
 
         `aria-hidden` on both, because the rail is this screen's only polite live
-        region (§A.11) and a countdown inside it would announce on every repaint —
+        region and a countdown inside it would announce on every repaint —
         four times a second, for the length of every wrap-up of the shift. The two
         licensed announcements (10s and 3s) are the page's, and they are two
         strings rather than a stream.

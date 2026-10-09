@@ -1,19 +1,13 @@
 /**
- * Shapes the agency call-detail and analysis-profile files need from cusui type
- * modules that are otherwise NOT ported (they describe the AI-calling product).
+ * Shapes the agency call-detail and analysis-profile files need from console type
+ * modules.
  *
- * PORT NOTE (magick-agency): verbatim excerpts, not a re-design —
- *   - `AnalyticsDimension` / `StoredAnalyticsDimension` from
- *     `magick-comms-cusui/src/types/prompt.ts:7-27` (cusui v2.96.0,
- *     ee5beb4400ec1fb5fdf6049871681ae6875e8d29), imported there by
+ *   - `AnalyticsDimension` / `StoredAnalyticsDimension`, used by
  *     `call-analysis-profile.ts`;
- *   - `CallAnalysisResult` from `magick-comms-cusui/src/types/call.ts:33-58`,
- *     imported there by `webrtc-call.ts`.
- * The rest of `prompt.ts` (call scripts) and `call.ts` (AI calls) is out of scope
- * (AI calling is not part of Magick Agency v1). See `../../../PORTING.md`.
+ *   - `CallAnalysisResult`, used by `webrtc-call.ts`.
  */
 
-/** A dimension as we SEND it. Core's `analyticsDimensionSchema` requires a
+/** A dimension as we SEND it. The dialer runtime's `analyticsDimensionSchema` requires a
  *  non-empty key and description, so the assemblers (`toValidDimensions`) must
  *  produce exactly this — keep it strict. */
 export interface AnalyticsDimension {
@@ -23,7 +17,7 @@ export interface AnalyticsDimension {
   options?: string[];
 }
 
-/** A dimension as core ECHOES it back, which is not the same guarantee: the
+/** A dimension as the dialer runtime ECHOES it back, which is not the same guarantee: the
  *  dimension list is stored as JSONB and rows written before the current schema
  *  (or by an import) can carry NULLs where a send would require a string. Read
  *  paths use this shape so the compiler makes them normalize — the editor's

@@ -11,9 +11,8 @@ interface PageDescriptionProps {
   /** Optional list of tips shown as bullet points below the description. */
   tips?: string[];
   /*
-   * PORT NOTE (magick-agency, decision B17): cusui's `docsSlug` / `docsLabel`
-   * props, and the "Read the full guide" link they rendered to the parent
-   * product's documentation site, are deleted. Magick Agency has no docs site.
+   * Decision B17: there are no `docsSlug` / `docsLabel` props or "Read the full
+   * guide" link, because Magick Agency has no docs site.
    */
 }
 

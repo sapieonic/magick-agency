@@ -2,7 +2,7 @@ import { useRepaintTick } from './useRepaintTick';
 import { correctedInstant, elapsedSince, remainingUntil } from '../utils/agencyClock';
 
 /**
- * The server-corrected clock (§A.13.10; acceptance criterion (b) — *matches the
+ * The server-corrected clock (; acceptance criterion (b) — *matches the
  * server's timer within a second and does not drift over a shift*).
  *
  * `agencyClock.ts` has the estimator and the pure arithmetic; `useRepaintTick` has

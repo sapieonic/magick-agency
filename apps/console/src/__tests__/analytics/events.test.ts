@@ -47,9 +47,8 @@ describe('analytics/events catalog', () => {
     });
   });
 
-  // PORT NOTE (magick-agency): MODIFIED — cusui's case also emitted the three
-  // onboarding events, which are removed with `/onboarding` (no self-serve
-  // sign-up). The auth half is verbatim.
+  // Auth events only: there are no onboarding events, because there is no
+  // `/onboarding` route (no self-serve sign-up).
   it('supports the broadened auth and onboarding enums from the shared catalog', () => {
     capture.mockClear();
     trackAuthFailed({ action: 'login', provider: 'google', reason: 'validation_error' });
@@ -77,11 +76,9 @@ describe('analytics/events catalog', () => {
     });
   });
 
-  // PORT NOTE (magick-agency): MODIFIED — the same six-emitter shape over what
-  // the catalog keeps: the team-invite setup event (cusui: a contact-list
-  // upload), an agency capability gate (cusui: `campaigns`), an agency export
-  // scope (cusui: `ai_calls`); the messaging-connection and credit emitters are
-  // removed, so their two calls go.
+  // Six emitters over what the catalog keeps: the team-invite setup event, an
+  // agency capability gate, an agency export scope. There are no
+  // messaging-connection or credit emitters.
   it('emits setup, monetization, gating, export, and reliability catalog events', () => {
     capture.mockClear();
     const typedPath = '/proxy/agency/campaigns' as AnalyticsPath;
@@ -110,11 +107,10 @@ describe('analytics/events catalog', () => {
     });
   });
 
-  // PORT NOTE (magick-agency): MODIFIED — the broadened surface the catalog
-  // keeps: both team-invite events, the agency feature-flag gate, an agency
-  // export failure (`incomplete_source`, the activity trail's 424) and an api
-  // error. cusui's contact-list, audio, API-key, messaging and credit calls are
-  // removed with their emitters.
+  // The broadened surface the catalog keeps: both team-invite events, the agency
+  // feature-flag gate, an agency export failure (`incomplete_source`, the activity
+  // trail's 424) and an api error. There are no contact-list, audio, API-key,
+  // messaging or credit emitters.
   it('supports the broadened setup, messaging, credit, gate, export, and api-error catalog surface', () => {
     capture.mockClear();
     const typedPath = '/proxy/agency/campaigns' as AnalyticsPath;
@@ -163,9 +159,8 @@ describe('analytics/events catalog', () => {
     });
   });
 
-  // PORT NOTE (magick-agency): MODIFIED — the compile-time rejections, over the
-  // agency gate ids (`agency`, `agency_dialer_enabled`); the three
-  // messaging-provider cases go with `trackMessagingConnectionEvent`.
+  // The compile-time rejections, over the agency gate ids (`agency`,
+  // `agency_dialer_enabled`).
   it('rejects arbitrary raw strings for branded API paths and feature gate ids at compile time', () => {
     // @ts-expect-error Analytics paths must come from a branded sanitizer/helper.
     trackApiErrorEvent({ status: 503, path: '/api/v1/messages' });

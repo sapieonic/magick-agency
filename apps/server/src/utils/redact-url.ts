@@ -31,18 +31,18 @@
  * different part of the process. One exported function is the only way those four
  * can be asserted to agree.
  *
- * PORT NOTE (magick-agency): one import now, the log-side scrubber, from
- * `@magick-agency/observability/url-scrub`, a leaf with no imports of its own, so the constraint
- * below still holds. See `redactedRequestSpanAttributes`, and `redactSpanUrl` /
- * `redactedOutgoingSpanAttributes` below for the query and outgoing-span rules agency adds.
+ * The span side also redacts credential query values and media-stream path tokens
+ * (`redactSpanUrl`), and outgoing `fetch` spans' query values (`redactedOutgoingSpanAttributes`).
  *
- * ── This module imports NOTHING, deliberately ──────────────────────────────
+ * ── This module imports (almost) NOTHING, deliberately ─────────────────────
  * `src/instrumentation.ts` imports it, and that file runs before the rest of the
  * application: it registers the `import-in-the-middle` ESM hook and may only
  * reach modules with no side effects and no transitive dependencies (the same
  * constraint its `./utils/version.js` import is annotated with). A `logger.js` or
  * `config/index.js` import here would drag the whole application graph — and
- * config's `process.exit(1)` — in front of the instrumentation bootstrap.
+ * config's `process.exit(1)` — in front of the instrumentation bootstrap. The one
+ * import is the log-side scrubber, `@magick-agency/observability/url-scrub`, a leaf
+ * with no imports of its own.
  */
 import { isSecretQueryKey, scrubMediaUrl } from '@magick-agency/observability/url-scrub';
 
@@ -81,11 +81,10 @@ export const CREDENTIAL_PATH_LITERALS: ReadonlyMap<string, ReadonlySet<string>> 
  * defensive copy, so a caller (and a test) can compare by `===` to ask "did this
  * URL carry a secret?".
  *
- * The query string is preserved verbatim, and dropping it would take the one thing a
- * "customer says the filter is wrong" ticket is answered from.
- * PORT NOTE (magick-agency): master's next sentence, "It is not where any credential in this
- * service travels", is not true here (VoiceLink's `?token=`, signed recording `?sig=`); query
- * credentials are `redactSpanUrl`'s and the log scrubber's job, not this function's. Fragments cannot appear in a
+ * The query string is preserved as-is: dropping it would take the one thing a "customer says
+ * the filter is wrong" report is answered from. Credentials DO travel in queries here
+ * (VoiceLink's `?token=`, signed recording `?sig=`); redacting them is `redactSpanUrl`'s and the
+ * log scrubber's job, not this function's. Fragments cannot appear in a
  * server-side `request.url` at all; the split tolerates one rather than relying
  * on that.
  */
@@ -115,7 +114,7 @@ export function redactUrl(url: string): string {
 const REDACTED_QUERY_VALUE = '[REDACTED]';
 
 /**
- * PORT NOTE (magick-agency): `@opentelemetry/instrumentation-http`'s own default redaction list
+ * `@opentelemetry/instrumentation-http`'s own default redaction list
  * (`DEFAULT_QUERY_STRINGS_TO_REDACT`, `build/src/internal-types.js`@0.223.0), which
  * `redact-url.test.ts` pins against the installed package. Pre-signed object-store URLs carry
  * these; a recording fetch can be redirected to one.
@@ -131,8 +130,7 @@ export const INSTRUMENTATION_DEFAULT_REDACTED_QUERY_PARAMS: readonly string[] = 
 ];
 
 /**
- * PORT NOTE (magick-agency): the list handed to the HTTP instrumentation's
- * `redactedQueryParams` (outgoing `http`/`https` spans). Setting it REPLACES the instrumentation's
+ * The list handed to the HTTP instrumentation's `redactedQueryParams` (outgoing `http`/`https` spans). Setting it REPLACES the instrumentation's
  * defaults, so they are repeated, plus the log scrubber's keys. The instrumentation matches
  * names exactly, so the `*verify_token` suffix rule is covered only for `hub.verify_token`.
  */
@@ -158,10 +156,10 @@ function isRedactedQueryKey(rawKey: string): boolean {
 }
 
 /**
- * PORT NOTE (magick-agency): redact credential VALUES in a query string (without its `?`) by
+ * Redact credential VALUES in a query string (without its `?`) by
  * DECODED, case-insensitive key: the log scrubber's keys (`token`, `sig`, `*verify_token`) plus
  * the instrumentation's signed-URL keys. The log scrubber matches the raw text, so
- * `?%74oken=…` (which Fastify decodes to `token`) got past it. Every other pair is kept byte for
+ * `?%74oken=…` (which Fastify decodes to `token`) gets past it. Every other pair is kept byte for
  * byte. Returns the input unchanged, by identity, when nothing matched.
  */
 export function redactQuery(query: string): string {
@@ -177,8 +175,7 @@ export function redactQuery(query: string): string {
 }
 
 /**
- * PORT NOTE (magick-agency): the whole span-side rule for a request URL: master's invite-path
- * rewrite, then the log scrubber (query tokens and media-stream path tokens, so a span says what
+ * The whole span-side rule for a request URL: the invite-path rewrite (`redactUrl`), then the log scrubber (query tokens and media-stream path tokens, so a span says what
  * the log line says), then `redactQuery` for what the scrubber's raw-text match misses. Returns
  * the input unchanged, by identity, when nothing matched.
  */
@@ -196,36 +193,32 @@ export function redactSpanUrl(url: string): string {
  * shaped for `@opentelemetry/instrumentation-http`'s `startIncomingSpanHook`.
  *
  * ── This was verified against the installed instrumentation, not assumed ────
- * PORT NOTE (magick-agency): re-verified against `instrumentation-http@0.223.0` (master's
- * comment cited 0.212.0). `utils.js:getIncomingRequestAttributes` there emits the STABLE keys
+ * Checked against `instrumentation-http@0.223.0`: `utils.js:getIncomingRequestAttributes` emits the STABLE keys
  * only (`url.path`, `url.query`, …; the old-semconv branch and `OTEL_SEMCONV_STABILITY_OPT_IN`
  * handling are gone) and ends with `Object.assign(attributes, hookAttributes)`. **The hook's
  * attributes are applied LAST**, so returning a key here overwrites the instrumentation's own
  * value rather than being ignored — which is the property this fix depends on and the reason
  * it is stated in full.
  *
- * Master returned both attribute vocabularies because at 0.212.0 the default was
- * `SemconvStability.OLD` (`http.url`, `http.target`). At 0.223.0 the instrumentation no longer
- * emits those, so on a redacted span the two old keys are ADDED, beside `url.path`, rather than
- * overwriting anything; they carry only the redacted URL. Kept as master returns them.
+ * The old-semconv keys (`http.url`, `http.target`) are returned as well. The instrumentation no
+ * longer emits them, so on a redacted span they are ADDED beside `url.path` rather than
+ * overwriting anything, and carry only the redacted URL.
  *
  * Two things deliberately NOT handled here, both checked in the same source:
  *
  *  - **The span NAME.** It starts as the bare method and is rewritten in
  *    `_onServerResponseFinish` to `${method} ${http.route}`, where `http.route`
  *    comes from the RPC metadata Fastify's instrumentation sets — the route
- *    TEMPLATE (`/invites/:token`), never the interpolated path. Nothing to
- *    redact.
- *    PORT NOTE (magick-agency): `auto-instrumentations-node@0.81.0` has no Fastify
- *    instrumentation (core has none either), so no `http.route` is set and server spans are
- *    named by method alone. Still nothing to redact.
+ *    TEMPLATE (`/invites/:token`), never the interpolated path. In practice
+ *    `auto-instrumentations-node@0.81.0` has no Fastify instrumentation, so no
+ *    `http.route` is set and server spans are named by method alone. Either
+ *    way, nothing to redact.
  *  - **The response-time attributes.** `getIncomingRequestAttributesOnResponse`
  *    contributes only the status code and `http.route`, so no URL is re-added
  *    after this hook has run.
  *
- * PORT NOTE (magick-agency): master redacted only the invite path segment and left the query to
- * the instrumentation, whose server-side default list has no `token`. Here the URL goes through
- * `redactSpanUrl`, so a `?token=` / `sig=` / `*verify_token=` value (VoiceLink's status webhook
+ * The instrumentation's own server-side redaction list has no `token`, so the URL goes through
+ * `redactSpanUrl`: a `?token=` / `sig=` / `*verify_token=` value (VoiceLink's status webhook
  * is `/webhooks/voicelink/webrtc-status/:callId?token=…`), a signed-URL key, or a media-stream
  * path token is redacted on the span as it is in the logs, and `url.query` is overwritten when
  * the query changed (Manas, 2026-10-09).
@@ -267,18 +260,17 @@ export function redactedRequestSpanAttributes(request: {
   return {
     // Stable semconv.
     'url.path': path,
-    // Old semconv (master's default at 0.212.0; see above). `url.query` is deliberately left
-    // to the instrumentation when the query is unchanged: its own value is already correct.
+    // Old semconv (see above). `url.query` is deliberately left to the instrumentation when the
+    // query is unchanged: its own value is already correct.
     'http.target': redacted,
     'http.url': `${scheme}//${host}${redacted}`,
-    // PORT NOTE (magick-agency): unless the redaction changed it. Stable semconv's `url.query` is
-    // the query without its `?`; set only then, so every other request keeps the shape above.
+    // Stable semconv's `url.query` is the query without its `?`; set only then, so every other request keeps the shape above.
     ...(queryChanged ? { 'url.query': redacted.slice(queryStart + 1) } : {}),
   };
 }
 
 /**
- * PORT NOTE (magick-agency): no source has this. `@opentelemetry/instrumentation-undici`
+ * `@opentelemetry/instrumentation-undici`
  * (global `fetch`) redacts nothing: it puts the full request URL on every client span as
  * `url.full` and `url.query` (`build/src/undici.js`@0.33.0). `recording-proxy.ts` fetches carrier
  * recording URLs and follows redirects hop by hop, so a pre-signed redirect would export its

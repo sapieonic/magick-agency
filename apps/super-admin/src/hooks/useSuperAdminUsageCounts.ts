@@ -4,8 +4,7 @@ import { localDayStartIso, localDayEndIso } from '../utils/localDayBounds';
 import type { UsageCountsResponse } from '@magick-agency/contracts/api/platform/super-admin-usage';
 
 /**
- * NEW (plan §3.3), replaces cusui's `useSuperAdminUsage` / `useSuperAdminFleet`
- * (credits and fleet usage, deleted with the routes they read).
+ * Usage counts hook. There is no credits or fleet usage hook.
  */
 
 export type PeriodPreset = '7d' | '30d' | '90d' | 'custom';

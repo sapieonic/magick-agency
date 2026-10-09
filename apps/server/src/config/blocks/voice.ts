@@ -2,14 +2,10 @@ import { z } from 'zod';
 import { envBoolean, type Env } from '../env.js';
 
 /**
- * Owned by lane C (voice engine). Every key below keeps core's name and shape
- * (magic-voice-core/src/config/{schema,index}.ts@4850d1d9) so the ported bridge,
- * guards, VoiceLink adapter, rate limiter, clip decode and PostHog client read
- * the paths they read in core. PORTING.md (Lane C) lists each modification.
+ * Voice-engine config: the bridge, guards, VoiceLink adapter, rate limiter, clip
+ * decode, S3 and the PostHog client read their settings from these blocks.
  */
 
-// core schema.ts:128 `concurrencySchema` — modified: `mediaStreamConnectTimeoutSeconds`
-// removed (the AI inbound media watchdog; no reader here).
 const concurrencySchema = z.object({
   maxConcurrentCalls: z.coerce.number().default(200),
   callTimeoutSeconds: z.coerce.number().positive().default(300),
@@ -30,7 +26,6 @@ const concurrencySchema = z.object({
   staleCallSweepMinutes: z.coerce.number().positive().default(30),
 });
 
-// core schema.ts:290 `voicelinkSchema` — verbatim.
 const voicelinkSchema = z.object({
   /** VoiceLink REST base URL, e.g. https://app.voicelink.co.in/api. */
   baseUrl: z.string().optional().default(''),
@@ -50,12 +45,10 @@ const voicelinkSchema = z.object({
 });
 
 /**
- * core schema.ts:320 `telephonySchema` — modified: VoiceLink is the only carrier
- * (plan §5, §9: agency dials only on its own VoiceLink account), so the other
- * seven provider blocks, `defaultProvider` and `enabledProviders` are gone.
+ * VoiceLink is the only carrier: the app dials only on its own VoiceLink account,
+ * so there is no provider selection.
  *
- * Core's superRefine required the selected provider's fields at boot. Here the
- * same VoiceLink `requireField` checks run when `requireVoicelink` is true, which
+ * The VoiceLink `requireField` checks run when `requireVoicelink` is true, which
  * the env reader sets in production or when `TELEPHONY_ENABLED_PROVIDERS` names
  * `voicelink` — so a misconfigured production deploy still fails fast, while the
  * unit-test env (which carries no carrier credentials) parses.
@@ -82,9 +75,8 @@ export const telephonySchema = z.object({
   requireField('voicelink.defaultCallerId', data.voicelink.defaultCallerId);
 });
 
-// core schema.ts:1428 `rateLimitSchema` — verbatim keys, defaults and bounds. The
-// sizing rationale (why webhookMax is 1000, why carrier media has its own bucket)
-// is core's and is restated in the middleware header.
+// The sizing rationale (why webhookMax is 1000, why carrier media has its own bucket)
+// is in the rate-limit middleware header.
 const rateLimitSchema = z.object({
   max: z.coerce.number().int().min(1).default(200),
   webhookMax: z.coerce.number().int().min(1).default(1000),
@@ -93,7 +85,7 @@ const rateLimitSchema = z.object({
   timeWindow: z.string().default('1 minute'),
 });
 
-// core schema.ts:1493 `s3Schema` — verbatim. Agency's own bucket (plan §5).
+// The app's own bucket.
 const s3Schema = z.object({
   audioBucket: z.string(),
   region: z.string().default('ap-south-1'),
@@ -101,23 +93,21 @@ const s3Schema = z.object({
   secretAccessKey: z.string(),
 });
 
-// core schema.ts `staticCallTtsSchema` — modified: only the on-disk clip-cache
-// sweeper knobs are kept (agency synthesises no TTS, decision 4). Key name kept
-// so the ported sweeper wiring reads the path core reads.
+// Only the on-disk clip-cache sweeper knobs: the app synthesises no TTS. The key
+// name is what the sweeper wiring reads.
 const staticCallTtsSchema = z.object({
   cacheTtlMs: z.coerce.number().int().min(0).default(21_600_000), // 6h
   cacheMaxBytes: z.coerce.number().int().min(0).default(524_288_000), // 500MB
   cacheSweepIntervalMs: z.coerce.number().int().min(0).default(3_600_000), // 1h
 });
 
-// core schema.ts:1907 `audioSchema` — verbatim.
 const audioSchema = z.object({
   decodeTimeoutMs: z.coerce.number().int().min(1000).default(90_000),
   decodeConcurrency: z.coerce.number().int().min(1).default(2),
 });
 
-// core schema.ts:2028 `analyticsSchema` — verbatim. Lane C owns the PostHog
-// client (lead decision); lane D's LLM observability reads the two llm* keys.
+// The voice engine owns the PostHog client; the analysis LLM observability reads
+// the two llm* keys.
 const analyticsSchema = z.object({
   /** Master switch for PostHog product/business analytics. */
   enabled: envBoolean.default(false),

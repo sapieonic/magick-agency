@@ -13,10 +13,9 @@ const log = createChildLogger({ component: 'invite-mailer' });
  * `process.exit(1)` when the Zod schema does not parse, and its first line is
  * `import 'dotenv/config'` against a `.env` that is gitignored and untracked. So
  * ANY module that imports it statically drags a process-killing side effect into
- * the import graph of everything that reaches that module — which is the hazard
- * the platform CLAUDE.md states outright: *"their Zod schemas are imported
- * transitively by many tests — so a missing `.env` fails unit tests, not just
- * `npm run dev`."*
+ * the import graph of everything that reaches that module: because the Zod
+ * schema is imported transitively by many tests, a missing `.env` fails unit
+ * tests, not just `npm run dev`.
  *
  * `user.routes.ts` imports this file, and `test/integration/api/user.routes.test.ts`
  * imports that. Before this file existed nothing in that graph reached config, so
@@ -24,7 +23,7 @@ const log = createChildLogger({ component: 'invite-mailer' });
  * `Error: process.exit unexpectedly called with "1"` at
  * `invite-mailer.ts:1:1`, with no reference to mail anywhere in the failure.
  *
- * Deliberately still `config` and not `process.env`: `cusuiBaseUrl` is
+ * Deliberately still `config` and not `process.env`: `consoleBaseUrl` is
  * `z.string().url().optional()`, so reading the variable directly would drop the
  * URL validation and let a malformed base URL through to a link handed to a new
  * hire. The validation is kept and only the moment it runs moves.
@@ -54,45 +53,25 @@ async function appConfig(): Promise<AppConfig> {
  * every other role.**
  *
  * ── The defect it removes ──────────────────────────────────────────────────
+ * ── What it is for ─────────────────────────────────────────────────────────
  * `POST /users/invite` writes a membership and, for an unknown address, a stub
- * user whose `firebase_uid` is `pending_<uuid>`. Master used to adopt that stub
- * on the invitee's first Firebase sign-in **matched by email** — which required
- * the invited person to independently arrive at the app and sign in with exactly
- * the address that was typed. Nothing told them to. Worse, an invited agent with
- * no Google account had no way in at all: `/agency/login` deliberately has no
- * signup, and Firebase password-reset cannot mint a credential for a user that
- * does not exist. The customer UI's modal said "Send Invite" and "Sending…", so a
- * supervisor had every reason to believe mail was on its way and the agent waited
- * for one that was never coming.
+ * user whose `firebase_uid` is `pending_<uuid>`. Without a mail, the invited
+ * person would have to arrive at the app on their own and sign in with exactly
+ * the address that was typed — and an invited agent with no Google account would
+ * have no way in at all: `/agency/login` deliberately has no signup, and Firebase
+ * password-reset cannot mint a credential for a user that does not exist.
  *
- * This file now sends a real email carrying a real token
+ * This file sends a real email carrying a real token
  * (`src/notifications/invite-token.ts`), and the token — not an email match — is
  * what binds the invitee's Firebase identity to the membership when they claim it
- * at `POST /invites/:token/claim`. The "signed up with a different address,
- * landed in a private empty tenant, membership orphaned" hazard goes with it.
+ * at `POST /invites/:token/claim`. So signing in with a different address does
+ * not orphan the membership.
  *
- * ── The transport is MAILJET, and `platformEmail` is deliberately NOT used ──
- * An earlier revision of this header specified core's Resend-backed email
- * messaging provider (`PLATFORM_EMAIL_CONNECTION_ID`) as the intended transport,
- * on a dogfooding argument: the platform's own product should send the platform's
- * own mail. That argument still stands and that seam is still reserved —
- * `config.platformEmail` remains in the schema and nothing here has removed it.
- * It is **not** what ships today, and this header used to say otherwise, which is
- * why this paragraph is explicit:
- *
- *  - The dogfooded path needs a `messaging_connections` row in CORE with a
- *    verified sending domain, an S2S contract for a platform-scoped (rather than
- *    tenant-scoped) send, and a decision about whose message ledger it lands in.
- *    None of that exists.
- *  - `mailjet.client.ts` exists, is already the transport for bulk-dispatch job
- *    completion and agency campaign completion, is bounded in time
- *    (`MAILJET_TIMEOUT_MS`), and reports rather than throws.
- *
- * Blocking an agent's only route into the product on a messaging integration that
- * has not been built is the wrong trade. So: Mailjet now, consolidation onto
- * `platformEmail` later, and this file is where that consolidation happens — swap
- * the transport inside {@link sendInviteEmail}, below the config guard, and
- * nothing else on this path changes.
+ * ── The transport is MAILJET ───────────────────────────────────────────────
+ * `mailjet.client.ts` is the transport the agency campaign-completion notice
+ * also uses, is bounded in time (`MAILJET_TIMEOUT_MS`), and reports rather than
+ * throws. Changing transport means swapping it inside {@link sendInviteEmail},
+ * below the config guard; nothing else on this path changes.
  *
  * ── Scope: the `agent` role only ───────────────────────────────────────────
  * Every other role still reports `not_implemented`, and their `sign_in_url` is
@@ -108,9 +87,8 @@ async function appConfig(): Promise<AppConfig> {
  * The membership IS the outcome of an invite; the email is an accelerant. So this
  * function is total — every failure is a returned `reason`, never a rejection —
  * and the route awaits it only because the answer goes on the response. The
- * transport carries its own timeout for the same reason `proxyToCore`'s callers
- * do: this service's global undici headers timeout is 300s, and an invite must
- * not sit behind a mail provider for five minutes. `mailjet.client.ts` bounds
+ * transport carries its own timeout because undici's default headers timeout is
+ * 300s, and an invite must not sit behind a mail provider for five minutes. `mailjet.client.ts` bounds
  * every request at `MAILJET_TIMEOUT_MS` (10s) and reports an abort as a refusal,
  * which is what keeps `POST /users/invite` answering 201 on a hung provider.
  */
@@ -121,10 +99,9 @@ export type InviteEmailResult =
    * Sent, and (when the transport can say) the provider's id for it.
    *
    * Mailjet CANNOT say: `sendEmail` reports a boolean, having already logged the
-   * `MessageUUID`s it got back. So this is `null` on today's transport, and the
-   * field stays on the union rather than being dropped because it is the natural
-   * home for the id once the send moves onto `platformEmail` — where the message
-   * gets a durable row in core and an id worth carrying.
+   * `MessageUUID`s it got back. So this is `null` on today's transport; the
+   * field stays on the union as the place for an id from a transport that
+   * returns one.
    */
   | { sent: true; messageId: string | null }
   /**
@@ -155,8 +132,8 @@ export interface SendInviteEmailInput {
   /** Whose workspace they were invited to. For attribution and logging. */
   tenantId: string;
   /**
-   * Where to send them, from {@link inviteSignInUrl}. `null` when master cannot
-   * build one (no `CUSUI_BASE_URL`), which is itself a reason not to send: an
+   * Where to send them, from {@link inviteSignInUrl}. `null` when the server
+   * cannot build one (no `CONSOLE_BASE_URL`), which is itself a reason not to send: an
    * invite email whose only job is to carry a link, without the link, is worse
    * than no email.
    */
@@ -164,14 +141,14 @@ export interface SendInviteEmailInput {
   /**
    * The organisation's name, for the supporting line ("…at Acme Collections").
    *
-   * Optional, and it FALLS BACK rather than failing: master resolves it from
+   * Optional, and it FALLS BACK rather than failing: the invite route resolves it from
    * `tenants` on the invite path, and a lookup that returns nothing must not be
    * the reason an agent never receives their only way in. The template treats it
    * as context rather than as the headline, so a generic value still reads.
    */
   tenantName?: string | null;
   /**
-   * Who invited them, if master can name them. `null` renders a sentence with no
+   * Who invited them, if the invite route can name them. `null` renders a sentence with no
    * actor rather than inventing one — see the template.
    */
   inviterName?: string | null;
@@ -179,11 +156,11 @@ export interface SendInviteEmailInput {
   expiresAt?: Date | null;
 }
 
-/** The customer UI's primary sign-in page. */
+/** The console's primary sign-in page. */
 const LOGIN_PATH = '/login';
 
 /**
- * The Agency Dialer's own sign-in page in the customer UI.
+ * The Agency Dialer's own sign-in page in the console.
  *
  * Same identity system, a different entrance. Retained as the fallback for an
  * `agent` invite with no token — see {@link inviteSignInUrl}.
@@ -205,23 +182,16 @@ const AGENCY_JOIN_PATH = '/agency/join';
  * The URL an invite should carry.
  *
  * ── The JOIN page for an `agent`, and only for an `agent` ──────────────────
- * An `agent` is hierarchy level 5 and inherits no navigation at all (design D6,
- * `src/rbac/roles.ts`), so dropping them on the app shell gives them a page with
- * nothing on it — and the sign-in page in front of that shell is worse than empty
- * for them. It sells the AI voice product they will never open, and it carries a
- * Sign Up tab that is a live hazard on an invite link: `POST /auth/session`
- * provisions a brand-new tenant for an address it does not recognise, so an agent
- * who reaches for "Sign Up" lands in a private empty tenant of their own while
- * the membership sits unclaimed.
+ * An `agent` is hierarchy level 5 and inherits no navigation at all
+ * (`packages/contracts/src/rbac.ts`), so dropping them on the app shell gives
+ * them a page with nothing on it.
  *
- * This used to point at `/agency/login`, which removed the Sign Up tab and
- * therefore removed the stray-tenant hazard — but only by removing the entrance
- * entirely. An invited agent with no Google account had nothing to click:
- * `/agency/login` deliberately has no signup, and Firebase password-reset cannot
- * mint a credential for a user that does not exist. `/agency/join/:token` is the
- * missing door, and the token is what makes it safe to have one — the claim binds
- * to the membership the token names, so no sign-up on this path can create a
- * tenant or orphan a membership.
+ * `/agency/login` alone is not enough either: an invited agent with no Google
+ * account has nothing to click there, because it deliberately has no signup and
+ * Firebase password-reset cannot mint a credential for a user that does not
+ * exist. `/agency/join/:token` is that door, and the token is what makes it safe
+ * to have one — the claim binds to the membership the token names, so no
+ * sign-up on this path can create a tenant or orphan a membership.
  *
  * **Without a token an `agent` still gets `/agency/login`.** Not dead code: it is
  * what a caller with no token to offer must fall back to, and it is the strictly
@@ -232,31 +202,27 @@ const AGENCY_JOIN_PATH = '/agency/join';
  * Sending them anywhere else would override wherever the product would rather put
  * them next (an onboarding step, a verify-email bounce). A supervisor is
  * `account_admin` or above and legitimately administers in `/app` — team,
- * credits, invoices, settings — so their invite lands them there and they reach
- * the dialer from its nav entry. Supervisors are first-class AT the agency door
- * and it routes them correctly; the invite link is simply not where that is
- * decided, and pointing every `account_admin` invite at it would be wrong for the
- * majority of tenants, which have no dialer at all.
+ * settings — so their invite lands them there and they reach the dialer from its
+ * nav entry. Supervisors are first-class AT the agency door and it routes them
+ * correctly; the invite link is simply not where that is decided.
  *
- * ── The cusui copy of this rule is now BEHIND, and that is fine ────────────
- * `inviteSignInUrl` in `magick-comms-cusui`'s `src/pages/team/TeamPage.tsx` is
- * the same rule computed from `window.location.origin`, and it cannot produce a
- * join URL at all — it has no token, which is a server fact minted per invite.
- * What keeps that from mattering is that **cusui prefers the `sign_in_url` master
- * serves over its own derivation**, so in any deployment with a configured
- * `CUSUI_BASE_URL` this side is the only one that decides. cusui's copy is
- * reached only when that variable is unset, and it then produces `/agency/login`
- * — the same fallback this function produces without a token. The two therefore
- * agree in every reachable state.
+ * ── The console's copy of this rule is BEHIND, and that is fine ────────────
+ * `inviteSignInUrl` in `apps/console/src/pages/team/TeamPage.tsx` is the same
+ * rule computed from `window.location.origin`, and it cannot produce a join URL
+ * at all — it has no token, which is a server fact minted per invite. What keeps
+ * that from mattering is that **the console prefers the `sign_in_url` the server
+ * returns over its own derivation**, so in any deployment with
+ * `CONSOLE_BASE_URL` set this side is the only one that decides. The console's
+ * copy is reached only when that variable is unset, and it then produces
+ * `/agency/login` — the same fallback this function produces without a token.
+ * The two therefore agree in every reachable state.
  *
  * ── What does NOT catch a drift, despite looking like it should ────────────
- * Both suites assert the same literal strings, and that does NOT make a
- * divergence surface: the literals are hand-written in each repo against that
- * repo's own source, so moving this function and updating master's test leaves
- * master green, cusui green, and the wrong URL shipping — because cusui renders
- * what master sends. There is no shared fixture and no contract test across this
- * seam. Master has the pattern to copy if one is ever wanted
- * (`src/agency/agency-s2s-contract.fixture.json`); until then the safeguard is
+ * The server and console suites assert the same literal strings, and that does
+ * NOT make a divergence surface: the literals are hand-written in each app's
+ * tests against that app's own source, so changing this function and updating
+ * the server test leaves both suites green while the two copies disagree. There
+ * is no shared fixture and no contract test across this seam; the safeguard is
  * this paragraph, not the test suites.
  *
  * Returns `null` when no base URL is configured, rather than guessing an origin.
@@ -268,9 +234,9 @@ export async function inviteSignInUrl(
 ): Promise<string | null> {
   // `baseUrl` short-circuits the lazy resolve, so a caller that already holds the
   // origin — and every test of the URL rule itself — never touches config at all.
-  const origin = baseUrl ?? (await appConfig()).consoleBaseUrl; // PORT NOTE (magick-agency): master `cusuiBaseUrl` → `consoleBaseUrl`
+  const origin = baseUrl ?? (await appConfig()).consoleBaseUrl;
   if (!origin) return null;
-  // Trailing slashes are stripped so a `CUSUI_BASE_URL` with one does not produce
+  // Trailing slashes are stripped so a `CONSOLE_BASE_URL` with one does not produce
   // `https://app.example.com//login`, which some routers 404 and others redirect.
   const trimmed = origin.replace(/\/+$/, '');
   if (role !== 'agent') return `${trimmed}${LOGIN_PATH}`;
@@ -320,8 +286,7 @@ export async function sendInviteEmail(input: SendInviteEmailInput): Promise<Invi
   if (!config.mailjet) {
     // `debug`, not `warn`: this is the configured-off state of an optional
     // subsystem, and warning on the expected path trains operators to ignore the
-    // log. Note this is the MAILJET block now, not `platformEmail` — see the
-    // module header on why the transport is Mailjet today.
+    // log.
     log.debug(
       { tenantId: input.tenantId, role: input.role },
       'Invite email skipped: no mailjet block configured',
@@ -332,11 +297,8 @@ export async function sendInviteEmail(input: SendInviteEmailInput): Promise<Invi
   if (!input.signInUrl) {
     // Configured, but there is nothing to put in the mail. Reported as
     // `not_configured` rather than `failed` because the missing thing is a
-    // setting (`CUSUI_BASE_URL`), not a transport fault — and `failed` would send
-    // an operator looking at the mail provider.
-    // PORT NOTE (magick-agency): the env var is `CONSOLE_BASE_URL` here (master's
-    // `CUSUI_BASE_URL`, renamed with `cusuiBaseUrl` → `consoleBaseUrl`), so the
-    // operator-facing message names the variable this app actually reads.
+    // setting (`CONSOLE_BASE_URL`), not a transport fault — and `failed` would
+    // send an operator looking at the mail provider.
     log.warn(
       { tenantId: input.tenantId },
       'Invite email skipped: CONSOLE_BASE_URL is unset, so no sign-in link could be built',
@@ -351,7 +313,7 @@ export async function sendInviteEmail(input: SendInviteEmailInput): Promise<Invi
       logoUrl: config.brand.logoUrl ?? null,
       joinUrl: input.signInUrl,
       email: input.email,
-      // Falls back rather than refusing: a tenant name master could not resolve
+      // Falls back rather than refusing: a tenant name the route could not resolve
       // must not be the reason an agent never receives their only way in.
       tenantName: input.tenantName?.trim() || 'your team',
       inviterName: input.inviterName?.trim() || null,

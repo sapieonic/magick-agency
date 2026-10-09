@@ -13,13 +13,13 @@ import type { AgencyReleaseReason, AgencyStationReleasedFrame } from '../types/a
 export type ReleaseCopySource = Pick<AgencyStationReleasedFrame, 'reason' | 'message'>;
 
 /**
- * Copy for every way an attempt can release the agent (UX §A.8.4).
+ * Copy for every way an attempt can release the agent.
  *
  * This is a table rather than inline JSX for two reasons. It is the entire
  * mitigation for "an agent whose screen clears with no explanation concludes
  * the app is broken" — which at volume is a support ticket per unanswered
  * call — and it must be exhaustively testable against the contract's union, so
- * a reason added in core surfaces as a compile error or a failing test rather
+ * a reason added in the server surfaces as a compile error or a failing test rather
  * than as a blank panel.
  *
  * Two rules that constrain every entry:
@@ -103,8 +103,8 @@ const COPY: Record<AgencyReleaseReason, ReleaseCopy> = {
  * Resolve copy for a release frame, falling back safely for a reason this build
  * does not know.
  *
- * The fallback is not decoration: core ships independently of the console, so an
- * unrecognised reason is *expected* traffic after a core deploy. It must still
+ * The fallback is not decoration: The server ships independently of the console, so an
+ * unrecognised reason is *expected* traffic after a the server deploy. It must still
  * produce a headline — an empty panel is the failure this table exists to
  * prevent — and the server's own `message` is the best available subtext.
  */
@@ -122,21 +122,21 @@ export function resolveReleaseCopy(frame: ReleaseCopySource): ReleaseCopy {
 }
 
 /**
- * The one-line account of a release that **no wrap-up ever explained** (core `#290`).
+ * The one-line account of a release that **no wrap-up ever explained** (the server `#290`).
  *
- * Core's wrap-up early return — taken when the disposition was already recorded
+ * The server's wrap-up early return — taken when the disposition was already recorded
  * before the call ended, which is an ordinary agent habit — skips both the
  * `agent_state{wrapup}` frame and the `wrapup` frame. So the release copy above
  * never gets a wrap-up rail to render in, and the console's idle panel would show
- * the resting "Waiting for a call" as if the last call had never happened. Core's
- * own review notes name this and deliberately left it here rather than making core
+ * the resting "Waiting for a call" as if the last call had never happened. The server's
+ * own review notes name this and deliberately left it here rather than making the server
  * emit a frame it has no state for.
  *
  * **This returns the server's own sentence, not a headline from the table above.**
  * Every headline there was written for the wrap-up rail — `remote_hangup` reads
  * "Wrap-up", and `completed`'s subtext says "Pick a disposition" — and both are
  * false on this path: there is no wrap-up and the disposition is already in.
- * `released.message` is what core actually sends (`releaseMessageFor`: "Call
+ * `released.message` is what the server actually sends (`releaseMessageFor`: "Call
  * ended.", "You ended the call.", "The customer hung up."), it is one sentence per
  * reason, and using it means the console explains itself from what it *receives*
  * rather than from a second table that can drift out of step with the first.
@@ -155,7 +155,7 @@ export function isKnownReleaseReason(reason: string): boolean {
 /**
  * Whether the context panel stays up for a disposition, or dims and clears.
  *
- * Branches on `requires_disposition`, never on the reason — core decides
+ * Branches on `requires_disposition`, never on the reason — the server decides
  * whether the call actually reached the agent, and it is the only side that
  * can know.
  */

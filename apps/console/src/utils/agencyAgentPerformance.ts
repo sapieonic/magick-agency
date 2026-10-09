@@ -59,7 +59,7 @@ import type { PerformanceReadout } from './agencyCampaignPerformance';
  * produce a "today" that belongs to a campaign's clock rather than the reader's.
  * Weeks and months are unions of whole buckets and would sum correctly — but
  * having one period derived by the server and another by the client is how two
- * numbers for one fact appear on one screen. The server defines every range.
+ * numbers for one fact appear on one screen. The dialer runtime defines every range.
  *
  * ── These are no longer the whole vocabulary of either surface ─────────────
  * `AgentStatsWindow` below adds the two COMPLETED ranges, and both the roster
@@ -152,10 +152,10 @@ export function periodRange(period: AgentStatsPeriod, now: Date): AgentStatsRang
  * `windowPeriod`'s lossy roster→panel mapping is gone. A supervisor drilling in
  * from a `last_week` roster now lands on `last_week`, not on "this week".
  *
- * ── Every range stays inside BOTH of core's window caps, which differ ───────
+ * ── Every range stays inside BOTH of the server's window caps, which differ ───────
  * There are two, and conflating them is a live trap rather than a pedantic
- * distinction — core says so itself, in a docblock titled "Why this is NOT
- * `AGENT_STATS_MAX_WINDOW_DAYS`" (`magic-voice-core/src/agency/agent-record.ts`):
+ * distinction — the server says so itself, in a docblock titled "Why this is NOT
+ * `AGENT_STATS_MAX_WINDOW_DAYS`":
  *
  *   • `AGENT_STATS_MAX_WINDOW_DAYS` = **366** guards the PER-AGENT read, which is
  *     what `AgentPerformancePanel` calls. A full year, deliberately: "the longest
@@ -472,7 +472,7 @@ export function headlineTrio(totals: AgencyAgentStatsTotals | undefined): Headli
       label: 'Dials',
       /*
         "Calls placed TO you" was backwards, and backwards in the one way that
-        matters on this screen: this is an outbound predictive dialer. Core places
+        matters on this screen: this is an outbound predictive dialer. The server places
         the dial to a CUSTOMER and reserves an agent onto it — nothing is placed to
         the agent — so an agent reading the old clause would reasonably conclude
         the tile was counting calls that came in.
@@ -609,7 +609,7 @@ export function wrapupReadout(totals: AgencyAgentStatsTotals | undefined): Perfo
  *
  * ── Why `offline` is absent, which is the load-bearing half ────────────────
  * It is not a presentational preference — it is what makes the shares agree with
- * the denominator the server publishes. Core defines `shift_seconds` as the sum
+ * the denominator the server publishes. The dialer runtime defines `shift_seconds` as the sum
  * of the states **excluding** `offline` (`foldOccupancy`, `src/agency/
  * agent-record.ts`: `if (row.state !== 'offline') occupancy.shift_seconds +=
  * clamped`), on the stated ground that *"an agent who logged out at 17:00 was
@@ -671,8 +671,8 @@ export interface OccupancyBreakdown {
  * Where the shift went — or the honest admission that we do not know.
  *
  * ── Why "all zeros" is unmeasured rather than a shift of nothing ────────────
- * Core computes occupancy from its agent-state event log, which shipped after
- * the dialer itself. A session that predates the log emits no events, so master
+ * The server computes occupancy from its agent-state event log, which shipped after
+ * the dialer itself. A session that predates the log emits no events, so the API
  * answers with **zeros, not nulls** — and a zeroed breakdown drawn as a bar is a
  * confident claim that an agent spent a shift doing nothing whatsoever. That is
  * the same defect as rendering a null rate as `0.0%`, in a different costume,
@@ -696,14 +696,14 @@ export interface OccupancyBreakdown {
  * the caller to say out loud.
  *
  * ── `offline` is in neither the denominator nor the segments ───────────────
- * Because it is in neither on core's side: `shift_seconds` is the sum of the
+ * Because it is in neither on the server's side: `shift_seconds` is the sum of the
  * states except `offline`. See {@link OCCUPANCY_ORDER} for the two things
  * including it broke — every share diluted by signed-out time, and the gap above
  * made unreachable.
  *
  * A period in which the ONLY recorded state is `offline` is therefore
  * `measured: false`: the shift it describes is zero seconds long, and there is
- * no such thing as a share of it. That is the same answer core gives — a
+ * no such thing as a share of it. That is the same answer the server gives — a
  * `shift_seconds` of 0 — rather than a separate client opinion.
  */
 export function occupancyBreakdown(
@@ -715,7 +715,7 @@ export function occupancyBreakdown(
   }
 
   /*
-    The ON-SHIFT states only. This is the same sum core calls `shift_seconds`,
+    The ON-SHIFT states only. This is the same sum the server calls `shift_seconds`,
     computed from the same six-key record, which is what lets the remainder below
     mean "the shift covers time the states do not account for" rather than
     "these two numbers were never comparable".
@@ -756,7 +756,7 @@ export function occupancySegmentText(segment: OccupancySegment): string {
 // ─── The day-wise series ─────────────────────────────────────────────────────
 
 export interface SeriesPoint {
-  /** The bucket's own `YYYY-MM-DD` start, verbatim, used as the key. */
+  /** The bucket's own `YYYY-MM-DD` start, unchanged, used as the key. */
   start: string;
   /** A short axis label — day of the month, in the reader's locale. */
   label: string;
@@ -783,7 +783,7 @@ export interface BucketSeries {
 /**
  * `YYYY-MM-DD` and nothing else — the only spelling `bucket_start` has.
  *
- * Core formats the label in SQL with `to_char` **precisely so that no zone
+ * The server formats the label in SQL with `to_char` **precisely so that no zone
  * attaches to it** (`bucketStartSql`; node-pg would otherwise parse a bare
  * `timestamp` into a local-time `Date` and put the server's zone back on a value
  * the query went to some trouble to remove). It is a calendar day in the
@@ -851,7 +851,7 @@ export function bucketDay(raw: string): Date | null {
  *
  * Buckets arrive oldest-first and are **not re-sorted**: the order is the
  * server's, and re-deriving it here would give the screen a second opinion about
- * a sequence master already ordered. A malformed `bucket_start` is kept as a
+ * a sequence the API already ordered. A malformed `bucket_start` is kept as a
  * point with its raw value as the label rather than dropped — losing a bucket
  * would break the property that the bars sum to the totals, which is the one
  * thing this chart can be checked against.
@@ -882,7 +882,7 @@ export function bucketSeries(buckets: AgencyAgentStatsBucket[] | undefined): Buc
  * The note that goes beside the chart.
  *
  * ── Why this is on screen rather than in a comment ──────────────────────────
- * Core buckets an attempt by its CAMPAIGN'S timezone, because that is the
+ * The server buckets an attempt by its CAMPAIGN'S timezone, because that is the
  * timezone the campaign's calling window is enforced in. Every attempt lands in
  * exactly one bucket, so the bars sum to the totals exactly — but for an agent
  * working a Mumbai campaign and a London one, a "day" is not one contiguous
@@ -916,7 +916,7 @@ export interface StaffingSummary {
    * DISTINCT campaigns the agent has ever been staffed on.
    *
    * Not `entries.length`. A staffing history repeats campaigns **by
-   * construction** — master's own docstring for `/my-campaigns` spells it out:
+   * construction** — the API's own docstring for `/my-campaigns` spells it out:
    * *"staffed in March, unstaffed in April, staffed again in June is three rows
    * and one campaign"*. So a row count printed under a heading reading "Campaigns
    * you've worked" told an agent they had worked three campaigns when they had
@@ -935,7 +935,7 @@ export interface StaffingSummary {
    *
    * Read through `assignmentEntry` rather than through a second status list.
    * That module already owns "may an agent enter this", its allow-list-of-blocks
-   * shape means a status core adds is treated as enterable rather than as
+   * shape means a status the server adds is treated as enterable rather than as
    * finished, and a second mapping here would be the copy that goes stale.
    */
   finished: number;
@@ -950,8 +950,8 @@ export interface StaffingSummary {
  * How much of the dialer this agent has seen, and how much of it is over.
  *
  * ── Two axes, and they must not be added together ───────────────────────────
- * `active` counts ASSIGNMENTS: master's own `active` flag rather than
- * `unassigned_at === null`, because master owns the staffing table and is
+ * `active` counts ASSIGNMENTS: The API's own `active` flag rather than
+ * `unassigned_at === null`, because the API owns the staffing table and is
  * entitled to end an assignment in ways this client has no business modelling.
  *
  * `campaigns`, `waiting` and `finished` count CAMPAIGNS, because that is what
@@ -966,13 +966,13 @@ export interface StaffingSummary {
  *
  * ── Deduplication, and where it does NOT apply ─────────────────────────────
  * Every campaign-axis count is over distinct `campaign_id`s. A history repeats a
- * campaign by construction (master's own words: three rows, one campaign), so a
+ * campaign by construction (the API's own words: three rows, one campaign), so a
  * row count under a heading that says "campaigns" is simply a different number
  * from the one it claims to be — and a campaign that was paused across two
  * separate stints was counted as two waiting campaigns.
  *
  * `active` is deliberately NOT deduplicated: it is a count of live assignment
- * rows, which is what master's flag is per, and two concurrent live assignments
+ * rows, which is what the API's flag is per, and two concurrent live assignments
  * to one campaign would be a real thing about the staffing table rather than
  * double counting. It is also the count whose word ("current") does not say
  * "campaign".
@@ -1005,7 +1005,7 @@ export function staffingSummary(entries: AgencyStaffingHistoryEntry[]): Staffing
 /**
  * The campaign's name for a breakdown row, or a stand-in.
  *
- * `by_campaign[]` carries ids and no names — master's contract, not an omission
+ * `by_campaign[]` carries ids and no names — the API's contract, not an omission
  * — so the name is resolved from a list the caller already holds. An id with no
  * match renders as a shortened id: never blank, and never a name this client
  * invented for a campaign the server declined to identify.

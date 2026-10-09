@@ -2,7 +2,7 @@
  * DialerAnalysisRunner unit test.
  *
  * Constructs the runner directly with a mock transcriber + analysis service and
- * drives `run(job)`, asserting the §7 lifecycle:
+ * drives `run(job)`, asserting the job lifecycle:
  *  - happy path: fetch → transcribe → persistTranscript (BEFORE analyze) →
  *    markAnalyzing → analyze → completeWithAnalysis → metrics/posthog/audit.
  *  - transcript persisted before analysis (ordering).
@@ -10,8 +10,8 @@
  *  - analysis failure leaves the transcript intact (persist happened, no complete).
  *  - empty transcript ⇒ skipped, NOT failed (no charge, no retry).
  *  - role mapping agent→assistant, customer→user, unknown→user.
- *  - snapshot used, never a live profile lookup, even if the profile was deactivated (M1).
- *  - stale claim_generation write rejected: persist fence false ⇒ abandon (M9).
+ *  - snapshot used, never a live profile lookup, even if the profile was deactivated.
+ *  - stale claim_generation write rejected: persist fence false ⇒ abandon.
  *  - the runner NEVER throws.
  *
  * Mocking: vi.hoisted + vi.mock with ESM .js imports.
@@ -19,13 +19,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /*
- * PORT NOTE (magick-agency): ported from core test/unit/core/dialer-analysis-runner.test.ts
- * @4850d1d9 (20 cases -> 21). Changes: mocks point at agency's module paths; the
- * `dialer.analysis.*` event-bus and `analysis.completed` webhook expectations are
- * removed with those features (plan §4); settlement fields leave the fixtures; the
- * call fixture is an `agency_calls` row. New case: the fetch is handed the
- * VoiceLink recording-host allow-list (and an unconfigured runner hands it an empty
- * one, i.e. fails closed).
+ * The call fixture is an `agency_calls` row. One case pins that the fetch is handed
+ * the VoiceLink recording-host allow-list (and an unconfigured runner hands it an
+ * empty one, i.e. fails closed).
  */
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -352,7 +348,7 @@ describe('DialerAnalysisRunner.run', () => {
     expect(mockJobRepo.requeueForRetry).toHaveBeenCalledWith('job-1', 5, expect.any(Number), 'AUDIO_TOO_SHORT', expect.any(String));
   });
 
-  // ── §8 pre-finalization race: in-attempt re-fetch ────────────────────────────
+  // ── pre-finalization race: in-attempt re-fetch ────────────────────────────
   // A carrier can serve `recording_url` a moment before the file is finalized, so
   // the first fetch returns truncated audio. These retries re-fetch WITHOUT burning
   // a job attempt (a late-finalizing carrier isn't a failure of the job).
@@ -423,7 +419,7 @@ describe('DialerAnalysisRunner.run', () => {
     expect(mockJobRepo.markSkipped).toHaveBeenCalledWith('job-1', 'call-1', 5, 'TRANSCRIPTION_EMPTY', expect.any(String));
   });
 
-  it('uses the SNAPSHOT dimensions/context, never a live profile lookup (M1)', async () => {
+  it('uses the SNAPSHOT dimensions/context, never a live profile lookup', async () => {
     const analysisService = makeAnalysisService();
     const snapshot = { context: 'renewals', custom_dimensions: [{ key: 'renewed', description: 'd', type: 'boolean' as const }], language_hint: 'hi-IN' };
     const runner = new DialerAnalysisRunner({ transcriber: makeTranscriber() as never, analysisService: analysisService as never, config: CFG });
@@ -445,7 +441,7 @@ describe('DialerAnalysisRunner.run', () => {
     expect(transcriber.transcribe.mock.calls[0]![0].languageHint).toBe('te-IN');
   });
 
-  it('stale claim_generation: persist fence false ⇒ abandon (M9), no analyze/complete', async () => {
+  it('stale claim_generation: persist fence false ⇒ abandon, no analyze/complete', async () => {
     mockJobRepo.persistTranscript.mockResolvedValue(false);
     const analysisService = makeAnalysisService();
     const runner = new DialerAnalysisRunner({ transcriber: makeTranscriber() as never, analysisService: analysisService as never, config: CFG });
@@ -476,7 +472,7 @@ describe('DialerAnalysisRunner.run', () => {
     expect(mockJobRepo.markSkipped).toHaveBeenCalledWith('job-1', 'call-1', 5, 'ALREADY_ANALYSED', expect.any(String));
   });
 
-  it('rate-limited ⇒ requeue without consuming an attempt (M4)', async () => {
+  it('rate-limited ⇒ requeue without consuming an attempt', async () => {
     const transcriber = makeTranscriber({
       transcribe: vi.fn().mockRejectedValue(new TranscriptionError('RATE_LIMITED', '429')),
     });

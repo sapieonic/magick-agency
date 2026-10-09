@@ -570,18 +570,18 @@ describe('the arming window does not accumulate audio', () => {
    * comment where the node was built claimed frames until then were "harmlessly
    * dropped". They were queued. Assigning the handler enabled the port and
    * delivered the entire backlog in one burst, at the exact instant the customer
-   * answered — so core received several thousand frames back-to-back,
+   * answered — so the server received several thousand frames back-to-back,
    * transcoded them, and handed them to the carrier, which plays audio out at
    * real time and cannot catch up.
    *
    * Staging measured it end-to-end. On a call whose arm-to-bridge gap was
-   * 11.38 s, core counted 2098 browser→PSTN frames across a 30.67 s relay
+   * 11.38 s, the server counted 2098 browser→PSTN frames across a 30.67 s relay
    * window — 565 more than 20 ms pacing allows, i.e. 11.29 s of surplus audio,
    * matching the ringing window to within 90 ms. The customer→agent direction
    * over the same window was 48.9 fps, textbook. One-way lag, growing with how
    * long the phone rang.
    *
-   * These tests are written against the *symptom core measured* — the count of
+   * These tests are written against the *symptom the server measured* — the count of
    * frames that reach the sink — rather than against the implementation, so
    * they stay honest if the fix is ever rewritten.
    */

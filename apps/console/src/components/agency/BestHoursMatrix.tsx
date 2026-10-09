@@ -60,7 +60,7 @@ export interface BestHoursMatrixProps {
   /**
    * The zone the buckets were cut in, or `null`.
    *
-   * A PROP rather than something read here, and that is the whole of E3: the only
+   * A PROP rather than something read here, and that is the whole point: the only
    * honest source is `resolved_timezone` off the page, and there is a neighbouring
    * function on this surface (`windowRangeReadout`) that correctly returns the
    * READER's zone for its own caption. Two zones on one screen is the defect; taking
@@ -112,8 +112,8 @@ export function BestHoursMatrix({ matrix, zone, caption }: BestHoursMatrixProps)
                   scope="row"
                   /*
                     The row header carries the fact too. A blank row of cells beside
-                    a normal-weight weekday label is exactly the misreading E4 is
-                    about — it reads as "we dialled Tuesday and connected nobody",
+                    a normal-weight weekday label is exactly the misreading the
+                    coverage state exists to prevent — it reads as "we dialled Tuesday and connected nobody",
                     which is the direction a supervisor acts on.
                   */
                   data-covered={row.coveredHours > 0 ? 'true' : 'false'}

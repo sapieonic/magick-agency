@@ -1,9 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /*
- * New (magick-agency): core has no dedicated unit test for `profile-preflight.ts`
- * (it is exercised through `campaign-retry-route.test.ts` and the campaign routes,
- * which are lane B's). These cover its contract directly: no id -> null, the owning
+ * `profile-preflight.ts` is also exercised through `campaign-retry-route.test.ts` and the
+ * campaign routes; these cover its contract directly: no id -> null, the owning
  * product's flag (agency_call_analysis) gates it, and the profile must be active and
  * owned by the caller's tenant/account.
  */

@@ -172,21 +172,21 @@ describe('windowRange — the roster’s two COMPLETED windows', () => {
   });
 
   /**
-   * Core has TWO window caps and this list is read by surfaces governed by both,
+   * The API has TWO window caps and this list is read by surfaces governed by both,
    * so one assertion against one number cannot protect it. The previous version
    * of this test asserted `days < 35` under a title naming a 92-day cap — three
    * numbers, none of them either real bound, and it would have passed for a
    * window set that violated the tighter one. It is also the assertion that
    * should have caught the 92-vs-366 mix-up and could not.
    *
-   * Mirrored from `magic-voice-core/src/agency/agent-record.ts`. They are
-   * literals because master is not a dependency of this repo and core is not
-   * either — the transcription is the thing a reviewer checks.
+   * Mirrored from the server's agent-record limits. They are
+   * literals because the server is not a dependency of this app — the
+   * transcription is the thing a reviewer checks.
    */
   const AGENT_STATS_MAX_WINDOW_DAYS = 366; // the per-agent read
   const ROSTER_MAX_WINDOW_DAYS = 92; // the roster + grouped reads
 
-  it('keeps every window inside the roster cap, the TIGHTER of core’s two', () => {
+  it('keeps every window inside the roster cap, the TIGHTER of the API’s two', () => {
     /*
      * The tighter bound is the binding one for this list, because
      * `AGENT_STATS_WINDOWS` is rendered as the option list on `AgentAnalyticsSection`,
@@ -370,9 +370,9 @@ describe('handleTimeReadout and wrapupReadout', () => {
 describe('occupancyBreakdown', () => {
   it('treats an ALL-ZERO breakdown as unmeasured, not as a shift of nothing', () => {
     /**
-     * The defect this exists to stop. Core computes occupancy from an event log
+     * The defect this exists to stop. The API computes occupancy from an event log
      * that shipped after the dialer, and a session predating it emits no events —
-     * so master answers with zeros rather than nulls. A bar built from those
+     * so the API answers with zeros rather than nulls. A bar built from those
      * zeros is a confident claim that somebody spent a shift doing nothing at
      * all: the null-not-zero rule in a different costume, aimed at the same
      * person.
@@ -432,7 +432,7 @@ describe('occupancyBreakdown', () => {
 
   it('leaves signed-out time out of the denominator and out of the bar', () => {
     /**
-     * Core defines `shift_seconds` as the sum of the states EXCLUDING `offline`
+     * The API defines `shift_seconds` as the sum of the states EXCLUDING `offline`
      * (`foldOccupancy`), because an agent who logged out at 17:00 was not on
      * shift at 18:00. Summing all six here diluted every share by signed-out
      * time: 30 of 90 worked minutes on calls read as 6.7% instead of 33% for
@@ -460,7 +460,7 @@ describe('occupancyBreakdown', () => {
     /**
      * The third state, and it is neither of the other two. There is no failed
      * read and no missing field — there is simply no shift to break down, which
-     * is the same answer core gives by reporting `shift_seconds: 0`. A bar of
+     * is the same answer the API gives by reporting `shift_seconds: 0`. A bar of
      * one full-width `offline` segment would claim the opposite.
      */
     const breakdown = occupancyBreakdown({
@@ -540,7 +540,7 @@ describe('bucketSeries', () => {
 
   it('keeps the server’s order rather than re-sorting', () => {
     // Re-deriving the sequence here would give the screen a second opinion about
-    // an order master already fixed.
+    // an order the API already fixed.
     const series = bucketSeries([
       bucket('2026-08-21', 1, 0),
       bucket('2026-08-20', 9, 4),
@@ -561,7 +561,7 @@ describe('bucketSeries', () => {
   it('labels a bucket with the day the server named', () => {
     /**
      * `bucket_start` is `YYYY-MM-DD` — a calendar day with no time and no offset
-     * on it, because core formats it in SQL precisely so none attaches. The day
+     * on it, because the API formats it in SQL precisely so none attaches. The day
      * on the axis has to be that day. The zone-varying half of this property
      * lives in `agencyBucketTimezone.test.ts`, because under this suite's UTC pin
      * a wrongly-framed parse reads correctly anyway.
@@ -653,8 +653,8 @@ describe('staffingSummary', () => {
     };
   }
 
-  it('counts current assignments from master’s own flag', () => {
-    // Not from `unassigned_at === null`: master owns the staffing table and may
+  it('counts current assignments from the API’s own flag', () => {
+    // Not from `unassigned_at === null`: The API owns the staffing table and may
     // end an assignment in ways this client has no business modelling.
     const summary = staffingSummary([
       entry(),
@@ -666,7 +666,7 @@ describe('staffingSummary', () => {
 
   it('counts CAMPAIGNS once however many times the agent was staffed on one', () => {
     /**
-     * A staffing history repeats campaigns by construction — master's own
+     * A staffing history repeats campaigns by construction — the API's own
      * docstring for `/my-campaigns`: *"staffed in March, unstaffed in April,
      * staffed again in June is three rows and one campaign"*. `entries.length`
      * under a heading reading "Campaigns you've worked" therefore told an agent
@@ -679,7 +679,7 @@ describe('staffingSummary', () => {
     ]);
     expect(summary.campaigns).toBe(1);
     // And `active` is NOT deduplicated: it counts live assignment ROWS, which is
-    // what master's flag is per.
+    // what the API's flag is per.
     expect(summary.active).toBe(1);
   });
 
@@ -717,7 +717,7 @@ describe('staffingSummary', () => {
   it('reads "finished" through assignmentEntry, not a second status list', () => {
     /**
      * `assignmentEntry` already owns which statuses are terminal, and its shape
-     * is an allow-list of BLOCKS — so a lifecycle state core adds is treated as
+     * is an allow-list of BLOCKS — so a lifecycle state the API adds is treated as
      * ordinary rather than as finished. A second mapping here is the copy that
      * goes stale.
      */
@@ -732,7 +732,7 @@ describe('staffingSummary', () => {
   });
 
   it('does not call an unrecognised status finished', () => {
-    // Core owns the lifecycle and master forwards it verbatim, so a status can
+    // The API owns the lifecycle and the API forwards it unchanged, so a status can
     // arrive before this build knows the word.
     const summary = staffingSummary([entry({ campaign_status: 'quiesced' })]);
     expect(summary.finished).toBe(0);
@@ -840,7 +840,7 @@ describe('agentDurationLong — the same duration, in a sentence', () => {
   });
 
   it('never emits a negative, which no duration on this surface is', () => {
-    // A clock skew between two timestamps is the one way core could serve one, and
+    // A clock skew between two timestamps is the one way the API could serve one, and
     // `-5s handled of 6h on shift` is a sentence about a bug rather than a shift.
     expect(agentDurationLong(-5)).toBe('0s');
   });

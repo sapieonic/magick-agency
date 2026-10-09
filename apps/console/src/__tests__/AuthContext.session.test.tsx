@@ -89,7 +89,7 @@ const SESSION: SessionResponse = {
   tenants: [{ id: 't1', name: 'T', slug: 't', settings: {}, status: 'active', created_at: '', updated_at: '' }],
   memberships: [{ id: 'm1', user_id: 'u1', tenant_id: 't1', account_id: null, role: 'tenant_owner', status: 'active', invited_by: null, created_at: '', updated_at: '' }],
   is_new: false,
-  // PORT NOTE (magick-agency): `settings` (the per-account settings map) where cusui had `governance`.
+  // `settings` is the per-account settings map.
   settings: {},
 };
 

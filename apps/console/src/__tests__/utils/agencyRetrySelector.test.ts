@@ -21,8 +21,8 @@ import type { AgencyContactFilters } from '../../types/agency-spine';
 /**
  * The retry selector's encoding and its copy.
  *
- * What is pinned here is the wire contract's §1, not the implementation: which
- * dimensions travel, which are stripped, and that the strip is announced. Core
+ * What is pinned here is the wire contract's, not the implementation: which
+ * dimensions travel, which are stripped, and that the strip is announced. The API
  * refuses the WHOLE request over an unrecognised key, so a filter leaking
  * through is not a widened cohort — it is a refused retry with a message about
  * a field the supervisor never typed.
@@ -49,7 +49,7 @@ describe('phone, from and to are stripped — and said out loud', () => {
       last_outcome: ['no_answer'],
     });
     expect(dropped).toEqual(['phone', 'from', 'to']);
-    // The exact keys core would 400 on must not reach the selector at all.
+    // The exact keys the API would 400 on must not reach the selector at all.
     for (const key of Object.keys(NON_SELECTOR_CONTACT_FILTERS)) {
       expect(Object.hasOwn(selector, key)).toBe(false);
     }
@@ -91,7 +91,7 @@ describe('phone, from and to are stripped — and said out loud', () => {
 });
 
 describe('the vocabulary is pinned in both directions', () => {
-  it('lists exactly the seven dimensions core parses', () => {
+  it('lists exactly the seven dimensions the API parses', () => {
     expect(Object.keys(RETRY_SELECTOR_KEYS).sort()).toEqual([
       'attempt_count_gte',
       'attempt_count_lte',
@@ -149,7 +149,7 @@ describe('the default selection offered from the campaign header', () => {
     // `last_outcome: [...]` AND `never_attempted: true` — is UNSATISFIABLE: the
     // algebra ANDs across keys and a contact with no attempts has a NULL
     // outcome, so the header's Retry button matched nothing on every campaign.
-    // Proven against Postgres in core's `agency-retry-seeding` integration test.
+    // Proven against Postgres in the API's `agency-retry-seeding` integration test.
     expect(DEFAULT_RETRY_SELECTOR).toEqual({
       last_outcome: ['no_answer', 'busy', '__none__'],
     });
@@ -214,7 +214,7 @@ describe('isSelectorEmpty', () => {
 });
 
 describe('the default name', () => {
-  it('follows core’s own default', () => {
+  it('follows the API’s own default', () => {
     expect(defaultRetryName('Q3 Winback', 0)).toBe('Q3 Winback — Retry 1');
   });
 
@@ -247,7 +247,7 @@ describe('the three 409 refusals', () => {
     expect(copy).toContain('Narrow the selection');
   });
 
-  it('returns null for a code this build has not heard of, so core’s own message stands', () => {
+  it('returns null for a code this build has not heard of, so the API’s own message stands', () => {
     expect(retryRefusalCopy('something_new_from_core')).toBeNull();
   });
 });
@@ -303,7 +303,7 @@ describe('the success toast', () => {
 
   it('says nothing about duplicates when none were merged, or when the field is absent', () => {
     // A `0` clause on every successful retry is a caveat that trains the reader
-    // to skip it. And an ABSENT field is an older core saying nothing, not a
+    // to skip it. And an ABSENT field is an older API saying nothing, not a
     // measured zero — claiming "no duplicates were merged" off it would be a
     // fact this build cannot know.
     const zero = retryCreatedToast({
@@ -326,7 +326,7 @@ describe('the success toast', () => {
 });
 
 describe('the idempotency key', () => {
-  it('is a fresh value on every call, within core’s accepted shape', () => {
+  it('is a fresh value on every call, within the API’s accepted shape', () => {
     // A mint that returned a constant would look like protection and provide
     // none — the second supervisor to open the dialog would replay the first's
     // campaign, and the second campaign nobody wanted would never be created.
@@ -340,8 +340,8 @@ describe('the idempotency key', () => {
   });
 });
 
-describe('describeSelector — the conjunction is core\'s algebra, not a guess', () => {
-  it('joins SEPARATE dimensions with "and", because core ANDs them', () => {
+describe('describeSelector — the conjunction is the API\'s algebra, not a guess', () => {
+  it('joins SEPARATE dimensions with "and", because the API ANDs them', () => {
     // This read "…, or …" and therefore described a different — and always
     // wider — cohort than the one that will be seeded. `{state:['exhausted'],
     // last_disposition:['callback']}` is the INTERSECTION; rendered as a union,
@@ -355,7 +355,7 @@ describe('describeSelector — the conjunction is core\'s algebra, not a guess',
     expect(sentence).not.toContain(', or ');
   });
 
-  it('joins values WITHIN one dimension with "or", because core ORs them', () => {
+  it('joins values WITHIN one dimension with "or", because the API ORs them', () => {
     const sentence = describeSelector({ last_outcome: ['no_answer', 'busy'] }, []);
     expect(sentence).toContain(' or ');
     expect(sentence).not.toContain(' and ');
@@ -381,7 +381,7 @@ describe('describeSelector — the conjunction is core\'s algebra, not a guess',
   });
 });
 
-describe('selectorFromContactFilters — values core refuses never reach the wire', () => {
+describe('selectorFromContactFilters — values the API refuses never reach the wire', () => {
   it('strips dnc and invalid but keeps the retryable suppressions', () => {
     // As VALUES, not as a key. `{suppressed_reason:['dnc','max_attempts']}` is a
     // legitimate half-intent, and dropping the whole dimension would widen the
@@ -406,7 +406,7 @@ describe('selectorFromContactFilters — values core refuses never reach the wir
   });
 
   it('strips in_flight from the state dimension', () => {
-    // Core refuses it by name: the contact is on a call right now, and seeding
+    // The API refuses it by name: the contact is on a call right now, and seeding
     // it into a child that then starts would dial a number the parent has an
     // open call on.
     const { selector, droppedValues } = selectorFromContactFilters({

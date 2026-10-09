@@ -3,7 +3,7 @@ import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-li
 import { MemoryRouter } from 'react-router-dom';
 
 /**
- * `AD-P3-U-02` at the PAGE level — the config sections as an operator meets
+ * The same behaviour at the PAGE level — the config sections as an operator meets
  * them, not as isolated components.
  *
  * (a) built-in codes cannot be deleted in the UI and the reason is explained
@@ -24,7 +24,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
-// The caller-ID picker is a hard gate on this page: core rejects a campaign with
+// The caller-ID picker is a hard gate on this page: The API rejects a campaign with
 // an empty `caller_ids`, so nothing downstream runs until one is chosen.
 vi.mock('../../hooks/usePhoneNumbers', () => ({
   usePhoneNumbers: () => ({
@@ -68,7 +68,7 @@ async function renderPage() {
 }
 
 /**
- * Name + caller ID, the two things core requires before a campaign can exist.
+ * Name + caller ID, the two things the API requires before a campaign can exist.
  * `Save campaign` creates it on first use, so the config tests have to satisfy
  * both before they can assert anything about the config payload.
  */
@@ -205,12 +205,12 @@ describe('the disposition catalog editor', () => {
     expect(sale.textContent).toContain('pick a date and time to call back');
   });
 
-  it('warns when Ends is set beside Stops, which core never reaches', async () => {
+  it('warns when Ends is set beside Stops, which the API never reaches', async () => {
     await openBehaviour();
     expect(screen.queryByTestId('precedence-2')).toBeNull();
 
     // `do_not_call` already carries `suppress`; adding `terminal` is legal and
-    // saves, and is also unreachable — core returns on the suppress arm.
+    // saves, and is also unreachable — the API returns on the suppress arm.
     const dncFlags = screen.getByRole('group', {
       name: 'What happens when an agent files Do not call',
     });
@@ -219,7 +219,7 @@ describe('the disposition catalog editor', () => {
     expect(screen.getByTestId('precedence-2').textContent).toContain('adds nothing');
   });
 
-  it('offers the disposition’s own retry, and withdraws it where core cannot read it', async () => {
+  it('offers the disposition’s own retry, and withdraws it where the API cannot read it', async () => {
     // The retry table says in so many words that voicemail retry lives on the
     // voicemail disposition. There was no control for it.
     await openBehaviour();
@@ -262,15 +262,15 @@ describe('wrap-up', () => {
   /**
    * `wrapup_auto_return` decides whether an agent's shift is paced by a timer or
    * by them: on, the countdown returns them to the pool; off, they sit in
-   * wrap-up until they say they are ready. Core has stored and read it since
-   * migration 072; the form hardcoded it and never sent it.
+   * wrap-up until they say they are ready. The API has stored and read it
+   * all along; the form hardcoded it and never sent it.
    */
   it('offers the control and sends it on save', async () => {
     await openBehaviour();
     const box = screen.getByRole('checkbox', {
       name: /send agents back to the pool automatically/i,
     }) as HTMLInputElement;
-    // Core's own column default, so a new campaign starts where it always did.
+    // The API's own column default, so a new campaign starts where it always did.
     expect(box.checked).toBe(true);
 
     fireEvent.click(box);
@@ -293,7 +293,7 @@ describe('wrap-up', () => {
   });
 
   it('says the flag is inert with no wrap-up window, rather than greying it out', async () => {
-    // Core only starts a countdown when there is BOTH a window and the flag, so
+    // The API only starts a countdown when there is BOTH a window and the flag, so
     // at 0 the checkbox is stored but does nothing. Disabling it would discard
     // the operator's choice the moment they set the window back.
     await openBehaviour();
@@ -333,20 +333,20 @@ describe('the retry policy editor', () => {
   });
 
   /**
-   * `MAG-100` (reopened): master added `agent_disconnected` to its validator and
-   * core reads it on the dial path, but this wizard never followed — an operator
+   * The API added `agent_disconnected` to its validator and
+   * reads it on the dial path, but this wizard never followed — an operator
    * could only set the cap by curl.
    */
   it('offers an editable `agent_disconnected` row, labelled as our fault', async () => {
     await openBehaviour();
 
-    // Editable, not fixed-at-zero: core genuinely honours a configured cap,
+    // Editable, not fixed-at-zero: The API genuinely honours a configured cap,
     // unlike `invalid`/`connected`.
     expect(screen.getByLabelText('Agent disconnected (our fault) max attempts')).toBeTruthy();
     expect(screen.queryByTestId('fixed-agent_disconnected')).toBeNull();
   });
 
-  it('does NOT offer an `orphaned` row — core never reads a campaign value for it', () => {
+  it('does NOT offer an `orphaned` row — the API never reads a campaign value for it', () => {
     // A control that saves, persists and reloads while changing nothing is worse
     // than no control: it tells the operator they have tuned something.
     return openBehaviour().then(() => {
@@ -358,7 +358,7 @@ describe('the retry policy editor', () => {
     /*
      * The regression this exists for. The row seed was `{ max_attempts: 0 }`, so
      * touching only the delay box submitted `max_attempts: 0` the operator never
-     * typed — and core reads `min(configured, OUR_FAULT_REDIAL_BOUND)`, retiring
+     * typed — and the API reads `min(configured, OUR_FAULT_REDIAL_BOUND)`, retiring
      * the contact on its FIRST pre-connect agent drop. Never dialed again.
      */
     await openBehaviour();
@@ -420,7 +420,7 @@ describe('the retry policy editor', () => {
 
   /**
    * Since the 2026-09-08 pilot, a dial we stopped before anyone picked up is its
-   * own outcome, is charged to the our-fault ledger, and master accepts the
+   * own outcome, is charged to the our-fault ledger, and the API accepts the
    * retry-policy key — so the wizard has to offer the row, or the lever is
    * curl-only again.
    */
@@ -433,7 +433,7 @@ describe('the retry policy editor', () => {
 
   it('does not zero the bound when only the DELAY is typed on the `canceled` row', async () => {
     // The `agent_disconnected` regression, one row down. The seed comes from
-    // `OUR_FAULT_RETRY_OUTCOMES` membership, so a row that is our-fault in core
+    // `OUR_FAULT_RETRY_OUTCOMES` membership, so a row that is our-fault in the API
     // and not named in that list would send a `max_attempts: 0` nobody typed —
     // retiring the contact on its first cancelled dial.
     await openBehaviour();
@@ -486,7 +486,7 @@ describe('calling hours', () => {
     expect(screen.getByTestId('calling-window-echo').textContent).toContain('overnight');
   });
 
-  it('displays the concurrency limit without offering a control (CR-2)', async () => {
+  it('displays the concurrency limit without offering a control', async () => {
     await openHours();
     const note = screen.getByTestId('concurrency-note');
     expect(note.textContent).toContain('shared with your AI calls');
@@ -511,7 +511,7 @@ describe('validation', () => {
   });
 
   it('lands a SERVER validation error on the offending field, not in a banner', async () => {
-    // (b). Master's config validator answers a flat `details` record keyed by
+    // (b). The API's config validator answers a flat `details` record keyed by
     // the body path; `ApiError` cannot summarise that shape, so its message is
     // the bare 'Validation Error' and the detail is only reachable from
     // `err.details`.
@@ -563,9 +563,9 @@ describe('validation', () => {
 
 describe('the campaign a builder actually creates', () => {
   /**
-   * Core's migration 072 declares no `description` column and its update
-   * whitelist does not list it, so the field wrote nothing. Master forwards the
-   * body verbatim, which is what made it look like it worked.
+   * The campaign table declares no `description` column and its update
+   * whitelist does not list it, so the field wrote nothing. The API forwards the
+   * body unchanged, which is what made it look like it worked.
    */
   it('offers no Description field', async () => {
     await renderPage();

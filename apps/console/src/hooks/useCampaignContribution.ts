@@ -17,7 +17,7 @@ import type { AgencyGroupPage, AgencyGroupRow } from '../types/agency-stats';
  * ── TWO reads, and neither is derivable from the other ────────────────────
  * The rows are grouped by `agent,campaign`; the campaign's own line is grouped by
  * `campaign` alone. The second is not a sum of the first and must not become one:
- * with `agent` grouped, master drops the rows of people who have since left the
+ * with `agent` grouped, the API drops the rows of people who have since left the
  * team, so the rows add to less than the campaign did. Summing them would
  * redefine "the campaign's total" as "the total of the people still here" —
  * silently, in the one figure a supervisor would never think to doubt. The
@@ -101,7 +101,7 @@ export interface CampaignContributionFilters {
   /**
    * Show agents who have since left the team.
    *
-   * Master's parameter, not core's, and meaningful only because `agent` is one of
+   * A server-side parameter, not a client filter, and meaningful only because `agent` is one of
    * the grouped dimensions. It changes which ROWS come back and deliberately does
    * not touch the campaign line.
    */
@@ -153,8 +153,8 @@ export function useCampaignContribution(
     /*
       Both ids, for the reason every agency surface waits for both: `TenantContext`
       resolves the account asynchronously, and a request sent in that window carries
-      no `X-Account-Id` — which master answers with `400 account_scope_required`
-      before it even resolves the tenant's core key. The account is a REQUIRED
+      no `X-Account-Id` — which the API answers with `400 account_scope_required`
+      before it even resolves the tenant's the API key. The account is a REQUIRED
       predicate on this route rather than an optional filter, so there is no
       degraded read to fall back to; the caller's own guard is what stops this early
       return from becoming a permanent spinner.
@@ -180,7 +180,7 @@ export function useCampaignContribution(
       sort: CONTRIBUTION_SORT,
       order: 'desc',
       limit: CONTRIBUTION_LIMIT,
-      // Omitted rather than sent as `false`: master accepts only `true|false|1|0`
+      // Omitted rather than sent as `false`: the API accepts only `true|false|1|0`
       // and 400s otherwise, and an explicit `false` is one more thing for the
       // whitelist to agree about for no gain.
       ...(includeInactive ? { include_inactive: true } : {}),

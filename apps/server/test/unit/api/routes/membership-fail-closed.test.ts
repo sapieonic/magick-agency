@@ -2,19 +2,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
 /**
- * NEW (magick-agency, no source). The equivalence-and-hardening test for the
- * lane-A modification to master's caller-role checks in `user.routes.ts` and
+ * The equivalence-and-hardening test for the caller-role checks in `user.routes.ts` and
  * `invites.routes.ts`.
  *
- * Master wrote each check as `request.membership && !canManage…(…)`: a request
- * that reached the handler WITHOUT `request.membership` skipped the role
- * comparison and went on to write. In production that cannot happen, because
- * `requirePermission` (which runs first) already 403s a request with no
- * membership — so the check relied on hook order for its safety. Agency drops
- * the short-circuit: no membership fails closed with the same 403.
+ * A check written as `request.membership && !canManage…(…)` would let a request that
+ * reached the handler WITHOUT `request.membership` skip the role comparison and go on to
+ * write. In production that cannot happen, because `requirePermission` (which runs first)
+ * already 403s a request with no membership — so such a check would rely on hook order for
+ * its safety. These checks have no short-circuit: no membership fails closed with the
+ * same 403.
  *
  * Here `requirePermission` is stubbed to PASS and nothing sets
- * `request.membership`, which is exactly the state master's short-circuit let
+ * `request.membership`, which is exactly the state a short-circuit would let
  * through. Every one of the five sites must refuse with its own 403 body and
  * write nothing. The last describe shows the change is invisible when a
  * membership IS present (the equivalence half).
@@ -70,7 +69,7 @@ vi.mock('@magick-agency/db/repositories/tenant.repository', () => ({
 vi.mock('@magick-agency/db/repositories/agency-campaign-agent.repository', () => ({
   agencyCampaignAgentRepository: { closeAllForUser: mocks.closeAllForUser },
 }));
-// Q5 (Manas, 2026-10-09): `delForRevocation` forwards to the `del` mock and reports success.
+// Q5: `delForRevocation` forwards to the `del` mock and reports success.
 vi.mock('../../../../src/cache/redis-cache.js', () => ({
   redisCache: { ...mocks.redisCache, delForRevocation: async (...k: string[]) => { await mocks.redisCache.del(...k); return true; } },
 }));
@@ -137,7 +136,7 @@ beforeEach(() => {
   mocks.closeAllForUser.mockResolvedValue([]);
 });
 
-describe('missing request.membership fails closed (hardening of master\'s `request.membership && …`)', () => {
+describe('missing request.membership fails closed (no `request.membership && …` short-circuit)', () => {
   it('POST /users/invite: 403 "Cannot invite with a role equal to or above your own", nothing written', async () => {
     const app = await buildApp();
     const res = await app.inject({
@@ -179,7 +178,7 @@ describe('missing request.membership fails closed (hardening of master\'s `reque
 });
 
 describe('PUT /users/:id/role — the NEW-role check also fails closed on its own', () => {
-  it('a caller outranking the CURRENT role but not the NEW one is refused by the second check (master behaviour, unchanged)', async () => {
+  it('a caller outranking the CURRENT role but not the NEW one is refused by the second check', async () => {
     // tenant_admin may manage a viewer, but may not assign tenant_admin.
     const app = await buildApp({ role: 'tenant_admin', account_id: null });
     const res = await app.inject({
@@ -191,7 +190,7 @@ describe('PUT /users/:id/role — the NEW-role check also fails closed on its ow
   });
 });
 
-describe('with a membership present the change is invisible (equivalence with master)', () => {
+describe('with a membership present the fail-closed check is invisible (same behaviour as before)', () => {
   it('POST /invites/resend by a tenant_owner for an agent proceeds to issue', async () => {
     mocks.issueInvite.mockResolvedValue({
       invite: { id: 'inv-1' }, inviteEmail: { sent: false, reason: 'not_configured' }, signInUrl: 'https://x/agency/join/t',

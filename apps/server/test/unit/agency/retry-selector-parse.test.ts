@@ -9,12 +9,12 @@ import {
 import type { AgencyDisposition } from '@magick-agency/contracts/agency';
 
 // ---------------------------------------------------------------------------
-// The retry selector's parse rules — `MagickVoice-platform/docs/agency-campaign-retry-wire-contract.md`
-// §1, which is FROZEN and implemented independently by three repos.
+// The retry selector's parse rules — the selector wire contract is FROZEN, and the
+// server and the console each implement it.
 //
-// Every refusal in §1's table is exercised here, because an ambiguity in that
-// table becomes a defect nobody's suite catches: master and cusui are written
-// against the same document and would each be internally correct while together
+// Every refusal in the contract's table is exercised here, because an ambiguity in that
+// table becomes a defect nobody's suite catches: the server and the console are written
+// against the same contract and would each be internally correct while together
 // describing a selector that means two different things.
 //
 // The rule this file holds, restated for this surface: a selection that cannot
@@ -73,14 +73,14 @@ describe('parseRetrySelector — one encoding, two transports', () => {
   });
 });
 
-// ── §1's refusal table, row by row ─────────────────────────────────────────
+// ── The refusal table, row by row ─────────────────────────────────────────
 
-describe('parseRetrySelector — the frozen refusals (§1)', () => {
+describe('parseRetrySelector — the frozen refusals', () => {
   it('refuses a selector that names no dimension at all, and says how to ask for everything', () => {
     // The most important refusal here. An empty `AgencyContactFilters` means "the
     // whole roster", which is the right default on a READ (the contacts page opens
     // unfiltered) and would here seed a second copy of an entire campaign from a
-    // request that named nothing — with no campaign delete route in either service
+    // request that named nothing — with no campaign delete route
     // to undo it with.
     const issues = issuesOf(parseRetrySelector({}, { catalog: CATALOG }));
     expect(issues['selector']).toBe(
@@ -97,8 +97,8 @@ describe('parseRetrySelector — the frozen refusals (§1)', () => {
   });
 
   it.each(['dnc', 'invalid'])('refuses suppressed_reason=%s with the rule, not a vocabulary error', (reason) => {
-    // DR-4. The message has to explain the rule: "unknown suppressed_reason: dnc"
-    // invites the reader to conclude core does not know what DNC is, when in fact
+    // DNC and invalid contacts are never retried. The message has to explain the rule: "unknown suppressed_reason: dnc"
+    // invites the reader to conclude the server does not know what DNC is, when in fact
     // it knows exactly what it is and is declining to dial it.
     const issues = issuesOf(parseRetrySelector({ suppressed_reason: reason }, { catalog: CATALOG }));
     expect(issues['suppressed_reason']).toBe(
@@ -106,12 +106,12 @@ describe('parseRetrySelector — the frozen refusals (§1)', () => {
     );
   });
 
-  it('refuses state=in_flight with the rule, the way DR-4 refuses dnc', () => {
+  it('refuses state=in_flight with the rule, the way the DNC rule refuses dnc', () => {
     // A contact in `in_flight` is ON A CALL right now: `claimDialable` flips the
     // state at dial, `chargeAttempt` writes the outcome at settle. Seeding it
     // into a child and starting that child dials a number the parent has an open
     // call on. Refused by name rather than left out of the vocabulary, because
-    // "unknown state: in_flight" reads as core not knowing its own states.
+    // "unknown state: in_flight" reads as the server not knowing its own states.
     // The two lists differ by exactly this one member, pinned so a future edit
     // that "tidies" `RETRY_SELECTABLE_STATES` back into `CONTACT_STATES` reds.
     expect(CONTACT_STATES).toContain('in_flight');
@@ -202,7 +202,7 @@ describe('parseRetrySelector — the frozen refusals (§1)', () => {
   });
 });
 
-// ── The two scalar readers, whose refusals §1 does not tabulate ────────────
+// ── The two scalar readers, whose refusals the table does not cover ────────────
 
 describe('parseRetrySelector — scalar coercion is refused, never guessed', () => {
   it.each(['yes', '1', 'TRUE', ''])('refuses never_attempted=%p rather than coercing it', (value) => {

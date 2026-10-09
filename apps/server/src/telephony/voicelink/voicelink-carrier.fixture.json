@@ -1,5 +1,5 @@
 {
-  "description": "VoiceLink carrier fixture: raw webhook bodies -> normalizeVoicelinkWebhook / parseVoicelinkWebhook / classifyVoicelinkOutcome. Every body is transcribed from a magic-voice-core test (source field: file > test name, core@4850d1d9). Pinned byte-identical with core's future copy (plan section 5, docs/seams.md section 5); edit both copies in one cross-repo change.",
+  "description": "VoiceLink carrier fixture: raw webhook bodies -> normalizeVoicelinkWebhook / parseVoicelinkWebhook / classifyVoicelinkOutcome. Every body is transcribed from a VoiceLink unit test; each entry's source field names it (file > test name). The fixture pins the carrier's payload shapes, so a change to the normaliser or classifier that alters any mapping reds its test.",
   "parsedNullMeans": "parseVoicelinkWebhook returned null (informational or unknown event)",
   "dispositionNullMeans": "the metadata key is absent",
   "classificationNullMeans": "not a terminal event; classifyVoicelinkOutcome is not run",

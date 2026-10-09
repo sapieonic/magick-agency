@@ -1,9 +1,3 @@
-/*
- * PORT NOTE (magick-agency): ported from core test/unit/transcription/index.test.ts
- * @4850d1d9. Cases unchanged; the `config` stub is dropped (the recording fetcher no
- * longer loads the Zod config at import time) and the logger mock points at
- * `@magick-agency/observability`.
- */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@magick-agency/observability', async (importOriginal) => ({

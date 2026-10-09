@@ -4,14 +4,13 @@ import { closeTestPool, getTestPool } from '../../../../../packages/db/test/help
 import { buildApp } from '../../../src/app.js';
 
 /**
- * NEW (magick-agency, Phase 8): master's `errorHandler` (with the 22P02 → 400 backstop) and
- * the 5xx error mask are registered APP-WIDE (`app.ts`, lead ruling), as master registered
- * them (`src/index.ts:481,487`). This suite proves the wiring in the built app with GENUINE
+ * The `errorHandler` (with the 22P02 → 400 backstop) and the 5xx error mask are registered
+ * APP-WIDE (`app.ts`). This suite proves the wiring in the built app with GENUINE
  * Postgres errors from the test database (5436), thrown from a route registered in its own
- * encapsulated scope — the shape of every lane plugin — so a plugin that forgot to inherit
+ * encapsulated scope — the shape of every route plugin — so a plugin that forgot to inherit
  * either would leak:
  *  - **no SQL text and no driver text ever reaches a response body**: a failed statement's
- *    error (and an error that quotes its SQL, as a wrapping repository might) answers master's
+ *    error (and an error that quotes its SQL, as a wrapping repository might) answers the
  *    masked 500 with the request id, nothing else;
  *  - a `22P02` (a malformed id reaching a `::uuid` cast) answers 400 `Invalid identifier`,
  *    never echoing the caller's value or the driver's message;
@@ -39,7 +38,7 @@ beforeAll(async () => {
   expect(invalidUuid.code).toBe('22P02');
 
   app = await buildApp({ ctx: null });
-  // Its own encapsulated scope, as every lane's plugin is.
+  // Its own encapsulated scope, as every route plugin is.
   await app.register(async (scope) => {
     scope.get('/__test/pg-500', async () => { throw undefinedColumn; });
     scope.get('/__test/sql-in-message', async () => {
@@ -59,7 +58,7 @@ afterAll(async () => {
 
 describe('errorHandler + error mask, app-wide (integration)', () => {
   it.each(['/__test/pg-500', '/__test/sql-in-message', '/__test/reply-500'])(
-    'a 500 from %s carries no SQL and no driver text — master masked body, request id only',
+    'a 500 from %s carries no SQL and no driver text — masked body, request id only',
     async (url) => {
       const res = await app.inject({ method: 'GET', url });
       expect(res.statusCode).toBe(500);

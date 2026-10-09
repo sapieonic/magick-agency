@@ -130,7 +130,7 @@
 
 /*
   A key-authenticated row's "who" is a CREDENTIAL, not a person and not the
-  system (86d45t7rm). Marked so it can never be read as either: master used to
+  system. Marked so it can never be read as either: the server used to
   record the key's creator here, so these rows once looked exactly like that
   person's, and dropping the creator without marking the row would have left
   them looking like the scheduler's.

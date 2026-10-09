@@ -23,7 +23,7 @@ describe('isUnsafeCorePath', () => {
     expect(isUnsafeCorePath(`/feature-flags/${encodeURIComponent('a flag key')}`)).toBe(false);
   });
 
-  it('rejects the MAG-159 spine interpolation (`..` + `?` truncation)', () => {
+  it('rejects the path-spine interpolation (`..` + `?` truncation)', () => {
     expect(isUnsafeCorePath('/agency-campaigns/x/../../knowledge-bases?/attempts')).toBe(true);
   });
 
@@ -62,11 +62,11 @@ describe('isUnsafeCorePath', () => {
     expect(isUnsafeCorePath('/calls/x/.%09./%2e%2e/knowledge-bases/recording')).toBe(true);
   });
 
-  it('rejects `#`, whose fragment is dropped rather than sent to core', () => {
+  it('rejects `#`, whose fragment is dropped rather than sent to the internal handler', () => {
     // `DELETE /proxy/webrtc-call/<id>%23/transcript` decodes to this path, and
     // fetch() would send `DELETE /webrtc-call/<id>` — deleting the call rather
     // than its transcript. (An `%23` that survives find-my-way still encoded is
-    // harmless: the parser keeps it, so core sees a `#` inside the id.)
+    // harmless: the parser keeps it, so the handler sees a `#` inside the id.)
     expect(isUnsafeCorePath('/webrtc-call/11111111-1111-4111-8111-111111111111#/transcript')).toBe(true);
     expect(isUnsafeCorePath('/webrtc-call/abc#/transcript')).toBe(true);
     expect(isUnsafeCorePath('/webrtc-call/11111111-1111-4111-8111-111111111111%23/transcript')).toBe(false);
@@ -79,8 +79,8 @@ describe('isUnsafeCorePath', () => {
   });
 
   it('does not treat a nested-but-non-traversing extra segment as unsafe', () => {
-    // `/` in a param that is not `.`/`..` is still a different core path, but
-    // it cannot walk *up* the tree; core 404s. The choke point is traversal.
+    // `/` in a param that is not `.`/`..` is still a different path, but
+    // it cannot walk *up* the tree; it 404s. The choke point is traversal.
     expect(isUnsafeCorePath('/calls/foo/bar/recording')).toBe(false);
   });
 
@@ -96,7 +96,7 @@ describe('isUnsafeCorePath', () => {
     ];
     for (const path of accepted) {
       expect(isUnsafeCorePath(path)).toBe(false);
-      const url = new URL(`https://core.test/api/v1${path}`);
+      const url = new URL(`https://server.test/api/v1${path}`);
       expect(url.pathname + url.search).toBe(`/api/v1${path}`);
     }
   });
@@ -125,9 +125,9 @@ describe('the wire → param → interpolated path chain', () => {
     return built;
   }
 
-  const CORE = 'https://core.test/api/v1';
+  const CORE = 'https://server.test/api/v1';
 
-  it('refuses the double-encoded traversal that reaches another core collection', async () => {
+  it('refuses the double-encoded traversal that reaches another collection', async () => {
     const built = await pathBuiltFor('/proxy/calls/x%2F%252e%252e%2F%252e%252e%2Fknowledge-bases/recording');
 
     // What the handler actually hands to proxyToCore…

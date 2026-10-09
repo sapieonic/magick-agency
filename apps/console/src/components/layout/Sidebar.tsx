@@ -48,15 +48,10 @@ interface NavSection {
 }
 
 /**
- * PORT NOTE (magick-agency): cusui's ten sections (overview, voice, phone menus,
- * automations, broadcasts, messaging, scheduling, contacts, knowledge, admin)
- * are cut to the one whose surfaces the console ports — ADMIN — and within it to
- * Team, Notifications and Call Summaries (the analysis profiles page, moved here
- * from cusui's VOICE section because it is now the agency's own; its gates are
- * agency's — the `agency_call_analysis` flag and the `agency.analytics`
- * capability, the active account's `analyze_calls`). Accounts, Credits, API Keys,
- * Audit Log, Settings and Phone Numbers are not ported. This shell is the
- * platform zone (team and settings); the agency workspace is entered from the
+ * One section, ADMIN, holding Team, Notifications and Call Summaries (the analysis
+ * profiles page; its gates are the `agency_call_analysis` flag and the
+ * `agency.analytics` capability, the active account's `analyze_calls`). This
+ * shell is the platform zone (team and settings); the agency workspace is entered from the
  * switch below.
  */
 const NAV_SECTIONS: NavSection[] = [
@@ -75,7 +70,7 @@ const NAV_SECTIONS: NavSection[] = [
       // An `agent` (level 5) does not see THIS sidebar at all — `AgentLanding`
       // leaves `/app` — so the floor is not what decides their access. What
       // used to be claimed here, that the page "would be empty for them", is
-      // false: master's `campaign.dispatched` and `campaign.completed` are
+      // false: the API's `campaign.dispatched` and `campaign.completed` are
       // `audience: explicit` and shown to every role including `agent`, because
       // the addresses are typed into a campaign form and may be theirs. Only
       // `agency.campaign.completed` (`agency.supervise`) and `usage.digest`
@@ -257,11 +252,9 @@ export function Sidebar({ collapsed, onClose }: SidebarProps) {
                     key={item.to}
                     to={item.to}
                     /*
-                      PORT NOTE (magick-agency): cusui's `end` list (`/app`, `/app/calls`,
-                      `/app/calls/softphone`) and its `/app/calls` active-state override
-                      (excluding `/app/calls/browser` and `/app/calls/softphone`) are
-                      deleted: none of those is a console nav item (the nav is Team,
-                      Notifications, Call Summaries), so both were always false.
+                      There is no `end` list or `/app/calls` active-state override:
+                      none of those is a console nav item (the nav is Team,
+                      Notifications, Call Summaries), so both would always be false.
                     */
                     className={({ isActive }) =>
                       `${styles.navItem} ${isActive ? styles.navItemActive : ''}`
@@ -288,14 +281,14 @@ export function Sidebar({ collapsed, onClose }: SidebarProps) {
 
         ── Why THIS gate ───────────────────────────────────────────────────────
         `agency.supervise` rather than a hand-written role list. The permission
-        floors at `account_admin` in master's `PERMISSION_MATRIX`, so it already
+        floors at `account_admin` in the API's `PERMISSION_MATRIX`, so it already
         resolves to account_admin / tenant_admin / tenant_owner — and when that
         floor moves, this moves with it. Listing roles here would drift from the
         matrix silently, and a nav gate that disagrees with the API's gate is a
         surface that either 403s on click or hides something the user may use.
 
-        All three gates are required and the two entitlements default off: master's
-        `agency` capability, core's `agency_dialer_enabled` flag, and standing in
+        All three gates are required and the two entitlements default off: the API's
+        `agency` capability, the API's `agency_dialer_enabled` flag, and standing in
         the dialer at all. A DEDICATED agent (level 5) never reads this sidebar —
         `AgentLanding` redirects them out of `/app` before it renders.
 

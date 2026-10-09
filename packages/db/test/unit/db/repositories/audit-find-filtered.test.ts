@@ -123,7 +123,7 @@ describe('auditRepository.findFiltered', () => {
   /**
    * ── `withTotal: false` skips the COUNT, and skipping it is the point ───────
    * The count is a second scan of the same filtered set over a partitioned
-   * table. Master's CSV export walks the trail to its end and never reads
+   * table. The CSV export walks the trail to its end and never reads
    * `total`, so at the 5000-row export ceiling it was paying for ~51 counts
    * nobody looked at.
    *
@@ -150,7 +150,7 @@ describe('auditRepository.findFiltered', () => {
 
   /**
    * Default `true`, so every caller that predates the option is unchanged —
-   * which is what makes it safe to add to a live S2S contract.
+   * which is what makes it safe to add to a response shape callers already consume.
    */
   it('counts by default, and when asked explicitly', async () => {
     await auditRepository.findFiltered(SCOPE);

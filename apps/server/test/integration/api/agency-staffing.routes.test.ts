@@ -34,39 +34,24 @@ import { insertAgencyCampaign } from '../agency/agency-factories.js';
  *    500s" are all properties of that join under real data.
  *
  * ── What is real here and what is not ──────────────────────────────────────
- * Real: Postgres, the repositories, RBAC (`requirePermission` against roles read
- * from the `memberships` table), the capability gate (`requireCapability` with
- * governance ENABLED), the audit logger and its buffer, the identity join.
- * Mocked: the two auth middlewares (there is no Firebase here), the core HTTP
- * boundary, and the governance service's resolved map — the last so a test can
- * turn the entitlement off without writing override rows for a subsystem this
- * file is not about.
- *
- * PORT NOTE (magick-agency): ported from master `test/integration/api/agency-staffing.routes.test.ts`
- * @a1f0756a, on agency's test database (Postgres 5436). Harness changes, then case changes:
- *  - **The core hop runs core's REAL handler by default.** Master mocked `proxyToCore` and
- *    had it answer `200 { name: 'Q3 Renewals' }` for any id; here `callCore` (decision
- *    B16) is spied under master's name `mocks.proxyToCore` and, unless a case shapes core's
- *    answer itself, delegates to the real `callCore` → core's `GET /agency-campaigns/:id`
- *    (feature gate + `requireOwned` on tenant AND account) against real `agency_campaigns`
- *    rows seeded in `beforeEach` (CAMPAIGN = 'Q3 Renewals' and OTHER_CAMPAIGN, both owned by
- *    the caller's account, with `agency_dialer_enabled` on for the tenant). So the
- *    cross-account and cross-tenant refusals below are core's real ownership rule, not a
- *    mock reproducing it. Cases that shape core's answer (a 404 body, a throw, a 503, a
- *    non-string name, a status) keep master's per-case stub: they test the route's
- *    handling of that answer, which no real row can produce (a throw, a 503).
- *  - `src/db/connection.js` mock → `initDbPool` on the test database; the `config` and
- *    governance mocks are gone (no governance); the logger mock is partial (the core
- *    handler's module graph needs the rest of `@magick-agency/observability`);
- *    `auditLogger` → `platformAuditLogger` (B7); the session stub loses its
- *    `x-platform-key` branch (decision #5).
- *  - DELETED: the `agency` capability gate block (3: governance is gone, plan §3.2) and the
- *    four platform-API-key cases (decision #5). MODIFIED: "a campaign in ANOTHER account"
- *    re-owns OTHER_CAMPAIGN to the sibling account instead of mocking core's 404. NEW: the
- *    in-process ownership probe against real rows (another TENANT's campaign, a foreign
- *    campaign's name never reaching `/my-assignments`) and the statuses core's handler can
- *    answer that master forwarded verbatim (flag off → 403, no account context → 400).
- *    See PORTING "Phase 8 — staffing".
+ * Real: Postgres (5436), the repositories, RBAC (`requirePermission` against roles read
+ * from the `memberships` table), the audit logger and its buffer, the identity join.
+ * Mocked: the two auth middlewares (there is no Firebase here).
+ *  - **The internal hop runs the REAL handler by default.** `callCore` (decision B16) is
+ *    spied as `mocks.proxyToCore` and, unless a case shapes the answer itself, delegates to
+ *    the real `callCore` → the internal `GET /agency-campaigns/:id` (feature gate +
+ *    `requireOwned` on tenant AND account) against real `agency_campaigns` rows seeded in
+ *    `beforeEach` (CAMPAIGN = 'Q3 Renewals' and OTHER_CAMPAIGN, both owned by the caller's
+ *    account, with `agency_dialer_enabled` on for the tenant). So the cross-account and
+ *    cross-tenant refusals below are the real ownership rule, not a mock reproducing it.
+ *    Cases that shape the handler's answer (a 404 body, a throw, a 503, a non-string name, a
+ *    status) use a per-case stub: they test the route's handling of that answer, which no
+ *    real row can produce (a throw, a 503).
+ *  - The logger mock is partial (the internal handler's module graph needs the rest of
+ *    `@magick-agency/observability`); the audit logger is `platformAuditLogger` (B7).
+ *  - There is no governance and no `agency` capability gate (the app IS agency), and no
+ *    platform API keys: the gate that remains on this path is the internal
+ *    `agency_dialer_enabled` check inside the in-process hop.
  */
 
 const CAMPAIGN = '22222222-2222-4222-8222-222222222222';
@@ -82,7 +67,7 @@ const mocks = vi.hoisted(() => ({
 initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
 
 // The in-process seam (decision B16). Everything else in the module is the real one, so
-// `setCoreHandlers` (below) installs the private core instance the real `callCore` runs.
+// `setCoreHandlers` (below) installs the private handler instance the real `callCore` runs.
 vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/api/core-dispatch.js')>();
   mocks.realCallCore = actual.callCore as (...args: unknown[]) => Promise<unknown>;
@@ -108,8 +93,7 @@ vi.mock('../../../src/auth/session.middleware.js', () => ({
     headers: Record<string, string | undefined>;
     user?: { id: string };
   }) => {
-    // PORT NOTE (magick-agency): master's `x-platform-key` branch (system and
-    // creator-backed platform API keys) is deleted with the keys (decision #5).
+    // There are no platform API keys, so no `x-platform-key` branch.
     const userId = request.headers['x-user-id'];
     if (userId) request.user = { id: userId };
   },
@@ -169,7 +153,7 @@ describe('agency staffing routes (integration)', () => {
   let core: FastifyInstance;
 
   beforeAll(async () => {
-    // Core's agency handler modules on their private instance, exactly as
+    // The internal agency handler modules on their private instance, exactly as
     // `agencyPlugin` builds them. Only `GET /agency-campaigns/:id` is reached from this
     // plugin, and it reads none of these runtime deps.
     core = await buildCoreHandlers({
@@ -190,8 +174,8 @@ describe('agency staffing routes (integration)', () => {
 
   beforeEach(async () => {
     vi.restoreAllMocks();
-    // Default: core's REAL handler, in-process. A case that shapes core's answer
-    // overrides this with its own stub, as it did in master.
+    // Default: the REAL internal handler, in-process. A case that shapes its answer
+    // overrides this with its own stub.
     mocks.proxyToCore.mockReset().mockImplementation(mocks.realCallCore!);
     mocks.logCalls.length = 0;
 
@@ -220,17 +204,15 @@ describe('agency staffing routes (integration)', () => {
       role: 'agent',
     });
 
-    // Core knows this campaign and this account owns it.
-    // PORT NOTE (magick-agency): master stubbed this answer for every id; here the rows
-    // exist and core's handler answers from them. OTHER_CAMPAIGN is owned by the same
-    // account (master's stub answered 200 for it too).
+    // The campaign exists and this account owns it; the handler answers from these rows.
+    // OTHER_CAMPAIGN is owned by the same account.
     await insertAgencyCampaign({
       id: CAMPAIGN, tenant_id: tenant.id, account_id: account.id, name: 'Q3 Renewals',
     });
     await insertAgencyCampaign({
       id: OTHER_CAMPAIGN, tenant_id: tenant.id, account_id: account.id, name: 'Collections',
     });
-    // Core's `agency_dialer_enabled` gate (its handler's `gate`) — on for this tenant.
+    // The `agency_dialer_enabled` gate (the handler's `gate`) — on for this tenant.
     await enableDialer(tenant.id);
 
     app = Fastify({ logger: false });
@@ -283,7 +265,7 @@ describe('agency staffing routes (integration)', () => {
     await platformAuditLogger.shutdown();
   }
 
-  /** A tenant-scoped `agency_dialer_enabled = true` override (core's handler gate). */
+  /** A tenant-scoped `agency_dialer_enabled = true` override (the handler gate). */
   async function enableDialer(tenantId: string) {
     await getTestPool().query(
       `INSERT INTO feature_flag_overrides (flag_key, scope_type, tenant_id, value)
@@ -430,22 +412,16 @@ describe('agency staffing routes (integration)', () => {
     });
   });
 
-  // ═══ The capability gate ══════════════════════════════════════════════════
+  // ═══ What the in-process internal handler can answer, and what the route does with it ═══
   //
-  // PORT NOTE (magick-agency): DELETED — master's "the `agency` capability gate is applied
-  // to the whole plugin" block (3 cases: "refuses all five routes when the capability is
-  // off", "fails CLOSED when governance cannot be resolved", "resolves the capability for
-  // the request's active (tenant, account)"). There is no governance and no
-  // `requireCapability('agency')`: the app IS agency (plan §3.2). The gate that remains on
-  // this path is core's own `agency_dialer_enabled` check inside the in-process hop, which
-  // the NEW block below drives.
+  // There is no governance and no `requireCapability('agency')` (the app IS agency). The gate
+  // that remains on this path is the internal `agency_dialer_enabled` check inside the
+  // in-process hop, which this block drives.
 
-  // ═══ What core's in-process handler can answer, and what the route does with it ═══
-
-  describe('statuses the in-process core hop answers are handled as master handled them (new)', () => {
-    it('agency_dialer_enabled OFF: core\'s 403 is forwarded on all three supervisory routes, and nothing is written', async () => {
-      // `assertCampaignInScope` forwards any non-404 status verbatim ("master could
-      // not PROVE the campaign is missing"). Core's handler answers 403
+  describe('statuses the in-process internal hop answers are forwarded by the route', () => {
+    it('agency_dialer_enabled OFF: the internal 403 is forwarded on all three supervisory routes, and nothing is written', async () => {
+      // `assertCampaignInScope` forwards any non-404 status verbatim (the route could
+      // not PROVE the campaign is missing). The internal handler answers 403
       // `feature_disabled` when the tenant's dialer flag is off.
       await getTestPool().query(`DELETE FROM feature_flag_overrides WHERE tenant_id = $1`, [tenant.id]);
       await getFeatureFlagService().invalidate({ tenantId: tenant.id });
@@ -485,9 +461,9 @@ describe('agency staffing routes (integration)', () => {
       ]);
     });
 
-    it('a TENANT-level caller with no X-Account-Id: core\'s 400 (no account context) is forwarded', async () => {
-      // Master forwarded `request.accountId` (the optional header), so a tenant-level
-      // admin who had not picked an account met core's header refusal, verbatim. The
+    it('a TENANT-level caller with no X-Account-Id: the internal 400 (no account context) is forwarded', async () => {
+      // The route forwards `request.accountId` (the optional header), so a tenant-level
+      // admin who had not picked an account meets the handler's header refusal, verbatim. The
       // same answer here, from the same rule (`auth.middleware.ts`'s header half).
       const tenantAdmin = await insertUser();
       await insertMembership({
@@ -537,7 +513,7 @@ describe('agency staffing routes (integration)', () => {
       expect(res.statusCode).toBe(204);
     });
 
-    it('reports campaign_name: null when core cannot name the campaign — a live contract with cusui', async () => {
+    it('reports campaign_name: null when the internal handler cannot name the campaign — a live contract with the console', async () => {
       await seedAssignment();
       mocks.proxyToCore.mockResolvedValue({ status: 404, body: { error: 'Not Found' } });
 
@@ -554,9 +530,9 @@ describe('agency staffing routes (integration)', () => {
       expect(Object.keys(res.json())).toEqual(['campaign_id', 'campaign_name']);
     });
 
-    it('reports campaign_name: null when the core call THROWS', async () => {
+    it('reports campaign_name: null when the internal call THROWS', async () => {
       await seedAssignment();
-      mocks.proxyToCore.mockRejectedValue(new Error('core unreachable'));
+      mocks.proxyToCore.mockRejectedValue(new Error('handler unreachable'));
 
       const res = await app.inject({
         method: 'GET',
@@ -564,13 +540,13 @@ describe('agency staffing routes (integration)', () => {
         headers: headers({ 'x-user-id': agent.id }),
       });
 
-      // The assignment is master's own fact and is already in hand; the name is
+      // The assignment is the route's own fact and is already in hand; the name is
       // a courtesy. An outage must not break the agent's landing redirect.
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ campaign_id: CAMPAIGN, campaign_name: null });
     });
 
-    it('reports campaign_name: null when core answers a shape without a string name', async () => {
+    it('reports campaign_name: null when the internal handler answers a shape without a string name', async () => {
       await seedAssignment();
       mocks.proxyToCore.mockResolvedValue({ status: 200, body: { id: CAMPAIGN, name: 42 } });
 
@@ -605,14 +581,10 @@ describe('agency staffing routes (integration)', () => {
       expect(res.statusCode).toBe(204);
     });
 
-    // PORT NOTE (magick-agency): DELETED — master's 'refuses a SYSTEM platform API key — no
-    // membership, no access'. Decision #5: no platform API keys. A caller with no membership is
-    // still refused by `requirePermission` ('a caller with no membership in this tenant is refused').
-
-    // PORT NOTE (magick-agency): DELETED — master's 'refuses a CREATOR-BACKED key, which would
-    // otherwise answer AS the creator'. Decision #5: no platform API keys, and `resolveMyAgentId`'s
-    // key branch is gone. Its remaining branch (no user id → 400 `missing_actor`) is pinned in the
-    // unit suite (re-expressed creator-backed cases).
+    // There are no platform API keys. A caller with no membership is refused by
+    // `requirePermission` ('a caller with no membership in this tenant is refused'), and
+    // `resolveMyAgentId`'s remaining branch (no user id → 400 `missing_actor`) is pinned in
+    // the unit suite.
   });
 
   // ═══ GET /my-assignments ══════════════════════════════════════════════════
@@ -656,7 +628,7 @@ describe('agency staffing routes (integration)', () => {
       ]);
     });
 
-    it('carries the four keys, always present — a live contract with cusui', async () => {
+    it('carries the four keys, always present — a live contract with the console', async () => {
       await seedAssignment({ campaignId: CAMPAIGN });
       mocks.proxyToCore.mockResolvedValue({
         status: 200,
@@ -677,7 +649,7 @@ describe('agency staffing routes (integration)', () => {
       expect(first.campaign_status).toBe('paused');
     });
 
-    it('nulls BOTH labels when core cannot name the campaign, and keeps the id', async () => {
+    it('nulls BOTH labels when the internal handler cannot name the campaign, and keeps the id', async () => {
       // Enrichment must never turn a 200 into a 500: the ids are the answer and
       // are already in hand, so every link on the agent's home keeps working.
       await seedAssignment({ campaignId: CAMPAIGN });
@@ -695,9 +667,9 @@ describe('agency staffing routes (integration)', () => {
       ]);
     });
 
-    it('nulls the labels when the core call THROWS', async () => {
+    it('nulls the labels when the internal call THROWS', async () => {
       await seedAssignment({ campaignId: CAMPAIGN });
-      mocks.proxyToCore.mockRejectedValue(new Error('core unreachable'));
+      mocks.proxyToCore.mockRejectedValue(new Error('handler unreachable'));
 
       const res = await app.inject({
         method: 'GET',
@@ -752,14 +724,10 @@ describe('agency staffing routes (integration)', () => {
       expect(res.json()).toEqual({ assignments: [] });
     });
 
-    // PORT NOTE (magick-agency): DELETED — master's 'refuses a SYSTEM platform API key — no
-    // membership, no access'. Decision #5: no platform API keys. A caller with no membership is
-    // still refused by `requirePermission` ('a caller with no membership in this tenant is refused').
-
-    // PORT NOTE (magick-agency): DELETED — master's 'refuses a CREATOR-BACKED key, which would
-    // otherwise answer AS the creator'. Decision #5: no platform API keys, and `resolveMyAgentId`'s
-    // key branch is gone. Its remaining branch (no user id → 400 `missing_actor`) is pinned in the
-    // unit suite (re-expressed creator-backed cases).
+    // There are no platform API keys. A caller with no membership is refused by
+    // `requirePermission` ('a caller with no membership in this tenant is refused'), and
+    // `resolveMyAgentId`'s remaining branch (no user id → 400 `missing_actor`) is pinned in
+    // the unit suite.
   });
 
   // ═══ GET /campaigns/:id/agents ════════════════════════════════════════════
@@ -914,16 +882,14 @@ describe('agency staffing routes (integration)', () => {
     /**
      * The real defect, pinned on the bytes. For one commit `GET` and `DELETE`
      * filtered on `(campaign_id, tenant_id)` only, while `POST` round-tripped
-     * core — so the READ surface returned another account's staffing list with
+     * the internal handler — so the READ surface returned another account's staffing list with
      * NAMES AND EMAILS and the DELETE surface could unstaff their agents, while
      * the WRITE surface was correctly refused.
      *
-     * Core's `requireOwned` compares tenant AND account and answers 404, which is
-     * what the mock reproduces: master never learns whether the campaign is
-     * missing or merely somebody else's, which is the non-oracle property.
-     *
-     * PORT NOTE (magick-agency): MODIFIED — no mock. OTHER_CAMPAIGN is re-owned to the
-     * sibling account and core's REAL `requireOwned` (in-process) answers the 404.
+     * `requireOwned` compares tenant AND account and answers 404, so the route never
+     * learns whether the campaign is missing or merely somebody else's, which is the
+     * non-oracle property. There is no mock: OTHER_CAMPAIGN is re-owned to the sibling
+     * account and the REAL `requireOwned` (in-process) answers the 404.
      */
     beforeEach(async () => {
       // Somebody IS staffed on the foreign campaign, in this tenant — so a
@@ -989,8 +955,8 @@ describe('agency staffing routes (integration)', () => {
       expect(await activeRowsFor(newcomer.id)).toHaveLength(0);
     });
 
-    it('a core failure that is NOT a 404 is forwarded rather than called "not found"', async () => {
-      // Master could not PROVE the campaign is missing. Answering 404 for "we
+    it('an internal failure that is NOT a 404 is forwarded rather than called "not found"', async () => {
+      // The route could not PROVE the campaign is missing. Answering 404 for "we
       // could not ask" is the confident-wrong answer.
       mocks.proxyToCore.mockResolvedValue({ status: 503, body: { error: 'Service Unavailable' } });
 
@@ -1003,12 +969,11 @@ describe('agency staffing routes (integration)', () => {
     });
   });
 
-  // ═══ The ownership probe against real rows — another TENANT (new) ═════════
+  // ═══ The ownership probe against real rows — another TENANT ═════════
 
-  describe('a campaign in ANOTHER TENANT is a 404 on all three routes, never data (new)', () => {
+  describe('a campaign in ANOTHER TENANT is a 404 on all three routes, never data ', () => {
     /**
-     * PORT NOTE (magick-agency): NEW. The phase's exit gate — "another tenant's or
-     * account's campaign is a 404, never data" — on the TENANT half, through core's real
+     * Another tenant's campaign is a 404, never data — the TENANT half, through the real
      * `requireOwned` in-process. The foreign campaign exists, is running, and has one of
      * ITS tenant's people staffed on it; the caller is a fully-privileged account_admin
      * of a different tenant who knows the id.
@@ -1115,7 +1080,7 @@ describe('agency staffing routes (integration)', () => {
         // saying "id" for a bad `:userId` sends the caller to the wrong half of
         // their URL.
         expect(Object.keys(res.json().details.fieldErrors)).toEqual([c.field]);
-        // Validation precedes the core round trip — a bad id costs nothing.
+        // Validation precedes the internal round trip — a bad id costs nothing.
         expect(mocks.proxyToCore).not.toHaveBeenCalled();
       });
     }
@@ -1181,12 +1146,12 @@ describe('agency staffing routes (integration)', () => {
 
     it('ADDS to someone already staffed elsewhere — it does not move them', async () => {
       /**
-       * This used to assert a MOVE, and the change is migration 064's. Under the
+       * This used to assert a MOVE, and the change is the per-tenant staffing index's. Under the
        * per-tenant index, staffing somebody onto a second campaign silently closed
        * their first — so a supervisor doing an ordinary afternoon handover destroyed
        * the morning's staffing decision without being told.
        *
-       * Being live on one campaign at a time is unchanged: that is core's session
+       * Being live on one campaign at a time is unchanged: that is the session
        * index, which answers a second concurrent join with a typed 409.
        */
       await seedAssignment({ campaignId: OTHER_CAMPAIGN });
@@ -1381,8 +1346,8 @@ describe('agency staffing routes (integration)', () => {
     it('unstaffs ONLY the named campaign, leaving their other assignments alone', async () => {
       /**
        * The campaign predicate used to guard against a stale console unstaffing
-       * somebody from the campaign they had since been MOVED to. Since migration
-       * 064 it does ordinary work on the ordinary path: an agent genuinely holds
+       * somebody from the campaign they had since been MOVED to. Under the
+       * per-tenant index it does ordinary work on the ordinary path: an agent genuinely holds
        * several assignments, so removing one must not disturb the rest.
        */
       await seedAssignment({ campaignId: CAMPAIGN });

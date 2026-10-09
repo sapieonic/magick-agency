@@ -1,24 +1,16 @@
 /**
  * Roles and permissions — ONE source for the server and both UIs.
  *
- * In MagickVoice this was a hand mirror: master's `src/rbac/roles.ts` (the
- * authority) and cusui's `src/utils/permissions.ts` (a copy that had to be kept
- * "in lockstep", `agency.md` §6.4 "Role hierarchy"). Magick Agency imports this
- * module on both sides, so the mirror — and the class of bug where the UI shows
- * a control the API 403s, or hides one it would allow — goes away.
+ * The server and both UIs import this module, so there is no hand-kept mirror —
+ * and none of the class of bug where the UI shows a control the API 403s, or
+ * hides one it would allow.
  *
- * Ported from `magick-master/src/rbac/roles.ts` at master v3.24.0
- * (a1f0756a58a63bf8a19baf74298a702f9fe7b430). Role levels are master's exactly.
- * The permission SET is narrowed to what Magick Agency uses (extraction plan
- * §3.1), and four permissions are RENAMED to agency names with master's floors
- * unchanged; every one is listed with its master source line in
- * `packages/contracts/PORTING.md`.
+ * The permission set is limited to what Magick Agency uses; the agency
+ * permissions carry `agency.` names.
  */
 
 /**
- * The six membership roles. Master's `MembershipRole`
- * (`src/db/models/membership.model.ts`), mirrored by cusui's `Role`
- * (`src/types/auth.ts`); here it is declared once.
+ * The six membership roles, declared once and shared by the server and both UIs.
  */
 export type Role =
   | 'tenant_owner'
@@ -28,13 +20,13 @@ export type Role =
   | 'viewer'
   | 'agent';
 
-/** Master's name for the same union. */
+/** The public API layer's name for the same union. */
 export type MembershipRole = Role;
 
 /**
  * Role hierarchy: higher number = more authority.
  *
- * `agent` (Agency Dialer, design D6) is deliberately placed at 5 — BELOW
+ * `agent` (Agency Dialer) is deliberately placed at 5 — BELOW
  * `viewer`. The hierarchy is linear and PERMISSION_MATRIX maps each permission
  * to a *minimum* role, so a floor of `viewer` (10) or higher is unreachable at
  * level 5. Every permission that predates the agency feature floors at `viewer`
@@ -46,7 +38,7 @@ export type MembershipRole = Role;
  * reserved agent for the attempt.
  *
  * The flag map is the single exception, and it is not a softening of the rule —
- * it is the read the rule forgot. cusui must resolve it before it can render
+ * it is the read the rule forgot. the console must resolve it before it can render
  * ANY flag-gated route, so while it floored at `viewer` an agent was locked out
  * of the very product the other four permissions exist to run. See its matrix
  * entry. `test/unit/rbac/roles.agent.test.ts` pins both halves.
@@ -54,8 +46,7 @@ export type MembershipRole = Role;
  * Do not raise this number to "make something work" — raising it silently grants
  * an agent every viewer-floored read on the platform.
  *
- * PORT NOTE (magick-agency): `proxy.feature_flags.read` is `agency.flags.read`
- * here (same `agent` floor). In this package the pin is `test/rbac.test.ts`.
+ * The pin is `test/rbac.test.ts`.
  */
 export const ROLE_HIERARCHY: Record<MembershipRole, number> = {
   agent: 5,
@@ -86,7 +77,7 @@ export type Permission =
   | 'account.read'
   | 'user.invite' | 'user.update_role' | 'user.remove'
   | 'audit.read'
-  // ── Renamed to agency names (master's name → here), floors unchanged ──────
+  // ── Renamed to agency names (the public API layer's name → here), floors unchanged ──────
   //   proxy.feature_flags.read   → agency.flags.read
   //   proxy.contact_lists.read   → agency.campaigns.read
   //   proxy.contact_lists.write  → agency.campaigns.write
@@ -97,20 +88,16 @@ export type Permission =
   // permission that does. See the matrix entry.
   | 'agency.flags.read'
   // Campaign reads (list, detail, stats, roster, analytics) and writes (create,
-  // PATCH, roster upload). In MagickVoice these rode the contact-list
-  // permissions (`agency.md` §7.1, "Campaign writes … floor at
-  // `proxy.contact_lists.write`").
+  // PATCH, roster upload).
   | 'agency.campaigns.read'
   | 'agency.campaigns.write'
-  // Call-analysis profiles (plan §4 "Profiles: CRUD"). In MagickVoice the
-  // profile routes rode the call-script permissions
-  // (`proxy-call-analysis-profiles.routes.ts:68-72`).
+  // Call-analysis profiles (CRUD).
   | 'agency.analysis_profiles.read'
   | 'agency.analysis_profiles.write'
   // The tenant's assigned caller IDs (`GET /phone-numbers`, the campaign
-  // builder's caller-ID picker). Added in session 3 for Phase 8.
+  // builder's caller-ID picker).
   | 'agency.phone_numbers.read'
-  // Agency Dialer (design D6). The four agent-scoped permissions floor at
+  // Agency Dialer. The four agent-scoped permissions floor at
   // `agent`, so supervisors and admins inherit them and can take calls
   // themselves to cover or demo — desirable, not a leak.
   | 'agency.station.connect'
@@ -122,35 +109,35 @@ export type Permission =
   | 'agency.supervise'
   // The DNC list as a MANAGED OBJECT, distinct from `agency.dnc.write` above.
   // `agency.dnc.write` is attempt-scoped: it suppresses the one number on the
-  // agent's own line, and core verifies they are that attempt's reserved agent.
+  // agent's own line, and the dialer runtime verifies they are that attempt's reserved agent.
   // These two are number-scoped and list-scoped, so neither floors at `agent`.
   | 'agency.dnc.read'
   | 'agency.dnc.manage';
 
 /** Minimum role required for each permission */
 export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
-  // Master `roles.ts:80`. Behind `GET /tenants/:id/members` (the team page).
+  // Behind `GET /tenants/:id/members` (the team page).
   'tenant.read': 'viewer',
-  // Master `roles.ts:83`. Behind `GET /accounts` (full rows). NOTE:
-  // `GET /accounts/mine` itself carries NO permission check in master — it is
+  // Behind `GET /accounts` (full rows). NOTE:
+  // `GET /accounts/mine` itself carries NO permission check in the public API layer — it is
   // membership-scoped and returns `{id, name, tenant_id}` only — which is how an
   // `agent` (below this floor) resolves its account (`TenantContext.tsx`).
   'account.read': 'viewer',
-  'user.invite': 'account_admin', // master `roles.ts:86`
-  'user.update_role': 'tenant_admin', // master `roles.ts:87`
-  'user.remove': 'tenant_admin', // master `roles.ts:88`
-  // MAG-157: supervisors (`account_admin`) read the trail they write. Rows are
+  'user.invite': 'account_admin',
+  'user.update_role': 'tenant_admin',
+  'user.remove': 'tenant_admin',
+  // Supervisors (`account_admin`) read the trail they write. Rows are
   // account-scoped in `platform_audit_log` so this does not leak sibling accounts.
   'audit.read': 'account_admin',
   // ── The feature-flag map ─────────────────────────────────────────────────
   // Floored at `agent`, and the ONLY non-`agency.*` permission that is. Read the
-  // hierarchy comment above first: this is not a relaxation of D6's "four
-  // permissions and nothing else" rule, it is the read that rule overlooked.
+  // hierarchy comment above first: this is not a relaxation of the "four
+  // agent-scoped permissions and nothing else" rule, it is the read that rule overlooked.
   //
-  // The route returns the client-exposed FLAG MAP, which cusui must fetch before
+  // The route returns the client-exposed FLAG MAP, which the console must fetch before
   // it can render any flag-gated route. It used to carry `proxy.stats.read`
   // (floor `viewer`, level 10). An `agent` is level 5, so EVERY dedicated agent
-  // got a 403 here — and cusui's `FeatureFlagsContext` is fail-safe closed, so an
+  // got a 403 here — and the console's `FeatureFlagsContext` is fail-safe closed, so an
   // errored map resolves every flag to `false`. That drove `RequireFlag
   // flag="agency_dialer_enabled"` — which wraps all four agent routes
   // (`/dialer`, `/station`, `/dialer/performance`, `/dialer/attempts`) — into its
@@ -163,7 +150,7 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   // who tested the dialer held a role above the gate.
   //
   // Its OWN permission rather than lowering `proxy.stats.read`, which is shared
-  // with the core stats lane and must stay at `viewer`: an agent has no business
+  // with the dialer runtime stats lane and must stay at `viewer`: an agent has no business
   // reading tenant call statistics, and widening that floor would grant exactly
   // the access the hierarchy comment forbids.
   //
@@ -174,21 +161,15 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   // is the honest form — a dedicated agent renders almost no screens, so
   // "they could infer it anyway" would be the wrong argument to lean on.
   //
-  // PORT NOTE (magick-agency): master's `proxy.feature_flags.read`
-  // (`roles.ts:164`), renamed. The name now starts `agency.`, but it is still
-  // not an ACTION permission — the four below remain the only ones of those.
+  // The name starts `agency.`, but it is not an ACTION permission — the four
+  // below remain the only ones of those.
   'agency.flags.read': 'agent',
-  // PORT NOTE (magick-agency): master's `proxy.contact_lists.read` /
-  // `.write` (`roles.ts:118-119`), renamed; floors unchanged.
   'agency.campaigns.read': 'viewer',
   'agency.campaigns.write': 'account_admin',
-  // PORT NOTE (magick-agency): master's `proxy.prompts.read` / `.write`
-  // (`roles.ts:94` / `:93`), renamed; floors unchanged.
   'agency.analysis_profiles.read': 'viewer',
   'agency.analysis_profiles.write': 'account_admin',
-  // PORT NOTE (magick-agency): master's `proxy.phone_numbers.read` (`roles.ts:122`),
-  // renamed; floor unchanged. `proxy.phone_numbers.manage` is not carried: number
-  // inventory and assignment are super-admin-only in agency (plan §3.4).
+  // There is no manage permission for phone numbers: number inventory and
+  // assignment are super-admin-only.
   'agency.phone_numbers.read': 'viewer',
   // ── Agency Dialer ────────────────────────────────────────────────────────
   // These four are the only agency ACTION permissions floored at `agent` — and,
@@ -196,7 +177,7 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   // at all. The distinction is worth keeping: these four authorise doing
   // something to a live call, that one authorises reading the boolean map the
   // SPA needs to render. Each corresponds to an action an agent takes on the
-  // call currently on their own station; core
+  // call currently on their own station; the dialer runtime
   // additionally verifies the caller is that attempt's reserved agent, an
   // ownership check the generic `/proxy/webrtc-call/:id/end` route cannot
   // express (it floors at `operator`, so an agent cannot reach it at all).
@@ -205,25 +186,23 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   'agency.attempts.dispose': 'agent', // disposition, notes, schedule callback
   'agency.dnc.write': 'agent', // mark the contact on the line as do-not-call
   // Supervisory. Distinct from the four above in kind, not just in floor: it
-  // authorises acting on an attempt reserved by *somebody else*, so master sets
-  // core's `on_behalf` flag from it (`src/agency/agency-actor.ts`) and the
+  // authorises acting on an attempt reserved by *somebody else*, so the public API layer sets
+  // the dialer runtime's `on_behalf` flag from it (`src/agency/agency-actor.ts`) and the
   // resulting disposition is filed against a customer under one person's name
   // while a different person chose it.
   //
-  // FLOOR IS `account_admin` (30), per design §8, core's contract
-  // (`contracts.ts:945`) and UX spec §C, which agree. The Phase 2 backlog line
-  // for `AD-P2-M-01` says acceptance (d) is "an `operator` can disposition on an
-  // agent's behalf" — an `operator` is 20 and cannot hold this. That line
-  // predates the freeze that introduced `on_behalf` and is the stale side; it is
-  // flagged rather than built to, because lowering a supervisory floor is not a
+  // FLOOR IS `account_admin` (30), per the dialer design and the frozen contract
+  // in `./agency`, which agree. An `operator` is 20 and cannot hold this; an older
+  // backlog note suggesting an `operator` can disposition on an agent's behalf
+  // predates `on_behalf` and is stale. Lowering a supervisory floor is not a
   // change to make silently.
   'agency.supervise': 'account_admin',
-  // ── The DNC list surface (`AD-P3-M-01`) ──────────────────────────────────
+  // ── The DNC list surface ──────────────────────────────────
   // Deliberately NOT floored at `agent`, and the two floors differ from each
   // other, because the two directions are not symmetric risks:
   //
   //  - READ floors at `viewer`. The list is every customer who asked not to be
-  //    contacted; an agent has no reason to browse it, and D6 gives them exactly
+  //    contacted; an agent has no reason to browse it, and agents get exactly
   //    four permissions on purpose. Reading it is a supervisory act.
   //  - MANAGE floors at `account_admin` and covers ADD (bulk/arbitrary numbers)
   //    and DELETE. Delete is the compliance-dangerous direction: it makes a
@@ -242,12 +221,10 @@ export const PERMISSIONS = Object.keys(PERMISSION_MATRIX) as Permission[];
 /**
  * Check if a role has sufficient authority for a permission.
  *
- * PORT NOTE (magick-agency): master's signature took a `MembershipRole`; cusui's
- * mirror took `Role | undefined` and failed CLOSED on a missing role (a console
- * that has not resolved a membership yet must show nothing privileged). One
- * function now serves both, so it accepts `undefined`/`null` and an unknown
+ * Fails CLOSED on a missing role (a console that has not resolved a membership
+ * yet must show nothing privileged), so it accepts `undefined`/`null` and an unknown
  * runtime string, and answers `false` for all three. For every real role the
- * result is master's, unchanged.
+ * answer is whether its level reaches the permission's floor.
  */
 export function hasPermission(
   userRole: MembershipRole | null | undefined,

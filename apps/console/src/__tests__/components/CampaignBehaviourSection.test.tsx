@@ -73,7 +73,7 @@ describe('an outcome that came back from the server', () => {
 });
 
 describe('a retry rule switched on from scratch', () => {
-  it('seeds core’s own voicemail default rather than a rule that never fires', () => {
+  it('seeds the server’s own voicemail default rather than a rule that never fires', () => {
     // `max_attempts: 0` would be a rule the engine ignores, so turning the
     // control on would look like it did nothing.
     loaded([{ code: 'sale', label: 'Sale' }]);

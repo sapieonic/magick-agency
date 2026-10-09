@@ -21,53 +21,47 @@ import { platformProfileRouteAuth } from './profile-route-auth.js';
 import { agencyCampaignRepository } from '../db/repositories/agency.repository.js';
 
 /**
- * Every prefix the agency API is served under — the console's paths (decision B16:
- * cusui @ `ee5beb44` called master at these, and the console ports with only its API
- * base changed). The route-table tests read this list rather than a copy of it.
+ * Every prefix the agency API is served under — the paths the console calls (decision
+ * B16). The route-table tests read this list rather than a copy of it.
  */
 export const AGENCY_ROUTE_PREFIXES = {
-  /** master `src/index.ts:564-585`@a1f0756a — the agency plugins on one prefix. */
+  /** The agency plugins on one prefix. */
   proxyAgency: '/proxy/agency',
-  /** master `src/index.ts:564` — the station socket (`proxy-agency-station.routes.ts`). */
+  /** The station socket (`proxy-agency-station.routes.ts`). */
   proxyAgencyStation: '/proxy/agency/station',
-  /** master `src/index.ts:614`. */
+  /** The DNC list. */
   dnc: '/dnc',
-  /**
-   * master's `/proxy/call-analysis-profiles` (`ENDPOINTS.proxy.callAnalysisProfiles`, cusui
-   * `src/config.ts:206`), served by lane D's port of core's profile routes.
-   */
+  /** Call-analysis profiles (the console's `ENDPOINTS.proxy.callAnalysisProfiles`). */
   callAnalysisProfiles: '/proxy/call-analysis-profiles',
-  /** master `src/index.ts:607` — the caller-ID list (`GET` only; see the route file). */
+  /** The caller-ID list (`GET` only; see the route file). */
   phoneNumbers: '/phone-numbers',
 } as const;
 
-/** core's `requireOwned` 404 (`agency-campaigns.routes.ts`), which master forwarded verbatim. */
+/** The campaign handlers' `requireOwned` 404 (`agency-campaigns.routes.ts`). */
 const CAMPAIGN_NOT_FOUND = {
   status: 404,
   body: { error: 'Not Found', code: 'campaign_not_found', message: 'Campaign not found' },
 } as const;
 
 /**
- * The agency API: master's agency route plugins at the console's paths, with each hop to
- * core collapsed into core's handler body in-process (`core-dispatch.ts`, decision B16).
+ * The agency API: the public API layer's agency route plugins at the console's paths,
+ * reaching the internal handler instance in-process (`core-dispatch.ts`, decision B16).
  *
  * Scope-local, because this plugin is NOT `fastify-plugin` wrapped:
  *  - the `X-Tenant-Id` shape check (`agency-id-guard.ts`);
- *  - the private core handler instance (`core-handlers.ts`), closed with the app.
+ *  - the internal handler instance (`core-handlers.ts`), closed with the app.
  *
- * Master's `errorHandler` (with the 22P02 backstop) and the 5xx error mask are app-wide
- * (`app.ts`), as master registered them.
+ * `errorHandler` (with the 22P02 backstop) and the 5xx error mask are app-wide (`app.ts`).
  *
  * Each family is registered in its own wrapper scope, so a malformed-id guard answers
- * with THAT family's not-found body (master's), and families whose route file already
- * validates its ids (staffing, performance, calls: master's own 400s) get none.
+ * with THAT family's not-found body, and families whose route file already validates its
+ * ids (staffing, performance, calls: their own 400s) get none.
  */
 export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = async (app, opts) => {
   app.addHook('preHandler', rejectMalformedTenantHeader());
 
-  // Phase 6's runtime (core `src/index.ts:694-696` handed `agencyRuntime` to both agency
-  // plugins). Created here with a context, as Phase 6's plugin did; every READ of it is a
-  // lookup per request (`getAgencyRuntime()`), never a reference captured at registration,
+  // The agency runtime, which both agency handler plugins use. Created here with a
+  // context; every READ of it is a lookup per request (`getAgencyRuntime()`), never a reference captured at registration,
   // so a runtime replaced after `buildApp` (tests reset it) is the one a request sees.
   // Without a context (route-table tests) there is none, and a runtime-backed handler
   // answers through its own error path (the strip's `bestEffort`, a 500 elsewhere).
@@ -81,13 +75,13 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
         appliedVersion: (tenantId: string) =>
           dncAvailabilityProbe(getAgencyRuntime()?.dnc).appliedVersion(tenantId),
       },
-      // Core passed `agencyRuntime.stations` (`index.ts:695`). Without a runtime the strip
+      // The runtime's station registry. Without a runtime the strip
       // degrades to `connected: null` ("unknown") through the handler's own `bestEffort`.
       stations: {
         connectedBySession: (sessionIds: readonly string[]) => liveRuntime().stations.connectedBySession(sessionIds),
       },
     },
-    // Lane C's guard host owns core's `accountConcurrencyGuard` (seams §3.1). Without a
+    // The voice engine's guard host owns `accountConcurrencyGuard`. Without a
     // context (route-table tests) the read degrades to `null`, as a Redis fault would.
     callManager: opts.ctx
       ? ensureVoiceEngine(opts.ctx.redis).guardHost
@@ -97,8 +91,8 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
           },
         },
   };
-  // Core's `agencyRoutes(app, agencyRuntime)` (sessions and attempts) gets the runtime as a
-  // per-access lookup (`lazyRuntime`), so the handler module stays core's verbatim.
+  // `agencyRoutes(app, agencyRuntime)` (sessions and attempts) gets the runtime as a
+  // per-access lookup (`lazyRuntime`), so the handler module keeps its plain signature.
   const core = await buildCoreHandlers({ campaigns: campaignDeps, agency: { runtime: lazyRuntime() } });
   setCoreHandlers(core);
   app.addHook('onClose', async () => {
@@ -110,10 +104,9 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
 
   // ── Campaigns: CRUD, config, stats, series, activity, spine, retry, lifecycle, ingest ──
   await app.register(async (scope) => {
-    // A malformed campaign id is core's `campaign_not_found` 404, the answer master gave
-    // for an id it could not find (B1/B2 carry-forward: never a `22P02` 500). Only under
-    // `/campaigns/`: this plugin's `/ingest/jobs/:id` is an ingest job, which the handler
-    // answers itself (master's `isIngestJobId` → 404 `Import not found.`).
+    // A malformed campaign id is the `campaign_not_found` 404 an unknown id gets (never a
+    // `22P02` 500). Only under `/campaigns/`: this plugin's `/ingest/jobs/:id` is an ingest
+    // job, which the handler answers itself (`isIngestJobId` → 404 `Import not found.`).
     scope.addHook('preHandler', rejectMalformedIdParams(
       { id: CAMPAIGN_NOT_FOUND },
       { onlyUnder: `${P.proxyAgency}/campaigns/` },
@@ -121,41 +114,41 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
     await scope.register(proxyAgencyCampaignsRoutes, { prefix: P.proxyAgency });
   });
 
-  // ── Staffing (master-native; its own zod 400 for `:id` / `:userId`) ─────────────────
+  // ── Staffing (its own zod 400 for `:id` / `:userId`) ───────────────────────────────
   await app.register(async (scope) => {
     await scope.register(proxyAgencyStaffingRoutes, { prefix: P.proxyAgency });
   });
 
-  // ── Agent performance (master's own 400 for `:userId`) ─────────────────────────────
+  // ── Agent performance (its own 400 for `:userId`) ──────────────────────────────────
   await app.register(async (scope) => {
     await scope.register(proxyAgencyPerformanceRoutes, { prefix: P.proxyAgency });
   });
 
-  // ── The agency call read (master's `requireUuidPathParams`, 400) ────────────────────
+  // ── The agency call read (`requireUuidPathParams`, 400) ─────────────────────────────
   await app.register(async (scope) => {
     await scope.register(proxyAgencyCallsRoutes, { prefix: P.proxyAgency });
   });
 
-  // ── Call-analysis profiles (lane D's port of core's routes; master's passthrough collapsed) ──
+  // ── Call-analysis profiles ─────────────────────────────────────────────────────────
   await app.register(async (scope) => {
-    // Core's handlers answer an unknown profile with 404 `Analysis profile not found`
-    // (master forwarded it); a malformed id gets the same answer instead of a `22P02`.
+    // The handlers answer an unknown profile with 404 `Analysis profile not found`; a
+    // malformed id gets the same answer instead of a `22P02`.
     scope.addHook('preHandler', rejectMalformedIdParams({
       id: { status: 404, body: { error: 'Not Found', message: 'Analysis profile not found' } },
     }));
     await scope.register(callAnalysisProfilesRoutes, {
       prefix: P.callAnalysisProfiles,
       auth: platformProfileRouteAuth(),
-      // B1's repository carries both methods core's reference check reads
+      // The agency repository carries both methods the reference check reads
       // (`findLiveDependentsOnAnalysisProfile`, `countLiveCampaignsInheritingAccountDefault`);
-      // without it lane D's PUT/DELETE answer 503 rather than retire a profile unguarded.
+      // without it PUT/DELETE answer 503 rather than retire a profile unguarded.
       dependents: agencyCampaignRepository,
     });
   });
 
-  // ── DNC (master-native: no core hop) ───────────────────────────────────────────────
+  // ── DNC (no internal handler hop) ──────────────────────────────────────────────────
   await app.register(async (scope) => {
-    // master `dnc.routes.ts` DELETE answers 404 `DNC entry not found` for an id it cannot
+    // `dnc.routes.ts` DELETE answers 404 `DNC entry not found` for an id it cannot
     // find in the caller's scope; a malformed id is the same answer.
     scope.addHook('preHandler', rejectMalformedIdParams({
       id: { status: 404, body: { error: 'Not Found', message: 'DNC entry not found' } },
@@ -163,16 +156,15 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
     await scope.register(dncRoutes, { prefix: P.dnc });
   });
 
-  // ── The caller-ID list (master-native: no core hop; no path params) ──────────────────
+  // ── The caller-ID list (no internal handler hop; no path params) ─────────────────────
   await app.register(async (scope) => {
     await scope.register(phoneNumberRoutes, { prefix: P.phoneNumbers });
   });
 
-  // ── Agent and supervisor actions (master `proxy-agency-agent.routes.ts`) ─────────────
+  // ── Agent and supervisor actions (`proxy-agency-agent.routes.ts`) ────────────────────
   await app.register(async (scope) => {
-    // Core answers an id it cannot find with 404 `Session not found` / `Attempt not found`
-    // (`requireOwnedSession` / `requireOwnedAttempt`), which master forwarded; a malformed
-    // id is the same answer rather than a `uuid`-cast 22P02.
+    // The handlers answer an id they cannot find with 404 `Session not found` / `Attempt not
+    // found` (`requireOwnedSession` / `requireOwnedAttempt`); a malformed id is the same answer rather than a `uuid`-cast 22P02.
     scope.addHook('preHandler', rejectMalformedIdParams(
       { id: { status: 404, body: { error: 'Not Found', message: 'Session not found' } } },
       { onlyUnder: `${P.proxyAgency}/sessions/` },
@@ -184,9 +176,9 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
     await scope.register(proxyAgencyAgentRoutes, { prefix: P.proxyAgency });
   });
 
-  // ── The agent station socket, at the console's path (master's route, collapsed) ─────
-  // Phase 6 mounted `registerStationSocket` at core's `/api/v1/agency/station/:sessionId`;
-  // the console calls master's path, and core's is no longer registered (see the route).
+  // ── The agent station socket, at the console's path ────────────────────────────────
+  // Served only at `/proxy/agency/station/:sessionId`: the route hands the socket to
+  // `handleStationSocket`. `/api/v1/agency/station` is not registered (see the route).
   await app.register(proxyAgencyStationRoutes, {
     prefix: P.proxyAgencyStation,
     getRuntime: () => (ctx ? getAgencyRuntime() : null),
@@ -202,7 +194,7 @@ function liveRuntime(): AgencyRuntime {
 
 /**
  * An `AgencyRuntime` whose every member is read from the current runtime at access time.
- * Core's `agencyRoutes` takes the runtime object once at registration; this keeps that
+ * `agencyRoutes` takes the runtime object once at registration; this keeps that
  * signature without pinning whichever instance existed then.
  */
 function lazyRuntime(): AgencyRuntime {

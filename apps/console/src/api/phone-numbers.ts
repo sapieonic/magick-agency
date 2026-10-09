@@ -9,7 +9,7 @@ export async function listMyPhoneNumbers(tenantId: string, accountId?: string): 
   return res.phone_numbers;
 }
 
-// PORT NOTE (magick-agency): cusui's tag/untag and inbound-configuration calls
-// (`tagPhoneNumber`, `untagPhoneNumber`, `listInboundConfig`, `putInboundConfig`,
-// `deleteInboundConfig`, `checkInboundConflict`) are not ported — AI-platform
-// number management, with no console caller in agency.
+// There are no tag/untag or inbound-configuration calls (`tagPhoneNumber`,
+// `untagPhoneNumber`, `listInboundConfig`, `putInboundConfig`,
+// `deleteInboundConfig`, `checkInboundConflict`): that is AI-platform number
+// management, with no console caller in agency.

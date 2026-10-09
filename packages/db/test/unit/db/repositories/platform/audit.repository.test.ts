@@ -6,10 +6,7 @@ vi.mock('../../../../../src/connection.js', () => ({ getPool: () => mocks.pool }
 import { AuditRepository } from '../../../../../src/repositories/platform/audit.repository.js';
 
 /*
- * PORT NOTE (magick-agency): ported from master
- * test/unit/db/repositories/audit.repository.test.ts@a1f0756a to `platform/`
- * (the repository's own path; core's audit repository holds the source path).
- *  - `api_key_id` is no longer a column (baseline; decision #5): each row binds
+ *  - `api_key_id` is not a column (baseline): each row binds
  *    10 values, so placeholders are `$1..$10` / `$11..$20` and every parameter
  *    index after `actor_type` (3) moves down by one.
  *  - DELETED: "writes the key id and NO user id for an api_key actor" and
@@ -17,10 +14,10 @@ import { AuditRepository } from '../../../../../src/repositories/platform/audit.
  *  - MODIFIED: "refuses to write a user id smuggled onto an api_key row" now
  *    smuggles it onto a `system` row — the remaining non-human shape, and the
  *    same repository narrowing (`actor_type === 'human' ? user_id : null`).
- *  - `ACTIVITY_EXPORT_PAGE_SIZE` is master's `src/agency/agency-activity.ts:184`
- *    constant, which lane B2 ports into the server; this package cannot import
+ *  - `ACTIVITY_EXPORT_PAGE_SIZE` is the server's activity-export constant
+ *    (apps/server/src/agency/agency-activity.ts); this package cannot import
  *    it, so its value is restated here.
- * Mocked pool: ids and action strings are master's, nothing reaches Postgres.
+ * Mocked pool: ids and action strings are arbitrary, nothing reaches Postgres.
  */
 const ACTIVITY_EXPORT_PAGE_SIZE = 500;
 
@@ -79,7 +76,7 @@ describe('AuditRepository', () => {
     });
 
     /**
-     * The columns the actor union writes, one shape per branch (86d45t7rm).
+     * The columns the actor union writes, one shape per branch.
      *
      * These are the assertions that make the repair real rather than declared:
      * the whole point of the change is that a key-authenticated row must NOT
@@ -98,7 +95,7 @@ describe('AuditRepository', () => {
         const [sql, params] = mocks.pool.query.mock.calls[0]!;
         expect(params[2]).toBe('u-1');
         expect(params[3]).toBe('human');
-        // PORT NOTE: there is no key-id column to be null; assert it is not written.
+        // There is no key-id column to be null; assert it is not written.
         expect(sql).not.toContain('api_key_id');
       });
 

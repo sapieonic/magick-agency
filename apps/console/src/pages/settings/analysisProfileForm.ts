@@ -67,7 +67,7 @@ export const DIMENSION_TYPE_LABELS: Record<DimensionRow['type'], string> = {
  *
  *  Every field lands in a controlled input and is `.trim()`ed on the very next
  *  render (`toValidDimensions` runs in the page's preview `useMemo`), so a NULL
- *  echoed by core has to become `''` HERE. The dimension list is core's shared
+ *  echoed by the API has to become `''` HERE. The dimension list is the API's shared
  *  `analyticsDimensionSchema`, stored as JSONB — see `StoredAnalyticsDimension`
  *  — and a prompt template's copy of it blanked the call-script editor for
  *  exactly this reason. */
@@ -90,7 +90,7 @@ export function profileToForm(profile: CallAnalysisProfile): AnalysisProfileForm
 /**
  * The dimensions that will actually be saved.
  *
- * PERMISSIVE by design (§13): a row the user started and abandoned is silently
+ * PERMISSIVE by design: a row the user started and abandoned is silently
  * dropped, not turned into a blocking validation error. Erroring on a half-typed
  * row punishes exploration, and there is nothing the user could usefully do with
  * the error beyond deleting the row we can drop for them.
@@ -104,7 +104,7 @@ export function profileToForm(profile: CallAnalysisProfile): AnalysisProfileForm
  * across the list, since two rows sharing a key would silently merge into one
  * captured value.
  * An `enum` with no usable choices degrades to free Text rather than being
- * rejected — core requires ≥2 options for an enum, and silently downgrading beats
+ * rejected — the API requires ≥2 options for an enum, and silently downgrading beats
  * a 400 the user can't act on.
  */
 export function toValidDimensions(rows: DimensionRow[]): AnalyticsDimension[] {
@@ -123,7 +123,7 @@ export function toValidDimensions(rows: DimensionRow[]): AnalyticsDimension[] {
     const existing = row.key.trim();
     const preserved = isValidDimensionKey(existing);
 
-    // A description of pure punctuation snake-cases to nothing; core requires a
+    // A description of pure punctuation snake-cases to nothing; the API requires a
     // non-empty key, so drop those rather than send an invalid payload.
     const derived = preserved ? existing : toDimensionKey(description);
     if (!derived) continue;

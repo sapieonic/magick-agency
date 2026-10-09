@@ -4,44 +4,39 @@ import type { AgencyCampaignRecord } from '../db/models/agency.model.js';
 import type { AgencyIngestContact } from './agency-csv-ingest.js';
 
 /*
- * PORT NOTE (magick-agency): the roster hand-off collapses (plan §1, decision B9). Master's
- * `sendRosterChunk` POSTed to core's `/internal/agency-campaigns/:id/contacts`
- * (core `src/api/routes/agency.routes.ts:1892-1962`@4850d1d9); that handler's body now runs
- * in-process here, against the same repository calls. Gone: the HTTP call, `withRetry`
- * (transport retries), the S2S token. The exported API, request/response types and error
- * classes are unchanged, so `agency-ingest.service.ts` ports unchanged. See PORTING.md,
- * "Lane B2 — roster hand-off".
+ * The roster hand-off from the ingest service to the dialer's contact table. It is a
+ * direct, in-process call: `sendRosterChunk` validates the chunk, checks the caller owns
+ * the campaign, and applies it through `agencyContactRepository.applyIngestChunk`. There
+ * is no transport, so there is no transport retry and no service token. The request and
+ * response types and the error classes are the interface `agency-ingest.service.ts`
+ * builds against.
  */
 
 const log = createChildLogger({ component: 'agency-roster-client' });
 
 /**
- * S2S client for streaming a parsed roster into core, 500 contacts per chunk
- * (design §2.2).
+ * Streams a parsed roster into the campaign's contacts, 500 contacts per chunk.
  *
  * ── Idempotency is the whole point of this module ──────────────────────────
- * The design omitted it; QA caught the gap. A retried chunk without it inserts
- * the contacts twice, and those duplicates then dial twice down two independent
- * attempt chains — which core's `uq_agency_attempt_live` **cannot** catch,
- * because it is unique on `contact_id` and the duplicates are two *different*
- * contact ids. The backstop that looks like it covers this does not.
+ * A chunk applied twice without it inserts the contacts twice, and those
+ * duplicates then dial twice down two independent attempt chains — which
+ * `uq_agency_attempt_live` **cannot** catch, because it is unique on
+ * `contact_id` and the duplicates are two *different* contact ids. The backstop
+ * that looks like it covers this does not.
  *
- * So every chunk carries a key that is stable across every retry of that chunk:
- * `{ingest_job_id}-{chunk_index}`. Core applies the chunk and records the key in
- * `agency_ingest_chunks` under a real UNIQUE, in **one transaction**, so a
- * replay is a single-row conflict rather than 500 upserts. Agreed with the core
- * owner rather than assumed; the shape below is that agreement.
+ * So every chunk carries a key that is stable for that chunk:
+ * `{ingest_job_id}-{chunk_index}`. `applyIngestChunk` applies the chunk and
+ * records the key in `agency_ingest_chunks` under a real UNIQUE
+ * (`uq_agency_ingest_chunk`), in **one transaction**, so a replay is a single-row
+ * conflict rather than 500 upserts.
  *
- * Retries are what make this necessary and are therefore deliberate, not
- * incidental: `withRetry` on a chunk is safe precisely *because* the key makes a
- * duplicate delivery a no-op. Never send a chunk without one.
+ * This module does not retry, but a second delivery of the same key is still a
+ * no-op (`duplicate_chunk: true`) rather than a duplicate roster. Never send a
+ * chunk without one.
  *
- * ── What this client does NOT do ───────────────────────────────────────────
- * No credit reservation. `chunked-dispatch.ts` reserves per recipient because
- * each of its chunks places calls; a roster chunk places none. Agency billing is
- * per connected call and per dial attempt, settled by core when those happen —
- * loading a contact costs nothing, and reserving here would bill a campaign that
- * is never started.
+ * ── What this module does NOT do ───────────────────────────────────────────
+ * No credit reservation or billing: there is none in v1 (decision S6), and a
+ * roster chunk places no calls — loading a contact costs nothing.
  */
 
 /** Contacts per chunk. Matches the ingest module's batch size by construction. */
@@ -51,81 +46,79 @@ export interface RosterChunkRequest {
   campaignId: string;
   tenantId: string;
   accountId?: string;
-  /** Master's job id. Stable across every retry of every chunk in this ingest. */
+  /** The ingest job's id. Stable for every chunk in this ingest. */
   ingestJobId: string;
   /** 0-based. */
   chunkIndex: number;
-  /** Total chunks, so core can report completeness. Omitted while unknown. */
+  /** Total chunks, so the final chunk can report completeness. Omitted while unknown. */
   chunkCount?: number;
-  /** Marks the last chunk; core flips `contacts_total` and reports completeness. */
+  /** Marks the last chunk; the completeness check runs on it. */
   isFinal: boolean;
   contacts: AgencyIngestContact[];
 }
 
 export interface RosterChunkResponse {
-  /** Contacts core inserted. 0 on a replay. */
+  /** Contacts inserted. 0 on a replay. */
   accepted: number;
-  /** True when core had already applied this key — a no-op, not an error. */
+  /** True when this key had already been applied — a no-op, not an error. */
   duplicate_chunk: boolean;
-  /** Core's running roster total for the campaign. */
+  /** The campaign's running roster total. */
   total_contacts: number;
   /**
-   * Rows in this chunk that core's
+   * Rows in this chunk that
    * `ON CONFLICT (campaign_id, row_fingerprint) DO NOTHING` refused because the
-   * roster already held that row **verbatim** — same phone, same context, same
+   * roster already held that row **exactly** — same phone, same context, same
    * timezone. **This is the field that makes `accepted` trustworthy**: without
-   * it, a chunk core wrote zero rows from still reports whatever `accepted`
-   * value happened to default to, and the operator sees "5,000 accepted" for an
-   * import that changed nothing.
+   * it, a chunk that wrote zero rows still reports whatever `accepted` value
+   * happened to default to, and the operator sees "5,000 accepted" for an import
+   * that changed nothing.
    *
-   * The conflict target is CONTENT since core's migration 083, not
+   * The conflict target is CONTENT (`uq_agency_contacts_row_fingerprint`), not
    * `(campaign_id, source_row_number)` — the row number is a position within one
-   * file, so under the old key a second CSV's rows 2..N collided with the first
-   * file's wholesale and a top-up could never land. What that changes for this
-   * field is what a non-zero value *means*: no longer "this campaign is already
-   * populated" but "you sent us these exact people again". A genuine top-up of
-   * new people now reports zero here.
+   * file, so keyed on it a second CSV's rows 2..N would collide with the first
+   * file's wholesale and a top-up could never land. So a non-zero value means
+   * "you sent these exact people again", not "this campaign is already
+   * populated". A genuine top-up of new people reports zero here.
    *
-   * 0 when core omits the field (an older core), and 0-meaning-**unknown** on a
-   * replay of a chunk core applied before its migration 084 — read
-   * `rejection_counts_unavailable` before treating a zero as "core refused
-   * nothing". Never an overcount, in any of those cases.
+   * 0 when the field is absent, and 0-meaning-**unknown** on a replay of a chunk
+   * whose counts were never recorded — read `rejection_counts_unavailable` before
+   * treating a zero as "nothing was refused". Never an overcount, in any of those
+   * cases.
    */
   rejected_duplicate_rows: number;
   /**
-   * A capped sample of the colliding `source_row_number`s (core's own cap is 20
-   * per chunk — see `MAX_REPORTED_DUPLICATE_ROWS` in core's
-   * `agency.repository.ts`). A sample, not the full set, on a large campaign.
-   * `[]` when core omits the field or nothing collided.
+   * A capped sample of the colliding `source_row_number`s (20 per chunk — see
+   * `MAX_REPORTED_DUPLICATE_ROWS` in `src/db/repositories/agency.repository.ts`).
+   * A sample, not the full set, on a large campaign. `[]` when the field is
+   * absent or nothing collided.
    */
   duplicate_source_rows: number[];
   /**
-   * Set (and only ever `true`) by core when THIS response's
+   * Set (and only ever `true`) by `applyIngestChunk` when THIS response's
    * `rejected_duplicate_rows: 0` means **"unknown"**, not **"none"** — a replay
-   * of a chunk core applied before its migration 084, whose counts were never
-   * recorded and cannot be reconstructed (a row refused by
-   * `uq_agency_contacts_row_fingerprint` leaves no residue to count).
+   * of a chunk whose counts were never recorded (`agency_ingest_chunks`
+   * `rejected_duplicate_rows IS NULL`) and cannot be reconstructed (a row refused
+   * by `uq_agency_contacts_row_fingerprint` leaves no residue to count).
    *
    * **Absence means the counts are trustworthy**, and that is the fail-safe
    * reading rather than an accident of encoding: every fresh application, and
-   * every replay of a chunk applied from 084 onward, reports an exact number —
-   * including an exact 0. So a core that predates the flag behaves here exactly
-   * as it did before this field existed, which is why it is a separate optional
-   * boolean instead of widening `rejected_duplicate_rows` to nullable.
+   * every replay of a chunk whose counts were recorded, reports an exact number —
+   * including an exact 0. That is why it is a separate optional boolean instead
+   * of widening `rejected_duplicate_rows` to nullable.
    *
    * Left `undefined` rather than defaulted to `false` below, for the same reason
-   * core sends it that way: the shapes "core said trustworthy" and "core never
-   * mentioned it" must not be forced to differ, and neither must be inventable
-   * by master.
+   * the repository sets it that way: the shapes "said trustworthy" and "never
+   * mentioned it" must not be forced to differ, and neither must be invented by
+   * this module.
    */
   rejection_counts_unavailable?: boolean;
   /** Only on the final chunk: whether every chunk index was seen. */
   roster_complete?: boolean;
-  /** Only on the final chunk: indexes core never received. */
+  /** Only on the final chunk: indexes never received. */
   missing_chunks?: number[];
 }
 
-/** Why master is retiring a roster. Echoed to core for its audit row. */
+/** Why a roster is being retired. Recorded on the audit row. */
 export type RosterSupersedeReason = 'replace' | 'clear';
 
 export interface RosterSupersedeRequest {
@@ -140,7 +133,7 @@ export interface RosterSupersedeRequest {
    * about which failure it prevents. Supersede runs BEFORE the first chunk, so
    * on the first call this job owns no rows and everything live is retired. A
    * REDELIVERY, though, can land after chunks have started arriving — a lost
-   * response plus `withRetry` is exactly that shape — and an unscoped "retire
+   * response followed by a retry is exactly that shape — and an unscoped "retire
    * every live contact" would then destroy the replacement it had just loaded.
    * Scoping by the job id makes the second call a no-op over its own rows
    * instead.
@@ -156,10 +149,10 @@ export interface RosterSupersedeRequest {
    * top-up between the screen and the click changes it, and that is precisely
    * the case where "retire everything" is not what anybody meant.
    *
-   * Core enforces it under the campaign row lock; master cannot, because master
-   * holds no contact table and any count it read would be stale by the time it
-   * acted on it — the same argument the PATCH handler already makes about
-   * campaign status.
+   * It has to be enforced under the campaign row lock, in the same transaction
+   * as the retire: any count read earlier would be stale by the time it was
+   * acted on — the same argument the PATCH handler already makes about campaign
+   * status.
    */
   expectedContactsTotal: number;
   reason: RosterSupersedeReason;
@@ -170,71 +163,72 @@ export interface RosterSupersedeResponse {
   superseded: number;
   /** Contacts left dialable — this job's own rows, or 0 for a clear. */
   retained: number;
-  /** Core's post-supersede roster total for the campaign. */
+  /** The campaign's post-supersede roster total. */
   contacts_total: number;
-  /** True when core found the work already done — a retry, not an error. */
+  /** True when the work was found already done — a retry, not an error. */
   already_applied: boolean;
   /**
-   * How many HTTP attempts this call took. `1` means the first one answered.
+   * How many attempts this call took. `1` means the first one answered.
    *
    * Exposed because it is the ONLY thing that distinguishes "the roster is
-   * untouched" from "the roster may already be gone", and neither core's body nor
-   * its status can say which. See {@link RosterSupersedeError.attempts}.
+   * untouched" from "the roster may already be gone", and neither the result body
+   * nor its status can say which. See {@link RosterSupersedeError.attempts}.
    */
   attempts: number;
 }
 
 /**
- * Core refused, or could not be asked. Carries core's own code where it gave
- * one, so the ingest job can record something an operator can act on.
+ * The supersede was refused, or could not be performed. Carries the refusal's
+ * own code where there is one, so the ingest job can record something an
+ * operator can act on.
  */
 export class RosterSupersedeError extends Error {
   constructor(
     message: string,
     /**
-     * Core's HTTP status.
+     * The refusal's HTTP-style status (404 for `unsupported` today).
      *
      * **Named `coreStatus`, not `status`, and that is load-bearing.** Fastify's
      * error handler reads `error.status` (as well as `error.statusCode`) off any
-     * thrown value and reflects it to the client — so an error carrying core's
-     * 404 would answer the BROWSER 404 when the clear route lets it propagate,
+     * thrown value and reflects it to the client — so an error carrying a 404
+     * would answer the BROWSER 404 when the clear route lets it propagate,
      * silently bypassing the error mask and telling an operator their campaign
-     * does not exist when what actually happened is that this deployment is
-     * wired wrong. The route deliberately rethrows the `unsupported` case; this
-     * name is what makes that rethrow mean "server fault" instead of "core's
+     * does not exist when what actually happened is that this deployment cannot
+     * do the operation. The route deliberately rethrows the `unsupported` case;
+     * this name is what makes that rethrow mean "server fault" instead of "this
      * status, whatever it was".
      */
     public readonly coreStatus: number,
     /**
-     * `unsupported` when core does not implement the hop at all. That case is
-     * separated because it is an OPERATOR-blameless deployment error — the
-     * message has to say "this deployment cannot do that yet", not "your
-     * campaign is busy".
+     * `unsupported` when the operation is not implemented at all — the only code
+     * thrown today (decision B15). That case is separated because it is an
+     * OPERATOR-blameless deployment gap — the message has to say "this deployment
+     * cannot do that yet", not "your campaign is busy".
      */
     public readonly code:
       | 'unsupported'
       | 'campaign_not_found'
       | 'refused'
       | 'failed',
-    /** Core's machine-readable refusal reason, when it sent one. */
+    /** The machine-readable refusal reason, when there is one. */
     public readonly coreCode?: string,
     /**
-     * How many HTTP attempts were made before this error.
+     * How many attempts were made before this error. Always `1` today:
+     * `supersedeRoster` refuses on its first attempt.
      *
      * ── Why an error needs an attempt count ──────────────────────────────────
-     * `supersedeRoster` retries, and `withRetry` runs `attempt <= maxRetries` —
-     * so `maxRetries: 3` is **four** attempts, not three. That makes the
-     * following interleaving reachable, and it was reported as a clean failure:
+     * An implementation that retries makes this interleaving reachable, and it
+     * reads as a clean failure:
      *
      *   1. attempt 1 retires 5,000 contacts and COMMITS;
-     *   2. its response is lost (the 30s timeout fires, or the socket drops);
-     *   3. attempt 2 asks again — core's compare-and-swap now sees a roster of 0
+     *   2. its result is lost before the caller sees it;
+     *   3. attempt 2 asks again — the compare-and-swap now sees a roster of 0
      *      against `expected_contacts_total: 5000` and answers
      *      `409 contacts_total_mismatch`;
-     *   4. master reports a refusal.
+     *   4. the caller reports a refusal.
      *
-     * Every signal available at step 4 says "core said no". The roster is gone.
-     * So `attempts > 1` is the discriminator: **after a retry, master cannot
+     * Every signal available at step 4 says "refused". The roster is gone.
+     * So `attempts > 1` is the discriminator: **after a retry, the caller cannot
      * claim the roster is intact for ANY final code**, because the attempt that
      * could have committed is not the one that answered. `attempts === 1` is the
      * only case where "nothing was touched" is provable.
@@ -253,27 +247,23 @@ export class RosterSupersedeError extends Error {
 }
 
 /**
- * Is this 404 core telling us the CAMPAIGN does not exist?
+ * Does this 404 body say the CAMPAIGN does not exist?
+ *
+ * Not called anywhere in `src/` today: `supersedeRoster` refuses without
+ * consulting anything.
  *
  * ── Why the test is positive, not negative ──────────────────────────────────
- * Two very different things arrive as 404 here: core saying "no such campaign",
- * and *anything between us and core* saying "no such route" — Fastify's own
- * not-found handler, but also an ingress, a service mesh sidecar or a
- * misconfigured load balancer, which answer HTML or a vendor JSON envelope that
- * looks nothing like either.
- *
- * The first version of this matched Fastify's `Route POST:/… not found` string
- * and treated everything else as a campaign 404. That defaults the UNKNOWN case
- * to the operator-blaming answer: an ingress 404 became "Campaign not found",
- * which the clear route then answers to the browser as a 404 — the same
- * misleading outcome the `coreStatus` rename fixed, reached through the
- * classifier instead of through Fastify.
+ * A 404 can mean "no such campaign" or "no such route", and only the first may
+ * be reported to an operator as "Campaign not found" — the clear route answers
+ * that to the browser as a 404. Defaulting the UNKNOWN case to the
+ * operator-blaming answer is the same misleading outcome the `coreStatus` name
+ * guards against, reached through a classifier instead of through Fastify.
  *
  * So the recognition is positive and narrow: only a body that actually looks like
- * core's campaign-404 is treated as one. Everything else — HTML, an empty body, a
- * proxy envelope, 405, 501 — is `unsupported`, i.e. "this deployment cannot serve
- * the hop", which surfaces as a masked 5xx plus a full log line. Unknown 404s
- * become OUR problem to investigate rather than the operator's to misread.
+ * the campaign-404 is treated as one. Everything else — HTML, an empty body, a
+ * vendor envelope, 405, 501 — is `unsupported`, i.e. "this deployment cannot do
+ * that", which surfaces as a masked 5xx plus a full log line. Unknown 404s become
+ * OUR problem to investigate rather than the operator's to misread.
  */
 function isCoreCampaignNotFound(body: unknown): boolean {
   if (typeof body !== 'object' || body === null) return false;
@@ -282,33 +272,32 @@ function isCoreCampaignNotFound(body: unknown): boolean {
 }
 
 /**
- * Retire a campaign's roster in core, so a replace or a clear can proceed.
+ * Retire a campaign's roster, so a replace or a clear can proceed.
  *
- * ── ⚠️ CORE DOES NOT IMPLEMENT THIS YET ────────────────────────────────────
- * The specification below is the request master sends; core owns the semantics.
- * Until core ships it, every call fails `unsupported` and the caller must have
- * mutated nothing. That is the gate that stops a half-built destructive path
- * from looking like it works.
+ * ── ⚠️ NOT IMPLEMENTED (decision B15) ──────────────────────────────────────
+ * Every call refuses `unsupported` with one attempt and touches nothing; the
+ * ingest service then fails the job `replace_unsupported`, and
+ * `POST /campaigns/:id/roster/clear` refuses. That is the gate that stops a
+ * half-built destructive path from looking like it works. What an
+ * implementation has to provide:
  *
- *   POST /internal/agency-campaigns/:id/roster/supersede
- *   { tenant_id, account_id?, ingest_job_id?, expected_contacts_total, reason }
- *   → 200 { superseded, retained, contacts_total, already_applied }
- *   → 409 { code: 'campaign_dialing' | 'attempts_live' | 'contacts_total_mismatch' }
- *   → 404 campaign not found (body must contain "Campaign not found" — see
- *         `isCoreCampaignNotFound`; any other 404 is read as "no such route")
+ *   input  { campaignId, tenantId, accountId?, ingestJobId?, expectedContactsTotal, reason }
+ *   result { superseded, retained, contacts_total, already_applied }
+ *   refuse `campaign_dialing` | `attempts_live` | `contacts_total_mismatch`,
+ *          or `campaign_not_found`
  *
- * ── ⚠️ WHAT CORE MUST ADD BEFORE THIS CAN WORK — THREE SCHEMA CHANGES ───────
- * Verified against core at `132a48c`. **None of these exists yet**, and the
- * ordering argument below is invalid without the first two:
+ * ── ⚠️ WHAT THE SCHEMA NEEDS BEFORE THIS CAN WORK — THREE CHANGES ──────────
+ * **None of these exists in `0001_baseline.sql`**, and the ordering argument
+ * below is invalid without the first two:
  *
  * 1. **`agency_contacts.superseded_at TIMESTAMPTZ`** (nullable). There is no such
- *    column today — nothing in core's schema can express "retired". The state
+ *    column today — nothing in the schema can express "retired". The state
  *    machine's `suppressed` + a `suppressed_reason` of `'superseded'` is the
  *    natural companion, but the timestamp is what makes the predicate in (2)
  *    writable.
  *
  * 2. **`uq_agency_contacts_row_fingerprint` must be narrowed to live rows.**
- *    Core's migration 083 creates it as
+ *    The baseline creates it as
  *
  *        CREATE UNIQUE INDEX uq_agency_contacts_row_fingerprint
  *          ON agency_contacts (campaign_id, row_fingerprint)
@@ -334,14 +323,10 @@ function isCoreCampaignNotFound(body: unknown): boolean {
  *
  * **Retire, not delete, and the schema is why.**
  * `agency_call_attempts.contact_id` is `REFERENCES agency_contacts(id) ON DELETE
- * CASCADE` (core migration 075), and that table's own comment calls itself "the
- * agency dialer audit spine". So a true `DELETE FROM agency_contacts` takes
- * every dial, disposition and note with it. Worse, it takes REVENUE: core's
- * hourly dial-attempt billing derives its count from those rows on every read
- * (`hourlyBuckets` in core's `agency.repository.ts`; `attempt-batcher.ts` states
- * "exactly-once with no durable state in core"), over a 48-hour lookback — so
- * deleting attempts inside an unposted hour silently reduces what master is ever
- * asked to bill, leaving no residue to reconcile against.
+ * CASCADE`, and that table's own comment calls itself "the agency dialer audit
+ * spine". So a true `DELETE FROM agency_contacts` takes every dial, disposition
+ * and note with it, and every count derived from those rows changes underneath
+ * whoever reads it next.
  *
  * **Ordering: retire FIRST, then ingest — and the reverse does not work.**
  * Ingesting first and retiring afterwards looks safer (a failure would leave the
@@ -352,37 +337,34 @@ function isCoreCampaignNotFound(body: unknown): boolean {
  * the roster entirely. Retiring first is the only order in which the replacement
  * can land.
  *
- * Note this argument is *conditional on core making the index change*, not on
- * core's present schema. Under today's unconditional index NEITHER order works,
- * which is why the change is listed as a prerequisite rather than a nicety.
+ * Note this argument is *conditional on the index change*, not on the present
+ * schema. Under today's unconditional index NEITHER order works, which is why the
+ * change is listed as a prerequisite rather than a nicety.
  *
  * The cost of that order is stated rather than hidden: a replace that dies
  * mid-file leaves a campaign with a retired roster and a partial new one. Two
- * things make that survivable — core refuses the whole operation while the
- * campaign can dial (so nothing is being called during the window), and the job
- * row records `replace_superseded_contacts` so the operator is told the number
+ * things make that survivable — the supersede refuses the whole operation while
+ * the campaign can dial (so nothing is being called during the window), and the
+ * job row records `replace_superseded_contacts` so the operator is told the number
  * instead of discovering it.
  */
 export async function supersedeRoster(
   request: RosterSupersedeRequest,
 ): Promise<RosterSupersedeResponse> {
   /**
-   * PORT NOTE (magick-agency): core @4850d1d9 does NOT implement
-   * `POST /internal/agency-campaigns/:id/roster/supersede` (core `agency.routes.ts:1827` names it
-   * as "future"; core's `083` header says it has no `superseded_at`, no retired state and no
-   * `ingest_job_id` on a contact). In production every call here therefore reached core's
-   * Fastify 404, which this function maps to `unsupported` (the 404/405/501 branch above) with
-   * ONE attempt, and the ingest service fails the job `replace_unsupported` before a single
-   * contact is touched. That is the behaviour ported — not an invented endpoint. When agency
-   * decides what replace/clear means (the three schema changes in the header), this body is the
-   * only place to build it. Stopped and reported to the lead; see PORTING.md.
+   * Refused, always (decision B15): the schema has no `superseded_at`, no retired
+   * contact state and no `ingest_job_id` on a contact. The refusal is
+   * `unsupported` with ONE attempt, so the ingest service fails the job
+   * `replace_unsupported` before a single contact is touched. When replace/clear
+   * is designed (the three schema changes in the header), this body is the only
+   * place to build it.
    */
   log.warn(
     { campaignId: request.campaignId, reason: request.reason },
     'Agency roster supersede refused: replace/clear is not implemented',
   );
   throw new RosterSupersedeError(
-    'This deployment cannot replace or clear a roster yet — the core service does not support it.',
+    'This deployment cannot replace or clear a roster yet — the dialer runtime does not support it.',
     404,
     'unsupported',
     undefined,
@@ -405,19 +387,19 @@ export class RosterChunkError extends Error {
  * Build the per-chunk idempotency key.
  *
  * Exported and tested directly because its ONLY required property — identical
- * for a retry, distinct for a different chunk — is invisible at the call site.
- * Bounded to core's `VARCHAR(128)` column: a UUID plus a separator plus an
- * index is ~45 characters, so the bound is comfortable, but it is asserted
- * rather than assumed.
+ * for a redelivery, distinct for a different chunk — is invisible at the call
+ * site. Bounded to `agency_ingest_chunks.idempotency_key VARCHAR(128)`: a UUID
+ * plus a separator plus an index is ~45 characters, so the bound is
+ * comfortable, but it is asserted rather than assumed.
  */
 export function rosterChunkKey(ingestJobId: string, chunkIndex: number): string {
   return `${ingestJobId}-${chunkIndex}`;
 }
 
 /**
- * Send one chunk. Retries on transport failure and 5xx; a 4xx is returned as an
- * error without retrying, because core rejecting the *shape* of a chunk will
- * reject it identically every time.
+ * Apply one chunk, in-process and once. A 4xx (a malformed chunk, or a campaign
+ * the caller does not own) is thrown as a {@link RosterChunkError}; a
+ * repository failure propagates as thrown.
  */
 export async function sendRosterChunk(request: RosterChunkRequest): Promise<RosterChunkResponse> {
   const { campaignId, chunkIndex, contacts } = request;
@@ -428,7 +410,7 @@ export async function sendRosterChunk(request: RosterChunkRequest): Promise<Rost
   if (result.status >= 400) {
     const body = result.body as { message?: string; error?: string } | null;
     throw new RosterChunkError(
-      body?.message ?? body?.error ?? `core rejected roster chunk ${chunkIndex}`,
+      body?.message ?? body?.error ?? `the dialer runtime rejected roster chunk ${chunkIndex}`,
       result.status,
       chunkIndex,
     );
@@ -437,7 +419,7 @@ export async function sendRosterChunk(request: RosterChunkRequest): Promise<Rost
   const body = (result.body ?? {}) as Partial<RosterChunkResponse>;
 
   if (body.duplicate_chunk) {
-    // Expected whenever a retry lands after core already committed. Logged at
+    // Expected whenever a chunk is delivered again after it committed. Logged at
     // info, not warn: this is the mechanism working, and alerting on it would
     // train people to ignore it.
     log.info(
@@ -454,7 +436,7 @@ export async function sendRosterChunk(request: RosterChunkRequest): Promise<Rost
     duplicate_source_rows: body.duplicate_source_rows ?? [],
     // Spread-if-present, matching `roster_complete` below: an absent flag must
     // stay absent rather than becoming an explicit `false`, because `false` is
-    // an assertion core did not make and only core can make it.
+    // an assertion the repository did not make and only it can make.
     ...(body.rejection_counts_unavailable !== undefined
       ? { rejection_counts_unavailable: body.rejection_counts_unavailable }
       : {}),
@@ -466,7 +448,6 @@ export async function sendRosterChunk(request: RosterChunkRequest): Promise<Rost
 /**
  * The 404 every refusal answers — an unknown campaign and one owned by somebody else alike, so
  * the response cannot be used to learn which campaign ids exist.
- * Core `agency.routes.ts:1816-1820` (`INTERNAL_CAMPAIGN_NOT_FOUND`), verbatim.
  */
 const INTERNAL_CAMPAIGN_NOT_FOUND = {
   error: 'Not Found',
@@ -477,10 +458,9 @@ const INTERNAL_CAMPAIGN_NOT_FOUND = {
 /**
  * Does the caller's stated tenant/account own this campaign?
  *
- * Core `agency.routes.ts:1841-1846` `ingestCallerOwnsCampaign` — `requireOwned`'s rule applied to
- * the request's tenant/account: both must match, exactly. **Legacy `account_id = 'default'`
- * campaigns get no special case**, and a missing account is refused as malformed before this
- * runs (core's rationale, unchanged).
+ * The internal handler's `requireOwned` rule applied to the request's tenant/account: both
+ * must match, exactly. No campaign gets a special case, and a missing account is refused as
+ * malformed before this runs.
  */
 export function ingestCallerOwnsCampaign(
   campaign: Pick<AgencyCampaignRecord, 'tenant_id' | 'account_id'>,
@@ -496,19 +476,17 @@ function nonEmptyString(value: unknown): value is string {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Core's `POST /agency-campaigns/:id/contacts` handler (`agency.routes.ts:1892-1962`), run
- * in-process. Returns the `{ status, body }` pair the HTTP hop returned so the caller's error
- * mapping is unchanged: 400 validation, 404 unknown-or-not-yours, 200 with the chunk result.
- * A repository/DB failure is NOT mapped (core's handler let it reach Fastify as a 500, which the
- * client then retried and finally rethrew as a plain `Error`): it propagates, and the ingest
- * service's `unexpected_error` arm records it.
+ * Validate and apply one roster chunk. Returns a `{ status, body }` pair so
+ * {@link sendRosterChunk}'s error mapping reads like a handler response: 400 validation, 404
+ * unknown-or-not-yours, 200 with the chunk result. A repository/DB failure is NOT mapped: it
+ * propagates, and the ingest service's `unexpected_error` arm records it.
  */
 async function applyRosterChunkInProcess(
   request: RosterChunkRequest,
   idempotencyKey: string,
 ): Promise<{ status: number; body: unknown }> {
   // Checked before the campaign is read, so a malformed request learns nothing about whether the
-  // id exists. (core :1894-1916)
+  // id exists.
   if (!nonEmptyString(request.tenantId) || !nonEmptyString(request.accountId)) {
     return {
       status: 400,
@@ -525,8 +503,8 @@ async function applyRosterChunkInProcess(
     };
   }
 
-  // PORT NOTE: a non-UUID id would be `22P02` in the repository's `$1::uuid` cast; over HTTP it
-  // was a 500 only for a malformed id, which no caller sends. Refused as an unknown campaign.
+  // A non-UUID id would be `22P02` in the repository's `$1::uuid` cast, which nothing maps to a
+  // status. No caller sends one; it is refused as an unknown campaign.
   if (!UUID_RE.test(request.campaignId)) return { status: 404, body: INTERNAL_CAMPAIGN_NOT_FOUND };
 
   const campaign = await agencyCampaignRepository.findById(request.campaignId);
@@ -534,7 +512,7 @@ async function applyRosterChunkInProcess(
   if (!ingestCallerOwnsCampaign(campaign, { tenantId: request.tenantId, accountId: request.accountId })) {
     // Same 404 as an unknown id. Logged because naming a campaign the caller does not own is
     // either a regression or a misuse — worth seeing, not worth telling the caller about.
-    // Not `tenantId`/`accountId`: on every other line those name the resource's owner. (core :1921-1939)
+    // Not `tenantId`/`accountId`: on every other line those name the resource's owner.
     log.warn(
       {
         campaignId: campaign.id,
@@ -561,7 +539,7 @@ async function applyRosterChunkInProcess(
 
   // On the final chunk, tell the caller whether the roster is actually whole. A lost final chunk
   // would otherwise leave a campaign permanently un-startable with nothing to diagnose it by;
-  // `missing_chunks` lets the caller re-send just the gap. (core :1953-1959)
+  // `missing_chunks` lets the caller re-send just the gap.
   let extra: Record<string, unknown> = {};
   if (request.isFinal && request.chunkCount) {
     const missing = await agencyContactRepository.missingChunks(campaign.id, request.ingestJobId, request.chunkCount);

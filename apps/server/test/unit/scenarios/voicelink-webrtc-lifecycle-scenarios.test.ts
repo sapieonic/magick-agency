@@ -1,21 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// PORT NOTE (magick-agency): ported from core test/unit/scenarios/voicelink-webrtc-lifecycle-scenarios.test.ts@4850d1d9
-// (3 cases → 3). Mock specifiers follow the new paths (logger → @magick-agency/observability,
-// webrtc-call repository → @magick-agency/db agency-call repository, account settings → the
-// @magick-agency/db repository with `getWebrtcMaxDurationSeconds` → null = the flag mock's 1800);
-// the settlement-dispatcher and feature-flag mocks are gone (no longer imported).
+// Mock specifiers: logger → @magick-agency/observability, webrtc-call repository →
+// the @magick-agency/db agency-call repository, account settings → the
+// @magick-agency/db repository (`getWebrtcMaxDurationSeconds` → null = the flag
+// mock's 1800).
 //
-// DELETED: none.
-// MODIFIED (3, all three cases): core's softphone `createCall(VL_PARAMS)` + owned
-// `attachBrowserLeg` (both deleted) → `createBridgedCall` with the browser socket borrowed at dial
-// time (the fake gains `off`); `forceEndByUser('call-1')` (deleted) → `forceEndWithOutcome('att-1',
-// 'ended_by_user')`, the same `localHangup`. Settlement assertions removed (agency never settles,
-// plan §9) → `trackWebrtcCallCompleted`, the terminal event `endCall` emits exactly once at the same
-// point (count and `status` / `talkTimeSeconds` in place of `call_type` / `status` /
-// `talk_time_seconds`). Cases: 'start → answer webhook → call.ended (remote) → completed + settled
-// once, carrier id captured', 'user hangup defers settlement until the real call.ended confirms
-// (ending window)', 'a `stop` frame before any `start` ends the call as no_answer (0 talk time)'.
+// The calls are created with `createBridgedCall`, with the browser socket borrowed
+// at dial time (the fake carries `off`); a user hangup is
+// `forceEndWithOutcome('att-1', 'ended_by_user')`, i.e. `localHangup`. The dialer
+// never settles, so the terminal event is `trackWebrtcCallCompleted`, which
+// `endCall` emits exactly once (asserted by count and by `status` /
+// `talkTimeSeconds`).
 
 // ═══════════════════════════════════════════════════════════════════════════
 // End-to-end VoiceLink WebRTC-bridge lifecycle scenarios driven with the REAL
@@ -39,8 +34,8 @@ vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
     telephony: {
-      vobiz: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/vobiz' },
-      voicelink: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/voicelink' },
+      vobiz: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/vobiz' },
+      voicelink: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/voicelink' },
     },
   },
 }));
@@ -83,8 +78,7 @@ vi.mock('../../../src/telephony/factory.js', () => ({
 
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn() } }));
 
-// PORT NOTE: hoisted so the terminal analytics event can stand in for core's settlement
-// dispatch (agency never settles, plan §9). Both fire exactly once per `endCall`.
+// Hoisted so the terminal analytics event is observable; it fires exactly once per `endCall`.
 const { mockAnalytics } = vi.hoisted(() => ({
   mockAnalytics: {
     trackWebrtcCallInitiated: vi.fn(),
@@ -98,11 +92,10 @@ import { WebRtcBridgeManager } from '../../../src/core/webrtc-bridge-manager.js'
 import { parseVoicelinkWebhook } from '../../../src/telephony/voicelink/voicelink.webhook.js';
 
 // ── Real captured payloads (from experiment/captures/2026-07-11T06-39-57-498Z) ──
-// start frame (007), call.answered (005), call.ended (009), call.completed (012),
-// stop frame (008). Kept verbatim so a shape change on VoiceLink's side fails here.
-// PORT NOTE: the `call.answered`/`call.ended` bodies carry `null`s the declared
-// `VoicelinkWebhookBody` type does not admit, so they are passed `as any` (type-only; this
-// tsconfig typechecks tests, core's did not).
+// start frame, call.answered, call.ended, call.completed and
+// stop frame. Kept exactly as captured so a shape change on VoiceLink's side fails here.
+// The `call.answered`/`call.ended` bodies carry `null`s the declared
+// `VoicelinkWebhookBody` type does not admit, so they are passed `as any` (type-only).
 const CARRIER_CALL_ID = 'fecdd5a7-5d14-415f-9222-a0f99b655cb0';
 
 const START_FRAME = {
@@ -174,7 +167,7 @@ function fakeWs() {
     sent: [] as any[],
     send(s: string) { this.sent.push(JSON.parse(s)); },
     on(ev: string, cb: (...a: any[]) => void) { (handlers[ev] ||= []).push(cb); },
-    // PORT NOTE: `off` added — a borrowed socket's listeners are removed at detach.
+    // `off` is needed — a borrowed socket's listeners are removed at detach.
     off(ev: string, cb: (...a: any[]) => void) {
       const list = handlers[ev];
       if (!list) return;
@@ -202,7 +195,7 @@ const VL_PARAMS = {
   destinationPhone: '+918093773107',
   provider: 'voicelink' as const,
 };
-/** PORT NOTE: the agency back-references every bridge call carries. */
+/** The agency back-references every bridge call carries. */
 const AGENCY = { campaignId: 'camp-1', agencyAttemptId: 'att-1' };
 
 beforeEach(() => {
@@ -221,7 +214,7 @@ describe('VoiceLink WebRTC lifecycle — answered call to completion (real paylo
   it('start → answer webhook → call.ended (remote) → completed + settled once, carrier id captured', async () => {
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
-    // PORT NOTE: core's `createCall` + `attachBrowserLeg` → the agency entry point, browser borrowed at dial.
+    // The call is created with `createBridgedCall`, the browser socket borrowed at dial.
     const browser = fakeWs();
     const pstn = fakeWs();
     await mgr.createBridgedCall({ ...VL_PARAMS, ...AGENCY, browserSocket: browser as any });
@@ -254,7 +247,7 @@ describe('VoiceLink WebRTC lifecycle — answered call to completion (real paylo
     expect(persisted.some((u: any) => u.error_code === 'TELEPHONY_ERROR')).toBe(false);
     // Carrier's real id was persisted.
     expect(persisted.some((u: any) => u.provider_call_id === CARRIER_CALL_ID)).toBe(true);
-    // PORT NOTE: settlement dispatch → the terminal analytics event (once, completed).
+    // The terminal analytics event fires once, completed.
     expect(mockAnalytics.trackWebrtcCallCompleted).toHaveBeenCalledTimes(1);
     expect(mockAnalytics.trackWebrtcCallCompleted).toHaveBeenCalledWith(expect.objectContaining({
       status: 'completed',
@@ -275,14 +268,14 @@ describe('VoiceLink WebRTC lifecycle — answered call to completion (real paylo
   it('user hangup defers settlement until the real call.ended confirms (ending window)', async () => {
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
-    // PORT NOTE: core's `createCall` + `attachBrowserLeg` → the agency entry point, browser borrowed at dial.
+    // The call is created with `createBridgedCall`, the browser socket borrowed at dial.
     const browser = fakeWs();
     const pstn = fakeWs();
     await mgr.createBridgedCall({ ...VL_PARAMS, ...AGENCY, browserSocket: browser as any });
     await mgr.attachPstnLegVerified('call-1', pstn as any, undefined);
     pstn.emit('message', JSON.stringify(START_FRAME));
 
-    // PORT NOTE: core's `forceEndByUser('call-1')` — the same `localHangup`, by attempt.
+    // The user hangup is `localHangup`, by attempt.
     await mgr.forceEndWithOutcome('att-1', 'ended_by_user');
     expect(mgr.getSession('call-1')!.ending).toBe(true);
     expect(mockAnalytics.trackWebrtcCallCompleted).not.toHaveBeenCalled();
@@ -306,7 +299,7 @@ describe('VoiceLink WebRTC lifecycle — unanswered / stop-before-start (real st
     };
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
-    // PORT NOTE: core's `createCall` + `attachBrowserLeg` → the agency entry point, browser borrowed at dial.
+    // The call is created with `createBridgedCall`, the browser socket borrowed at dial.
     const browser = fakeWs();
     const pstn = fakeWs();
     await mgr.createBridgedCall({ ...VL_PARAMS, ...AGENCY, browserSocket: browser as any });
@@ -319,7 +312,7 @@ describe('VoiceLink WebRTC lifecycle — unanswered / stop-before-start (real st
     expect(mgr.getSession('call-1')).toBeUndefined();
     const persisted = mockRepo.update.mock.calls.map((c: any[]) => c[1]).filter(Boolean);
     expect(persisted.some((u: any) => u.status === 'no_answer')).toBe(true);
-    // PORT NOTE: settlement dispatch → the terminal analytics event.
+    // The terminal analytics event fires.
     expect(mockAnalytics.trackWebrtcCallCompleted).toHaveBeenCalledWith(expect.objectContaining({
       talkTimeSeconds: 0,
     }));

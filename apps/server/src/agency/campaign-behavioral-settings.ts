@@ -6,50 +6,36 @@ import { DEFAULT_ALLOW_RECORDING, DEFAULT_ANALYZE_CALLS } from '../settings/agen
 const log = createChildLogger({ component: 'campaign-behavioral-settings' });
 
 /*
- * PORT NOTE (magick-agency): ported from magick-master@a1f0756a
- * `src/api/routes/proxy-agency-campaigns.routes.ts:412-575` (MAG-138 —
- * `assertBehavioralCapabilitiesForConfig`, `assertCampaignBehavioralCapabilities`,
- * `resolveInheritedBehavioralConfig`) into its own module, so the Phase 8 campaign
- * routes (lane B2's port of that route file) call ONE definition instead of a
- * second copy inside the route file.
+ * The campaign-write gate for the two behavioral capabilities —
+ * `assertBehavioralCapabilitiesForConfig` and `resolveInheritedBehavioralConfig` —
+ * in its own module, so the campaign create, patch and retry routes call ONE
+ * definition.
  *
- * The one plan change (§3.2): the two governance capabilities became two columns
- * of the per-account settings row. `agency.recording` is
- * `account_settings.allow_recording`; `agency.analytics` is
- * `account_settings.analyze_calls`. Master's `assertCapability(request, reply,
- * key)` resolved `governance[key] === false`; here the check reads the row for
- * (`request.tenantId`, `request.accountId`) and refuses unless the column is
- * EXPLICITLY true — a NULL column resolves to the documented default `false`
- * (`settings/agency-account-settings.ts`), the same default the governance keys
- * had (`agency.md` §7.2). Master's two other paths are gone with governance: the
- * `config.governance.enabled` kill switch (no governance) and the section-level
- * `requireCapability('agency')` (the app IS agency). Failure posture is master's:
- * no tenant context, or a settings read that throws, FAILS CLOSED with the same
- * 403. NEW: no ACCOUNT context also fails closed, because the settings are
- * per-account and a campaign always belongs to one; master resolved governance at
- * tenant level when the header was absent.
+ * The two capabilities are two columns of the per-account settings row.
+ * `agency.recording` is `account_settings.allow_recording`; `agency.analytics` is
+ * `account_settings.analyze_calls`. The check reads the row for the target
+ * (tenant, account) and refuses unless the column is EXPLICITLY true — a NULL
+ * column resolves to the documented default `false`
+ * (`settings/agency-account-settings.ts`). Failure posture: no tenant context, no
+ * account context (the settings are per-account and a campaign always belongs to
+ * one), or a settings read that throws, FAILS CLOSED with the same 403.
  *
- * The refusal body is master's established `{ error: 'capability_disabled',
- * capability }` with master's capability names, so the console's handling of it
- * ports unchanged.
+ * The refusal body is `{ error: 'capability_disabled', capability }` with the
+ * capability names above, which is what the console handles.
  *
- * ── Two INTERFACE changes vs master, both because this is a new boundary ─────
- * (security review of d2e33bc, lead.)
- *  1. **The account checked is the campaign's, passed as `target`.** Master's
- *     gate was tenant-level governance and core scoped the campaign, so the
- *     capability and the campaign could not belong to different accounts. Here
- *     the setting is per account, so reading the request's `X-Account-Id` would
- *     let a PATCH or retry on a campaign in account X, sent with account Y's
- *     header, be judged by Y's settings. The caller passes the ids of the account
- *     that OWNS the campaign being created, patched or retried (the loaded
- *     campaign's own ids; the request's on create). A missing id fails closed.
- *  2. **There is no `request.body` convenience.** Master's
- *     `assertCampaignBehavioralCapabilities(request, reply)` inspected the raw
- *     body; the Phase 8 routes act on their Zod-PARSED output, and anything the
- *     schema accepts that a raw key check does not see (coercion, a default, an
- *     alias, a nested field) would be a gap. Callers MUST pass exactly the object
- *     they persist — the parsed create/patch body, or for a retry
- *     `resolveInheritedBehavioralConfig`'s output.
+ * ── Two interface rules, both because this is a trust boundary ──────────────
+ *  1. **The account checked is the campaign's, passed as `target`.** The setting
+ *     is per account, so reading the request's `X-Account-Id` would let a PATCH
+ *     or retry on a campaign in account X, sent with account Y's header, be
+ *     judged by Y's settings. The caller passes the ids of the account that OWNS
+ *     the campaign being created, patched or retried (the loaded campaign's own
+ *     ids; the request's on create). A missing id fails closed.
+ *  2. **There is no `request.body` convenience.** The routes act on their
+ *     Zod-PARSED output, and anything the schema accepts that a raw key check
+ *     does not see (coercion, a default, an alias, a nested field) would be a
+ *     gap. Callers MUST pass exactly the object they persist — the parsed
+ *     create/patch body, or for a retry `resolveInheritedBehavioralConfig`'s
+ *     output.
  */
 
 /** The two behavioral capabilities and the settings column each now reads. */
@@ -81,14 +67,12 @@ export interface BehavioralRefusal {
 }
 
 /**
- * ─── MAG-138: the two `behavioral` capabilities, actually enforced ───────────
+ * ─── The two `behavioral` capabilities, actually enforced ────────────────────
  *
- * (master's header, kept for its rationale) `agency.recording` and
- * `agency.analytics` were declared with `enforcement: ['nav', 'behavioral']`, but
- * until this guard existed only the `nav` half was real: a tenant with
- * `agency.recording` OFF could record human↔human calls with one curl. For a
- * consent-bearing capability that is not a thin spot in defence-in-depth, it is
- * the absence of the defence.
+ * `agency.recording` and `agency.analytics` gate behaviour, not just navigation:
+ * without this guard a tenant with `agency.recording` OFF could record
+ * human↔human calls with one curl. For a consent-bearing capability that is not
+ * a thin spot in defence-in-depth, it is the absence of the defence.
  *
  * ── Refuse, do not silently strip ───────────────────────────────────────────
  * Stripping the field looks kinder and is worse. A supervisor turns recording
@@ -113,10 +97,8 @@ export interface BehavioralRefusal {
  * JSON booleans, and an ambiguous value on a consent gate is the right thing to
  * be wrong about in the safe direction.
  *
- * PORT NOTE (magick-agency): the decision, as a pure function over the resolved
- * settings — master interleaved it with `assertCapability`'s I/O. Returns the
- * FIRST refusal in master's order (recording, then analytics), exactly the
- * capability master's sequential `await`s would have named.
+ * The decision, as a pure function over the resolved settings. Returns the FIRST
+ * refusal, recording before analytics.
  */
 export function behavioralRefusalForConfig(
   config: unknown,
@@ -164,10 +146,9 @@ async function resolveBehavioralSettings(target: BehavioralTarget): Promise<Beha
  * caller must `return` immediately.
  *
  * ── The config is a PARAMETER, and the retry create is why ─────────────────
- * On create and patch the config being enabled is literally the request body,
- * (its parsed form). On
- * `POST /campaigns/:id/retry` it is not: a retry INHERITS its parent's config
- * (DR-10) and the body may name none of it, so the thing that has to be checked
+ * On create and patch the config being enabled is literally the request body
+ * (its parsed form). On `POST /campaigns/:id/retry` it is not: a retry INHERITS
+ * its parent's config and the body may name none of it, so the thing that has to be checked
  * is the parent's values with `config_overrides` applied on top. Reading
  * `request.body` there would assert the capability against a body that says
  * nothing and pass every time — a gate that is only ever handed the one input on
@@ -181,9 +162,7 @@ export async function assertBehavioralCapabilitiesForConfig(
   /** The account that owns the campaign (see the module header). */
   target: BehavioralTarget,
 ): Promise<boolean> {
-  // PORT NOTE (magick-agency): master called `assertCapability` only for a field
-  // that enables something, so a disabling body never read governance. Same here:
-  // a body that enables nothing passes without a settings read, which is what
+  // A body that enables nothing passes without a settings read, which is what
   // keeps the on→off write available to an account that has LOST the permission.
   if (!enablesAnything(config)) return true;
 
@@ -203,18 +182,9 @@ export async function assertBehavioralCapabilitiesForConfig(
   return true;
 }
 
-/*
- * PORT NOTE (magick-agency): master's `assertCampaignBehavioralCapabilities(request,
- * reply)` — the create/patch convenience that passed the RAW `request.body` — is
- * deliberately not ported (interface change 2 in the module header). Create and
- * patch call `assertBehavioralCapabilitiesForConfig` with their parsed body.
- */
-
 /**
  * The EFFECTIVE behavioral config a retry campaign would be created with:
- * the parent's values, with `config_overrides` applied on top. (master
- * `proxy-agency-campaigns.routes.ts:499-575`, verbatim; its full rationale is
- * there.)
+ * the parent's values, with `config_overrides` applied on top.
  *
  * ── An override wins in BOTH directions, which is why this is a merge ──────
  * `config_overrides: { record_calls: false }` on a recording parent is a retry

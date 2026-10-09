@@ -3,7 +3,7 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 /**
- * The app root, routed on entitlement (handoff E4).
+ * The app root, routed on entitlement.
  *
  * ── What is worth pinning ──────────────────────────────────────────────────
  * The two errors this component can make are not symmetrical, and every case
@@ -24,14 +24,10 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
  * through the component, where the waiting and the feature-flag clause live.
  */
 /*
- * PORT NOTE (magick-agency): `isAgencyOnlyTenant` and `PRIMARY_APP_PRODUCTS` are
- * not ported (every agency tenant is agency-only; the predicate is the dialer
- * flag alone — see `HomeRedirect`), so their seven cases are deleted, and so are
- * "sends an AI-only tenant to the current default" and "defaults when the
- * governance read failed" (there is no AI-only tenant and no governance read).
- * "sends a both-products tenant to the current default" is MODIFIED into the
- * case that pins the new predicate: a capability map that cusui read as
- * both-products still lands in `/agency`. The maps below are kept as fixtures.
+ * Every agency tenant is agency-only, so the predicate is the dialer flag alone
+ * (see `HomeRedirect`). There is no capability-based product split and no
+ * governance read to fail. A capability map that looks like a both-products
+ * tenant still lands in `/agency`. The maps below are fixtures for that.
  */
 const mocks = vi.hoisted(() => ({
   useAuth: vi.fn(),
@@ -46,9 +42,9 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({ useFeatureFlags: mocks.us
 import HomeRedirect from '../../components/auth/HomeRedirect';
 
 /**
- * A dense map, the shape master's resolver actually returns — every catalog key
+ * A dense map, the shape the server's resolver actually returns — every catalog key
  * present, at the catalog's own defaults. This is the effective map of a tenant
- * with no overrides at all, i.e. an ordinary AI-product tenant.
+ * with no overrides at all.
  */
 function governanceMap(over: Record<string, boolean> = {}): Record<string, boolean> {
   return {
@@ -128,7 +124,7 @@ describe('HomeRedirect', () => {
     expect(landsOn()).toBe('/agency');
   });
 
-  it('routes on the dialer flag alone — a map cusui read as both-products still lands in /agency', () => {
+  it('routes on the dialer flag alone — a both-products-looking map still lands in /agency', () => {
     mocks.useGovernance.mockReturnValue({ map: governanceMap({ agency: true }), loading: false });
     renderRoot();
     expect(landsOn()).toBe('/agency');
@@ -156,7 +152,7 @@ describe('HomeRedirect', () => {
     expect(screen.getByRole('status')).toBeTruthy();
   });
 
-  it('does NOT redirect on the capability alone when core has the flag off', () => {
+  it('does NOT redirect on the capability alone when the server has the flag off', () => {
     /**
      * `/agency` is gated on `agency_dialer_enabled` as well as on the capability,
      * so a redirect that only checked governance would land the reader on a

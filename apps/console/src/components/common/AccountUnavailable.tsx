@@ -20,7 +20,7 @@ import { EmptyState } from './EmptyState';
  *
  * `detail` is the underlying message where there is one. Rendered because these
  * failures are mostly permission-shaped and the server's own sentence is more use
- * than ours — but it is additive, never the whole message: master masks upstream
+ * than ours — but it is additive, never the whole message: the API masks upstream
  * errors, so `detail` is sometimes only a request id.
  */
 export function AccountUnavailable({

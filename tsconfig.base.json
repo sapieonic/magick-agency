@@ -1,5 +1,5 @@
 {
-  // One compiler config for source AND tests (handoff quality rule 5): every
+  // One compiler config for source AND tests (decision B1): every
   // package's `lint` runs `tsc --noEmit` over `src` and `test` together, so a
   // broken test file fails lint. Nothing here is ever emitted by tsc: the
   // server is bundled by esbuild (apps/server/scripts/build.mjs) and the UIs by

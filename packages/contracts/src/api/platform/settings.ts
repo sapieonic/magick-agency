@@ -1,26 +1,19 @@
 /**
- * Per-account settings — the ONE row that replaces governance (extraction plan
- * §3.2).
+ * Per-account settings — one row per account holding four facts:
  *
- * NEW in Magick Agency (no single source to port). In MagickVoice the same four
- * facts lived in four places, each with its own gate and its own copy:
- *
- * | Field | MagickVoice source |
+ * | Field | Meaning |
  * |---|---|
- * | `allow_recording` | master governance `agency.recording` (catalog `agency.recording`), pushed into core `account_settings.allow_recording` |
- * | `analyze_calls` | master governance `agency.analytics`, pushed into core `account_settings.analyze_calls` |
- *  * | `max_concurrent_calls` | core `account_settings.max_concurrent_calls`, written by master's super-admin concurrency route |
- * | `webrtc_max_duration_seconds` | core feature flag `webrtc_max_duration_seconds` (`registry.ts:235`, default 1800, 60..14400) |
+ * | `allow_recording` | whether campaigns on the account may record calls |
+ * | `analyze_calls` | whether campaign calls may be analysed |
+ * | `max_concurrent_calls` | the account's concurrency ceiling, written by the super-admin concurrency route |
+ * | `webrtc_max_duration_seconds` | hard cap on a bridged human call (default 1800, range 60..14400) |
  *
- * Column names are core's (`magic-voice-core/src/db/models/account-settings.model.ts`)
- * so the cutover copy is a rename-free projection. Values are EFFECTIVE values
- * (plan §3.2 "Cutover copies **effective** values"), so on the wire every field
- * is non-null: core's `null` = "inherit the env default" is resolved before it
- * reaches a client.
+ * Values are EFFECTIVE values, so on the wire every field is non-null: a stored
+ * `null` meaning "inherit the env default" is resolved before it reaches a client.
  *
  * The section-level `agency` capability has no field: it is always on, because
  * the app *is* agency. Recording and analysis stay checked **per field** on
- * campaign writes (MAG-138) — a campaign asking for `record_calls: true` on an
+ * campaign writes — a campaign asking for `record_calls: true` on an
  * account whose `allow_recording` is false is refused, not silently downgraded.
  */
 export interface AgencyAccountSettings {
@@ -28,26 +21,23 @@ export interface AgencyAccountSettings {
   account_id: string;
   /**
    * Whether campaigns on this account may record human↔human calls. Successor
-   * of governance `agency.recording` (default `false`, and that default is the
-   * safe direction but is NOT a consent mechanism — `agency.md` §7.2).
+   *: default `false`, and that default is the
+   * safe direction but is NOT a consent mechanism).
    */
   allow_recording: boolean;
-  /** Whether campaign calls may be analysed. Successor of governance `agency.analytics`. */
+  /** Whether campaign calls may be analysed. */
   analyze_calls: boolean;
-  // Core's `analyze_dialer_calls` (migration 059) is NOT carried: its only
-  // reader was the bridge's softphone-only gate 3, which core already skipped
-  // for agency calls (lead decision Q3b, docs/decisions.md).
+  // There is no separate dialer-analysis setting: `analyze_calls` alone governs
+  // analysis (docs/decisions.md Q3b).
   /**
    * The account's concurrency ceiling — a read-out on the supervisor surface
-   * (`AgencyCampaignStats.concurrency_limit`, D10), set by super-admins only.
-   * Core's range for the legacy total is 1..1000
-   * (`magick-master/src/api/routes/super-admin.routes.ts:1332-1334`).
+   * (`AgencyCampaignStats.concurrency_limit`), set by super-admins only.
+   * The range for the legacy total is 1..1000.
    */
   max_concurrent_calls: number;
   /**
    * Hard cap on a bridged human call before auto-hangup, in whole seconds.
-   * Core's flag default 1800; valid range 60..14400 (`isWebrtcMaxDuration`,
-   * `registry.ts:104`, `WEBRTC_MAX_DURATION_SECONDS = 14_400`).
+   * Default 1800; valid range 60..14400 (`WEBRTC_MAX_DURATION_SECONDS = 14_400`).
    */
   webrtc_max_duration_seconds: number;
   /** ISO-8601. */
@@ -59,7 +49,7 @@ export interface AgencyAccountSettings {
  * entry per account the caller's active memberships reach (every account in the
  * tenant for a tenant-wide membership). Replaces `SessionResponse.governance`,
  * which was a single `Record<string, boolean>` resolved for `memberships[0]`
- * only (master `src/auth/session-payload.ts`).
+ * only (the public API layer `src/auth/session-payload.ts`).
  */
 export type AgencyAccountSettingsMap = Record<string, AgencyAccountSettings>;
 

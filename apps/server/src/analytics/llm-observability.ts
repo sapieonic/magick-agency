@@ -1,8 +1,3 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/src/analytics/llm-observability.ts@4850d1d9,
-// the dialer subset: `AI_GENERATION`, `llmEnabled` (:29-38) and the two dialer emitters
-// (:120-172), bodies verbatim (moved here from lane D's `analysis-events.ts` by the lead at
-// lane C's merge). Not carried (AI pipeline, no CallRecord here): `captureContent`,
-// `trackLlmGeneration`, `trackLlmAnalysis` and the `pipeline-tiers` / `ai/types` imports.
 /**
  * PostHog LLM Analytics ($ai_generation) catalog.
  *
@@ -35,9 +30,8 @@ function llmEnabled(): boolean {
 /**
  * `$ai_generation` for the dialer **transcription** call, sharing the call's trace
  * (`$ai_trace_id = call_id`) under a `dialer_transcription` span. Always metrics-only
- * — the transcriber input is a verbatim human conversation, so content is never
- * forwarded regardless of the content-capture flag. Keyed on ids only (no CallRecord;
- * a dialer call is a `webrtc_calls` row, not the AI `calls` shape).
+ * — the transcriber input is a word-for-word human conversation, so content is never
+ * forwarded. Keyed on ids only.
  */
 export function trackDialerTranscription(args: {
   callId: string;
@@ -68,7 +62,7 @@ export function trackDialerTranscription(args: {
 /**
  * `$ai_generation` for the dialer **post-call analysis** LLM call, on the same trace
  * (`$ai_trace_id = call_id`) under a `post_call_analysis` span. Always metrics-only.
- * The dialer analogue of `trackLlmAnalysis` that takes ids (not a CallRecord).
+ * Keyed on ids only.
  */
 export function trackDialerLlmAnalysis(args: {
   callId: string;

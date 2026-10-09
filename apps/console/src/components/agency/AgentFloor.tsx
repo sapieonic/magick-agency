@@ -32,13 +32,13 @@ import { AgentFloorDrawer } from './AgentFloorDrawer';
 import styles from './AgentFloor.module.css';
 
 /**
- * The agent floor (§C.4) — the half of the supervisor screen that answers
+ * The agent floor — the half of the supervisor screen that answers
  * **which agent**.
  *
  * Everything else on the campaign aggregates: the health strip says the
  * campaign is not dialing, the Overview counters say five agents are on break.
  * Neither names a person, and every action a supervisor can take is aimed at
- * one. Since `MAG-166` those counters are a section away rather than directly
+ * one. Those counters are a section away rather than directly
  * above — the strip's diagnosis still sits above this, on every section.
  *
  * ── A summary card, then a table ────────────────────────────────────────────
@@ -76,7 +76,7 @@ export interface AgentFloorProps {
   /**
    * `hasPermission(role, 'agency.supervise')`, computed by the page.
    *
-   * **This must be that exact permission.** Master gates
+   * **This must be that exact permission.** The API gates
    * `POST /proxy/agency/sessions/:id/force-available` on
    * `requirePermission('agency.supervise')`; a looser gate here shows a
    * `viewer`, `operator` or `agent` a button that 403s on click, and a tighter
@@ -290,7 +290,7 @@ function AgentRow({
             <span className={hasResolvedName(agent) ? styles.name : styles.nameFallback}>{displayName}</span>
           </button>
           {/*
-            `connected === false` only. `null` is core's Redis read having failed,
+            `connected === false` only. `null` is the API's Redis read having failed,
             and rendering it as a dropped station would send a supervisor chasing
             an agent who is sitting right there.
 
@@ -401,7 +401,7 @@ export function AgentFloor({ campaignId, stats, wrapupSeconds, canSupervise, onF
 
   /*
     `undefined` and `[]` are different facts and are said differently. An absent
-    roster is this payload not carrying one — an older core or master, or a
+    roster is this payload not carrying one — an older server, or a
     partial read — and rendering it as "nobody is on this campaign" would be a
     confident claim about staffing drawn from our own ignorance. Same rule as
     `concurrency_in_use`.
@@ -417,7 +417,7 @@ export function AgentFloor({ campaignId, stats, wrapupSeconds, canSupervise, onF
             : ''}
         </p>
         {/*
-          Defensive, and deliberately not load-bearing. **Core cannot currently
+          Defensive, and deliberately not load-bearing. **The API cannot currently
           produce this state**: `agents_by_state` is `agents.reduce(...)` over
           the very array `agents[]` comes from, tallied rather than queried
           separately precisely so the roll-up and the floor can never disagree.
@@ -426,7 +426,7 @@ export function AgentFloor({ campaignId, stats, wrapupSeconds, canSupervise, onF
 
           It is here anyway because it costs a conditional and the alternative —
           a `!` on a field that is only co-derived by convention — is the kind of
-          coupling that breaks silently if core ever does split the two reads.
+          coupling that breaks silently if the API ever does split the two reads.
 
           Note this is also the branch that draws NO bar: an absent roll-up is
           "we don't know how the floor is distributed", and an empty bar would

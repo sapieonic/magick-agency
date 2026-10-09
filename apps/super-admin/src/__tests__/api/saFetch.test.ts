@@ -1,9 +1,6 @@
 /**
- * PORT NOTE (magick-agency): cusui's `saFetchRaw.test.ts` (31 cases) tested
- * `saFetchRaw`, deleted here with its only consumer (the credits-usage CSV
- * export), plus `saError` through `saFetch`. The `saFetchRaw` cases that have an
- * `saFetch` counterpart are ported against `saFetch` (token, 401, non-ok,
- * masked errors) and the `saError` block is verbatim. See PORTING.md.
+ * Tests `saFetch` (token, 401, non-ok, masked errors) and `saError` through
+ * `saFetch`. There is no `saFetchRaw`: it had no consumer.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -209,7 +206,7 @@ describe('saFetch — originator header', () => {
 });
 
 // ── Error message resolution ─────────────────────────────────────────────────
-// magic-voice-core answers a validation failure with
+// The server answers a validation failure with
 // `{ error: 'Validation Error', details: [...zod issues] }` and NO top-level
 // `message`, so every one of its carefully-worded messages used to surface as
 // the literal string "API error 400". This is a shared super-admin helper, so
@@ -247,7 +244,7 @@ describe('saError — message resolution', () => {
     expect(msg).toBe('Top level wins');
   });
 
-  it('reads the first zod issue when core sends no top-level message', async () => {
+  it('reads the first zod issue when the server sends no top-level message', async () => {
     const msg = await messageFor(
       errRes(400, {
         error: 'Validation Error',

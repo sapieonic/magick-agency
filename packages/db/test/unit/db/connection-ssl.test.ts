@@ -2,10 +2,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { buildSslOption, closePool, initDbPool } from '../../../src/connection.js';
 
 /**
- * NEW (magick-agency), Q1 (Manas, 2026-10-09): Postgres TLS verifies the server certificate
- * by default. Core connected with `{ rejectUnauthorized: false }` (`src/db/connection.ts`
- * @4850d1d9): encrypted, but any certificate was accepted. Mutation-checked: restoring
- * core's literal in `buildSslOption` reds the default and CA cases.
+ * Decision Q1: Postgres TLS verifies the server certificate by default. A
+ * `{ rejectUnauthorized: false }` option would encrypt but accept any certificate.
+ * Mutation-checked: restoring that literal in `buildSslOption` reds the default and CA cases.
  */
 describe('buildSslOption (Q1)', () => {
   it('no TLS when ssl is off, whatever else is set', () => {

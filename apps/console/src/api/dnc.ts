@@ -11,10 +11,10 @@ import type {
 /**
  * The Do Not Call list.
  *
- * **Master-native.** These are not `/proxy/*` routes — master owns the table and
- * core only receives a derived Redis set. So unlike the rest of the agency
- * client, nothing here has a core route behind it, and a failure here is a
- * master failure.
+ * **Served by the server itself.** These are not `/proxy/*` routes — the server owns the table and
+ * the server only receives a derived Redis set. So unlike the rest of the agency
+ * client, nothing here has a server route behind it, and a failure here is a
+ * server failure.
  *
  * Two floors apply, and the UI should respect both: reading is `agency.dnc.read`
  * (`viewer`), while adding and removing are `agency.dnc.manage`
@@ -49,9 +49,9 @@ export async function listDncEntries(
  * the caller must read `summary.results` rather than assuming everything landed.
  *
  * `accountId` is deliberately **not** defaulted into the body. Omitting
- * `account_id` means tenant-wide, and tenant-wide is the only scope core's flat
+ * `account_id` means tenant-wide, and tenant-wide is the only scope the server's flat
  * `dnc:{tenantId}` Redis set can express — an account-scoped row never reaches
- * core and so never suppresses a dial. Passing the active account here would
+ * the server and so never suppresses a dial. Passing the active account here would
  * silently produce entries that look suppressed in this list and are not
  * suppressed on the wire. The header still carries the account for auth; the
  * body scope is a separate, deliberate decision.

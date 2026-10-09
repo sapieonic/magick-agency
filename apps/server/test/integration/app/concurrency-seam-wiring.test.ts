@@ -1,9 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * NEW (magick-agency, lead, at lane C's merge): the concurrency seam
- * (docs/seams.md §3.3) is wired in the REAL app, not only in the voice engine's
- * own suite. Lane A's super-admin concurrency PUT commits the allocation and then
+ * The concurrency seam (docs/seams.md) is wired in the REAL app, not only in the voice
+ * engine's own suite. The super-admin concurrency PUT commits the allocation and then
  * calls `getConcurrencyControl().invalidateAccountLimit` / `invalidateProviderLimits`;
  * with the seam unwired those throw after the commit and the route answers 500.
  * `buildApp` with a real context registers the voice plugin, whose

@@ -53,15 +53,15 @@ export function AgencyHomeRedirect() {
    *  1. **The branch is not reachable with an unresolved role.** `/agency` sits
    *     inside `RequireFlag flag="agency_dialer_enabled"`, which renders children
    *     only on `status === 'ready'` with the flag true. That needs a successful
-   *     `GET /proxy/feature-flags`, which needs a resolved `accountId`, and master
+   *     `GET /proxy/feature-flags`, which needs a resolved `accountId`, and the server
    *     403s that request unless `tenantContextMiddleware` finds an active
    *     membership for `(tenant, account)` by the same two rules this file's
    *     `role` uses — the account-scoped row, else the tenant-wide one
-   *     (`master/src/api/middleware/tenant-context.middleware.ts`). If master
+   *     (`tenantContextMiddleware`). If the server
    *     found one, `role` is defined. The reverse is what would break it: a
    *     membership written AFTER this session's `POST /auth/session` is in
-   *     master's DB but not in `useAuth().memberships`, so master answers and
-   *     cusui still reads `undefined` until the session is re-synced. That
+   *     the server's DB but not in `useAuth().memberships`, so the server answers and
+   *     the console still reads `undefined` until the session is re-synced. That
    *     staleness window, or `/agency` losing the flag gate, is what would make
    *     this reachable.
    *  2. **It would not be a trap if it were.** This route is `<Route index>`

@@ -1,73 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// PORT NOTE (magick-agency): ported from core test/unit/core/call-manager-self-heal.test.ts@4850d1d9,
-// the cases that test what `TelephonyGuardHost` extracted from CallManager (its header lists
-// the methods). The unit under test is the host instead of `new CallManager(null)`; the mock
-// harness shrinks to what the host imports. Kept (28): `reconcileConcurrency` (6), the WebRTC
-// half of `sweepStaleActiveCalls` (5), `runSelfHealSweep` (4 `it.each` rows + 2), the
-// demand-driven poll (8), the dormancy derivation (2), startup integration (1).
-//
-// MODIFIED: the six reconcile cases drop their `triggerDequeue` assertion (AI SQS queue, not
-// carried — a heal is still asserted by the return value); 'sweeps WebRTC calls as a 4th
-// source…' drops the settlement assertion (no billing, plan §4) and keeps the audit +
-// exclude-ids assertions; 'does not turn the generic stale window into a hard cap…' and
-// 'uses a configured window longer…' assert the WebRTC cutoff only (the only source);
-// 'all three empty → returns false' / 'all three reject → returns false, never throws' run
-// over the one source; the `runSelfHealSweep` rows no longer stub `reconcileLiveCallGauges`
-// (not carried); `gracefulShutdown(0)` → `gracefulShutdown()` (the host has no call drain);
-// the poll's `getActiveCallCount` is the host's (the bridge's active calls, see its PORT NOTE).
-//
-// DELETED (AI / static / IVR / SQS / settlement / group refiller, not carried): 'all three
-// sources return rows → true; each repo called once with a past Date cutoff', 'cutoff ≈ now -
-// staleCallSweepMinutes*60000 (≈30 min in the past)', 'AI sweep passes the in-memory active
-// session ids as the exclude list', 'audit-logs each swept row with STUCK_ACTIVE_CALL +
-// correct dispatchType', 'dispatches batch-completion once per DISTINCT non-null batch_id
-// (dedupe); null skipped', 'per-source isolation: static rejects, AI + IVR still swept and
-// audit-logged' (its `reason` / `sweep` assertions are carried onto the WebRTC sweep case), and
-// every case (43) in these describes:
-//  - `reconcileAccountSlots` (5): 'heals account drift → returns true, triggers dequeue', 'heals
-//    global drift only (account false) → true + dequeue', 'no drift → returns false, no dequeue',
-//    'returns false (no throw) when the account reconcile rejects', 'incident regression: a
-//    poisoned account counter is healed and dequeue re-fires' — reached only from the SQS
-//    coordinator and AI inbound.
-//  - `static_calls_total from the self-heal sweeps` (4): 'stale-active sweep: counts each swept
-//    static row once, as `failed`, under its own carrier', 'never counts an AI or IVR row —
-//    static_calls_total is static calls only', 'a sweep that moved nothing, or whose UPDATE
-//    failed, counts nothing', 'orphaned-queued sweep: counts each orphaned static row once, as
-//    `failed`' — static calls.
-//  - `sweepOrphanedQueuedCalls` (19): 'derives its cutoff from the queue's LIVE retention, not a
-//    constant', 'follows the queue when retention changes, with no code change', 'sweeps all three
-//    call types — every one shares the queue that loses messages', 'settles each orphaned row and
-//    completes its batch — this is what unstalls the platform job', 'stamps
-//    ORPHANED_QUEUED_CALL, distinct from STUCK_ACTIVE_CALL', 'records the recovered count under the
-//    call type it actually swept', 'reports a clean pass for every call type, so a silent source is
-//    visible', 'publishes the queued-backlog gauges — the DB half of the incident fingerprint',
-//    'warns when the backlog is older than retention — rows past this point have no message left',
-//    'does nothing when no queue is configured — nothing was enqueued, so nothing is orphaned',
-//    'skips the pass rather than guessing a cutoff when retention is unreadable', 'per-source
-//    isolation: one failing query does not skip the others', 'a failing gauge read never takes the
-//    sweep down with it', 'keeps the self-heal poller armed while it is still recovering rows', 'a
-//    healthy backlog is not "work" — only actually failing rows re-arms the poller', 'stays armed
-//    while the backlog is past retention but not yet past the cutoff', 'an empty table past
-//    retention is not work — the age is meaningless with no rows', 'hands a 1000-row recovery to
-//    the process-wide fan-out, not an inline loop', 'leaves the active sweep's statuses alone — the
-//    two must not overlap' — the SQS queued-call sweep (agency has no AI queue).
-//  - `cancelCallWithoutSession` (5): 'settles the call, releases both slots, checks the batch, and
-//    triggers dequeue', 'is a no-op when the row is already terminal (nothing settled or
-//    released)', 'skips the batch-completion check for a call with no batch', 'still settles when
-//    releasing a concurrency slot throws', 'catches and logs a rejected settlement dispatch
-//    instead of floating it' — AI calls.
-//  - `CallManager — GroupRefiller wiring` (7): 'keeps the WS-static dequeue delegate WITHOUT SQS
-//    and hands it to the refill dial deps', 'triggerDequeue wakes the refiller even with no
-//    coordinator; park points arm it', 'a gate release that freed a slot wakes the refiller for
-//    that group', 'gracefulShutdown stops the refiller (bounded) before the call drain', 'a refill
-//    pass that outlives the shutdown budget marks the fan-out drain NOT all-clear', 'a refill pass
-//    that finished leaves the fan-out drain clear', 'refillParkedGroups runs the refiller boot pass
-//    and never throws' — per-broadcast group refiller.
-//  - `CallManager.registerDequeuedAiSession — persisted enable_recording / analyze` (3):
-//    'regression: a row that opted out of recording and analysis is started opted out (was:
-//    account default)', 'the account ceiling still wins over a request that asked to record', 'a
-//    row with no persisted flags keeps the historical account-only behaviour' — AI sessions.
+// Covers `TelephonyGuardHost`: `reconcileConcurrency`, the WebRTC half of
+// `sweepStaleActiveCalls`, `runSelfHealSweep`, the demand-driven poll, the dormancy
+// derivation, and startup integration. Reconcile cases assert a heal by the return
+// value; the WebRTC sweep case asserts the audit log and exclude-ids (no billing
+// settlement); the cutoff cases assert the WebRTC cutoff only (the only source);
+// `gracefulShutdown()` takes no call drain (the host has none).
 //
 // `getActiveCallCount` returning the bridge's live call count (the 'bridge-count idle' case
 // below) is lead decision B13.
@@ -222,13 +160,12 @@ describe('CallManager self-heal', () => {
       expect(cutoff).toBeInstanceOf(Date);
       expect(excludeIds).toEqual(['webrtc-live']);
 
-      // audit-logged (core also settled it as webrtc_call at talk_time 0 — no billing here)
+      // audit-logged (no billing settlement)
       const wlog = mockAuditLogger.log.mock.calls.map((c) => c[0]).find((c) => c.callId === 'webrtc-1');
       expect(wlog).toBeDefined();
       expect(wlog.eventData.errorCode).toBe('STUCK_ACTIVE_CALL');
       expect(wlog.eventData.dispatchType).toBe('webrtc_call');
-      // PORT NOTE: from core's deleted 'audit-logs each swept row with STUCK_ACTIVE_CALL + correct
-      // dispatchType' (AI/static/IVR rows), the only case that pinned these two fields.
+      // The only case that pins these two fields.
       expect(wlog.eventData.reason).toBe('stuck active call');
       expect(wlog.eventData.sweep).toBe('startup');
     });
@@ -488,7 +425,7 @@ describe('CallManager self-heal', () => {
   });
 });
 
-// NEW (magick-agency): the host's own two PORT NOTEs, pinned.
+// The host's own two behaviours, pinned.
 describe('TelephonyGuardHost — agency-specific behaviour', () => {
   it('"calls in flight" for the poll is the bridge\'s active call count', () => {
     const host = new TelephonyGuardHost(null);
@@ -497,7 +434,7 @@ describe('TelephonyGuardHost — agency-specific behaviour', () => {
     expect(host.getActiveCallCount()).toBe(2);
   });
 
-  it('tryAcquireTelephonyConcurrency on a legacy account takes global then account, rolling back on refusal (core :744-772)', async () => {
+  it('tryAcquireTelephonyConcurrency on a legacy account takes global then account, rolling back on refusal', async () => {
     const host = new TelephonyGuardHost(null);
     (host as any).providerConcurrencyGuard.tryAcquireAll = vi.fn().mockResolvedValue({ result: 'legacy_mode', providerScoped: false });
     const globalAcquire = vi.spyOn(host.concurrencyGuard, 'tryAcquire').mockResolvedValue(true);

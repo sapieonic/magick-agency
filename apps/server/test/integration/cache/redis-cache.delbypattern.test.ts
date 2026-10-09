@@ -1,4 +1,3 @@
-// PORT NOTE (magick-agency): ported from master test/integration/cache/redis-cache.delbypattern.test.ts@a1f0756a (4 → 4); only the Redis target changed.
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import Redis from 'ioredis';
 import { redisCache } from '../../../src/cache/redis-cache.js';
@@ -10,9 +9,7 @@ import { TEST_REDIS_URL, assertSafeTestRedisUrl } from '../../helpers/test-redis
 // never match keys written through a prefixed client. We therefore drive the
 // REAL redisCache singleton against a raw, un-prefixed client and assert against
 // that same client so SCAN MATCH and GET/KEYS all agree on the key namespace.
-// PORT NOTE (magick-agency): master pointed this at its own test Redis
-// (`redis://localhost:6381`, a port agency must never touch). Agency's guarded
-// test Redis (6383, the worktree's non-zero db) is used, and every FLUSHDB goes
+// The guarded test Redis (6383, the worktree's non-zero db) is used, and every FLUSHDB goes
 // through `assertSafeTestRedisUrl()` first.
 assertSafeTestRedisUrl();
 const RAW_REDIS_URL = TEST_REDIS_URL;

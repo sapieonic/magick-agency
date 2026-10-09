@@ -177,7 +177,7 @@ describe('campaign settings — saving', () => {
   });
 
   it('re-seeds the form from the response, not from what was sent', async () => {
-    // Master normalises the window; if the form kept the submitted value the
+    // The server normalises the window; if the form kept the submitted value the
     // operator would see one thing and the server would hold another, and the
     // next save would re-submit the stale value.
     mocks.updateAgencyCampaign.mockResolvedValue(
@@ -196,7 +196,7 @@ describe('campaign settings — saving', () => {
 
   /**
    * `description` was the field that erased itself on the save that reported
-   * success: core stores no such column, so the re-seed below — which is
+   * success: the server stores no such column, so the re-seed below — which is
    * deliberately from the response, not from what was sent — put the field back
    * empty in front of the operator.
    */
@@ -293,7 +293,7 @@ describe('campaign settings — permissions', () => {
 
 describe('campaign settings — caller IDs', () => {
   /**
-   * Core rejects an empty `caller_ids` and the pacing engine throws rather than
+   * The server rejects an empty `caller_ids` and the pacing engine throws rather than
    * dialing without a pool, so an empty save is not a cosmetic mistake: on a
    * running campaign it leaves the next call unplaceable.
    */
@@ -318,7 +318,7 @@ describe('campaign settings — caller IDs', () => {
     await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
     const [, body] = mocks.updateAgencyCampaign.mock.calls[0]!;
     expect(body.caller_ids).toEqual(['+912200000001']);
-    // Core's column defaults to 'vobiz', so an omitted provider would point a
+    // The server's column defaults to 'vobiz', so an omitted provider would point a
     // VoiceLink pool at the wrong carrier.
     expect(body.telephony_provider).toBe('voicelink');
   });
@@ -334,12 +334,12 @@ describe('campaign settings — caller IDs', () => {
 });
 
 /**
- * Recording + call summary (`MAG-147`).
+ * Recording + call summary.
  *
  * Both fields already existed on the wire and had no editor anywhere in the SPA
- * — `record_calls` appeared once, read-only, on the agent console; the whole
- * repo never mentioned `analysis_profile_id` on a campaign. As of
- * magick-master#197 the API correctly refuses both to a capability-off tenant,
+ * — `record_calls` appeared once, read-only, on the agent console; the app
+ * never mentioned `analysis_profile_id` on a campaign. The API correctly refuses
+ * both to a capability-off tenant,
  * so the two capabilities were guarding a surface that did not exist.
  */
 const RECORD_LABEL = /record every call on this campaign/i;
@@ -395,7 +395,7 @@ describe('campaign settings — `agency.recording` off', () => {
   });
 
   it('omits `record_calls` entirely so an unrelated edit still saves', async () => {
-    // Master refuses rather than strips, so sending the unchanged `true` would
+    // The server refuses rather than strips, so sending the unchanged `true` would
     // make a capability-off tenant unable to rename their own campaign.
     capabilitiesOff('agency.recording');
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ record_calls: true }));
@@ -413,7 +413,7 @@ describe('campaign settings — `agency.recording` off', () => {
 
   /**
    * THE case the whole asymmetry exists for. `record_calls: false` passes
-   * master's guard even with the capability off, deliberately — disabling the
+   * the server's guard even with the capability off, deliberately — disabling the
    * control here would trap the tenant in exactly the state the capability
    * exists to prevent, which is worse than not shipping the control at all.
    */
@@ -496,13 +496,13 @@ describe('campaign settings — call-summary profile', () => {
   });
 
   /**
-   * `MAG-152`: `unlistedProfile` used to be computed from `analysisProfiles`
+   * `unlistedProfile` used to be computed from `analysisProfiles`
    * alone, and `useCallAnalysisProfiles` initialises that list to `[]` — so a
    * fetch still in flight was indistinguishable from a list that genuinely
    * lacked the campaign's profile. The three cases below — pending, failed, and
    * settled-and-absent — must each read differently.
    */
-  describe('the picker while the profiles fetch has not settled successfully (MAG-152)', () => {
+  describe('the picker while the profiles fetch has not settled successfully', () => {
     it('does NOT flash "no longer listed" while the fetch is still pending', async () => {
       mocks.getAgencyCampaign.mockResolvedValue(campaign({ analysis_profile_id: 'prof-1' }));
       // `[]` — exactly what the hook holds before the fetch resolves.
@@ -560,7 +560,7 @@ describe('campaign settings — call-summary profile', () => {
   });
 
   it('still offers removal when `agency.analytics` is off but a profile is set', async () => {
-    // Same asymmetry as recording: `analysis_profile_id: null` passes master's
+    // Same asymmetry as recording: `analysis_profile_id: null` passes the server's
     // guard with the capability off.
     capabilitiesOff('agency.analytics');
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ analysis_profile_id: 'prof-1' }));
@@ -585,11 +585,9 @@ describe('campaign settings — call-summary profile', () => {
   });
 
   /**
-   * PORT NOTE (magick-agency): MODIFIED. cusui's "names `calls.dialer.analytics`
-   * when the list cannot be read" pinned master's split between the profile-LIST
-   * capability and the field's `agency.analytics`. Agency has one gate, so this
-   * pins the opposite: with `agency.analytics` on, the list is fetched, and a
-   * capability agency does not have changes nothing.
+   * There is one gate, not a split between a profile-LIST capability and the
+   * field's `agency.analytics`: with `agency.analytics` on, the list is fetched,
+   * and an unrelated capability changes nothing.
    */
   it('lists the profiles whenever `agency.analytics` is on — there is no separate list capability', async () => {
     capabilitiesOff('calls.dialer.analytics');
@@ -603,7 +601,7 @@ describe('campaign settings — call-summary profile', () => {
 });
 
 describe('campaign settings — the refusals reach the operator legibly', () => {
-  it('names the capability on master’s `capability_disabled` 403', async () => {
+  it('names the capability on the server’s `capability_disabled` 403', async () => {
     // `ApiError` reduces this body to the message `'capability_disabled'`, which
     // is a wire token. A bare "something went wrong" fails this outright.
     mocks.updateAgencyCampaign.mockRejectedValue(
@@ -618,7 +616,7 @@ describe('campaign settings — the refusals reach the operator legibly', () => 
     expect(screen.queryByText(/^capability_disabled$/)).toBeNull();
   });
 
-  it('surfaces core’s `Feature Not Enabled` message for the analysis flag', async () => {
+  it('surfaces the server’s `Feature Not Enabled` message for the analysis flag', async () => {
     mocks.updateAgencyCampaign.mockRejectedValue(
       apiError(403, {
         error: 'Feature Not Enabled',
@@ -638,7 +636,7 @@ describe('campaign settings — the refusals reach the operator legibly', () => 
   });
 
   it('explains a MASKED 404 as a missing profile, because the body cannot', async () => {
-    // Master's error-mask hook rewrites core's
+    // The server's error-mask hook rewrites the dialer runtime's
     // `{ error: 'Not Found', message: 'Analysis profile not found' }` into the
     // generic support-ticket body — `'Not Found'` is not on its allow-list and
     // the payload carries no `details`. Only the id we sent identifies the cause.
@@ -680,7 +678,7 @@ describe('campaign settings — the refusals reach the operator legibly', () => 
 });
 
 /**
- * ── This screen is a section of the campaign workspace (`MAG-166`) ──────────
+ * ── This screen is a section of the campaign workspace ──────────
  *
  * The bar is what makes it one, and it is rendered by each page rather than by
  * a shared route layout — so without an assertion here it could be deleted

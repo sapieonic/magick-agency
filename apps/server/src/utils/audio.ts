@@ -1,6 +1,3 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/src/utils/audio.ts@4850d1d9. Removed:
-// `frameDurationMs` and its `AudioEncoding` import (AI live-adapter frame accounting only).
-
 // ── G.711 μ-law encoding/decoding ────────────────────────────────────────────
 // Standard ITU-T G.711 μ-law algorithm (Sun `g711.c`), the same reference form
 // `encodeAlawSample`/`alawDecodeTable` below follow.

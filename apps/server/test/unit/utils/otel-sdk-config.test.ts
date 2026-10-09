@@ -1,13 +1,4 @@
 /**
- * PORT NOTE (magick-agency): ported from core `test/unit/utils/otel-sdk-config.test.ts`@4850d1d9
- * (42 cases). Deleted with the `:9090` scrape (17): "the :9090 scrape reader applies the same
- * rule", all of `renderPrometheusScrape — the local :9090 view` (4), `collection errors in the
- * :9090 body` (3) and `renderLastExportScrape — …` (8), and the wiring audit "always builds a
- * meter provider, so :9090 serves metrics with OTLP export off". Changed: the default
- * `service.name`, the "drops none of OUR metrics" audit (reads `packages/observability/src/metrics`,
- * where this app declares them), and the wiring audits that named the scrape. Added: the wiring
- * audits under `agency additions`. `PORTING.md` "OpenTelemetry SDK" has the ledger.
- *
  * The OTel SDK configuration's pure pieces, run against the REAL SDK.
  *
  * Views are the one thing here that cannot be checked by reading them: whether
@@ -127,17 +118,16 @@ describe('resolveMetricsExportTimeoutMs', () => {
 
 describe('buildResourceAttributes', () => {
   const version = '9.9.9';
-  const hostname = () => 'core-host-abc';
+  const hostname = () => 'agency-host-abc';
 
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
   it('sets NO service.instance.id by default — rollout-gated, it multiplies every series by R', () => {
-    const attrs = buildResourceAttributes({ OTEL_SERVICE_INSTANCE_ID: 'core-1' }, { version, hostname });
+    const attrs = buildResourceAttributes({ OTEL_SERVICE_INSTANCE_ID: 'agency-1' }, { version, hostname });
     expect(attrs).not.toHaveProperty('service.instance.id');
     expect(attrs).toEqual({
-      // PORT NOTE (magick-agency): core expected 'voice-ai-orchestrator'.
       'service.name': 'magick-agency',
       'service.version': '9.9.9',
       'deployment.environment': 'development',
@@ -153,17 +143,17 @@ describe('buildResourceAttributes', () => {
 
   it('when enabled, prefers OTEL_SERVICE_INSTANCE_ID, else the hostname', () => {
     expect(buildResourceAttributes(
-      { OTEL_SERVICE_INSTANCE_ID_ENABLED: 'true', OTEL_SERVICE_INSTANCE_ID: ' core-1 ' },
+      { OTEL_SERVICE_INSTANCE_ID_ENABLED: 'true', OTEL_SERVICE_INSTANCE_ID: ' agency-1 ' },
       { version, hostname },
-    )['service.instance.id']).toBe('core-1');
+    )['service.instance.id']).toBe('agency-1');
     expect(buildResourceAttributes(
       { OTEL_SERVICE_INSTANCE_ID_ENABLED: 'true', OTEL_SERVICE_INSTANCE_ID: '   ' },
       { version, hostname },
-    )['service.instance.id']).toBe('core-host-abc');
+    )['service.instance.id']).toBe('agency-host-abc');
     expect(buildResourceAttributes(
       { OTEL_SERVICE_INSTANCE_ID_ENABLED: 'true' },
       { version, hostname },
-    )['service.instance.id']).toBe('core-host-abc');
+    )['service.instance.id']).toBe('agency-host-abc');
   });
 
   it('omits the attribute rather than exporting an empty identity', () => {
@@ -256,10 +246,9 @@ describe('buildMetricViews — what leaves the process', () => {
     expect([...names.keys()]).toEqual(['calls_total']);
   });
 
-  it('drops none of OUR metrics (source audit of src/utils/metrics.ts)', async () => {
-    // PORT NOTE (magick-agency): core read its one `src/utils/metrics.ts`; this app declares its
-    // metrics per lane in `packages/observability/src/metrics/*.ts`, so every file is read, and
-    // the canary is 30 (40 declarations) where core's was 100.
+  it('drops none of OUR metrics (source audit of packages/observability/src/metrics)', async () => {
+    // Metrics are declared per module area in `packages/observability/src/metrics/*.ts`, so every
+    // file is read. The canary is 30 (40 declarations today).
     const dir = resolve(process.cwd(), '../../packages/observability/src/metrics');
     const source = readdirSync(dir).filter((f) => f.endsWith('.ts'))
       .map((f) => readFileSync(resolve(dir, f), 'utf8')).join('\n');
@@ -368,11 +357,10 @@ describe('src/instrumentation.ts wiring (source audit)', () => {
     expect(src).toMatch(/registerHeapUsedGauge\(/);
   });
 
-  it('exporting path has exactly ONE metric reader — :9090 reads it rather than adding a second', () => {
+  it('exporting path has exactly ONE metric reader', () => {
     // A second reader doubles the storage work of every add() and leaks when
-    // nothing scrapes it; see ScrapeMetricReader.
+    // nothing reads it.
     expect(src).toContain('metricReaders: [otlpReader]');
-    // PORT NOTE (magick-agency): core asserted `withFreshGauges(metricExporter, lastExport)`.
     expect(src).toContain('exporter: withFreshGauges(metricExporter)');
     expect(src).not.toMatch(/PrometheusExporter/);
   });
@@ -387,17 +375,16 @@ describe('src/instrumentation.ts wiring (source audit)', () => {
     expect(helper).not.toMatch(/from '\.\.?\//);
   });
 
-  describe('agency additions', () => {
+  describe('startup and shutdown wiring', () => {
     it('installs no meter provider with export off, so every instrument stays a no-op as before', () => {
-      // OTLP only (no :9090): the one provider is NodeSDK's, inside the exporting branch.
+      // OTLP only: the one provider is NodeSDK's, inside the exporting branch.
       expect(src).not.toMatch(/setGlobalMeterProvider|new MeterProvider\(/);
       expect(src).toMatch(/if \(otelEnabled && otlpEndpoint && otelServiceNamed\) \{\n\s+\/\/ Force HTTP\/protobuf/);
       expect(src).toContain("const otelEnabled = process.env['OTEL_ENABLED'] === 'true';");
     });
 
     it('starts nothing without OTEL_SERVICE_NAME: the fallback is the production name Grafana alerts on', () => {
-      // Manas, 2026-10-09. `buildResourceAttributes` still falls back to SERVICE_NAME (core's
-      // shape), so the gate is what keeps an unnamed process out of production's series.
+      // Manas, 2026-10-09. `buildResourceAttributes` still falls back to SERVICE_NAME, so the gate is what keeps an unnamed process out of production's series.
       expect(src).toContain("const otelServiceNamed = Boolean(process.env['OTEL_SERVICE_NAME']);");
       const gates = src.match(/^if \(otelEnabled && otlpEndpoint[^)]*\) \{$/gm) ?? [];
       expect(gates).toEqual([
@@ -408,7 +395,7 @@ describe('src/instrumentation.ts wiring (source audit)', () => {
       expect(buildResourceAttributes({}, { version: '0', hostname: () => 'h' })['service.name']).toBe('magick-agency');
     });
 
-    it('loads .env before anything reads process.env (master src/instrumentation.ts:1-2)', () => {
+    it('loads .env before anything reads process.env', () => {
       const firstImport = src.match(/^import .*$/m)?.[0];
       expect(firstImport).toBe("import 'dotenv/config';");
     });
@@ -433,7 +420,7 @@ describe('src/instrumentation.ts wiring (source audit)', () => {
       expect(flush).toBeGreaterThan(index.indexOf('await closePool();'));
       expect(flush).toBeGreaterThan(index.lastIndexOf('await stop()'));
       expect(flush).toBeLessThan(index.indexOf('process.exit(0);'));
-      // In a `finally`, so a rejected step above cannot skip it (core `src/index.ts:932`).
+      // In a `finally`, so a rejected step above cannot skip it.
       expect(index.slice(index.lastIndexOf('} finally {', flush) + '} finally {'.length, flush)).not.toMatch(/[{}]/);
       // And a failed boot flushes before exiting.
       expect(index).toMatch(/logger\.fatal\(\{ err \}, 'boot failed'\);[^]*?await shutdownOtelSdk\(\);\s+process\.exit\(1\);/);

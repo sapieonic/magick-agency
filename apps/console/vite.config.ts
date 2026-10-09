@@ -8,13 +8,11 @@ import { loadBrandConfig, injectBrandName } from './src/brand/load-brand';
 import type { Brand } from './src/brand/types';
 
 /*
- * Ported from `magick-comms-cusui/vite.config.ts` @ ee5beb44. PORT NOTE
- * (magick-agency): kept — the TZ pin, the brand plugin and defines, the
- * unit/timezone project split. Changed — the dev port (5175), the dev proxy (the
- * agency server on 3021, see `API_PREFIXES`), a locale pin beside the TZ pin, and
- * the pool (`forks`, for that pin). Dropped —
- * the manual chunks for libraries the console does not ship (`@xyflow`,
- * `chart.js`, `@assistant-ui`, the markdown stack).
+ * Vite config: the TZ pin, the brand plugin and defines, and the
+ * unit/timezone project split. The dev port is 5175, the dev proxy targets the
+ * agency server on 3021 (see `API_PREFIXES`), a locale pin sits beside the TZ
+ * pin, and the pool is `forks` (for that pin). There are no manual chunks for
+ * heavy libraries, since the console does not ship any.
  */
 
 /**
@@ -32,7 +30,7 @@ import type { Brand } from './src/brand/types';
  */
 if (process.env['VITEST']) process.env['TZ'] = 'UTC';
 /*
- * The LOCALE, pinned the same way. PORT NOTE (magick-agency): cusui's suite
+ * The LOCALE, pinned the same way. The suite
  * assumes en-US number and date formatting (`1,000,000`, `Aug 19`) and its CI ran
  * in that locale; on a machine whose `LANG` is `en_IN` ICU renders `10,00,000`
  * and `19 Aug`. ICU reads the locale once per PROCESS, at start, so this reaches
@@ -64,9 +62,9 @@ function brandPlugin(b: Brand): Plugin {
 }
 
 /**
- * Every prefix the console calls on the agency server — the console's existing
- * cusui paths (decision B16) — proxied in dev so the browser talks to ONE origin
- * (extraction plan §1). `ws: true` on `/proxy` carries the station socket.
+ * Every prefix the console calls on the agency server — the paths
+ * are unchanged (decision B16) — proxied in dev so the browser talks to ONE origin.
+ * `ws: true` on `/proxy` carries the station socket.
  */
 const API_PREFIXES = [
   '/auth',
@@ -78,7 +76,7 @@ const API_PREFIXES = [
   '/feature-flags',
   '/proxy',
   '/dnc',
-  // Lead (session 4): the caller-ID picker's `GET /phone-numbers` (Phase 8); without it the
+  // The caller-ID picker's `GET /phone-numbers`; without it the
   // dev server's SPA fallback answered it with index.html. Pinned by devProxyPrefixes.test.ts.
   '/phone-numbers',
 ];
@@ -86,9 +84,8 @@ const API_PREFIXES = [
 export default defineConfig({
   plugins: [react(), brandPlugin(brand)],
   // The active brand's optional static assets (`brands/<id>/public/`), served at
-  // the site root. PORT NOTE (magick-agency, decision B17): the default
-  // `magick-agency` pack ships none (cusui's held the parent product's logo, also
-  // its favicon), so the directory is used only when it exists; `false` turns
+  // the site root. The default
+  // `magick-agency` pack ships none (decision B17), so the directory is used only when it exists; `false` turns
   // public-dir copying off instead of pointing Vite at a missing folder.
   publicDir: existsSync(resolve(BRANDS_DIR, BRAND_NAME, 'public'))
     ? resolve(BRANDS_DIR, BRAND_NAME, 'public')
@@ -130,7 +127,7 @@ export default defineConfig({
       },
     ],
     /**
-     * PORT NOTE (magick-agency): `forks`, where cusui used `threads`. A worker
+     * `forks` rather than `threads`. A worker
      * thread shares its parent's ICU, initialised before this config could pin
      * the locale above; a forked child starts with the pinned environment, so a
      * bare `npx vitest run` formats in en-US on any machine. Costs wall time over

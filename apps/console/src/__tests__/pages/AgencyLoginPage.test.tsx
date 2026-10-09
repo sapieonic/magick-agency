@@ -11,7 +11,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
  * way this feature fails in production rather than a way the markup could change:
  *
  *  1. **No signup, ever.** `POST /auth/session` provisions a brand-new tenant for
- *     an address master does not recognise, and an invited agent's membership is
+ *     an address the server does not recognise, and an invited agent's membership is
  *     activated by matching the address they sign in with. So a signup affordance
  *     on this page is not a stray control — it is the mechanism by which an agent
  *     ends up in a private empty tenant while the membership their supervisor
@@ -25,17 +25,14 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
  *     two doors, and this is the only place in the app where the distinction
  *     exists.
  *
- * PORT NOTE (magick-agency): property 3's FACT changed, its rule did not. Agency
- * refuses session path 4 with 403 `no_membership` (plan §3.1) instead of
- * provisioning a tenant and answering `is_new: true`, so every case that drove
- * the diagnosis with `{ is_new: true }` drives it with that refusal instead
- * (`noMembership()`), and the Google case reads the address from Firebase's
- * current user, because a refused sign-in has no session to read it from. Two
- * cases are DELETED with the cross-link they pinned ("keeps an exit to the
- * primary app…", "offers an exit that does not depend on the network"): the
- * console has one door, and `/login` is this page. Two NEW cases at the end pin
- * the reload path (`useAuth().sessionRefusal`) and that a different 403 is not
- * mistaken for the diagnosis.
+ * Agency refuses session path 4 with 403 `no_membership` rather than
+ * provisioning a tenant and answering `is_new: true`, so the diagnosis is driven
+ * by that refusal (`noMembership()`), and the Google case reads the address from
+ * Firebase's current user, because a refused sign-in has no session to read it
+ * from. The console has one door, and `/login` is this page, so there is no
+ * cross-link to another app. Two cases at the end pin the reload path
+ * (`useAuth().sessionRefusal`) and that a different 403 is not mistaken for the
+ * diagnosis.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -100,7 +97,7 @@ import { SESSION_EXPIRED_MESSAGE } from '../../utils/session';
 import { ApiError } from '../../api/client';
 import AgencyLoginPage from '../../pages/agency/AgencyLoginPage';
 
-/** Agency's answer to an address it has no user, stub or invite for (plan §3.1). */
+/** Agency's answer to an address it has no user, stub or invite for. */
 function noMembership() {
   return new ApiError(403, {
     error: 'Forbidden',
@@ -169,7 +166,7 @@ afterEach(() => cleanup());
 describe('there is no way to sign up at the agency door', () => {
   it('offers no signup affordance at all', () => {
     /*
-      The hazard this closes is silent and not obviously an auth bug: master
+      The hazard this closes is silent and not obviously an auth bug: the server
       provisions a tenant for an unrecognised address, so an agent who reaches for
       "Sign Up" lands in an empty workspace of their own and their real membership
       is never claimed. `/login` keeps its tabs; this page must never grow them.
@@ -437,7 +434,7 @@ describe('the unrecognised-account diagnosis survives a remount', () => {
    * the visitor into `/agency` as owner of the stray tenant, where the capability
    * gate meets them with a bare "not part of your plan".
    *
-   * Nothing in the session can recover it: master answers the SECOND
+   * Nothing in the session can recover it: the server answers the SECOND
    * `POST /auth/session` from path 1 with `is_new: false`, because by then the
    * tenant it provisioned genuinely exists. `is_new` is true exactly once.
    */
@@ -454,7 +451,7 @@ describe('the unrecognised-account diagnosis survives a remount', () => {
   it('shows the diagnosis on a cold mount, instead of forwarding a signed-in user', () => {
     /*
       The reload, reconstructed: storage carries the marker, the context has a user
-      (master recognised the stray tenant's own firebase_uid), and component state
+      (the server recognised the stray tenant's own firebase_uid), and component state
       is empty. Before the seed this rendered nothing and forwarded to `/agency`.
     */
     sessionStorage.setItem(KEY, 'typo@agency.test');
@@ -572,7 +569,7 @@ describe('the unrecognised-account screen cannot become a dead end', () => {
   it('reports the refusal to analytics as a failure, not a success', async () => {
     /*
       Credentials were accepted, so `trackAuthSucceeded` fires too — Firebase and
-      master both did their jobs. But the funnel would otherwise count an agent who
+      the server both did their jobs. But the funnel would otherwise count an agent who
       never reached the dialer as a completed sign-in, and this branch is the one
       the `door` dimension was added to make visible.
     */
@@ -691,7 +688,7 @@ describe('analytics can tell the two doors apart', () => {
   });
 });
 
-describe('the refusal also arrives without a button press (magick-agency)', () => {
+describe('the refusal also arrives without a button press', () => {
   it('renders the diagnosis from the listener’s refusal on a reload, naming the Firebase address', () => {
     // A restored credential is synced by `AuthContext`'s listener; agency's 403
     // lands on `sessionRefusal`, with no user and no `unrecognised` state yet.

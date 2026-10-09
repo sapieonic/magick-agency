@@ -26,7 +26,7 @@ interface Props {
   onReset?: () => void;
   /**
    * Extra content rendered inline (e.g. an "env var: FOO_BAR" hint). Kept as a
-   * prop rather than derived here because the master API doesn't currently
+   * prop rather than derived here because the server API doesn't currently
    * expose `envVar` on the catalog response.
    */
   extra?: ReactNode;

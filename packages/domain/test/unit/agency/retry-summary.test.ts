@@ -3,7 +3,7 @@ import { renderSelectionSummary } from '../../../src/retry-summary.js';
 import type { AgencyDisposition } from '@magick-agency/contracts/agency';
 
 // ---------------------------------------------------------------------------
-// The agent's retry banner — wire contract §4's rendering rules.
+// The agent's retry banner — the banner's rendering rules.
 //
 // This string is built CORE-SIDE so the copy the agent reads and the query that
 // produced their roster cannot disagree. That makes it a payload three repos
@@ -22,7 +22,7 @@ const CATALOG: AgencyDisposition[] = [
   { code: 'nri_followup', label: 'NRI Followup' },
 ];
 
-describe('renderSelectionSummary — §4\'s order and sources', () => {
+describe('renderSelectionSummary — order and sources', () => {
   it('renders dispositions, then outcomes, then never-attempted', () => {
     // The contract's own worked example. The order is fixed so all three repos
     // read the same sentence.
@@ -57,10 +57,10 @@ describe('renderSelectionSummary — §4\'s order and sources', () => {
   });
 });
 
-describe('renderSelectionSummary — the arm §4 does not specify', () => {
+describe('renderSelectionSummary — the arm the ordering rules do not specify', () => {
   it('renders the remaining dimensions when the contract\'s three produce nothing', () => {
     // `{ state: ['exhausted'] }` is a perfectly ordinary retry and renders to
-    // NOTHING under §4's three rules — the banner would read `Retry 1 of "X" — `
+    // NOTHING under the three ordering rules — the banner would read `Retry 1 of "X" — `
     // with a trailing dash and no reason. Core is the sole producer of this
     // string, so extending it for a case the contract leaves empty cannot put core
     // out of step with anyone.
@@ -149,7 +149,7 @@ describe('`canceled` in the exhaustive copy map', () => {
     // list from the pilot's data saw cancelled rings under "abandoned (no agent
     // free)" — a sentence about a customer who picked up and got silence, on
     // dials nobody ever answered. All three now say what they mean, in one line,
-    // in the order the wire contract §4 fixes.
+    // in the fixed order.
     expect(renderSelectionSummary({ last_outcome: ['no_answer', 'abandoned', 'canceled'] }, []))
       .toBe('no answer, abandoned (no agent free), stopped by us before answer');
   });

@@ -14,7 +14,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
  *
  *  1. **The Google address mismatch stops the flow.** This is the whole reason
  *     the page exists in the shape it does. `POST /auth/session` provisions a
- *     brand-new tenant for an address master does not recognise, so an agent
+ *     brand-new tenant for an address the server does not recognise, so an agent
  *     invited at a work address who presses Continue with Google and is handed
  *     their personal Gmail used to land — silently — as the owner of an empty
  *     workspace, with the real membership unclaimed and neither them nor their
@@ -190,7 +190,7 @@ describe('reading the invitation', () => {
   it('names who added them, to what, and where', async () => {
     await renderInvitation();
 
-    // `product_name` is master's, rendered rather than assembled — it is
+    // `product_name` is the server's, rendered rather than assembled — it is
     // whitelabel-dependent and this client must not hardcode it.
     expect(screen.getByText(/Magick Agency Dialer/)).toBeTruthy();
     expect(screen.getByText('Priya Sharma')).toBeTruthy();
@@ -198,7 +198,7 @@ describe('reading the invitation', () => {
     expect(screen.getByText('priya@acme.com')).toBeTruthy();
   });
 
-  it('reads without an inviter, which master can legitimately not know', async () => {
+  it('reads without an inviter, which the server can legitimately not know', async () => {
     // A system or API invite has no person to name. The sentence has to survive
     // that rather than rendering "null has set you up as Agent".
     await renderInvitation({ ...INVITE, inviter_name: null });
@@ -207,9 +207,9 @@ describe('reading the invitation', () => {
     expect(screen.queryByText(/null/i)).toBeNull();
   });
 
-  it('drops the workspace clause when master could not name one', async () => {
+  it('drops the workspace clause when the server could not name one', async () => {
     /*
-      `tenant_name` is `string | null` on the wire — master sends `tenant?.name ??
+      `tenant_name` is `string | null` on the wire — the server sends `tenant?.name ??
       null` on purpose, refusing to hand a raw tenant UUID to an unauthenticated
       caller — and the type here claimed `string`. The sentence rendered "You have
       been set up as Agent at ." with an empty `<strong>` mid-sentence, on the one
@@ -279,10 +279,10 @@ describe('each terminal status gets its own screen', () => {
 
   it('sends an already-set-up invitee to the door rather than to their supervisor', async () => {
     /*
-      Master's fifth claim outcome (`identity_already_bound`), added after this
+      The server's fifth claim outcome (`identity_already_bound`), added after this
       page was first written: the invited USER ROW already has a real Firebase
       account behind it, because the invitee signed in by some other route since
-      the invitation was sent. Master refuses to rebind the row — it would be an
+      the invitation was sent. The server refuses to rebind the row — it would be an
       account-takeover primitive on an address the claimant may not control — and
       leaves the invitation outstanding.
 
@@ -349,7 +349,7 @@ describe('Continue with Google', () => {
   });
 
   it('never asks about an address that matches only in case', async () => {
-    // Master matches on the exact string, but a confirmation for `PRIYA@ACME.COM`
+    // The server matches on the exact string, but a confirmation for `PRIYA@ACME.COM`
     // would be a question with no content — it is the same mailbox, and asking
     // teaches people to click through the one question that matters.
     mocks.establishInviteCredential.mockResolvedValue({ email: 'PRIYA@Acme.com ' });
@@ -437,7 +437,7 @@ describe('the Google address mismatch', () => {
 
   it('keeps the way out on screen when the confirmed claim is refused', async () => {
     /*
-      Master's `identity_in_use`: the Google account they confirmed already
+      The server's `identity_in_use`: the Google account they confirmed already
       belongs to a DIFFERENT user row here, so the claim is refused and the
       invitation is deliberately left outstanding. This case is reachable
       precisely because this page allows a mismatched address — a personal
@@ -463,7 +463,7 @@ describe('the Google address mismatch', () => {
     );
     // The sign-out is still there…
     expect(screen.getByRole('button', { name: 'Use a different account' })).toBeTruthy();
-    // …and so is the other remedy master names, as something pressable.
+    // …and so is the other remedy the server names, as something pressable.
     expect(screen.getByRole('link', { name: /go to sign in/i }).getAttribute('href'))
       .toBe('/agency/login');
     expect(mocks.trackAgencyInviteClaimFailed).toHaveBeenCalledWith({
@@ -479,7 +479,7 @@ describe('the Google address mismatch', () => {
       ("Sign in instead", and "Go to sign in" on a terminal screen). Firebase
       persists the credential in localStorage, the provider's suppression does not
       survive a page load, and `POST /auth/session` provisions a tenant for an
-      address master does not recognise — so leaving this page holding an
+      address the server does not recognise — so leaving this page holding an
       unclaimed credential is the same defect the page exists to remove, one
       navigation later. Leaving signs out, exactly as declining does.
     */

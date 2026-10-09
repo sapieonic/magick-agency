@@ -13,12 +13,11 @@ import type { NotificationEventDefinition } from './catalog.js';
  *
  * These are deliberately small composable functions rather than one
  * `dispatchNotification(...)` that does audience, preferences, claiming,
- * rendering and sending behind a callback. The existing mailers each resolve
- * their audience at a different point and in a different shape — one reads free
- * text off a campaign row, one derives a supervisor roster, the digest groups by
- * account scope — and forcing all three through a single `render(recipient)`
- * seam would mean rewriting a 522-line module with its own discriminated result
- * type in order to gain nothing it does not already have.
+ * rendering and sending behind a callback. Mailers resolve their audience at
+ * different points and in different shapes, and forcing them through a single
+ * `render(recipient)` seam would mean rewriting `agency-campaign-completion.ts`,
+ * with its own discriminated result type, in order to gain nothing it does not
+ * already have.
  *
  * "New events are cheap to add" comes from the catalog entry plus these
  * primitives, not from a god function.
@@ -30,7 +29,7 @@ export interface ResolvedRecipient {
   email: string;
   /**
    * The users behind the address. Usually one; more than one is legal, because
-   * `users.email` carries only a NON-unique index (migration 069 says so).
+   * `users.email` carries only a NON-unique index.
    * Empty for an explicit-audience address that matches no platform user.
    */
   userIds: string[];
@@ -117,9 +116,8 @@ export function resolveEffectivePreferences(
  * visible to all of them.
  *
  * This exists so the settings page can refuse to offer a toggle that cannot do
- * anything. `campaign-gate.ts` states the rule this serves: a toggle that changes
- * nothing is worse than no toggle, because it is a promise the product does not
- * keep.
+ * anything: a toggle that changes nothing is worse than no toggle, because it is
+ * a promise the product does not keep.
  */
 export function isEventAddressableToRole(
   event: NotificationEventDefinition,
@@ -136,17 +134,11 @@ function clearsFloor(role: MembershipRole, minimumRole: MembershipRole): boolean
 }
 
 /**
- * PORT NOTE (magick-agency): master's `collapseByInbox` and
- * `resolveRoleFloorAudience` (master `audience.ts:139-289`) are deleted. Their
- * only caller was the credits usage-digest runner (`digest/run-digests.ts`),
- * which is not ported (plan §3.5, no credits). The agency completion notice
+ * There is no role-floor audience resolver here. The agency completion notice
  * derives its role-floor audience in `agency-campaign-completion.ts` from
  * `findAddressableMembersInAccount` and filters it through
- * `applyExplicitAudiencePreferences` below, as it does in master — through a
- * DYNAMIC import inside `suppressUnsubscribed` (`agency-campaign-completion.ts`
- * :340, master :311), so a search for a static import finds no caller. The
- * `notificationPreferenceRepository` import went with them (nothing else in
- * this file used it).
+ * `applyExplicitAudiencePreferences` below — through a DYNAMIC import inside
+ * `suppressUnsubscribed`, so a search for a static import finds no caller.
  */
 
 /**
@@ -168,8 +160,7 @@ function clearsFloor(role: MembershipRole, minimumRole: MembershipRole): boolean
  * it is entitled to be told unless everyone who could read it has declined.
  *
  * `members` is the tenant's roster, already fetched by the caller — this does no
- * I/O of its own so it stays usable from inside the existing mailers, which run
- * on a webhook handler with a settlement waiting behind them.
+ * I/O of its own, so a mailer can call it without adding a round trip.
  */
 export function applyExplicitAudiencePreferences(
   eventKey: string,

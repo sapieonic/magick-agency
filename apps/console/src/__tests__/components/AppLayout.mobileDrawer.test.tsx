@@ -3,7 +3,7 @@ import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-libra
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
 /**
- * AppLayout — mobile navigation drawer lifecycle (86d3nxc9n). Covers: the closed
+ * AppLayout — mobile navigation drawer lifecycle. Covers: the closed
  * drawer being pulled out of the mobile focus/accessibility tree, the open drawer
  * isolating background content and trapping focus, Escape/overlay/close/route
  * selection all closing it and restoring focus, and the toggle reporting its
@@ -22,7 +22,6 @@ vi.mock('../../contexts/ThemeContext', () => ({
 }));
 vi.mock('../../components/layout/TenantSwitcher', () => ({ TenantSwitcher: () => null }));
 vi.mock('../../components/layout/AccountSwitcher', () => ({ AccountSwitcher: () => null }));
-// PORT NOTE (magick-agency): cusui also stubbed `CreditBadge`, which is not ported.
 vi.mock('../../components/common/GlobalSearch', () => ({ GlobalSearch: () => null }));
 
 // Sidebar's own contents (nav sections, permissions, governance...) aren't under
@@ -75,7 +74,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('AppLayout — mobile drawer (86d3nxc9n)', () => {
+describe('AppLayout — mobile drawer', () => {
   beforeEach(() => mockMatchMedia(true));
 
   it('starts closed, inert, and out of the a11y tree, with the toggle reporting collapsed state', () => {

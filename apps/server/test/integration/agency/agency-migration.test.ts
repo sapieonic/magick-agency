@@ -11,7 +11,7 @@ import {
 /**
  * T-M1/T-M2/T-M3 — the agency schema, against a real Postgres.
  *
- * Migrations 072–077 were exercised only by the code that reads them. Nothing
+ * The agency tables were exercised only by the code that reads them. Nothing
  * asserted the schema itself, which means every `CHECK` constraint, every
  * nullability decision and every `ON DELETE` was unverified — a mock cannot have
  * an opinion about any of them.
@@ -30,7 +30,7 @@ const AGENCY_TABLES = [
   'agency_ingest_chunks',
 ] as const;
 
-/** Every legal value of every state machine, from the design's §5. */
+/** Every legal value of every state machine, from the design's. */
 const LEGAL = {
   campaign_status: ['draft', 'running', 'paused', 'stopping', 'completed', 'stopped'],
   contact_state: ['pending', 'in_flight', 'connected', 'completed', 'exhausted', 'suppressed'],
@@ -38,7 +38,7 @@ const LEGAL = {
   attempt_state: ['queued', 'dialing', 'ringing', 'answered', 'bridged', 'ended'],
 } as const;
 
-describe('agency schema — migrations 072-077 (integration)', () => {
+describe('agency schema (integration)', () => {
   beforeEach(truncateAll);
   afterAll(closeTestPool);
 
@@ -54,7 +54,7 @@ describe('agency schema — migrations 072-077 (integration)', () => {
   it('T-M1b: the webrtc_calls back-references exist and are NULLABLE', async () => {
     // The single most dangerous nullability in this feature. `webrtc_calls` is
     // the EXISTING dialer's table; a NOT NULL on either of these columns would
-    // break every ordinary browser-dialer call the moment 076 landed, and would
+    // break every ordinary browser-dialer call the moment the columns existed, and would
     // do it at insert time rather than at boot.
     const { rows } = await getTestPool().query<{
       column_name: string; is_nullable: string; data_type: string;
@@ -221,9 +221,9 @@ describe('agency schema — migrations 072-077 (integration)', () => {
     ).rejects.toMatchObject({ code: '23503' });
   });
 
-  it('T-M4b: the ingest idempotency constraint is a real UNIQUE (077)', async () => {
-    // 077's whole argument is that one key maps to exactly one chunk, so a real
-    // UNIQUE is available here — unlike 066's advisory-lock idiom. Assert the
+  it('T-M4b: the ingest idempotency constraint is a real UNIQUE', async () => {
+    // One key maps to exactly one chunk, so a real
+    // UNIQUE is available here — unlike an advisory-lock idiom. Assert the
     // constraint, not the intent.
     const campaign = await insertAgencyCampaign();
     const insert = () => getTestPool().query(

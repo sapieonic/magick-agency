@@ -3,28 +3,15 @@ import fastifyWebsocket from '@fastify/websocket';
 import { WebSocket as WsWebSocket, type RawData } from 'ws';
 import type { AddressInfo } from 'node:net';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): master `test/unit/agency/ws-harness.ts`@a1f0756a, ported
- * only as far as the kept station cases need it. DELETED: `FakeCore` / `startFakeCore` (the
- * stand-in for core's upstream socket): the station route no longer opens a second socket to
- * core — it hands the console's socket to `handleStationSocket` in-process — so there is no
- * upstream to fake; the `WebSocketServer` and `once` imports went with it. Kept verbatim:
- * `HarnessApp` / `startProxyApp`, `TestClient` / `connectClient`, `waitFor`. The docblock
- * below is master's record.
- */
-
 /**
  * WebSocket test harness.
  *
- * master had **no** WebSocket test coverage anywhere across its suites — the
- * two existing WS proxies are untested, and the only adjacent test exercises a
- * pure URL helper in isolation. There was no fake socket, no client helper and
- * no precedent, so this is the harness rather than a reuse of one.
+ * Provides a client helper and a proxy app for the station WebSocket route.
  *
  * The shape it provides is deliberately end-to-end over **real sockets** rather
- * than mocks: the things that break in a WS proxy are close-code propagation,
- * ordering, and back-pressure, and a mocked `ws` reproduces none of them. Two
- * real servers and a real client cost a few milliseconds and actually exercise
+ * than mocks: the things that break in a WS route are close-code propagation,
+ * ordering, and back-pressure, and a mocked `ws` reproduces none of them. A
+ * real server and a real client cost a few milliseconds and actually exercise
  * the protocol.
  */
 

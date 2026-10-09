@@ -15,9 +15,9 @@ describe('test database guard', () => {
   });
 
   it.each([
-    ['core dev', 'postgresql://u:p@localhost:5432/magick_agency_test'],
-    ['master dev / core test', 'postgresql://u:p@localhost:5433/magick_agency_test'],
-    ['master test', 'postgresql://u:p@localhost:5434/magick_agency_test'],
+    ['another local stack on 5432', 'postgresql://u:p@localhost:5432/magick_agency_test'],
+    ['another local stack on 5433', 'postgresql://u:p@localhost:5433/magick_agency_test'],
+    ['another local stack on 5434', 'postgresql://u:p@localhost:5434/magick_agency_test'],
     ['agency dev database', 'postgresql://u:p@localhost:5436/magick_agency'],
     ['lookalike name', 'postgresql://u:p@localhost:5436/magick_agency_testing'],
   ])('refuses %s', (_label, url) => {

@@ -8,12 +8,11 @@ import { SYSTEM_AUDIT_ACTOR } from '../../../src/audit/platform/audit-actor.js';
 import { getAuditRetentionHorizon, resetAuditRetentionCache } from '../../../src/audit/audit-retention.js';
 
 /**
- * NEW (magick-agency, no source). Neither source tests its audit LOGGER against
- * a database: core and master each cover the repository and nothing drives
- * `log() → buffer → flush → INSERT` end to end. These do, for both halves of the
- * activity trail (decision B7) — core's `auditLogger` into `audit_logs` (with
- * PII masking) and master's `platformAuditLogger` into `platform_audit_log` —
- * plus core's retention horizon read against the baseline's real partitions.
+ * The audit LOGGERs against a real database: the repositories are covered elsewhere and
+ * nothing else drives `log() → buffer → flush → INSERT` end to end. These do, for both
+ * halves of the activity trail (decision B7) — the voice engine's `auditLogger` into
+ * `audit_logs` (with PII masking) and the platform's `platformAuditLogger` into
+ * `platform_audit_log` — plus the retention horizon read against the baseline's real partitions.
  */
 describe('audit loggers against the real baseline (integration)', () => {
   const TENANT = randomUUID();
@@ -32,7 +31,7 @@ describe('audit loggers against the real baseline (integration)', () => {
     await closeTestPool();
   });
 
-  it("core's auditLogger masks PII and flushes the buffer into audit_logs", async () => {
+  it("auditLogger masks PII and flushes the buffer into audit_logs", async () => {
     const campaignId = randomUUID();
     auditLogger.log({
       tenantId: TENANT,
@@ -58,7 +57,7 @@ describe('audit loggers against the real baseline (integration)', () => {
     expect(rows[0].event_data.phone).not.toBe('+919876543210');
   });
 
-  it("master's platformAuditLogger flushes catalog-typed rows into platform_audit_log", async () => {
+  it("platformAuditLogger flushes catalog-typed rows into platform_audit_log", async () => {
     const userId = randomUUID();
     const campaignId = randomUUID();
     platformAuditLogger.log({
@@ -91,17 +90,17 @@ describe('audit loggers against the real baseline (integration)', () => {
 
   it('a write outside the catalog, or with a half-stated actor, does not compile', () => {
     const compileOnly = (): void => {
-      // @ts-expect-error — not in PLATFORM_AUDIT_ACTIONS (master's scheduling action, trimmed).
+      // @ts-expect-error — not in PLATFORM_AUDIT_ACTIONS (a scheduling action, not in the catalog).
       platformAuditLogger.log({ tenant_id: TENANT, ...SYSTEM_AUDIT_ACTOR, action: 'schedule.created', resource_type: 'dnc_entry' });
       // @ts-expect-error — a human row must name the user.
       platformAuditLogger.log({ tenant_id: TENANT, actor_type: 'human', action: 'dnc_entry.created', resource_type: 'dnc_entry' });
-      // @ts-expect-error — there is no api_key actor (decision #5).
+      // @ts-expect-error — there is no api_key actor.
       platformAuditLogger.log({ tenant_id: TENANT, actor_type: 'api_key', action: 'dnc_entry.created', resource_type: 'dnc_entry' });
     };
     expect(typeof compileOnly).toBe('function');
   });
 
-  it("core's retention horizon reads the baseline's earliest range partition", async () => {
+  it("the retention horizon reads the baseline's earliest range partition", async () => {
     resetAuditRetentionCache();
     expect(await getAuditRetentionHorizon()).toEqual({
       earliest_retained_at: '2026-01-01T00:00:00.000Z',

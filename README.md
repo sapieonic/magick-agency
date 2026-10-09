@@ -1,8 +1,8 @@
 # Magick Agency
 
-Human-agent outbound power dialing, as one self-sufficient application.
-Extracted from the MagickVoice platform (core, master, cusui); the spec is
-`MagickVoice-platform/docs/agency-extraction-plan.md` (v4.2).
+Human-agent outbound power dialing, as one self-contained application. Documentation starts at
+[`docs/README.md`](docs/README.md): status, intent and delivery plan, architecture, modules and
+decisions.
 
 ## Layout
 
@@ -16,7 +16,11 @@ packages/contracts/  wire contract shared by server and UIs (lead-owned)
 packages/domain/     pure agency rules
 packages/db/         pg pool, repositories, the squashed baseline migration
 packages/observability/  logger, OTel, metric declarations
+docker/              dev Postgres + Redis; the production image, nginx and compose file
 ```
+
+Production: `docker/docker-compose.prod.yml`; see [`docs/operations.md`](docs/operations.md)
+("Production packaging").
 
 ## Dev setup
 
@@ -36,7 +40,7 @@ pnpm infra:up      # Postgres on 5436, Redis on 6383; waits until both are healt
 
 The first start creates two databases, `magick_agency` (dev) and `magick_agency_test`.
 Redis db 0 is for dev and db 1 is for tests. These ports belong only to agency. Never point
-anything at 5432/5433/5434/6379/6380/6381; those are the MagickVoice core and master stacks.
+anything at 5432/5433/5434/6379/6380/6381; other local stacks use them.
 
 ### 3. Configure the server
 
@@ -120,14 +124,14 @@ together, they wipe each other's rows. Give each worktree its own test database 
 in an untracked `.test-env.local.json` at the repo root:
 
 ```json
-{ "dbName": "magick_agency_test_lane_a", "redisDb": 2 }
+{ "dbName": "magick_agency_test_wt1", "redisDb": 2 }
 ```
 
 The database name must start with `magick_agency_test`, and the Redis db must not be 0. The
 test setup does not create the database, so create it once:
 
 ```bash
-docker exec magick-agency-postgres createdb -U magick_agency magick_agency_test_lane_a
+docker exec magick-agency-postgres createdb -U magick_agency magick_agency_test_wt1
 ```
 
 ## Checks
@@ -139,5 +143,5 @@ pnpm test:integration   # real Postgres/Redis; needs pnpm infra:up
 ```
 
 Run a single package's tests from inside its directory (dotenv resolves from
-cwd). Never point anything at 5432/5433/5434/6379/6380/6381: those belong to the
-MagickVoice core and master stacks.
+cwd). Never point anything at 5432/5433/5434/6379/6380/6381: other local stacks use
+them.

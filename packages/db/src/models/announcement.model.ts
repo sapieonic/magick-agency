@@ -1,8 +1,7 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/src/db/models/announcement.model.ts@4850d1d9.
-// Changed (baseline decision 4, uploaded clip only — see packages/db/BASELINE.md
-// `announcements`): removed `tts_text`, `tts_voice`, `tts_language` from the record
-// and both input types (the columns are dropped), and narrowed `type` from
-// `'tts' | 'audio'` to `'audio'` (the CHECK is `type IN ('audio')`).
+// Uploaded clip only (see packages/db/BASELINE.md
+// `announcements`): the record and both input types carry no `tts_text`,
+// `tts_voice` or `tts_language` (the columns do not exist), and `type` is
+// `'audio'` only (the CHECK is `type IN ('audio')`).
 export interface AnnouncementRecord {
   id: string;
   tenant_id: string;

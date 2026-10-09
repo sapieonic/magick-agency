@@ -9,7 +9,7 @@ import {
 /**
  * The contacts tab's filters, in the URL.
  *
- * The round trip is the point: retry design DR-3 says the query string the
+ * The round trip is the point: the rule is that the query string the
  * supervisor is already looking at BECOMES the retry selector, and that is only
  * literally true if the applied filters live there rather than in a component.
  */
@@ -44,7 +44,7 @@ describe('the round trip', () => {
   });
 
   it('uses repeated params, never a comma-joined value', () => {
-    // Both services accept repeated params; a comma-joined value would lose a
+    // The server accepts repeated params; a comma-joined value would lose a
     // disposition code containing a comma a second time, before the request is
     // even built.
     const params = rosterFiltersToParams({ last_disposition: ['a', 'b'] });

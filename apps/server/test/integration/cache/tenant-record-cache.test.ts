@@ -1,4 +1,3 @@
-// PORT NOTE (magick-agency): ported from master test/integration/cache/tenant-record-cache.test.ts@a1f0756a (10 → 10).
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import Redis from 'ioredis';
 import { closePool, initDbPool } from '@magick-agency/db';
@@ -9,17 +8,13 @@ import { TEST_REDIS_URL, assertSafeTestRedisUrl } from '../../helpers/test-redis
 
 // ── Mocks (must precede the dynamic import of the module under test) ─────────
 
-// PORT NOTE (magick-agency): master redirected `src/db/connection.js` to the
-// test pool and stubbed `analytics/posthog.js`. Agency's repositories use the
-// package pool, initialised on the test database in `beforeAll`; there is no
-// analytics module (the resolver's `identifyGroups` call is removed).
+// The repositories use the package pool, initialised on the test database in
+// `beforeAll`; there is no analytics module.
 
 // The real redisCache singleton is used (NOT mocked) — inited against raw Redis
 // in beforeAll below.
 
-// PORT NOTE (magick-agency): master pointed this at its own test Redis
-// (`redis://localhost:6381`, a port agency must never touch). Agency's guarded
-// test Redis (6383, the worktree's non-zero db) is used, and every FLUSHDB goes
+// The guarded test Redis (6383, the worktree's non-zero db) is used, and every FLUSHDB goes
 // through `assertSafeTestRedisUrl()` first.
 assertSafeTestRedisUrl();
 const RAW_REDIS_URL = TEST_REDIS_URL;

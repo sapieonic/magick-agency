@@ -12,54 +12,18 @@ const { webrtcCallRepository } = await import(
 );
 
 /**
- * ─── AGENCY LEGS ARE INVISIBLE AND UNTOUCHABLE THROUGH THE SOFTPHONE ─────────
+ * ─── THE AGENCY SCOPE AGAINST REAL ROWS ─────────────────────────────────────
  *
- * `webrtc_calls` holds both products' calls and stays one table by design
- * (migration 076). The boundary is a read-path predicate at the repository
- * (`docs/agency-dialer-design.md` §7b), and this suite asserts the resulting
- * behaviour against real SQL rather than the query text.
+ * The boundary between agency legs (`campaign_id IS NOT NULL`) and campaign-less
+ * rows is a read-path predicate at the repository (see docs/architecture.md), and
+ * this suite asserts the resulting behaviour against real SQL rather than the
+ * query text.
  *
- * ── Why the seven routes are tested as two functions ────────────────────────
- *
- * Every tenant-facing `/api/v1/webrtc-call/*` handler reaches its record through
- * exactly one of two repository reads:
- *
- *   GET  /                      → listByTenant
- *   GET  /:id                   → findByIdScoped
- *   GET  /:id/recording         → findByIdScoped
- *   GET  /:id/recording-url     → findByIdScoped
- *   POST /:id/end               → findByIdScoped
- *   POST /:id/retry-analysis    → findByIdScoped
- *   DELETE /:id/transcript      → findByIdScoped
- *
- * The six `findByIdScoped` handlers each do the same thing with the result: they
- * 404 when it is null. So `findByIdScoped` returning null for an agency row is
- * exactly what closes all six, and asserting it once at the repository is a
- * stronger statement than asserting it six times through mocked routes — it
- * cannot pass while the SQL is wrong. The route wiring itself (that each handler
- * really does go through this function, and really does 404 on null) is pinned by
- * `test/unit/api/routes/webrtc-call.test.ts`.
- *
- * The severity of the six is not uniform, and the writes are the reason this is a
- * security patch and not a cosmetic one: before the predicate, `POST /:id/end`
- * let a softphone user hang up a live agency power-dialer leg by id, and
- * `DELETE /:id/transcript` let them erase an agency call's transcript.
- */
-
-/*
- * PORT NOTE (magick-agency): ported from core
- * test/integration/agency/webrtc-call-scope-isolation.test.ts@4850d1d9. The
- * softphone (scope `'dialer'`) is deleted; `'agency'` is the only scope.
- *  - DELETED (4): the "findByIdScoped — the six by-id routes" cases. Their
- *    subject is the softphone's six routes; the agency-scope refusal of a
- *    campaign-less row is the "mirror image" case below, kept.
- *  - MODIFIED (5): the "listByTenant" cases now list the AGENCY scope, with
- *    campaign-less rows (`campaign_id: null`, the old softphone shape) as the
- *    rows the scope must neither return nor count.
- *  - MODIFIED (1): the partition case asserts the agency page excludes exactly
- *    the campaign-less rows (no `'dialer'` page to compare against).
- *  - Ids are UUIDs (core: 'test-tenant' / 'test-account' / 'other-tenant'); the
- *    table is `agency_calls`. The comment above is core's and describes core.
+ * `'agency'` is the only scope. The "listByTenant" cases list the AGENCY scope,
+ * with campaign-less rows (`campaign_id: null`) as the rows the scope must neither
+ * return nor count, and the partition case asserts the agency page excludes
+ * exactly those rows. The agency-scope refusal of a campaign-less row is the
+ * "mirror image" case below. Ids are UUIDs and the table is `agency_calls`.
  */
 const TENANT = DEFAULTS.tenantId;
 const ACCOUNT = DEFAULTS.accountId;
@@ -203,7 +167,7 @@ describe('webrtc_calls dialer/agency scope isolation (integration)', () => {
 
   // ── the agency side of the same predicate ────────────────────────────────
   describe("scope 'agency' — the mirror image", () => {
-    it('returns the agency leg and refuses the softphone call', async () => {
+    it('returns the agency leg and refuses the campaign-less call', async () => {
       const agency = await insertWebrtcCall({
         tenant_id: TENANT, account_id: ACCOUNT, campaign_id: CAMPAIGN,
       });
@@ -247,7 +211,7 @@ describe('webrtc_calls dialer/agency scope isolation (integration)', () => {
         });
       }
 
-      // PORT NOTE: no `'dialer'` page exists; the complement is the campaign-less rows.
+      // No `'dialer'` page exists; the complement is the campaign-less rows.
       const agencyPage = await webrtcCallRepository.listByTenant(TENANT, ACCOUNT, 'agency', 50, 0);
 
       expect(agencyPage.total).toBe(4);
@@ -267,11 +231,11 @@ describe('webrtc_calls dialer/agency scope isolation (integration)', () => {
 
   /**
    * The internal read stays unscoped on purpose: the bridge, settlement and the
-   * analysis runner all handle both products' calls through it. If this test
+   * analysis runner all handle every call through it. If this test
    * fails because someone scoped `findById`, the agency dialer is broken, not
    * secured.
    */
-  describe('findById — deliberately serves both products', () => {
+  describe('findById — deliberately serves every row', () => {
     it('returns an agency leg', async () => {
       const agency = await insertWebrtcCall({
         tenant_id: TENANT,
@@ -281,7 +245,7 @@ describe('webrtc_calls dialer/agency scope isolation (integration)', () => {
       expect(await webrtcCallRepository.findById(agency.id)).not.toBeNull();
     });
 
-    it('returns a softphone call', async () => {
+    it('returns a campaign-less call', async () => {
       const dialer = await insertWebrtcCall({ tenant_id: TENANT, account_id: ACCOUNT, ...NO_CAMPAIGN });
       expect(await webrtcCallRepository.findById(dialer.id)).not.toBeNull();
     });

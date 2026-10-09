@@ -3,13 +3,12 @@ import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js'
 import { DEFAULTS, insertWebrtcCall } from '../setup/factories.js';
 
 /*
- * PORT NOTE (magick-agency): ported from core test/integration/db/dialer-analysis-migration.test.ts
- * @4850d1d9 (5 cases -> 6), against the squashed BASELINE instead of migration 059. Modified:
- * the first case checks the baseline's columns (8 analysis columns on `agency_calls`,
- * `dialer_analysis_jobs.call_id` NOT NULL, `analysis_audio_seconds` kept) and that the
- * settlement columns and `account_settings.analyze_dialer_calls` are NOT there; ids are
- * UUIDs; the profile names carry the factory tenant/account. New: the settlement
- * constraint / index and the dropped columns are asserted gone.
+ * Runs against the squashed BASELINE. The first case checks the baseline's columns
+ * (8 analysis columns on `agency_calls`, `dialer_analysis_jobs.call_id` NOT NULL,
+ * `analysis_audio_seconds` kept) and that the settlement columns and
+ * `account_settings.analyze_dialer_calls` are NOT there; ids are UUIDs; the profile
+ * names carry the factory tenant/account. The settlement constraint / index and the
+ * dropped columns are asserted gone.
  */
 const T = DEFAULTS.tenantId;
 const A = DEFAULTS.accountId;

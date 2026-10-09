@@ -9,12 +9,10 @@ import type { MetricData } from '@opentelemetry/sdk-metrics';
 import { freshGaugeTemporality } from '../../src/utils/otel-sdk-config.js';
 
 /**
- * PORT NOTE (magick-agency, Phase 6): core `test/helpers/otel-metric-reader.ts`@4850d1d9,
- * verbatim below the inlined block. Core imported `ScrapeMetricReader` from
- * `src/utils/otel-sdk-config.ts`. That file is now ported without its `:9090` scrape section
- * (OTLP export only), so `ScrapeMetricReader` is still copied here verbatim (`:320-331`) and
- * `freshGaugeTemporality` comes from the ported file (re-exported for the suites that import it
- * from this helper). The suites read metrics through the same SDK aggregation core's did.
+ * A manual metric reader for tests. `freshGaugeTemporality` is the runtime's own gauge rule
+ * (`src/utils/otel-sdk-config.ts`, re-exported for the suites that import it from here); the
+ * reader class lives here because the runtime exports over OTLP and has no scrape reader. The
+ * suites read metrics through the real SDK aggregation.
  */
 export { freshGaugeTemporality };
 
@@ -34,7 +32,7 @@ export class ScrapeMetricReader extends MetricReader {
 
 /**
  * A real OTel meter provider for suites that need to READ a metric's value back
- * — what an OTLP export (or the `:9090` scrape) would actually carry — rather
+ * — what an OTLP export would actually carry — rather
  * than assert on a stand-in instrument's calls.
  *
  * `src/utils/metrics.ts` creates its instruments from the GLOBAL meter at module

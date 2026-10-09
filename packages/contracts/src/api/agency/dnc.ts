@@ -1,13 +1,13 @@
 /**
  * Do Not Call list types.
  *
- * Mirrors `magick-master/src/dnc/` — this is a **master-native** surface, not a
- * `/proxy/*` one. Master owns `dnc_entries`; core receives only a derived,
- * tenant-flat Redis set for its dial-time check. So there is no core shape to
- * reconcile against here, unlike everything else under `agency*`.
+ * This is a **public-API-layer-native** surface, not a `/proxy/*` one. The public
+ * API layer owns `dnc_entries`; the dialer runtime receives only a derived,
+ * tenant-flat Redis set for its dial-time check. So there is no dialer runtime
+ * shape to reconcile against here, unlike everything else under `agency*`.
  */
 
-/** `dnc_entries.source`, as enumerated by `DNC_SOURCES` in master. */
+/** `dnc_entries.source`, as enumerated by `DNC_SOURCES` in the public API layer. */
 export type DncSource = 'agent' | 'import' | 'api' | 'regulator';
 
 export const DNC_SOURCES: readonly DncSource[] = ['agent', 'import', 'api', 'regulator'];
@@ -23,7 +23,7 @@ export const DNC_SOURCE_LABELS: Record<DncSource, string> = {
 export interface DncEntry {
   id: string;
   tenant_id: string;
-  /** NULL ⇒ tenant-wide. Only tenant-wide rows reach core's Redis set. */
+  /** NULL ⇒ tenant-wide. Only tenant-wide rows reach the dialer runtime's Redis set. */
   account_id: string | null;
   /** NULL ⇒ every campaign. */
   campaign_id: string | null;
@@ -52,7 +52,7 @@ export type DncAddOutcome = 'added' | 'already_present' | 'invalid_phone';
  * that are not failures.
  */
 export interface DncAddResult {
-  /** The input string verbatim, so the UI can point at the row they typed. */
+  /** The input string unchanged, so the UI can point at the row they typed. */
   input: string;
   outcome: DncAddOutcome;
   phone_e164?: string;
@@ -70,7 +70,7 @@ export interface DncAddSummary {
  * `'tenant'` means "rows with a NULL scope"; a uuid means that scope; `undefined`
  * means no filter at all. The literal exists because a bare empty query param is
  * indistinguishable from an absent one, and "show me the tenant-wide rows" — the
- * rows that actually reach core — is the most useful filter on this screen.
+ * rows that actually reach the dialer runtime — is the most useful filter on this screen.
  */
 export type DncScopeFilter = string;
 

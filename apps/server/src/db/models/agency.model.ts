@@ -1,6 +1,6 @@
 // ─── Agency dialer — execution-side row shapes ──────────────────────────────
 //
-// Persisted shapes for migrations 072–077. The wire/cross-service shapes live in
+// Persisted shapes for the agency tables. The wire shapes live in
 // src/agency/contracts.ts and are frozen; these are internal and may change.
 // State vocabularies are imported from the contract rather than re-declared, so
 // a DB state and a wire state can never drift apart.
@@ -18,9 +18,9 @@ import type {
 } from '@magick-agency/contracts/agency';
 
 /**
- * Retry policy keyed by outcome (§2.4). No `machine` key — AMD is out (D1).
+ * Retry policy keyed by outcome. No `machine` key — AMD is out.
  *
- * ── READ THIS BEFORE IMPLEMENTING `AD-P3-C-01` / `AD-P3-C-02` ────────────────
+ * ── READ THIS BEFORE CHANGING HOW REAPED ATTEMPTS ARE RETRIED ────────────────
  *
  * **1. `orphaned` is not uniformly "never happened", and the distinction is a
  * customer-facing one.** The reaper sweeps attempts in `ringing`, `answered` and
@@ -39,7 +39,7 @@ import type {
  * to. It is also no longer the source of `attempt_number`: that is derived from
  * `MAX(attempt_number)` over the attempts table (see `AgencyAttemptRepository.create`).
  * Conflating those two jobs made every reaper-recovered contact permanently
- * undialable while looking healthy (`AD-P2-C-12`). If a numbering problem ever
+ * undialable while looking healthy. If a numbering problem ever
  * tempts you to bump this on recovery, that is the bug coming back.
  *
  * **3. A `null` outcome is possible** and is not the same as `failed`: an attempt
@@ -62,8 +62,8 @@ export interface AgencyCampaignRecord {
   default_timezone: string;
   wrapup_seconds: number;
   /**
-   * Announcement played to an abandoned call before hangup (migration 080,
-   * `AD-P2-C-05`). NULL = hang up without a clip; the attempt is still recorded
+   * Announcement played to an abandoned call before hangup.
+   * NULL = hang up without a clip; the attempt is still recorded
    * `abandoned` and still counted against the rate either way.
    *
    * No FK, so a deleted announcement leaves a dangling id — the resolver treats
@@ -73,7 +73,7 @@ export interface AgencyCampaignRecord {
   wrapup_auto_return: boolean;
   retry_policy: AgencyRetryPolicy;
   disposition_catalog: AgencyDisposition[];
-  /** Operator-configured break codes (migration 078). Empty ⇒ core's built-ins. */
+  /** Operator-configured break codes. Empty ⇒ `DEFAULT_BREAK_REASONS`. */
   break_reasons: AgencyBreakReason[];
   context_display: AgencyContextDisplay;
   record_calls: boolean;
@@ -81,11 +81,11 @@ export interface AgencyCampaignRecord {
   status: AgencyCampaignStatus;
   /**
    * Rolling-24h abandonment rate at which this campaign auto-pauses, as a
-   * percentage (migration 089, `AD-P4-C-02`). Defaults to
+   * percentage. Defaults to
    * `DEFAULT_ABANDONMENT_CEILING_PCT`, which is the column's DEFAULT.
    *
-   * `double precision`, not `numeric`, so this is genuinely a `number` — see the
-   * migration header for why the driver would otherwise hand back a string.
+   * `double precision`, not `numeric`, so this is genuinely a `number` — the driver
+   * would otherwise hand back a string.
    */
   abandonment_ceiling_pct: number;
   /**
@@ -102,7 +102,7 @@ export interface AgencyCampaignRecord {
    * The abandonment rate as measured at the instant of an auto-pause, frozen.
    * NULL for a supervisor pause.
    *
-   * Never recomputed: the campaign stays paused (acceptance (c)) while its 24h
+   * Never recomputed: the campaign stays paused while its 24h
    * window keeps sliding, so a live re-read would eventually render "2.1% is
    * over your 3% limit". The evidence is frozen with the decision that used it.
    */
@@ -113,12 +113,11 @@ export interface AgencyCampaignRecord {
    * The FIRST transition into `running`, ever. NULL = never started.
    *
    * **First-write-wins, enforced in SQL** (`transitionStatus` writes
-   * `COALESCE(started_at, now())`), which is a change of meaning from what this
-   * column held before migration 108: the routes used to pass `new Date()` on
-   * both `/start` AND `/resume`, and the UPDATE used `COALESCE($n, started_at)` —
-   * new value first — so every resume overwrote it. A campaign paused for lunch
-   * and resumed therefore reported a start time of 14:05 on a run that began at
-   * 09:00, and the elapsed-time reading the console draws from it was short by
+   * `COALESCE(started_at, now())`), which is the point: were the routes to pass `new Date()` on
+   * both `/start` AND `/resume` with `COALESCE($n, started_at)` — new value first —
+   * every resume would overwrite it. A campaign paused for lunch
+   * and resumed would then report a start time of 14:05 on a run that began at
+   * 09:00, and the elapsed-time reading the console draws from it would be short by
    * however long the campaign had been running.
    *
    * The invariant now lives in the one statement that moves a status rather than
@@ -129,7 +128,7 @@ export interface AgencyCampaignRecord {
   /**
    * Entry into a TERMINAL status (`completed` or `stopped`). NULL = still live.
    *
-   * Migration 108, and it supersedes {@link completed_at} — same instant, honest
+   * It supersedes {@link completed_at} — same instant, honest
    * name. Both are written by the same CASE in the same UPDATE so they cannot
    * drift; `completed_at` is retained only because it is already on the wire.
    */
@@ -138,9 +137,9 @@ export interface AgencyCampaignRecord {
    * LEGACY spelling of {@link ended_at}. Same value, always.
    *
    * Kept rather than dropped for the reason `agency_contacts.source_row_number`
-   * is kept (migration 085): it is served on a payload master and the console
-   * already read before `ended_at` existed, and removing a field from a shipped
-   * response is a breaking change that has to be sequenced across three repos.
+   * is kept: it is served on a payload the console already read
+   * before `ended_at` existed, and removing a field from a shipped response is a
+   * breaking change.
    * It is also MISNAMED — it is stamped for `stopped` as well as `completed`, so
    * it says "completed" about a campaign a supervisor stopped, which is the defect
    * `ended_at` fixes. Read `ended_at`; this exists so nothing breaks on the way
@@ -148,7 +147,8 @@ export interface AgencyCampaignRecord {
    */
   completed_at: Date | null;
   /**
-   * master's user id for whoever caused the CURRENT status, or NULL.
+   * The `users.id` of whoever caused the CURRENT status, or NULL. No FK: opaque
+   * to the dialer tables.
    *
    * Written UNCONDITIONALLY by every transition — never COALESCE'd — because the
    * question is about the current status and "leave whatever was there" is wrong
@@ -162,16 +162,16 @@ export interface AgencyCampaignRecord {
    */
   last_transition_by_user_id: string | null;
   /**
-   * Their display name AS MASTER KNEW IT at the transition, or NULL.
+   * Their display name AS THE PUBLIC API LAYER KNEW IT at the transition, or NULL.
    *
-   * A snapshot, never refreshed, and core has no user table to refresh it from
-   * (D3). NULL beside a non-null `last_transition_by_user_id` is a real state —
-   * an id-only actor — not a missing row. Both columns are folded into the wire's
+   * A snapshot, never refreshed. NULL beside a non-null
+   * `last_transition_by_user_id` is a real state — an id-only actor — not a
+   * missing row. Both columns are folded into the wire's
    * `last_transition_by` object by `formatAgencyCampaignResponse`.
    */
   last_transition_by_name: string | null;
   /**
-   * The campaign this one was retried FROM (migration 111), or NULL when it is
+   * The campaign this one was retried FROM, or NULL when it is
    * not a retry.
    *
    * `ON DELETE SET NULL`, so a retry can outlive its parent — which is why
@@ -183,8 +183,7 @@ export interface AgencyCampaignRecord {
    * The FIRST campaign in this retry chain — a denormalised grouping key so the
    * lineage strip is one indexed read rather than a recursive walk.
    *
-   * ⚠️ **NULL on every generation-0 campaign**, deliberately (111's header says
-   * why: stamping it would need a trigger or a backfill that restamps
+   * ⚠️ **NULL on every generation-0 campaign**, deliberately (stamping it would need a trigger or a backfill that restamps
    * `updated_at` on every row). Every reader must spell it
    * `COALESCE(root_campaign_id, id)`; reading it bare gives a chain of one for
    * every parent.
@@ -193,8 +192,8 @@ export interface AgencyCampaignRecord {
   /** 0 = not a retry. Bounded at the route by `RETRY_MAX_GENERATION`, not by a CHECK. */
   retry_generation: number;
   /**
-   * The contact filter that produced this campaign's roster, frozen as sent
-   * (DR-5) — a RECORD, never re-executed. NULL when `retry_generation = 0`.
+   * The contact filter that produced this campaign's roster, frozen as sent:
+   * a RECORD, never re-executed. NULL when `retry_generation = 0`.
    *
    * Typed `unknown` rather than `AgencyRetrySelector` on purpose: the column is
    * JSONB and holds whatever a past release wrote, so a reader must narrow it
@@ -202,8 +201,8 @@ export interface AgencyCampaignRecord {
    */
   retry_selector: unknown | null;
   /**
-   * The client-minted key that made this retry's creation at-most-once
-   * (migration 115). NULL on every ordinary campaign and on an unkeyed retry.
+   * The client-minted key that made this retry's creation at-most-once.
+   * NULL on every ordinary campaign and on an unkeyed retry.
    *
    * **Internal. Never served.** It is declared here because the row genuinely
    * carries it — `SELECT *` and `RETURNING *` bring it back whether or not this
@@ -224,7 +223,7 @@ export interface AgencyCampaignRecord {
  *
  * Derived from {@link AgencyCampaignRecord} with a `Pick` rather than written out,
  * so a renamed column is a build error here instead of a field that silently stops
- * being inherited. It exists for the retry create (DR-10), which copies exactly
+ * being inherited. It exists for the retry create, which copies exactly
  * this set from the parent and then applies `config_overrides` on top.
  *
  * **What is NOT in it is the whole point.** `status`, `started_at`, `ended_at`,
@@ -261,28 +260,27 @@ export interface AgencyContactRecord {
   phone_e164: string;
   context: Record<string, unknown>;
   /**
-   * LEGACY (073) — **no longer written**, NULL on every row ingested since
-   * migration 085. Provenance moved to `csv_line_number` because 073's unique
-   * index on `(campaign_id, source_row_number)` is partial on NOT NULL and cannot
-   * be dropped while pre-083 replicas can still serve a request (they infer it;
-   * the drop raises 42P10) — so new rows leave it NULL to sit outside it, which is
-   * what lets a second CSV top up a live campaign. Dropped, with that index, in
-   * the phase-3 release. Read 085's header before reinstating a write.
+   * LEGACY — **no longer written**, NULL on every ingested row. Provenance is
+   * `csv_line_number` because the unique index on
+   * `(campaign_id, source_row_number)` (`uq_agency_contacts_source_row`) is
+   * partial on NOT NULL and is still in the schema — so new rows leave it NULL
+   * to sit outside it, which is what lets a second CSV top up a live campaign.
+   * Do not reinstate a write.
    */
   source_row_number: number | null;
   /**
-   * The row's line number in the uploaded CSV (master's `startLine`), migration
-   * 085 — provenance for an operator tracing a contact back to its file line, and
+   * The row's line number in the uploaded CSV (`startLine` in `agency-csv-ingest.ts`) —
+   * provenance for an operator tracing a contact back to its file line, and
    * nothing else. Never indexed and never an identity: that is `row_fingerprint`.
-   * NULL on rows written before 085.
+   * NULL when no file line is known.
    */
   csv_line_number: number | null;
   /**
-   * Content identity of the row (migration 083) — md5 of phone + context +
+   * Content identity of the row — md5 of phone + context +
    * timezone, computed in SQL at ingest. This, not `source_row_number`, is the
    * ingest-replay guard: the row number is a position in ONE file, so keying on
    * it made a second CSV's lines collide with the first's and silently discarded
-   * every top-up. NULL on rows written before 083 and on legacy rows whose
+   * every top-up. NULL on rows with no fingerprint and on legacy rows whose
    * content was already ambiguous — those sit outside the unique index.
    */
   row_fingerprint: string | null;
@@ -291,7 +289,7 @@ export interface AgencyContactRecord {
   /** The CUSTOMER's retry allowance. Never spent on our own faults — see below. */
   attempt_count: number;
   /**
-   * Redials caused by OUR faults (migration 082, `AD-P3-C-09`): an agent's
+   * Redials caused by OUR faults: an agent's
    * station socket dropping before the call bridged, or the reaper requeueing an
    * attempt whose replica died. Bounded independently of `attempt_count` by
    * `OUR_FAULT_REDIAL_BOUND`, so our failures can neither retire a customer nor
@@ -304,7 +302,7 @@ export interface AgencyContactRecord {
   suppressed_reason: string | null;
   /**
    * The parent campaign's roster row this one was copied from when a retry
-   * campaign was created (migration 112), or NULL for an ordinary ingested row.
+   * campaign was created, or NULL for an ordinary ingested row.
    *
    * Provenance, one hop, `ON DELETE SET NULL`. **Do not walk it to build
    * history** — that read is on the dial hot path, which is what
@@ -313,13 +311,10 @@ export interface AgencyContactRecord {
   source_contact_id: string | null;
   /**
    * The FIRST roster row in this contact's retry chain — its own id for every
-   * ordinary contact, stamped by `trg_agency_contacts_root` (migration 112).
+   * ordinary contact, stamped by `trg_agency_contacts_root`.
    *
    * The agent panel's prior attempts are read as `WHERE root_contact_id = $1`
-   * across the whole lineage. Carries no foreign key on purpose (112's header
-   * has the argument). Typed nullable only until the backfill has run
-   * everywhere and a later release tightens the column — the same shape 085
-   * used.
+   * across the whole lineage. Carries no foreign key on purpose.
    */
   root_contact_id: string | null;
   created_at: Date;
@@ -359,7 +354,7 @@ export interface AgencyCallAttemptRecord {
   notes: string | null;
   callback_at: Date | null;
   /**
-   * master's user id for whoever recorded the disposition (migration 079).
+   * The `users.id` of whoever recorded the disposition.
    *
    * Deliberately not the same fact as `reserved_agent_id`, which is a *session*
    * id for whoever was on the call. A supervisor writing up an agent's call sets
@@ -368,7 +363,7 @@ export interface AgencyCallAttemptRecord {
    */
   dispositioned_by_user_id: string | null;
   dispositioned_at: Date | null;
-  /** True when master asserted `on_behalf` — step 3 of the ownership rule. */
+  /** True when the public API layer asserted `on_behalf` — step 3 of `checkActor`'s ownership rule. */
   dispositioned_on_behalf: boolean;
   dialed_at: Date | null;
   answered_at: Date | null;
@@ -377,14 +372,14 @@ export interface AgencyCallAttemptRecord {
   talk_seconds: number | null;
   /** The wrap-up window OWED, copied from campaign config at wrap-up entry. */
   wrapup_seconds: number | null;
-  /** Migration 088. When wrap-up actually began — never inferred from `ended_at`. */
+  /** When wrap-up actually began — never inferred from `ended_at`. */
   wrapup_started_at: Date | null;
-  /** Migration 088. When it actually ended; NULL = never concluded on a seen path. */
+  /** When it actually ended; NULL = never concluded on a seen path. */
   wrapup_ended_at: Date | null;
-  /** Migration 088. A `WrapupResolution`; only three of the six feed the average. */
+  /** A `WrapupResolution`; only three of the six feed the average. */
   wrapup_resolution: string | null;
   /**
-   * Why an abandoned attempt reached no agent (migration 119).
+   * Why an abandoned attempt reached no agent.
    *
    * NULL means **not an abandoned attempt**, not "cause unknown" — so this is
    * never a substitute for `ABANDONED_ATTEMPT_PREDICATE_SQL`, which is the
@@ -397,7 +392,7 @@ export interface AgencyCallAttemptRecord {
 
 /**
  * An attempt whose wrap-up lapsed with no disposition, joined to the two pieces
- * of campaign config the sweep must consult (`AD-P2-C-08` (b)).
+ * of campaign config the sweep must consult.
  *
  * The catalog and the policy are carried on the row rather than re-fetched per
  * attempt because both decisions — *was* a disposition owed, and what happens to
@@ -410,7 +405,7 @@ export interface AgencyLapsedWrapupRow extends AgencyCallAttemptRecord {
   /**
    * The CONTACT's retry budget (`agency_contacts.attempt_count`), which is what the
    * outcome policy is evaluated against — never the attempt's own `attempt_number`.
-   * `AD-P2-C-12` decoupled the two on purpose: `attempt_number` is derived from the
+   * The two are decoupled on purpose: `attempt_number` is derived from the
    * attempts table, so `attempt_count` is purely the budget.
    */
   contact_attempt_count: number;
@@ -464,25 +459,19 @@ export const AGENCY_CAMPAIGN_TERMINAL_STATUSES: readonly AgencyCampaignStatus[] 
 /**
  * A campaign that depends on some shared primitive.
  *
- * **Deliberately id + status and NOT `name`.** This shape crosses into a refusal
- * body on the primary app's analysis-profile routes, which master gates on
- * `calls.dialer.analytics` ALONE — so the reader may hold no agency entitlement
- * at all, and campaign names are the agency product's vocabulary. Core cannot
- * know the caller's capabilities, so it emits the shape that is safe for every
- * caller and lets a console that DOES hold `agency.analytics` resolve names
- * through the agency surface. That is the capability boundary doing its job
- * rather than being worked around.
+ * **Deliberately id + status and NOT `name`.** This shape crosses into the
+ * `profile_in_use_by_agency_campaign` refusal body on the analysis-profile
+ * routes, and campaign names are operator-authored text that discloses the
+ * agency's clients and offers. The console resolves names through the campaign
+ * routes.
  *
  * Status is included because it carries the severity — "it is running" and "it is
  * still a draft" call for different responses — and is a closed enum rather than
  * operator-authored text.
  *
- * **What crosses the boundary, stated exactly.** The id crosses. Earlier wording
- * here, in `call-analysis-profiles.routes.ts` and in master's allow-list entry all
- * implied that nothing of the agency product reaches a reader gated on
- * `calls.dialer.analytics` alone, and that is not what this type does — it hands
- * that reader a UUID per dependent campaign. The judgement is that this is
- * acceptable and worth it, not that it does not happen: an opaque id discloses
+ * **What crosses, stated exactly.** The id crosses: the refusal hands its
+ * reader a UUID per dependent campaign. The judgement is that this is
+ * acceptable and worth it: an opaque id discloses
  * that N campaigns exist and nothing about them, which the refusal's own count has
  * already disclosed; a name discloses the agency's clients and offers. And without
  * the ids the refusal has no remedy for a console that IS entitled to resolve

@@ -1,22 +1,20 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 /*
- * PORT NOTE (magick-agency, Phase 6): ported from core
- * test/integration/agency/chaos/roster-exactly-once.test.ts@4850d1d9 — 8 cases, all kept. Modified only in
- * harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
+ * Harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
  * `/connection` entry, which packages/db's repositories import); the config stub
- * drops `telephony.vobiz` (VoBiz deleted, plan §5); import specifiers per the path
+ * carries no carrier config; import specifiers per the path
  * rule (domain leaves, `@magick-agency/contracts/agency`).
  */
 import { closeTestPool, getTestPool, truncateAll } from '../../setup/test-utils.js';
 
-// PORT NOTE: core mocked `src/db/connection.js`; agency's pool lives in `@magick-agency/db`
+// The DB pool lives in `@magick-agency/db`
 // (the server's repositories import its root, packages/db's repositories `./connection`).
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
 vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
 vi.mock('../../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: {}, // PORT NOTE: core stubbed `telephony.vobiz` (VoBiz deleted, plan §5)
+    telephony: {}, // no carrier config is needed
   },
 }));
 
@@ -29,17 +27,17 @@ const {
 type World = Awaited<ReturnType<typeof createChaosWorld>>;
 
 /**
- * ─── AD-P2-X-01 · SCENARIO 2 — ROSTER-LEVEL EXACTLY-ONCE ────────────────────
+ * ─── SCENARIO 2 — ROSTER-LEVEL EXACTLY-ONCE ────────────────────
  *
- * **Phase 2 exit criterion 1, run as written**: five agents on one account with
+ * **The exit scenario, run as written**: five agents on one account with
  * `max_concurrent_calls = 5` work a 200-contact list to completion; no contact
  * is dialed twice and no answered call reaches an agent who was not reserved
  * for it, verified against the attempt table rather than by observation.
  *
  * **Why the existing suite does not already cover this.** T-D5/D5b/D5c and T-D6
- * are excellent and they are all *single-contact* or *single-mechanism*: D5 is
- * one contact and two connections, D5c asserts four concurrent claims are
- * disjoint, D6 races two bare claim+create loops over 60 contacts with no
+ * are excellent and they are all *single-contact* or *single-mechanism*: the single-contact claim test is
+ * one contact and two connections, its sibling asserts four concurrent claims are
+ * disjoint, T-D6 races two bare claim+create loops over 60 contacts with no
  * pacing engine, no agent pool, no reservation and no carrier. None of them
  * exercise the property the criterion actually states, which is a **roster-level
  * conservation law over a complete run**: 200 contacts in, 200 attempts out,
@@ -57,7 +55,7 @@ type World = Awaited<ReturnType<typeof createChaosWorld>>;
  * attempts the database says it was reserved for.
  */
 
-describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () => {
+describe('roster-level exactly-once over a full run (chaos)', () => {
   let world: World;
 
   beforeEach(truncateAll);
@@ -73,13 +71,13 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
   /**
    * ─── WHY CRITERION 1's HEADLINE PINS ITS RETRY POLICY ────────────────────────
    *
-   * `AD-P3-C-01` (`4ff3126`) gave `agency_campaigns.retry_policy` a **built-in
+   * A later change gave `agency_campaigns.retry_policy` a **built-in
    * default** — and it had to, because the column is `JSONB NOT NULL DEFAULT '{}'`
    * and nothing in either repo seeds it, so reading an absent key as "no retry"
-   * would have shipped the whole ticket inert. That default requeues `no_answer` at
+   * would have shipped the whole scenario inert. That default requeues `no_answer` at
    * 60 minutes and `failed` at 120.
    *
-   * Which quietly invalidated this file's evidence for **Phase 2 exit criterion 1**.
+   * Which quietly invalidated this file's evidence for the exit scenario.
    * The criterion is a conservation law over the *dialing engine* — 200 contacts in,
    * 200 attempts out, one each, roster worked — and under the default policy a
    * `no_answer` contact returns to `pending` with `next_attempt_at` an hour away, so
@@ -87,10 +85,10 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
    * unmeasurable without a fake clock. This case burned all 400 ticks and reported
    * a tick-budget failure that named nothing.
    *
-   * **Not a defect in `4ff3126`, and not a fixture inheriting a bad default.** It is
-   * Phase 2 evidence written before a Phase 3 default existed. So the headline names
+   * **Not a defect in the retry default, and not a fixture inheriting a bad default.** It is
+   * evidence written before that default existed. So the headline names
    * the policy it means, rather than depending on one it does not control:
-   * `max_attempts: 0` is §2.4's own vocabulary for "never retried" (it is what the
+   * `max_attempts: 0` is the policy's own vocabulary for "never retried" (it is what the
    * shipped default says for `invalid` and `connected`), so this is a legitimate
    * operator configuration and not a test-only escape hatch.
    *
@@ -108,7 +106,7 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
   } as const;
 
   /**
-   * §4.2's hazard, as a predicate: a `pending` contact this campaign could claim on
+   * the hazard, as a predicate: a `pending` contact this campaign could claim on
    * the very next tick. Must be empty while a retry delay is outstanding.
    *
    * `next_attempt_at IS NULL` is included deliberately — `claimDialable`'s own
@@ -125,7 +123,7 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
    * {@link CLAIMABLE_NOW_SQL} minus the time predicate, and nothing else.
    *
    * The permanent control for the zero that query is asserted to return. Kept
-   * verbatim-parallel on purpose: if the two ever stop differing by exactly the
+   * deliberately parallel to it: if the two ever stop differing by exactly the
    * `next_attempt_at` clause, the control has stopped controlling for it.
    */
   const UNDEFERRED_SQL = `
@@ -238,8 +236,8 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
     expect(w.bridge.absorbTimeouts).toEqual([]);
   }, 120_000);
 
-  it('the §10 abandonment predicate is no longer vacuous, and is independent of the outcome the code stamps', async () => {
-    // §10.1's whole finding was that this predicate could not fire. `answered_at`
+  it('the abandonment predicate is no longer vacuous, and is independent of the outcome the code stamps', async () => {
+    // the whole finding was that this predicate could not fire. `answered_at`
     // was written once from `bridgedAt`, so the interval clause was 0 by
     // construction; an abandoned call never reached `phase === 'bridged'`, so
     // `answered_at` was never written and the predicate's own
@@ -247,7 +245,7 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
     // `outcome = 'abandoned'` survived, which made the SQL a circular audit of
     // the code path it exists to check.
     //
-    // Core's `e4ec019` added the `answered` phase. This case is the standing
+    // The `answered` phase is emitted separately from `bridged`. This case is the standing
     // proof that the fix works, and it belongs in the chaos suite rather than
     // beside the unit tests because EVERY zero-abandonment assertion in every
     // scenario here rests on it. If this goes vacuous again, the rest of the
@@ -255,7 +253,7 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
     world = await createChaosWorld({ agents: 1, contacts: 1, maxConcurrentCalls: 1 });
     const w = world;
     // The carrier picks up and the bridge never completes: an answered call with
-    // no agent on it. This is the shape §10 exists to count.
+    // no agent on it. This is the shape exists to count.
     w.bridge.setDefaultScript({ answer: true, bridge: false, status: 'failed' });
     for (const agent of w.agents) await w.bringOnline(agent);
     await w.runUntilQuiescent();
@@ -275,7 +273,7 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
     // The independence claim, stated as a query. The predicate fired via its
     // `bridged_at IS NULL` arm, NOT via `outcome = 'abandoned'` — so it is an
     // audit of the data rather than an echo of the classifier, which is exactly
-    // what §10 needs it to be for the metric cross-check to mean anything.
+    // what needs it to be for the metric cross-check to mean anything.
     const { rows: outcomeOnly } = await getTestPool().query<{ n: string }>(
       `SELECT COUNT(*)::text AS n FROM agency_call_attempts
         WHERE campaign_id = $1 AND outcome = 'abandoned'`, [w.campaignId],
@@ -295,7 +293,7 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
   // `no_disposition` sweep is the reaper's, so an ordinary run could not finish
   // without a backstop.
   //
-  // MAG-88 closed that: the `bridged` phase now asks
+  // That is closed: the `bridged` phase now asks
   // `requiresDisposition('connected', campaign.disposition_catalog)` before
   // writing the hold, so a campaign owing no write-up leaves the contact
   // `in_flight` and the `ended` handler's outcome policy retires it to
@@ -337,14 +335,14 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
   it('the DEFAULT retry policy defers rather than spins — supplying no policy at all', async () => {
     // ── The companion the two pinned cases above owe ─────────────────────────
     //
-    // §16.6: *any config with a documented default deserves a test that supplies
+    //: *any config with a documented default deserves a test that supplies
     // nothing at all*, and `retry_policy` is the sharpest instance in the project —
-    // `JSONB NOT NULL DEFAULT '{}'`, never sent by master, so the **empty** policy is
+    // `JSONB NOT NULL DEFAULT '{}'`, never sent by the public API layer, so the **empty** policy is
     // the ordinary case and every test that passes an explicit one stays green while
     // production runs on the fallback. Two cases above now pass an explicit one, so
     // this case exists to keep the fallback covered.
     //
-    // What it asserts is §4.2's hazard, not merely "a retry was scheduled":
+    // What it asserts is the hazard, not merely "a retry was scheduled":
     // `next_attempt_at` must be **strictly in the future**. Returned at `now()`, the
     // contact is re-claimable on the very next tick and a fully-deferred roster spins
     // at four claims a second all night — the failure mode `resolveRetryDecision`'s
@@ -370,7 +368,7 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
     // roster is retryable.
     expect(await contactStates(w.campaignId)).toEqual({ pending: 20 });
 
-    // The exact clause §4.2 names, read from the column rather than inferred from
+    // The exact clause names, read from the column rather than inferred from
     // the dial count.
     const claimableNow = await countPending(w.campaignId, CLAIMABLE_NOW_SQL);
     expect(
@@ -392,7 +390,7 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
     // this assertion would have had to establish, and unlike a falsification it is
     // permanent, self-documenting, cannot be forgotten, and does not red the shared
     // worktree for every other agent. (`UNGUARDED_REAP_SQL` / `UNCOALESCED_CLOCK_SQL`
-    // in `21fa0fa` are the established pattern.)
+    // are the established pattern.)
     expect(
       await countPending(w.campaignId, UNDEFERRED_SQL),
       'the guarded query above found zero because it matches NO rows at all, not '
@@ -404,18 +402,18 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
     expect(await campaignStatus(w.campaignId)).toBe('running');
   }, 60_000);
 
-  it('MAG-88: a worked roster of BRIDGED calls on an empty catalog reaches `completed`, no reaper', async () => {
+  it('a worked roster of BRIDGED calls on an empty catalog reaches `completed`, no reaper', async () => {
     // ── Why this is not the `no connections` case above with a different script ─
     //
     // That one is a roster of `no_answer`, which never reaches the `bridged` phase
-    // and so never touches the write MAG-88 changed. Every contact here is
+    // and so never touches the conditional write. Every contact here is
     // answered AND bridged, which is the only path that used to park a contact in
     // `connected`. Uniform on purpose: a mixed script would let a single stuck
     // contact hide inside a bucket that had other legitimate occupants.
     //
-    // Migration 072's `disposition_catalog JSONB NOT NULL DEFAULT '[]'` is left
+    // The `disposition_catalog JSONB NOT NULL DEFAULT '[]'` is left
     // alone rather than overridden — the empty catalog IS the case under test, and
-    // it is also what every campaign in production currently has, since master
+    // it is also what every campaign in production currently has, since the public API layer
     // does not send the field.
     world = await createChaosWorld({ agents: 3, contacts: 12, maxConcurrentCalls: 3 });
     const w = world;
@@ -428,7 +426,7 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
     // `createChaosWorld` deliberately never calls `reaper.start()`, and nothing in
     // this case calls `reapOnStartup()`. So `completed` here cannot have been
     // reached by the lapsed-wrap-up sweep rescuing a stranded contact — which is
-    // exactly MAG-88's acceptance (a), and the distinction between a fix and a
+    // exactly that change's acceptance (a), and the distinction between a fix and a
     // backstop. Asserted as prose rather than a spy because the absence of a call
     // nobody makes is not mockable; see the reaper's own suite for the sweep.
     //
@@ -440,7 +438,7 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
 
     // And the calls really did bridge — without this the assertion above is
     // satisfied by 12 contacts that failed before answer, i.e. by the case that
-    // was already passing before MAG-88 existed.
+    // was already passing before the conditional write existed.
     const all = await attempts(w.campaignId);
     expect(all).toHaveLength(12);
     expect(all.every((a) => a.bridged_at !== null)).toBe(true);
@@ -491,7 +489,7 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
   }, 60_000);
 
   it('two forced leaders over one 200-contact roster still dial every contact exactly once', async () => {
-    // Phase 2 exit criterion 3's third clause, at roster scale. T-D6 races two
+    // The third exit clause, at roster scale. T-D6 races two
     // bare claim+create loops; this races two real pacing engines with a real
     // agent pool, real reservations and a real carrier — and deliberately WITHOUT
     // a leader lease, because the lease is the efficiency mechanism and the
@@ -542,7 +540,7 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
   }, 180_000);
 
   it('fairness holds over the run — no agent is starved and none takes the lion’s share', async () => {
-    // `AD-P2-C-01` acceptance (c): no agent's idle time diverges over a 200-call
+    // no agent's idle time diverges over a 200-call
     // run. Idle time is not directly observable here, but its cause is — the
     // longest-idle-first ORDER — and an order that had degenerated to "whatever
     // the database returned" shows up as a skewed dial count. Asserted as a
@@ -562,7 +560,7 @@ describe('AD-P2-X-01 · roster-level exactly-once over a full run (chaos)', () =
     const counts = [...perAgent.values()];
     expect(counts).toHaveLength(AGENTS);
     // Nobody starved. This is the assertion that fails against the pre-fix
-    // engine, which took `findLiveForCampaign`'s row order verbatim and handed
+    // engine, which took `findLiveForCampaign`'s row order as-is and handed
     // the early rows nearly everything.
     expect(Math.min(...counts)).toBeGreaterThan(0);
     // And nobody dominated: a fair share is 40, so half-share is the floor and

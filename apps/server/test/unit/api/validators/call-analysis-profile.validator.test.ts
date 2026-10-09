@@ -1,7 +1,3 @@
-/*
- * PORT NOTE (magick-agency): ported from core test/unit/api/validators/call-analysis-profile.validator.test.ts
- * @4850d1d9. Cases unchanged; only the import depth differs.
- */
 import { describe, expect, it } from 'vitest';
 import {
   createAnalysisProfileSchema,

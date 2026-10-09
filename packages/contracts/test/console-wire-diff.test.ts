@@ -7,24 +7,23 @@ import type {
 import type { AgencyApi } from '../src/index';
 
 /**
- * NEW (magick-agency, Phase 8): the three fields CONTRACT-DIFF §1 said the console wire types
- * lacked, added to `api/agency/agency.ts` (the console rendered them from a local override
- * until this landed). Type-level: `pnpm lint` fails if a field goes missing or its type drifts
- * from core's frozen contract (`../src/agency.ts`).
+ * The three fields the console wire types carry beyond the minimum (in
+ * `api/agency/agency.ts`). Type-level: `pnpm lint` fails if a field goes missing or its
+ * type drifts from the dialer runtime's frozen contract (`../src/agency.ts`).
  */
 
 type Equals<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 
-// `supervisor_hold`: the console's hold vocabulary is core's, exactly.
+// `supervisor_hold`: the console's hold vocabulary is the dialer runtime's, exactly.
 const _holds: Equals<AgencyApi.AgencyWrapupHold, AgencyWrapupHoldReason> = true;
-// `callback_requested_at`: the console type carries core's field with core's type.
+// `callback_requested_at`: the console type carries the dialer runtime's field with the dialer runtime's type.
 const _callback: Equals<
   AgencyApi.AgencyDispositionResponse['callback_requested_at'],
   AgencyDispositionResponse['callback_requested_at']
 > = true;
-// `deferred_hangup_ms`: core's required number is optional on the console side (it degrades to
-// cusui's copy when absent), so core's intervals are assignable to the console's, and the
-// member exists with core's type once defined.
+// `deferred_hangup_ms`: the dialer runtime's required number is optional on the console side (it degrades to
+// the console's default when absent), so the dialer runtime's intervals are assignable to the console's, and the
+// member exists with the dialer runtime's type once defined.
 const _intervals: AgencyStationIntervals extends AgencyApi.AgencyStationIntervals ? true : false = true;
 const _deferred: Equals<
   NonNullable<AgencyApi.AgencyStationIntervals['deferred_hangup_ms']>,
@@ -32,7 +31,7 @@ const _deferred: Equals<
 > = true;
 void [_holds, _callback, _intervals, _deferred];
 
-describe('console wire types carry the CONTRACT-DIFF §1 fields', () => {
+describe('console wire types carry the wrap-up hold, callback and reconnect-window fields', () => {
   it('names both wrap-up hold reasons', () => {
     const holds: AgencyApi.AgencyWrapupHold[] = ['disposition_required', 'supervisor_hold'];
     expect(holds).toHaveLength(2);

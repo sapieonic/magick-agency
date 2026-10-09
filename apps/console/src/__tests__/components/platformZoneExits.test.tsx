@@ -3,10 +3,9 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 /*
- * NEW in Magick Agency (decision B17). The agency shell's exits read "Back to
- * MagickVoice" in cusui, because `/app` was the parent product. Here `/app` is
- * this console's own platform zone (Team, Notifications, Call summaries), so the
- * exits stay and say where they go. These cases pin the label and destination.
+ * Decision B17. `/app` is this console's own platform zone (Team,
+ * Notifications, Call summaries), so the agency shell's exits stay and say where
+ * they go; no exit mentions a parent product. These cases pin the label and destination.
  */
 
 const mocks = vi.hoisted(() => ({ useTenant: vi.fn() }));
@@ -19,6 +18,7 @@ vi.mock('../../components/layout/AccountSwitcher', () => ({ AccountSwitcher: () 
 
 import { AgencyLayout } from '../../components/layout/AgencyLayout';
 import { WorkspaceExit } from '../../components/agency/WorkspaceExit';
+import { PARENT_BRAND } from '../helpers/parentBrand';
 
 afterEach(() => cleanup());
 
@@ -35,7 +35,7 @@ describe('platform-zone exits (B17)', () => {
     const link = screen.getByRole('link', { name: 'Team and settings' });
     expect(link.getAttribute('href')).toBe('/app');
     expect(link.textContent).toBe('Team & settings');
-    expect(screen.queryByText(/MagickVoice/i)).toBeNull();
+    expect(screen.queryByText(PARENT_BRAND)).toBeNull();
   });
 
   it('WorkspaceExit defaults to "Go to settings" → /app', () => {

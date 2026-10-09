@@ -22,11 +22,11 @@ import type { AgencyAgentState } from '../../types/agency';
 import styles from './StationMenu.module.css';
 
 /**
- * The station's `⚙` menu — the two ways out of the console (`MAG-160`, §A.13.3).
+ * The station's `⚙` menu — the two ways out of the console.
  *
  * ── It lives in the HEADER, beside cue settings, and not in the action bar ───
  * The action bar's sequence is fixed (Break → Save → … → Hang up) and is the set
- * of controls that act on the **call in progress**; §A.13.9 makes that order a
+ * of controls that act on the **call in progress**; that order is a
  * tab-order guarantee, so anything inserted there moves a control an agent
  * reaches by muscle memory — and the control next door hangs up on a human
  * being. Leaving the station is not a call action. `CueSettings` sits in the
@@ -48,7 +48,7 @@ import styles from './StationMenu.module.css';
  *
  * ── The two items block on DIFFERENT sets ───────────────────────────────────
  * Exit is additionally refused in `available`, because it leaves the session in
- * the dialable pool for the length of core's 45s lease with no console attached.
+ * the dialable pool for the length of the API's 45s lease with no console attached.
  * Leave is not, because leaving IS the way out of that pool. The whole argument
  * is at the predicates in `agencyStationExit.ts`; this component asks each item
  * for its own reason rather than sharing one, so the asymmetry cannot be lost by
@@ -102,7 +102,7 @@ export function StationMenu({ agentState, canExit, leaving, onLeave, onExit }: S
 
   const close = useCallback((returnFocus: boolean) => {
     setOpen(false);
-    // §A.13.9: every transient surface returns focus to the control that opened
+    // every transient surface returns focus to the control that opened
     // it, or a keyboard agent is stranded at the top of the document.
     if (returnFocus) triggerRef.current?.focus();
   }, []);
@@ -113,7 +113,7 @@ export function StationMenu({ agentState, canExit, leaving, onLeave, onExit }: S
     itemRefs.current[0]?.focus();
   }, [open]);
 
-  // Viewport clamping by measurement (§A.13.10) — the trigger sits at the right
+  // Viewport clamping by measurement — the trigger sits at the right
   // edge of the header, which is exactly where CSS-only placement clips.
   useEffect(() => {
     if (!open) return undefined;

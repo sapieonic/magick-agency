@@ -18,17 +18,15 @@ import { getDecodeGateStats } from '../utils/decode-gate.js';
 import { shutdownAnalytics } from '../analytics/posthog.js';
 
 /**
- * Lane C's background work and the voice engine's process-wide singletons.
+ * The voice engine's background work and process-wide singletons.
  *
- * The order and every step below are core's (`magic-voice-core/src/index.ts@4850d1d9`
- * :143-244, :353-354, :389-391, :857, :906), restricted to the voice engine:
- * S3 → clip cache (+ sweeper) → decode scratch reap → decode-gate gauges → PostHog →
+ * Order: S3 → clip cache (+ sweeper) → decode scratch reap → decode-gate gauges →
  * lease-release metric seam → guard host + bridge → startup self-heal → arm the poll.
  *
  * The engine is created on first use by {@link ensureVoiceEngine}, because the HTTP
  * plugin registers before `startVoice` runs (`src/index.ts`: `buildApp` then the
- * bootstraps) and its routes need the bridge. Phase 6's agency runtime takes the bridge
- * from {@link getVoiceEngine} (core: `new AgencyRuntime(webrtcBridge, …)`).
+ * bootstraps) and its routes need the bridge. The agency runtime takes the bridge from
+ * the same engine (`new AgencyRuntime(bridge, …)`).
  */
 export interface VoiceEngine {
   guardHost: TelephonyGuardHost;
@@ -41,9 +39,9 @@ export function ensureVoiceEngine(redis: Redis | null): VoiceEngine {
   if (engine) return engine;
   const guardHost = new TelephonyGuardHost(redis);
   const bridge = new WebRtcBridgeManager(guardHost, redis);
-  // core index.ts:391 — the stale sweep must never fail a call this replica is bridging.
+  // The stale sweep must never fail a call this replica is bridging.
   guardHost.registerWebrtcActiveIdsProvider(() => bridge.getActiveCallIds());
-  // docs/seams.md §3.3 — lane A's super-admin concurrency writes reach the guards here.
+  // The super-admin concurrency writes reach the guards through this seam.
   setConcurrencyControl(createConcurrencyControl(guardHost));
   engine = { guardHost, bridge };
   return engine;
@@ -74,11 +72,10 @@ export async function startVoice(ctx: AppContext): Promise<() => Promise<void>> 
   // Initialize TTS file cache directory
   initTtsFileCache();
 
-  // PORT NOTE: core registered `setEvictableClipFilter(staticCallRepository
-  // .filterDeletableTtsHashes)` here — the reference-count guard keyed on static
-  // calls. Agency has no static calls; abandon clips are re-materialised by
-  // `ensurePcmClip` from the uploaded file when missing, so the sweeper runs
-  // unguarded (its documented behaviour with no filter registered).
+  // No `setEvictableClipFilter` is registered: there are no static calls holding a clip
+  // reference, and abandon clips are re-materialised by `ensurePcmClip` from the
+  // uploaded file when missing, so the sweeper runs unguarded (its documented
+  // behaviour with no filter registered).
   setTtsCacheSweepObserver(trackTtsClipCacheSweep);
 
   const sweepTts = (): Promise<void> =>
@@ -107,16 +104,16 @@ export async function startVoice(ctx: AppContext): Promise<() => Promise<void>> 
   // Expose decode-gate occupancy on the metrics surface.
   setDecodeGateStatsProvider(getDecodeGateStats);
 
-  // PostHog is initialised in `index.ts`, before `app.listen` (Phase 8 hoist: core initialised
-  // it before listening). Shutdown stays here, in this lane's stop function.
+  // PostHog is initialised in `index.ts`, before `app.listen`. Shutdown stays here, in
+  // this stop function.
 
-  // core index.ts:310 — `telephony_lease_release_total` through the release seam.
+  // `telephony_lease_release_total` through the release seam.
   setTelephonyReleaseObserver(trackTelephonyLeaseRelease);
 
   const { guardHost, bridge } = ensureVoiceEngine(ctx.redis);
 
-  // Settle the startup clip sweep before admitting work (core awaited it before
-  // `drainQueue()`; here the first dial is the next thing that can read a clip).
+  // Settle the startup clip sweep before admitting work: the first dial is the next
+  // thing that can read a clip.
   await startupSweep;
 
   // Self-heal first: reconcile concurrency counters drifted by any prior crash

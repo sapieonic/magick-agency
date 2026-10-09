@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
 /**
- * `/invites` — the token-bound invitation claim flow (migration 069).
+ * `/invites` — the token-bound invitation claim flow.
  *
  * ── The defect this feature removes, restated so the cases read as its parts ─
  * `POST /users/invite` writes a membership and, for an unknown address, a stub
@@ -10,7 +10,7 @@ import type { FastifyInstance } from 'fastify';
  * bind an invitee to that stub was an EMAIL MATCH in `POST /auth/session` path
  * 2. An invitee who signed up with a different address fell through to path 4
  * instead — a brand-new private tenant, a default account, a signup credit
- * bonus, a fresh core API key — while the membership somebody deliberately
+ * bonus, a fresh platform API key — while the membership somebody deliberately
  * created sat unclaimed and nothing told anyone.
  *
  * Three properties replace that, and each has cases below:
@@ -24,7 +24,7 @@ import type { FastifyInstance } from 'fastify';
  *     compensating control, and it is the only place the discrepancy survives —
  *     `memberships` and `users` retain no trace of it afterwards.
  *  3. **Nothing is ever provisioned.** No tenant, no account, no membership, no
- *     credit balance, no core API key. Asserted as a property over the whole
+ *     credit balance, no platform API key. Asserted as a property over the whole
  *     module rather than case by case, because the failure mode is a branch
  *     somebody ADDS later.
  *
@@ -50,7 +50,6 @@ const mocks = vi.hoisted(() => ({
   config: {
     brand: { name: 'Magick Agency', accent: '#7c5cfc' },
     invites: { tokenTtlDays: 7 },
-    // PORT NOTE (magick-agency): master `cusuiBaseUrl` → `consoleBaseUrl`.
     consoleBaseUrl: 'https://app.example.com',
   },
   verifyIdToken: vi.fn(),
@@ -113,7 +112,7 @@ vi.mock('@magick-agency/db/repositories/tenant.repository', () => ({
 vi.mock('@magick-agency/db/repositories/user.repository', () => ({
   userRepository: mocks.userRepository,
 }));
-// Q5 (Manas, 2026-10-09): `delForRevocation` forwards to the `del` mock and reports success.
+// Q5: `delForRevocation` forwards to the `del` mock and reports success.
 vi.mock('../../../../src/cache/redis-cache.js', () => ({
   redisCache: { ...mocks.redisCache, delForRevocation: async (...k: string[]) => { await mocks.redisCache.del(...k); return true; } },
 }));
@@ -127,7 +126,6 @@ vi.mock('../../../../src/auth/session-payload.js', () => ({
   buildSessionPayload: mocks.buildSessionPayload,
 }));
 vi.mock('../../../../src/invites/invite-issuer.js', () => ({ issueInvite: mocks.issueInvite }));
-// PORT NOTE (magick-agency): master's `auditLogger` is `platformAuditLogger` here.
 vi.mock('../../../../src/audit/platform/audit-logger.js', () => ({ platformAuditLogger: { log: mocks.auditLog } }));
 vi.mock('@magick-agency/observability', () => ({ createChildLogger: () => mocks.log }));
 
@@ -375,7 +373,7 @@ describe('POST /invites/:token/claim', () => {
   it('binds the stub and answers the SAME body /auth/session returns', async () => {
     /**
      * The whole point of the response shape: the SPA reuses its existing
-     * `SessionResponse` type verbatim, so a claimed agent is simply signed in
+     * `SessionResponse` type unchanged, so a claimed agent is simply signed in
      * with no second round trip and no second type to keep in step with a login
      * flow that will keep changing.
      */
@@ -848,7 +846,7 @@ describe('the claim path can NEVER provision anything', () => {
   /**
    * The hazard this whole feature removes. `POST /auth/session` path 4 creates a
    * tenant, an account, a `tenant_owner` membership, a credit balance with a
-   * signup bonus and a core API key for any Firebase identity it does not
+   * signup bonus and a platform API key for any Firebase identity it does not
    * recognise — and an invited agent who reached it landed in a private empty
    * tenant of their own while their real membership sat unclaimed.
    *
@@ -961,7 +959,7 @@ describe('POST /invites/resend', () => {
 
   it('answers 409, not a masked 500, when a concurrent resend won the live slot', async () => {
     /**
-     * The loser of two resends landing together. Migration 069's partial unique
+     * The loser of two resends landing together. The partial unique
      * index refuses the second row, the repository turns that `23505` into
      * `LiveInviteConflictError`, and this route names what happened — left to
      * escape, `errorMaskHook` rewrites it into "contact support and quote this
@@ -1099,7 +1097,7 @@ describe('POST /invites/resend', () => {
 
   it('hands the TENANT to the issuer, which puts it in the revoke statement', async () => {
     /**
-     * CLAUDE.md's RBAC rule 1: the boundary belongs in the same statement as the
+     * The RBAC rule: the boundary belongs in the same statement as the
      * write, not only in the lookup above it. The statement is now
      * `createSupersedingOutstanding`'s (pinned in the repository suite); what
      * this route owes it is the tenant the caller was actually authenticated
@@ -1135,11 +1133,9 @@ describe('POST /invites/resend', () => {
     await app.close();
   });
 
-  // PORT NOTE (magick-agency): MODIFIED from "carries the full auth chain, and
-  // refuses a platform API key". There are no platform API keys (decision #5), so
-  // `denyPlatformApiKey` is gone from the chain; the case now pins that it is
-  // absent (a re-introduced guard would import a module that does not exist) and
-  // that the other three links are still there.
+  // There are no platform API keys (decision #5), so there is no `denyPlatformApiKey`
+  // link in the chain; the case pins that it is absent (a re-introduced guard would
+  // import a module that does not exist) and that the other three links are still there.
   it('carries the full auth chain', () => {
     /**
      * The plugin has no plugin-wide auth hooks — it cannot, since two of its

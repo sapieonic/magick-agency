@@ -20,20 +20,20 @@ import type {
 import type { AgencyRetrySelector } from '../types/agency-spine';
 
 /**
- * Campaign CRUD and roster ingest, all through master's `/proxy/agency`.
+ * Campaign CRUD and roster ingest, all through the server's `/proxy/agency`.
  *
- * **cusui never reaches core.** Every route below exists in
- * `magick-master/src/api/routes/proxy-agency-campaigns.routes.ts`; a core route
- * with no master proxy is unreachable from a browser, so anything missing there
+ * **The console never reaches the server.** Every route below is served by
+ * the server's `/proxy/agency` routes; a dialer-runtime route
+ * with no public-API-layer proxy is unreachable from a browser, so anything missing there
  * is a blocker to report rather than to work around.
  *
  * **Every function here takes `accountId` and must be given it.** `apiFetch`
- * sends `X-Account-Id` only when the fourth argument is present; master treats
+ * sends `X-Account-Id` only when the fourth argument is present; the server treats
  * that header as OPTIONAL and simply omits `x-mgkvc-account` when it is absent
- * (`core-client.ts`), while core's `authMiddleware` requires it on every
+ * (`core-dispatch.ts`), while the server's `authMiddleware` requires it on every
  * authenticated route. So an omitted argument here does not degrade — it
- * produces `400 Missing required header: x-mgkvc-account` from core, surfaced
- * through master's error mask, with nothing in the message pointing at cusui.
+ * produces `400 Missing required header: x-mgkvc-account` from the server, surfaced
+ * through the server's error mask, with nothing in the message pointing at the console.
  * Omitting it is what made every campaign call fail; the multipart helpers
  * below were unaffected only because they build their headers by hand.
  */
@@ -43,7 +43,7 @@ const AGENCY_BASE = `${API_BASE}/proxy/agency`;
 /**
  * The limits the wizard displays.
  *
- * Fetched rather than hardcoded because §B.2 requires the number the operator is
+ * Fetched rather than hardcoded because requires the number the operator is
  * told to be the real one — a copied constant is a limit that goes stale and
  * tells them the wrong thing.
  */
@@ -101,11 +101,11 @@ export async function analyzeRosterColumns(
 }
 
 /**
- * Start an ingest. Master answers **202** with a job id — a 1M-row file takes
+ * Start an ingest. The server answers **202** with a job id — a 1M-row file takes
  * minutes, so the wizard polls rather than holding a request open.
  *
  * `dry_run: true` parses the whole file and reports the summary without sending
- * anything to core, and is the only form that may omit `campaign_id`.
+ * anything to the server, and is the only form that may omit `campaign_id`.
  */
 export async function startRosterIngest(
   request: AgencyIngestRequest,
@@ -131,7 +131,7 @@ export async function getIngestJob(
 /**
  * Ask for cancellation.
  *
- * Master answers **409** when the job already finished, and that is not an error
+ * The server answers **409** when the job already finished, and that is not an error
  * to swallow: pretending to cancel something already loaded would leave the
  * operator believing a roster is not there when it is.
  */
@@ -217,7 +217,7 @@ export async function createAgencyCampaign(
  *
  * Editing a **running** campaign is allowed and deliberately not gated — the
  * calling window is most often wrong *while* the campaign is dialing outside it.
- * Core re-reads the campaign every pacing tick, so the edit applies to future
+ * The server re-reads the campaign every pacing tick, so the edit applies to future
  * attempts; an already-dispatched attempt keeps the snapshot it was dialed with.
  */
 export async function updateAgencyCampaign(
@@ -242,8 +242,8 @@ export async function updateAgencyCampaign(
  * What comes back today is eleven counters from `agencyCampaignRepository.stats`.
  * `AgencyCampaignStats` in the shared contract additionally declares
  * `abandoned_24h`, `answered_24h` and `abandonment_rate_24h_pct` as REQUIRED,
- * and core produces none of them — they exist only as Prometheus metrics
- * (`MAG-120`). They are typed optional here on purpose: a required field with no
+ * and the server produces none of them — they exist only as Prometheus metrics
+ * (see the contract). They are typed optional here on purpose: a required field with no
  * producer reads as guaranteed and silences the one check that would catch it.
  * Render them as unavailable rather than as zero.
  */
@@ -263,13 +263,13 @@ export async function getAgencyCampaignStats(
 /**
  * The four lifecycle controls.
  *
- * `stop` is not the inverse of `start`: core sets `stopping` and the pacing
+ * `stop` is not the inverse of `start`: the server sets `stopping` and the pacing
  * leader finalizes to `stopped` once in-flight attempts drain, so the status the
  * caller reads back is usually `stopping`, not `stopped`. Callers must render
  * what came back rather than assuming the transition completed.
  *
  * A **409** here is a real answer, not a failure to retry: either the campaign
- * moved underneath us, or D9's one-running-campaign-per-account rule refused the
+ * moved underneath us, or the one-running-campaign-per-account rule refused the
  * start. Both carry a `code` the caller should show.
  */
 export async function transitionAgencyCampaign(
@@ -288,10 +288,9 @@ export async function transitionAgencyCampaign(
 
 // ─── Retry campaigns ─────────────────────────────────────────────────────────
 //
-// Three routes, all browser → master → core `/proxy/*` (wire contract §2, §6).
-// **No new S2S seam**, so none of this touches `agency-s2s-contract.fixture.json`.
+// Three routes, all browser → the server → the dialer runtime (`/proxy/*`).
 //
-// Master's permissions, mirrored here only as a comment because master's 403 is
+// The server's permissions, mirrored here only as a comment because the server's 403 is
 // the real enforcement and this client's job is to not offer what it cannot do:
 //   preview → `agency.supervise`
 //   create  → `agency.supervise` AND `agency.campaigns.write`
@@ -304,10 +303,10 @@ export async function transitionAgencyCampaign(
  * How many contacts a selector would seed, and what they are made of. Writes
  * nothing.
  *
- * The preview is a separate read on purpose (DR-8): the create is one
+ * The preview is a separate read on purpose: the create is one
  * transaction that makes a campaign AND a roster, and a supervisor has to see
  * the count before that happens. Preview and commit share one parser and one
- * predicate builder inside core, or the preview eventually promises a number the
+ * predicate builder inside the server, or the preview eventually promises a number the
  * commit does not deliver.
  */
 export async function retryPreview(
@@ -326,16 +325,16 @@ export async function retryPreview(
 }
 
 /**
- * Create the child campaign and seed its roster, in one core transaction.
+ * Create the child campaign and seed its roster, in one server transaction.
  *
  * **A 409 here is an answer, not a failure to retry** — the same shape the
  * lifecycle controls already deal with. `retry_selection_empty`,
  * `retry_selection_too_large` and `retry_generation_exceeded` each carry a
- * `code` master allow-lists through its error mask, and each has a remedy the
+ * `code` the server allow-lists through its error mask, and each has a remedy the
  * caller must show (`retryRefusalCopy`). On all three, **nothing was created**;
  * re-sending the same body would refuse identically.
  *
- * The actor is **not** in the body. Master fills `agent_user_id` from the
+ * The actor is **not** in the body. The server fills `agent_user_id` from the
  * authenticated session and `actor_name` from its own user directory, exactly as
  * it does for every other agency write — an actor the browser supplies is an
  * actor the browser can forge.

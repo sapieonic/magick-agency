@@ -3,11 +3,9 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 /**
- * NEW (magick-agency): the Sidebar's active state after cusui's `/app/calls`
- * special cases were deleted (PORTING §9.2, `Sidebar.tsx`). The `end` list
- * (`/app`, `/app/calls`, `/app/calls/softphone`) and the `/app/calls` override
- * never matched a console nav item, so every item now takes React Router's own
- * `isActive`: exactly the item on the current path is highlighted, and a nested
+ * The Sidebar's active state. There are no `/app/calls` special cases (no `end`
+ * list and no `/app/calls` override in `Sidebar.tsx`), so every item takes React
+ * Router's own `isActive`: exactly the item on the current path is highlighted, and a nested
  * path keeps its parent highlighted (no item is `end`).
  */
 const mocks = vi.hoisted(() => ({

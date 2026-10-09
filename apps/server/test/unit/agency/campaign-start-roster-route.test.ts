@@ -1,13 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): ported from core test/unit/agency/campaign-start-roster-route.test.ts@4850d1d9.
- * Mock paths re-pointed only (logger → a partial `@magick-agency/observability` mock;
- * announcement / call / account-settings / profile repositories → `@magick-agency/db/repositories/*`;
- * leaf modules → `@magick-agency/domain/*`; `contracts.js` → `@magick-agency/contracts/agency`).
- * Cases verbatim unless noted here. `/start`'s roster gate is a repository read (no runtime call).
- */
 
 // ---------------------------------------------------------------------------
 // `POST /agency-campaigns/:id/start` — refuse a campaign with nothing to dial.
@@ -69,7 +62,7 @@ vi.mock('@magick-agency/db/repositories/announcement.repository', () => ({
 import { agencyCampaignRoutes } from '../../../src/api/routes/agency-campaigns.routes.js';
 
 /**
- * `AD-P4-C-01` gave this plugin dependencies, for the stats route's health strip
+ * This plugin takes dependencies for the stats route's health strip
  * only. Every test in this file exercises a DIFFERENT route, so the stubs exist
  * to satisfy the signature and are deliberately not exercised — a stub that
  * returned plausible health data here would invite an assertion about a surface

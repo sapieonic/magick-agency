@@ -26,7 +26,7 @@ import type { AgencyAttempt, AgencyAttemptFilters } from '../types/agency-spine'
  * caller can supply by accident, and the whole point of the paired routes is that
  * an agent cannot form a request for somebody else's shift. Callers of the
  * `agent` form **must** gate on `hasPermission(role, 'agency.supervise')` —
- * master's exact floor. Looser renders a list whose first read 403s; tighter
+ * the API's exact floor. Looser renders a list whose first read 403s; tighter
  * hides it from an `account_admin` who holds it.
  *
  * ── The filters live HERE, and that is the cursor-reset fix ────────────────
@@ -174,7 +174,7 @@ export function useAgentAttempts(subject: AgentAttemptsSubject): UseAgentAttempt
      * Both ids, for the reason every agency surface waits for both: an `agent` is
      * below `account.read`'s `viewer` floor so `GET /accounts` 403s for them, and
      * a request sent before `TenantContext` resolves carries no `X-Account-Id`,
-     * which core answers with a 400 about a header this client never sent — an
+     * which the API answers with a 400 about a header this client never sent — an
      * error with nothing to do with the data being asked for.
      *
      * This early return can never become a permanent spinner, because the caller

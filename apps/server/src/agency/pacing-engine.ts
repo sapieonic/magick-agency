@@ -35,13 +35,9 @@ const LEADER_LEASE_MS = 15_000;
 const LEADER_RENEW_MS = 5_000;
 
 /**
- * NEW (magick-agency, Phase 6): how long `stop()` waits for completion notices still in
- * flight. The notice replaced a core → master webhook (master awaited the mail fan-out
- * inside the handler, `webhook-core.routes.ts:1160` @a1f0756a), so it takes the budget
- * core gave its own background webhook fan-out on shutdown:
- * `WEBHOOK_FANOUT_DRAIN_TIMEOUT_MS = 30_000` (`src/config/webhook-fanout.config.ts:56`
- * @4850d1d9, drained at `src/index.ts`'s `settlement-fanout-drain` step). Bounded, so an
- * SMTP server that never answers cannot hold the process past its grace period.
+ * How long `stop()` waits for completion notices still in flight. Bounded, so an
+ * SMTP server that never answers cannot hold the process past its shutdown grace
+ * period.
  */
 export const COMPLETION_NOTICE_DRAIN_TIMEOUT_MS = 30_000;
 
@@ -117,7 +113,7 @@ type TickIdleReason = 'no_agents' | 'no_slots' | 'no_contacts' | 'no_reservation
  * availability.
  *
  * **Two independent safety mechanisms, because either alone has a failure mode we
- * cannot accept** (§4.1). The Redis leader lease is the *efficiency* mechanism —
+ * cannot accept**. The Redis leader lease is the *efficiency* mechanism —
  * it stops N replicas doing the same work. The `FOR UPDATE SKIP LOCKED` contact
  * claim plus `uq_agency_attempt_live` is the *correctness* mechanism — it means
  * that even during a split-brain window (GC pause, partition, clock skew) two
@@ -147,7 +143,7 @@ export class PacingEngine {
     private readonly agents: AgentStateMachine,
     private readonly dispatcher: DialDispatcher,
     /**
-     * The DNC set. Required, not optional — an optional compliance gate is one
+     * The DNC registry. Required, not optional — an optional compliance gate is one
      * that is off wherever somebody forgot, which is every construction site a
      * test ever wrote.
      */
@@ -155,19 +151,12 @@ export class PacingEngine {
   ) {}
 
   /**
-   * PORT NOTE (magick-agency): core's `registerAttemptBatcher` seam is deleted with the
-   * attempt batcher it served (billing, plan §8 Phase 6 "no attempt batcher"). Its doc
-   * said the engine's only knowledge of billing was "something may want to know a
-   * campaign finished"; that sentence is now the whole of this seam, and what wants to
-   * know is the supervisors' completion notice (E10, lane A's
-   * `sendAgencyCampaignCompletionEmail`). Core never emitted that notice — master's
-   * `POST /webhooks/core/agency-campaign-completed` (`webhook-core.routes.ts:1058-1119`
-   * @a1f0756a) documents that "what core has to add is one dispatcher call inside
-   * [`maybeFinalize`'s] `if (updated)` block". In one process the dispatcher call is
-   * this registration. Same idiom and the same reason as the batcher: a registration
-   * rather than a 7th positional constructor parameter, and optional — an engine with
-   * nothing registered finalizes campaigns exactly as before, it just tells nobody's
-   * inbox.
+   * The engine's "something may want to know a campaign finished" seam. What wants to
+   * know is the supervisors' completion notice (`campaign-completion-notice.ts`, which
+   * sends `sendAgencyCampaignCompletionEmail`); `maybeFinalize` calls it inside its
+   * `if (updated)` block. A registration rather than a 7th positional constructor
+   * parameter, and optional — an engine with nothing registered finalizes campaigns
+   * exactly the same, it just tells nobody's inbox.
    */
   private completionNotifier: {
     notifyCampaignFinished(campaign: AgencyCampaignRecord, status: 'completed' | 'stopped'): Promise<void>;
@@ -180,13 +169,12 @@ export class PacingEngine {
   }
 
   /**
-   * NEW (magick-agency, Phase 6): completion notices requested but not yet settled.
+   * Completion notices requested but not yet settled.
    *
    * The notice is fire-and-forget at the call site (see `maybeFinalize`), so a campaign
    * finalized on the last tick before SIGTERM would otherwise lose its mail and its
-   * `agency_campaign_notifications_total` increment when the process exits. Core never
-   * had this window: it AWAITED the batcher flush in the same branch, and master awaited
-   * the notifier inside its webhook handler. `stop()` drains this set, bounded by
+   * `agency_campaign_notifications_total` increment when the process exits. `stop()`
+   * drains this set, bounded by
    * {@link noticeDrainTimeoutMs}.
    */
   private readonly inFlightNotices = new Set<Promise<void>>();
@@ -237,8 +225,8 @@ export class PacingEngine {
     if (this.superviseTimer) clearInterval(this.superviseTimer);
     this.superviseTimer = null;
     for (const campaignId of [...this.led.keys()]) await this.relinquish(campaignId);
-    // PORT NOTE (magick-agency): settle the completion notices a final tick requested,
-    // before the runtime (and then the pool) comes down. See `inFlightNotices`.
+    // Settle the completion notices a final tick requested, before the runtime (and
+    // then the pool) comes down. See `inFlightNotices`.
     await this.drainNotices();
   }
 
@@ -290,7 +278,7 @@ export class PacingEngine {
    * `getValue` reads both. The 60s TTL bounds the DB, not Redis — so 100 running
    * campaigns is ~200 sequential Redis round trips every 2s, plus one DB read per
    * tenant per minute when a TTL lapses. That is affordable (Redis serves it in
-   * well under the 2s budget at any plausible campaign count, and D9's
+   * well under the 2s budget at any plausible campaign count, and
    * `uq_agency_campaign_running` caps running campaigns at one per account) but it
    * is not nothing, and `superviseOnce` is re-entrancy-guarded partly because of it.
    * If campaign counts grow an order of magnitude, memoise the decision here rather
@@ -501,7 +489,7 @@ export class PacingEngine {
    * ```
    * idle     = agents in `available` on this campaign  (busy agents excluded)
    * occupied = ALL non-terminal attempts   (a bridged call still holds a slot)
-   * to_dial  = MAX(0, MIN(account max_concurrent_calls - occupied, idle))   -- D9
+   * to_dial  = MAX(0, MIN(account max_concurrent_calls - occupied, idle))
    * ```
    *
    * **The two terms bound different quantities and must not be subtracted from
@@ -533,7 +521,7 @@ export class PacingEngine {
       //
       // **`paused` is two different events and the status alone cannot tell them
       // apart** — which is exactly what `AgencyCampaignChangeReason`'s own doc
-      // comment predicted ("`paused` by a supervisor and `paused` by the Phase 4
+      // comment predicted ("`paused` by a supervisor and `paused` by the
       // abandonment guardrail are the same status and very different messages to a
       // human, and they will coexist"). The guardrail pauses out-of-band, from the
       // abandonment refresh, and never announces anything itself; this tick is the
@@ -559,7 +547,7 @@ export class PacingEngine {
       // the identical thing 250 ms later: exactly the 4-claims-a-second spin
       // `AgencyContactRepository.unclaim` documents as the thing to avoid. It also
       // restamped every agent's `availableSince` each tick, collapsing the
-      // longest-idle fairness ordering AD-P2-C-01(c) depends on, and emitted an
+      // longest-idle fairness ordering depends on, and emitted an
       // unthrottled error log (~345k lines/day at 4 Hz).
       //
       // Checked here because `findById` has already loaded the row, so the guard
@@ -567,10 +555,11 @@ export class PacingEngine {
       //
       // **Deliberately NOT applied to the shared `halt` gate** (`dnc_unavailable`),
       // which has the same abort-the-batch shape but a genuinely different cause:
-      // that condition clears the instant Redis recovers, and `AgentStateMachine.
-      // reserve` fails closed on the same Redis, so a DNC halt usually cannot reach
-      // a claim in the first place. This one has a healthy Redis, reserves fine,
-      // claims fine, and stays broken until someone edits the campaign.
+      // that condition clears the instant the `dnc_entries` read succeeds again, and
+      // the claim reads the same database, so a DNC halt from an unavailable database
+      // usually cannot reach a claim in the first place. This one has a healthy
+      // database, reserves fine, claims fine, and stays broken until someone edits
+      // the campaign.
       // `usableCallerIds`, NOT `caller_ids.length`: a stored `['']` is length 1 and
       // dials nothing. Testing length here while the picker tested truthiness is
       // what let a junk pool past this guard and into an unlatched 4 Hz spin.
@@ -603,7 +592,7 @@ export class PacingEngine {
 
       // Idle tick (or a stopping campaign draining): the leader — and ONLY the
       // leader — evaluates completion, so there is exactly one writer of these two
-      // transitions and no race with the supervisor's controls (§5.3).
+      // transitions and no race with the supervisor's controls.
       await this.maybeFinalize(campaign);
     } finally {
       this.ticking.delete(campaignId);
@@ -619,7 +608,7 @@ export class PacingEngine {
     const candidates: AgentCandidate[] = [];
     for (const s of sessions) {
       // ── `isLocallyOwned` is CORRECT here, and is ONE of the things holding the
-      //    single-replica constraint (ticket 86d44path audit) ──────────────────────
+      //    single-replica constraint ──────────────────────────────────────────────
       //
       // Unlike `POST /sessions/:id/available` — which asked this in-process map a
       // question only Redis can answer, and 409'd agents whose stations were held
@@ -649,11 +638,11 @@ export class PacingEngine {
     }
     if (candidates.length === 0) return { toDial: 0, candidates: [], idle: 'no_agents' };
 
-    // ── Fairness: longest-idle first (AD-P2-C-01 (c)). ──────────────────────
-    // The acceptance is that no agent's idle time diverges over a 200-call run,
+    // ── Fairness: longest-idle first. ───────────────────────────────────────
+    // The requirement is that no agent's idle time diverges over a 200-call run,
     // which is a property of the ORDER, not of the count. Whatever order
     // `findLiveForCampaign` returns is a database artefact — stable across ticks
-    // and unrelated to who has been waiting — so taking it verbatim hands the
+    // and unrelated to who has been waiting — so taking it as-is hands the
     // early rows most of the calls and lets a late row idle indefinitely on a pool
     // larger than the concurrency ceiling. Sorting by the Redis `since` (the last
     // transition, untouched by heartbeat renewal) makes "waited longest" the
@@ -676,21 +665,18 @@ export class PacingEngine {
      * `candidates` is already only the *idle* agents — a busy one failed the
      * `state === 'available'` test above and is not in the list. `occupied` is
      * every non-terminal attempt on the campaign, which is those same busy
-     * agents' calls. So the previous `min(accountLimit, candidates.length) -
-     * occupied` removed each busy agent once by omission and again by
-     * subtraction, and dialled `idle − busy` instead of `idle`.
+     * agents' calls. So `min(accountLimit, candidates.length) - occupied` would
+     * remove each busy agent once by omission and again by subtraction, and dial
+     * `idle − busy` instead of `idle`.
      *
      * With two agents and one on a call that is `1 − 1 = 0` **for every value of
      * `accountLimit`**, so the campaign could only ever dial when every agent was
-     * simultaneously idle. Staging, 2026-08-13: agent B went available at
-     * 06:47:15 with agent A's call still ringing and nothing was dialled for 24 s
-     * — until A's call ended unanswered and both agents were idle, at which point
-     * two calls went out 0.9 s apart. The engine itself was healthy; it had
-     * reacted to agent A going available in 198 ms.
+     * simultaneously idle: an agent going available while a colleague's call rang
+     * would wait, undialled, until both were idle.
      *
      * The correct reading is that they bound different quantities:
      *   • `accountLimit` caps **total concurrency**, so `occupied` counts against
-     *     it — that part was right, and is why `countLive` includes bridged
+     *     it — which is why `countLive` includes bridged
      *     attempts (see the note on `tickOnce`).
      *   • `candidates.length` caps **new dials**, because only an idle agent can
      *     take one. Attempts already in flight have their agent and must not be
@@ -704,20 +690,20 @@ export class PacingEngine {
   /**
    * Reserve → claim → create attempt → dispatch.
    *
-   * **Agents are reserved BEFORE any contact is claimed**, which is the ordering
-   * `AD-P2-C-01` (b) asks for: "a lost CAS never consumes a claimed contact". The
-   * previous order claimed a batch of contacts and then hunted for agents, so a
-   * lost CAS moved a real contact into `in_flight` and back out again — recoverable,
+   * **Agents are reserved BEFORE any contact is claimed**, so that "a lost CAS
+   * never consumes a claimed contact". Claiming a batch of contacts and then
+   * hunting for agents would let a lost CAS move a real contact into `in_flight`
+   * and back out again — recoverable,
    * but it made the contact's state a function of a race it had nothing to do with,
    * and every such round trip is a window where a crash strands the row for the
    * reaper. Reserving first means a lost CAS costs one Redis call and touches
    * nothing durable.
    */
   private async dialUpTo(campaign: AgencyCampaignRecord, plan: TickPlan): Promise<number> {
-    // ── 1. Reserve agents first, strictly before the dial (§6) and now also
+    // ── 1. Reserve agents first, strictly before the dial and now also
     //       strictly before the claim. The agent is committed before the carrier
     //       is contacted, which is what makes an answered call with no agent
-    //       unreachable under D1.
+    //       unreachable under strict power dialing.
     const reserved: string[] = [];
     for (const candidate of plan.candidates) {
       if (reserved.length >= plan.toDial) break;
@@ -727,7 +713,7 @@ export class PacingEngine {
       const res = await this.agents.reserve(candidate.sessionId, RESERVING_MARKER);
       if (res === 'reserved') reserved.push(candidate.sessionId);
       // `reserved` is deliberately NOT mirrored to `agency_agent_sessions`
-      // (`AD-P4-C-01`), and the reason is worth keeping: a mirror here is
+      // and the reason is worth keeping: a mirror here is
       // write-only. Every release path below — surplus, suppress, defer, no
       // station, the duplicate-dial backstop, dispatch failure, `abortRemainder`
       // — returns the agent through `this.agents.set(...)`, i.e. Redis alone. So
@@ -737,7 +723,7 @@ export class PacingEngine {
       // supervisor's breakdown showed them stuck at `reserved` indefinitely.
       //
       // Two further costs made this a clear no: `setState` restamps
-      // `state_since = now()`, which is the anchor §C.4's risk ordering sorts on
+      // `state_since = now()`, which is the anchor the supervisor floor's risk ordering sorts on
       // — the same fairness-ordering harm documented at `recordIdle` above — and
       // it is an awaited round trip per reserved agent per tick on the dial path.
       //
@@ -770,7 +756,7 @@ export class PacingEngine {
     for (const [index, contact] of contacts.entries()) {
       const sessionId = reserved[index]!;
 
-      // ── 3. The compliance gates, exactly where §4.2 puts them: after the claim
+      // ── 3. The compliance gates, in the tick: after the claim
       //       and BEFORE the attempt exists. Suppressing here costs no attempt row
       //       to unwind, and a `dial` decision carries the clearance the dispatcher
       //       refuses to place a call without.
@@ -805,7 +791,7 @@ export class PacingEngine {
       }
 
       if (gate.action === 'defer') {
-        // The clock MUST move forward here (§4.2). `deferUntil` is the next
+        // The clock MUST move forward here. `deferUntil` is the next
         // window-open instant in the contact's own timezone, so the contact wakes
         // at the right local time with no scheduler — and does not spin.
         this.logSkip(campaign, contact, gate);
@@ -898,12 +884,12 @@ export class PacingEngine {
   /**
    * Return every agent and contact a halted tick had already taken.
    *
-   * Unclaimed at `now()`, which is §4.2's third rule rather than an oversight: the
-   * condition that stopped us — the registry could not answer — genuinely clears
-   * the moment it can, so pushing the clock forward would delay a recovered
-   * campaign for no reason. It does not spin, because `AgentStateMachine.reserve`
-   * also fails closed on the same Redis, so a tick that cannot read the DNC set
-   * usually cannot reserve an agent either and never reaches a claim.
+   * Unclaimed at `now()`, deliberately rather than by oversight: the condition
+   * that stopped us — the registry could not answer — genuinely clears the moment
+   * it can, so pushing the clock forward would delay a recovered campaign for no
+   * reason. It usually does not spin: a DNC read that fails because the database is
+   * unavailable leaves the claim, which reads the same database, failing too, so
+   * such a tick never reaches a claim.
    */
   private async abortRemainder(contacts: AgencyContactRecord[], sessions: string[]): Promise<void> {
     for (const sessionId of sessions) {
@@ -1019,7 +1005,7 @@ export class PacingEngine {
   }
 
   /**
-   * Round-robin the caller-ID pool. All entries belong to one provider (§2.1).
+   * Round-robin the caller-ID pool. All entries belong to one provider.
    *
    * **Returns null rather than throwing on an empty pool.** It used to throw, from
    * inside the dial loop's `create({ callerId: … })` argument list — which unwound
@@ -1073,7 +1059,7 @@ export class PacingEngine {
    *
    * `running → completed` asks **"is there any work left?"**, so it counts the
    * ROSTER: a `pending` contact whose retry is hours out is outstanding work and
-   * has to hold the campaign open (`AD-P3-C-04` (a)).
+   * has to hold the campaign open.
    *
    * `stopping → stopped` asks a different question — **"have the calls we already
    * placed finished?"** — and answering it with the roster count was a defect with
@@ -1099,8 +1085,8 @@ export class PacingEngine {
     // running one that has run out of work is completed.
     const to = campaign.status === 'stopping' ? 'stopped' : 'completed';
     // No patch. `ended_at` (and its legacy twin `completed_at`) are derived from
-    // the TARGET STATUS inside `transitionStatus` since migration 108, so the
-    // leader no longer carries an opinion about them — and the actor is derived
+    // the TARGET STATUS inside `transitionStatus`, so the leader carries no
+    // opinion about them — and the actor is derived
     // there too: `stopping → stopped` inherits whoever pressed Stop, while
     // `running → completed` correctly clears to NULL, because nobody completed the
     // campaign, the list ran out.
@@ -1109,8 +1095,8 @@ export class PacingEngine {
     );
     if (updated) {
       log.info({ campaignId: campaign.id, status: to }, 'Agency campaign finalized');
-      // MAG-157: the two terminal transitions have no HTTP actor. A NULL actor
-      // reads as "attribution lost" (MAG-107). This is the single writer of
+      // The two terminal transitions have no HTTP actor. A NULL actor
+      // reads as "attribution lost". This is the single writer of
       // running→completed and stopping→stopped, so the row is the record that
       // the campaign actually ended — not that a supervisor pressed Stop.
       auditLogger.log({
@@ -1122,16 +1108,14 @@ export class PacingEngine {
         actor: 'system:pacing-leader',
         eventData: { campaign_id: campaign.id, from: campaign.status, to },
       });
-      // PORT NOTE (magick-agency): core flushed the billing batcher here (`AD-P2-C-09`,
-      // deleted with the batcher). The completion notice takes its place, inside
-      // `if (updated)` for the batcher's own reason: this is where the transition is
-      // known to have been WON, by the single writer of both terminal transitions, so
-      // the notice is requested exactly once per campaign even if two ticks race.
-      // NOT awaited, unlike the flush: a mail fan-out to every supervisor must not hold
-      // the floor announcement and the lease release below behind an SMTP round trip.
+      // The completion notice, inside `if (updated)` because this is where the
+      // transition is known to have been WON, by the single writer of both terminal
+      // transitions, so the notice is requested exactly once per campaign even if two
+      // ticks race. NOT awaited: a mail fan-out to every supervisor must not hold the
+      // floor announcement and the lease release below behind an SMTP round trip.
       // The notifier is total (every failure is a returned reason) and the `.catch` is
-      // the backstop the batcher call carried — a notice must never abort `relinquish`.
-      // Tracked in `inFlightNotices` so `stop()` can drain it (PORT NOTE above).
+      // the backstop — a notice must never abort `relinquish`. Tracked in
+      // `inFlightNotices` so `stop()` can drain it.
       if (this.completionNotifier) {
         const notice: Promise<void> = this.completionNotifier.notifyCampaignFinished(updated, to).catch((err) =>
           log.error({ err, campaignId: campaign.id }, 'Campaign completion notice failed'));

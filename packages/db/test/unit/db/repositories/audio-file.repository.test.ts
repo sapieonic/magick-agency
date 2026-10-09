@@ -1,9 +1,6 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/unit/db/repositories/audio-file.repository.test.ts@4850d1d9.
-// Changed: connection/repository import paths (packages/db layout). Deleted the whole
-// `migration 067 — shape and safety` describe (6 cases) and its fs/path imports + MIGRATION
-// constant: they read core's src/db/migrations/067_audio_file_pcm.sql, which is not carried —
-// agency has a squashed baseline (packages/db/migrations/0001_baseline.sql) that creates the
-// three PCM columns nullable with no DEFAULT inline. Ids stay non-UUID: the pool is mocked.
+// There is no schema-shape describe here: the baseline
+// (packages/db/migrations/0001_baseline.sql) creates the three PCM columns nullable with no
+// DEFAULT inline, and the integration suite pins that. Ids stay non-UUID: the pool is mocked.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -44,7 +41,7 @@ beforeEach(() => {
   repo = new AudioFileRepository();
 });
 
-describe('AudioFileRepository.create — PCM columns round-trip (§5.5)', () => {
+describe('AudioFileRepository.create — PCM columns round-trip', () => {
   it('inserts all three PCM columns plus duration', async () => {
     mocks.query.mockResolvedValue({ rows: [row({ pcm_audio_hash: 'h'.repeat(40), pcm_sample_rate: 44100, pcm_channels: 1, duration_seconds: '0.50' })] });
 

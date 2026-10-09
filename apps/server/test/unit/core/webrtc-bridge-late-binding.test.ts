@@ -1,52 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// PORT NOTE (magick-agency): ported from core test/unit/core/webrtc-bridge-late-binding.test.ts@4850d1d9
-// (18 cases → 17). Mock specifiers follow the new paths (logger → @magick-agency/observability,
-// webrtc-call repository → @magick-agency/db agency-call repository, account settings → the
-// @magick-agency/db repository with `getWebrtcMaxDurationSeconds` → null = the flag mock's 1800);
-// the settlement-dispatcher and feature-flag mocks are gone (no longer imported). The default
-// provider is now VoiceLink (core: VoBiz), so `UNBOUND` and `VL_UNBOUND` dial the same carrier.
-//
-// DELETED (1):
-//  - 'refuses a /browser-stream connect, closing the intruder' — `attachBrowserLeg` (the owned,
-//    token-gated softphone leg) is deleted; there is no `/browser-stream` connect to refuse.
-//
-// MODIFIED: every case that ended its call with `forceEndByUser(callId)` (deleted) now uses the
-// same `localHangup` under the same outcome, `forceEndWithOutcome('att-1', 'ended_by_user')`.
-// That is the only change in: 'dials with no browser leg and marks it borrowed-unbound',
-// 'emits `answered` but NOT `bridged` when the carrier answers with no agent bound',
-// 'binds before the carrier media arrives, and `bridged` waits for it', 'VoiceLink, PSTN leg
-// attached BEFORE the start frame, bound from the `answered` listener: exactly one `bridged`',
-// 'refuses a bind after the socket dropped, and again after a re-attach', 'refuses a socket that
-// has already closed', 'refuses a call that has already ended, and one that is settling',
-// 'refuses a bridge-owned browser leg', 'is the route for a dropped socket — a bind is refused
-// for it'. Further changes (each marked `PORT NOTE` inline):
-//  - 'mints no browser WS token (there is no /browser-stream connect to gate)' — on VoiceLink the
-//    carrier's provider + webhook tokens are still stored, so the assertion is "no
-//    `browser`-purpose token", not "`redis.set` never called".
-//  - 'discards carrier audio until a socket is bound' — the `start` frame is sent so the carrier
-//    media is negotiated (VoBiz was media-ready on connect) and the missing socket is the only
-//    reason the frame is dropped, as in core.
-//  - 'binds at the answer, emits exactly one `bridged`, and opens the relay both ways' — VoBiz
-//    anchored the answer on the PSTN connect; VoiceLink anchors on the `start` frame, which is
-//    sent after the connect. The relay is VoiceLink's transcoded `media` frames (core asserted
-//    VoBiz's verbatim L16 `playAudio` of 4-char payloads): a real 20ms tone goes each way and
-//    exactly one frame must come out, of the transcoded length (A-law 120-160 B, PCM16 480-640 B)
-//    and not silent. An
-//    answered VoiceLink hangup defers to the carrier's `call.ended`, so it is driven before the
-//    detach assertions (VoBiz finalized immediately).
-//  - 'a PSTN leg that re-connects mid-call re-notifies the browser but emits no second `bridged`',
-//    'refuses a second bind rather than displacing a live agent', 'resumes the bridge WITHOUT
-//    emitting a second `bridged`', 'refuses an attempt that has NEVER been bound, rather than
-//    joining a ringing call' — the `start` frame is sent after the PSTN connect, because the
-//    `bridged` emission (and the relay counted in 'refuses a second bind') needs negotiated media,
-//    which VoBiz had on connect.
-//  - 'refuses a bind after the socket dropped, and again after a re-attach', 'refuses a socket that
-//    has already closed', 'is the route for a dropped socket — a bind is refused for it' — the
-//    `start` frame is sent after the PSTN connect so the call is answered with media negotiated,
-//    as the VoBiz call was on connect. In 'refuses a socket that has already closed' this is what
-//    keeps `not.toContain('bridged')` meaningful (without media `bridged` cannot be emitted at
-//    all), and the case also asserts the `answered` phase before the refused bind.
+// The default provider is VoiceLink, so `UNBOUND` and `VL_UNBOUND` dial the same carrier.
+// Every case ends its call with `forceEndWithOutcome('att-1', 'ended_by_user')`, a
+// `localHangup` under that outcome. VoiceLink specifics the cases account for:
+//  - the carrier's provider + webhook tokens are still stored on a dial, so 'mints no browser
+//    WS token' asserts no `browser`-purpose token, not "`redis.set` never called";
+//  - carrier media is negotiated only after the `start` frame, so cases that need an answered
+//    call with media send `start` after the PSTN connect (in 'refuses a socket that has already
+//    closed' this is what keeps `not.toContain('bridged')` meaningful: without media `bridged`
+//    cannot be emitted at all);
+//  - the answer is anchored on the `start` frame, and the relay is VoiceLink's transcoded `media`
+//    frames: a real 20ms tone goes each way and exactly one frame must come out, of the
+//    transcoded length (A-law 120-160 B, PCM16 480-640 B) and not silent;
+//  - an answered VoiceLink hangup defers to the carrier's `call.ended`, so it is driven before
+//    the detach assertions.
 
 // ---------------------------------------------------------------------------
 // Late binding — the bridge half (`FF_AGENCY_LATE_BINDING`).
@@ -85,8 +52,8 @@ vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
     telephony: {
-      vobiz: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/vobiz' },
-      voicelink: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/voicelink' },
+      vobiz: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/vobiz' },
+      voicelink: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/voicelink' },
     },
   },
 }));
@@ -193,7 +160,7 @@ const UNBOUND = {
 };
 const VL_UNBOUND = { ...UNBOUND, provider: 'voicelink' as const };
 
-/** PORT NOTE: core's `forceEndByUser(callId)` — the same `localHangup`, keyed on the attempt. */
+/** ends the call by attempt id via `localHangup` with the `ended_by_user` outcome. */
 const endByUser = (mgr: WebRtcBridgeManager, attemptId = 'att-1') =>
   mgr.forceEndWithOutcome(attemptId, 'ended_by_user');
 
@@ -203,8 +170,7 @@ function alawFrame(): string {
 }
 
 /**
- * PORT NOTE: real 20ms tone frames for the relay check. Core relayed VoBiz's L16 verbatim, so a
- * 4-char payload proved the relay; VoiceLink transcodes (PCM16 16k ⇄ A-law 8k), so only real
+ * Real 20ms tone frames for the relay check. VoiceLink transcodes (PCM16 16k ⇄ A-law 8k), so only real
  * audio makes the output's length and level meaningful.
  */
 function pcm16kToneFrame(): string {
@@ -278,7 +244,7 @@ describe('WebRtcBridgeManager.createUnboundBridgedCall', () => {
     // The token condition used to key on the presence of a socket, which would
     // hand this call a browser token and open the token-gated route onto the
     // agent's audio for the whole ring window.
-    // PORT NOTE: a VoiceLink dial still stores the carrier's provider + webhook tokens
+    // a VoiceLink dial still stores the carrier's provider + webhook tokens
     // (key `webrtc:ws-token:<purpose>:<callId>`); what must never be stored is a browser one.
     const purposes = redis.set.mock.calls.map((c: any[]) => String(c[0]).split(':')[2]);
     expect(purposes).not.toContain('browser');
@@ -306,11 +272,11 @@ describe('WebRtcBridgeManager.createUnboundBridgedCall', () => {
 
   it('discards carrier audio until a socket is bound', async () => {
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
-    await mgr.createUnboundBridgedCall(UNBOUND); // vobiz: media-ready on connect
+    await mgr.createUnboundBridgedCall(UNBOUND);
     const pstn = fakeStationWs();
     mgr.attachPstnLeg('call-1', pstn as any);
-    // PORT NOTE: VoiceLink is media-ready only after `start`; negotiate so the missing
-    // socket is the only reason the frame below is dropped, as it was on VoBiz.
+    // VoiceLink is media-ready only after `start`; negotiate so the missing
+    // socket is the only reason the frame below is dropped.
     negotiateVoicelink(pstn);
 
     // The relay's own guard (`session.browserWs?.readyState !== 1`) already drops
@@ -328,12 +294,12 @@ describe('WebRtcBridgeManager.bindBorrowedBrowserLeg', () => {
   it('binds at the answer, emits exactly one `bridged`, and opens the relay both ways', async () => {
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
     const seen = recordLifecycle(mgr);
-    await mgr.createUnboundBridgedCall(UNBOUND); // vobiz
+    await mgr.createUnboundBridgedCall(UNBOUND);
     const pstn = fakeStationWs();
     mgr.attachPstnLeg('call-1', pstn as any);
-    // PORT NOTE: VoiceLink anchors the answer on its `start` frame, not on the connect.
+    // VoiceLink anchors the answer on its `start` frame, not on the connect.
     negotiateVoicelink(pstn);
-    expect(phases(seen)).toEqual(['answered']); // VoBiz anchors on the media connect
+    expect(phases(seen)).toEqual(['answered']);
 
     const station = fakeStationWs();
     // Keyed on the correlation id, not the call id: the answer can precede the
@@ -347,8 +313,7 @@ describe('WebRtcBridgeManager.bindBorrowedBrowserLeg', () => {
     expect(station.sent.some((f) => f.event === 'status' && f.status === 'in_progress')).toBe(true);
 
     // A real bind, not just an event: audio flows.
-    // PORT NOTE: core asserted VoBiz's verbatim L16 frames (`playAudio` 'BBBB' out, 'CCCC'
-    // back); VoiceLink transcodes both ways into plain `media` frames, so a real 20ms tone goes
+    // VoiceLink transcodes both ways into plain `media` frames, so a real 20ms tone goes
     // each way and exactly one transcoded, non-silent frame must come out the other side
     // (bounds as webrtc-bridge-manager.test.ts: FIR warm-up shortens the first frame).
     const toPstn = pstn.sent.filter((f) => f.event === 'media').length;
@@ -370,8 +335,8 @@ describe('WebRtcBridgeManager.bindBorrowedBrowserLeg', () => {
 
     // And the borrowed contract still holds: detached, never closed.
     await endByUser(mgr);
-    // PORT NOTE: an answered VoiceLink hangup waits for the carrier's `call.ended`
-    // before it finalizes (and detaches); VoBiz finalized at once.
+    // an answered VoiceLink hangup waits for the carrier's `call.ended`
+    // before it finalizes (and detaches).
     await mgr.handleVoicelinkStatus('call-1', {
       providerCallId: 'carrier-1', callId: 'call-1', eventType: 'hangup', timestamp: new Date(),
       metadata: { event: 'call.ended', call: { id: 'carrier-1', status: 'ended' } },
@@ -409,13 +374,12 @@ describe('WebRtcBridgeManager.bindBorrowedBrowserLeg', () => {
     //
     // Both legs are live and media is ready by the time control returns to that
     // last line, so nothing there could tell it had already happened. The second
-    // event makes the dialer rewrite `bridged_at` with the later instant
-    // (`MAG-137`), move the agent to `on_call` twice, and send the console two
+    // event makes the dialer rewrite `bridged_at` with the later instant,
+    // move the agent to `on_call` twice, and send the console two
     // connect cues.
     //
-    // On VoBiz the same code emits once purely by ordering — its `<Stream>`
-    // connects after the answer webhook, so the bind finds one leg down — which
-    // is why binding before the `start` frame, or testing VoBiz, passes either way.
+    // Binding before the `start` frame would pass either way (one leg is still down,
+    // so the bind emits once purely by ordering); the bind here happens after it.
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
     const seen = recordLifecycle(mgr);
     const station = fakeStationWs();
@@ -452,10 +416,10 @@ describe('WebRtcBridgeManager.bindBorrowedBrowserLeg', () => {
     // told a second bridge happened at a later instant.
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
     const seen = recordLifecycle(mgr);
-    await mgr.createUnboundBridgedCall(UNBOUND); // vobiz
+    await mgr.createUnboundBridgedCall(UNBOUND);
     const firstPstn = fakeStationWs();
     mgr.attachPstnLeg('call-1', firstPstn as any);
-    negotiateVoicelink(firstPstn); // PORT NOTE: VoiceLink media is ready only after `start`.
+    negotiateVoicelink(firstPstn); // VoiceLink media is ready only after `start`.
     const station = fakeStationWs();
     mgr.bindBorrowedBrowserLeg('att-1', station as any);
     expect(phases(seen).filter((p) => p === 'bridged')).toHaveLength(1);
@@ -475,7 +439,7 @@ describe('WebRtcBridgeManager.bindBorrowedBrowserLeg', () => {
     await mgr.createUnboundBridgedCall(UNBOUND);
     const pstn = fakeStationWs();
     mgr.attachPstnLeg('call-1', pstn as any);
-    negotiateVoicelink(pstn); // PORT NOTE: VoiceLink media is ready only after `start`.
+    negotiateVoicelink(pstn); // VoiceLink media is ready only after `start`.
     const first = fakeStationWs();
     expect(mgr.getSession('call-1')!.browserLegBound).toBe(false);
     expect(mgr.bindBorrowedBrowserLeg('att-1', first as any)).toBe(true);
@@ -509,7 +473,7 @@ describe('WebRtcBridgeManager.bindBorrowedBrowserLeg', () => {
     await mgr.createUnboundBridgedCall({ ...UNBOUND, browserCloseGraceMs: 5_000 });
     const pstn = fakeStationWs();
     mgr.attachPstnLeg('call-1', pstn as any);
-    negotiateVoicelink(pstn); // PORT NOTE: answered, as VoBiz was on connect.
+    negotiateVoicelink(pstn); // answered, with media negotiated.
     const station = fakeStationWs();
     mgr.bindBorrowedBrowserLeg('att-1', station as any);
 
@@ -532,7 +496,7 @@ describe('WebRtcBridgeManager.bindBorrowedBrowserLeg', () => {
     await mgr.createUnboundBridgedCall(UNBOUND);
     const pstn = fakeStationWs();
     mgr.attachPstnLeg('call-1', pstn as any);
-    // PORT NOTE: answered with media negotiated (VoBiz was on connect). Without it `bridged`
+    // answered with media negotiated. Without it `bridged`
     // could never be emitted on VoiceLink, and the `not.toContain('bridged')` below would be
     // vacuous.
     negotiateVoicelink(pstn);
@@ -600,7 +564,7 @@ describe('reattachBorrowedBrowserLeg after a late bind', () => {
     await mgr.createUnboundBridgedCall({ ...UNBOUND, browserCloseGraceMs: 5_000 });
     const pstn = fakeStationWs();
     mgr.attachPstnLeg('call-1', pstn as any);
-    negotiateVoicelink(pstn); // PORT NOTE: VoiceLink media is ready only after `start`.
+    negotiateVoicelink(pstn); // VoiceLink media is ready only after `start`.
 
     const station = fakeStationWs();
     expect(mgr.bindBorrowedBrowserLeg('att-1', station as any)).toBe(true);
@@ -648,7 +612,7 @@ describe('reattachBorrowedBrowserLeg after a late bind', () => {
     // And the bind still works afterwards — the refusal consumed nothing.
     const pstn = fakeStationWs();
     mgr.attachPstnLeg('call-1', pstn as any);
-    negotiateVoicelink(pstn); // PORT NOTE: VoiceLink media is ready only after `start`.
+    negotiateVoicelink(pstn); // VoiceLink media is ready only after `start`.
     expect(mgr.bindBorrowedBrowserLeg('att-1', reconnecting as any)).toBe(true);
     expect(phases(seen).filter((p) => p === 'bridged')).toHaveLength(1);
 
@@ -660,7 +624,7 @@ describe('reattachBorrowedBrowserLeg after a late bind', () => {
     await mgr.createUnboundBridgedCall({ ...UNBOUND, browserCloseGraceMs: 5_000 });
     const pstn = fakeStationWs();
     mgr.attachPstnLeg('call-1', pstn as any);
-    negotiateVoicelink(pstn); // PORT NOTE: answered, as VoBiz was on connect.
+    negotiateVoicelink(pstn); // answered, with media negotiated.
     const station = fakeStationWs();
     mgr.bindBorrowedBrowserLeg('att-1', station as any);
     station.readyState = 3;

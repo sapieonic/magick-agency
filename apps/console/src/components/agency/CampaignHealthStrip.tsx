@@ -21,8 +21,7 @@ import type { Role } from '../../types/auth';
 import styles from './CampaignHealthStrip.module.css';
 
 /**
- * The supervisor health strip (§C.2) and the two read-outs beside it (§C.3,
- * CR-2) — "the actual feature" of the supervisor dashboard.
+ * The supervisor health strip and the two read-outs beside it — "the actual feature" of the supervisor dashboard.
  *
  * ── One diagnosis, or none ──────────────────────────────────────────────────
  * `stall: null` renders **nothing**. Not a green "all good" banner: a banner
@@ -62,7 +61,7 @@ export interface CampaignHealthStripProps {
    *
    * **Optional, and `undefined` renders NEITHER link.** A caller that does not
    * know the role cannot have established that the viewer may follow them, and
-   * master enforces `agency.supervise` on the floor and `audit.read` on the
+   * the API enforces `agency.supervise` on the floor and `audit.read` on the
    * activity trail — a link that renders and then 403s on arrival is worse than
    * no link, so an unknown role is treated exactly like an insufficient one.
    * (`hasPermission` already answers `false` for `undefined`; this is why.)
@@ -92,7 +91,7 @@ export function CampaignHealthStrip({
 }: CampaignHealthStripProps) {
   const [showOthers, setShowOthers] = useState(false);
   const stall = stats?.stall ?? null;
-  // Sorted here, never trusted from the array. Core does send them in priority
+  // Sorted here, never trusted from the array. The API does send them in priority
   // order; relying on that would let a producer-side reorder silently change
   // what a supervisor reads with nothing on this side going red.
   const others = sortStallCodes(stats?.other_stalls ?? []);
@@ -109,7 +108,7 @@ export function CampaignHealthStrip({
   const showDiagnosis = mode !== 'readouts';
   const showReadouts = mode !== 'diagnosis';
 
-  // Master's own floors on the two destinations, checked before the link exists
+  // The API's own floors on the two destinations, checked before the link exists
   // rather than after the supervisor has followed it. See the `role` prop.
   const canOpenFloor = hasPermission(role, 'agency.supervise');
   const canSeeActivity = hasPermission(role, 'audit.read');
@@ -240,7 +239,7 @@ export function CampaignHealthStrip({
 
       {showReadouts && <div className={styles.readouts}>
         {/*
-          CR-2 / D10: concurrency is a READ-OUT. No input, no stepper, no "change
+          Concurrency is a READ-OUT. No input, no stepper, no "change
           this" link — the supervisor sees it and cannot set it, and rendering
           any affordance would be a claim the platform cannot honour.
         */}

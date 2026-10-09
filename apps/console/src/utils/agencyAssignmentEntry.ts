@@ -3,14 +3,14 @@
  * about a campaign that is not currently dialing.
  *
  * ── ADVISORY, and the first version was not advisory enough ────────────────
- * Core decides whether a join succeeds. This exists only so an agent is not sent
+ * The server decides whether a join succeeds. This exists only so an agent is not sent
  * somewhere pointless, and so the list can say something true about a campaign
  * before they click.
  *
  * The first version refused `draft`, `paused`, `stopping`, `stopped` and
  * `completed`, on the stated grounds that an agent should not be "sent into a
- * refusal they could have been told about". **There is no such refusal.** Core's
- * `POST /sessions` (`magic-voice-core/src/api/routes/agency.routes.ts`) checks
+ * refusal they could have been told about". **There is no such refusal.** The server's
+ * `POST /sessions` checks
  * campaign OWNERSHIP and nothing else — `campaign_not_running` is declared in its
  * contracts and raised nowhere — and it returns `campaign_status` in the bootstrap
  * so the console can render it. Joining a paused campaign has always worked: the
@@ -32,12 +32,12 @@
  * Two invariants carried over from the first version, both still load-bearing:
  *
  *  - **An unknown status must not block.** `campaign_status` is `null` whenever
- *    master's best-effort lookup failed. Blocking would let a thirty-second core
+ *    the API's best-effort lookup failed. Blocking would let a thirty-second server
  *    blip lock a floor out of a running campaign.
- *  - **An UNRECOGNISED status must not block either.** Core owns the lifecycle and
- *    master forwards its value verbatim, so a status core adds arrives here before
+ *  - **An UNRECOGNISED status must not block either.** The server owns the lifecycle and
+ *    the server forwards its value unchanged, so a status the dialer runtime adds arrives here before
  *    this file knows the word. The block list is therefore an ALLOW-LIST OF
- *    BLOCKS: named statuses block, everything else goes through and lets core
+ *    BLOCKS: named statuses block, everything else goes through and lets the server
  *    answer.
  */
 
@@ -79,7 +79,7 @@ export interface AssignmentEntry {
 }
 
 export function assignmentEntry(status: string | null | undefined): AssignmentEntry {
-  // Null, empty, and anything core added since this file was written.
+  // Null, empty, and anything the server added since this file was written.
   if (!status) return { canEnter: true, note: null };
 
   const blocked = BLOCKED_REASONS.get(status);

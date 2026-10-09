@@ -7,7 +7,7 @@ import { TEST_DB_URL, truncateAll } from '../../../../../packages/db/test/helper
 import { assertBehavioralCapabilitiesForConfig } from '../../../src/agency/campaign-behavioral-settings.js';
 
 /**
- * Plan §9: "recording and analysis are gated per field on campaign writes" — the
+ * Plan: "recording and analysis are gated per field on campaign writes" — the
  * gate reading the REAL `account_settings` row (Postgres 5436) through the shared
  * repository, so a renamed column or a changed NULL default cannot pass a mocked
  * suite and still ship. NEW (magick-agency); the per-field cases themselves are the
