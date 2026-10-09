@@ -176,7 +176,7 @@ export function replyMissingActor(reply: FastifyReply) {
   return reply.code(400).send({
     error: 'Bad Request',
     code: 'missing_actor',
-    message: 'A platform API key has no assignment. Sign in as the agent.',
+    message: 'An API key has no assignment. Sign in as the agent.',
   });
 }
 
@@ -769,7 +769,7 @@ export async function proxyAgencyStaffingRoutes(app: FastifyInstance): Promise<v
             currentCampaignId: err.currentCampaignId,
             requestedCampaignId: err.requestedCampaignId,
           },
-          'Staffing refused: migration 064 has not been applied on this database',
+          'Staffing refused: this database does not have the per-campaign staffing index yet',
         );
         return reply.code(409).send({
           error: 'Conflict',

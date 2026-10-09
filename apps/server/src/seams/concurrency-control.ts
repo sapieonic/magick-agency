@@ -52,19 +52,19 @@ export type DistributedAccountCount =
 
 const UNWIRED: ConcurrencyControl = {
   async invalidateAccountLimit() {
-    throw new Error('ConcurrencyControl not wired: lane C must call setConcurrencyControl at boot');
+    throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
   },
   async invalidateProviderLimits() {
-    throw new Error('ConcurrencyControl not wired: lane C must call setConcurrencyControl at boot');
+    throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
   },
   async getAccountProviderCounts() {
-    throw new Error('ConcurrencyControl not wired: lane C must call setConcurrencyControl at boot');
+    throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
   },
   async getAccountCount() {
-    throw new Error('ConcurrencyControl not wired: lane C must call setConcurrencyControl at boot');
+    throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
   },
   async getDistributedAccountCount() {
-    throw new Error('ConcurrencyControl not wired: lane C must call setConcurrencyControl at boot');
+    throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
   },
 };
 

@@ -30,7 +30,7 @@ import type { AgencyRetrySelector } from '../types/agency-spine';
  * **Every function here takes `accountId` and must be given it.** `apiFetch`
  * sends `X-Account-Id` only when the fourth argument is present; the server treats
  * that header as OPTIONAL and simply omits `x-mgkvc-account` when it is absent
- * (`core-client.ts`), while the server's `authMiddleware` requires it on every
+ * (`core-dispatch.ts`), while the server's `authMiddleware` requires it on every
  * authenticated route. So an omitted argument here does not degrade — it
  * produces `400 Missing required header: x-mgkvc-account` from the server, surfaced
  * through the server's error mask, with nothing in the message pointing at the console.

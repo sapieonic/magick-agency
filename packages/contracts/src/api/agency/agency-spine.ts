@@ -67,7 +67,7 @@ export interface AgencyAttempt {
    */
   agent_user_id: string | null;
   /**
-   * The agent's display name, resolved by MASTER — the dialer runtime has no user table, so
+   * The agent's display name, resolved by the public API layer — the dialer runtime has no user table, so
    * it can only ever serve the id, and a column of UUIDs is not one a
    * supervisor can read.
    *
@@ -331,7 +331,7 @@ export function attemptOutcomeLabel(outcome: string | null): string {
  *
  * A sibling of {@link attemptOutcomeLabel} rather than a bare map lookup, and for
  * the same reason: `AgencyAttemptState` is a closed union in a cross-service
- * contract that CORE owns, so a state the dialer runtime adds arrives here before this file
+ * contract that the dialer runtime owns, so a state the dialer runtime adds arrives here before this file
  * knows the word. Printing it unchanged is what lets that happen without a client
  * release — the property `AgencyCampaignStatusBadge` keeps for campaign status.
  */

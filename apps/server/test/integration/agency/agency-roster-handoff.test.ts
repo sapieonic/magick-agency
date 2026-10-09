@@ -282,7 +282,7 @@ describe('supersedeRoster (in-process)', () => {
 
     expect(err).toMatchObject({ code: 'unsupported' });
     expect((err as Error).message).toBe(
-      'This deployment cannot replace or clear a roster yet — the core service does not support it.',
+      'This deployment cannot replace or clear a roster yet — the dialer runtime does not support it.',
     );
   });
 });

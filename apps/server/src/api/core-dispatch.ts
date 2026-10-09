@@ -87,7 +87,7 @@ export async function callCore(req: CoreCallRequest): Promise<CoreCallResult> {
     return { status: 400, body: { ...UNSAFE_CORE_PATH_BODY }, headers: new Headers() };
   }
   const app = coreApp;
-  if (!app) throw new Error('core handlers are not registered (agencyPlugin did not build them)');
+  if (!app) throw new Error('internal handlers are not registered (agencyPlugin did not build them)');
 
   const queryString = req.query ? '?' + new URLSearchParams(req.query).toString() : '';
   // Tenancy comes from the typed arguments only (the tenant context at every call site),

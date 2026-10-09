@@ -638,7 +638,7 @@ export async function proxyAgencyPerformanceRoutes(app: FastifyInstance): Promis
     if (!rows) {
       log.warn(
         { tenantId: request.tenantId, accountId },
-        'agency roster: core body carries no row array; serving it unfiltered',
+        'agency roster: the internal handler\'s body carries no row array; serving it unfiltered',
       );
       // Unfiltered, but NOT without the counters. Nothing was dropped on this
       // path, for either reason, so `0`/`0` are the truthful values rather than
@@ -683,7 +683,7 @@ export async function proxyAgencyPerformanceRoutes(app: FastifyInstance): Promis
       // `memberships` row goes away with the user.
       log.warn(
         { tenantId: request.tenantId, accountId, unknownOmitted: filtered.unknownOmitted },
-        'agency roster: core returned agent ids with no membership in this tenant; rows dropped',
+        'agency roster: the internal handler returned agent ids with no membership in this tenant; rows dropped',
       );
     }
 
@@ -842,7 +842,7 @@ export async function proxyAgencyPerformanceRoutes(app: FastifyInstance): Promis
     if (!rows) {
       log.warn(
         { tenantId: request.tenantId, accountId },
-        'agency grouped stats: core body carries no row array; serving it unfiltered',
+        'agency grouped stats: the internal handler\'s body carries no row array; serving it unfiltered',
       );
       // Unrecognised is not a licence to drop the counters: see the roster's
       // twin above and {@link withOmissionCounters}. Nothing was filtered here,
@@ -936,7 +936,7 @@ export async function proxyAgencyPerformanceRoutes(app: FastifyInstance): Promis
       // for the same agent, so ONE unaccountable id drops N rows.
       log.warn(
         { tenantId: request.tenantId, accountId, unknownOmitted: filtered.unknownOmitted },
-        'agency grouped stats: core returned agent ids with no membership in this tenant; rows dropped',
+        'agency grouped stats: the internal handler returned agent ids with no membership in this tenant; rows dropped',
       );
     }
 

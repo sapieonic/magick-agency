@@ -74,7 +74,7 @@ export class StaffingUpgradePendingError extends Error {
     super(
       `Cannot staff user ${userId} onto campaign ${requestedCampaignId}: they are already ` +
         `active on ${currentCampaignId} and this database still enforces one campaign per ` +
-        'person (migration 064 not applied).',
+        'person (the per-campaign staffing index is not present).',
     );
     this.name = 'StaffingUpgradePendingError';
   }

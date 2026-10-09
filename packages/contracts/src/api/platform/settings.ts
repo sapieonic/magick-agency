@@ -31,7 +31,7 @@ export interface AgencyAccountSettings {
   // softphone-only gate, which agency calls already skip (docs/decisions.md Q3b).
   /**
    * The account's concurrency ceiling — a read-out on the supervisor surface
-   * (`AgencyCampaignStats.concurrency_limit`, D10), set by super-admins only.
+   * (`AgencyCampaignStats.concurrency_limit`), set by super-admins only.
    * The range for the legacy total is 1..1000.
    */
   max_concurrent_calls: number;

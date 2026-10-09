@@ -4,14 +4,14 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, relative, resolve } from 'node:path';
 
 /*
- * The "D10: concurrency is super-admin only" source guards:
+ * The "concurrency is super-admin only" source guards:
  *
  *  - "super-admin account concurrency already writes super_admin_audit" runs
  *    against `src/api/routes/super-admin.routes.ts`.
  *  - "the agency campaign proxy has no concurrency write path": the three
  *    regexes run over EVERY agency route and module (`src/api/routes/*agency*.ts`,
  *    `src/agency/**`), so they bind whatever the files are called. The positive
- *    `/D10: there is no concurrency setter/` comment check belongs with the
+ *    "There is no concurrency setter here" comment check belongs with the
  *    campaign proxy route file. Made non-vacuous by the last case below.
  *  - "agency campaign config validation has no concurrency field": the same
  *    regex over every file under `src/agency/` whose name contains `campaign-config`.
@@ -22,7 +22,7 @@ import { dirname, join, relative, resolve } from 'node:path';
  *    `max_concurrent_calls`) nowhere: the super-admin settings route writes its
  *    toggles through the toggles-only `setRecordingAnalysisToggles`.
  *    Everything runs in one process, so the repository call IS the write; this
- *    is the guard that actually holds D10.
+ *    is the guard that actually holds the rule.
  */
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -52,7 +52,7 @@ const AGENCY_SURFACE = SRC.filter((path) => {
   return r.startsWith('src/agency/') || /^src\/api\/routes\/[^/]*agency[^/]*\.ts$/.test(r);
 });
 
-describe('D10: concurrency is super-admin only', () => {
+describe('concurrency is super-admin only', () => {
   it('the agency campaign proxy has no concurrency write path', () => {
     for (const path of AGENCY_SURFACE) {
       const source = code(path);

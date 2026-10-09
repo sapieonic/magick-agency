@@ -202,7 +202,7 @@ class SpineExportRefused extends Error {
  * hand-off. The file is the source of truth here; the roster is the dialer
  * runtime's. That is `agency_ingest_jobs` and the routes below it.
  *
- * ── D10: there is no concurrency setter here, and that is deliberate ───────
+ * ── There is no concurrency setter here, and that is deliberate ────────────
  * `account_settings.max_concurrent_calls` is reachable only through the
  * super-admin tree. No `/proxy/account-settings` route exists and none is being
  * added: concurrency is a commercial lever, and an account that can raise its
@@ -923,14 +923,11 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    *
    * ── A 404 here ────────────────────────────────────────────────────────────
    * The internal handler's own refusal, `{ code: 'campaign_not_found' }`: the
-   * campaign is in another tenant or does not exist. That code is in
-   * `FORWARDABLE_ERROR_CODES` and `isStructuredClientError` forwards on an
-   * allow-listed `code` independently of `details`, so the body arrives intact.
-   * A body WITHOUT an allow-listed code (`{ error: 'Not Found' }`) is replaced by
-   * `errorMaskHook` with the generic support-ticket one, but **the 404 STATUS
-   * survives** — the hook rewrites payloads and never `reply.statusCode`.
+   * campaign is in another tenant or does not exist. `errorMaskHook` passes every
+   * 4xx through untouched (it masks only 5xx bodies), so the body arrives intact,
+   * and the hook never rewrites `reply.statusCode` in any case.
    *
-   * So the client contract on this route is the STATUS, not a code: any 404 means
+   * The client contract on this route is still the STATUS, not a code: any 404 means
    * "there is no series to draw", and the console hides the panel rather than
    * rendering an error.
    */
@@ -1041,7 +1038,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     }
     const accountId = extractCampaignField(result.body, 'account_id');
     if (!accountId) {
-      throw new Error('agency campaign ownership probe: core answered without the campaign\'s account_id');
+      throw new Error('agency campaign ownership probe: the internal handler answered without the campaign\'s account_id');
     }
     return {
       accountId,
@@ -3009,7 +3006,7 @@ async function proveCampaignOwnedForWrite(
   }
   const ownerAccountId = extractCampaignField(result.body, 'account_id');
   if (!ownerAccountId) {
-    throw new Error('agency campaign ownership probe: core answered without the campaign\'s account_id');
+    throw new Error('agency campaign ownership probe: the internal handler answered without the campaign\'s account_id');
   }
   return ownerAccountId;
 }

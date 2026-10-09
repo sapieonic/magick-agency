@@ -17,12 +17,12 @@ import { PERMISSION_MATRIX } from '@magick-agency/contracts/rbac';
  * The audit.read floor is checked against the contracts' matrix
  * (`@magick-agency/contracts/rbac`).
  *
- * The "D10: concurrency is super-admin only" source guards read
+ * The "concurrency is super-admin only" source guards read
  * `proxy-agency-campaigns.routes.ts`, `agency/agency-campaign-config.ts` and
  * `super-admin.routes.ts` (ROOT is `apps/server`). `concurrency-super-admin-only.test.ts`
  * also carries broadened copies of the first two (every agency route/module) and a
  * copy of the third; this is the original single-file form, including the positive
- * `D10: there is no concurrency setter` comment check on the route file.
+ * "There is no concurrency setter here" comment check on the route file.
  */
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -81,13 +81,13 @@ describe('PLATFORM_AUDIT_ACTIONS', () => {
   });
 });
 
-describe('D10: concurrency is super-admin only', () => {
+describe('concurrency is super-admin only', () => {
   it('the agency campaign proxy has no concurrency write path', () => {
     const source = readFileSync(resolve(ROOT, 'src/api/routes/proxy-agency-campaigns.routes.ts'), 'utf8');
-    expect(source).toMatch(/D10: there is no concurrency setter/);
+    expect(source).toMatch(/There is no concurrency setter here, and that is deliberate/);
     expect(source).not.toMatch(/app\.(put|post|patch)(?:<[^>]*>)?\([^)]*concurrency/);
     // Payload field, not just the URL: a concurrency setter must not land as an unaudited
-    // campaign body key. The D10 comment names `max_concurrent_calls`; a setter
+    // campaign body key. That comment names `max_concurrent_calls`; a setter
     // would have to mention it as a schema key, not only in that comment.
     expect(source).not.toMatch(/max_concurrent_calls:\s/);
   });

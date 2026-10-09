@@ -496,7 +496,7 @@ export class AgencyIngestService {
           // dials a partial list.
           await failJob(
             'roster_incomplete',
-            `Core is missing chunks ${(final.missing_chunks ?? []).join(', ')}. The import did not complete; upload the file again.`,
+            `The roster is missing chunks ${(final.missing_chunks ?? []).join(', ')}. The import did not complete; upload the file again.`,
           );
           return;
         }
@@ -535,7 +535,7 @@ export class AgencyIngestService {
       } catch (err) {
         log.error(
           { err, jobId: job.id, campaignId },
-          'Could not write the rejected-rows export — completing the job anyway, the roster is already with core',
+          'Could not write the rejected-rows export — completing the job anyway, the roster is already applied',
         );
       }
 
@@ -688,7 +688,7 @@ export class AgencyIngestService {
       if (err instanceof RosterChunkError) {
         await failJob(
           'core_rejected_chunk',
-          `Core rejected roster chunk ${err.chunkIndex}: ${err.message}`,
+          `The dialer runtime rejected roster chunk ${err.chunkIndex}: ${err.message}`,
         );
         return;
       }

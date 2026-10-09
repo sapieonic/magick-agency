@@ -1,5 +1,5 @@
 /**
- * ─── THE AGENT'S RETRY BANNER, RENDERED CORE-SIDE ───────────────────────────
+ * ─── THE AGENT'S RETRY BANNER, RENDERED SERVER-SIDE ─────────────────────────
  *
  * *Retry 1 of "Q3 Winback" — these contacts were previously voicemail, callback,
  * no answer, busy.*

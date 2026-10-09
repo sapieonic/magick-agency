@@ -496,7 +496,7 @@ function validateRetryPolicy(policy: unknown): ConfigIssue[] {
       issues.push({
         field: `retry_policy.${key}`,
         message: SPELLING_ALIAS_OUTCOMES.has(key)
-          ? `'${key}' is not a call outcome — did you mean '${SPELLING_ALIAS_OUTCOMES.get(key)}'? Core spells this one without the double L, matching the call status. Rename the key and the rule is kept as written.`
+          ? `'${key}' is not a call outcome — did you mean '${SPELLING_ALIAS_OUTCOMES.get(key)}'? The outcome is spelled with one L, matching the call status. Rename the key and the rule is kept as written.`
           : SILENTLY_INERT_OUTCOMES.has(key)
             ? `'${key}' is never a call outcome — with answering-machine detection off, a call answered by voicemail is classified 'connected'. A rule here would never fire. Configure voicemail retry on the 'voicemail' disposition instead, where it is applied.`
             : SUPPRESSED_BEFORE_POLICY_OUTCOMES.has(key)

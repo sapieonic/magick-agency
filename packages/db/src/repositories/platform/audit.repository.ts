@@ -17,7 +17,7 @@ import type { AuditLogRecord, CreateAuditLogInput } from '../../models/platform/
  * it asked for is not a smaller page — it is row loss. `mergeActivityPage` reads
  * "fewer rows came back than I asked for" as "this stream is exhausted" and
  * returns a null cursor, so on a trail that is mostly this stream's rows (dispositions
- * and DNC marks are master-only) the export would stop at the clamp and hand
+ * and DNC marks are recorded only here) the export would stop at the clamp and hand
  * over a file that looks complete. The cap must therefore sit above the largest
  * page any caller asks for, not at a number chosen for the interactive route —
  * `GET /audit-log` keeps its own `max(100)` in its query schema.

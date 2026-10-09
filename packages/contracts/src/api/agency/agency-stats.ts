@@ -33,13 +33,13 @@
  * not carry the field, so the answer is "didn't load", not "nothing to measure".
  * The rate fields are declared `number | null` because the contract promises
  * them; the pure helpers in `utils/agencyAgentPerformance.ts` nevertheless accept
- * `undefined` and render it as its own state, so a public API layer mid-deploy degrades a
+ * `undefined` and render it as its own state, so a server mid-deploy degrades a
  * figure rather than crashing a render.
  */
 
 /*
   `by_state` reuses the supervisor floor's own record type rather than
-  re-declaring the six states. Core seeds every state with a zero on both
+  re-declaring the six states. The dialer runtime seeds every state with a zero on both
   payloads, so the shape is genuinely the same one — and a second copy of an
   agent-state union is exactly the drift `AgencyAgentLiveState`'s own comment
   exists to prevent.
@@ -601,7 +601,7 @@ export interface AgencyRosterPage {
   order: AgencyRosterOrder;
   limit: number;
   /**
-   * Agents matching scope+window, counted by CORE **before** `limit` and before
+   * Agents matching scope+window, counted by the dialer runtime **before** `limit` and before
    * the public API layer's departed-member filter. Also the population {@link benchmark} was
    * computed over.
    *
@@ -643,7 +643,7 @@ export interface AgencyRosterPage {
   inactive_omitted: number;
 
   /**
-   * Rows MASTER dropped because it could not attribute them to a person at all —
+   * Rows the public API layer dropped because it could not attribute them to a person at all —
    * R4's third state: an id with no membership row of any status ("never in this
    * tenant"), logged and dropped, deliberately never folded into
    * {@link inactive_omitted}.
@@ -855,7 +855,7 @@ export interface AgencyGroupPage {
   order: AgencyRosterOrder;
   limit: number;
   /**
-   * Groups matching scope+window, counted by CORE **before** `limit` and before
+   * Groups matching scope+window, counted by the dialer runtime **before** `limit` and before
    * the public API layer's departed-member filter.
    *
    * ── Not the denominator of a "showing N of M" ─────────────────────────────
@@ -898,7 +898,7 @@ export interface AgencyGroupPage {
   inactive_omitted: number;
 
   /**
-   * Groups MASTER dropped because it could not attribute them to a person —
+   * Groups the public API layer dropped because it could not attribute them to a person —
    * R4's third state, and never part of {@link inactive_omitted}.
    *
    * Two consumers, both of them sentences that were false without it:

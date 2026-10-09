@@ -458,7 +458,7 @@ export interface AgencyRetryContext {
    */
   parent_campaign_name: string;
   /**
-   * Human rendering of the frozen `retry_selector`, built CORE-SIDE.
+   * Human rendering of the frozen `retry_selector`, built server-side.
    *
    * Built here — not composed by the console from the raw selector — so the copy
    * the agent reads and the query that actually produced the roster cannot
@@ -1847,7 +1847,7 @@ export type AgencyStallCode =
   | 'dnc_unavailable'
   /** 3. Nobody is available to take a call. */
   | 'no_agents_available'
-  /** 4. At the account concurrency ceiling (D10). */
+  /** 4. At the account concurrency ceiling (set by super-admins only). */
   | 'concurrency_saturated'
   /** 5. Everything left is outside its calling window. */
   | 'outside_calling_hours'
@@ -2157,9 +2157,9 @@ export interface AgencyCampaignStats {
   other_stalls: AgencyStallCode[];
 
   /**
-   * The account's configured concurrency ceiling (D10).
+   * The account's configured concurrency ceiling.
    *
-   * A READ-OUT, never a control. Per D10 there is no tenant-facing setter, and
+   * A READ-OUT, never a control. There is no tenant-facing setter, and
    * grouping this with start/pause/stop would itself be an affordance claim. A tenant-facing
    * setter is out of scope.
    */

@@ -494,7 +494,7 @@ export async function proxyAgencyCallsRoutes(app: FastifyInstance): Promise<void
          */
         log.error(
           { tenantId, campaignId: request.params.id, attemptId: request.params.attemptId },
-          'agency call read: core returned an unrecognised envelope and fields had to be withheld',
+          'agency call read: the internal handler returned an unrecognised envelope and fields had to be withheld',
         );
         return reply.code(502).send({
           error: 'Bad Gateway',

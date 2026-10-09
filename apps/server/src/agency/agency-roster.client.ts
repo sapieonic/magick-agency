@@ -364,7 +364,7 @@ export async function supersedeRoster(
     'Agency roster supersede refused: replace/clear is not implemented',
   );
   throw new RosterSupersedeError(
-    'This deployment cannot replace or clear a roster yet — the core service does not support it.',
+    'This deployment cannot replace or clear a roster yet — the dialer runtime does not support it.',
     404,
     'unsupported',
     undefined,
@@ -410,7 +410,7 @@ export async function sendRosterChunk(request: RosterChunkRequest): Promise<Rost
   if (result.status >= 400) {
     const body = result.body as { message?: string; error?: string } | null;
     throw new RosterChunkError(
-      body?.message ?? body?.error ?? `core rejected roster chunk ${chunkIndex}`,
+      body?.message ?? body?.error ?? `the dialer runtime rejected roster chunk ${chunkIndex}`,
       result.status,
       chunkIndex,
     );

@@ -476,9 +476,9 @@ export interface AgencyCampaignStats {
   other_stalls: AgencyStallCode[];
 
   /**
-   * The account's configured concurrency ceiling (D10).
+   * The account's configured concurrency ceiling.
    *
-   * A READ-OUT, never a control. Per D10 there is no tenant-facing setter, and
+   * A READ-OUT, never a control. There is no tenant-facing setter, and
    * rendering an input — or a link to one — beside the lifecycle buttons would
    * itself be an affordance claim the platform cannot honour.
    *
