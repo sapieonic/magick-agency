@@ -10,21 +10,6 @@ import {
 } from './registry.js';
 import { featureFlagEvaluationsTotal } from '@magick-agency/observability/metrics/shared';
 
-/*
- * PORT NOTE (magick-agency): ported from core `src/feature-flags/feature-flag.service.ts`
- * (v1.123.2). REMOVED, as AI-only resolution paths: `resolvePrewarm` and
- * `resolveCallerActivity`, their result types `ResolvedPrewarm` /
- * `ResolvedCallerActivity`, and the helpers only they used (`layerOf`,
- * `exactBoolean`, `boundedNumber`, `RejectedValueContext`,
- * `warnRejectedFlagValue`, `previewValue`). Everything else — `getValue`,
- * `isEnabled`, `snapshot`, `resolveAll`, `resolveClientExposed`,
- * `resolveAllWithSource`, `invalidate`, the Redis read-through cache, degraded
- * mode and its probe, the corrupt-cache guard, and the fail-safe arms (a failed
- * snapshot read resolves the REGISTRY default) — is verbatim. Doc comments below
- * that mention the two removed resolvers or AI flags are core's and describe
- * core's callers.
- */
-
 const CACHE_TTL_SECONDS = 60;
 
 /**
@@ -106,9 +91,8 @@ interface CacheEntry {
 }
 
 /**
- * Read-through cache + resolver for feature flags. Cloned from the (now retired)
- * tenant-settings cache shape: Redis read-through (60s TTL, shared across
- * replicas) → DB → registry default. Falls back to a per-replica local cache
+ * Read-through cache + resolver for feature flags: Redis read-through (60s TTL,
+ * shared across replicas) → DB → registry default. Falls back to a per-replica local cache
  * when Redis writes fail (degraded mode) and probes its way back out again once
  * per `DEGRADED_PROBE_COOLDOWN_SECONDS` — it is a cooldown, never a latch; see
  * {@link FeatureFlagService.claimRedisAttempt}. The "no overrides" case caches
@@ -173,17 +157,15 @@ export class FeatureFlagService {
    * registry.
    *
    * **Why.** `isEnabled`/`getValue` each read a snapshot pair (a Redis GET pair,
-   * or a DB pair on a miss). On the call-initiation request path three separate
-   * preflights (`preflightSipConnection`, `preflightEscalationTransfer`,
-   * `preflightPipelineTier`) each gate independently, so a single request paid up
-   * to three round-trip pairs for what is one point-in-time question. `resolveAll`
-   * already reads one pair for the whole registry; this is the same economy for an
-   * arbitrary, caller-chosen subset:
+   * or a DB pair on a miss), so a request that gates on several flags
+   * independently pays one round-trip pair per gate for what is one point-in-time
+   * question. `resolveAll` already reads one pair for the whole registry; this is
+   * the same economy for an arbitrary, caller-chosen subset:
    *
    * ```ts
    * const flags = await featureFlags.snapshot({ tenantId, accountId });
-   * if (flags.isEnabled(FLAGS.custom_sip)) { … }        // no I/O
-   * const cap = flags.getValue(FLAGS.max_sip_connections); // no I/O
+   * if (flags.isEnabled(FLAGS.agency_dialer_enabled)) { … }      // no I/O
+   * const late = flags.getValue(FLAGS.agency_late_binding);      // no I/O
    * ```
    *
    * **It is a point-in-time view.** The reader resolves from the records captured
@@ -267,10 +249,8 @@ export class FeatureFlagService {
    * Resolve every registered flag for a context using one snapshot read pair.
    *
    * Resolution goes through {@link resolveFromOrDefault}, not `resolveFrom`, for
-   * the same reason `getValue` and `snapshot` wrap theirs in a try/catch: this is
-   * the multi-flag entry point the `ringing` hot path reaches (via
-   * {@link resolvePrewarm} / {@link resolveCallerActivity}), and a throw here
-   * escapes into a telephony webhook handler rather than degrading a gate.
+   * the same reason `getValue` and `snapshot` wrap theirs in a try/catch: a throw
+   * here would escape into the caller rather than degrading a gate.
    */
   async resolveAll(ctx: FlagContext): Promise<Record<string, unknown>> {
     const [global, tenant] = await this.getSnapshotsAllOrNothing(ctx.tenantId);
@@ -295,12 +275,10 @@ export class FeatureFlagService {
    * Resolve every flag AND report which layer each value came from. One snapshot
    * read pair, same as `resolveAll`.
    *
-   * Two consumers, for the same reason: the super-admin resolve surface, so the UI
-   * can attribute the inherited default precisely ("inherited (default: On — set
-   * globally)" vs "… — from env") rather than inferring it; and
-   * {@link resolvePrewarm} / {@link resolveCallerActivity}, so that when they
-   * DISCARD a value they can say which layer wrote it. Both need the attribution
-   * an operator would otherwise have to guess at.
+   * Used by the super-admin resolve surface, so the UI can attribute the
+   * inherited default precisely ("inherited (default: On — set globally)" vs
+   * "… — from env") rather than inferring it — attribution an operator would
+   * otherwise have to guess at.
    */
   async resolveAllWithSource(
     ctx: FlagContext,
@@ -358,13 +336,11 @@ export class FeatureFlagService {
    * third of the three places that must take the SAME arm on a resolver throw.
    *
    * Without it, `resolveAll` / `resolveClientExposed` / `resolveAllWithSource`
-   * were the only resolve entry points with nothing between `resolveFrom` and
-   * their caller. That matters because of who those callers are: `resolvePrewarm`
-   * and `resolveCallerActivity` run on the `ringing` telephony webhook, so a
-   * TypeError out of `resolveFrom` — reachable from a structurally-bad cached
-   * snapshot, see {@link readCachedSnapshot} — became a 500 on every `ringing`
-   * for the life of the cached value, on every tenant if the poisoned key was
-   * `ff:global`. `getValue` degraded, `snapshot` degraded, these did not.
+   * would be the only resolve entry points with nothing between `resolveFrom` and
+   * their caller, so a TypeError out of `resolveFrom` — reachable from a
+   * structurally-bad cached snapshot, see {@link readCachedSnapshot} — would
+   * become a 500 on every request that reaches them for the life of the cached
+   * value, on every tenant if the poisoned key was `ff:global`.
    *
    * `readCachedSnapshot` is the primary fix and stops the known cause at the
    * parse; this is the containment, and it is not redundant with it. It is what
@@ -378,7 +354,7 @@ export class FeatureFlagService {
    * env layer here would let a corrupt cache entry resolve a gated flag through
    * its env var — the exact substitution {@link SnapshotPairResult} exists to
    * prevent for the read-failure case. Per-flag, not per-loop, so one unresolvable
-   * flag cannot blank the other twenty. No `recordEval` call: unlike `getValue`
+   * flag cannot blank the others. No `recordEval` call: unlike `getValue`
    * and `snapshot`, these loops do not meter their evaluations, and starting to
    * here would put a new series under `feature_flag_evaluations_total` for a
    * failure path only.
@@ -404,15 +380,13 @@ export class FeatureFlagService {
    * Steps 4-5 of {@link resolveFrom} — the value a flag resolves to once no
    * override row applies: the env layer if it is set, else the registry default.
    *
-   * Extracted so `resolvePrewarm` can ask for it when it DISCARDS a malformed
-   * override row, without a second snapshot read (this reads `process.env` only)
-   * and without restating the "is the env layer set?" test. That test is subtler
-   * than it looks and must not drift: an env var set to the EMPTY STRING counts as
-   * unset here (registry default), whereas `resolveEnvDefault` alone would parse
-   * `''` as boolean false. Two copies of this predicate would eventually disagree,
-   * and the disagreement would show up only for a tenant with a corrupt row on a
-   * deployment with an empty env var — i.e. never in a test anyone thought to
-   * write. One definition, used by both callers.
+   * Extracted so the "is the env layer set?" test has one definition (this reads
+   * `process.env` only). That test is subtler than it looks and must not drift: an
+   * env var set to the EMPTY STRING counts as unset here (registry default),
+   * whereas `resolveEnvDefault` alone would parse `''` as boolean false. Two copies
+   * of this predicate would eventually disagree, and the disagreement would show up
+   * only on a deployment with an empty env var — i.e. never in a test anyone
+   * thought to write.
    */
   private resolveEnvOrRegistryDefault(
     flag: FlagDefinition,
@@ -444,13 +418,13 @@ export class FeatureFlagService {
     );
   }
 
-  // --- All-or-nothing snapshot pair for resolveAll/resolveClientExposed/resolvePrewarm ---
+  // --- All-or-nothing snapshot pair for resolveAll/resolveClientExposed/resolveAllWithSource ---
 
   /**
    * Read the global + tenant snapshots for a multi-flag resolve. **All-or-nothing:**
    * if EITHER read fails the pair collapses to `[[], []]` (full registry-default
    * fallback). A partial result — a good global with an empty tenant snapshot —
-   * would transiently invert precedence (D1): an opted-in tenant override (`true`)
+   * would transiently invert precedence: an opted-in tenant override (`true`)
    * would resolve to a surviving `global=false`, leaving the tenant stuck off. So a
    * partial failure must degrade to defaults, never to the other layer's value.
    * (`isEnabled`/`getValue` already fail whole via the `Promise.all` in `getValue`.)
@@ -468,7 +442,7 @@ export class FeatureFlagService {
    * `getSnapshotsAllOrNothing`'s `[[], []]` return type cannot express (a tenant
    * with no overrides reads exactly the same empty pair). Same all-or-nothing
    * rule: if either read fails, neither survives, so a partial failure can't
-   * invert precedence (D1).
+   * invert precedence.
    */
   private async readSnapshotPair(tenantId: string): Promise<SnapshotPairResult> {
     try {
@@ -484,8 +458,7 @@ export class FeatureFlagService {
   }
 
   /**
-   * Read-through one snapshot. Same shape as the retired tenant-settings cache: a Redis
-   * read failure falls through to the DB without flipping degraded mode; only a
+   * Read-through one snapshot. A Redis read failure falls through to the DB without flipping degraded mode; only a
    * write failure flips it. A DB read failure throws (caller decides) and is
    * never cached. Degraded mode is left again by the single per-window probe
    * described on {@link claimRedisAttempt}.
@@ -578,26 +551,23 @@ export class FeatureFlagService {
    * the wrong shape, and never returns a value the caller could mistake for "this
    * tenant has no overrides".
    *
-   * ── What was wrong ────────────────────────────────────────────────────────
-   * `getSnapshot` used to `return JSON.parse(cached) as FeatureFlagOverrideRecord[]`,
-   * the cast being the only "validation" there was. A value that is valid JSON but
-   * NOT an array — a key-prefix collision, a stray `SET`, a partial write — reached
-   * `resolveFrom`, where `.find(...)` threw `TypeError: tenant.find is not a
-   * function`. `getValue` and `snapshot` caught that and degraded; `resolveAll` did
-   * not, and `resolveAll` is what `resolvePrewarm`/`resolveCallerActivity` — and so
-   * the `ringing` telephony webhook — resolve through. One bad `ff:global` value
-   * therefore 500'd every inbound call on every tenant for as long as it stayed
-   * cached, with carriers retrying into it. A GET *hit* never re-`SET`s, so the
-   * window did not self-heal; a stray `SET` issued without `EX` never expires at
-   * all. {@link resolveFromOrDefault} is the containment; this is the cause.
+   * ── Why the shape is checked ──────────────────────────────────────────────
+   * A bare `JSON.parse(cached) as FeatureFlagOverrideRecord[]` would make the cast
+   * the only "validation" there is. A value that is valid JSON but NOT an array —
+   * a key-prefix collision, a stray `SET`, a partial write — would reach
+   * `resolveFrom`, where `.find(...)` throws `TypeError: tenant.find is not a
+   * function`, for as long as it stayed cached. A GET *hit* never re-`SET`s, so
+   * that window would not self-heal; a stray `SET` issued without `EX` never
+   * expires at all. {@link resolveFromOrDefault} is the containment; this stops
+   * the cause.
    *
    * ── Why THROW rather than treat it as a cache miss ────────────────────────
    * A miss would fall through to the DB, which is the source of truth, produce the
    * right answer, and repair the key on the way out — strictly better answers. It
    * is rejected anyway, because a corrupt cache entry must not be able to resolve a
    * gated capability through its env var: with no override rows in the DB, "cache
-   * miss" resolves `custom_sip` from `FF_CUSTOM_SIP`, i.e. evident corruption of
-   * the flag namespace would OPEN a gate. That is the substitution
+   * miss" resolves a gated flag from its env var, i.e. evident corruption of the
+   * flag namespace would OPEN a gate. That is the substitution
    * {@link SnapshotPairResult} exists to prevent, and it is pinned in
    * `test/unit/feature-flags/flag-snapshot.test.ts` ("resolves the REGISTRY default
    * even when the env var would open the gate"). Failing the read routes every
@@ -606,8 +576,7 @@ export class FeatureFlagService {
    *
    * Unparseable JSON takes the same arm as a non-array, deliberately: both mean
    * "the key holds something that is not a snapshot", and splitting them would put
-   * two treatments of one condition in one function. (Unparseable JSON previously
-   * fell through to the DB by accident of sitting inside the GET's catch block.)
+   * two treatments of one condition in one function.
    *
    * ── Repair ────────────────────────────────────────────────────────────────
    * The key is DELETED before throwing. Without it the conservative arm is worse
@@ -618,10 +587,9 @@ export class FeatureFlagService {
    * known to be unusable.
    *
    * Contents are NOT validated beyond the shape. `resolveFrom` tolerates junk rows
-   * (they match no `flag_key`), and the values inside a matching row are the
-   * untrusted-JSONB case `resolvePrewarm`/`resolveCallerActivity` already guard at
-   * the point of use — re-validating here would repeat that on the hot path for
-   * every flag, including the ones nobody read.
+   * (they match no `flag_key`), and re-validating the values inside every row here
+   * would do that work on the hot path for every flag, including the ones nobody
+   * read.
    */
   private async readCachedSnapshot(
     cached: string,
@@ -655,23 +623,23 @@ export class FeatureFlagService {
    * May this read touch Redis — and if we are degraded, is this the one request
    * allowed to find out?
    *
-   * Degraded mode used to be a ONE-WAY LATCH: a single transient `SET` failure
-   * took a replica off shared Redis permanently, for the life of the process.
-   * That is worse than it sounds, because `invalidate()` clears the shared key
-   * and only the LOCAL cache of the replica that handled the write — so every
-   * other latched replica kept serving a stale policy for up to
-   * `CACHE_TTL_SECONDS` after every subsequent change, forever. Which replica
-   * handles a given call's `ringing` webhook is effectively random, so a tenant's
-   * pre-warm toggle then took effect on some calls and not others: the classic
-   * "it misbehaves sometimes, with no pattern" report.
+   * Degraded mode is a cooldown, not a ONE-WAY LATCH. A latch would take a
+   * replica off shared Redis permanently, for the life of the process, on a single
+   * transient `SET` failure. That is worse than it sounds, because `invalidate()`
+   * clears the shared key and only the LOCAL cache of the replica that handled the
+   * write — so every other latched replica would keep serving a stale policy for
+   * up to `CACHE_TTL_SECONDS` after every subsequent change, forever. Which replica
+   * handles a given request is effectively random, so a tenant's flag change would
+   * take effect on some requests and not others: the classic "it misbehaves
+   * sometimes, with no pattern" report.
    *
    * The claim is taken SYNCHRONOUSLY, before the caller's first `await`: the
    * cooldown is re-armed here rather than when the probe finishes, so a burst of
    * concurrent reads arriving the instant a window opens yields exactly one
    * probe and the rest take the local-cache path. That also means a probe that
    * FAILS costs no more than one that succeeds — the next window is already set,
-   * whatever the outcome — which is what keeps a real Redis outage as cheap as
-   * the latch it replaces, minus one round trip per window.
+   * whatever the outcome — which is what keeps a real Redis outage as cheap as a
+   * latch would be, minus one round trip per window.
    */
   private claimRedisAttempt(): boolean {
     if (!this.redis) return false;

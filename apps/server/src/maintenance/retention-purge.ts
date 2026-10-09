@@ -4,26 +4,18 @@ import { config } from '../config/index.js';
 import { withRetry } from '../utils/retry.js';
 
 /*
- * PORT NOTE (magick-agency): the AGENCY SLICE of core `src/maintenance/retention-purge.ts`
- * (v1.123.2). Changes, each in PORTING.md:
- *  - only the agency-owned population is purged: `dialer_analysis_jobs` and
- *    `agency_calls` on the agency window (core's `window: 'agency'` targets, now
- *    without the `campaign_id IS NOT NULL` split - every `agency_calls` row is
- *    agency's). Every AI-call, IVR, messaging, KB and softphone target is deleted;
- *  - core's run window (`retention_days` from the retention Lambda's request) has no
- *    counterpart: the window is `AGENCY_RETENTION_DAYS`, and when it is unset the
- *    row purge does NOT run (default, pending Manas);
- *  - core's `purgeAuditPartitions` (the `audit_logs` partition drop and the
- *    default-partition row delete) and its report fields are NOT here: lane A owns
- *    audit partition maintenance, creating and dropping
- *    (`audit/audit-partition-maintenance.ts`), so two jobs never drop the same
- *    partitions;
+ * Retention purge for call data:
+ *  - the rows purged are `dialer_analysis_jobs` and `agency_calls`, on the
+ *    `AGENCY_RETENTION_DAYS` window; when it is unset the row purge does NOT run
+ *    (the default, pending Manas);
+ *  - audit partitions are NOT purged here: `audit/audit-partition-maintenance.ts`
+ *    owns creating and dropping them, so two jobs never drop the same partitions;
  *  - the transcript step nulls `conversation_log` AND `transcript_meta` (the
  *    transcript and its provenance, which carries `source_url`) on
  *    `AGENCY_TRANSCRIPT_RETENTION_DAYS`, leaving `call_analysis` to survive until
  *    the row expires; unset = transcripts are not nulled early;
- *  - it is invoked by a timer in `bootstrap/analysis.ts`, not by an internal route.
- * Batching, FK-safe ordering and the Slack summary are core's, verbatim.
+ *  - it is invoked by a timer in `bootstrap/analysis.ts`.
+ * Deletes are batched, in FK-safe order, and the run posts a Slack summary.
  */
 
 const log = createChildLogger({ component: 'retention-purge' });
@@ -46,7 +38,7 @@ interface PurgeTarget {
  * lets the report say how many jobs went).
  *
  * A job is part of its call's record, so it ages out on the same (agency) window:
- * keyed on the JOB's own created_at, as in core.
+ * keyed on the JOB's own created_at.
  */
 export const PURGE_TARGETS: PurgeTarget[] = [
   {
@@ -195,8 +187,7 @@ export async function runRetentionPurge(opts: RetentionPurgeOptions = {}): Promi
  * row purge. `transcript_meta` goes too: it carries `source_url`, the recording
  * location, and is the transcript's provenance. Only touches rows that still carry
  * a transcript, so it's a no-op once cleared. In dry-run mode it counts without
- * writing. (Core's `purgeWebrtcTranscripts` nulled `conversation_log` alone and
- * split by product; the product split is gone with the softphone.)
+ * writing.
  */
 async function purgeAgencyTranscripts(dryRun: boolean, retentionDays: number): Promise<number> {
   const pool = getPool();
