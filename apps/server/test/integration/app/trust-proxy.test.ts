@@ -11,8 +11,8 @@ import { resetAgencyRuntimeForTests } from '../../../src/bootstrap/agency.js';
 import { resetConcurrencyControl } from '../../../src/seams/concurrency-control.js';
 
 /**
- * NEW (magick-agency), Q7/Q9 (Manas, 2026-10-09): the built app passes
- * `server.trustProxyHops` (`TRUST_PROXY_HOPS`, master's setting) to Fastify's `trustProxy`,
+ * Decisions Q7/Q9: the built app passes
+ * `server.trustProxyHops` (`TRUST_PROXY_HOPS`) to Fastify's `trustProxy`,
  * so `request.ip` — the key of every IP rate-limit bucket — honours exactly N proxy hops:
  *  - with hops = 1, a spoofed extra LEFTMOST `X-Forwarded-For` entry changes neither
  *    `request.ip` nor the bucket (the limiter's remaining count keeps falling across
@@ -22,7 +22,7 @@ import { resetConcurrencyControl } from '../../../src/seams/concurrency-control.
  * Real Postgres (5436) and Redis (6383, this worktree's db): the limiter uses the shared
  * Redis store, as in production.
  *
- * Mutation-checked: passing master's bare number (`trustProxy: hops`, which Fastify 5.12 fails
+ * Mutation-checked: passing the bare number (`trustProxy: hops`, which Fastify 5.12 fails
  * closed) reds the three hop cases (request.ip stays the socket peer); `trustProxy: true` reds
  * them too (the spoofed leftmost entry becomes request.ip and rotates the bucket).
  */

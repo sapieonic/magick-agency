@@ -21,7 +21,7 @@ import { insertTenant } from '../setup/factories.js';
  *   2. A genuine "never call again, any campaign, forever" escalation arrives for
  *      the same number with no scope. Its `ON CONFLICT` collides with the nil
  *      row and does nothing; the fallback SELECT matches that same row.
- *   3. Master answers `200 {recorded: true, already_present: true}`. The number
+ *   3. The mark answers `200 {recorded: true, already_present: true}`. The number
  *      is suppressed in exactly ONE campaign, having asked for everywhere.
  *
  * That is the precise failure this feature exists to prevent, in the direction it
@@ -105,7 +105,7 @@ describe('the hazard: a nil-UUID scope collides with tenant-wide in uq_dnc_scope
       [tenantId, NIL_UUID, PHONE],
     );
 
-    // It is not tenant-wide, so core is never told about it.
+    // It is not tenant-wide, so it must not appear among the tenant-wide rows.
     expect(await tenantWide(tenantId)).toEqual([]);
 
     // Step 2: the escalation. No scope at all — "never call again, anywhere".
@@ -124,7 +124,7 @@ describe('the hazard: a nil-UUID scope collides with tenant-wide in uq_dnc_scope
     expect(escalation.results[0]!.created).toBe(false);
 
     // The number the caller demanded be blocked everywhere is in no tenant-wide
-    // row, so it never enters core's flat `dnc:{tenantId}` set and every campaign
+    // row, so it never counts as tenant-wide and every campaign
     // keeps dialing it.
     expect(await tenantWide(tenantId)).toEqual([]);
 
@@ -158,35 +158,24 @@ describe('the hazard: a nil-UUID scope collides with tenant-wide in uq_dnc_scope
 });
 
 /*
- * PORT NOTE (magick-agency, lane B1). Kept: the matched pair's DATABASE half (the
- * hazard group, 2 cases). Changed: `listTenantWidePhones`, `syncVersion` and
- * `addedTenantWide` are gone with the Redis sync (decision B8), so the "core is
- * never told" assertions are restated as a direct query for tenant-wide rows (the
- * rows `DncRegistry.check` blocks everywhere), and the version assertions are
- * dropped. DEFERRED to Phase 8 by name (they drive `internal-agency.routes`, which
- * is a route): "the guard: the sequence, driven through the route" — "refuses the
- * nil-UUID mark, and the escalation that follows LANDS tenant-wide", "a real
- * campaign mark still works, then its escalation still lands"; "the receipt reports
- * the row, checked against the table" — "the campaign_id and entry_id in the
- * response are the row that exists", "reports the PRE-EXISTING row's scope on a
- * redelivery, not the request's". The agent's-mark half of the guard (sentinel
- * refused, nothing written) is covered by `agency/dnc-registry.test.ts`.
+ * The matched pair's DATABASE half (the hazard group, 2 cases). There is no separate tenant-wide
+ * set or sync version (decision B8), so "nothing tenant-wide was published" is asserted as a
+ * direct query for tenant-wide rows (the rows `DncRegistry.check` blocks everywhere). The
+ * agent's-mark half of the guard (sentinel refused, nothing written) is covered by
+ * `agency/dnc-registry.test.ts`.
  */
 
 /*
- * PORT NOTE (magick-agency, Phase 8): master's two route-driven describes (4 cases), which lane
- * B1 left for Phase 8. Master drove them through its S2S `POST /internal/agency/dnc`; that route
- * is gone with the DNC collapse (B8). The agent's mark now reaches `dnc_entries` through B1's
- * `markDnc` — called by the station DNC route (`POST /proxy/agency/attempts/:id/dnc`), which
- * resolves the campaign from the attempt and so can never send the sentinel itself — and the
- * guard lives in `markDnc` (`refused: 'invalid_dnc_scope'`, nothing written). So the sequence is
- * driven through `markDnc` on the real table. MODIFIED: master's HTTP status/body assertions
- * become `markDnc`'s result (`refused`, `recorded`, `alreadyPresent`, `written.campaign_id` — the
- * receipt read back from the row); master's `entry_id` and sync-version assertions are deleted
- * (no entry id in the result, no Redis set or version — B8); "the escalation LANDS tenant-wide"
- * is asserted on the rows the dial-time check blocks everywhere.
+ * The agent's mark reaches `dnc_entries` through `markDnc`, called by the station DNC route
+ * (`POST /proxy/agency/attempts/:id/dnc`), which resolves the campaign from the attempt and so
+ * can never send the sentinel itself; the guard lives in `markDnc`
+ * (`refused: 'invalid_dnc_scope'`, nothing written). So the sequence is driven through
+ * `markDnc` on the real table, asserting its result (`refused`, `recorded`, `alreadyPresent`,
+ * `written.campaign_id` — the receipt read back from the row). There is no entry id in the
+ * result and no separate tenant-wide set or version (decision B8); "the escalation LANDS
+ * tenant-wide" is asserted on the rows the dial-time check blocks everywhere.
  */
-describe('the guard: the sequence, driven through markDnc (Phase 8)', () => {
+describe('the guard: the sequence, driven through markDnc', () => {
   it('refuses the nil-UUID mark, and the escalation that follows LANDS tenant-wide', async () => {
     const poison = await markDnc({ tenantId, phoneE164: PHONE, campaignId: NIL_UUID });
 
@@ -221,7 +210,7 @@ describe('the guard: the sequence, driven through markDnc (Phase 8)', () => {
   });
 });
 
-describe('the receipt reports the row, checked against the table (Phase 8)', () => {
+describe('the receipt reports the row, checked against the table', () => {
   it('the written campaign_id in the result is the row that exists', async () => {
     const res = await markDnc({ tenantId, phoneE164: PHONE, campaignId });
     const rows = await rowsFor(PHONE);

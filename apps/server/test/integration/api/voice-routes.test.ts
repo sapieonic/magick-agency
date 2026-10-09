@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * NEW (magick-agency, lane C): the voice plugin end to end through the real app
- * (`buildApp` with a real context: Postgres 5436, Redis 6383 test db). Core's route-level
- * tests mocked the bridge; these drive the real bridge and its real Redis ws-token store,
+ * The voice plugin end to end through the real app
+ * (`buildApp` with a real context: Postgres 5436, Redis 6383 test db). Route-level
+ * tests elsewhere mock the bridge; these drive the real bridge and its real Redis ws-token store,
  * with only the carrier faked. They pin that the two unauthenticated carrier surfaces keep
- * core's token checks exactly:
+ * their token checks exactly:
  *   - `POST /api/v1/webhooks/voicelink/webrtc-status/:callId?token=` — the purpose-bound
  *     WEBHOOK token (403 on a wrong one; a right one drives the bridge);
  *   - `GET  /api/v1/webrtc-call/:id/pstn-stream?token=` (WebSocket) — the purpose-bound
@@ -164,7 +164,7 @@ describe('voice plugin routes against the real bridge (integration)', () => {
     expect(getVoiceEngine()!.bridge.getSession(callId)).toBeUndefined();
     const { rows } = await getTestPool().query('SELECT status FROM agency_calls WHERE id = $1', [callId]);
     expect(rows[0]!.status).toBe('no_answer');
-    // Q6 (Manas, 2026-10-09): the media legs' tokens are cleared at teardown; the WEBHOOK
+    // decision Q6: the media legs' tokens are cleared at teardown; the WEBHOOK
     // token is kept for the post-end grace (2h) so VoiceLink's late terminal post — the one
     // carrying the recording URL — still verifies, now that a missing key is refused.
     await expect(getTestRedis().get(`webrtc:ws-token:provider:${callId}`)).resolves.toBeNull();

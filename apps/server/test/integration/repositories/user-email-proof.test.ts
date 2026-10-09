@@ -11,18 +11,16 @@ import {
 } from '../../../../../packages/db/test/integration/setup/platform-factories.js';
 import { PENDING_UID_PREFIX } from '../../../src/auth/firebase-identity.js';
 
-// PORT NOTE (magick-agency): master mocked `src/db/connection.js` to hand back
-// the test pool. Here the repositories (server-local and `@magick-agency/db`)
+// The repositories (server-local and `@magick-agency/db`)
 // share the package's pool singleton, so the suite initialises it against the
 // agency test database instead (worker-common: `initDbPool`, not a mock).
 initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
 
 /*
- * PORT NOTE (magick-agency): master does not type-check its tests; agency's lint
- * does, and `DecodedFirebaseToken` types the optional claims as `string |
- * undefined`. The `null` claims master passes (a Firebase token with no name,
+ * The lint type-checks tests, and `DecodedFirebaseToken` types the optional claims as `string |
+ * undefined`. The `null` claims (a Firebase token with no name,
  * picture or email) are kept as `null` at runtime and only typed through this
- * constant, so every bind sees exactly the value master's suite sent.
+ * constant, so every bind sees exactly the value a real token with no claim yields.
  */
 const NO_CLAIM = null as unknown as string;
 
@@ -535,13 +533,11 @@ describe('users.email_unverified — an address nobody proved is never an identi
   });
 
   /*
-   * PORT NOTE (magick-agency): DELETED "BACKFILLS rows bound by a historical claim
-   * — history is not safe to default". It runs master migration 073's backfill
-   * statement read out of `src/db/migrations/073_users_email_unverified.sql`.
-   * Agency has one squashed baseline (`packages/db/migrations/0001_baseline.sql`)
-   * that creates `users.email_unverified` with no backfill, because a fresh
-   * database has no pre-073 rows. The historical rows arrive at cutover (Phase
-   * 10), which must copy master's flag as-is rather than default it.
+   * Not covered: backfilling rows bound by a historical claim ("history is not safe
+   * to default"). The squashed baseline (`packages/db/migrations/0001_baseline.sql`)
+   * creates `users.email_unverified` with no backfill, because a fresh database has
+   * no historical rows. Historical rows arrive at cutover, which must copy the flag
+   * as-is rather than default it.
    */
 
   it('flags a PHONE-AUTH claim too, which has no address to prove and so stays flagged', async () => {
@@ -700,7 +696,7 @@ describe('users.email_unverified — an address nobody proved is never an identi
       const { targetId } = await inviteResolvesThenClaimRebinds();
 
       /**
-       * The leftover-membership branch (#280): a departed member of the victim
+       * The leftover-membership branch: a departed member of the victim
        * workspace is being re-added. Same resolve-then-write shape, same gap.
        */
       const leftover = await insertMembership({
@@ -768,7 +764,7 @@ describe('users.email_unverified — an address nobody proved is never an identi
     /** Somebody with a real account here, address proven, invited elsewhere. */
     async function existingAccountClaimsASecondInvite(identity: {
       uid: string;
-      email: string; // PORT NOTE (magick-agency): master `string | null`; `null` is passed as NO_CLAIM (see top)
+      email: string; // a `null` claim is passed as NO_CLAIM (see top)
       email_verified?: boolean;
     }) {
       const user = await insertUser({

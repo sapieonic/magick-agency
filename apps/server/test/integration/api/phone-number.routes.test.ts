@@ -15,19 +15,14 @@ import { TEST_DB_URL } from '../../../../../packages/db/test/helpers/test-db.js'
 import { initDbPool, closePool } from '@magick-agency/db';
 
 /*
- * PORT NOTE (magick-agency, Phase 8): ported from master
- * `test/integration/api/phone-number.routes.test.ts`@a1f0756a, on agency's test database
- * (Postgres 5436).
- *  - Harness: the `src/db/connection.js` mock → `initDbPool` on the test database; the
- *    logger mock targets `@magick-agency/observability`; the Redis-cache, inbound-config,
- *    core-client and key-resolver stubs are gone with the modules (the route file no longer
- *    imports them). The session / tenant-context / RBAC stubs are master's.
- *  - Kept verbatim: the two `GET /` cases.
- *  - DELETED (7): the `POST /:assignmentId/tags` (3), `DELETE /:assignmentId/tags/:accountId`
- *    (2) and `PUT /:assignmentId/account-default` (2) blocks: those routes are not served
- *    (number administration is the super-admin's; see the route file's PORT NOTE). Master's
- *    file has 9 cases: 2 GET + 7 administration.
- *  - NEW (isolation, Phase 8 exit gate): another tenant's assignment never appears; an
+ * Runs on the test database (Postgres 5436).
+ *  - Harness: `initDbPool` on the test database; the
+ *    logger mock targets `@magick-agency/observability`. The session / tenant-context / RBAC are stubbed.
+ *  - The two `GET /` cases.
+ *  - Not covered: `POST /:assignmentId/tags`, `DELETE /:assignmentId/tags/:accountId`
+ *    and `PUT /:assignmentId/account-default`: those routes are not served
+ *    (number administration is the super-admin's; see the route file).
+ *  - Isolation: another tenant's assignment never appears; an
  *    account-scoped caller sees untagged numbers and its own, never a number tagged only to a
  *    sibling account, and never the sibling's tag on a shared number.
  */
@@ -142,9 +137,9 @@ describe('phone-number routes (integration)', () => {
     });
   });
 
-  // ── Isolation (NEW, magick-agency Phase 8) ───────────────────────────────────
+  // ── Isolation ───────────────────────────────────
 
-  describe('GET / — tenant and account isolation (NEW)', () => {
+  describe('GET / — tenant and account isolation', () => {
     it("never lists another tenant's assignment, on either query", async () => {
       const tenant = await insertTenant();
       const account = await insertAccount({ tenant_id: tenant.id });

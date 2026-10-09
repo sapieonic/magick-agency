@@ -1,12 +1,9 @@
 /*
- * PORT NOTE (magick-agency): ported from master test/integration/api/account.routes.test.ts@a1f0756a
- * (8 cases → 1 ported + 2 NEW). Deleted with `POST /accounts`, `PUT /accounts/:id`
- * and `DELETE /accounts/:id` (no `account.create|update|delete` in the contract):
- * the 4 'POST /accounts — validation errors' cases, 'PUT /accounts/:id —
- * validation errors' (1), 'POST /accounts — successful creation' (1) and
- * 'DELETE /accounts/:id' (1). Real Postgres through `initDbPool` (master mocked
- * `src/db/connection.js`; agency's repositories import the package pool directly).
- * NEW: `GET /accounts/mine` on real Postgres — the agent's bootstrap read.
+ * Account routes on real Postgres through `initDbPool` (the repositories import the
+ * package pool directly). `POST /accounts`, `PUT /accounts/:id` and
+ * `DELETE /accounts/:id` are not served (no `account.create|update|delete` in the
+ * contract), so they are not covered. Also covers `GET /accounts/mine`, the agent's
+ * bootstrap read.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { vi } from 'vitest';
@@ -18,8 +15,7 @@ import { insertTenant, insertAccount, insertUser, insertMembership } from '../..
 
 // Bypass auth/RBAC — attach tenantId directly
 vi.mock('../../../src/auth/session.middleware.js', () => ({
-  // PORT NOTE (magick-agency): attaches `request.user` from a header for the NEW
-  // `/mine` case; master's stub was a no-op (no route it tested read the user).
+  // Attaches `request.user` from a header for the `/mine` case.
   sessionMiddleware: async (request: any) => {
     if (request.headers['x-user-id']) request.user = { id: request.headers['x-user-id'] };
   },
@@ -33,9 +29,6 @@ vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
 vi.mock('../../../src/rbac/rbac.middleware.js', () => ({
   requirePermission: () => async () => {},
 }));
-
-// PORT NOTE (magick-agency): master's core account-settings sync stub is removed —
-// the route no longer imports it.
 
 const { accountRoutes } = await import('../../../src/api/routes/account.routes.js');
 
@@ -78,7 +71,7 @@ describe('account routes (integration)', () => {
     });
   });
 
-  describe('NEW: GET /accounts/mine', () => {
+  describe('GET /accounts/mine', () => {
     it('resolves a tenant-wide membership to every live account, three fields each', async () => {
       const a1 = await insertAccount({ tenant_id: tenant.id, name: 'A', slug: 'a' });
       const a2 = await insertAccount({ tenant_id: tenant.id, name: 'B', slug: 'b' });

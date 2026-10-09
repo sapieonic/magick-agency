@@ -90,23 +90,15 @@ const mocks = vi.hoisted(() => ({
 }));
 
 /*
- * PORT NOTE (magick-agency): changes to the harness, none to the cases kept.
- *  - Master mocked `src/db/connection.js` to hand back the test pool. Here every
- *    repository shares `@magick-agency/db`'s pool singleton, so it is initialised
- *    against the agency test database instead (`initDbPool`, closed in afterAll).
- *  - `seen` lived in master's `test/integration/setup/test-utils.ts`; agency's
- *    shared test-utils is lead-owned and does not carry it, so master's helper is
- *    copied below verbatim.
- *  - `auditLogger` is `platformAuditLogger` here (decision B7).
- *  - `GET /audit-log` (master `src/api/routes/audit.routes.ts`) is NOT ported in
- *    agency (PORTING.md A.1: no lane-A brief owns it), so `auditRoutes` is not
- *    registered. Of the four cases in the "GET /audit-log" block, the two that
- *    only read through the route are DELETED ("the account_admin of EACH account
- *    sees their own row and not the other's", "and the TENANT-level admin sees
- *    both"); the two that also assert the WRITTEN row's account keep that half and
- *    lose the route read ("lands correctly even when the ACTOR sent no
- *    X-Account-Id at all", "is not filed under whichever account the ADMIN
- *    happened to have selected"). Restore the reads when an audit read route lands.
+ * Harness notes:
+ *  - Every repository shares `@magick-agency/db`'s pool singleton, so it is initialised
+ *    against the test database (`initDbPool`, closed in afterAll).
+ *  - `seen` is a local helper (the shared test-utils does not carry it).
+ *  - The audit logger is `platformAuditLogger` (decision B7).
+ *  - There is no `GET /audit-log` route, so `auditRoutes` is not registered and the audit
+ *    cases assert the WRITTEN row's account directly ("lands correctly even when the ACTOR
+ *    sent no X-Account-Id at all", "is not filed under whichever account the ADMIN happened
+ *    to have selected"). Add reads through the route if an audit read route lands.
  */
 initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
 
@@ -116,7 +108,7 @@ interface SeenResponse {
   body: unknown;
 }
 
-/** master `test/integration/setup/test-utils.ts` `seen`, verbatim. */
+/** A response's status and parsed body, so assertions carry the body. */
 function seen(res: { statusCode: number; body: string }): SeenResponse {
   return { status: res.statusCode, body: parseBody(res.body) };
 }
@@ -141,7 +133,7 @@ vi.mock('../../../src/cache/redis-cache.js', () => ({
     get: vi.fn().mockResolvedValue(null),
     set: vi.fn().mockResolvedValue(undefined),
     del: mocks.redisDel,
-    // Q5 (Manas, 2026-10-09): forwards to the `del` mock and reports success.
+    // decision Q5: forwards to the `del` mock and reports success.
     delForRevocation: async (...k: string[]) => { await mocks.redisDel(...k); return true; },
     delByPattern: vi.fn().mockResolvedValue(undefined),
   },
@@ -724,9 +716,8 @@ describe('offboarding closes agency staffing (integration)', () => {
       return user;
     }
 
-    // PORT NOTE (magick-agency): DELETED here — "the account_admin of EACH account
-    // sees their own row and not the other's" and "and the TENANT-level admin sees
-    // both" read only through `GET /audit-log`, which agency has not ported.
+    // Reads through `GET /audit-log` ("each account_admin sees their own row", "the
+    // tenant-level admin sees both") are not covered: that route is not served.
 
     it('lands correctly even when the ACTOR sent no X-Account-Id at all', async () => {
       /**
@@ -759,9 +750,8 @@ describe('offboarding closes agency staffing (integration)', () => {
       expect(audit[0].account_id).toBe(accountA.id);
       expect(audit[0].resource_id).toBe(a.id);
 
-      // PORT NOTE (magick-agency): MODIFIED — master then read the row back through
-      // `GET /audit-log` as `adminA` (not ported in agency). `adminA` is still
-      // seeded so the fixture is master's; the read half is pending that route.
+      // The row is not read back through `GET /audit-log` (not served); `adminA` is
+      // still seeded so the fixture stays complete.
       expect(adminA.id).toBeTruthy();
     });
 
@@ -788,10 +778,8 @@ describe('offboarding closes agency staffing (integration)', () => {
       expect(audit).toHaveLength(1);
       expect(audit[0].account_id).toBe(accountA.id);
       expect(audit[0].resource_id).toBe(a.id);
-      // PORT NOTE (magick-agency): MODIFIED — master then read through
-      // `GET /audit-log` as `adminA` (sees [a]) and `adminB` (sees []); that route is
-      // not ported in agency. The written row's account, asserted above, is the
-      // half that does not depend on it: it is NOT the admin's selected accountB.
+      // The written row's account, asserted above, does not depend on an audit read
+      // route: it is NOT the admin's selected accountB.
       expect(audit[0].account_id).not.toBe(accountB.id);
       expect([adminA.id, adminB.id].every(Boolean)).toBe(true);
     });

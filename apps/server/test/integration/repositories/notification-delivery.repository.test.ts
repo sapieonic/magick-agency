@@ -13,7 +13,7 @@
  *     produce it. A mock returns the rows it was handed.
  *   - Which four columns are in `uq_notification_deliveries_claim`. Drop
  *     `tenant_id` from the index and every unit test still passes — the mock has
- *     no index to disagree with. docs/reference/magick-master/CLAUDE.md records that exact defect: a person
+ *     no index to disagree with. That exact defect has occurred: a person
  *     administering two tenants received the first workspace's digest and had
  *     the second silently skipped as a duplicate. It is asserted explicitly
  *     below.
@@ -47,11 +47,9 @@ import { randomUUID } from 'node:crypto';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const holder = vi.hoisted(() => ({ current: null as any }));
 
-// PORT NOTE (magick-agency): master mocks `src/db/connection.js`; the
-// repository's `getPool` now comes from `@magick-agency/db`, so that is the
+// The repository's `getPool` comes from `@magick-agency/db`, so that is the
 // specifier mocked. Kept as a mock (not `initDbPool`) because the holder is the
-// point — see the header. `event_key` values are opaque TEXT to the repository
-// and are kept as master wrote them.
+// point — see the header. `event_key` values are opaque TEXT to the repository.
 vi.mock('@magick-agency/db', () => ({
   getPool: () => holder.current ?? getTestPool(),
 }));
@@ -459,8 +457,8 @@ describe('notificationDeliveryRepository (integration)', () => {
      * satisfied, nothing raises, and the row is quietly mis-scoped.
      *
      * With `AND a.tenant_id = $3` a foreign id lands on the same NULL a deleted
-     * one gets, which is the honest answer — master could not scope this
-     * delivery, so it records no scope. Reverting the predicate reds this.
+     * one gets, which is the honest answer — the delivery cannot be scoped,
+     * so it records no scope. Reverting the predicate reds this.
      *
      * Not a live cross-tenant leak today: nothing reads this column as an
      * authorization filter. It is closed now because the day it becomes one is

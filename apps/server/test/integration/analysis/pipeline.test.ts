@@ -5,14 +5,14 @@ import { TEST_DB_URL, closeTestPool, getTestPool, truncateAll } from '../../../.
 import { insertWebrtcCall } from '../../../../../packages/db/test/integration/setup/factories.js';
 
 /*
- * NEW (magick-agency, no source). Core's runner and worker are unit-tested against mocked
- * repositories and its flows tests drive the repository by hand; nothing ran the WORKER
- * and RUNNER over the real job table. This does, with the REAL recording fetcher (only
+ * The runner and worker are unit-tested against mocked repositories and the flow tests
+ * drive the repository by hand; nothing else runs the WORKER and RUNNER over the real job
+ * table. This does, with the REAL recording fetcher (only
  * global `fetch` is stubbed) and fake transcriber / analysis service (Gemini, Sarvam and
- * OpenAI are never called). Phase 7 exit gate items: skip, resume, truncation-retry and
+ * OpenAI are never called). Cases: skip, resume, truncation-retry and
  * backoff on real rows, `analysis_audio_seconds` recorded, off-list recording host a
  * permanent failure. "One real recording transcribed and analysed on the pilot account" is
- * NOT attempted (no vendor account, docs/seams.md §5).
+ * NOT attempted (no vendor account; see docs/seams.md).
  */
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn() } }));
 
