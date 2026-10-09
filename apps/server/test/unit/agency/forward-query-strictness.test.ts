@@ -12,7 +12,7 @@ import {
  * ─── UNKNOWN QUERY PARAMS ARE REFUSED, NOT DROPPED ──────────────────────────
  *
  * `forwardAllowedQuery` used to iterate the ALLOWLIST and never look at the request, so
- * a param master did not know about vanished without trace and the request still
+ * a param the route did not know about vanished without trace and the request still
  * succeeded. For a filter that is the worst available outcome: a `?phone=` search
  * against a route whose allowlist lacked `phone` answered 200 with the person's
  * entire unfiltered history, which the console then presented as the calls
@@ -31,7 +31,7 @@ describe('forwardAllowedQuery — the allowlist', () => {
     expect(r).toEqual({ ok: true, query: { outcome: 'connected' } });
   });
 
-  it('joins a repeated param with a comma, core’s other accepted spelling', () => {
+  it('joins a repeated param with a comma, the other accepted spelling', () => {
     const r = forwardAllowedQuery({ outcome: ['a', 'b'] }, ATTEMPT_QUERY_PARAMS);
     expect(r.ok && r.query.outcome).toBe('a,b');
   });
@@ -94,7 +94,7 @@ describe('forwardAllowedQuery — refusal', () => {
 describe('forwardAllowedQuery — params the route consumes itself', () => {
   /**
    * The regression strictness would otherwise have caused. `preamble` is read by
-   * the CSV handlers (`wantsPreamble`) and never forwarded to core, so it has to
+   * the CSV handlers (`wantsPreamble`) and never forwarded to the internal handlers, so it has to
    * be declared route-consumed rather than left to read as unknown.
    */
   it('permits a route-consumed key without forwarding it', () => {
@@ -142,7 +142,7 @@ describe('the allowlists themselves', () => {
    * the previous page. Attempts filter by `disposition_code` (this
    * attempt's write-up), not the contact's latest disposition; a shared
    * name would 400 or silently no-op depending on which list it landed on.
-   * `disposition` is the alias the tester guessed and core does not read.
+   * `disposition` is the alias the tester guessed and the internal handlers do not read.
    */
   it('carries last_disposition on contacts only', () => {
     expect(CONTACT_QUERY_PARAMS).toContain('last_disposition');

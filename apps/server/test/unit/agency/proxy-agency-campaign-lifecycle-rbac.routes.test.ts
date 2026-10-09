@@ -4,12 +4,12 @@ import type { MembershipRole } from '@magick-agency/contracts/rbac';
 
 /**
  * **`/proxy/agency/campaigns/:id/{start,pause,resume,stop}` and `/stats` —
- * the RBAC floor, asserted by execution (MAG-136).**
+ * the RBAC floor, asserted by execution.**
  *
  * ── Why this file exists, separate from `proxy-agency-campaigns.routes.test.ts` ──
  * That file stubs `requirePermission` to a no-op for every one of its cases and
  * instead asserts the permission STRING each route carries by reading the
- * source text. MAG-96 found the gap that leaves open: nothing in the suite ever
+ * source text. That leaves a gap open: nothing in the suite ever
  * asks "does an operator actually get a 403 here" — a `requirePermission(...)`
  * call can be deleted from a handler entirely and, so long as the source-text
  * table is edited to match, every test in that file stays green. That file's own
@@ -25,10 +25,9 @@ import type { MembershipRole } from '@magick-agency/contracts/rbac';
  * only in the matrix.
  *
  * ── What this pins ────────────────────────────────────────────────────────────
- * MAG-136 raised the floor on the four lifecycle routes from
- * `proxy.schedules.write` (floor `operator`) to `agency.supervise` (floor
- * `account_admin`) — an `operator` could stop a live campaign today, which is
- * exactly what `agency.supervise`'s own doc comment says it exists to prevent.
+ * The four lifecycle routes floor at `agency.supervise` (floor `account_admin`),
+ * not at an `operator`-level permission — an `operator` must not be able to stop a
+ * live campaign, which is exactly what `agency.supervise` exists to prevent.
  * `GET /campaigns/:id/stats` deliberately keeps its `proxy.contact_lists.read`
  * (floor `viewer`) permission — a supervisor dashboard a viewer can read is the
  * intent, only the controls rise — and a test below pins that boundary so a
@@ -51,8 +50,6 @@ vi.mock('../../../src/auth/session.middleware.js', () => ({ sessionMiddleware: a
 vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
   tenantContextMiddleware: async () => {},
 }));
-// PORT NOTE (magick-agency): master's `require-capability` mock is gone with governance
-// (the route registers no `requireCapability('agency')`; plan §3.2).
 // Deliberately NOT mocked: `src/rbac/rbac.middleware.js`, `src/config/index.js`.
 // See the file header for why.
 
@@ -88,9 +85,9 @@ beforeEach(() => {
   });
 });
 
-describe('campaign lifecycle controls floor at agency.supervise (account_admin) — MAG-136', () => {
+describe('campaign lifecycle controls floor at agency.supervise (account_admin)', () => {
   it.each(['start', 'pause', 'resume', 'stop'])(
-    'an OPERATOR gets 403 on %s and the core proxy is never called',
+    'an OPERATOR gets 403 on %s and the proxy is never called',
     async (action) => {
       const app = await buildApp('operator');
 
@@ -105,7 +102,7 @@ describe('campaign lifecycle controls floor at agency.supervise (account_admin) 
   );
 
   it.each(['start', 'pause', 'resume', 'stop'])(
-    'an ACCOUNT_ADMIN gets through on %s and the core proxy is called',
+    'an ACCOUNT_ADMIN gets through on %s and the proxy is called',
     async (action) => {
       const app = await buildApp('account_admin');
 

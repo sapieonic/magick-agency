@@ -2,26 +2,19 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 /*
- * PORT NOTE (magick-agency): master @ a1f0756a
- * `test/unit/agency/proxy-agency-campaign-transition-actor.routes.test.ts`.
  * The pg-pool boundary is `@magick-agency/db/connection` (the shared user repository imports
- * `../connection.js`, the same module). DELETED with platform API keys (decision #5; the
- * route's `isPlatformApiKeyCaller` check and `requestAuditActor`'s key branch are gone):
- * "%s refuses to attribute a PLATFORM API KEY to its creator" (×4), "a client-supplied actor
- * does not survive a key-authenticated call either", "%s names the CREDENTIAL, not its
- * creator, for a key caller" (×4), "still records that a key acted when the credential id
- * is unavailable". `KEY_CREATOR` / `API_KEY_ID` stay as fixtures (unused by the kept cases).
+ * `../connection.js`, the same module). Platform API keys do not exist in this app, so every
+ * request here is a signed-in person. `KEY_CREATOR` / `API_KEY_ID` remain as fixtures.
  */
 
 /**
- * **The four lifecycle proxies must tell core WHO pressed the control
- * (`86d45k0bk`).**
+ * **The four lifecycle proxies must tell the internal handler WHO pressed the control.**
  *
- * Core stores `last_transition_by: { user_id, name } | null` on the campaign row,
- * read from an OPTIONAL request body. Master's proxies sent no body, so core
+ * The internal handler stores `last_transition_by: { user_id, name } | null` on the campaign row,
+ * read from an OPTIONAL request body. The public API layer's proxies sent no body, so the internal handler
  * stored `null` on every supervisor-initiated transition — indistinguishable from
  * the `null` it writes for a genuinely automatic one (the abandonment auto-pause,
- * the pacing leader's finalization). The field shipped meaning "master did not
+ * the pacing leader's finalization). The field shipped meaning "the public API layer did not
  * say" and never "nobody did it".
  *
  * ── What is deliberately NOT mocked ───────────────────────────────────────────
@@ -31,13 +24,11 @@ import Fastify, { type FastifyInstance } from 'fastify';
  * does and for the same reason. So the tenant scope on the actor's own name is
  * only proved if the statement really carries it — delete `m.tenant_id = $2` from
  * `findDisplayNamesInTenant` and "a user outside this tenant" stops being id-only.
- * A stubbed name resolver would pass whether or not master had wired anything up.
+ * A stubbed name resolver would pass whether or not the public API layer had wired anything up.
  *
  * `requirePermission` IS stubbed here: the floors on these four routes are pinned
  * by execution next door in `proxy-agency-campaign-lifecycle-rbac.routes.test.ts`,
- * and this file is about what master SENDS once a caller is through. A caller
- * shape that must not be trusted — the platform API key — is exercised directly,
- * because RBAC waves those past entirely and so cannot be what stops them.
+ * and this file is about what the public API layer SENDS once a caller is through.
  */
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
@@ -94,8 +85,6 @@ vi.mock('../../../src/auth/session.middleware.js', () => ({ sessionMiddleware: a
 vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
   tenantContextMiddleware: async () => {},
 }));
-// PORT NOTE (magick-agency): master's `require-capability` mock is gone with governance
-// (the route registers no `requireCapability('agency')`; plan §3.2).
 vi.mock('../../../src/rbac/rbac.middleware.js', () => ({
   requirePermission: () => async () => {},
 }));
@@ -166,7 +155,7 @@ async function buildApp(caller: {
   return app;
 }
 
-/** What master handed `proxyToCore` as the request body, if anything. */
+/** What the public API layer handed `proxyToCore` as the request body, if anything. */
 function sentBody(): unknown {
   return mocks.proxyToCore.mock.calls[0]![0].body;
 }
@@ -188,7 +177,7 @@ beforeEach(() => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('the authenticated actor reaches core on all four transitions', () => {
+describe('the authenticated actor reaches the internal handler on all four transitions', () => {
   it.each(ACTIONS)('%s carries the session user and their resolved name', async (action) => {
     const app = await buildApp();
 
@@ -196,7 +185,7 @@ describe('the authenticated actor reaches core on all four transitions', () => {
 
     expect(res.statusCode).toBe(200);
     // The exact contract shape, not a superset: an extra key here would be a
-    // field core's `readTransitionActor` ignores while the client believed it.
+    // field the internal handler's `readTransitionActor` ignores while the client believed it.
     expect(sentBody()).toEqual({ actor_user_id: SUPERVISOR, actor_name: 'Asha Menon' });
     // …and nothing else about the call changed.
     expect(mocks.proxyToCore.mock.calls[0]![0].path)
@@ -218,7 +207,7 @@ describe('the authenticated actor reaches core on all four transitions', () => {
 
   it('falls back to the email for a user with no display name', async () => {
     // The same folding the campaign activity trail applies to its own actor
-    // column, so the name master SENDS core cannot disagree with the name the
+    // column, so the name the public API layer SENDS the internal handler cannot disagree with the name the
     // trail DISPLAYS for the same person.
     const app = await buildApp({ user: { id: NO_NAME_USER } });
 
@@ -240,7 +229,7 @@ describe('an unresolvable name degrades to an id-only actor, never a placeholder
     const res = await app.inject({ method: 'POST', url: `${PREFIX}/campaigns/${CAMPAIGN}/stop` });
 
     expect(res.statusCode).toBe(200);
-    // `actor_name` is OMITTED, not empty. Core stores `name: null` for an
+    // `actor_name` is OMITTED, not empty. The internal handler stores `name: null` for an
     // id-only actor, which is the honest answer; `''` would be trimmed back to
     // null AFTER the id was accepted, and `'unknown'` would be a fabricated name.
     expect(sentBody()).toEqual({ actor_user_id: userId });
@@ -295,7 +284,7 @@ describe('an unresolvable name degrades to an id-only actor, never a placeholder
       const inflight = app.inject({ method: 'POST', url: `${PREFIX}/campaigns/${CAMPAIGN}/stop` });
 
       // One millisecond short of the bound: the lookup is still hung, so the
-      // transition has NOT yet been sent. This is what proves master really is
+      // transition has NOT yet been sent. This is what proves the public API layer really is
       // waiting on the lookup — and therefore that the bound is doing work.
       await vi.advanceTimersByTimeAsync(TRANSITION_ACTOR_LOOKUP_TIMEOUT_MS - 1);
       expect(mocks.proxyToCore).not.toHaveBeenCalled();
@@ -322,7 +311,7 @@ describe('an unresolvable name degrades to an id-only actor, never a placeholder
 
   it('is bounded well below the ownership probe, whose call the request needs', async () => {
     // The precedent this bound follows, and the direction it deliberately differs
-    // in. `ACTIVITY_OWNERSHIP_PROBE_TIMEOUT_MS` gates a core read the request
+    // in. `ACTIVITY_OWNERSHIP_PROBE_TIMEOUT_MS` gates an internal handler read the request
     // cannot proceed without; this one gates a cosmetic label with the whole
     // transition still ahead of it, so it must be the shorter of the two. From
     // the constants, so the ordering cannot rot into a copied literal.
@@ -344,7 +333,7 @@ describe('an unresolvable name degrades to an id-only actor, never a placeholder
       await app.inject({ method: 'POST', url: `${PREFIX}/campaigns/${CAMPAIGN}/${action}` });
 
       const body = (sentBody() ?? {}) as AgencyCampaignTransitionRequest;
-      // The three strings core would read as a real actor.
+      // The three strings the internal handler would read as a real actor.
       for (const value of Object.values(body)) {
         expect(['system', '', 'unknown', 'system:api', null]).not.toContain(value);
       }
@@ -354,7 +343,7 @@ describe('an unresolvable name degrades to an id-only actor, never a placeholder
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('a caller master cannot name sends NO actor — and still transitions', () => {
+describe('a caller the public API layer cannot name sends NO actor — and still transitions', () => {
   it.each(ACTIONS)('%s sends no body at all when there is no session user', async (action) => {
     const app = await buildApp({});
 
@@ -362,14 +351,11 @@ describe('a caller master cannot name sends NO actor — and still transitions',
 
     expect(res.statusCode).toBe(200);
     // The `body` KEY is absent, not `{}` — byte-identical to what these routes
-    // sent before this feature, which is what core's `actorPatch` already
+    // sent before this feature, which is what the internal handler's `actorPatch` already
     // answers with an empty patch.
     expect(sentBodyKeyPresent()).toBe(false);
     await app.close();
   });
-
-  // PORT NOTE (magick-agency): DELETED — "%s refuses to attribute a PLATFORM API KEY to its
-  // creator" (×4): no platform API keys (decision #5).
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -378,7 +364,7 @@ describe('the actor is NEVER taken from the client', () => {
     // `last_transition_by` is an attribution field on an audit surface, so a
     // caller-supplied actor is a forged one: a supervisor could stop a campaign in
     // a colleague's name. These routes never read `request.body`, and the body
-    // core receives is built from facts master authenticated.
+    // the internal handler receives is built from facts the public API layer authenticated.
     const app = await buildApp();
 
     await app.inject({
@@ -393,9 +379,9 @@ describe('the actor is NEVER taken from the client', () => {
     await app.close();
   });
 
-  it('a client-supplied actor does NOT become the actor when master has none', async () => {
+  it('a client-supplied actor does NOT become the actor when the public API layer has none', async () => {
     // The case where forwarding the inbound body would be invisible: with no
-    // session user, a forwarded spoof would be the ONLY actor core ever saw.
+    // session user, a forwarded spoof would be the ONLY actor the internal handler ever saw.
     const app = await buildApp({});
 
     await app.inject({
@@ -407,9 +393,6 @@ describe('the actor is NEVER taken from the client', () => {
     expect(sentBodyKeyPresent()).toBe(false);
     await app.close();
   });
-
-  // PORT NOTE (magick-agency): DELETED — "a client-supplied actor does not survive a
-  // key-authenticated call either": no key-authenticated call exists (decision #5).
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -428,11 +411,7 @@ describe('nothing else about the four routes changed', () => {
     await app.close();
   });
 
-  // PORT NOTE (magick-agency): DELETED — "%s names the CREDENTIAL, not its creator, for a key
-  // caller" (×4) and "still records that a key acted when the credential id is unavailable":
-  // `platform_audit_log` has no `api_key` actor type here (Q4) and there are no keys.
-
-  it('forwards core\'s refusal verbatim and writes no audit row', async () => {
+  it('forwards the internal handler\'s refusal unchanged and writes no audit row', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 409,
       body: { error: 'Invalid Transition', code: 'invalid_campaign_transition' },
@@ -444,7 +423,7 @@ describe('nothing else about the four routes changed', () => {
 
     expect(res.statusCode).toBe(409);
     expect(mocks.auditLog).not.toHaveBeenCalled();
-    // The actor still went out: core decides whether the transition is legal, and
+    // The actor still went out: the internal handler decides whether the transition is legal, and
     // an attribution on a refused transition costs nothing.
     expect(sentBody()).toEqual({ actor_user_id: SUPERVISOR, actor_name: 'Asha Menon' });
     await app.close();

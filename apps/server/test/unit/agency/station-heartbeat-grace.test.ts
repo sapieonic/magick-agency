@@ -1,9 +1,3 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core test/unit/agency/station-heartbeat-grace.test.ts@4850d1d9 (19 → 19).
-// The handler under test moved: core's `agencyRoutes` (`src/api/routes/agency.routes.ts`) →
-// `registerStationSocket` in `src/agency/station-socket.ts` (verbatim body, Phase 6). Mounted at the
-// same prefix. The `auth.middleware` mock (only the authenticated HTTP routes used it; Phase 8) and
-// the `settlement-dispatcher` mock (module deleted) are removed. Import paths otherwise only. No case
-// deleted or modified.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
@@ -18,7 +12,7 @@ import type { AddressInfo } from 'node:net';
 //
 // `socket.on('message')` was registered AFTER the station setup's awaits, and
 // `ws` buffers nothing for a socket with no listener — so a frame that arrived
-// while core was reading the session row, attaching and rehydrating was emitted
+// while the handler was reading the session row, attaching and rehydrating was emitted
 // to nobody and gone. Nothing in the suite could see that, because nothing sent
 // a frame that early. Here the session read is held open deliberately, which is
 // the only way to put a frame inside that window on purpose.
@@ -61,10 +55,8 @@ vi.mock('../../../src/config/index.js', () => ({
   },
 }));
 
-// PORT NOTE: core mocked `src/api/middleware/auth.middleware.js` because it mounted the
-// whole `agencyRoutes` plugin, whose HTTP routes sit behind it. Only the station socket
-// is mounted here (`registerStationSocket`), and it is registered OUTSIDE the
-// authenticated scope in core too — so there is no auth middleware to double.
+// No auth middleware mock: only the station socket is mounted here
+// (`registerStationSocket`), and it is registered OUTSIDE the authenticated scope.
 
 vi.mock('../../../src/feature-flags/index.js', () => ({
   getFeatureFlagService: () => ({
@@ -101,8 +93,7 @@ vi.mock('@magick-agency/db/repositories/agency-call.repository', () => ({
 vi.mock('../../../src/telephony/factory.js', () => ({
   TelephonyProviderRegistry: class { get() { return {}; } },
 }));
-// PORT NOTE: core mocked `src/webhooks/settlement-dispatcher.js`; the bridge's
-// settlement dispatch is deleted (plan §5, lane C), so there is nothing to double.
+// The bridge does no settlement dispatch, so there is no dispatcher to double.
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn() } }));
 vi.mock('../../../src/analytics/posthog.js', () => ({
   trackWebrtcCallInitiated: vi.fn(),
@@ -110,10 +101,8 @@ vi.mock('../../../src/analytics/posthog.js', () => ({
   trackWebrtcCallCompleted: vi.fn(),
 }));
 
-// PORT NOTE: core's station handler lived in `src/api/routes/agency.routes.ts`
-// (`agencyRoutes`, `GET /station/:sessionId` + `handleStationSocket`). Its body is
-// ported verbatim into the runtime-owned `agency/station-socket.ts`; the other agency
-// routes are Phase 8 and none of them is exercised here.
+// The station handler (`GET /station/:sessionId` + `handleStationSocket`) lives in the
+// runtime-owned `agency/station-socket.ts`; the other agency routes are not exercised here.
 import { registerStationSocket } from '../../../src/agency/station-socket.js';
 import { AgencyRuntime } from '../../../src/agency/runtime.js';
 import { AGENT_LEASE_MS } from '../../../src/agency/agent-state-machine.js';
@@ -158,7 +147,7 @@ const SESSION = {
 const ENTRY = { campaignId: 'camp-1', tenantId: 't1', accountId: 'a1', agentUserId: 'u-agent' };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Received — a frame that lands while core is still setting the station up
+// Received — a frame that lands while the handler is still setting the station up
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('a frame sent immediately on open is answered, not dropped', () => {
@@ -189,8 +178,7 @@ describe('a frame sent immediately on open is answered, not dropped', () => {
 
     app = Fastify();
     await app.register(websocket);
-    // PORT NOTE: `agencyRoutes(a, runtime)` → `registerStationSocket(a, runtime)`, same prefix.
-    await app.register(async (a) => registerStationSocket(a as never, runtime), { prefix: '/api/v1/agency' });
+      await app.register(async (a) => registerStationSocket(a as never, runtime), { prefix: '/api/v1/agency' });
     await app.listen({ port: 0, host: '127.0.0.1' });
   });
 
@@ -400,7 +388,7 @@ describe('a frame sent immediately on open is answered, not dropped', () => {
   // land inside the window is decided by TCP, not by this test — so an assertion
   // on the count would pass or fail on scheduling rather than on the behaviour.
   // The bound exists to stop an unbounded pre-attach queue buying a database read
-  // per frame; it is argued at the source and is not separately observable from
+  // per frame; it is argued in the handler and is not separately observable from
   // out here.
 });
 
@@ -483,7 +471,7 @@ describe('the advertised heartbeat grace is enforced', () => {
   });
 
   it('NEVER closes a socket that is mid-attempt', async () => {
-    // This socket is also the media leg (§7), and media frames do not renew
+    // This socket is also the media leg, and media frames do not renew
     // `lastSeen` — only `ping` does. So a console whose heartbeat timer was
     // orphaned while its audio kept flowing is exactly the shape that lands here,
     // and closing it would put a live customer on silence and arm the deferred

@@ -1,7 +1,3 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core test/unit/agency/station-supersede-stomp.test.ts@4850d1d9 (10 → 10).
-// As `station-heartbeat-grace.test.ts`: `agencyRoutes` → `registerStationSocket` (`src/agency/station-
-// socket.ts`), same prefix; `auth.middleware` and `settlement-dispatcher` mocks removed. No case
-// deleted or modified.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
@@ -26,7 +22,7 @@ import type { AddressInfo } from 'node:net';
 // shift on a console that looked healthy.
 //
 // So the assertion has to be about POOL MEMBERSHIP after a second socket
-// attaches, not about attach churn: all four of the ticket's stated criteria can
+// attaches, not about attach churn: every ordinary attach-churn criterion can
 // pass while this ships unfixed.
 //
 // ── Why this file drives the REAL route and the REAL runtime ───────────────
@@ -60,10 +56,8 @@ vi.mock('../../../src/config/index.js', () => ({
   },
 }));
 
-// PORT NOTE: core mocked `src/api/middleware/auth.middleware.js` because it mounted the
-// whole `agencyRoutes` plugin, whose HTTP routes sit behind it. Only the station socket
-// is mounted here (`registerStationSocket`), and it is registered OUTSIDE the
-// authenticated scope in core too — so there is no auth middleware to double.
+// No auth middleware mock: only the station socket is mounted here
+// (`registerStationSocket`), and it is registered OUTSIDE the authenticated scope.
 
 vi.mock('../../../src/feature-flags/index.js', () => ({
   getFeatureFlagService: () => ({
@@ -104,8 +98,7 @@ vi.mock('@magick-agency/db/repositories/agency-call.repository', () => ({
 vi.mock('../../../src/telephony/factory.js', () => ({
   TelephonyProviderRegistry: class { get() { return {}; } },
 }));
-// PORT NOTE: core mocked `src/webhooks/settlement-dispatcher.js`; the bridge's
-// settlement dispatch is deleted (plan §5, lane C), so there is nothing to double.
+// The bridge does no settlement dispatch, so there is no dispatcher to double.
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn() } }));
 vi.mock('../../../src/analytics/posthog.js', () => ({
   trackWebrtcCallInitiated: vi.fn(),
@@ -113,10 +106,8 @@ vi.mock('../../../src/analytics/posthog.js', () => ({
   trackWebrtcCallCompleted: vi.fn(),
 }));
 
-// PORT NOTE: core's station handler lived in `src/api/routes/agency.routes.ts`
-// (`agencyRoutes`, `GET /station/:sessionId` + `handleStationSocket`). Its body is
-// ported verbatim into the runtime-owned `agency/station-socket.ts`; the other agency
-// routes are Phase 8 and none of them is exercised here.
+// The station handler (`GET /station/:sessionId` + `handleStationSocket`) lives in the
+// runtime-owned `agency/station-socket.ts`; the other agency routes are not exercised here.
 import { registerStationSocket } from '../../../src/agency/station-socket.js';
 import { AgencyRuntime } from '../../../src/agency/runtime.js';
 import { AGENT_LEASE_MS } from '../../../src/agency/agent-state-machine.js';
@@ -231,7 +222,6 @@ async function harness(): Promise<Harness> {
 
   const app = Fastify();
   await app.register(websocket);
-  // PORT NOTE: `agencyRoutes(a, runtime)` → `registerStationSocket(a, runtime)`, same prefix.
   await app.register(async (a) => registerStationSocket(a as never, runtime), { prefix: '/api/v1/agency' });
   await app.listen({ port: 0, host: '127.0.0.1' });
   const { port } = app.server.address() as AddressInfo;

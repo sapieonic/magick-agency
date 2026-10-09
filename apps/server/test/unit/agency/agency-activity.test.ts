@@ -29,7 +29,7 @@ function masterRecord(overrides: Partial<AuditLogRecord> = {}): AuditLogRecord {
     actor_type: 'human',
     action: 'agency_disposition.created',
     resource_type: 'agency_disposition',
-    // The attempt id, NOT the campaign id — the trap MAG-158 names.
+    // The attempt id, NOT the campaign id — the trap here.
     resource_id: 'attempt-9',
     campaign_id: 'camp-1',
     details: { disposition_code: 'promise_to_pay', campaign_id: 'camp-1' },
@@ -113,7 +113,7 @@ describe('normalizeMasterRow', () => {
    * existed, so a historical trail does not visibly change under a deploy — a
    * display shift on old rows reads as the audit being rewritten. `type` still
    * reports `'unknown'`, so a client can tell that the distinction was never
-   * captured rather than being told a value master would be guessing at.
+   * captured rather than being told a value the console would be guessing at.
    */
   describe('rows that predate the actor_type column', () => {
     it('renders a legacy row with a user as it always did', () => {
@@ -162,18 +162,18 @@ describe('normalizeCoreRow', () => {
   });
 
   /**
-   * Core has no user table (design D3), so a non-`system:` actor is an
+   * The dialer side has no user table (design D3), so a non-`system:` actor is an
    * originator string, not an id. Reporting it as `user_id` would invite the
    * client to link it to a person who does not exist on that side.
    */
-  it('never claims a user id for a core row', () => {
+  it('never claims a user id for a dialer-side row', () => {
     const normalized = normalizeCoreRow(coreRecord({ actor: 'console@example.com' }));
 
     expect(normalized.actor).toEqual({
-      // `unknown`, NOT `human`: core has no notion of master's platform API
+      // `unknown`, NOT `human`: the dialer side has no notion of platform API
       // keys, so its originator string cannot say whether a person was behind
-      // the call. Claiming `human` would manufacture the fact master added
-      // `actor_type` because nobody had recorded it.
+      // the call. Claiming `human` would manufacture exactly the fact `actor_type` was
+      // added to record, because nobody had recorded it.
       type: 'unknown',
       system: false,
       user_id: null,
@@ -183,17 +183,17 @@ describe('normalizeCoreRow', () => {
   });
 
   /**
-   * The `system:` PREFIX is what proves a core write was automatic — never the
+   * The `system:` PREFIX is what proves a dialer-side write was automatic — never the
    * absence of an actor.
    *
-   * Core recording nothing (and `parseCoreBody` normalising a non-string to
+   * The dialer side recording nothing (and `parseCoreBody` normalising a non-string to
    * null) is "I could not work out who", which is not "no caller existed".
    * Reporting `type: 'system'` there manufactures the strongest claim on the
-   * enum out of missing data — the exact ambiguity in core's own
-   * `last_transition_by` that 86d45t7rm exists to stop recreating, since
-   * `system` and `unattributed` are opposite conclusions for an incident.
+   * enum out of missing data — the same ambiguity as the dialer's own
+   * `last_transition_by`, since `system` and `unattributed` are opposite
+   * conclusions for an incident.
    */
-  it('reports a null core actor as unknown, not as system', () => {
+  it('reports a null dialer-side actor as unknown, not as system', () => {
     expect(normalizeCoreRow(coreRecord({ actor: null })).actor.type).toBe('unknown');
     expect(normalizeCoreRow(coreRecord({ actor: 'system:abandonment-guardrail' })).actor.type)
       .toBe('system');
@@ -204,11 +204,11 @@ describe('normalizeCoreRow', () => {
    * deliberately disagree on exactly this row.
    *
    * Same split `normalizeMasterRow` makes for a NULL `actor_type`: the page
-   * renders from `system`, and flipping historical core rows out of "System"
+   * renders from `system`, and flipping historical dialer-side rows out of "System"
    * reads as the audit being rewritten. Pinned because the two fields looking
    * inconsistent is precisely what invites someone to "fix" one of them.
    */
-  it('keeps the legacy system flag on a null core actor', () => {
+  it('keeps the legacy system flag on a null dialer-side actor', () => {
     const actor = normalizeCoreRow(coreRecord({ actor: null })).actor;
 
     expect(actor.system).toBe(true);
@@ -272,8 +272,8 @@ describe('mergeActivityPage', () => {
     });
 
     expect(merged.rows.map((r) => r.id)).toEqual(['master:m1']);
-    // The core row did not fit, so it is the next page — and the cursor must
-    // carry master's position forward without touching core's.
+    // The dialer-side row did not fit, so it is the next page — and the cursor must
+    // carry the console's position forward without touching the dialer's.
     expect(merged.nextCursor).toEqual({
       master: { at: '2026-08-01T12:00:00.000Z', id: 'm1' },
       core: null,
@@ -324,7 +324,7 @@ describe('mergeActivityPage', () => {
 });
 
 /**
- * The whole-stream property MAG-158 acceptance 9 asks for, driven against a
+ * The whole-stream property, driven against a
  * fixed corpus: every row exactly once, in one non-increasing time order.
  * This is the case a naive merge of two offset-paginated sources fails.
  */
@@ -332,7 +332,7 @@ describe('paging the merged stream', () => {
   const at = (minutes: number) =>
     new Date(Date.UTC(2026, 7, 1, 12, 0, 0) - minutes * 60_000).toISOString();
 
-  // Deliberately dense in ties: three master rows and two core rows all share
+  // Deliberately dense in ties: three console rows and two dialer rows all share
   // one timestamp, which is what a single audit flush actually looks like.
   const masterCorpus = [
     row('master', 'm1', at(0)),
@@ -391,10 +391,10 @@ describe('paging the merged stream', () => {
    */
   it('is not disturbed by a row written after the first page', () => {
     const master = [...masterCorpus];
-    // Page size 3, so master has actually emitted a row and therefore HAS a
-    // position. (At size 2 the first page is core-only, master's cursor is still
+    // Page size 3, so the console stream has actually emitted a row and therefore HAS a
+    // position. (At size 2 the first page is dialer-only, the console cursor is still
     // null, and a row written at the very top legitimately appears next — it is
-    // in front of a stream master has not started reading.)
+    // in front of a stream that has not started being read.)
     const first = mergeActivityPage({
       masterRows: fetch(master, null, 4),
       coreRows: fetch(coreCorpus, null, 4),
@@ -624,7 +624,7 @@ describe('the CSV preamble', () => {
    * Absent or unreadable retention is reported, not omitted — silence reads as
    * "no limit", which is the one thing this line must never be mistaken for.
    */
-  it('says retention is unknown rather than omitting the line when core carried none', () => {
+  it('says retention is unknown rather than omitting the line when the dialer side carried none', () => {
     const lines = buildActivityCsvPreamble(preambleInput({ retention: null })).join('');
 
     expect(lines).toContain('Retention: unknown — the dialer\'s retention horizon could not be determined');
@@ -729,23 +729,22 @@ describe('the CSV preamble', () => {
 });
 
 /**
- * ── Every page size here is bounded by a cap that lives in another repo ──────
- * The merge asks each source for `limit + 1`, and core's `/internal/audit-logs`
- * refuses a limit above its own ceiling — so a page size that leaves no room for
- * the extra row 400s core on every full-size page and degrades it to `partial`,
- * a failure that looks exactly like core being down. On the CSV route that
+ * ── Every page size here is bounded by the audit-logs request ceiling ────────
+ * The merge asks each source for `limit + 1`, and the internal `/internal/audit-logs`
+ * handler refuses a limit above its own ceiling — so a page size that leaves no room
+ * for the extra row 400s on every full-size page and degrades the dialer half to
+ * `partial`, a failure that looks exactly like it being down. On the CSV route that
  * `partial` is a 424 refusal of the entire export.
  *
- * The number is written out here rather than imported because it belongs to
- * `magic-voice-core` (`AUDIT_FIND_MAX_LIMIT`, the ceiling its route reads from
- * its own repository) and master cannot import it. That makes this a mirror, and
- * a mirror is only useful if it fails loudly: raising a page size past it must
- * break this test rather than production.
+ * The number is written out here as a mirror of `AUDIT_FIND_MAX_LIMIT` (the ceiling
+ * the route reads from the audit repository), and a mirror is only useful if it
+ * fails loudly: raising a page size past it must break this test rather than
+ * production.
  */
 const CORE_AUDIT_LOGS_MAX_LIMIT = 1000;
 
 describe('the page ceiling', () => {
-  it('leaves room for the merge\'s extra row inside core\'s own cap', () => {
+  it('leaves room for the merge\'s extra row inside the audit-logs cap', () => {
     expect(ACTIVITY_MAX_LIMIT + 1).toBeLessThanOrEqual(CORE_AUDIT_LOGS_MAX_LIMIT);
   });
 

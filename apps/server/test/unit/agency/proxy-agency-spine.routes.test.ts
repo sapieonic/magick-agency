@@ -1,26 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 
-/*
- * PORT NOTE (magick-agency): master @ a1f0756a `test/unit/agency/proxy-agency-spine.routes.test.ts`.
- * Mechanical changes as in the campaigns suite (`callCore` under master's `proxyToCore` mock
- * name, `platformAuditLogger`, observability logger mock, no governance mock, `getFile`).
- * DELETED — three cases that drove the per-page HTTP timeout `drainSpineExport` no longer
- * hands down (`callCore` has no socket; route PORT NOTE): "turns a mid-page deadline abort
- * into a TRUNCATED file, not a 500", "never hands core a zero or negative timeout, on any
- * page", "hands each page what is left of the time budget rather than only checking between
- * pages". NEW — "stops at the time budget BETWEEN pages, marked deadline", the in-process
- * form of the `deadline` truncation the first of those covered.
- */
-
 /**
- * ─── MAG-159: MASTER'S HALF OF THE ATTEMPT SPINE ─────────────────────────────
+ * ─── THE PUBLIC API HALF OF THE ATTEMPT SPINE ────────────────────────────────
  *
  * The proxies themselves are thin, so the interesting behaviour is at the
- * edges — what master forwards, what it refuses to forward, and what the export
- * does when core stops answering.
+ * edges — what the proxy forwards, what it refuses to forward, and what the export
+ * does when the internal handler stops answering.
  *
- * Two properties carry the ticket's privacy decisions and are asserted rather
+ * Two properties carry the privacy decisions and are asserted rather
  * than left to the code review:
  *
  *  * a bulk export writes an audit row naming the actor, the filters and the
@@ -58,8 +46,7 @@ vi.mock('../../../src/auth/session.middleware.js', () => ({ sessionMiddleware: a
 vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
   tenantContextMiddleware: async () => {},
 }));
-// PORT NOTE (magick-agency): master's `require-capability` mock is gone with governance
-// (the route registers no `requireCapability('agency')`; plan §3.2).
+// No governance mock: the route registers no `requireCapability('agency')`.
 vi.mock('../../../src/rbac/rbac.middleware.js', () => ({
   requirePermission: () => async () => {},
 }));
@@ -96,7 +83,7 @@ async function buildApp(): Promise<FastifyInstance> {
   return app;
 }
 
-/** Core's campaign body, which the ownership probe reads for the name. */
+/** The internal handler's campaign body, which the ownership probe reads for the name. */
 const CAMPAIGN_BODY = {
   status: 200,
   body: { id: CAMPAIGN, name: 'Q3 Renewals', account_id: 'core-account', status: 'stopped' },
@@ -135,10 +122,10 @@ beforeEach(() => {
 });
 
 describe('the agent is named, not just identified', () => {
-  // Core has no user table (D3), so it serves `agent_user_id` — a UUID in
-  // production. This surface shipped rendering that raw, which is a column a
-  // supervisor can neither read nor filter by. Master already does exactly this
-  // enrichment for the agent floor.
+  // The internal handler has no user table (D3), so it serves `agent_user_id` — a UUID in
+  // production. This surface once rendered that raw, which is a column a
+  // supervisor can neither read nor filter by. The agent floor already does exactly this
+  // enrichment.
   const AGENT_ID = 'ac1f9d2e-1111-4222-8333-444455556666';
   const WITH_AGENT = ATTEMPT;
   /** An abandoned attempt: nobody was ever reserved, so there is no agent. */
@@ -243,15 +230,15 @@ describe('the JSON proxies', () => {
   });
 
   /**
-   * An undocumented param is now REFUSED rather than dropped, and core is never
-   * called. `account_id` is the case worth pinning: master's API does not accept
+   * An undocumented param is now REFUSED rather than dropped, and the internal handler is never
+   * called. `account_id` is the case worth pinning: the public API does not accept
    * it, and dropping it silently meant a caller could send it, get a 200, and
    * reasonably believe it had been applied.
    *
    * The refusal is also strictly safer than the drop it replaces — the param
-   * still cannot reach core, and now the caller is told.
+   * still cannot reach the internal handler, and now the caller is told.
    */
-  it('refuses an undocumented param instead of dropping it, without calling core', async () => {
+  it('refuses an undocumented param instead of dropping it, without calling the internal handler', async () => {
     const app = await buildApp();
 
     const res = await app.inject({
@@ -268,7 +255,7 @@ describe('the JSON proxies', () => {
     await app.close();
   });
 
-  it('joins a repeated param with a comma — core accepts both spellings', async () => {
+  it('joins a repeated param with a comma — the internal handler accepts both spellings', async () => {
     mocks.proxyToCore.mockResolvedValue(page([]));
     const app = await buildApp();
     await app.inject({
@@ -321,8 +308,8 @@ describe('the JSON proxies', () => {
 
   /**
    * The tester's guess — "API probably wants `disposition`" — is the
-   * wrong rename. Core's contacts parser reads `last_disposition` only.
-   * An alias here would 200 a query core then ignores, which is the
+   * wrong rename. The contacts parser reads `last_disposition` only.
+   * An alias here would 200 a query the handler then ignores, which is the
    * silent-unfiltered defect this allow-list exists to prevent.
    */
   it('refuses the guessed alias `disposition` on the contact roster', async () => {
@@ -355,7 +342,7 @@ describe('the JSON proxies', () => {
     await app.close();
   });
 
-  it('forwards core\'s 404 verbatim, so a cross-tenant id and a missing one look the same', async () => {
+  it('forwards the internal handler\'s 404 unchanged, so a cross-tenant id and a missing one look the same', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 404, body: { error: 'Not Found', code: 'campaign_not_found' }, headers: new Headers(),
     });
@@ -480,7 +467,7 @@ describe('the CSV exports', () => {
     ['a numeric cursor', 12345],
     ['an object cursor', { at: 'x' }],
     ['a boolean cursor', true],
-  ])('refuses the whole export when core sends %s mid-drain', async (_label, badCursor) => {
+  ])('refuses the whole export when the internal handler sends %s mid-drain', async (_label, badCursor) => {
     mocks.proxyToCore
       .mockResolvedValueOnce(CAMPAIGN_BODY)
       .mockResolvedValueOnce(page([ATTEMPT], 'cursor-2'))
@@ -543,7 +530,7 @@ describe('the CSV exports', () => {
   });
 
   it('never exports the contact\'s uploaded CSV columns', async () => {
-    // Even if core were to start serving them on the list, the writer has no
+    // Even if the internal handler were to start serving them on the list, the writer has no
     // column for them — the exclusion is structural, not a filter someone has
     // to remember to apply.
     mocks.proxyToCore
@@ -581,7 +568,7 @@ describe('the CSV exports', () => {
     const res = await app.inject({
       method: 'GET', url: `${PREFIX}/campaigns/${CAMPAIGN}/contacts.csv?state=suppressed`,
     });
-    expect(res.body).toContain('# Magick Agency — campaign contact roster export'); // B17 (master: "MagickVoice platform")
+    expect(res.body).toContain('# Magick Agency — campaign contact roster export'); // B17
     expect(res.body).toContain('# Campaign: Q3 Renewals');
     expect(res.body).toContain('# Filter — state: suppressed');
     expect(res.body).toContain('# Rows exported: 1');
@@ -665,7 +652,7 @@ describe('the CSV exports', () => {
     await app.close();
   });
 
-  it('forwards core\'s refusal mid-drain and sends no file', async () => {
+  it('forwards the internal handler\'s refusal mid-drain and sends no file', async () => {
     mocks.proxyToCore
       .mockResolvedValueOnce(CAMPAIGN_BODY)
       .mockResolvedValueOnce(page([ATTEMPT], 'cursor-2'))
@@ -703,7 +690,7 @@ describe('the CSV exports', () => {
     mocks.proxyToCore
       .mockResolvedValueOnce(CAMPAIGN_BODY)
       // A cursor that never ends: the drain must stop on the ceiling, not on
-      // the source running out.
+      // the data running out.
       .mockResolvedValue(page(rows, 'next'));
 
     const app = await buildApp();
@@ -726,13 +713,10 @@ describe('the CSV exports', () => {
     await app.close();
   }, 30_000);
 
-  // PORT NOTE (magick-agency): DELETED — "turns a mid-page deadline abort into a TRUNCATED
-  // file, not a 500": no abort signal exists in-process (see the header).
-
   /*
-   * NEW (magick-agency): the `deadline` truncation the deleted case pinned, as it can still
-   * happen — the drain checks the wall-clock budget after each complete page. The clock is
-   * driven from inside the core read, so the deadline is exercised by the loop.
+   * The `deadline` truncation: the drain checks the wall-clock budget after each complete
+   * page. The clock is driven from inside the internal read, so the deadline is exercised
+   * by the loop.
    */
   it('stops at the time budget BETWEEN pages, marked deadline', async () => {
     let now = Date.now();
@@ -776,9 +760,6 @@ describe('the CSV exports', () => {
     await app.close();
   });
 
-  // PORT NOTE (magick-agency): DELETED — "never hands core a zero or negative timeout, on any
-  // page": `callCore` takes no timeout (see the header).
-
   it('honours ?preamble=FALSE as well as lowercase', async () => {
     // The only place a caller reads this spelling from is the preamble's own
     // last line, so an exact-case compare kept the block for anyone who typed
@@ -794,8 +775,8 @@ describe('the CSV exports', () => {
 
   it('caps a filter value before it reaches the audit row', async () => {
     // Only the KEYS are whitelisted; `disposition_code` is deliberately
-    // un-vocabularied in core, so the VALUE is caller-controlled. Unbounded, a
-    // 200KB value landed verbatim in the audit store — repeatable, on the one
+    // un-vocabularied in the internal handler, so the VALUE is caller-controlled. Unbounded, a
+    // 200KB value landed unchanged in the audit store — repeatable, on the one
     // trail a compliance reader depends on.
     const huge = 'x'.repeat(200_000);
     mocks.proxyToCore.mockResolvedValueOnce(CAMPAIGN_BODY).mockResolvedValueOnce(page([ATTEMPT]));
@@ -812,8 +793,4 @@ describe('the CSV exports', () => {
     expect(details.filters['disposition_code']).toContain('[truncated]');
     await app.close();
   });
-
-  // PORT NOTE (magick-agency): DELETED — "hands each page what is left of the time budget
-  // rather than only checking between pages": no per-page timeout in-process; the
-  // between-pages check is pinned by "stops at the time budget BETWEEN pages" above.
 });

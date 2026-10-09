@@ -179,10 +179,10 @@ describe('AgencyIngestJobRepository', () => {
       expect(paramsOf()[7]).toBe(JSON.stringify({ invalid_phone: 1, duplicate_phone: 1 }));
     });
 
-    it('persists core-side duplicate-rejection counters independent of accepted/rejected', async () => {
-      // The fix this pins: accepted/rejected are about what MASTER decided to
-      // send; these two columns are the independent signal for what CORE
-      // actually refused on arrival (a re-upload into a populated campaign).
+    it('persists dialer-side duplicate-rejection counters independent of accepted/rejected', async () => {
+      // The fix this pins: accepted/rejected are about what the ingest service decided to
+      // send; these two columns are the independent signal for what the dialer
+      // roster handler actually refused on arrival (a re-upload into a populated campaign).
       await repo.complete('job-1', {
         progress: {
           rows_read: 5000, accepted: 5000, rejected: 0, duplicates: 0, bytes_read: 40, chunks_sent: 10,
@@ -207,8 +207,8 @@ describe('AgencyIngestJobRepository', () => {
     });
 
     it('persists whether that count is exact or a lower bound (migration 056)', async () => {
-      // Without this column the terminal job row cannot tell "core refused
-      // nothing" from "core could not tell us what it refused" — the same zero
+      // Without this column the terminal job row cannot tell "the dialer refused
+      // nothing" from "the dialer could not tell us what it refused" — the same zero
       // on the wire, one a clean import and the other a summary that must not be
       // trusted to prove one. The flag is set here from the progress object, so a
       // completed job carries it as durably as the count it qualifies.
@@ -241,7 +241,7 @@ describe('AgencyIngestJobRepository', () => {
       );
       (undefinedColumnError as Error & { code: string }).code = '42703';
       // TWO rejections, because the ladder now has a middle rung: tier 0 names all
-      // three core columns, tier 1 names the two from 055, tier 2 names none. A
+      // three dialer-side columns, tier 1 names the two from 055, tier 2 names none. A
       // pre-055 database rejects the first two.
       mocks.query
         .mockRejectedValueOnce(undefinedColumnError)
@@ -275,8 +275,8 @@ describe('AgencyIngestJobRepository', () => {
     it('keeps the COUNT in the 055-applied / 056-missing window', async () => {
       /**
        * The middle rung, and the reason it exists. A single all-or-nothing
-       * fallback dropped all three core columns whenever ANY of them was missing —
-       * so in this window an import where core refused 5,000 rows recorded
+       * fallback dropped all three dialer-side columns whenever ANY of them was missing —
+       * so in this window an import where the dialer refused 5,000 rows recorded
        * `core_rejected_duplicate_rows = 0` (the column default, never written) and
        * no flag: a confident wrong zero, which is precisely the failure migration
        * 056 was added to end.
@@ -367,7 +367,7 @@ describe('AgencyIngestJobRepository', () => {
   });
 
   describe('updateProgress', () => {
-    it('writes the core-side duplicate-rejection running total alongside the rest', async () => {
+    it('writes the dialer-side duplicate-rejection running total alongside the rest', async () => {
       await repo.updateProgress('job-1', {
         rows_read: 500, accepted: 500, rejected: 0, duplicates: 0, bytes_read: 40, chunks_sent: 1,
         core_rejected_duplicate_rows: 250,
@@ -497,7 +497,7 @@ describe('AgencyIngestJobRepository', () => {
 
   describe('reapStaleJobs', () => {
     it('fails everything live-and-stale at boot, with actionable copy', async () => {
-      // Master's ingest runs in-process per replica. A row that is genuinely
+      // The ingest runs in-process per replica. A row that is genuinely
       // orphaned (its owning process died) stops heartbeating `updated_at` and
       // is safe to fail; the wizard would otherwise poll it forever.
       mocks.query.mockResolvedValue({ rows: [], rowCount: 3 });

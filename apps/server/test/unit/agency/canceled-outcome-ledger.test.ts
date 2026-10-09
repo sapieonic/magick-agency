@@ -1,12 +1,6 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core
-// test/unit/agency/canceled-outcome-ledger.test.ts@4850d1d9 (11 cases → 11). Deleted: none.
-// Modified (no case changed meaning):
-//  - mock/import specifiers follow the path rule (logger → `@magick-agency/observability`;
-//    break-manager / timers / abandonment-predicate → `@magick-agency/domain/*`; the metric reader is core's `test/helpers/otel-metric-reader.ts`, ported verbatim at the same path over a real `@opentelemetry/sdk-metrics` provider (devDependency; `ScrapeMetricReader` inlined because `src/utils/otel-sdk-config.ts` is not ported));
-//  - the campaign fixture drops `sip_connection_id` (SIP deleted, plan §5; the dialer
-//    no longer passes `sipConnectionId`, docs/seams.md §3.1). No assertion read it.
-//  - mutation-checked: forcing `agency_abandoned_total` to increment on every settle reds
-//    'moves NO compliance number…', so the reader is not vacuous.
+// Mutation-checked: forcing `agency_abandoned_total` to increment on every settle reds
+// 'moves NO compliance number…', so the metric reader is not vacuous. The metric reader runs over a real
+// `@opentelemetry/sdk-metrics` provider (`ScrapeMetricReader` is inlined).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
@@ -64,7 +58,7 @@ const { repos } = vi.hoisted(() => ({
       // "this spy was not called", which is worthless unless the spy exists —
       // so it is stubbed at its real name on the real repository shape.
       chargeAttempt: vi.fn().mockResolvedValue(1),
-      // The OUR-FAULT ledger (`AD-P3-C-09`), `agency_contacts.our_fault_attempts`.
+      // The OUR-FAULT ledger, `agency_contacts.our_fault_attempts`.
       chargeOurFaultAttempt: vi.fn().mockResolvedValue(1),
     },
     session: { setState: vi.fn().mockResolvedValue(undefined) },
@@ -165,11 +159,11 @@ function fakeBridge() {
 
 const CAMPAIGN = {
   id: 'camp-1', name: 'Q3 Renewals', tenant_id: 't1', account_id: 'a1',
-  telephony_provider: 'voicelink', record_calls: false, // PORT NOTE: `sip_connection_id` dropped (SIP deleted)
+  telephony_provider: 'voicelink', record_calls: false,
   analysis_profile_id: null, caller_ids: ['+14155550100'],
-  // Empty, i.e. what master actually stores on a campaign it did not configure.
+  // Empty, i.e. what a campaign stores when no catalog was configured.
   // Kept explicit because `requiresDisposition(outcome, undefined)` and
-  // `(outcome, [])` are different answers (MAG-88).
+  // `(outcome, [])` are different answers.
   disposition_catalog: [],
   retry_policy: {},
 } as any;
@@ -238,7 +232,7 @@ describe('pilot 2026-09-08: a cancelled ring is charged to the our-fault ledger'
   /**
    * The pilot's shape. VoiceLink cannot cancel a ringing leg, so the console's
    * hangup arrives as a pre-answer teardown: `status: 'canceled'`,
-   * `outcome: 'agent_hangup'` (MAG-112's route), `answered: false`, and no
+   * `outcome: 'agent_hangup'` (the hangup route), `answered: false`, and no
    * `bridged` phase ever fired.
    */
   async function cancelledRing() {
@@ -262,7 +256,7 @@ describe('pilot 2026-09-08: a cancelled ring is charged to the our-fault ledger'
 
   it('spends `our_fault_attempts` and NEVER the customer\'s `attempt_count`', async () => {
     await cancelledRing();
-    // Criterion 1 of `AD-P3-C-09`, applied to a second cause. Three cancelled
+    // The our-fault ledger rule (never charge the customer's attempt_count), applied to a second cause. Three cancelled
     // rings against `max_attempts: 3` would otherwise retire a contact nobody
     // ever spoke to, behind an entirely plausible audit trail.
     expect(repos.contact.chargeAttempt,

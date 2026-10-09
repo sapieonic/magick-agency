@@ -1,20 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): ported from core test/unit/agency/session-join-conflict-route.test.ts@4850d1d9
- * (source 13 → ported 13; the one `for…of` sits inside a case and adds none). Harness change
- * only: the logger mock is re-pointed from `src/utils/logger.js` to a partial
- * `@magick-agency/observability` mock. Every other mock path and every case is verbatim.
- * No case DELETED, MODIFIED or NEW.
- */
-
 // ---------------------------------------------------------------------------
-// `POST /agency/sessions` — the 409 that migration 092 makes reachable.
+// `POST /agency/sessions` — the 409 that the one-live-session constraint makes reachable.
 //
 // ── What this file is for ──────────────────────────────────────────────────
 //
-// 092 stopped one human holding two live sessions (the reservation CAS key is
+// The constraint stops one human holding two live sessions (the reservation CAS key is
 // per SESSION — `agency:agent:{sessionId}:state` — so two sessions are two
 // independently reservable agents and one pair of ears). The database now
 // refuses the second join, and this route is where that refusal becomes
@@ -26,11 +18,11 @@ import Fastify from 'fastify';
 // that is where the refusal stops being actionable if it is got wrong:
 //
 //   * the status is 409 and the body carries the OTHER campaign's id and NAME —
-//     master forwards this verbatim and cusui renders it, so an id-only body is
+//     the public API layer forwards this unchanged and the console renders it, so an id-only body is
 //     an error message the agent cannot act on;
 //   * `message` says the useful thing ON ITS OWN. The body is an
-//     `AgencyActionErrorResponse`, and until master mirrors the new code in
-//     `AGENCY_ACTION_ERROR_CODES` its error mask replaces unknown codes with
+//     `AgencyActionErrorResponse`, and until the new code is mirrored in
+//     `AGENCY_ACTION_ERROR_CODES` the error mask replaces unknown codes with
 //     "contact support and quote this request id" — so the structured fields are
 //     the ceiling and this sentence is the floor;
 //   * the state comes from REDIS, not the durable mirror, because it is what
@@ -171,7 +163,7 @@ describe('POST /sessions — agent already live on another campaign', () => {
   });
 
   it('carries a `message` that is still useful with the structured fields stripped', async () => {
-    // `message` is the FLOOR, not the ceiling. Master's error mask is keyed on
+    // `message` is the FLOOR, not the ceiling. The error mask is keyed on
     // `AGENCY_ACTION_ERROR_CODES` and rewrites codes it has not mirrored into
     // "contact support and quote this request id"; a generic client error handler
     // shows `message` and nothing else. Either way an agent whose console never
@@ -209,7 +201,7 @@ describe('POST /sessions — agent already live on another campaign', () => {
   it('reports the state from REDIS, not from the durable mirror', async () => {
     // The row says `break`; Redis holds a live `on_call` lease. Reporting the row
     // would tell an agent mid-conversation that leaving is a single click, which
-    // is the same "derive availability from the mirror" mistake `AD-P2-C-07` (d)
+    // is the same "derive availability from the mirror" mistake that
     // already cost this route once.
     repos.session.joinOrRehydrate.mockResolvedValue({
       ok: false, reason: 'other_campaign', session: liveSession({ state: 'break' }),
@@ -301,9 +293,9 @@ describe('POST /sessions — agent already live on another campaign', () => {
     // `findById` is unscoped, so the row it returns has to be checked against
     // something. The right scope is the constraint's: the tenant. A campaign coming
     // back under a different tenant can only be a corrupt row or a repurposed id,
-    // and putting its name in this body would leak across the boundary core scopes
-    // everything on — into an error message master forwards verbatim and cusui
-    // renders to an agent.
+    // and putting its name in this body would leak across the boundary every query is scoped
+    // on — into an error message the public API layer forwards unchanged and the
+    // console renders to an agent.
     repos.campaign.findById.mockImplementation(async (id: string) =>
       (id === 'camp-new' ? REQUESTED : { ...OTHER, tenant_id: 'someone-else', name: 'Rival Tenant Collections' }));
     repos.session.joinOrRehydrate.mockResolvedValue({

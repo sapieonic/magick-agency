@@ -197,7 +197,7 @@ describe('the attempt buckets are cut in each campaign\'s own timezone', () => {
 
   it('scopes on the SESSION\'s tenant and account, not on the agent id alone', async () => {
     await read();
-    // `agent_user_id` is master's user id, opaque to core, and there is no
+    // `agent_user_id` is the console user's id, opaque to the voice engine, and there is no
     // campaign in this route's path to own. Without these predicates any tenant
     // could read any other tenant's agent by supplying their user id.
     expect(attemptsSql()).toContain('s.tenant_id = $4');

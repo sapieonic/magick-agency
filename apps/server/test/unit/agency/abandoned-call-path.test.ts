@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 
 // ---------------------------------------------------------------------------
-// AD-P2-C-05 — the abandoned-call path, end to end at the unit tier.
+// The abandoned-call path, end to end at the unit tier.
 //
 // **This file drives the REAL bridge**, for the same reason
-// `presence-resilience.test.ts` does (§16.6 question 2): every one of this
+// `presence-resilience.test.ts` does: every one of this
 // ticket's acceptance criteria is a property of what reaches the CARRIER
 // SOCKET, and a bridge double would let all four pass against a path that
 // plays nothing. So the real `WebRtcBridgeManager`, the real `StationRegistry`,
@@ -18,33 +18,27 @@ import { EventEmitter } from 'node:events';
 //
 // Self-contained mock harness (project convention: no shared test utilities).
 //
-// PORT NOTE (magick-agency, Phase 6): core test/unit/agency/abandoned-call-path.test.ts
-// @4850d1d9 (16 cases → 16). Every case keeps its name and its assertions about the
-// attempt row, the contact, the counters and the agent; what changed is the CARRIER,
-// because lane C deleted VoBiz and the real bridge here dials VoiceLink (plan §5).
-// Each change is marked `PORT NOTE` inline:
-//   - the answer: VoBiz answered when its `<Stream>` connected; VoiceLink answers on
-//     the media WS's `start` frame (`answerCarrier`), as lane C's bridge suites do.
+// The real bridge here dials VoiceLink. Harness notes:
+//   - the answer: VoiceLink answers on the media WS's `start` frame (`answerCarrier`),
+//     as the bridge suites do.
 //   - the hangup: VoiceLink has no hangup API for an answered call — closing its media
 //     WS is the hangup, and the row settles on the carrier's `call.ended`
 //     (`confirmCarrierEnd`). So "the carrier leg was hung up" is asserted as the media
 //     socket being closed (`hangupAt` is stamped there), not as `adapter.endCall`.
 //   - the clip's wire format: VoiceLink `media` frames of A-law 8 kHz (160 bytes per
-//     20 ms), not VoBiz `playAudio` L16 16 kHz. Ten frames for the 200 ms clip either way.
+//     20 ms). Ten frames for the 200 ms clip.
 //   - the apology is an UPLOADED clip (`type: 'audio'`, resolved through
-//     `ensurePcmClip`): decision #4 deletes the TTS branch this file's fixture used.
-//   - "counts an answered call that NEVER BRIDGED, whatever the outcome says": core
-//     settled it through `handleVobizStatus(error)` → `failed`. On VoiceLink every
-//     carrier-reported end of an answered call classifies `completed`/`remote_hangup`,
-//     which the classifier's answered-unbridged arm already reports as `abandoned`, so a
-//     carrier fault can no longer produce the non-`abandoned` label this case needs. The
-//     same shape is driven by a service-initiated teardown (`service_shutdown` →
-//     `orphaned`); the property — the counter asks the predicate, not the label — is
-//     asserted unchanged.
-//   - harness: the bridge takes the guard-host stand-in lane C's suites use; mocks for
-//     deleted modules (`webhooks/settlement-dispatcher`, `tts/tts-generator`) removed;
-//     the config stub drops `telephony.vobiz`; fixtures drop `sip_connection_id`; the metric
-//     reader is core's `test/helpers/otel-metric-reader.ts`, ported verbatim at the same path over a real `@opentelemetry/sdk-metrics` provider (devDependency; `ScrapeMetricReader` inlined because `src/utils/otel-sdk-config.ts` is not ported).
+//     `ensurePcmClip`): decision #4 has no TTS branch.
+//   - "counts an answered call that NEVER BRIDGED, whatever the outcome says": on
+//     VoiceLink every carrier-reported end of an answered call classifies
+//     `completed`/`remote_hangup`, which the classifier's answered-unbridged arm already
+//     reports as `abandoned`, so a carrier fault cannot produce the non-`abandoned` label
+//     this case needs. The same shape is driven by a service-initiated teardown
+//     (`service_shutdown` → `orphaned`); the property — the counter asks the predicate,
+//     not the label — is asserted.
+//   - harness: the bridge takes the guard-host stand-in the bridge suites use; the
+//     metric reader is `test/helpers/otel-metric-reader.ts`, over a real
+//     `@opentelemetry/sdk-metrics` provider (devDependency; `ScrapeMetricReader` inlined).
 // ---------------------------------------------------------------------------
 
 vi.mock('@magick-agency/observability', () => ({
@@ -56,7 +50,6 @@ vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
     telephony: {
-      // PORT NOTE: core's `vobiz` block removed (VoBiz deleted).
       voicelink: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/voicelink' },
     },
   },
@@ -72,7 +65,7 @@ const { repos } = vi.hoisted(() => ({
     contact: {
       unclaim: vi.fn().mockResolvedValue(undefined),
       markState: vi.fn().mockResolvedValue(undefined),
-      // Returns the POST-bump budget (`AD-P3-C-01`). A number, not undefined: the
+      // Returns the POST-bump budget (the our-fault ledger). A number, not undefined: the
       // dial path decides the retry from whatever this returns.
       chargeAttempt: vi.fn().mockResolvedValue(1),
     },
@@ -98,7 +91,7 @@ vi.mock('@magick-agency/db/repositories/agency-call.repository', () => ({
 }));
 
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
-  // PORT NOTE: + `getWebrtcMaxDurationSeconds` (null ⇒ the bridge's 1800 default) —
+  // `getWebrtcMaxDurationSeconds` (null ⇒ the bridge's 1800 default) —
   // the bridge reads the max duration from the account row here, not from a flag.
   accountSettingsRepository: {
     getAllowRecording: vi.fn().mockResolvedValue(null),
@@ -111,7 +104,7 @@ const { announcements, audioFiles, ttsCache, pcmClip } = vi.hoisted(() => ({
   announcements: { findActiveByIdScoped: vi.fn() },
   audioFiles: { findById: vi.fn().mockResolvedValue(null) },
   ttsCache: { readTtsPcm: vi.fn() },
-  // PORT NOTE: the uploaded clip's decode step (decision #4: no TTS synthesis).
+  // The uploaded clip's decode step (decision #4: no TTS synthesis).
   pcmClip: { ensurePcmClip: vi.fn().mockResolvedValue({ hash: 'apology-hash', sampleRate: 16000 }) },
 }));
 vi.mock('@magick-agency/db/repositories/announcement.repository', () => ({
@@ -121,8 +114,7 @@ vi.mock('@magick-agency/db/repositories/audio-file.repository', () => ({
   audioFileRepository: audioFiles,
 }));
 vi.mock('../../../src/tts/tts-file-cache.js', () => ttsCache);
-// PORT NOTE: core mocked `tts/tts-generator.js` (TTS synthesis, deleted by decision #4);
-// the uploaded clip resolves through `ensurePcmClip`, mocked here instead.
+// The uploaded clip resolves through `ensurePcmClip`, mocked here.
 vi.mock('../../../src/audio/ensure-pcm-clip.js', () => pcmClip);
 
 const { mockAdapter } = vi.hoisted(() => ({
@@ -136,8 +128,6 @@ vi.mock('../../../src/telephony/factory.js', () => ({
   TelephonyProviderRegistry: class { get() { return mockAdapter; } },
 }));
 
-// PORT NOTE: core's `webhooks/settlement-dispatcher.js` mock removed — the bridge's
-// settlement dispatch is deleted (plan §4/§5) and the module does not exist.
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn() } }));
 vi.mock('../../../src/analytics/posthog.js', () => ({
   trackWebrtcCallInitiated: vi.fn(),
@@ -165,7 +155,7 @@ import { AgentStateMachine, AGENT_LEASE_MS } from '../../../src/agency/agent-sta
 import { StationRegistry } from '../../../src/agency/station-registry.js';
 import { BreakRegistry } from '@magick-agency/domain/break-manager';
 // The real meter provider, installed before `metrics.ts` creates its instruments:
-// the claim is about the value an export (or the `:9090` scrape) would read.
+// the claim is about the value an export (or a Prometheus scrape) would read.
 const { reader } = await vi.hoisted(async () => {
   const { installMetricReader } = await import('../../helpers/otel-metric-reader.js');
   return { reader: installMetricReader() };
@@ -176,7 +166,7 @@ import type { DialCommand } from '../../../src/agency/dial-dispatcher.js';
 /**
  * A counter series' live value, or undefined when absent.
  *
- * The real meter provider, deliberately — `AD-P2-C-06`'s counters are only
+ * The real meter provider, deliberately — the abandonment counters are only
  * meaningful as numbers an export would read, and a mocked instrument cannot
  * show that a real abandoned call moved them.
  *
@@ -227,9 +217,8 @@ class PstnSocket extends EventEmitter {
   readonly OPEN = 1;
   readonly frames: Array<{ at: number; frame: any }> = [];
   /**
-   * PORT NOTE: VoiceLink has no hangup API for an answered call — the bridge closes
-   * this socket, and that IS the carrier hangup. So the hangup instant is stamped here
-   * (core stamped it inside VoBiz's `adapter.endCall`).
+   * VoiceLink has no hangup API for an answered call — the bridge closes
+   * this socket, and that IS the carrier hangup. So the hangup instant is stamped here.
    */
   closedAt: number | null = null;
   /** Frame counts are asserted against this, so a non-media frame can't inflate them. */
@@ -248,9 +237,8 @@ class PstnSocket extends EventEmitter {
 }
 
 /**
- * PORT NOTE: the VoiceLink answer — the carrier's `start` frame negotiates media and
- * anchors the answer (VoBiz answered when its `<Stream>` connected). Same frame lane C's
- * bridge suites send.
+ * The VoiceLink answer — the carrier's `start` frame negotiates media and
+ * anchors the answer. Same frame the bridge suites send.
  */
 function answerCarrier(world: { bridge: WebRtcBridgeManager }, pstn: PstnSocket): void {
   world.bridge.attachPstnLeg('call-1', pstn as any);
@@ -261,8 +249,8 @@ function answerCarrier(world: { bridge: WebRtcBridgeManager }, pstn: PstnSocket)
 }
 
 /**
- * PORT NOTE: an answered VoiceLink call settles on the carrier's `call.ended`, which
- * confirms the hangup the bridge issued by closing the media WS (VoBiz finalized at once).
+ * An answered VoiceLink call settles on the carrier's `call.ended`, which
+ * confirms the hangup the bridge issued by closing the media WS.
  */
 async function confirmCarrierEnd(world: { bridge: WebRtcBridgeManager }): Promise<void> {
   await world.bridge.handleVoicelinkStatus('call-1', {
@@ -321,7 +309,6 @@ function fakeWrapup() {
 
 const CAMPAIGN = {
   id: 'camp-1', name: 'Q3 Renewals', tenant_id: 't1', account_id: 'a1',
-  // PORT NOTE: `voicelink` (core: `vobiz`, deleted); `sip_connection_id` dropped (SIP deleted).
   telephony_provider: 'voicelink', record_calls: false,
   analysis_profile_id: null, caller_ids: ['+14155550100'],
   disposition_catalog: [], wrapup_seconds: 0, wrapup_auto_return: true,
@@ -344,8 +331,8 @@ function makeCmd(campaign: any = CAMPAIGN): DialCommand {
 
 function makeWorld() {
   const redis = new FakeRedis();
-  // PORT NOTE: the bridge's first argument is the guard host (docs/seams.md §3.1); the
-  // same stand-in shape lane C's bridge suites pass.
+  // The bridge's first argument is the guard host (docs/seams.md); the same
+  // stand-in shape the bridge suites pass.
   const bridge = new WebRtcBridgeManager(makeCallManager() as any, redis as any);
   const stations = new StationRegistry(redis as any, '', 'r1');
   const agents = new AgentStateMachine(redis as any, '');
@@ -356,12 +343,10 @@ function makeWorld() {
 
 // ─── The clip ──────────────────────────────────────────────────────────────
 //
-// 3200 samples at 16 kHz is exactly **200 ms** of audio. The bridge resamples a
-// VoBiz clip to 16 kHz L16 (identity here) and frames it at 20 ms, so the wire
-// carries exactly **10 frames of 640 bytes**.
-// PORT NOTE: on VoiceLink the bridge converts the clip to A-law 8 kHz and frames it
-// at 20 ms, so the wire carries exactly **10 frames of 160 bytes** — same count. Both numbers are derived from the
-// clip rather than read off a run, which is what lets them falsify a change in
+// 3200 samples at 16 kHz is exactly **200 ms** of audio. On VoiceLink the bridge
+// converts the clip to A-law 8 kHz and frames it at 20 ms, so the wire carries
+// exactly **10 frames of 160 bytes**. Both numbers are derived from the clip
+// rather than read off a run, which is what lets them falsify a change in
 // framing or in playback.
 const CLIP_SAMPLES = 3200;
 const CLIP_MS = 200;
@@ -424,12 +409,11 @@ async function loseAgentThenAnswer(world: ReturnType<typeof makeWorld>, campaign
   await world.stations.detach('s1', ws as any);
   expect(world.stations.isLocallyOwned('s1')).toBe(false);
 
-  // The customer picks up. VoBiz's <Stream> connecting IS the answer.
-  // PORT NOTE: on VoiceLink the `start` frame is the answer (`answerCarrier`).
+  // The customer picks up: on VoiceLink the `start` frame is the answer (`answerCarrier`).
   const pstn = new PstnSocket();
   const answeredAt = Date.now();
   answerCarrier(world, pstn);
-  // PORT NOTE: the bridge hangs up by closing the media WS, and the attempt settles on
+  // The bridge hangs up by closing the media WS, and the attempt settles on
   // the carrier's confirmation of it.
   await waitUntil(() => pstn.readyState === 3);
   await confirmCarrierEnd(world);
@@ -463,10 +447,10 @@ beforeEach(() => {
     campaign_id: i.campaign_id ?? null, agency_attempt_id: i.agency_attempt_id ?? null,
   }));
   mockAdapter.initiateCall.mockResolvedValue({ providerCallId: 'pcid-1' });
-  // PORT NOTE: `hangupAt` is stamped by `PstnSocket.close` (VoiceLink's hangup), so
+  // `hangupAt` is stamped by `PstnSocket.close` (VoiceLink's hangup), so
   // `endCall` is a plain mock here.
   mockAdapter.endCall.mockResolvedValue(undefined);
-  // PORT NOTE: an uploaded recording (decision #4), resolved through `ensurePcmClip`.
+  // An uploaded recording (decision #4), resolved through `ensurePcmClip`.
   announcements.findActiveByIdScoped.mockResolvedValue({
     id: 'ann-1', tenant_id: 't1', account_id: 'a1', name: 'Apology', type: 'audio',
     audio_file_id: 'af-1', is_active: true,
@@ -482,13 +466,13 @@ afterEach(() => { vi.useRealTimers(); });
 // Acceptance (a) and (c): the sequence, and the outcome it settles under.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P2-C-05 (a),(c) · agent loss during ring produces exactly this sequence', () => {
+describe('agent loss during ring produces exactly this sequence', () => {
   it('plays the apology to the carrier, hangs up, and settles `abandoned`', async () => {
     const world = makeWorld();
     const { pstn } = await loseAgentThenAnswer(world);
 
     // 1. The apology reached the CUSTOMER'S socket, in the carrier's own format.
-    // PORT NOTE: VoiceLink's format — `media` frames of 20 ms A-law at 8 kHz.
+    // VoiceLink's format — `media` frames of 20 ms A-law at 8 kHz.
     expect(pstn.mediaFrames.length).toBe(EXPECTED_FRAMES);
     expect(pstn.mediaFrames[0]!.frame).toMatchObject({
       event: 'media',
@@ -497,7 +481,7 @@ describe('AD-P2-C-05 (a),(c) · agent loss during ring produces exactly this seq
     expect(Buffer.from(pstn.mediaFrames[0]!.frame.media.payload, 'base64').length).toBe(160);
 
     // 2. The carrier leg was hung up.
-    // PORT NOTE: VoiceLink's hangup is closing its media WS (see `PstnSocket.closedAt`).
+    // VoiceLink's hangup is closing its media WS (see `PstnSocket.closedAt`).
     expect(pstn.closedAt).not.toBeNull();
 
     // 3. `abandoned`, NOT `failed` and NOT `connected`. The classifier is handed
@@ -517,16 +501,16 @@ describe('AD-P2-C-05 (a),(c) · agent loss during ring produces exactly this seq
     // filed as a conversation.
     const states = repos.contact.markState.mock.calls.map((c) => c[1]);
     expect(states).not.toContain('connected');
-    // `pending`, not `completed`, since `AD-P3-C-01`. Design §6.2 step 3 is explicit
+    // `pending`, not `completed`, since the our-fault ledger. The design is explicit
     // that an abandoned contact is *re-queued* per the `abandoned` retry policy —
     // which is the whole point: the customer picked up and reached nobody, so they
-    // are owed another call, not written off. Phase 2's `completed` was the honest
-    // answer only while no retry engine existed.
+    // are owed another call, not written off. `completed` would be the honest
+    // answer only if no retry engine existed.
     expect(states).toContain('pending');
     expect(states).not.toContain('completed');
   });
 
-  it('writes `answered_at` on a call that never bridged — the §10.1 falsifier', async () => {
+  it('writes `answered_at` on a call that never bridged — the abandonment-predicate falsifier', async () => {
     const world = makeWorld();
     await loseAgentThenAnswer(world);
 
@@ -534,11 +518,11 @@ describe('AD-P2-C-05 (a),(c) · agent loss during ring produces exactly this seq
     expect(answered, 'no `answered` state was written, so the abandonment predicate has no numerator').toBeTruthy();
     expect(answered![2]).toMatchObject({ answered_at: expect.any(Date) });
 
-    // And no `bridged` write at all. This is the whole point of C-11: an
+    // And no `bridged` write at all. This is the whole point: an
     // abandoned call is the one shape where `answered_at` exists and
     // `bridged_at` does not, and it used to be unreachable because `answered_at`
     // was only ever written from `bridgedAt` on the bridged path — which made
-    // the §10 SQL predicate vacuous while returning 0 for months.
+    // the abandonment SQL predicate vacuous while returning 0 for months.
     expect(repos.attempt.setState.mock.calls.map((c) => c[1])).not.toContain('bridged');
   });
 
@@ -551,7 +535,7 @@ describe('AD-P2-C-05 (a),(c) · agent loss during ring produces exactly this seq
     // for the reconnect rather than dropped. An agent returning to an empty panel
     // with no account of the call they were on concludes the app is broken.
     // Asserted unconditionally: an `if (held)` here would pass on a build that
-    // held nothing, which is the shape §16.6 question 1 is about.
+    // held nothing, which is the shape this assertion guards against.
     const held = world.dialer.takeMissedRelease('s1');
     expect(held).not.toBeNull();
     expect(held!.reason).toBe('abandoned');
@@ -565,14 +549,14 @@ describe('AD-P2-C-05 (a),(c) · agent loss during ring produces exactly this seq
 // Acceptance (b) and (d): the clip is heard, not merely sent.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P2-C-05 (b),(d) · the clip plays to completion, and starts immediately', () => {
+describe('the clip plays to completion, and starts immediately', () => {
   it('sends every frame BEFORE the hangup, not alongside it', async () => {
     const world = makeWorld();
     const { pstn } = await loseAgentThenAnswer(world);
 
     // `hangupAt` is stamped inside the real carrier-teardown call, so this is the
     // criterion measured where it is consumed rather than at the send site.
-    // PORT NOTE: on VoiceLink the carrier teardown is the media WS closing, so that is
+    // On VoiceLink the carrier teardown is the media WS closing, so that is
     // where `hangupAt` is stamped.
     expect(pstn.closedAt).not.toBeNull();
     expect(hangupAt).not.toBeNull();
@@ -617,14 +601,14 @@ describe('AD-P2-C-05 (b),(d) · the clip plays to completion, and starts immedia
 // The fail-quiet arms. The accounting is the mechanism; the clip is the courtesy.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P2-C-05 · every clip failure still settles the attempt `abandoned`', () => {
+describe('every clip failure still settles the attempt `abandoned`', () => {
   it('hangs up bare when no apology is configured', async () => {
     const world = makeWorld();
     const { pstn } = await loseAgentThenAnswer(world, { ...CAMPAIGN, abandon_announcement_id: null });
 
     expect(announcements.findActiveByIdScoped).not.toHaveBeenCalled();
     expect(pstn.mediaFrames.length).toBe(0);
-    expect(pstn.closedAt).not.toBeNull(); // PORT NOTE: VoiceLink's hangup (core: `endCall('pcid-1')`)
+    expect(pstn.closedAt).not.toBeNull(); // VoiceLink's hangup
     // Unconfigured must never mean "the call stays open" or "the attempt stays
     // non-terminal" — the abandonment rate counts this call either way.
     expect(endedWith()).toMatchObject({ outcome: 'abandoned' });
@@ -639,7 +623,7 @@ describe('AD-P2-C-05 · every clip failure still settles the attempt `abandoned`
     const { pstn } = await loseAgentThenAnswer(world);
 
     expect(pstn.mediaFrames.length).toBe(0);
-    expect(pstn.closedAt).not.toBeNull(); // PORT NOTE: VoiceLink's hangup (core: `endCall('pcid-1')`)
+    expect(pstn.closedAt).not.toBeNull(); // VoiceLink's hangup
     expect(endedWith()).toMatchObject({ outcome: 'abandoned' });
   });
 
@@ -656,7 +640,7 @@ describe('AD-P2-C-05 · every clip failure still settles the attempt `abandoned`
   });
 
   it('scopes the dial-time lookup to the campaign’s own tenancy', async () => {
-    // §16.6 q2 at the consumer: the scope has to be threaded by the DIALER, not
+    // Consumer-side check: the scope has to be threaded by the DIALER, not
     // merely accepted by the resolver. A resolver with a mandatory scope parameter
     // that the one real caller fills in from the wrong place is no protection.
     const world = makeWorld();
@@ -669,12 +653,12 @@ describe('AD-P2-C-05 · every clip failure still settles the attempt `abandoned`
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AD-P2-C-06's counters, asserted where they are INCREMENTED rather than where
+// The abandonment counters, asserted where they are INCREMENTED rather than where
 // they are declared. `metrics.test.ts` pins the names; only this file can show
 // that a real abandoned call moves them.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P2-C-06 · the counters move on a real abandoned call', () => {
+describe('the counters move on a real abandoned call', () => {
   it('counts the call in BOTH the numerator and the denominator', async () => {
     await markBaseline();
     const world = makeWorld();
@@ -701,7 +685,7 @@ describe('AD-P2-C-06 · the counters move on a real abandoned call', () => {
     });
     await world.agents.set('s1', 'reserved', { attemptId: 'att-1', leaseMs: AGENT_LEASE_MS.reserved_predial });
     await world.dialer.executeDial(makeCmd());
-    answerCarrier(world, new PstnSocket()); // PORT NOTE: VoiceLink answers on `start`
+    answerCarrier(world, new PstnSocket()); // VoiceLink answers on `start`
     await flush(30);
 
     const labels = { tenant_id: 't1', campaign_id: 'camp-1' };
@@ -710,7 +694,7 @@ describe('AD-P2-C-06 · the counters move on a real abandoned call', () => {
   });
 
   it('counts an answered call that NEVER BRIDGED, whatever the outcome says', async () => {
-    // ─── The `AD-P2-C-06` counter fix, at the unit tier ─────────────────────
+    // ─── The abandonment-counter fix, at the unit tier ─────────────────────
     //
     // The scenario the integration tier encodes as a standing failure
     // (`abandonment-counter-vs-table.test.ts`): the customer picks up, the media
@@ -740,10 +724,10 @@ describe('AD-P2-C-06 · the counters move on a real abandoned call', () => {
 
     // The customer picks up. `bothLegsConnected` is false, so no `bridged` is ever
     // emitted — the shape the predicate is about.
-    answerCarrier(world, new PstnSocket()); // PORT NOTE: VoiceLink answers on `start`
+    answerCarrier(world, new PstnSocket()); // VoiceLink answers on `start`
     await flush(20);
     // Then the carrier reports a fault and the attempt settles.
-    // PORT NOTE: VoiceLink classifies every carrier-reported end of an answered call as
+    // VoiceLink classifies every carrier-reported end of an answered call as
     // `completed`/`remote_hangup`, which the classifier already labels `abandoned` when
     // unbridged — so a carrier fault cannot produce a non-`abandoned` outcome here. A
     // service-initiated teardown (a deploy landing on this call) does: `service_shutdown`
@@ -761,7 +745,7 @@ describe('AD-P2-C-06 · the counters move on a real abandoned call', () => {
     // THE OUTCOME WRITE IS UNCHANGED, and that is half the decision: relabelling
     // this `abandoned` would hand the contact the wrong retry policy and tell the
     // agent their own dropped socket "could not be connected to you".
-    // PORT NOTE: `orphaned` (core: `failed`) — see the teardown above.
+    // `orphaned` — see the teardown above.
     expect(endedWith()).toMatchObject({ outcome: 'orphaned' });
 
     // And the counter still sees it, because it now asks the table's question.
@@ -800,7 +784,7 @@ describe('AD-P2-C-06 · the counters move on a real abandoned call', () => {
 // every answered call in the system.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P2-C-05 · a call whose agent IS present is never abandoned', () => {
+describe('a call whose agent IS present is never abandoned', () => {
   it('plays no clip and does not hang up when the station is still owned', async () => {
     const world = makeWorld();
     const ws = new StationSocket();
@@ -812,14 +796,14 @@ describe('AD-P2-C-05 · a call whose agent IS present is never abandoned', () =>
     await world.dialer.executeDial(makeCmd());
 
     const pstn = new PstnSocket();
-    answerCarrier(world, pstn); // PORT NOTE: VoiceLink answers on `start`
+    answerCarrier(world, pstn); // VoiceLink answers on `start`
     await flush(30);
 
     // No apology, no teardown, and the attempt is bridged rather than settled.
     expect(announcements.findActiveByIdScoped).not.toHaveBeenCalled();
     expect(pstn.mediaFrames.length).toBe(0);
     expect(mockAdapter.endCall).not.toHaveBeenCalled();
-    expect(pstn.closedAt).toBeNull(); // PORT NOTE: VoiceLink's hangup would close the media WS
+    expect(pstn.closedAt).toBeNull(); // VoiceLink's hangup would close the media WS
     expect(endedWith()).toBeUndefined();
     expect(repos.attempt.setState.mock.calls.map((c) => c[1])).toContain('bridged');
     expect(ws.eventsNamed('bridged').length).toBe(1);

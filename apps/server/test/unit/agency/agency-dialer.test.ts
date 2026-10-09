@@ -1,14 +1,7 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core
-// test/unit/agency/agency-dialer.test.ts@4850d1d9 (28 cases → 28). Deleted: none.
-// Modified (no case changed meaning):
-//  - mock/import specifiers follow the path rule (logger → `@magick-agency/observability`;
-//    break-manager / timers / abandonment-predicate → `@magick-agency/domain/*`);
-//  - the campaign fixture drops `sip_connection_id` (SIP deleted, plan §5; the dialer
-//    no longer passes `sipConnectionId`, docs/seams.md §3.1). No assertion read it.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// The ordering guarantee (§9) and the release contract.
+// The ordering guarantee and the release contract.
 //
 // QA's decisive test answers the carrier SYNCHRONOUSLY inside the dial call — a
 // three-second ring would hide an implementation that emits `reserved` from an
@@ -37,8 +30,8 @@ const { repos } = vi.hoisted(() => ({
       setState: vi.fn().mockResolvedValue(null),
       attachWebrtcCall: vi.fn().mockResolvedValue(undefined),
       findPriorForContactLineage: vi.fn().mockResolvedValue([]),
-      // Stubbed at their real home on the attempt repository so `MAG-88`
-      // acceptance (b) can assert nobody stamped a code on a call that never owed
+      // Stubbed at their real home on the attempt repository so the
+      // empty-catalog acceptance (b) can assert nobody stamped a code on a call that never owed
       // one. "This spy was never called" is worthless if the spy does not exist —
       // the property under test would then be "the double is incomplete", which is
       // true of any name at all.
@@ -48,7 +41,7 @@ const { repos } = vi.hoisted(() => ({
     contact: {
       unclaim: vi.fn().mockResolvedValue(undefined),
       markState: vi.fn().mockResolvedValue(undefined),
-      // Returns the POST-bump budget (`AD-P3-C-01`). A number, not undefined: the
+      // Returns the POST-bump budget (the our-fault ledger). A number, not undefined: the
       // dial path decides the retry from whatever this returns.
       chargeAttempt: vi.fn().mockResolvedValue(1),
     },
@@ -129,7 +122,7 @@ function fakeBridge(opts: { answerDuringDial?: boolean } = {}) {
 
 const CAMPAIGN = {
   id: 'camp-1', name: 'Q3 Renewals', tenant_id: 't1', account_id: 'a1',
-  telephony_provider: 'vobiz', record_calls: false, // PORT NOTE: `sip_connection_id` dropped (SIP deleted)
+  telephony_provider: 'vobiz', record_calls: false,
   analysis_profile_id: null, caller_ids: ['+14155550100'],
 } as any;
 
@@ -139,12 +132,12 @@ const CONTACT = {
 } as any;
 
 // `campaign` is a parameter, NOT a closed-over constant, because the disposition
-// questions (`MAG-88`, §2.4 precedence) are decided off campaign config — an
+// questions (the disposition precedence order) are decided off campaign config — an
 // empty `disposition_catalog` is a different scenario from an absent one. It was
 // previously fixed at `CAMPAIGN`, so a caller passing an override was silently
-// given the default: the MAG-88 case ran against `disposition_catalog: undefined`
+// given the default: the empty-catalog case ran against `disposition_catalog: undefined`
 // and asserted the empty-catalog behaviour. `tsc` reported it (TS2554) but
-// `npm run lint` does not typecheck tests (`AD-PLATFORM-01`), so only the red
+// `npm run lint` does not typecheck tests, so only the red
 // assertion surfaced it — and it read as an implementation gap rather than a
 // harness one.
 function makeCmd(sessionId: string, campaign: any = CAMPAIGN): DialCommand {
@@ -371,7 +364,7 @@ describe('AgencyDialer carrier-answer anchor', () => {
     // `answered` is declared in the attempt state machine and was unreachable: the
     // only writes were `dialing`, `bridged` and `ended`. An answered-but-never-
     // bridged attempt is the ONLY path an abandoned call takes, so an unreachable
-    // `answered` state means AD-P2-C-05 has nothing to key on.
+    // `answered` state means the abandoned-call path has nothing to key on.
     await dialAndAnswer();
     expect(repos.attempt.setState).toHaveBeenCalledWith('att-1', 'answered', expect.anything());
   });
@@ -433,7 +426,7 @@ describe('AgencyDialer release contract', () => {
     expect(repos.contact.markState).toHaveBeenCalledWith('contact-1', 'connected', expect.anything());
   });
 
-  it('MAG-88: does NOT park a connected contact when no disposition is owed', async () => {
+  it('does NOT park a connected contact when no disposition is owed', async () => {
     // ─── The parking defect ─────────────────────────────────────────────────
     // `connected` holds a contact awaiting the agent's write-up, and the only two
     // things that release it are the disposition route and the reaper's
@@ -443,8 +436,8 @@ describe('AgencyDialer release contract', () => {
     //
     // An empty catalog is not a broken campaign — it is a legitimate configuration
     // meaning "outcome-driven retry, no human write-up step", and it is the state of
-    // every campaign today since master never sends the field. So the fix is
-    // `MAG-88` option (1): when none is owed, the outcome policy decides now.
+    // every campaign today since the public API layer never sends the field. So the fix is
+    // that when none is owed, the outcome policy decides now.
     //
     // **There is no reaper in this harness at all**, which is what makes this test
     // about the fix rather than about the backstop — a test that let the sweep run
@@ -549,7 +542,7 @@ describe('AgencyDialer release contract', () => {
     };
   }
 
-  it('MAG-88 (a): an empty catalog reaches `completed` with NO reaper in the harness', async () => {
+  it('acceptance (a): an empty catalog reaches `completed` with NO reaper in the harness', async () => {
     // ─── Acceptance (a) ─────────────────────────────────────────────────────
     // **There is no reaper anywhere in this harness**, and that is the load-bearing
     // part. `sweepLapsedWrapups` rescues exactly this contact, so a test that let it
@@ -570,10 +563,10 @@ describe('AgencyDialer release contract', () => {
     expect(released.requires_disposition).toBe(false);
   });
 
-  it('MAG-88 (b): writes no disposition code for a call that never owed one', async () => {
+  it('acceptance (b): writes no disposition code for a call that never owed one', async () => {
     // ─── Acceptance (b) ─────────────────────────────────────────────────────
     // Rescue without a verdict. Stamping `no_disposition` on a call nobody was asked
-    // to write up libels the agent and poisons the Phase 3 retry input, which keys
+    // to write up libels the agent and poisons the retry input, which keys
     // off the disposition.
     const { states, patches } = await runBridgedCall({ ...CAMPAIGN, disposition_catalog: [] });
 
@@ -590,11 +583,11 @@ describe('AgencyDialer release contract', () => {
     expect(repos.attempt.recordAutoDisposition).not.toHaveBeenCalled();
   });
 
-  it('MAG-88 (c): a populated catalog still holds the contact in `connected`', async () => {
+  it('acceptance (c): a populated catalog still holds the contact in `connected`', async () => {
     // ─── Acceptance (c) ─────────────────────────────────────────────────────
     // The regression guard. `connected` is a HOLD awaiting the agent's write-up, and
     // a campaign that HAS codes to pick must keep it — the disposition route is
-    // entitled to decide this contact's fate (§2.4 precedence) and releasing it here
+    // entitled to decide this contact's fate (the disposition precedence order) and releasing it here
     // would answer a question that is not ours.
     const { states, patches, released } = await runBridgedCall({
       ...CAMPAIGN, disposition_catalog: [{ code: 'sale', label: 'Sale' }],
@@ -628,7 +621,7 @@ describe('AgencyDialer release contract', () => {
     // Without outcome classification a non-answered call never leaves in_flight
     // and the campaign can never reach `completed`.
     //
-    // `AD-P3-C-01` changed the destination from `completed` to `pending`: a `busy`
+    // The our-fault ledger changed the destination from `completed` to `pending`: a `busy`
     // contact is now RETRIED rather than abandoned after one dial. The property this
     // test is named for is unchanged and still asserted — the contact must not be
     // left `in_flight` — but "not stranded" now has a second failure mode, because a
@@ -666,7 +659,7 @@ describe('AgencyDialer release contract', () => {
   });
 });
 
-describe('AgencyDialer queued break (AD-P2-C-03)', () => {
+describe('AgencyDialer queued break ', () => {
   async function releaseWith(breaks: any) {
     const stations = new StationRegistry(null, '', 'r1');
     const agents = reservedAgents();
@@ -716,7 +709,7 @@ describe('AgencyDialer queued break (AD-P2-C-03)', () => {
     // transition announcement in the whole wrap-up window, and `contracts.ts` puts
     // those fields on the frame precisely so a queued break survives a lost socket.
     // But reading the queue to announce it must NOT consume it: `releaseAgent` is
-    // the single place a break applies (`AD-P2-C-03` (a)), so a `take()` at
+    // the single place a break applies, so a `take()` at
     // announce time would show the badge and then silently drop the break, leaving
     // the agent `available` and dialed into immediately.
     //
@@ -746,7 +739,7 @@ describe('AgencyDialer queued break (AD-P2-C-03)', () => {
     // test above for why this file did not have to say so before.
     bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'bridged', answered: true });
 
-    // The agent asks for a break mid-conversation. §5.1: it must not interrupt the
+    // The agent asks for a break mid-conversation. It must not interrupt the
     // call, so it queues.
     breaks.queue('s1', { code: 'lunch', label: 'Lunch' });
     ws.sent.length = 0;
@@ -878,7 +871,7 @@ describe('AgencyDialer · a bookkeeping failure does not end a live call', () =>
   });
 });
 
-describe('AgencyDialer · the release names the agent hangup (MAG-112)', () => {
+describe('AgencyDialer · the release names the agent hangup', () => {
   /**
    * `hangupAttempt` ends the bridge with `forceEndWithOutcome(id, 'agent_hangup')`,
    * so the lifecycle arrives as `ev.outcome === 'agent_hangup'`. Matching only the
@@ -957,9 +950,9 @@ describe('AgencyDialer · `bridged` beats a late `answered` into the abandon dec
   });
 });
 
-// ─── AD-P4-C-01: the durable mirror the supervisor breakdown reads ──────────
+// ─── the durable mirror the supervisor breakdown reads ──────────
 
-describe('AD-P4-C-01: `on_call` reaches the durable mirror', () => {
+describe('`on_call` reaches the durable mirror', () => {
   it('mirrors on_call to agency_agent_sessions when the bridge joins', async () => {
     const stations = new StationRegistry(null, '', 'r1');
     const agents = reservedAgents();

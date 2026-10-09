@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// `AD-P4-C-04` — the supervisor stats payload matches the contract it declares.
+// The supervisor stats payload matches the contract it declares.
 //
 // The defect this suite exists to make un-shippable: `AgencyCampaignStats`
 // declared `abandoned_24h`, `answered_24h` and `abandonment_rate_24h_pct` as
@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // existed only as Prometheus metric names. Because they are typed required, every
 // consumer read `undefined` off a field the compiler guaranteed was there.
 //
-// `AD-P4-C-02`'s auto-pause is specified against `abandonment_rate_24h_pct`, and
+// The abandonment auto-pause is specified against `abandonment_rate_24h_pct`, and
 // `undefined > ceiling` evaluates to `false` — so the abandonment guardrail would
 // have been present in code review, passed every existing test, and silently never
 // fired while a campaign dialled through any abandonment rate whatsoever.
@@ -47,7 +47,7 @@ const { ABANDONED_ATTEMPT_PREDICATE_SQL, ABANDONMENT_WINDOW_HOURS } = await impo
 /**
  * The SCALAR-AGGREGATE statement, located by what it is not.
  *
- * `stats()` also runs a second statement for the agent roster (`AD-P4-C-01`),
+ * `stats()` also runs a second statement for the agent roster,
  * which is set-returning and carries no rate whose halves could disagree. Every
  * assertion in this file is about the aggregates, so they are selected by
  * predicate rather than by call index — a reordering must not silently retarget
@@ -103,11 +103,11 @@ function serveAggregate(row: Record<string, string> | null): void {
 
 // ─── the payload is complete ────────────────────────────────────────────────
 
-describe('AD-P4-C-04: the stats payload produces every field the contract declares', () => {
+describe('the stats payload produces every field the contract declares', () => {
   it('produces exactly the contract fields the route does not supply — no more, no fewer', async () => {
     const stats = await new AgencyCampaignRepository().stats('camp-1');
 
-    // The payload has TWO producers since `AD-P4-C-01`'s health strip: the route
+    // The payload has TWO producers since the health strip: the route
     // supplies `campaign_id`/`status` off the campaign row it already loaded, plus
     // the four health fields that need Redis and the calling-hours rule. The
     // repository owes everything else.
@@ -171,7 +171,7 @@ describe('AD-P4-C-04: the stats payload produces every field the contract declar
     // The skip list is the payload's genuinely non-numeric fields, and it is
     // written out rather than inferred so that a NEW count arriving as a string
     // still reds this test: every rate and average is `number | null` by design
-    // (`AD-P4-C-01` — "no evidence" and "zero" are different facts), the floor and
+    // ("no evidence" and "zero" are different facts), the floor and
     // its by-state tally are structures, `machine_connects_available` is a
     // boolean, and `previous_hour` is a nested object whose own coercion is
     // covered in `supervisor-stats.test.ts`.
@@ -202,7 +202,7 @@ describe('attempts_retried counts dials PLACED, not retries queued', () => {
   it('counts attempt_number > 1 on the attempts table', async () => {
     await new AgencyCampaignRepository().stats('camp-1');
     // `attempt_number` is the attempts table's own counter, derived at insert from
-    // `MAX(attempt_number)` over the contact's rows (`AD-P2-C-12`) — deliberately
+    // `MAX(attempt_number)` over the contact's rows — deliberately
     // NOT `agency_contacts.attempt_count`, which the two were decoupled from and
     // which does not charge our-fault redials.
     expect(sqlOf()).toContain('attempt_number > 1');
@@ -224,9 +224,9 @@ describe('attempts_retried counts dials PLACED, not retries queued', () => {
 
   it('is ALWAYS produced even though the contract types it optional', async () => {
     const stats = await new AgencyCampaignRepository().stats('camp-1');
-    // The `?` is for a master/console talking to a core that predates the field.
-    // This core has it, so omitting it would make "absent" ambiguous between "old
-    // core" and "zero redials" — and the field-roster assertion above compares the
+    // The `?` is for a client talking to a server that predates the field.
+    // This server has it, so omitting it would make "absent" ambiguous between "old
+    // server" and "zero redials" — and the field-roster assertion above compares the
     // produced key set exactly, so a conditional spread would red that test too.
     expect(Object.hasOwn(stats, 'attempts_retried')).toBe(true);
     expect(stats.attempts_retried).toBe(9);
@@ -241,14 +241,14 @@ describe('attempts_retried counts dials PLACED, not retries queued', () => {
   });
 });
 
-// ─── the rate is derived from the TABLE, per MAG-45 ─────────────────────────
+// ─── the rate is derived from the TABLE, ─────────────────────────
 
-describe('AD-P4-C-04: the guardrail source is the table, not a counter', () => {
+describe('the guardrail source is the table, not a counter', () => {
   it('counts the 24h window from agency_call_attempts using the shared predicate', async () => {
     await new AgencyCampaignRepository().stats('camp-1');
     const sql = sqlOf();
 
-    // `MAG-45`'s constraint, asserted rather than commented: the auto-pause must
+    // The constraint, asserted rather than commented: the auto-pause must
     // read the SQL-derived window that survives a restart, not the process-local
     // prom-client counter that under-reports by construction. Asserting against the
     // IMPORTED predicate constant is what proves there is one definition and not a
@@ -278,7 +278,7 @@ describe('AD-P4-C-04: the guardrail source is the table, not a counter', () => {
     // briefly exceeds 100% and trips a guardrail on arithmetic alone.
     //
     // Asserted as "every aggregate is in the SAME statement" rather than "there is
-    // only one query": `AD-P4-C-01` added a second statement for the agent roster,
+    // only one query": the health strip added a second statement for the agent roster,
     // which is set-returning and holds no rate. A bare call count would either
     // have to be relaxed to "at most two" — which would let a future edit split
     // the aggregates apart, the exact failure this test exists to catch — or would
@@ -296,7 +296,7 @@ describe('AD-P4-C-04: the guardrail source is the table, not a counter', () => {
 
 // ─── null, never zero ───────────────────────────────────────────────────────
 
-describe('AD-P4-C-04: an unmeasured campaign reports null, not a reassuring zero', () => {
+describe('an unmeasured campaign reports null, not a reassuring zero', () => {
   it('is null when nothing has been answered', async () => {
     serveAggregate({ ...ROW, answered_24h: '0', abandoned_24h: '0' });
 

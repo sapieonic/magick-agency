@@ -1,22 +1,17 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core test/unit/agency/exhaustion-completion.test.ts@4850d1d9 (19 → 21: 19 ported + 2 new).
-// Import/mock paths only (connection → `@magick-agency/db`), except the attempt batcher (deleted:
-// billing, plan §8 Phase 6). Its seam (`registerAttemptBatcher` / `flushCampaign`) is replaced by
-// `registerCompletionNotifier` / `notifyCampaignFinished(updatedCampaign, to)`, called inside the same
-// won-transition branch and NOT awaited. The three batcher cases asserted properties of that branch,
-// so they are kept as EQUIVALENCE cases through the notifier rather than deleted (names verbatim):
+// Completion-notice seam: `registerCompletionNotifier` / `notifyCampaignFinished(updatedCampaign, to)` is
+// called inside the won-transition branch and NOT awaited. Cases through the notifier:
 // 'the LOSING leader announces nothing, flushes nothing, and relinquishes nothing' (a lost race calls
 // no notifier), 'the WINNING leader announces once and flushes exactly once' (called exactly once,
-// with the updated row and `completed`), 'a failing billing flush does not abort finalization' —
-// RENAMED 'a failing completion notice does not abort finalization' (a rejecting notifier: finalization
-// still announces `list_exhausted`, and the rejection does not escape — a plain function, because a
-// Vitest spy attaches its own handler). NEW (2 cases, review fix): `stop()` drains a notice still in
-// flight, bounded by `noticeDrainTimeoutMs` (core awaited the flush; master awaited the notifier). The `engine()` helper registers
-// through the real seam instead of poking the private field. Mutation-checked: a duplicated, missing,
-// pre-`if (updated)` or `.catch`-less notifier call each reds a case. No case deleted.
+// with the updated row and `completed`), 'a failing completion notice does not abort finalization'
+// (a rejecting notifier: finalization still announces `list_exhausted`, and the rejection does not
+// escape — a plain function, because a Vitest spy attaches its own handler). Also: `stop()` drains a
+// notice still in flight, bounded by `noticeDrainTimeoutMs`. The `engine()` helper registers
+// through the real seam instead of poking a private field. Mutation-checked: a duplicated, missing,
+// pre-`if (updated)` or `.catch`-less notifier call each reds a case.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// `AD-P3-C-04` — exhaustion, the completion predicate, single-writer finalization.
+// Exhaustion, the completion predicate, single-writer finalization.
 //
 // The three acceptance criteria, and what each is actually vulnerable to:
 //
@@ -98,10 +93,8 @@ function makeStations(owned: string[]) {
   };
 }
 
-// PORT NOTE: core's second parameter was the billing batcher, poked onto the private
-// `attemptBatcher` field. The batcher is deleted (plan §8 Phase 6); the engine's
-// "something may want to know a campaign finished" seam now carries the completion
-// notice, registered through the real `registerCompletionNotifier`.
+// The engine's "something may want to know a campaign finished" seam carries the
+// completion notice, registered through the real `registerCompletionNotifier`.
 function engine(stations: any, notifier: any = undefined) {
   const agents = { get: vi.fn(async () => null), reserve: vi.fn(), set: vi.fn() };
   const e = new PacingEngine(
@@ -130,7 +123,7 @@ beforeEach(() => {
 
 // ─── (a) the completion predicate vs. "list exhausted" ──────────────────────
 
-describe('AD-P3-C-04 (a): a future retry is outstanding, not complete', () => {
+describe('a future retry is outstanding, not complete', () => {
   it('countOutstanding counts pending rows REGARDLESS of next_attempt_at', async () => {
     await new AgencyCampaignRepository().countOutstanding('camp-1');
     const sql = sqlOf();
@@ -138,7 +131,7 @@ describe('AD-P3-C-04 (a): a future retry is outstanding, not complete', () => {
     // The load-bearing absence. A predicate that also filtered
     // `next_attempt_at <= now()` would read "nothing is dialable right now" as
     // "nothing is left", and finalize a campaign whose retries are hours out —
-    // the exact conflation §5.3 says these two questions are not.
+    // the exact conflation these two questions must not make.
     expect(sql).toContain("state IN ('pending','in_flight','connected')");
     expect(sql).not.toContain('next_attempt_at');
   });
@@ -171,7 +164,7 @@ describe('AD-P3-C-04 (a): a future retry is outstanding, not complete', () => {
   });
 });
 
-describe('AD-P3-C-04 (a): remaining and retries-pending are reported separately', () => {
+describe('remaining and retries-pending are reported separately', () => {
   it('stats reports total pending AND the future-dated subset as distinct columns', async () => {
     pool.query.mockResolvedValue({ rows: [{}] });
     await new AgencyCampaignRepository().stats('camp-1');
@@ -189,7 +182,7 @@ describe('AD-P3-C-04 (a): remaining and retries-pending are reported separately'
     pool.query.mockResolvedValue({ rows: [{}] });
     await new AgencyCampaignRepository().stats('camp-1');
 
-    // Exhaustion is `AD-P3-C-04`'s own subject and §5.3 makes it a distinct
+    // Exhaustion is this suite's own subject and it is a distinct
     // STATE. Folding it into `contacts_completed` — or omitting it, which is what
     // this suite found — makes `contacts_total` disagree with the sum of the
     // buckets, and the contacts that vanish are precisely the ones an operator
@@ -225,7 +218,7 @@ describe('AD-P3-C-04 (a): remaining and retries-pending are reported separately'
 
 // ─── (b) exactly one writer ─────────────────────────────────────────────────
 
-describe('AD-P3-C-04 (b): exactly one writer performs the transition', () => {
+describe('exactly one writer performs the transition', () => {
   it('guards the UPDATE on the expected status, so the second writer matches no row', async () => {
     pool.query.mockResolvedValue({ rows: [] });
     await new AgencyCampaignRepository().transitionStatus('camp-1', ['running'], 'completed', {});
@@ -252,7 +245,6 @@ describe('AD-P3-C-04 (b): exactly one writer performs the transition', () => {
     repos.campaign.countOutstanding.mockResolvedValue(0);
     repos.campaign.transitionStatus.mockResolvedValue(null);       // we lost
     const stations = makeStations(['s1']);
-    // PORT NOTE: the billing flush → the completion notice (same seam, same branch).
     const notifyCampaignFinished = vi.fn().mockResolvedValue(undefined);
 
     await engine(stations, { notifyCampaignFinished }).tickOnce('camp-1');
@@ -270,7 +262,7 @@ describe('AD-P3-C-04 (b): exactly one writer performs the transition', () => {
     repos.campaign.countOutstanding.mockResolvedValue(0);
     repos.campaign.transitionStatus.mockResolvedValue({ ...CAMPAIGN, status: 'completed' });
     const stations = makeStations(['s1']);
-    // PORT NOTE: the billing flush → the completion notice. The notifier receives the
+    // The notifier receives the
     // UPDATED campaign row (what `transitionStatus` returned), not just its id.
     const notifyCampaignFinished = vi.fn().mockResolvedValue(undefined);
 
@@ -284,17 +276,15 @@ describe('AD-P3-C-04 (b): exactly one writer performs the transition', () => {
     expect(reasons).toContain('list_exhausted');
   });
 
-  // PORT NOTE: renamed from core's 'a failing billing flush does not abort finalization'.
   it('a failing completion notice does not abort finalization', async () => {
-    // The flush is awaited inside the won-transition branch. If it were allowed
-    // to throw, a billing outage would strand the leader lease on a campaign that
+    // The notice is issued inside the won-transition branch. If it were allowed
+    // to throw, a downstream outage would strand the leader lease on a campaign that
     // has already been transitioned in the database — unrecoverable without a
     // restart, and invisible until agents notice they get no more calls.
     repos.campaign.countOutstanding.mockResolvedValue(0);
     repos.campaign.transitionStatus.mockResolvedValue({ ...CAMPAIGN, status: 'completed' });
     const stations = makeStations(['s1']);
-    // PORT NOTE: a failing completion notice in place of a failing billing flush. The
-    // notice is not awaited (so it cannot abort finalization) and carries its own
+    // The notice is not awaited (so it cannot abort finalization) and carries its own
     // `.catch`; the listener below pins that no rejection escapes it.
     // A plain function, not `vi.fn()`: a Vitest spy records its settled results and
     // so attaches a handler to the promise it returns, which would hide an escape.
@@ -317,9 +307,9 @@ describe('AD-P3-C-04 (b): exactly one writer performs the transition', () => {
   });
 });
 
-// ─── NEW (magick-agency): a notice requested on the last tick survives stop() ─
+// ─── a notice requested on the last tick survives stop() ─
 
-describe('Phase 6: completion notices are drained on stop', () => {
+describe('completion notices are drained on stop', () => {
   it('stop() waits for a completion notice still in flight', async () => {
     // A campaign finalized on the last tick before SIGTERM: the notice is not awaited
     // by the tick, so only `stop()` stands between it and process exit.
@@ -357,7 +347,7 @@ describe('Phase 6: completion notices are drained on stop', () => {
 
 // ─── (c) stopping → stopped, same path, after the drain ─────────────────────
 
-describe('AD-P3-C-04 (c): stopping drains before it stops', () => {
+describe('stopping drains before it stops', () => {
   it('does not stop a stopping campaign while an attempt is still in flight', async () => {
     repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, status: 'stopping' });
     // LIVE ATTEMPTS, not `countOutstanding`, and the distinction is load-bearing.
@@ -430,7 +420,7 @@ describe('AD-P3-C-04 (c): stopping drains before it stops', () => {
 
 // ─── the inherited finding: assert the STATE, never the absent instant ──────
 
-describe('AD-P3-C-04: a terminal contact keeps a stale next_attempt_at', () => {
+describe('a terminal contact keeps a stale next_attempt_at', () => {
   it('markState COALESCEs next_attempt_at, so omitting it PRESERVES the old instant', async () => {
     await new AgencyContactRepository().markState('c1', 'exhausted', { last_outcome: 'no_answer' });
     const sql = sqlOf();

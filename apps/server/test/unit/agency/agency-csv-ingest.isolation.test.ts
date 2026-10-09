@@ -71,8 +71,8 @@ describe('agency ingest ↔ contact-list parser isolation', () => {
       'contact-lists/template-generator.ts',
       'contact-lists/chunk-size.ts',
     ];
-    // PORT NOTE: only csv-parser.ts exists in agency (bulk dispatch and the rest of
-    // contact-lists/ are not ported), so the missing files are skipped, not read.
+    // Only csv-parser.ts exists here (bulk dispatch and the rest of
+    // contact-lists/ are absent), so the missing files are skipped, not read.
     for (const file of files.filter((f) => existsSync(resolve(SRC, f)))) {
       const imports = importedPaths(read(file));
       expect(

@@ -1,13 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// NEW (magick-agency, Phase 6): the in-process body of master's
-// `POST /webhooks/core/agency-campaign-completed` (`webhook-core.routes.ts:1120-1215`
-// @a1f0756a), reached from `PacingEngine.maybeFinalize` through the completion notifier.
-// Master's handler tests are in `test/unit/api/routes/webhook-core-agency.test.ts`, which
-// PORTING.md (lane B2) deletes with the S2S webhook; the outcome contract those cases
-// pinned for this endpoint — the notifier awaited, `agency_campaign_notifications_total`
-// incremented with `sent` or the returned reason, a throw counted as `threw` and never
-// rethrown — is pinned here.
+// The in-process campaign-completion notice, reached from `PacingEngine.maybeFinalize`
+// through the completion notifier. The outcome contract pinned here: the notifier
+// awaited, `agency_campaign_notifications_total` incremented with `sent` or the
+// returned reason, a throw counted as `threw` and never rethrown.
 
 vi.mock('@magick-agency/observability', () => ({
   createChildLogger: () => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() }),

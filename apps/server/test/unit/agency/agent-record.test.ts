@@ -273,7 +273,7 @@ describe('bucketStartSql / bucketTruncSql', () => {
     // every unresolvable zone to UTC in one more place than the repository owns.
     //
     // So the assertion is that the zone position holds the caller's expression
-    // VERBATIM — nothing added, for any unit and any expression.
+    // UNCHANGED — nothing added, for any unit and any expression.
     const zoneOperand = (unit: typeof AGENT_STATS_BUCKETS[number], tz: string): string => {
       const match = /AT TIME ZONE (.*)\)\)$/.exec(bucketTruncSql(unit, 'a.dialed_at', tz));
       if (!match) throw new Error(`no AT TIME ZONE operand in ${bucketTruncSql(unit, 'a.dialed_at', tz)}`);
@@ -646,8 +646,8 @@ describe('parseRosterQuery: the window rules are imported, not restated', () => 
     // predicate its occupancy index is reachable through. This one names no agent,
     // so `rosterOccupancyTotals` differences every transition of every agent in the
     // ACCOUNT — an ~N-fold cost in a floor of N. Neither statement may carry a
-    // `LIMIT` (the benchmark needs the whole pre-`limit` cohort) and core sets no
-    // `statement_timeout`, so the window is the only bound there is.
+    // `LIMIT` (the benchmark needs the whole pre-`limit` cohort) and no
+    // `statement_timeout` is set, so the window is the only bound there is.
     const tooWide = parseRosterQuery({ from: '2025-01-01', to: '2026-08-24' });
     expect(rosterIssue(tooWide, 'from')).toContain(String(ROSTER_MAX_WINDOW_DAYS));
     // Named explicitly rather than only compared, so a future edit that "restored
@@ -1105,7 +1105,7 @@ describe('parseGroupedStatsQuery: a time dimension needs an unambiguous zone (D5
     // the two `campaign,<time>` remedies — and `groupBy.some(needsZone)` and
     // `groupBy.every(needsZone)` agree on every one of those. They differ ONLY on a
     // pair holding one zoned dimension and one non-zoned dimension that is not
-    // `campaign`. Mutating that `some` to `every` therefore left the whole core
+    // `campaign`. Mutating that `some` to `every` therefore left the whole
     // suite green while ANSWERING these three requests: `agent,day` would sum one
     // agent's attempts across campaigns in Asia/Kolkata and Europe/London into a
     // single "2026-08-19" row, and `agent,hour_of_day` into a single "18:00" — which

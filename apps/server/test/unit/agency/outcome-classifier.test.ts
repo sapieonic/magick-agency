@@ -366,7 +366,7 @@ describe('a service-initiated teardown is `orphaned`, not `failed`', () => {
     // the status switch and came out `failed` — the CUSTOMER's ledger, 2 attempts,
     // and a contact retired by our own restart. `orphaned` has an our-fault
     // default and is routed to the `our_fault_attempts` ledger by the dial site,
-    // which is `AD-P3-C-09`'s whole point.
+    // which is the point of the our-fault ledger.
     for (const outcome of ['service_shutdown', 'system_rebooted', 'stuck_active_call']) {
       expect(classifyAttemptOutcome({
         status: 'failed', outcome, answered: false, bridged: false,
@@ -426,7 +426,7 @@ describe('releaseReasonFor / requiresDisposition', () => {
     // pre-answer cancel is announced to nobody — the agent was never shown the
     // dial — and with the flag off the only producer is the agent's own hangup,
     // which already has exact copy. A new member would be a fifth hand-mirrored
-    // union (core, master's error mask, cusui, `releaseMessageFor`) bought for a
+    // union (the dialer, the public API layer's error mask, the console, `releaseMessageFor`) bought for a
     // frame that either is not sent or already reads correctly.
     expect(releaseReasonFor('canceled', { agentHungUp: true })).toBe('agent_hangup');
     expect(releaseMessageFor(releaseReasonFor('canceled', { agentHungUp: true })))
@@ -466,7 +466,7 @@ describe('console copy', () => {
   });
 
   it('falls back rather than returning empty for an unknown reason', () => {
-    // A console that receives a reason from a newer core must still say
+    // A console that receives a reason from a newer server must still say
     // something true instead of blanking the panel.
     expect(releaseMessageFor('something_new' as AgencyReleaseReason).length).toBeGreaterThan(0);
     expect(campaignMessageFor('something_new' as AgencyCampaignChangeReason).length).toBeGreaterThan(0);
@@ -482,7 +482,7 @@ describe('console copy', () => {
 
   it('tells the two kinds of `paused` apart, which the status alone cannot', () => {
     // The defect this closes: both writers set `status = 'paused'`, so a reason
-    // derived from the status announced the `AD-P4-C-02` compliance stop as "A
+    // derived from the status announced the compliance stop as "A
     // supervisor paused this campaign" to every agent on the floor.
     expect(campaignChangeReasonFor({ status: 'paused', pause_reason: 'supervisor' }))
       .toBe('paused_by_supervisor');
@@ -519,7 +519,7 @@ describe('console copy', () => {
   });
 });
 
-describe('AD-P2-C-05 — an abandoned call is never a connected one', () => {
+describe('an abandoned call is never a connected one', () => {
   it('classifies `abandoned` on either terminal status', () => {
     // `abandonAnsweredCall` hangs the customer up itself, so the teardown it
     // produces can report either terminal status — `completed` when the apology

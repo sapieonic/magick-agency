@@ -1,27 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): ported from core test/unit/agency/agency-call-read-routes.test.ts@4850d1d9.
- * Mock paths re-pointed only (logger → a partial `@magick-agency/observability` mock;
- * announcement / call / account-settings / profile repositories → `@magick-agency/db/repositories/*`;
- * leaf modules → `@magick-agency/domain/*`; `contracts.js` → `@magick-agency/contracts/agency`).
- * Cases verbatim unless noted here. MODIFIED: the config mock gains `voicelinkRecording.allowedHosts`, and "streams through the
- * authenticated proxy when the call is there" also asserts the allow-list handed to lane D's
- * `proxyCallRecording` (the route's one change).
- */
-
 // ---------------------------------------------------------------------------
 // The agency-native call read —
 // `GET /agency-campaigns/:id/attempts/:attemptId{,/recording,/recording-url}`.
 //
 // This is the surface whose absence made the agency workspace link its attempt
-// rows into `/app/calls/dialer/history/:id` — the other product's shell, gated on
-// the other product's capability. Design §7b.
+// rows into `/app/calls/dialer/history/:id` — a different shell, gated on
+// a different capability.
 //
 // ── Two assertions this file exists for ────────────────────────────────────
 //
-// 1. **The middleware actually runs.** Core registers auth PER ROUTE PLUGIN, not
+// 1. **The middleware actually runs.** Auth is registered PER ROUTE PLUGIN, not
 //    globally, and that mistake has already shipped here once (the roster-ingest
 //    route). Asserted by spying on the middleware rather than on a status code —
 //    a route that does not exist also answers 404, so a status assertion would
@@ -40,9 +30,8 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
   createChildLogger: () => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }));
 
-// PORT NOTE (magick-agency): `voicelinkRecording.allowedHosts` added — the recording
-// route now hands lane D's `proxyCallRecording` the allow-list from config (core's
-// proxy read it itself). Asserted in "streams through the authenticated proxy…".
+// `voicelinkRecording.allowedHosts`: the recording route hands `proxyCallRecording`
+// the allow-list from config. Asserted in "streams through the authenticated proxy…".
 const { RECORDING_HOSTS } = vi.hoisted(() => ({ RECORDING_HOSTS: ['recordings.voicelink.test'] }));
 vi.mock('../../../src/config/index.js', () => ({
   config: { redis: { keyPrefix: '' }, telephony: {}, voicelinkRecording: { allowedHosts: RECORDING_HOSTS } },
@@ -282,7 +271,7 @@ describe('agency call read — scoping', () => {
    * The whole point of the repository's scope parameter. This surface reads the
    * agency population; the softphone's plugin reads the other one. Asking for
    * 'dialer' here would 404 every agency call — which is what the old cross-shell
-   * link effectively did once Phase 1a landed.
+   * link effectively did.
    */
   it("reads the call under the 'agency' scope, with tenant and account bound", async () => {
     const app = await makeApp();
@@ -389,9 +378,8 @@ describe('agency call read — recording streaming', () => {
     expect(res.statusCode).toBe(200);
     expect(proxySpy).toHaveBeenCalledTimes(1);
     expect((proxySpy.mock.calls[0]![0] as { id: string }).id).toBe('call-1');
-    // PORT NOTE (magick-agency): the configured allow-list is the one handed over, by
-    // identity — not a copy, not a default (lane D's proxy refuses every host on an
-    // empty list).
+    // The configured allow-list is the one handed over, by identity — not a copy,
+    // not a default (`proxyCallRecording` refuses every host on an empty list).
     expect((proxySpy.mock.calls[0] as unknown[])[3]).toBe(RECORDING_HOSTS);
     await app.close();
   });

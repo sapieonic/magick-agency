@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// Retry campaigns — the repository half (design §4.3, wire contract §2).
+// Retry campaigns — the repository half.
 //
 // These pin the DECISIONS, not the SQL text: which rows are seeded, which
 // columns are deliberately absent from the INSERT, what is written to

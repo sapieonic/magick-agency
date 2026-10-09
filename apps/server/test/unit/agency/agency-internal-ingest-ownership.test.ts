@@ -1,33 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /*
- * PORT NOTE (magick-agency, Phase 8): ported from core
- * test/unit/agency/agency-internal-ingest-ownership.test.ts@4850d1d9 (7 `it` + 1 `it.each`
- * of 8 rows = 15), plus the one non-auth case of core's agency-internal-auth.test.ts
- * (last describe below).
- *
- * Core's `POST /internal/agency-campaigns/:id/contacts` (`agency.routes.ts:1892-1962`) is
- * gone as a route: lane B2 collapsed the master → core roster hop into
- * `src/agency/agency-roster.client.ts`, whose `sendRosterChunk` now runs that handler's
- * body in-process (`applyRosterChunkInProcess`, private) and keeps master's response
- * mapping — a 4xx becomes a thrown `RosterChunkError(message, status, chunkIndex)`, a 200
- * becomes a `RosterChunkResponse`. So every assertion about the HANDLER BODY is re-run here
- * against `sendRosterChunk`, with the same repository mocks:
+ * Ingest ownership for roster chunks. `sendRosterChunk`
+ * (`src/agency/agency-roster.client.ts`) runs the roster-chunk handler body in-process
+ * (`applyRosterChunkInProcess`, private) and maps the outcome — a 4xx becomes a thrown
+ * `RosterChunkError(message, status, chunkIndex)`, a 200 becomes a `RosterChunkResponse`.
+ * So every assertion about the handler body is made against `sendRosterChunk`, with
+ * repository mocks:
  *  - "refuses … with 404" → `sendRosterChunk` rejects with status 404 and the handler's
- *    message; the source's `res.json()` body equality becomes the error's
- *    `{ status, message }` (the body never leaves the process; master surfaced the message);
+ *    message; the error's `{ status, message }` is compared (the body never leaves the process);
  *  - the 8 malformed-identity rows: the request's typed `tenantId`/`accountId` are driven
- *    with the same values through a cast;
- *  - "accepts a chunk from the owner": the repository call is asserted byte-identically; the
+ *    with those values through a cast;
+ *  - "accepts a chunk from the owner": the repository call is asserted exactly; the
  *    response is the CLIENT's mapping of the handler body (`rejected_duplicate_rows: 0`,
  *    `duplicate_source_rows: []` are the client's defaults for fields the mock omits);
  *  - campaign ids are UUIDs: the client answers a malformed campaign id with the same 404
- *    before reading (B2, "answers a malformed campaign id with the same 404"), so core's
- *    `'camp-victim'` would never reach `findById`. Tenant/account ids are left as core had
- *    them: the repository is mocked, and the comparison is string equality.
+ *    before reading (B2, "answers a malformed campaign id with the same 404"), so a
+ *    non-UUID id like `'camp-victim'` would never reach `findById`. Tenant/account ids are
+ *    arbitrary strings: the repository is mocked, and the comparison is string equality.
  *
- * What the S2S token proved, and the HTTP-only refusals, are deleted with the route: see
- * PORTING (Phase 8, p8-core-routes). The real-Postgres twin is
+ * There is no HTTP route and no S2S token for this hand-off. The real-Postgres twin is
  * test/integration/agency/agency-ingest-route-seam.test.ts.
  */
 
@@ -54,7 +46,7 @@ import {
   type RosterChunkRequest,
 } from '../../../src/agency/agency-roster.client.js';
 
-/** Core's `'camp-victim'`, as a UUID (see the header). */
+/** The victim campaign's id, as a UUID (see the header). */
 const CAMPAIGN_ID = 'cccccccc-0000-4000-8000-00000000c1c7';
 
 const CAMPAIGN_ROW = {
@@ -65,10 +57,10 @@ const CAMPAIGN_ROW = {
 const OWNER = { tenant_id: 'victim-tenant', account_id: 'victim-account' };
 
 /**
- * Core's `chunk(identity, extra)` in the client's request shape. The wire's
+ * Builds a chunk request from an identity, in the client's request shape. The wire's
  * `tenant_id`/`account_id`/`is_final`/`chunk_count` are the request's
  * `tenantId`/`accountId`/`isFinal`/`chunkCount`; the idempotency key is derived by the
- * client as `{ingest_job_id}-{chunk_index}` — `job-1-0`, which is what core's suite sent.
+ * client as `{ingest_job_id}-{chunk_index}` — `job-1-0`.
  */
 function chunk(identity: Record<string, unknown>, extra: { isFinal?: boolean; chunkCount?: number } = {}) {
   return {
@@ -83,7 +75,7 @@ function chunk(identity: Record<string, unknown>, extra: { isFinal?: boolean; ch
   } as unknown as RosterChunkRequest;
 }
 
-/** What core's 404 body said, as the client surfaces it. */
+/** The 404 refusal, as the client surfaces it. */
 const NOT_FOUND = { status: 404, message: 'Campaign not found' };
 
 async function refusal(request: RosterChunkRequest): Promise<RosterChunkError> {
@@ -128,8 +120,8 @@ describe('internal roster ingest — campaign ownership', () => {
 
     expect(foreign.status).toBe(unknown.status);
     expect(foreign.message).toBe(unknown.message);
-    // Master's `sendRosterChunk` surfaces this message on the failed ingest job,
-    // and its `supersedeRoster` (`isCoreCampaignNotFound`) classifies on it — so
+    // `sendRosterChunk` surfaces this message on the failed ingest job,
+    // and `supersedeRoster` (`isCoreCampaignNotFound`) classifies on it — so
     // the shared 404 must keep saying it.
     expect(unknown.message).toMatch(/campaign\s+not\s+found/i);
   });
@@ -186,7 +178,7 @@ describe('internal roster ingest — campaign ownership', () => {
     expect(contacts.missingChunks).toHaveBeenCalledWith(CAMPAIGN_ID, 'job-1', 2);
     expect(res).toEqual({
       accepted: 1, duplicate_chunk: false, total_contacts: 1,
-      // The client's defaults for the two fields this mock omits (master's mapping).
+      // The client's defaults for the two fields this mock omits (the client's mapping).
       rejected_duplicate_rows: 0, duplicate_source_rows: [],
       roster_complete: false, missing_chunks: [1],
     });
@@ -210,12 +202,10 @@ describe('ingestCallerOwnsCampaign', () => {
 });
 
 /*
- * From core test/unit/agency/agency-internal-auth.test.ts@4850d1d9: its one case that is an
- * assertion about the handler body ("accepts the configured token and applies the chunk"),
- * minus the token. Its four refusal cases asserted the S2S credential, which is gone with
- * the route (deleted, PORTING).
+ * The handler-body assertion for an accepted chunk; there is no credential to check on
+ * the in-process hand-off.
  */
-describe('from agency-internal-auth: the in-process hand-off applies the chunk', () => {
+describe('the in-process hand-off applies the chunk', () => {
   it('applies the chunk with tenancy taken from the campaign row', async () => {
     const res = await sendRosterChunk(chunk(OWNER, { isFinal: true, chunkCount: 1 }));
 

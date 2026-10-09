@@ -30,9 +30,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //     **u-bala**, at connected exactly 20.
 //
 // This file's header used to claim the boundary was covered when only the second
-// row existed. A reviewer mutated the first `>=` to `>` and the entire core suite
+// row existed. A reviewer mutated the first `>=` to `>` and the entire suite
 // stayed green — the fixture held agents at 400, 100, 40 and 11 attempts and
-// nothing at 20. That is the MAG-106 shape: an assertion that reads like it covers
+// nothing at 20. That is the false-coverage shape: an assertion that reads like it covers
 // a boundary and does not. Both are named above so the next reader can check the
 // claim against the fixture rather than trusting it.
 //
@@ -201,7 +201,7 @@ describe('the tenant AND account scope is in every statement', () => {
   it('binds both into both statements, and spells the predicate literally', async () => {
     // There is no path parameter on this route at all, so these two predicates are
     // the ONLY thing separating one account's floor from another's. `agent_user_id`
-    // is master's user id, opaque to core (D3), and core cannot tell a real one
+    // is the console user's id, opaque to the voice engine (D3), which cannot tell a real one
     // from a guess or from another tenant's.
     await read();
     // The two statements bind the scope at DIFFERENT positions, and deliberately:
@@ -256,7 +256,7 @@ describe('the tenant AND account scope is in every statement', () => {
   it('scopes the occupancy read by BOTH the ids and the tenant/account', async () => {
     // Belt and braces on purpose: the ids are already the output of a scoped
     // statement, and `sess` re-applies both predicates anyway. An `agent_user_id`
-    // is opaque to core and could legitimately collide across tenants.
+    // is opaque to the voice engine and could legitimately collide across tenants.
     await read();
     const occupancy = executable(occupancySql());
     expect(occupancy).toContain('s.tenant_id = $4');
@@ -610,7 +610,7 @@ describe('a thin row is served in full, flagged, and excluded from the cohort', 
   it('flags a row sitting EXACTLY on the threshold as reportable', async () => {
     // The boundary of `attempts >= AGENCY_ROSTER_MIN_RATE_DENOMINATOR` itself, and
     // it needs its own row: with the fixture at 400 / 100 / 40 / 11 the comparison
-    // was unpinned, and a reviewer mutated the `>=` to `>` with the whole core
+    // was unpinned, and a reviewer mutated the `>=` to `>` with the whole
     // suite staying green. u-esi dials exactly 20.
     //
     // FALSIFICATION: change that `>=` to `>` in `roster()` and this fails three
@@ -952,8 +952,8 @@ describe('an occupancy failure never takes the roster with it', () => {
 
 // ─── the two ADDITIVE benchmark fields (contract D10) ───────────────────────
 //
-// Additive, not changed: the roster payload is frozen so phase 02c can swap its
-// data source under a console already built against it, and adding a field breaks
+// Additive, not changed: the roster payload is frozen so its
+// data source can be swapped under a console already built against it, and adding a field breaks
 // no consumer. Both of these were found by review as gaps the frozen shape could
 // not express.
 //
@@ -1018,7 +1018,7 @@ describe('benchmark.shift_seconds / break_seconds: pooled, so the team row can s
 
   it('does NOT move when `limit` moves — it is the cohort, not the page', async () => {
     // The reason these are pooled here rather than derived from the visible rows by
-    // a consumer: master's `include_inactive` toggle and the caller's `limit` both
+    // a consumer: the console's `include_inactive` toggle and the caller's `limit` both
     // change which ROWS are returned, and this object's own contract forbids the
     // benchmark moving when a row filter does. A field summed from `rows` would be
     // a different number under the same name.

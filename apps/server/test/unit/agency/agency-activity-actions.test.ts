@@ -6,12 +6,13 @@ import {
 import { PLATFORM_AUDIT_ACTIONS } from '../../../src/audit/platform/catalog.js';
 
 /**
- * The vocabulary cusui's action filter is now built from.
+ * The vocabulary the console's action filter is built from.
  *
- * It replaced a hand-maintained copy in that repository, so the guarantee has to
- * live here instead: master's half is checked against the catalog it comes from,
- * and the served list is checked for entries nothing writes. Neither check can
- * reach core — see the transcription note on `CORE_AGENCY_EVENT_TYPES`.
+ * It replaced a hand-maintained copy in the console, so the guarantee has to
+ * live here instead: the public API layer's half is checked against the catalog it
+ * comes from, and the served list is checked for entries nothing writes. Neither
+ * check can reach the voice engine's writes — see the transcription note on
+ * `CORE_AGENCY_EVENT_TYPES`.
  *
  * The type-level guards in the module catch both directions at `npm run lint`
  * already. These tests exist because vitest does not type-check: a source file
@@ -20,7 +21,7 @@ import { PLATFORM_AUDIT_ACTIONS } from '../../../src/audit/platform/catalog.js';
  */
 
 /**
- * Everything master writes about a campaign is `agency_*` or `dnc_*`. The
+ * Everything the public API layer writes about a campaign is `agency_*` or `dnc_*`. The
  * catalog's other entries are `schedule.*`/`recurring_schedule.*`, which carry
  * no campaign scope and would be a filter that always returns nothing.
  */
@@ -32,12 +33,12 @@ describe('the campaign activity action vocabulary', () => {
   /**
    * The check the hand-maintained copy could never have. Adding an
    * `agency_*`/`dnc_*` action to `PLATFORM_AUDIT_ACTIONS` and not here ships a
-   * filter that cannot select rows master is already writing to the trail.
+   * filter that cannot select rows the public API layer is already writing to the trail.
    */
-  it('offers every campaign-scoped action master writes', () => {
+  it('offers every campaign-scoped action the public API layer writes', () => {
     const missing = PLATFORM_AUDIT_ACTIONS
       .filter((action) => CAMPAIGN_SCOPED.test(action))
-      .filter((action) => !(served as ReadonlySet<string>).has(action)); // PORT NOTE: type-only cast (master does not type-check tests)
+      .filter((action) => !(served as ReadonlySet<string>).has(action)); // type-only cast (tests are not type-checked)
 
     expect(
       missing,
@@ -45,13 +46,13 @@ describe('the campaign activity action vocabulary', () => {
     ).toEqual([]);
   });
 
-  /** The transcription of core's writes, held to the same standard. */
-  it('offers every agency event type core writes', () => {
+  /** The transcription of the voice engine's writes, held to the same standard. */
+  it('offers every agency event type the voice engine writes', () => {
     const missing = CORE_AGENCY_EVENT_TYPES.filter((event) => !served.has(event));
 
     expect(
       missing,
-      `written by core but not offered as a filter: ${missing.join(', ')}`,
+      `written by the voice engine but not offered as a filter: ${missing.join(', ')}`,
     ).toEqual([]);
   });
 
@@ -77,8 +78,8 @@ describe('the campaign activity action vocabulary', () => {
    * they are tenant-wide and never carry a campaign, so every one of them would
    * be a control that returns nothing on this screen.
    */
-  // PORT NOTE: agency's catalog has no `schedule.*` actions (decision: no scheduler), so the
-  // "not campaign-scoped" set is now the `user.*` actions; the assertion is unchanged.
+  // The catalog has no `schedule.*` actions (decision: no scheduler), so the
+  // "not campaign-scoped" set is the `user.*` actions.
   it('leaves the scheduler actions out', () => {
     const schedulerActions = PLATFORM_AUDIT_ACTIONS.filter((action) => !CAMPAIGN_SCOPED.test(action));
 
@@ -98,7 +99,7 @@ describe('the campaign activity action vocabulary', () => {
   });
 
   /**
-   * The filter is rendered from this list verbatim, so an entry with no label
+   * The filter is rendered directly from this list, so an entry with no label
    * would render as a nameless checkbox rather than as an obvious bug.
    */
   it('gives every entry a label and one of the three groups', () => {

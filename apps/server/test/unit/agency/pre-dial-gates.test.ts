@@ -1,22 +1,18 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core
-// test/unit/agency/pre-dial-gates.test.ts@4850d1d9 (20 cases). Deleted: none.
-// Modified (decision B8 — the DNC collapse; `pre-dial-gates.ts` now passes the scope
-// the DB-backed registry requires):
-//  - `CAMPAIGN` fixture gains `account_id` (the gate input's Pick now names it);
+// Decision B8 (the DNC check is scoped): `pre-dial-gates.ts` passes the scope the
+// DB-backed registry requires. So:
+//  - the `CAMPAIGN` fixture carries `account_id` (the gate input's Pick names it);
 //  - the `check` mock's type takes the third `scope` argument;
 //  - "asks the DNC set for this tenant and this number" asserts the call WITH
-//    `{ accountId, campaignId }`. The assertion is still exact (`toHaveBeenCalledWith`),
-//    so a two-argument call — the old, now non-compiling form that would only check
-//    tenant-wide entries — is red.
-// The logger mock specifier follows the path rule.
+//    `{ accountId, campaignId }`. The assertion is exact (`toHaveBeenCalledWith`),
+//    so a two-argument call — which would only check tenant-wide entries — is red.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// AD-P3-C-05 + AD-P3-C-06 — the pre-dial gates as a decision, before any wiring.
+// The pre-dial gates as a decision, before any wiring.
 //
 // This file tests the DECISION only. Whether the tick honours it — whether a
 // `suppress` really writes `suppressed_reason='dnc'`, whether a `halt` really
-// stops the contacts claimed alongside it — is §16.6 question 2 and lives in
+// stops the contacts claimed alongside it — is a consumption-site property and lives in
 // `pacing-engine-gates.test.ts`. A green decision table proves nothing about
 // where it is consumed, so do not read this file as coverage of the dial path.
 //
@@ -41,7 +37,7 @@ import type { DncCheck, DncCheckScope } from '../../../src/agency/dnc-registry.j
 const CAMPAIGN = {
   id: 'camp-1',
   tenant_id: 'tenant-1',
-  account_id: 'account-1', // PORT NOTE: B8 — the DNC scope reads it.
+  account_id: 'account-1', // decision B8 — the DNC scope reads it.
   calling_window_start: '09:00:00',
   calling_window_end: '20:00:00',
   calling_days: [1, 2, 3, 4, 5],
@@ -55,7 +51,7 @@ const IN_HOURS = new Date('2026-08-11T05:00:00Z');
 /** Tue 2026-08-11, 20:30 IST — just closed. */
 const AFTER_HOURS = new Date('2026-08-11T15:00:00Z');
 
-// PORT NOTE: B8 — the registry's `check` takes a required scope.
+// Decision B8 — the registry's `check` takes a required scope.
 const check = vi.fn<(t: string, p: string, scope: DncCheckScope) => Promise<DncCheck>>();
 const deps = { dnc: { check } as never };
 
@@ -82,9 +78,9 @@ describe('the clear path', () => {
     // The tenant comes from the campaign, never from the contact row: a contact
     // whose tenant_id disagreed with its campaign's would otherwise be checked
     // against the wrong tenant's DNC list, which is a check that always passes.
-    // PORT NOTE (B8): and with this account and this campaign, so an account- or
-    // campaign-scoped `dnc_entries` row stops the dial too (core's set held only
-    // tenant-wide entries and was called with two arguments).
+    // Decision B8: and with this account and this campaign, so an account- or
+    // campaign-scoped `dnc_entries` row stops the dial too, not only
+    // tenant-wide entries.
     expect(check).toHaveBeenCalledWith('tenant-1', '+14155550100', {
       accountId: 'account-1', campaignId: 'camp-1',
     });
@@ -140,7 +136,7 @@ describe('phone validity is checked first, and is terminal', () => {
   it('agrees with the registry about what a number is', async () => {
     // Gate 1 and the registry both use `normalizeE164`, which is what makes the
     // `unverifiable` arm unreachable. Pinned, because the comment saying so is not
-    // evidence (§16.6 rule 3) and a divergence would fall through to `dial`.
+    // evidence and a divergence would fall through to `dial`.
     const { normalizeE164 } = await import('../../../src/agency/dnc-registry.js');
     for (const phone of ['+14155550100', '14155550100', 'nope', '', '+0123']) {
       const decision = await evaluatePreDialGates(
@@ -161,7 +157,7 @@ describe('calling hours', () => {
     expect(decision.gate).toBe('calling_hours');
     // Wed 09:00 IST. Exact, because "some time later" is satisfied by `now()+1ms`,
     // which re-claims the contact on the next tick — the 4-claims-per-second spin
-    // §4.2 exists to prevent.
+    // the unclaim rule exists to prevent.
     expect(decision.deferUntil.toISOString()).toBe('2026-08-12T03:30:00.000Z');
     expect(decision.deferUntil.getTime()).toBeGreaterThan(AFTER_HOURS.getTime());
   });
@@ -224,7 +220,7 @@ describe('calling hours', () => {
 
 describe('every defer is strictly in the future', () => {
   it('holds across every deferring input', async () => {
-    // The single invariant behind §4.2's unclaim rule, asserted over the whole
+    // The single invariant behind the unclaim rule, asserted over the whole
     // set rather than case by case: a contact returned at `now()` is re-claimed
     // immediately, and the campaign burns agent reservations all night.
     const inputs = [
