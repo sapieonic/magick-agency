@@ -1,8 +1,16 @@
 # Seams between lanes
 
-Lead-owned. Lanes build against what this file names and never change it on their branch.
-A lane that cannot meet a seam as written **stops and reports**; it does not adapt the seam.
-Three individually correct lanes that did not compose cost this project a full cycle before.
+**What this is.** The lane boundaries the build used: where ported files go (the path rule),
+which files each lane owned in the shared server, and the fixed interfaces lanes built against.
+The lanes are gone, but these boundaries remain the module boundaries of `apps/server`, and 32
+source and test comments (in 23 files) cite this file by section. Read it before moving a ported file, adding a config
+key, route plugin or bootstrap, or changing anything under `apps/server/src/seams/`. Updated
+2026-10-09 for the post-build state; the rules below were binding on every lane.
+
+During the build this file was lead-owned: lanes built against what it names and never changed
+it on their branch. A lane that could not meet a seam as written **stopped and reported**; it did
+not adapt the seam. Three individually correct lanes that did not compose cost this project a
+full cycle before.
 
 Sources: core `magic-voice-core@4850d1d9` (v1.123.2), master `magick-master@a1f0756a` (v3.24.0),
 cusui `magick-comms-cusui@ee5beb44` (v2.96.0).
@@ -38,10 +46,19 @@ paths require.
 | Metrics | `packages/observability/src/metrics/platform.ts` | `.../agency.ts` | `.../voice.ts` | `.../analysis.ts` |
 
 Config blocks must declare **disjoint top-level keys** (enforced at load by `config/schema.ts`
-and by a test). Claimed so far: lane C — `telephony`, `concurrency`, `rateLimit`, `s3`, `audio`,
-`staticCallTts`, `analytics`; lane D (merged) — `postCallAnalysis`, `dialerAnalysis`, `voicelinkRecording`,
-`recordingUrlSigningSecret`, `retention`. A second lane needing S3 (e.g. B2's CSV uploads) reads `config.s3`
-rather than declaring its own; if it needs extra S3 fields, it asks the lead.
+and by `test/unit/config/blocks-disjoint.test.ts`). The keys each block declares (checked against
+`apps/server/src/config/blocks/*.ts`, 2026-10-09):
+
+| Block | Top-level keys |
+|---|---|
+| `base.ts` (lead) | `server`, `db`, `redis` |
+| `platform.ts` (lane A) | `firebase`, `superAdmin`, `mailjet`, `brand`, `invites`, `localCache`, `consoleBaseUrl`, `auditPartitions` |
+| `agency.ts` (lane B) | `agency` |
+| `voice.ts` (lane C) | `concurrency`, `telephony`, `rateLimit`, `s3`, `staticCallTts`, `audio`, `analytics` |
+| `analysis.ts` (lane D) | `postCallAnalysis`, `dialerAnalysis`, `voicelinkRecording`, `recordingUrlSigningSecret`, `retention` |
+
+A second module needing S3 (e.g. B2's CSV uploads) reads `config.s3` rather than declaring its
+own key.
 
 Lead-owned (never edited on a lane branch): `packages/contracts/**`, `packages/db/migrations/**`,
 `apps/server/src/seams/**`, `apps/server/src/{app.ts,app-context.ts,index.ts}`,
@@ -82,7 +99,7 @@ export type WebRtcLifecycleListener = (event: WebRtcLifecycleEvent) => void;
 `(callManager: CallManager, redis)` and uses `CallManager` only for the concurrency guard
 (`acquireTelephonyConcurrency`, `releaseTelephonyLease`, `wakeSelfHeal`; `triggerDequeue` is AI-queue
 only and goes). Lane C replaces `CallManager` with its extracted guard host and documents the new
-constructor in `PORTING.md`. Lane C adds a type-level test that a `WebRtcBridgeManager` satisfies an
+constructor in `PORTING.md`. Lane C adds a type-level test (now `apps/server/test/unit/core/webrtc-bridge-seam-contract.test.ts`) that a `WebRtcBridgeManager` satisfies an
 interface listing exactly the members above, so a signature change fails `tsc`.
 
 ### 3.2 Voice engine → analysis (lane C calls, lane D implements)
@@ -121,7 +138,7 @@ that needs a new method or column asks the lead.
   trail) and master's platform audit logger with its catalog, vocabulary and actor types
   (→ `platform_audit_log`, the "Console" half). Both tables are kept (build decision B7).
 
-## 5. Known gaps in the seams
+## 5. Known gaps in the seams (still open, 2026-10-09)
 
 - **Carrier fixture in both repos.** Plan §5 wants a byte-identical `voicelink-carrier.fixture.json`
   in core and agency. Core is read-only during the build, so lane C commits agency's copy and the core
