@@ -53,15 +53,6 @@ vi.mock('@magick-agency/db/repositories/account.repository', () => ({
 vi.mock('@magick-agency/db/repositories/membership.repository', () => ({
   membershipRepository: { findAllByUserId: mocks.findAllByUserId },
 }));
-/*
- * PORT NOTE (magick-agency): master also mocked credit-balance,
- * credit-transaction, tenant-core-credential, phone-number,
- * tenant-phone-assignment, proxy/core-client, utils/crypto, config/index and
- * governance.service, every one of them a path-4 provisioning or governance
- * dependency. Agency's `auth.routes.ts` imports none of them (path 4 refuses,
- * plan §3.1; settings replace governance, §3.2), so the mocks are removed with
- * the modules. The four cases are unchanged.
- */
 vi.mock('@magick-agency/db', () => ({
   getPool: () => ({
     query: mocks.poolQuery,
@@ -71,8 +62,6 @@ vi.mock('@magick-agency/db', () => ({
 vi.mock('@magick-agency/observability', () => ({
   createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }));
-// PORT NOTE (magick-agency): master's `signupPhoneAssignmentsTotal` mock is
-// removed — path 4 assigns no pooled number (plan §3.1).
 
 import Fastify from 'fastify';
 import { authRoutes } from '../../../../src/api/routes/auth.routes.js';

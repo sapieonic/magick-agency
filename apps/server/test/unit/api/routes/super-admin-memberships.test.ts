@@ -1,7 +1,5 @@
 /*
- * NEW (magick-agency): no master source file. Master's super-admin add-user and
- * create-tenant were untested at the route layer; role change and revoke on a
- * membership are NEW routes (plan §3.4). Covers `POST /super-admin/tenants`,
+ * Covers `POST /super-admin/tenants`,
  * `POST /super-admin/tenants/:id/users`, `PUT …/memberships/:membershipId/role`
  * and `DELETE …/memberships/:membershipId` in
  * `apps/server/src/api/routes/super-admin.routes.ts`, through the REAL
@@ -85,7 +83,7 @@ vi.mock('@magick-agency/db', () => ({
   getPool: () => ({ connect: mocks.connect }),
 }));
 vi.mock('../../../../src/cache/redis-cache.js', () => ({
-  // Q5 (Manas, 2026-10-09): revocation deletes go through `delForRevocation` (retried, reports
+  // Q5: revocation deletes go through `delForRevocation` (retried, reports
   // failure); this double forwards to the `del` mock and reports success, so the assertions on
   // `del` still observe the key.
   redisCache: { del: mocks.redisDel, delForRevocation: async (...k: string[]) => { await mocks.redisDel(...k); return mocks.revocation.cleared; } },
@@ -499,7 +497,7 @@ describe('PUT /super-admin/tenants/:id/memberships/:membershipId/role', () => {
     mocks.membershipRepository.findByUserAndTenant.mockImplementation(async () => [target('viewer')]);
   });
 
-  // Q5 (Manas, 2026-10-09). NEW (magick-agency): idempotent on retry, so a failed revocation
+  // Q5: idempotent on retry, so a failed revocation
   // delete is a 503 — after the role write, the staffing close and the audit row.
   it('Q5: a cache delete that still fails answers 503 cache_invalidation_failed, after every other effect', async () => {
     mocks.revocation.cleared = false;
@@ -659,7 +657,7 @@ describe('DELETE /super-admin/tenants/:id/memberships/:membershipId', () => {
     ]);
   });
 
-  // Q5 (Manas, 2026-10-09). NEW (magick-agency): not idempotent on retry (the revoked row is
+  // Q5: not idempotent on retry (the revoked row is
   // gone from `findByIdInTenant`), so the 200 is kept and the failure is only logged.
   it('Q5: a cache delete that still fails keeps the 200', async () => {
     mocks.revocation.cleared = false;
@@ -807,7 +805,7 @@ describe('POST /super-admin/tenants', () => {
     });
   });
 
-  it('assigns NO pooled number and writes no credit balance or core key', async () => {
+  it('assigns NO pooled number and writes no credit balance or API key', async () => {
     const res = await post({ name: 'Acme', owner_email: 'owner@acme.test' });
 
     expect(res.statusCode).toBe(201);

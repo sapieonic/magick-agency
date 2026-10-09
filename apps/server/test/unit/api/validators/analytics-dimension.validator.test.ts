@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { analyticsDimensionSchema, analyticsDimensionsSchema } from '../../../../src/api/validators/analytics-dimension.validator.js';
 /*
- * PORT NOTE (magick-agency): ported from core test/unit/api/validators/analytics-dimension.validator.test.ts
- * @4850d1d9 (9 + it.each(4) -> 10 cases). Deleted: "re-exported by the prompt validator ...", "is enforced by prompt create and update" and the
- * "shipped prompt JSONs" describe (a canary + an it.each over core's prompt templates): prompt
- * templates are AI-call surface and not carried. The shared dimension schema's own cases are unchanged.
+ * The shared dimension schema's own cases. Prompt templates and prompt validators are not part
+ * of this product, so there are no prompt-validator cases.
  */
 
 const valid = { key: 'payment_status', description: 'Whether payment was made', type: 'boolean' };

@@ -1,16 +1,7 @@
 /*
- * PORT NOTE (magick-agency): ported from master test/unit/api/validators/phone-number.validator.test.ts@a1f0756a
- * (8 cases → 6: 0 verbatim, 8 deleted, 6 NEW). Every source case exercises
- * `updateTelephonyProviderSchema` (migration 074's `live_transfer_enabled`), which
- * is deleted with the telephony-provider CRUD routes (see the validator's PORT
- * NOTE) — deleted: 'accepts a live_transfer_enabled toggle on its own',
- * 'accepts live_transfer_enabled alongside the existing fields',
- * 'leaves live_transfer_enabled absent when omitted (no implicit default)', and the
- * 5 `it.each` rows of 'rejects a non-boolean live_transfer_enabled (%j)'
- * ("true", 1, 0, null, "yes").
- * NEW: equivalence tests for the port's changes to this module — the deleted
- * schemas are gone, and `pool_eligible` is stripped (not refused) by the create and
- * update schemas.
+ * Phone-number validators. There is no telephony-provider update schema (the telephony-provider
+ * CRUD routes are not registered), so the tests cover that the deleted schemas are gone, and
+ * that `pool_eligible` is stripped (not refused) by the create and update schemas.
  */
 import { describe, it, expect } from 'vitest';
 import * as validators from '../../../../src/api/validators/phone-number.validator.js';
@@ -19,7 +10,7 @@ import {
   updatePhoneNumberSchema,
 } from '../../../../src/api/validators/phone-number.validator.js';
 
-describe('phone-number.validator — deleted schemas (NEW)', () => {
+describe('phone-number.validator — deleted schemas', () => {
   it('exports no telephony-provider or tagging schema', () => {
     expect(Object.keys(validators).sort()).toEqual([
       'assignPhoneNumberSchema',
@@ -29,7 +20,7 @@ describe('phone-number.validator — deleted schemas (NEW)', () => {
   });
 });
 
-describe('createPhoneNumberSchema — pool_eligible removed (NEW)', () => {
+describe('createPhoneNumberSchema — pool_eligible removed', () => {
   const valid = {
     phone_number: '+12025550100',
     provider_id: '11111111-1111-1111-1111-111111111111',
@@ -51,7 +42,7 @@ describe('createPhoneNumberSchema — pool_eligible removed (NEW)', () => {
   });
 });
 
-describe('updatePhoneNumberSchema — pool_eligible removed (NEW)', () => {
+describe('updatePhoneNumberSchema — pool_eligible removed', () => {
   it('strips pool_eligible, leaving only the fields agency writes', () => {
     expect(updatePhoneNumberSchema.parse({ pool_eligible: true, label: 'Main' })).toEqual({ label: 'Main' });
   });

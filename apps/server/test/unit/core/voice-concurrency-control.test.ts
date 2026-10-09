@@ -1,5 +1,5 @@
-// NEW (magick-agency, lane C): docs/seams.md §3.3. Each `ConcurrencyControl` method is a
-// one-line forward to the guard method core's internal routes called, with the same
+// docs/seams.md. Each `ConcurrencyControl` method is a
+// one-line forward to the corresponding guard method, with the same
 // arguments and the same result — pinned here per method; the same methods are exercised
 // against real Redis in test/integration/core/voice-engine.test.ts.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -54,7 +54,7 @@ describe('createConcurrencyControl', () => {
     expect(host.accountConcurrencyGuard.getDistributedAccountCount).toHaveBeenCalledWith('t', 'a');
   });
 
-  it('propagates a guard rejection (core\'s route surfaced it)', async () => {
+  it('propagates a guard rejection', async () => {
     const host = fakeHost();
     host.accountConcurrencyGuard.invalidateLimit.mockRejectedValue(new Error('redis down'));
     await expect(createConcurrencyControl(host as any).invalidateAccountLimit('t', 'a')).rejects.toThrow('redis down');
@@ -74,7 +74,7 @@ describe('the voice bootstrap registers the implementation (setConcurrencyContro
     expect(ensureVoiceEngine(null)).toBe(engine);
     expect(getVoiceEngine()).toBe(engine);
     // No Redis: the runtime accessor reads the process-local count (0), the control-plane
-    // read refuses to substitute it (core's semantics).
+    // read refuses to substitute it.
     await expect(getConcurrencyControl().getAccountCount('t', 'a')).resolves.toBe(0);
     await expect(getConcurrencyControl().getDistributedAccountCount('t', 'a')).resolves.toEqual({ status: 'unavailable' });
     await expect(getConcurrencyControl().getAccountProviderCounts('t', 'a'))

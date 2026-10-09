@@ -1,20 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
- * PORT NOTE (magick-agency): the audit-partition half of the two retention suites,
- * against `src/audit/audit-partition-maintenance.ts`:
- *  - core `test/unit/maintenance/retention-purge.test.ts@4850d1d9` — "drops only audit
- *    partitions entirely older than the cutoff and purges the default partition"
- *    (`audit_logs`), and the partition assertions of "dry run counts rows without
- *    deleting or dropping anything";
- *  - master `test/unit/maintenance/retention-purge.test.ts@a1f0756a` — the same two,
- *    for `platform_audit_log`.
- * Same fixtures (the 2026-02 / 2026-05 / DEFAULT partitions) and the same mocked pool.
- * The rest of each dry-run case (table counts) and the Slack-summary partition line
- * stay with lane D's retention purge (it reports no partitions now) — deleted here,
- * there is no Slack summary for this job.
- * NEW: the create half's naming / month arithmetic (pure); its SQL is exercised on
- * real Postgres in `test/integration/audit/audit-partition-maintenance.test.ts`.
+ * Audit-partition maintenance, against `src/audit/audit-partition-maintenance.ts`:
+ *  - drops only audit partitions entirely older than the cutoff and purges the
+ *    default partition (for both `audit_logs` and `platform_audit_log`);
+ *  - a dry run counts rows without deleting or dropping anything.
+ * Fixtures are the 2026-02 / 2026-05 / DEFAULT partitions and a mocked pool.
+ * Also covers the create half's naming / month arithmetic (pure); its SQL is
+ * exercised on real Postgres in `test/integration/audit/audit-partition-maintenance.test.ts`.
  */
 
 const mocks = vi.hoisted(() => ({

@@ -1,18 +1,10 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/unit/api/middleware/rate-limit.middleware.test.ts@4850d1d9.
-// Changed: mock specifiers only. The logger mock targets `@magick-agency/observability`; the
-// metrics mock targets `@magick-agency/observability/metrics/voice` and returns
-// `{ trackRateLimitRejected }` directly, since core's `metricsMock` helper (which stubs core's whole
-// metrics module) is not carried. Every case is verbatim except:
-//  - Phase 8: the exemption cases name agency's probes (`/healthz`, `/readyz`); +1 NEW route-class
-//    case for the agency API at the console paths;
-//  - Phase 8 (review, BLOCKING fix): the `tenant` bucket is deleted with platform API keys
-//    (decision #5; see the middleware's header). MODIFIED (7), each now asserting that an
-//    `x-api-key` / `x-mgkvc-tenant` header selects nothing: "keys on tenant + hashed api key",
-//    "uses "anon" scope…", "an authenticated request keeps its tenant key…", "does NOT give an
-//    authenticated webhook-path request the webhook ceiling", "CURRENT BEHAVIOR: a duplicated
-//    x-api-key header…", "budgetFor resolves each bucket kind…", "labels the 429 with the bucket
-//    ACTUALLY charged…", plus a comment in "keeps max, keyGenerator and allowList in lockstep…".
-//    `hashApiKey` is no longer imported (deleted).
+// The logger mock targets `@magick-agency/observability`; the metrics mock targets
+// `@magick-agency/observability/metrics/voice` and returns `{ trackRateLimitRejected }`
+// directly. The exemption cases name the probes (`/healthz`, `/readyz`), and one case covers
+// the route class of the agency API at the console paths.
+// There is no `tenant` bucket (no platform API keys, decision #5; see the middleware's
+// header), so the cases around `x-api-key` / `x-mgkvc-tenant` assert that those headers
+// select nothing.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@magick-agency/observability', () => ({
@@ -247,9 +239,8 @@ describe('registerRateLimit', () => {
       headers: { 'x-api-key': 'k', 'x-mgkvc-tenant': 't1' },
       ip: '1.2.3.4',
     };
-    // PORT NOTE (magick-agency): core put this in the TENANT bucket at the tenant
-    // ceiling. With no tenant bucket it is a webhook request like any other, and
-    // the ceiling still follows the bucket (one counter, one budget).
+    // With no tenant bucket this is a webhook request like any other, and the
+    // ceiling still follows the bucket (one counter, one budget).
     expect(options.keyGenerator(req)).toBe('wh:1.2.3.4');
     expect(options.max(req)).toBe(1000);
   });
@@ -310,17 +301,17 @@ describe('registerRateLimit', () => {
     const options = mockRegister.mock.calls[0]![1] as any;
     const keyGen = options.keyGenerator;
 
-    // Core: a repeated header arrived as string[] and hashApiKey(array) threw in
-    // crypto's .update() — a 500 on any route. The header now selects nothing.
+    // A repeated header arrives as string[]; hashing it would throw in crypto's
+    // .update() — a 500 on any route. The header selects nothing, so it is never read.
     expect(keyGen({ headers: { 'x-api-key': ['a', 'b'], 'x-mgkvc-tenant': 't1' }, ip: '1.2.3.4' })).toBe('1.2.3.4');
   });
 
   // ── Generalised buckets (Part 4): carrier media, /internal, probe exemption ──
   // PR #357 namespaced /api/v1/webhooks/* only, leaving every OTHER
   // unauthenticated route in one shared `<ip>` bucket at the tenant ceiling —
-  // the same failure one door along, and /internal/* is the live one (master
-  // authenticates with Authorization: Bearer, so its whole fleet keyed on one
-  // egress IP, and master retries).
+  // the same failure one door along, and /internal/* is the live one (callers
+  // authenticate with Authorization: Bearer, so a whole fleet keys on one
+  // egress IP, and they retry).
 
   it('gives carrier-facing media paths their own bucket and ceiling', async () => {
     const app = { register: mockRegister } as any;
@@ -369,9 +360,8 @@ describe('registerRateLimit', () => {
     expect(keyGenerator(withBearer)).toBe('int:8.8.8.8');
   });
 
-  // PORT NOTE (magick-agency, Phase 8): agency's probes are `/healthz` and `/readyz`
-  // (`EXEMPT_PATHS`); every probe path below is core's with that rename, and core's own
-  // `/health` / `/ready` are now ordinary (unserved) paths in the `ip` bucket.
+  // The probes are `/healthz` and `/readyz` (`EXEMPT_PATHS`); `/health` / `/ready` are
+  // ordinary (unserved) paths in the `ip` bucket.
   it('exempts /healthz and /readyz outright via allowList', async () => {
     const app = { register: mockRegister } as any;
     await registerRateLimit(app);
@@ -387,7 +377,7 @@ describe('registerRateLimit', () => {
     // Boundary: a route merely starting with the same characters is not a probe.
     expect(allowList(apiReq('/readyzz'))).toBe(false);
     expect(allowList(apiReq('/healthz-check'))).toBe(false);
-    // Core's probe paths are not agency's, and are not exempt here.
+    // `/health` and `/ready` are not probe paths here, and are not exempt.
     expect(allowList(apiReq('/health'))).toBe(false);
     expect(allowList(apiReq('/ready'))).toBe(false);
     // And exemption is EXACT, not a prefix: neither probe has sub-routes, so a
@@ -461,8 +451,8 @@ describe('registerRateLimit', () => {
       { url: '/healthz', headers: {}, ip: 'i' },
       { url: '/healthz/deep', headers: {}, ip: 'i' },
       // An API key wins over the path in every one of them.
-      // PORT NOTE (magick-agency): no longer — the header selects nothing (no tenant bucket);
-      // the rows stay, and the lockstep they assert holds for the path's own bucket.
+      // The header selects nothing (no tenant bucket), so the lockstep these rows
+      // assert holds for the path's own bucket.
       { url: '/api/v1/webhooks/x', headers: { 'x-api-key': 'k' }, ip: 'i' },
       { url: '/api/v1/media-stream/x', headers: { 'x-api-key': 'k' }, ip: 'i' },
       { url: '/internal/x', headers: { 'x-api-key': 'k' }, ip: 'i' },
@@ -510,9 +500,8 @@ describe('registerRateLimit', () => {
     await registerRateLimit(app);
 
     const options = mockRegister.mock.calls[0]![1] as any;
-    // PORT NOTE (magick-agency): core's case put an x-api-key webhook request in the
-    // tenant bucket and expected `tenant`; with no tenant bucket the charged bucket —
-    // and so the label — is `webhook`, whatever headers it carries.
+    // With no tenant bucket the charged bucket — and so the label — is `webhook`,
+    // whatever headers the request carries.
     const req = {
       url: '/api/v1/webhooks/voicelink/static-status/a',
       headers: { 'x-api-key': 'k', 'x-mgkvc-tenant': 't1' },
@@ -602,7 +591,7 @@ describe('registerRateLimit', () => {
     expect(routeClassFor(undefined)).toBe('other');
   });
 
-  // NEW (magick-agency, Phase 8): the console's agency paths carry the `agency` class.
+  // The console's agency paths carry the `agency` class.
   it('labels the agency API at the console paths as agency', () => {
     expect(routeClassFor('/proxy/agency/campaigns/c1/stats')).toBe('agency');
     expect(routeClassFor('/dnc')).toBe('agency');

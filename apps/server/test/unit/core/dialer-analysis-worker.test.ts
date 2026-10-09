@@ -2,7 +2,7 @@
  * DialerAnalysisWorker unit test.
  *
  * Drives the worker's `sweepOnce` + poll lifecycle against a mocked job repo and
- * runner, asserting §7 ordering + durability:
+ * runner, asserting ordering + durability:
  *  - each tick runs promote → expire → claim → recover IN ORDER.
  *  - promotion runs before expiry (B1: a lost-wake job is rescued, not expired).
  *  - claim uses SKIP LOCKED (repo) and each claimed job goes through the runner.
@@ -15,11 +15,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /*
- * PORT NOTE (magick-agency): ported from core test/unit/core/dialer-analysis-worker.test.ts
- * @4850d1d9 (16 cases -> 13). Deleted: the three "settlement sweep (B2)" cases (the
- * settle step is removed, plan §4). Modified: the ordering case ends at `recover`,
- * the gauge case drops the settlement-pending-age half, the step-failure case
- * asserts `recover` (the last step) still ran. Mocks point at agency's module paths.
+ * There is no settle step: the ordering case ends at `recover`, and the
+ * step-failure case asserts `recover` (the last step) still ran.
  */
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),

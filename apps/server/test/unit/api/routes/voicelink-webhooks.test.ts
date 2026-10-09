@@ -1,32 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// PORT NOTE (magick-agency): ported from core test/unit/api/routes/voicelink-webhooks.test.ts@4850d1d9
-// (9 cases → 4): ONLY the `POST /voicelink/webrtc-status/:callId` cases, against
+// Covers only the `POST /voicelink/webrtc-status/:callId` route, against
 // apps/server/src/api/routes/webhooks.routes.ts (which carries that one route). The route module
-// now imports only the logger and the VoiceLink webhook parser, so the harness mocks only
-// `@magick-agency/observability` (core: `utils/logger.js`); the parser stays REAL, as in core.
-// Every other core mock (call/static/IVR/announcement/audio-file repositories, S3, telephony
-// factory, config, metrics, tracing, IVR interpolator, VoBiz TTS, TTS cache, settlement and
-// batch-completion dispatchers, PostHog) served a route that is not carried and is removed.
+// imports only the logger and the VoiceLink webhook parser, so the harness mocks only
+// `@magick-agency/observability`; the parser stays REAL.
 //
-// DELETED (5) — AI-call and WS-static VoiceLink webhooks, not carried:
-//  - 'call.completed with recordingUrl persists recording_url AND drives handleTelephonyEvent'
-//  - 'an unanswered call.failed reaches CallManager carrying a no_answer disposition'
-//  - 'call.initiated (informational) does NOT invoke handleTelephonyEvent and persists nothing'
-//    (all three: `POST /voicelink/status/:callId`, the AI-call route)
-//  - 'counts a rejected token and does not hand the event to the manager'
-//  - 'does not count an accepted token'
-//    (both: `POST /voicelink/static-status/:callId`, the WS-static route)
-//
-// MODIFIED (2):
-//  - 'routes a terminal (answered) event to handleVoicelinkStatus as hangup' — the "must NOT touch
-//    the AI-call path" assertion (`callManager.handleTelephonyEvent` not called) is removed: the
-//    route takes no `callManager` and there is no AI-call path to touch.
-//  - 'short-circuits with {status:true} when no webrtcBridge is wired' — core built the app through
-//    the AI-call harness's `buildApp()` (a `callManager` and no bridge); here the plugin is built
-//    with `webrtcBridge: null`, which is the same "no bridge wired" input.
-// Fixture: `buildAppWithBridge` no longer passes `callManager` (the route's options are
-// `{ webrtcBridge }` only).
+// The route takes no `callManager` and there is no AI-call path to touch, so there is no
+// assertion that `callManager.handleTelephonyEvent` is not called. 'short-circuits with
+// {status:true} when no webrtcBridge is wired' builds the plugin with `webrtcBridge: null`.
+// Fixture: `buildAppWithBridge` passes only `{ webrtcBridge }` as the route's options.
 
 // ── Hoisted mocks ──────────────────────────────────────────────────────
 // webhooks.routes.ts pulls in a wide dependency graph; mock it the same way
@@ -105,7 +87,6 @@ describe('VoiceLink WebRTC webhook — POST /voicelink/webrtc-status/:callId', (
     const [id, event] = handleVoicelinkStatus.mock.calls[0]!;
     expect(id).toBe(WEBRTC_ID);
     expect(event).toMatchObject({ callId: WEBRTC_ID, eventType: 'hangup' });
-    // PORT NOTE: core's "Must NOT touch the AI-call path" assertion is removed (no such path).
     await app.close();
   });
 
@@ -140,7 +121,7 @@ describe('VoiceLink WebRTC webhook — POST /voicelink/webrtc-status/:callId', (
   });
 
   it('short-circuits with {status:true} when no webrtcBridge is wired', async () => {
-    const app = await buildAppWithBridge(null); // no bridge — PORT NOTE: core used `buildApp()`
+    const app = await buildAppWithBridge(null); // no bridge
     const res = await postJson(app, `/api/v1/webhooks/voicelink/webrtc-status/${WEBRTC_ID}`, {
       event: 'call.answered',
       call: { id: 'pcid-9', direction: 'outbound', status: 'answered', callStatus: 'ANSWERED' },

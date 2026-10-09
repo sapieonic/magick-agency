@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from 'vitest';
-// PORT NOTE (magick-agency): ported from core test/unit/core/paced-audio-streamer.test.ts@4850d1d9; only the logger mock specifier changed.
 
 // ---------------------------------------------------------------------------
 // Self-contained harness (project convention: no shared test utilities).

@@ -1,6 +1,6 @@
 /*
- * PORT NOTE (magick-agency): ported from master test/unit/api/middleware/tenant-context.middleware.test.ts@a1f0756a
- * (33 cases → 24). The 9 platform-API-key cases are deleted (decision #5).
+ * Tenant-context middleware. There are no platform API keys (decision #5), so only the
+ * Firebase user path is covered.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -69,9 +69,6 @@ describe('tenantContextMiddleware', () => {
       expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ error: 'Bad Request' }));
     });
   });
-
-  // PORT NOTE (magick-agency): master's 'API key authentication path' block (6
-  // cases) is deleted with the platform-API-key branch (decision #5).
 
   describe('Firebase user authentication path', () => {
     it('should return 401 when there is no user on request', async () => {
@@ -208,21 +205,18 @@ describe('tenantContextMiddleware', () => {
       await tenantContextMiddleware(req, makeReply());
       expect(req.membership?.id).toBe('m-a');
     });
-
-    // PORT NOTE (magick-agency): master's 'uses the same selection on the
-    // platform-API-key branch' is deleted (decision #5).
   });
 
   /**
    * ─── `X-Account-Id` MUST BELONG TO `X-Tenant-Id` ──────────────────────────
    *
-   * The header was assigned to `request.accountId` verbatim, and the only check
+   * The header was assigned to `request.accountId` unvalidated, and the only check
    * near it was the tenant-wide membership fallback above — which succeeds for
    * any tenant-wide member of the tenant they named. So a legitimate tenant-wide
    * member of A could send `X-Tenant-Id: A` with `X-Account-Id: <an account of
    * B>` and every downstream consumer took the foreign id as fact: the agency
-   * ingest job stamped it onto core's roster rows, `proxyToCore` forwarded B's
-   * resolved display name to core, and PostHog filed A's events under B's group.
+   * ingest job stamped it onto the internal roster rows, `callCore` forwarded B's
+   * resolved display name to the internal handler, and PostHog filed A's events under B's group.
    *
    * The invite fix closed the door that needed a cross-tenant membership row.
    * This is the door that needed none.
@@ -310,9 +304,6 @@ describe('tenantContextMiddleware', () => {
       await expect(tenantContextMiddleware(req, makeReply())).rejects.toThrow('Connection terminated');
     });
 
-    // PORT NOTE (magick-agency): master's 'applies on the platform-API-key path
-    // too' is deleted (decision #5).
-
     it('costs nothing when no account is named', async () => {
       // The overwhelmingly common request shape; it must not add a lookup.
       mocks.findByUserAndTenant.mockResolvedValue([activeMembership()]);
@@ -376,9 +367,6 @@ describe('tenantContextMiddleware', () => {
       expect(mocks.findByUserAndTenant).toHaveBeenCalledWith('u-1', 't-1');
       expect(req.membership).toEqual(m);
     });
-
-    // PORT NOTE (magick-agency): master's 'should skip cache for API key auth
-    // path' is deleted (decision #5).
   });
 });
 
