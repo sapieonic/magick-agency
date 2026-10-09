@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * `webrtc_calls` holds both products' calls — softphone legs (`campaign_id IS
  * NULL`) and agency power-dialer legs (`campaign_id IS NOT NULL`) — and stays one
  * table by design (migration 076). The boundary between the two is therefore a
- * read-path predicate, and `docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b puts it at the
+ * read-path predicate, and the design (docs/architecture.md) puts it at the
  * repository rather than at the routes.
  *
  * That placement is what these tests are pinning. All seven tenant-facing
@@ -33,16 +33,10 @@ vi.mock('../../../../src/connection.js', () => ({
 import { WebRtcCallRepository } from '../../../../src/repositories/agency-call.repository.js';
 
 /*
- * PORT NOTE (magick-agency): ported from core
- * test/unit/db/repositories/webrtc-call-scope.test.ts@4850d1d9. The softphone
- * (`'agency'` scope) is deleted, so `WebRtcCallScope` is `'agency'` only:
- *  - DELETED: "refuses agency rows with campaign_id IS NULL" (its subject is the
- *    dialer predicate).
- *  - MODIFIED: the remaining findByIdScoped/listByTenant cases pass `'agency'`
- *    and assert `campaign_id IS NOT NULL`; the table is `agency_calls`.
- *  - KEPT verbatim: the agency-scope cases, the required-scope case (scopeClause
- *    keeps core's body, so untyped code still fails closed to the narrower
- *    `campaign_id IS NULL`), and the unscoped findById case.
+ * `WebRtcCallScope` is `'agency'` only, so the findByIdScoped/listByTenant cases
+ * pass `'agency'` and assert `campaign_id IS NOT NULL`; the table is `agency_calls`.
+ * Also covered: the required-scope case (untyped code still fails closed to the
+ * narrower `campaign_id IS NULL`) and the unscoped findById case.
  */
 
 const repo = new WebRtcCallRepository();

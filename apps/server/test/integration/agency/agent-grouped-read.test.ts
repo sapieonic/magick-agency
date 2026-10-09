@@ -6,8 +6,8 @@ import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, uuidFor } from '../setup/factori
 /**
  * ─── THE GROUPED READ, AGAINST A REAL POSTGRES ──────────────────────────────
  *
- * `GET /agency-agents/grouped-stats` (contract 02a D1-D11) plus 02b's
- * `resolved_timezone` (E3 + Amendment 1). Until this file the whole read had no
+ * `GET /agency-agents/grouped-stats` plus its
+ * `resolved_timezone`. Until this file the whole read had no
  * integration coverage of any kind: `agent-grouped-repository.test.ts` mocks the
  * pool, so every assertion it makes is an assertion about a STRING, and the two
  * defects this file exists for are both invisible at that tier.
@@ -43,7 +43,7 @@ import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, uuidFor } from '../setup/factori
  * precisely the concurrent writer being modelled.
  *
  * ⚠️ The hook is asserted to have RUN. A test whose interleave silently never
- * fired would pass while proving nothing, which is MAG-106 with extra steps.
+ * fired would pass while proving nothing, which is the same failure again.
  */
 
 /** Set by a test; consumed ONCE, at the seam between the two statements. */

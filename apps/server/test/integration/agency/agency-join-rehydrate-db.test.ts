@@ -124,7 +124,7 @@ describe('joinOrRehydrate against real Postgres (integration)', () => {
   it('refuses a second ACCOUNT of the same tenant — the case 092 is scoped for', async () => {
     // `account_id` is deliberately absent from the uniqueness key. This is the
     // reachable population of the defect in a system that permits one RUNNING
-    // campaign per account (D9): the two campaigns an agent can be double-bridged
+    // campaign per account: the two campaigns an agent can be double-bridged
     // across are necessarily in two accounts. An account-scoped index would pass
     // every same-account case and protect nobody.
     const first = await insertAgencyCampaign({ name: 'Acct 1 campaign' });

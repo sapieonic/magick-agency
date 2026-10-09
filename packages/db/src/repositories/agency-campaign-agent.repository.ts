@@ -1,21 +1,19 @@
 import { getPool } from '../connection.js';
 
 /*
- * PORT NOTE (magick-agency): ported verbatim from master
- * `src/db/repositories/agency-campaign-agent.repository.ts` (v3.24.0). Master has
- * no separate model file; the record and input types live here, as in master.
- * Comments are master's and describe master's two-database world (core-owned
- * campaign ids, the proxy); in this app `agency_campaigns` is in the same
- * database, but the table still has no FK on `campaign_id` (baseline).
+ * There is no separate model file; the record and input types live here.
+ * Some comments below describe `campaign_id` as owned by the dialer runtime and
+ * resolved through the proxy; `agency_campaigns` is in the same database as this
+ * table, but the table still has no FK on `campaign_id` (baseline).
  */
 
 /**
  * A row of `agency_campaign_agents` (migration 060, index widened by 064) — one
  * agent's staffing on one campaign, active while `unassigned_at` is NULL. An agent
- * may hold several such rows; being LIVE on one campaign is core's session index,
+ * may hold several such rows; being LIVE on one campaign is the dialer runtime's session index,
  * not this table.
  *
- * `campaign_id` is core's, with no FK behind it (separate databases), so a row can
+ * `campaign_id` has no FK behind it (baseline), so a row can
  * legitimately outlive the campaign it names. Readers resolve the name through the
  * proxy and report what they find rather than assuming the row is stale.
  */
@@ -195,8 +193,8 @@ export class AgencyCampaignAgentRepository {
    * agent's landing page unable to express "which of my campaigns now?". The
    * index is now per-campaign and this returns the set.
    *
-   * Tenant-scoped in the same statement as the read, per rule 1 of the RBAC
-   * section in docs/reference/magick-master/CLAUDE.md — an assignment id is not a capability and a user id
+   * Tenant-scoped in the same statement as the read, per the tenancy rule
+   * (the tenant boundary and the lookup are one statement) — an assignment id is not a capability and a user id
    * says nothing about which tenant is asking.
    *
    * `ORDER BY assigned_at ASC, id ASC` is a STABLE total order, not a ranking:
@@ -270,8 +268,8 @@ export class AgencyCampaignAgentRepository {
    * in one transaction share a timestamp to the microsecond, and a bare
    * `assigned_at` would let equal rows come back in a different order per read.
    *
-   * Tenant-scoped in the same statement as the read, per rule 1 of docs/reference/magick-master/CLAUDE.md's
-   * RBAC section.
+   * Tenant-scoped in the same statement as the read, per the tenancy rule
+   * (the tenant boundary and the lookup are one statement).
    *
    * ── BOUNDED, which an earlier revision of this docstring said it was not ───
    * It used to end "deliberately UNBOUNDED … a handful per campaign per year, not
@@ -285,7 +283,7 @@ export class AgencyCampaignAgentRepository {
    * entire point of migration 060 closing rather than deleting. And the only
    * caller is `GET /proxy/agency/my-campaigns`, which an `agent` — the lowest
    * privileged role there is — reaches on their own console, and which spends one
-   * core round trip per distinct campaign on the result.
+   * campaign lookup per distinct campaign on the result.
    *
    * So the nominated shape is implemented rather than described: a hard `LIMIT`
    * the caller cannot raise, and an optional `from`/`to` window on `assigned_at`
@@ -335,7 +333,7 @@ export class AgencyCampaignAgentRepository {
    *
    * ── The leak this closes ───────────────────────────────────────────────────
    * `DELETE /users/:id/membership` removed a membership and dropped a cache key,
-   * and nothing else. Nothing in master called any bulk unassign — this repository's
+   * and nothing else. Nothing called any bulk unassign — this repository's
    * only caller was the staffing route — so a departed agent stayed on every
    * supervisor's staffing list forever, and `GET /campaigns/:id/agents` went on
    * resolving them to a name and an email out of `users`. The same held for a role
@@ -596,7 +594,7 @@ export class AgencyCampaignAgentRepository {
    * from THIS campaign", so a stale console holding an old campaign id must not
    * be able to unstaff someone from the campaign they were since moved to. Note
    * the campaign predicate is NOT the account check — the route proves campaign
-   * ownership through core before calling this (`assertCampaignInScope`), because
+   * ownership through the dialer runtime before calling this (`assertCampaignInScope`), because
    * this table has no trustworthy account column to check against.
    */
   async unassign(

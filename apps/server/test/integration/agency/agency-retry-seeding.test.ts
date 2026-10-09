@@ -100,7 +100,7 @@ afterAll(async () => {
   await closeTestPool();
 });
 
-describe('the DR-4 exclusion is NULL-safe', () => {
+describe('the compliance exclusion is NULL-safe', () => {
   it('seeds contacts whose suppressed_reason is NULL', async () => {
     // The whole bug in one assertion. Before the fix this was `[]` — a NULL
     // reason failed the negated predicate, so the ordinary roster was invisible.
@@ -113,7 +113,7 @@ describe('the DR-4 exclusion is NULL-safe', () => {
 
   it('still refuses dnc and invalid, and accounts for them', async () => {
     // Selecting every suppressed contact must NOT reach the two compliance
-    // rows — DR-4 is unconditional, not a checkbox — and the supervisor must be
+    // rows — the exclusion is unconditional, not a checkbox — and the supervisor must be
     // told where the missing rows went, or 0-of-2 reads as a bug.
     const preview = await agencyCampaignRepository.retryPreview(PARENT, {
       state: ['suppressed'],
@@ -236,7 +236,7 @@ describe('a contact that is on a call right now is never seeded', () => {
     // retries "everyone we did not reach". Pause does not hang up a bridged
     // call. Seeding this row and starting the child dials a number the parent
     // has an OPEN CONVERSATION on. `uq_agency_attempt_live` cannot catch it:
-    // DR-2 copies the contact, so the child's attempt is a different contact_id.
+    // A retry copies the contact, so the child's attempt is a different contact_id.
     await addLiveConnected();
     const preview = await agencyCampaignRepository.retryPreview(PARENT, {
       last_outcome: ['no_answer', 'busy', '__none__'],
@@ -429,11 +429,11 @@ describe('the commit delivers exactly what the preview promised', () => {
     );
 
     for (const row of rows) {
-      // DR-2: a retry is a fresh allowance, so the counters reset.
+      // A retry is a fresh allowance, so the counters reset.
       expect(row.attempt_count).toBe(0);
       expect(row.our_fault_attempts).toBe(0);
       expect(row.state).toBe('pending');
-      // DR-6: lineage points back, and the root is the PARENT's row — not this
+      // Lineage points back, and the root is the PARENT's row — not this
       // one — which is what makes the agent's prior-attempt read work.
       expect(row.source_contact_id).not.toBeNull();
       expect(row.root_contact_id).toBe(row.source_contact_id);

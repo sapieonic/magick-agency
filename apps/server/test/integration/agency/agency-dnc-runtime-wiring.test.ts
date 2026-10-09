@@ -4,7 +4,7 @@ import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js'
 import { TEST_REDIS_URL } from '../../helpers/test-redis.js';
 import { uuidFor } from '../setup/factories.js';
 
-// PORT NOTE: core mocked `src/db/connection.js`; agency's pool lives in `@magick-agency/db`.
+// The DB pool lives in `@magick-agency/db`.
 vi.mock('@magick-agency/db', () => ({
   getPool: () => getTestPool(),
   healthCheck: async () => true,
@@ -17,8 +17,7 @@ vi.mock('@magick-agency/db/connection', () => ({
 vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: {}, // PORT NOTE: core stubbed `telephony.vobiz` (VoBiz deleted, plan §5)
-    // PORT NOTE: core also stubbed `masterService` — the outbox forward's target (B8).
+    telephony: {}, // no carrier config is needed
   },
 }));
 
@@ -32,31 +31,24 @@ const { DncRegistry } = await import('../../../src/agency/dnc-registry.js');
 const { ScriptedBridge } = await import('./chaos/harness.js');
 
 /*
- * PORT NOTE (magick-agency, Phase 6, decision B8 — REWRITTEN). Core's
- * test/integration/agency/agency-dnc-runtime-wiring.test.ts@4850d1d9 (1 case: "arms on
- * start, generation-safely hands back a mid-forward claim, and a fresh runtime lands
- * it") pinned the runtime's DNC OUTBOX lifecycle: `AgencyRuntime.start()` arms the
- * `AgencyDncOutboxSweeper`, `stop()` hands a mid-forward `agency_dnc_outbox` claim back
- * (generation-matched), and a fresh runtime forwards it to master and marks it
- * `landed`. The sweeper, the forward and the outbox writes are deleted (B8): a mark
+ * Decision B8: there is no DNC outbox sweeper, no forward and no outbox write. A mark
  * writes `dnc_entries` in the agent's own transaction, and the dial-time gate reads
- * that table. The table `agency_dnc_outbox` stays in the baseline for the Phase 10
- * rollback mirror and nothing writes it.
+ * that table. The table `agency_dnc_outbox` stays in the baseline for the rollback
+ * mirror and nothing writes it.
  *
- * The case keeps its subject — "what the runtime's start/stop does to the DNC path,
- * and whether a record survives into a fresh runtime" — re-stated for the collapsed
- * design, against real Postgres and Redis:
+ * The subject is "what the runtime's start/stop does to the DNC path, and whether a
+ * record survives into a fresh runtime", against real Postgres and Redis:
  *  - `runtime.dnc` is the DB-backed registry (not a Redis set), live as soon as the
  *    runtime starts, with no network: a `dnc_entries` row answers `suppressed` and no
- *    `fetch` is ever issued (core's mark reached master through `fetch`);
+ *    `fetch` is ever issued ;
  *  - nothing writes `agency_dnc_outbox` across start → stop;
  *  - the record survives the replica: a FRESH runtime answers `suppressed` for it, the
- *    property core's "a fresh runtime lands it" proved for the outbox;
+ *    durability property;
  *  - and the gate fails closed: an unreadable table is `unavailable`, never `clear`.
  */
 
 const REDIS_PREFIX = 'dnc-runtime:';
-const TENANT = uuidFor('runtime-tenant'); // PORT NOTE: UUID column (core: 'runtime-tenant')
+const TENANT = uuidFor('runtime-tenant'); // UUID column
 const PHONE = '+14155550100';
 
 let redis: Redis;
@@ -72,7 +64,7 @@ describe('AgencyRuntime DNC gate wiring (integration, B8)', () => {
   beforeEach(async () => {
     await truncateAll();
     realFetch = globalThis.fetch;
-    // PORT NOTE: the worktree's agency test Redis (core: db 9 on its 6380).
+    // the worktree's agency test Redis.
     redis = new Redis(TEST_REDIS_URL, {
       keyPrefix: REDIS_PREFIX,
       maxRetriesPerRequest: 3,

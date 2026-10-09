@@ -2,9 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS, insertWebrtcCall } from '../setup/factories.js';
 
-// PORT NOTE (magick-agency): ported from core
-// test/integration/db/webrtc-call-analysis-projection.test.ts@4850d1d9. Ids are
-// UUIDs (core: 'test-tenant' / 'test-account'); the scope is `'agency'`.
+// Ids are UUIDs; the scope is `'agency'`.
 
 vi.mock('../../../src/connection.js', () => ({ getPool: () => getTestPool() }));
 const { webrtcCallRepository: repo } = await import('../../../src/repositories/agency-call.repository.js');

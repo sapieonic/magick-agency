@@ -15,16 +15,14 @@ const {
 } = await import('../../../src/agency/agency-roster.client.js');
 
 /**
- * Equivalence suite for the roster hand-off collapse (plan §1, decision B9).
+ * The roster hand-off, in-process.
  *
- * Master's `agency-roster.client.test.ts@a1f0756a` (22 cases) ran the client against a mocked
- * `coreInternalRequest`. The hop is now an in-process call into core's handler body
- * (core `agency.routes.ts:1892-1962`), so each of those cases is re-run here against REAL
- * Postgres and the real `agencyContactRepository`, asserting the same outward behaviour.
- * The mapping below is recorded case by case in PORTING.md ("Lane B2 — roster hand-off").
+ * The hop is an in-process call into the internal handler's body, so the client's behaviour
+ * is exercised here against REAL Postgres and the real `agencyContactRepository`, asserting
+ * the outward behaviour.
  *
- * Cases that existed only to test the transport (retry on 5xx, attempt counting around a lost
- * response, mapping an ingress 404) have no in-process equivalent and are listed as deleted.
+ * There are no transport-only cases (retry on 5xx, attempt counting around a lost
+ * response, mapping an ingress 404): the call is in-process.
  */
 
 const JOB = '11111111-2222-3333-4444-555555555555';
@@ -65,7 +63,7 @@ describe('rosterChunkKey', () => {
     expect(rosterChunkKey(JOB, 0)).not.toBe(rosterChunkKey('other-job', 0));
   });
 
-  it("fits core's VARCHAR(128) idempotency column", () => {
+  it("fits the VARCHAR(128) idempotency column", () => {
     expect(rosterChunkKey(JOB, 999_999).length).toBeLessThanOrEqual(128);
   });
 });
@@ -147,7 +145,7 @@ describe('sendRosterChunk (in-process)', () => {
     expect(whole.duplicate_chunk).toBe(true);
   });
 
-  it("threads core's duplicate-rejection fields through to the caller", async () => {
+  it("threads the duplicate-rejection fields through to the caller", async () => {
     await sendRosterChunk({
       campaignId, tenantId: TENANT, accountId: ACCOUNT, ingestJobId: JOB, chunkIndex: 0,
       isFinal: false, contacts: contacts(3),
@@ -175,7 +173,7 @@ describe('sendRosterChunk (in-process)', () => {
   });
 
   it('carries the "these counts are unknown" flag through untouched', async () => {
-    // A chunk applied before core's migration 084: a marker with no recorded rejection counts.
+    // A chunk applied before migration 084: a marker with no recorded rejection counts.
     await getTestPool().query(
       `INSERT INTO agency_ingest_chunks
          (campaign_id, ingest_job_id, chunk_index, idempotency_key, chunk_count, row_count)
@@ -203,9 +201,8 @@ describe('sendRosterChunk (in-process)', () => {
   });
 
   /**
-   * MODIFIED (recorded): the HTTP client omitted `account_id` cleanly and core's handler then
-   * answered 400, because ownership is compared on tenant AND account and a missing account is
-   * malformed (core `agency.routes.ts:1894-1900`, :1841-1846). The in-process call keeps that
+   * The handler answers 400 when `account_id` is omitted, because ownership is compared on
+   * tenant AND account and a missing account is malformed. The in-process call keeps that
    * answer: no account context is a refusal, never a wildcard.
    */
   it('refuses a request with no account context instead of treating it as a wildcard', async () => {
@@ -219,7 +216,7 @@ describe('sendRosterChunk (in-process)', () => {
     expect(await rosterCount()).toBe(0);
   });
 
-  describe('ownership (core `requireOwned`, applied to the request tenant/account)', () => {
+  describe('ownership (`requireOwned`, applied to the request tenant/account)', () => {
     async function expectNotFound(over: { campaignId?: string; tenantId?: string; accountId?: string }) {
       const err = await sendRosterChunk({
         campaignId: over.campaignId ?? campaignId, tenantId: over.tenantId ?? TENANT,
@@ -245,9 +242,8 @@ describe('sendRosterChunk (in-process)', () => {
 
 describe('supersedeRoster (in-process)', () => {
   /**
-   * KNOWN GAP, ported as it behaved in production: core @4850d1d9 has no
-   * `POST /internal/agency-campaigns/:id/roster/supersede` (core `agency.routes.ts:1827` calls it
-   * "future"), so master's call always met Fastify's 404 and was mapped to `unsupported` after ONE
+   * KNOWN GAP: there is no roster-supersede handler yet, so a replace is
+   * mapped to `unsupported` after ONE
    * attempt, with nothing touched. These cases pin that, including that no roster row moves.
    */
   async function seededRoster(): Promise<void> {

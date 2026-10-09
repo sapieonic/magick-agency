@@ -1,43 +1,40 @@
 /**
  * Types for the WebRTC browser dialer (human → PSTN softphone).
  *
- * Phase 2 of the WebRTC human-calling feature. The backend contract lives in
- * magic-voice-core PR #183 (proxied through master's `/proxy/webrtc-call/*`).
- * Some response shapes are not fully pinned in the ticket, so the API layer
- * normalizes defensively — see `src/api/webrtc-call.ts`.
+ * The WebRTC human-calling feature (served through the public API layer's
+ * `/proxy/webrtc-call/*`). Some response shapes are not fully pinned, so the API
+ * layer normalizes defensively — see `src/api/webrtc-call.ts`.
  */
 
 // The dialer's summary payload is the SAME `CallAnalysisResult` an AI call
-// produces (core reuses the type verbatim), so the detail page can hand it to
+// produces (the dialer runtime reuses the type unchanged), so the detail page can hand it to
 // the shared `AnalysisSection` with no adaptation.
-// PORT NOTE (magick-agency): `./call` (the AI-call types) is not ported;
-// `CallAnalysisResult` is carried verbatim in `./shared`.
+// `CallAnalysisResult` lives in `./shared`.
 import type { CallAnalysisResult } from './shared';
 
-// PORT NOTE (magick-agency): only the parts of cusui's `webrtc-call.ts` an agency
-// campaign call shows are ported — the persisted call record, its analysis
-// lifecycle, transcript and recording outcome, as served inside
-// `AgencyAttemptCallDetail` (`./attempt-call`). The softphone surface is removed:
-// the live-dialer lifecycle (`WebRtcCallStatus`, `TERMINAL_WEBRTC_STATUSES`,
+// Only the parts an agency campaign call shows are declared here — the persisted
+// call record, its analysis lifecycle, transcript and recording outcome, as served
+// inside `AgencyAttemptCallDetail` (`./attempt-call`). The softphone surface does
+// not exist: the live-dialer lifecycle (`WebRtcCallStatus`, `TERMINAL_WEBRTC_STATUSES`,
 // `KNOWN_WEBRTC_STATUSES`), carrier choice (`WebRtcTelephonyProvider`,
 // `WEBRTC_TELEPHONY_PROVIDERS` — VoBiz is out, VoiceLink is the only carrier),
 // the caller-ID picker (`WebRtcCallerId`, incl. BYOC `is_byoc` — BYOC is out of scope too, and
-// the agency caller-ID list, `GET /phone-numbers`, carries no `is_byoc`: Phase 8), call start
+// the agency caller-ID list, `GET /phone-numbers`, carries no `is_byoc`), call start
 // (`WebRtcCallStartInput` / `WebRtcCallStartResponse`) and the softphone call
-// history list (`WebRtcCallsListResponse`, `WebRtcCallListFilters`). See PORTING.md.
+// history list (`WebRtcCallsListResponse`, `WebRtcCallListFilters`) are not declared.
 
 /**
  * Persisted/historical status of a WebRTC call record (call history), as stored
- * on the `webrtc_calls` row by core. This is a DIFFERENT concept from the live
+ * on the `webrtc_calls` row by the dialer runtime. This is a DIFFERENT concept from the live
  * dialer's `WebRtcCallStatus` lifecycle above — these are the terminal/durable
  * states the record settles into.
  *
- * Sourced from the CHECK constraint `ck_webrtc_status` in core migration
+ * Sourced from the CHECK constraint `ck_webrtc_status` in the dialer runtime migration
  * `047_webrtc_calls.sql`:
  *   initiating | ringing | in_progress | completed | failed | no_answer | busy | canceled
  *
  * The trailing `(string & {})` keeps the literal autocomplete while tolerating
- * any future status core may add without a type break.
+ * any future status the dialer runtime may add without a type break.
  */
 export type WebRtcCallRecordStatus =
   | 'initiating'
@@ -57,7 +54,7 @@ export type WebRtcCallRecordStatus =
  * `awaiting_recording` (the carrier hasn't delivered the file yet) and `expired`
  * (it never did). `deleted` is the DSAR erasure terminal state.
  *
- * Mirrors core's `DialerAnalysisStatus` (`webrtc-call.model.ts`).
+ * Mirrors the dialer runtime's `DialerAnalysisStatus` (`webrtc-call.model.ts`).
  */
 export type DialerAnalysisStatus =
   | 'awaiting_recording'
@@ -69,7 +66,7 @@ export type DialerAnalysisStatus =
   | 'deleted';
 
 /**
- * The overall-sentiment vocabulary core emits. Scalar form of the sentiment
+ * The overall-sentiment vocabulary the dialer runtime emits. Scalar form of the sentiment
  * `label` buried in the `call_analysis` blob — surfaced flat on the LIST row as
  * `analysis_sentiment_label` (see below) so the list can render sentiment
  * without the detail-only blob it deliberately excludes.
@@ -103,19 +100,19 @@ export interface DialerTranscriptEntry {
  * One `null` for every failure was the previous shape, and it collapsed four
  * different sentences into "Recording not available." — an entitlement refusal, a
  * call that aged out, a call that was never recorded, and a carrier we could not
- * reach. Master goes to specific trouble to forward core's `call_purged`,
+ * reach. The public API layer goes to specific trouble to forward the dialer runtime's `call_purged`,
  * `call_never_placed` and `no_recording` codes unmasked (four allow-list entries
  * in its `error-mask.middleware.ts`) precisely so this distinction can be made,
- * and §7b's central claim is that *"the call is no longer available" must be
+ * and the central claim is that *"the call is no longer available" must be
  * distinguishable from an error.* This union is that work's consumer.
  */
 export type RecordingOutcome =
   | { status: 'ready'; url: string; mimeType: string | null }
-  /** The call aged out of retention — core's `call_purged` / `call_never_placed`. */
+  /** The call aged out of retention — the dialer runtime's `call_purged` / `call_never_placed`. */
   | { status: 'purged' }
-  /** The call is there and simply carries no recording — core's `no_recording`. */
+  /** The call is there and simply carries no recording — the dialer runtime's `no_recording`. */
   | { status: 'not_recorded' }
-  /** The tenant may not hear it — master 403s the media route on its capability. */
+  /** The tenant may not hear it — the public API layer 403s the media route on its capability. */
   | { status: 'forbidden' }
   /** We could not reach the carrier that stores it — a 5xx from either tier. */
   | { status: 'unreachable' };
@@ -141,7 +138,7 @@ export interface TranscriptMeta {
 /**
  * A persisted WebRTC call record as returned by
  * `GET /proxy/webrtc-call` (list) and `GET /proxy/webrtc-call/:id` (detail).
- * Mirrors core's `webrtc_calls` row shape exactly (see migration 047/048).
+ * Mirrors the dialer runtime's `webrtc_calls` row shape exactly (see migration 047/048).
  *
  * NOTE the list/detail split: the LIST endpoint returns `analysis_status` only —
  * the three JSONB blobs (`call_analysis`, `conversation_log`, `transcript_meta`)
@@ -178,7 +175,7 @@ export interface WebRtcCallRecord {
   /** Summary lifecycle. Absent/null on calls placed before the feature existed. */
   analysis_status?: DialerAnalysisStatus | null;
   /**
-   * List-safe scalar sentiment. Core extracts the overall-sentiment `label` out
+   * List-safe scalar sentiment. The dialer runtime extracts the overall-sentiment `label` out
    * of the detail-only `call_analysis` JSONB server-side and returns it flat on
    * the LIST response, so the calls list can render sentiment WITHOUT the blob
    * (which `WEBRTC_LIST_COLUMNS` excludes). Null until the summary completes /

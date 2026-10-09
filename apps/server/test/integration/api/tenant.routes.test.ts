@@ -1,10 +1,6 @@
 /*
- * PORT NOTE (magick-agency): ported from master test/integration/api/tenant.routes.test.ts@a1f0756a
- * (23 cases → 17). Deleted with `GET /tenants` and `PUT /tenants/:id`: 'GET / —
- * lists user tenants' (2) and 'PUT /:id — update tenant' (4). Real Postgres
- * through `initDbPool` (master mocked `src/db/connection.js`). The
- * metadata-cache write-fence stubs and the core account-settings sync stub are
- * removed with the modules.
+ * Tenant routes on real Postgres through `initDbPool`. `GET /tenants` and
+ * `PUT /tenants/:id` are not served, so they are not covered.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { vi } from 'vitest';
@@ -54,7 +50,7 @@ vi.mock('../../../src/rbac/rbac.middleware.js', () => ({
 }));
 
 // Stub logger
-// PORT NOTE (magick-agency): partial — `packages/db`'s pool imports `logger`.
+// Partial mock: `packages/db`'s pool imports `logger`.
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/observability')>()),
   createChildLogger: () => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }),
@@ -391,7 +387,7 @@ describe('tenant routes (integration)', () => {
 
       /**
        * `firebase_uid` is read by the derivation and must not leave the
-       * service — the stub form is `pending_<uuid>` and the ticket forbids
+       * service — the stub form is `pending_<uuid>` and it must not
        * leaking either it or a real uid. Asserted over the SERIALIZED body, not
        * over the parsed object's top-level keys: the point is that the bytes do
        * not contain it, wherever somebody might later nest it.

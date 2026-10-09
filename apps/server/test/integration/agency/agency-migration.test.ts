@@ -30,7 +30,7 @@ const AGENCY_TABLES = [
   'agency_ingest_chunks',
 ] as const;
 
-/** Every legal value of every state machine, from the design's §5. */
+/** Every legal value of every state machine, from the design's. */
 const LEGAL = {
   campaign_status: ['draft', 'running', 'paused', 'stopping', 'completed', 'stopped'],
   contact_state: ['pending', 'in_flight', 'connected', 'completed', 'exhausted', 'suppressed'],

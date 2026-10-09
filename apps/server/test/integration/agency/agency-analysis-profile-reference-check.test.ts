@@ -14,7 +14,7 @@ const { agencyCampaignRepository } = await import(
  * ─── Q3's reference check, against a real Postgres ───────────────────────────
  *
  * Two predicates stop a primary-app admin retiring an analysis profile a live
- * agency campaign depends on (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b, Q3), because
+ * agency campaign depends on (decision Q3), because
  * there are two ways to depend on one:
  *
  * - `findLiveDependentsOnAnalysisProfile` — campaigns that NAME this profile.
@@ -41,7 +41,7 @@ const { agencyCampaignRepository } = await import(
  *     predicate.
  *
  * There is deliberately no foreign key from `agency_campaigns.analysis_profile_id`
- * to `call_analysis_profiles` (§7, migration 076), which is why these fixtures can
+ * to `call_analysis_profiles`, which is why these fixtures can
  * name a profile id that has no row at all — and why the guard has to be a query
  * rather than a constraint.
  */
@@ -82,7 +82,7 @@ describe('findLiveDependentsOnAnalysisProfile — against a real Postgres', () =
 
     // ── The projection, against real columns ───────────────────────────────
     // These rows reach the route and land, capped to a sample with the true count
-    // beside them, in the refusal body's `details.campaigns` — on a surface master
+    // beside them, in the refusal body's `details.campaigns` — on a surface the public API layer
     // gates on `calls.dialer.analytics` ALONE, a caller who may hold no agency
     // entitlement at all. The id crosses deliberately and the name must not, so
     // the row has to be id + status and nothing else. Every fixture above carries a

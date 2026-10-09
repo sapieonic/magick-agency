@@ -1,21 +1,12 @@
 /*
- * PORT NOTE (magick-agency): ported from master test/integration/api/super-admin.routes.test.ts@a1f0756a
- * (56 cases → 46). Deleted with the routes they exercised (super-admin.routes.ts
- * module note): 'POST /super-admin/tenants/:id/credits' (4) and
- * 'POST /super-admin/tenants/:id/credits/deduct' (3) — no credits in v1;
- * 'reports the credit cache beside the ledger, as strings' (1) — `credit_cache`
- * went with the credit ledger; 'DELETE /super-admin/tenants/:id' (2) — the route
- * is not ported. Modified: 'creates tenant with account and membership' (no
- * `core_key_provisioned` / `phone_auto_assigned` on the response, no
- * `tenant_phone_assignments` row, and no `tenant_credit_balances` row to check),
- * 'lists all tenants with credit balance and member count' and 'returns tenant
- * detail with members and credits' (the credit-balance fixture and assertions
- * are dropped; the rest is master's). Real Postgres through `initDbPool` (master
- * mocked `src/db/connection.js`). The config mock spreads the real config and
- * overrides only `superAdmin` (master's `encryption` / `coreService` have no
- * counterpart). Master's core-client, proxy.utils, crypto and phone-number
- * repository mocks are removed with the modules they stubbed (no core, no core
- * API key, no pooled number). The route takes no `creditService` option.
+ * Super-admin routes on real Postgres through `initDbPool`. There are no credit routes
+ * (`/super-admin/tenants/:id/credits`, `.../credits/deduct`), no credit cache, and no
+ * `DELETE /super-admin/tenants/:id` in v1 (see super-admin.routes.ts module note).
+ * Tenant creation returns no `core_key_provisioned` / `phone_auto_assigned`, writes no
+ * `tenant_phone_assignments` row and no `tenant_credit_balances` row; the tenant list and
+ * detail carry no credit balance. The config mock spreads the real config and overrides
+ * only `superAdmin`. There is no API key or pooled number to stub, and the route takes
+ * no `creditService` option.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
 import { vi } from 'vitest';
@@ -35,9 +26,7 @@ import { trackSuperAdminAuditWrites } from '../../helpers/drain-super-admin-audi
 
 // ── Mocks (must be before dynamic imports) ─────────────────────────────────
 
-// PORT NOTE (magick-agency): master replaced the whole config with
-// `{ superAdmin, encryption, coreService }`. The invite issuer that add-user now
-// calls reads `invites` / `brand` / `consoleBaseUrl` / `mailjet` (unset → the
+// The invite issuer that add-user calls reads `invites` / `brand` / `consoleBaseUrl` / `mailjet` (unset → the
 // mail reports unsent), so the real parsed config is kept and only `superAdmin`
 // is overridden.
 vi.mock('../../../src/config/index.js', async (importOriginal) => {
@@ -51,7 +40,7 @@ vi.mock('../../../src/config/index.js', async (importOriginal) => {
   };
 });
 
-// PORT NOTE (magick-agency): partial — `packages/db`'s pool imports `logger`.
+// Partial mock: `packages/db`'s pool imports `logger`.
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/observability')>()),
   createChildLogger: () => ({
@@ -65,7 +54,7 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 vi.mock('../../../src/cache/redis-cache.js', () => ({
   redisCache: {
     get: vi.fn().mockResolvedValue(null), set: vi.fn(), del: vi.fn(), delByPattern: vi.fn(),
-    // Q5 (Manas, 2026-10-09): revocation deletes forward to `del` and report success.
+    // decision Q5: revocation deletes forward to `del` and report success.
     async delForRevocation(this: { del: (...k: string[]) => unknown }, ...k: string[]) { await this.del(...k); return true; },
     // metadata-cache.ts write fence
     incrementGeneration: vi.fn().mockResolvedValue(1),
@@ -133,14 +122,13 @@ describe('super-admin routes (integration)', () => {
     await insertSuperAdmin({ id: adminId });
 
     app = Fastify();
-    // PORT NOTE (magick-agency): master passed `creditService: new CreditService(null)`.
     await app.register(superAdminRoutes, {
       prefix: '/super-admin',
     });
     await app.ready();
   });
 
-  // PORT NOTE (magick-agency): drain the routes' fire-and-forget super-admin
+  // Drain the routes' fire-and-forget super-admin
   // audit writes before the next `truncateAll()`; an in-flight INSERT deadlocks
   // with the TRUNCATE (see test/helpers/drain-super-admin-audit.ts).
   const auditWrites = trackSuperAdminAuditWrites();
@@ -303,17 +291,14 @@ describe('super-admin routes (integration)', () => {
       expect(body.tenant).toBeDefined();
       expect(body.tenant.name).toBe('New Tenant Corp');
       expect(body.owner_email).toBe('owner@example.com');
-      // PORT NOTE (magick-agency): master asserted `core_key_provisioned: true`
-      // (a mocked `createCoreApiKey`). No core API key and no pooled number are
-      // provisioned, so neither flag is on the response (contract
-      // `CreateTenantResponse`).
+      // No API key and no pooled number are provisioned, so neither flag is on
+      // the response (contract `CreateTenantResponse`).
       expect(body).not.toHaveProperty('core_key_provisioned');
       expect(body).not.toHaveProperty('phone_auto_assigned');
 
       // Verify tenant, account and membership were created in DB
-      // PORT NOTE (magick-agency): master also checked a zero
-      // `tenant_credit_balances` row — no credits; the pooled-number check below
-      // replaces it.
+      // There are no credits, so the pooled-number check below stands in for a
+      // credit-balance check.
       const pool = getTestPool();
       const tenantId = body.tenant.id;
 
@@ -383,10 +368,6 @@ describe('super-admin routes (integration)', () => {
       expect(body.details).toBeDefined();
     });
   });
-
-  // PORT NOTE (magick-agency): master's 'POST /super-admin/tenants/:id/credits'
-  // (4 cases) and 'POST /super-admin/tenants/:id/credits/deduct' (3 cases) are
-  // deleted with the credit routes — see the file note.
 
   // ── POST /admins ─────────────────────────────────────────────────────────
 
@@ -771,9 +752,8 @@ describe('super-admin routes (integration)', () => {
   // ── GET /tenants ─────────────────────────────────────────────────────────
 
   describe('GET /super-admin/tenants', () => {
-    // PORT NOTE (magick-agency): name kept verbatim; the `insertCreditBalance`
-    // fixture and the `credit_balance` assertion are dropped with the
-    // `tenant_credit_balances` join (no credits). `member_count` is master's.
+    // No credit balance: there is no `tenant_credit_balances` join, so only
+    // `member_count` is asserted.
     it('lists all tenants with credit balance and member count', async () => {
       const token = await loginAndGetToken(app);
       const tenant1 = await insertTenant({ name: 'Tenant Alpha' });
@@ -801,9 +781,7 @@ describe('super-admin routes (integration)', () => {
   // ── GET /tenants/:id ─────────────────────────────────────────────────────
 
   describe('GET /super-admin/tenants/:id', () => {
-    // PORT NOTE (magick-agency): name kept verbatim; the `insertCreditBalance`
-    // fixture and the `credits` assertions are dropped (contract
-    // `SuperAdminTenantDetail` has no `credits`).
+    // The detail carries no `credits` (contract `SuperAdminTenantDetail`).
     it('returns tenant detail with members and credits', async () => {
       const token = await loginAndGetToken(app);
       const tenant = await insertTenant();
@@ -824,9 +802,6 @@ describe('super-admin routes (integration)', () => {
       expect(body.members).toHaveLength(1);
     });
 
-    // PORT NOTE (magick-agency): master's 'reports the credit cache beside the
-    // ledger, as strings' is deleted — `credit_cache` went with the credit ledger.
-
     it('returns 404 for non-existent tenant', async () => {
       const token = await loginAndGetToken(app);
 
@@ -839,9 +814,6 @@ describe('super-admin routes (integration)', () => {
       expect(res.statusCode).toBe(404);
     });
   });
-
-  // PORT NOTE (magick-agency): master's 'DELETE /super-admin/tenants/:id'
-  // (2 cases) is deleted — the route is not ported (super-admin.routes.ts).
 
   // ── GET /admins ──────────────────────────────────────────────────────────
 

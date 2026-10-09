@@ -3,10 +3,10 @@ import Redis from 'ioredis';
 import type { FastifyInstance } from 'fastify';
 
 /**
- * Plan §8 Phase 3 exit gate: **a super-admin creates a tenant and adds a user, who
+ * End-to-end onboarding: **a super-admin creates a tenant and adds a user, who
  * then signs in** — across the REAL routes (`buildApp` with a real context: Postgres
  * 5436, Redis 6383 test db), with only Firebase's `verifyIdToken` mocked (as
- * master's suites do). NEW (magick-agency, no single source).
+ * the other suites do).
  *
  * The walk:
  *  1. the first super-admin is created by `scripts/create-super-admin.ts`
@@ -82,7 +82,7 @@ describe('platform onboarding end to end (integration, real routes)', () => {
     h.verifyIdToken.mockReset();
   });
 
-  // PORT NOTE (magick-agency): drain the routes' fire-and-forget super-admin
+  // Drain the routes' fire-and-forget super-admin
   // audit writes before the next `truncateAll()`; an in-flight INSERT deadlocks
   // with the TRUNCATE (see test/helpers/drain-super-admin-audit.ts).
   const auditWrites = trackSuperAdminAuditWrites();
@@ -99,7 +99,7 @@ describe('platform onboarding end to end (integration, real routes)', () => {
   });
 
   it('super-admin creates a tenant and adds a user, who then signs in', async () => {
-    // 1 — a super-admin, created fresh (decision #6), logs in.
+    // 1 — a super-admin, created fresh, logs in.
     const root = await createSuperAdmin({
       email: 'root@agency.example', password: 'correct horse battery', name: 'Root', system: true,
     });

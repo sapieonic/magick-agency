@@ -7,14 +7,14 @@
  * a Node-only or DOM-only API.
  *
  * ROOT (flat): the domain contract and the single sources of truth —
- *   - `./agency`  core's frozen agency contract (frames, payloads, unions);
+ *   - `./agency`  the dialer runtime's frozen agency contract (frames, payloads, unions);
  *   - `./errors`  every agency error vocabulary as union + `as const` list;
  *   - `./rbac`    roles, permissions, the permission matrix, `hasPermission`;
  *   - `./flags`   the three agency feature flags.
  *
  * NAMESPACED: the HTTP API layers, because they reuse names the root already
- * exports with a DIFFERENT shape (cusui's `AgencyCampaignStats` is master's
- * enriched payload, not core's — `api/agency/CONTRACT-DIFF.md`):
+ * exports with a DIFFERENT shape (the console's `AgencyCampaignStats` is the public API layer's
+ * enriched payload, not the dialer runtime's):
  *   - `AgencyApi`    console agency surfaces (`./api/agency/*`);
  *   - `PlatformApi`  auth/session, settings, team, invites, notifications, audit,
  *                    flags map, super-admin (`./api/platform/*`).

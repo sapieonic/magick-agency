@@ -10,20 +10,19 @@ import {
 } from '../../../src/retry-campaign-bounds.js';
 
 /**
- * ─── THE CROSS-REPO BOUNDS, PINNED TO THEIR LITERAL VALUES ──────────────────
+ * ─── THE RETRY BOUNDS, PINNED TO THEIR LITERAL VALUES ────────────────────────
  *
  * Every other test in this feature reads these constants SYMBOLICALLY, which is
  * right — a test asserting `matched > RETRY_MAX_SEED_ROWS` should keep passing
  * when the number is tuned. The consequence is that nothing anywhere fails when
- * the number CHANGES, and these are not private numbers: the wire contract's §8
- * fixes them so three repositories agree, and neither magick-master nor
- * magick-comms-cusui is a dependency of this one, so no compiler and no CI job
- * can see the other two copies.
+ * the number CHANGES, and these are not private numbers: the console
+ * echoes them into its copy, and it is not a compile-time dependent of this
+ * package, so no compiler and no CI job can see that copy.
  *
  * So this file is the one place that fails on a change of value, and its job is
  * to be a prompt rather than an obstacle: **changing a number here is fine —
- * change §8 and the sibling repos' copy in the same commit.** A bound tuned in
- * core alone leaves master's error copy and the console's "up to 100,000
+ * change the console's copy in the same commit.** A bound tuned here
+ * alone leaves the API's error copy and the console's "up to 100,000
  * contacts" naming a limit that no longer exists, and the supervisor learns the
  * real one from a refusal.
  *
@@ -31,8 +30,8 @@ import {
  * need not hold a copy — that is the right pattern and this file is the backstop
  * for the surfaces that cannot be served, chiefly prose.)
  */
-describe('the wire contract §8 constants', () => {
-  it('are the values §8 publishes', () => {
+describe('the retry bound constants', () => {
+  it('hold the published values', () => {
     expect(RETRY_MAX_SEED_ROWS).toBe(100_000);
     expect(RETRY_MAX_GENERATION).toBe(10);
     expect(PRIOR_ATTEMPT_LIMIT).toBe(20);
@@ -60,8 +59,8 @@ describe('the wire contract §8 constants', () => {
     expect(RETRY_IDEMPOTENCY_KEY_PATTERN.test('')).toBe(false);
   });
 
-  it('inherits exactly the seventeen config columns §2 lists, and no lifecycle column', () => {
-    // The list is what a retry copies from its parent (DR-10). A LIFECYCLE column
+  it('inherits exactly the seventeen listed config columns, and no lifecycle column', () => {
+    // The list is what a retry copies from its parent. A LIFECYCLE column
     // landing in it would carry the parent's run onto a campaign that has never
     // dialled — a terminal status, a start time, or a stale auto-pause record on
     // a draft. `campaign-retry-repository.test.ts` asserts they are absent from

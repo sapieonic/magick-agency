@@ -5,8 +5,8 @@ import { TEST_DB_URL, truncateAll } from '../../../../../packages/db/test/helper
 import { createSuperAdmin, parseArgs } from '../../../scripts/create-super-admin.js';
 
 /**
- * NEW (magick-agency, decision #6): the CLI that creates the first super-admin,
- * on real Postgres. No source; it mirrors `POST /super-admin/admins` (same body
+ * The CLI that creates the first super-admin,
+ * on real Postgres. It mirrors `POST /super-admin/admins` (same body
  * schema, bcrypt cost, duplicate refusal, audit row). The login half — that the
  * created credentials actually authenticate through `POST /super-admin/login` —
  * is exercised by `test/integration/api/platform-onboarding.e2e.test.ts`.
@@ -40,7 +40,7 @@ describe('scripts/create-super-admin (integration)', () => {
     expect(JSON.stringify(audit.rows)).not.toContain('a-long-passphrase');
   });
 
-  it('--system marks the admin is_system (the protection master\'s seeded admin had)', async () => {
+  it('--system marks the admin is_system (the protection the seeded admin has)', async () => {
     const result = await createSuperAdmin({ email: 'root@agency.example', name: 'Root', password: 'a-long-passphrase', system: true });
     expect(result.ok && result.admin.is_system).toBe(true);
     expect((await admins())[0]!.is_system).toBe(true);

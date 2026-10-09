@@ -1,13 +1,13 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * NEW (magick-agency, lane C): the voice engine as the agency runtime will use it — the
- * real `TelephonyGuardHost` (the guards extracted from core's CallManager) and the real
+ * The voice engine as the agency runtime uses it — the
+ * real `TelephonyGuardHost` and the real
  * `WebRtcBridgeManager`, over REAL Redis (6383, this worktree's test db) and REAL
- * Postgres (5436). Only the carrier is faked (`TelephonyProviderRegistry`), as in core's
- * bridge suites — there is no VoiceLink sandbox account (docs/seams.md §5).
+ * Postgres (5436). Only the carrier is faked (`TelephonyProviderRegistry`), as in the
+ * unit-level bridge suites — there is no VoiceLink sandbox account (docs/seams.md).
  *
- * Phase 5 exit-gate evidence:
+ * Covered:
  *   1. the guard refuses at each scope (global, account, provider, unallocated), seen
  *      through the bridge's own dial path, and frees every scope at teardown;
  *   2. the stale sweep frees a dead session's slot: a crashed replica's agency call
@@ -15,7 +15,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  *      `STUCK_ACTIVE_CALL` and its capacity comes back, while a call this replica is
  *      bridging is never swept;
  *   3. `setConcurrencyControl` is registered by the voice bootstrap and its methods act
- *      on the same guards the bridge admits through (docs/seams.md §3.3).
+ *      on the same guards the bridge admits through (docs/seams.md).
  */
 
 // Config is read at import: a small global ceiling, and the VoiceLink webhook base the
@@ -252,7 +252,7 @@ describe('voice engine against real Redis + Postgres (integration)', () => {
     });
   });
 
-  describe('ConcurrencyControl (docs/seams.md §3.3), registered by the voice bootstrap', () => {
+  describe('ConcurrencyControl (docs/seams.md), registered by the voice bootstrap', () => {
     it('is wired by ensureVoiceEngine and reads the live leases the bridge holds', async () => {
       await providerConcurrencyRepository.replaceProviderBreakdown({
         tenant_id: TENANT, account_id: ACCOUNT_P, expected_version: 1,
@@ -270,7 +270,7 @@ describe('voice engine against real Redis + Postgres (integration)', () => {
       expect(providerCounts.counts.get('voicelink')).toBe(2);
     });
 
-    it('invalidateAccountLimit makes the guard read a lowered limit at once (core\'s order: settings cache, then guard)', async () => {
+    it('invalidateAccountLimit makes the guard read a lowered limit at once (settings cache first, then guard)', async () => {
       await seedLegacy(ACCOUNT_A, 5);
       await dial(ACCOUNT_A); // primes the guard's cached limit (5)
 

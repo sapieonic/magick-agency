@@ -4,7 +4,7 @@ import { DEFAULT_TEST_DB_URL } from '../../../../tooling/test-env.js';
 /**
  * The ONLY database integration tests may touch. The guard below refuses
  * anything else, explicit env override or not: every other port on this
- * machine belongs to a MagickVoice stack (core 5432/5433, master 5433/5434),
+ * machine belongs to another local stack (the 5432-5434 and 6379-6381 ranges),
  * and a reset here is `DROP SCHEMA public CASCADE`.
  */
 export const TEST_DB_URL = process.env['TEST_DB_URL'] ?? DEFAULT_TEST_DB_URL;

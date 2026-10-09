@@ -1,8 +1,5 @@
-// PORT NOTE (magick-agency): ported from core test/integration/flows/concurrency-guards.test.ts@4850d1d9.
-// Changed: harness imports (agency test-db / test-redis helpers); mock specifiers
-// (`@magick-agency/db/connection`, `@magick-agency/db/repositories/...`); the tenant/
-// account ids that reach Postgres (`account_settings` and the allocation rows are UUID
-// columns here) are `uuidFor(<core label>)`, and the raw-key assertions interpolate
+// The tenant/account ids that reach Postgres (`account_settings` and the allocation rows
+// are UUID columns) are `uuidFor(<label>)`, and the raw-key assertions interpolate
 // them. 'vobiz' stays as a second provider LABEL in the cross-provider cases: the
 // guard is provider-agnostic and the no-borrowing proof needs two providers.
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
@@ -255,7 +252,7 @@ describe('AccountConcurrencyGuard (integration)', () => {
 });
 
 describe('ProviderConcurrencyGuard composite admission (integration)', () => {
-  // PORT: account_settings / allocation ids are UUID columns here.
+  // account_settings / allocation ids are UUID columns.
   const TENANT_PROVIDER = uuidFor('tenant-provider');
   const ACCOUNT_PROVIDER = uuidFor('account-provider');
 
@@ -431,7 +428,7 @@ describe('ProviderConcurrencyGuard composite admission (integration)', () => {
 describe('releaseTelephonyLease against REAL guards (integration)', () => {
   // Provider-mode account (A, C, D) and a legacy account (B) that owns no
   // allocation row, so `tryAcquireAll` hands it back as `legacy_mode`.
-  // PORT: UUIDs (the baseline types tenant/account ids UUID; core used labels).
+  // UUIDs (the baseline types tenant/account ids UUID).
   const TENANT = uuidFor('tenant-release');
   const ACCOUNT = uuidFor('account-release');
   const LEGACY_TENANT = uuidFor('tenant-release-legacy');
@@ -584,7 +581,7 @@ describe('releaseTelephonyLease against REAL guards (integration)', () => {
   });
 
   it('costs exactly ONE Redis eval on the healthy path and THREE on the fallback', async () => {
-    // The ticket's headline claim ("three release evaluations reduced to one") has
+    // The headline claim ("three release evaluations reduced to one") has
     // only ever been asserted by counting mock calls. This counts what Redis itself
     // recorded: the delta on the server's `cmdstat_eval:calls` between two
     // `INFO commandstats` reads. Chosen over a spy on the ioredis client because a
@@ -620,7 +617,7 @@ describe('releaseTelephonyLease against REAL guards (integration)', () => {
     // Forced by the `no_release_all` decline: a provider guard exposing only
     // `release`. Deliberately NOT forced via `isDegraded()` — that decline also
     // fires the composite as best-effort Redis cleanup, so it costs a mixed
-    // 1 composite + 2 per-scope evals (the degraded core guard releases into a
+    // 1 composite + 2 per-scope evals (the degraded guard releases into a
     // process-local counter and skips Redis entirely) and would measure something
     // other than "three release evaluations". `provider: undefined` is no good
     // either: the fallback then skips the provider scope and costs two. Only this

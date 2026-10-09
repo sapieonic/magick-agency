@@ -77,7 +77,7 @@ export class AccountRepository {
   }
 
   /**
-   * Batch lookup for `GET /accounts/mine` (§ agent account self-resolution) —
+   * Batch lookup for `GET /accounts/mine` (agent account self-resolution) —
    * the accounts a caller's own memberships point at, never the full tenant
    * list. `= ANY($1)` short-circuits to zero rows on an empty array rather
    * than matching everything, which matters here: a caller with no

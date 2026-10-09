@@ -36,7 +36,7 @@ const {
  *      becomes a 500 carrying the database's error text — over one bad character in
  *      one operator's config. Only a query can show the comparison does not throw.
  *   3. **The element SHAPE guard.** `jsonb_typeof(e) = 'object'` runs before
- *      `e->>'code'`, because a catalog written directly against core can hold
+ *      `e->>'code'`, because a catalog written directly against the server can hold
  *      strings, numbers, nulls or nested arrays.
  *
  * Plus the denominator: `success_rate_pct` is over CONNECTED (bridged) attempts,
@@ -294,7 +294,7 @@ describe('conversion counting against a real disposition_catalog (integration)',
   it('survives a catalog whose ELEMENTS are not objects at all', async () => {
     // The `jsonb_typeof(e) = 'object'` guard, which runs before `e->>'code'` is
     // asked of anything. Migration 072 constrains the column to an array and says
-    // nothing about its elements, so a catalog written directly against core — or
+    // nothing about its elements, so a catalog written directly against the server — or
     // by a client that got the shape wrong — can hold any of these.
     // `resolveDisposition` is defensive in exactly this way so a malformed catalog
     // cannot 500 an agent's submission; a stats read must not either.
@@ -378,7 +378,7 @@ describe('conversion counting against a real disposition_catalog (integration)',
   });
 
   it('is NULL — never 0 — when nothing has bridged', async () => {
-    // The rule `abandonment_rate_24h_pct` has carried since AD-P2-C-06, now one
+    // The rule `abandonment_rate_24h_pct` has carried since it was introduced, now one
     // exported helper. "Nothing has converted yet" and "nothing has been measured
     // yet" are different facts, and a `0` renders both as the same confident,
     // flattering number — which is how a supervisor reads `success 0.0%` on a

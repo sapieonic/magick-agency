@@ -14,8 +14,7 @@ export type ProvenEmailResolution =
 
 /**
  * Declared here rather than imported from `src/agency/agency-billing-contract.ts`
- * (which has its own copy for the settlement path) so the DB layer does not
- * depend upward on a feature module.
+ * so the DB layer does not depend upward on a feature module.
  */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -239,22 +238,22 @@ export class UserRepository {
 
   /**
    * Resolve a SET of user ids to display names, scoped to one tenant — one
-   * query, never one per id (MAG-148).
+   * query, never one per id.
    *
    * ── Why this is set-shaped and not a loop over `findById` ──────────────────
-   * Its only caller is the agency supervisor dashboard's stats hop, which cusui
+   * Its only caller is the agency supervisor dashboard's stats hop, which the console
    * polls every 5 seconds and which carries the whole live floor. A per-row
    * lookup there is an N+1 on the hot path — 30 agents on shift is 30 serial
-   * round trips per poll, per open dashboard. See the "No per-item loops over
-   * I/O" rule in docs/reference/magick-master/CLAUDE.md.
+   * round trips per poll, per open dashboard. Per-item loops over I/O are
+   * not allowed.
    *
    * ── The tenant predicate is the security property, not an optimisation ─────
-   * `agent_user_id` arrives from CORE, which holds no user table and does no
-   * tenant checking of its own on this field — it is echoing back an id master
+   * `agent_user_id` arrives from the dialer runtime, which holds no user table and does no
+   * tenant checking of its own on this field — it is echoing back an id the public API layer
    * gave it at some point in the past. An unscoped `WHERE id = ANY(...)` would
    * therefore happily resolve an id belonging to another tenant and put that
    * person's name on this tenant's dashboard. This is the exact class of defect
-   * rule 1 in docs/reference/magick-master/CLAUDE.md's RBAC section describes: `requirePermission` proves the
+   * tenancy rule describes: `requirePermission` proves the
    * caller's ROLE and never looks at the target row, so the tenant predicate has
    * to be in the same statement as the read.
    *
@@ -263,18 +262,18 @@ export class UserRepository {
    * answers 404 rather than 403: anything else is a user-id oracle.
    *
    * Membership STATUS is deliberately not filtered. A revoked membership still
-   * means this person was legitimately in this tenant, and core can still be
+   * means this person was legitimately in this tenant, and the dialer runtime can still be
    * holding their live session row for the shift they were mid-way through; the
    * supervisor needs to see who that is. The predicate exists to stop names
    * crossing a tenant boundary, which a revoked membership does not do.
    *
-   * `users.status = 'deleted'` IS excluded — a soft-deleted user is one master
+   * `users.status = 'deleted'` IS excluded — a soft-deleted user is one the system
    * can no longer claim to identify.
    *
    * Ids that are not UUID-shaped are filtered out in JS rather than sent to
    * Postgres, which would raise `22P02` from inside the read and turn a
    * dashboard poll into a 500. Same trap `normalizeSettlementAccountId` documents
-   * for core's `VARCHAR(100)` account ids.
+   * for `VARCHAR(100)` account ids.
    */
   async findDisplayNamesInTenant(
     userIds: readonly string[],
@@ -298,7 +297,7 @@ export class UserRepository {
 
     for (const row of result.rows) {
       // `display_name` is nullable and a user who never set one is still RESOLVED
-      // — a different fact from "master cannot identify this person", which is
+      // — a different fact from "cannot identify this person", which is
       // what a null answer means to the caller. Falling back to the email keeps
       // those two apart; collapsing them would make a missing profile field read
       // as a cross-tenant miss.
@@ -365,7 +364,7 @@ export class UserRepository {
   }
 
   /**
-   * Everybody master could address about something that happened inside one
+   * Everybody who could be addressed about something that happened inside one
    * account — email plus the role each membership grants, one row per
    * membership.
    *
@@ -384,8 +383,8 @@ export class UserRepository {
    * the common shape.
    *
    * ── A non-UUID `accountId` NARROWS, and deliberately does not widen ─────────
-   * Core's `account_id` is `VARCHAR(100)` with a `'default'` literal available
-   * (migration 072), so a value arriving from a core webhook may not be
+   * The dialer's `account_id` is `VARCHAR(100)` with a `'default'` literal available
+   * (migration 072), so a value arriving from a dialer webhook may not be
    * UUID-shaped at all — the trap `normalizeSettlementAccountId` exists for.
    * Passing it to Postgres raises `22P02` from inside the read; guessing "then
    * everyone in the tenant" would mail people who cannot see the account.
@@ -402,7 +401,7 @@ export class UserRepository {
    * `inactive` user is still who a stale assignment names — and here it mailed
    * suspended accounts. The distinction this docstring already draws settles it:
    * "who should be told" is a question about a mailbox somebody is expected to be
-   * reading, and `inactive` is master's own record that they are not.
+   * reading, and `inactive` is the system's own record that they are not.
    */
   async findAddressableMembersInAccount(
     tenantId: string,

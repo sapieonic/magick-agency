@@ -1,4 +1,4 @@
-// PORT NOTE (magick-agency): ported from master test/unit/db/repositories/membership.repository.test.ts@a1f0756a — verbatim except import specifiers and the type-only casts marked below.
+// Type-only casts are marked below: tests are typechecked (decision B1).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ pool: { query: vi.fn(), connect: vi.fn() } }));
@@ -83,7 +83,7 @@ describe('MembershipRepository', () => {
 
     it('keeps the tenant predicate in the same statement as the read', async () => {
       // Dropping the status filter widens WHO is visible, never WHICH TENANT —
-      // rule 1 of docs/reference/magick-master/CLAUDE.md's RBAC section, and the property that keeps a user who
+      // tenant scoping is never optional, and the property that keeps a user who
       // was never here answering 404.
       mocks.pool.query.mockResolvedValue({ rows: [] });
       await repo.findAnyByUserAndTenant('u-1', 't-2');
@@ -122,7 +122,7 @@ describe('MembershipRepository', () => {
     const memberRow = { ...row, user_id: USER_A, tenant_id: TENANT };
 
     it('SELECTs both ids in ONE statement, not one query per id', async () => {
-      // The "no per-item loops over I/O" rule in docs/reference/magick-master/CLAUDE.md: the roster reads up to
+      // No per-item loops over I/O: the roster reads up to
       // `limit` (200) memberships to decide which rows survive, and asked through
       // the singleton that is 200 round trips.
       mocks.pool.query.mockResolvedValue({ rows: [memberRow] });
@@ -135,7 +135,7 @@ describe('MembershipRepository', () => {
     });
 
     it('keeps the tenant predicate in the SAME statement as the read', async () => {
-      // Rule 1 of docs/reference/magick-master/CLAUDE.md's RBAC section. Widening WHO is visible (no status
+      // Tenant scoping is never optional. Widening WHO is visible (no status
       // filter, below) must never widen WHICH TENANT — a user who was never here
       // has to resolve to nothing so the caller drops their row.
       mocks.pool.query.mockResolvedValue({ rows: [] });
@@ -296,7 +296,7 @@ describe('MembershipRepository', () => {
       expect(sql[1]).toContain("status = 'active'");
       expect(sql[1]).toContain("status <> 'active'");
       expect(sql[1]).toContain('tenant_id = $3');
-      // PORT NOTE (magick-agency): type-only cast — agency's tsconfig typechecks tests (B1), master's did not.
+      // Type-only cast — the tsconfig typechecks tests (decision B1).
       expect((client.query.mock.calls[1] as unknown[])[1]).toEqual(['tenant_admin', 'm-1', 't-1']);
       expect(sql[2]).toContain('UPDATE membership_invites');
       expect(sql[2]).toContain('claimed_at IS NULL');

@@ -19,7 +19,7 @@ const { agencyAttemptRepository, agencyContactRepository } = await import(
 );
 
 /**
- * Duplicate dialing — falsifying the correctness claim (§4.1, §2.1).
+ * Duplicate dialing — falsifying the correctness claim.
  *
  * The design leans on two mechanisms and is explicit that either alone has a
  * failure mode we cannot accept: the Redis leader lease is the EFFICIENCY
@@ -324,7 +324,7 @@ describe('agency duplicate-dial backstop (integration)', () => {
 
   // ── The other two live-uniqueness guarantees ──────────────────────────────
 
-  it('T-M5: only one campaign per account may be `running` (D9)', async () => {
+  it('T-M5: only one campaign per account may be `running`', async () => {
     await insertAgencyCampaign({ status: 'running' });
 
     await expect(insertAgencyCampaign({ status: 'running' })).rejects.toMatchObject({

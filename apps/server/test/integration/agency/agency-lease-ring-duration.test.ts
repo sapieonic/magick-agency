@@ -1,11 +1,9 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 /*
- * PORT NOTE (magick-agency, Phase 6): ported from core
- * test/integration/agency/agency-lease-ring-duration.test.ts@4850d1d9 — 3 cases (+ `it.each` rows: 25s / 35s / 45s), all kept. Modified only in
- * harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
+ * Harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
  * `/connection` entry, which packages/db's repositories import); the config stub
- * drops `telephony.vobiz` (VoBiz deleted, plan §5); import specifiers per the path
- * rule (domain leaves, `@magick-agency/contracts/agency`). `TEST_REDIS_URL`/`LEASE_DB` are the worktree's agency test Redis (see the note at the constant: core's fallback was 6380, another stack's port).
+ * carries no carrier config; import specifiers per the path
+ * rule (domain leaves, `@magick-agency/contracts/agency`). `TEST_REDIS_URL`/`LEASE_DB` are the worktree's agency test Redis (see the note at the constant).
  */
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
@@ -18,7 +16,7 @@ import {
 import { insertAgencyCampaign, insertAgencyContact, insertAgentSession } from './agency-factories.js';
 import { TEST_REDIS_URL as AGENCY_TEST_REDIS_URL } from '../../helpers/test-redis.js';
 
-// PORT NOTE: core mocked `src/db/connection.js`; agency's pool lives in `@magick-agency/db`
+// The DB pool lives in `@magick-agency/db`
 // (the server's repositories import its root, packages/db's repositories `./connection`).
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
 vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
@@ -32,7 +30,7 @@ vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() })
 vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: {}, // PORT NOTE: core stubbed `telephony.vobiz` (VoBiz deleted, plan §5)
+    telephony: {}, // no carrier config is needed
   },
 }));
 
@@ -63,7 +61,7 @@ function dialerWith(bridge: unknown, stations: never, agents: InstanceType<typeo
 }
 
 /**
- * T-L2 — the ring-duration lease (§6.1). THE regression test for this feature.
+ * T-L2 — the ring-duration lease. THE regression test for this feature.
  *
  * The bug this exists to prevent shipped in the first draft of the design and is
  * worth restating, because it breaks the central promise on the HAPPY PATH:
@@ -164,12 +162,10 @@ function fakeBridge(ringMs: number) {
  * so overlapping integration runs remain an operational hazard in general. This
  * only fixes the part that a test can fix.
  */
-// PORT NOTE (magick-agency): core pinned database 6 on its shared 6380 Redis. Here
-// the worktree's whole test db (6383, `.test-env.local.json`) is already private to this
+// The worktree's whole test db (6383, `.test-env.local.json`) is already private to this
 // checkout, and every other db index belongs to another worktree or stack, so the
-// "private database" is the worktree's own — read off the agency harness URL. Core's
-// `process.env['TEST_REDIS_URL'] ?? 'redis://localhost:6380'` fallback would have
-// reached another stack's port.
+// "private database" is the worktree's own — read off the agency harness URL. A
+// hard-coded fallback URL would risk reaching another stack's port.
 const TEST_REDIS_URL = AGENCY_TEST_REDIS_URL;
 const LEASE_DB = Number(new URL(TEST_REDIS_URL).pathname.replace(/^\//, '') || '0');
 let redis: Redis;
@@ -362,7 +358,7 @@ describe('agency lease lifecycle — ring duration (integration, slow)', () => {
       expect(row?.state).toBe('bridged');
       expect(row?.outcome).not.toBe('abandoned');
 
-      // Zero-abandonment, measured the way §10 of the test plan defines it.
+      // Zero-abandonment, measured by the abandonment predicate.
       const { rows } = await getTestPool().query<{ n: string }>(
         `SELECT COUNT(*)::text AS n FROM agency_call_attempts
           WHERE campaign_id = $1

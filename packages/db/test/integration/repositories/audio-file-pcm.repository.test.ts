@@ -1,6 +1,4 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/integration/repositories/audio-file-pcm.repository.test.ts@4850d1d9.
-// Only changes: connection/repository paths (packages/db layout); tenant/account labels wrapped in
-// `uuidFor` (UUID columns). Every case kept.
+// Tenant/account labels are wrapped in `uuidFor` (UUID columns).
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { vi } from 'vitest';
 import { randomUUID } from 'node:crypto';

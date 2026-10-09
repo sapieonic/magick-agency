@@ -9,34 +9,31 @@ import { insertAgencyCampaign, insertAgencyContacts } from './agency-factories.j
 import { FakeStationSocket, ScriptedBridge } from './chaos/harness.js';
 
 /*
- * PORT NOTE (magick-agency, Phase 8; handed over by Phase 6): ported from core
- * test/integration/agency/agency-agent-state-cycle.test.ts@4850d1d9 (1 case → 1). The walk,
- * every assertion and every comment are core's. Harness changes, each because the thing it
- * replaced does not exist here:
- *  - auth: core's routes ran behind real API-key auth (`insertApiKey` + `x-api-key`). Agency
- *    has no API keys (decision #5); `agency.routes.ts` is a handler module on the private
+ * Harness notes — each point records something this suite does differently from a plain
+ * API-key-authenticated server:
+ *  - auth: there are no API keys in this application; `agency.routes.ts` is a handler module on the private
  *    in-process instance, and its `authMiddleware` keeps only the header half — so `post` sends
  *    `x-mgkvc-tenant` / `x-mgkvc-account` alone. The routes are registered here exactly as
- *    core's `index.ts` did (`agencyRoutes(scope, runtime)` under `/api/v1/agency`); the
+ *    `src/index.ts` does (`agencyRoutes(scope, runtime)` under `/api/v1/agency`); the
  *    `@fastify/websocket` registration is gone with the station route, which moved to
- *    `agency/station-socket.ts` (this walk attaches a `FakeStationSocket` directly, as core's did);
+ *    `agency/station-socket.ts` (this walk attaches a `FakeStationSocket` directly);
  *  - ids: TENANT / ACCOUNT are the factories' default UUIDs (agency's columns are `uuid`), the
  *    agent a stable `uuidFor`;
  *  - Redis: this worktree's test Redis (`TEST_REDIS_URL`, the same db the chaos suites use)
- *    with core's `cycle:` key prefix; files run serially (`fileParallelism: false`);
+ *    with a `cycle:` key prefix; files run serially (`fileParallelism: false`);
  *  - the DNC sync in `beforeEach` (`runtime.dnc.applyReplace(...)` + its two expects) is
  *    deleted: there is no Redis DNC set, the pre-dial gate reads `dnc_entries` (decision B8),
  *    and an empty table is "nobody is suppressed" for real;
- *  - Q8 (Manas, 2026-10-09): `post` adds the agent's `agent_user_id` on `/sessions/:id/*` (the
- *    actor master now sends; `requireOwnedSession` refuses a request without it);
+ *  - decision Q8: `post` adds the agent's `agent_user_id` on `/sessions/:id/*` (the
+ *    actor the public API layer sends; `requireOwnedSession` refuses a request without it);
  *  - mocks: the pool through `@magick-agency/db` (as the chaos suites); the config stub drops
- *    `auth` and `telephony.vobiz`; the logger targets `@magick-agency/observability`; core's
- *    `utils/metrics.js` and `analytics/posthog.js` mocks are gone (agency's metric modules
- *    create no-op instruments without a provider, and `authMiddleware` no longer calls PostHog).
+ *    `auth` and `telephony.vobiz`; the logger targets `@magick-agency/observability`; no metrics
+ *    or analytics mocks are needed (the metric modules create no-op instruments without a
+ *    provider, and `authMiddleware` does not call PostHog).
  */
 
 /**
- * ─── PHASE 2 EXIT CRITERION 2 ───────────────────────────────────────────────
+ * ─── THE AGENT STATE CYCLE ───────────────────────────────────────────────
  *
  * *"All six agent states entered and left correctly, including break with a
  * reason code and wrap-up with auto-return."*
@@ -54,7 +51,7 @@ import { FakeStationSocket, ScriptedBridge } from './chaos/harness.js';
  * is reached only by leaving the previous one. A state that traps the agent stops
  * the walk at that line, which is the property being asserted.
  *
- * It is also the criterion §16.7 flags as most likely to be waved through on a
+ * It is also the criterion most likely to be waved through on a
  * screen-share — six states is exactly the sort of thing that gets demonstrated
  * live and recorded as met. A walk that fails at the trapped hop is the artefact
  * that cannot be demonstrated away.
@@ -63,10 +60,10 @@ import { FakeStationSocket, ScriptedBridge } from './chaos/harness.js';
  *
  * Real: **the production assembly.** `new AgencyRuntime(...)` — the same
  * constructor `src/index.ts` calls — so the collaborator graph under test is the
- * one that ships, against real Postgres and real Redis, driven through core's
- * real Fastify routes with real API-key auth and a real feature-flag row.
+ * one that ships, against real Postgres and real Redis, driven through the
+ * real Fastify routes and a real feature-flag row.
  *
- * That choice is the point, not convenience. §16.6 question 2: *is the property
+ * That choice is the point, not convenience. The question is: *is the property
  * true where it is consumed?* Every agent-initiated transition here is consumed
  * by an HTTP route, and the two rules criterion 2 names by name live only there —
  * break-reason validation is `POST /sessions/:id/break` calling
@@ -82,8 +79,8 @@ import { FakeStationSocket, ScriptedBridge } from './chaos/harness.js';
  *
  * ── What this deliberately does NOT cover ──────────────────────────────────
  *
- * **Wrap-up held on an outstanding required disposition.** `AD-P2-C-04`'s route
- * (`POST /attempts/:id/disposition`) does not exist in core yet, so the only exit
+ * **Wrap-up held on an outstanding required disposition.** the route
+ * (`POST /attempts/:id/disposition`) does not exist yet, so the only exit
  * from a held wrap-up an agent controls is unbuilt. The supervisor exit does
  * exist and is walked below (`/force-available`), which is what keeps the held
  * branch from being a state with no demonstrated exit at all. When `C-04` lands,
@@ -134,9 +131,9 @@ const AGENT_USER = uuidFor('agent-cycle-1');
  * and while `fileParallelism` is false today, a flush landing mid-walk would read
  * exactly like a lease bug — the failure this whole partition keeps re-learning.
  *
- * PORT NOTE (magick-agency): agency gives each worktree ONE test Redis db (`TEST_REDIS_URL`), so
+ * agency gives each worktree ONE test Redis db (`TEST_REDIS_URL`), so
  * this walk shares it with the chaos suites; with `fileParallelism: false` no two files run at
- * once, which is the property the separate db bought in core. The `cycle:` prefix is kept.
+ * once, which is the property the separate db bought. The `cycle:` prefix is kept.
  */
 const KEY_PREFIX = 'cycle:';
 
@@ -144,7 +141,7 @@ const KEY_PREFIX = 'cycle:';
  * One second, so the auto-return timer genuinely fires within the test.
  *
  * A real `setTimeout`, not a faked clock: `WrapupManager`'s countdown IS an
- * in-process timer (§6.1 forbids it being a Redis TTL), and a fake clock here
+ * in-process timer, and a fake clock here
  * would let the harness advance it — which is how a doubled fake clock hid inside
  * a `toBeGreaterThan(0)` earlier in this phase. Everything clock-derived below is
  * asserted against an exact value or a two-sided bound, never a floor.
@@ -166,7 +163,7 @@ let redis: Redis;
 let bridge: ScriptedBridge;
 
 async function post(path: string, rawBody?: unknown) {
-  // Q8 (Manas, 2026-10-09): `requireOwnedSession` requires the actor master sends for the
+  // decision Q8: `requireOwnedSession` requires the actor the public API layer sends for the
   // session's own agent, so every `/sessions/:id/*` call carries it (the walk is one agent's).
   const body = /^\/sessions\/[^/]+\//.test(path)
     ? { agent_user_id: AGENT_USER, ...((rawBody ?? {}) as Record<string, unknown>) }
@@ -194,7 +191,7 @@ async function post(path: string, rawBody?: unknown) {
 /**
  * The agent's state as **Redis** holds it — the authority the pacing tick reads.
  *
- * Deliberately separate from the DB reader below. §6.1 makes Redis the authority
+ * Deliberately separate from the DB reader below. makes Redis the authority
  * and the `agency_agent_sessions` row a mirror, so a transition that writes one
  * and not the other is a real defect class: a row reading `available` for an
  * agent who is actually bridged is how a break gets applied mid-conversation.
@@ -256,7 +253,7 @@ async function waitForExitFrom(sessionId: string, from: string, budgetMs = 5_000
  * Needed because the two are written in order, not together: `releaseAgent` does
  * `agents.set(...)` and *then* `agencyAgentSessionRepository.setState(...)`, so
  * there is a real window in which Redis says `available` and the row still says
- * `wrapup`. §6.1 makes that correct — Redis is the authority, the row is a
+ * `wrapup`. makes that correct — Redis is the authority, the row is a
  * best-effort mirror whose write is explicitly allowed to fail — but it means a
  * row assertion placed straight after `waitForExitFrom` is racing the second
  * write.
@@ -281,7 +278,7 @@ async function waitForRowToLeave(sessionId: string, from: string, budgetMs = 5_0
   }
 }
 
-describe('AD-P2 criterion 2 · the agent state machine, walked as one cycle (integration)', () => {
+describe('the agent state machine, walked as one cycle (integration)', () => {
   beforeEach(async () => {
     await truncateAll();
 
@@ -294,7 +291,7 @@ describe('AD-P2 criterion 2 · the agent state machine, walked as one cycle (int
     bridge = new ScriptedBridge();
     runtime = new AgencyRuntime(bridge as never, redis, '');
 
-    // PORT NOTE (magick-agency): core's DNC sync (`runtime.dnc.applyReplace`) is deleted (B8).
+    // No DNC set is synced here: the pre-dial gate reads `dnc_entries` (decision B8).
     // `dialer.start()` only — NOT `runtime.start()`. The latter starts the pacing
     // supervisor's `setInterval`, and a wall-clock loop racing a scripted walk is
     // how a suite becomes something people re-run rather than read. Ticks are
@@ -332,7 +329,7 @@ describe('AD-P2 criterion 2 · the agent state machine, walked as one cycle (int
       // Empty ON PURPOSE. `requiresDisposition()` returns false for an empty
       // catalog, which is what lets the auto-return timer actually fire — with a
       // non-empty catalog the wrap-up is HELD pending a disposition and the only
-      // agent-controlled exit is `AD-P2-C-04`'s unbuilt route. See the file
+      // agent-controlled exit is the unbuilt route. See the file
       // header; the held branch is walked separately at the end via the
       // supervisor exit, which does exist.
       disposition_catalog: '[]',
@@ -367,16 +364,16 @@ describe('AD-P2 criterion 2 · the agent state machine, walked as one cycle (int
     //
     // Asserted as the absence of a live key rather than the string 'offline'.
     // Nothing has claimed this agent, so there is nothing for the tick to count,
-    // which is what `offline` MEANS here (§5.1's "presence is the heartbeat").
+    // which is what `offline` MEANS here.
     const preJoin = await getTestPool().query(
       'SELECT id FROM agency_agent_sessions WHERE campaign_id = $1', [campaign.id],
     );
     expect(preJoin.rows).toHaveLength(0);
     ledger.push('offline');
 
-    // ── 2. `offline → break` — joining, per D2 ─────────────────────────────
+    // ── 2. `offline → break` — joining ─────────────────────────────
     //
-    // NOT `offline → available`. D2 lands every joining or rehydrating agent in
+    // NOT `offline → available`. The rule is that every joining agent lands every joining or rehydrating agent in
     // `break`, never `available`, because the engine must not dial into a pool
     // that has not demonstrably re-attached a socket. So the honest first hop is
     // into `break`, and the diagram's `offline → available` edge is really two.
@@ -435,8 +432,7 @@ describe('AD-P2 criterion 2 · the agent state machine, walked as one cycle (int
     // Criterion 2 says "break with a reason code", and the load-bearing word is
     // *code*: free text reaching `break_reason` fails the gate. This is the only
     // assertion in the walk that the validation is server-side — a console-side
-    // menu is not a validator, and `AD-P2-C-10` exists because the delivery plan
-    // and the UX spec disagreed about whether the catalog existed at all.
+    // menu is not a validator, so the catalog has to be enforced here.
     const badReason = await post(`/sessions/${sessionId}/break`, { reason: 'just because' });
     expect(badReason.statusCode).toBe(400);
     expect(badReason.json().code).toBe('unknown_break_reason');
@@ -468,7 +464,7 @@ describe('AD-P2 criterion 2 · the agent state machine, walked as one cycle (int
     // The reservation names the real attempt by the time the tick returns.
     //
     // Note what this does NOT assert, because getting it wrong once is instructive:
-    // `pacing-engine.ts:316` reserves with a `'reserving'` MARKER rather than an
+    // `pacing-engine.ts` reserves with a `'reserving'` MARKER rather than an
     // id, since reserve-before-dial holds the agent before the attempt exists.
     // That marker is genuinely unobservable from here — it lives only inside
     // `tickOnce`, between the CAS and `executeDial` overwriting it, with no await
@@ -483,10 +479,10 @@ describe('AD-P2 criterion 2 · the agent state machine, walked as one cycle (int
 
     // ── 7. A break requested from `reserved` must QUEUE, not apply ─────────
     //
-    // The case §5.1 makes easy to miss. An agent reserved for a dial already at
+    // The case makes easy to miss. An agent reserved for a dial already at
     // the carrier is about to be bridged to someone who is about to answer;
     // applying a break there produces the abandoned call the whole reservation
-    // design exists to prevent.
+    // design is meant to prevent.
     const breakWhileReserved = await post(`/sessions/${sessionId}/break`, { reason: 'lunch' });
     expect(breakWhileReserved.statusCode).toBe(200);
     expect(breakWhileReserved.json().pending_state).toBe('break');
@@ -515,8 +511,8 @@ describe('AD-P2 criterion 2 · the agent state machine, walked as one cycle (int
     expect(await observe(sessionId)).toBe('on_call');
     expect((await attemptRow(attemptOne)).state).toBe('bridged');
     expect((await attemptRow(attemptOne)).bridged_at).not.toBeNull();
-    // The MIRROR of this hop, which `AD-P4-C-01` added and which nothing in this
-    // file asserted. The supervisor breakdown reads `agents_by_state` off this row,
+    // The MIRROR of this hop, which nothing else in this
+    // file asserts. The supervisor breakdown reads `agents_by_state` off this row,
     // and before the mirror existed it showed agents idle while they were talking
     // to customers — the row still held the `available` written back at step 4.
     //
@@ -539,7 +535,7 @@ describe('AD-P2 criterion 2 · the agent state machine, walked as one cycle (int
     // ── 10. A break requested from `on_call` queues too ───────────────────
     //
     // This one is NOT cancelled: it is the break that will apply at the end of
-    // wrap-up, which is how the walk re-enters `break` — §5.1's "applied after
+    // wrap-up, which is how the walk re-enters `break` — the "applied after
     // wrap-up", never mid-conversation.
     const breakWhileOnCall = await post(`/sessions/${sessionId}/break`, { reason: 'technical_issue' });
     expect(breakWhileOnCall.statusCode).toBe(200);
@@ -579,7 +575,7 @@ describe('AD-P2 criterion 2 · the agent state machine, walked as one cycle (int
     // written back at step 4 right through the call and the only mirror write it
     // could possibly see next was `wrapup`.
     //
-    // `AD-P4-C-01` made that false for exactly one of the two states (step 9), and
+    // The durable mirror makes that false for exactly one of the two states (step 9), and
     // the wait became a race the moment it landed: the row leaves `available` at
     // the bridge, so by the time control reaches here the helper returns on
     // whichever of `on_call` or `wrapup` the poll happens to catch. It caught
@@ -670,7 +666,7 @@ describe('AD-P2 criterion 2 · the agent state machine, walked as one cycle (int
     // Everything above ran with an empty `disposition_catalog`. Flip it on the
     // live campaign and the next wrap-up is HELD — `ends_at: null`,
     // `held_reason: 'disposition_required'`, no timer — which is a state that can
-    // be entered and, until `AD-P2-C-04` ships, cannot be left by the agent. That
+    // be entered and, until the agent-side disposition route exists, cannot be left by the agent. That
     // is precisely the failure mode criterion 2 names, so it needs its exit
     // walked rather than assumed.
     await getTestPool().query(
@@ -727,7 +723,7 @@ describe('AD-P2 criterion 2 · the agent state machine, walked as one cycle (int
     expect(await liveState(sessionId)).toBe('wrapup');
 
     // The supervisor exit does exist, and it is gated at `agency.supervise` in
-    // master — out of an `agent`'s reach entirely per D6 — so the route that can
+    // the public API layer — out of an `agent`'s reach entirely — so the route that can
     // skip a disposition is one the person who would benefit cannot call.
     const forced = await post(`/sessions/${sessionId}/force-available`);
     expect(forced.statusCode).toBe(200);

@@ -1,18 +1,16 @@
 /**
- * Metric declarations owned by the agency lane. Port declarations verbatim from
- * magic-voice-core/src/utils/metrics.ts or magick-master/src/utils/metrics.ts
- * (same names, kinds, units, buckets, label keys) using ../metric-instruments.js
- * and ../meter.js.
+ * Metric declarations for the agency dialer runtime, declared through
+ * ../metric-instruments.js and ../meter.js.
  */
 import { meter } from '../meter.js';
 import { counter, histogram, observableGauge } from '../metric-instruments.js';
 
 // ── S3 metrics ────────────────────────────────────────────
-// Lane B2: master `src/utils/metrics.ts:457-469`@a1f0756a, verbatim names, labels and buckets
-// (the platform overview dashboard charts both). Read by `getFileStream` / `headFile`, the two
-// master S3 functions appended to `apps/server/src/storage/s3.ts` (decision B14). The histogram
-// is `unit: 's'` like the other duration histograms here; master's `startTimer` wrapper does not
-// exist on these instruments, so the one timed caller (`headFile`) measures and `observe`s.
+// Names, labels and buckets are charted by the platform overview dashboard. Read by
+// `getFileStream` / `headFile`, the two S3 functions in `apps/server/src/storage/s3.ts`
+// (decision B14). The histogram is `unit: 's'` like the other duration histograms here;
+// these instruments have no `startTimer` wrapper, so the one timed caller (`headFile`)
+// measures and `observe`s.
 export const s3OperationsTotal = counter<'operation' | 'status'>(meter, 's3_operations_total', {
   description: 'Total S3 operations',
 });
@@ -23,16 +21,12 @@ export const s3OperationDurationSeconds = histogram<'operation'>(meter, 's3_oper
   buckets: [0.05, 0.1, 0.5, 1, 2, 5],
 });
 
-// ── Agency runtime metrics (Phase 6) ─────────────────────────────────────
-// Core `src/utils/metrics.ts:2294-2636` and `:2692-2962`@4850d1d9, verbatim (names, kinds,
-// descriptions, units, buckets, label keys, comments). Not carried, each by plan:
-// `agency_attempt_batches_total` / `agency_attempt_batch_attempts_total` and
-// `trackAgencyAttemptBatchAttempts` (`:2637-2690`, the hourly billing batcher — plan §8
-// Phase 6 "no attempt batcher"); `agency_dnc_synced` and the DNC outbox series (`:2964-`,
-// the Redis DNC set and its outbox — decision B8). Comments below that mention those
-// series, prom-client or "this module is imported by ~200 files" are core's, kept verbatim.
+// ── Agency runtime metrics ───────────────────────────────────────────────
+// Deliberately absent: an hourly attempt-batch billing series (there is no attempt
+// batcher), and `agency_dnc_synced` plus the DNC outbox series (there is no Redis DNC
+// set or outbox — decision B8).
 
-// ─── Agency dialer: the compliance abandonment metric (`AD-P2-C-06`) ────────
+// ─── Agency dialer: the compliance abandonment metric ────────────────────────
 //
 // Two counters and a three-gauge window, and the split is the point.
 //
@@ -43,9 +37,9 @@ export const s3OperationDurationSeconds = histogram<'operation'>(meter, 's3_oper
 // The WINDOW gauges are derived from `agency_call_attempts` by SQL and survive a
 // restart, because a rolling 24h regulatory number cannot be reconstructed from
 // a process that has just started. **That is not an implementation detail — it is
-// what makes the §10 cross-check meaningful.** A counter audited against a table
+// what makes an independent cross-check meaningful.** A counter audited against a table
 // number derived from the same write agrees perfectly and proves nothing, which
-// is exactly how `AD-P2-C-11` found the abandonment metric returning 0 for
+// is exactly how an abandonment metric once went unnoticed returning 0 for
 // months. Do not re-point either side at the other's source.
 
 export const agencyAnsweredTotal = counter<'tenant_id' | 'campaign_id'>(meter, 'agency_answered_total', {
@@ -57,20 +51,19 @@ export const agencyAbandonedTotal = counter<'tenant_id' | 'campaign_id'>(meter, 
 });
 
 /**
- * ─── THE 24h WINDOW: the rate AND both of its terms (ticket 86d44par2) ─────────
+ * ─── THE 24h WINDOW: the rate AND both of its terms ─────────────────────────────
  *
  * Deliberately three series rather than one. A rate alone cannot distinguish
- * 1-abandoned-of-1 from 30-of-3000, and the auto-pause guardrail (`AD-P4-C-02`)
+ * 1-abandoned-of-1 from 30-of-3000, and the auto-pause guardrail
  * reads this: pausing a campaign because its first call of the day was
  * abandoned would be a self-inflicted outage. Same lesson as `no_balance_row` —
  * facts that are distinguishable in the data must not be collapsed into one
  * series on the way out.
  *
- * These three were prom-client only until 86d44par2, which meant invisible in
- * Grafana Cloud (fed by OTLP, not by scraping :9090) — the
- * `gemini_backend_breaker_open` defect, landing on the one number a compliance
- * reviewer asks for. Be exact about what was and was not broken: the auto-pause
- * guardrail was NOT blinded (it reads the same SQL rows
+ * These three must be exported over OTLP, because Grafana Cloud is fed by OTLP and
+ * not by scraping :9090; a series visible only on the scrape is invisible there,
+ * and these are the numbers a compliance reviewer asks for. Be exact about the
+ * exposure: the auto-pause guardrail is NOT blinded by that (it reads the same SQL rows
  * `publishAbandonmentMetrics` is handed), and there is at present **no dashboard
  * panel and no alert rule on any of these three names** — grep the repo,
  * `grafana/` included. The series are reachable by one; somebody still has to
@@ -375,7 +368,7 @@ observableGauge<'tenant_id' | 'campaign_id' | 'state'>(meter, 'agency_live_attem
   }
 });
 
-// ─── Pre-dial compliance gates (`AD-P3-C-05` / `AD-P3-C-06`) ─────────────────
+// ─── Pre-dial compliance gates ─────────────────
 //
 // **These exist because a fail-closed gate makes "nothing dialed" ambiguous.** Once
 // the DNC gate can halt a campaign, a supervisor looking at zero calls cannot tell
@@ -454,7 +447,7 @@ export const agencyTickIdleTotal = counter<'campaign_id' | 'reason'>(meter, 'age
  *
  *   • `busy` / `failed` high     ⇒ carrier signalling latency. Nothing we can tune.
  *   • `no_answer` high           ⇒ a ring timeout would pay (needs a cancel-capable
- *                                  carrier — see §11).
+ *                                  carrier).
  *   • `connected` high           ⇒ ring + talk, NOT talk. See the warning below.
  *   • `canceled` high            ⇒ our own teardown latency.
  *
@@ -529,7 +522,7 @@ export const agencyAttemptHoldSeconds = histogram<'tenant_id' | 'outcome'>(meter
  * what a given timeout would forgo (the tail beyond it). It is also half of the
  * over-dial arithmetic: the marginal abandonment of a surplus dial depends on how
  * tightly two answers can cluster, and that is this distribution's shape rather
- * than the flat `p` the §11 formula takes.
+ * than a flat `p` would assume.
  *
  * Deliberately NOT labelled by outcome. Under D1 a voicemail pickup is an answer
  * like any other, so this measures the carrier's view, which is the same view the
@@ -547,9 +540,8 @@ export const agencyAnswerLatencySeconds = histogram<'tenant_id'>(meter, 'agency_
  * ⚠️ **The whole budget is `ABANDONMENT_BRIDGE_GRACE_MS` = 1000ms.** Everything
  * this measures is time the compliance predicate counts as abandonment, so the
  * buckets are deliberately sub-second and crowd the region that matters: p99 above
- * 150ms is the documented abort criterion for the late-binding rollout, and §11
- * has carried that criterion as **not instrumented** since the flag shipped. This
- * is the instrument.
+ * 150ms is the documented abort criterion for the late-binding rollout, and until
+ * now that criterion has been **not instrumented**. This is the instrument.
  *
  * A refused bind was previously a WARN line and nothing else. Pair this with
  * `agencyBindTotal` below — latency alone cannot distinguish "fast" from "never
@@ -589,7 +581,7 @@ export const agencyBindTotal = counter<'tenant_id' | 'campaign_id' | 'result'>(m
  * Abandonments split by cause.
  *
  * ⚠️ **A SEPARATE SERIES, not a `reason` label on `agency_abandoned_total`.**
- * §11 asked for the label and flagged the cost: adding one terminates the live
+ * A `reason` label would be tempting, but adding one terminates the live
  * series, which is the compliance numerator and is read by the auto-pause
  * guardrail's own cross-check. `static_calls_total` got a deliberate migration for
  * exactly this; a diagnostic label does not earn one. So this rides alongside, and
@@ -612,7 +604,7 @@ export const agencyAbandonedReasonTotal = counter<
 /**
  * How long wrap-up actually takes, by how it ended.
  *
- * `AD-P4-C-01` already averages this in SQL for the supervisor view, but there is
+ * The supervisor view already averages this in SQL for the supervisor view, but there is
  * no time series — so "wrap-up is 18.5s mean against a 30s window" is a pilot
  * artefact nobody can re-check. `resolution` keeps it honest for the same reason
  * migration 088 records it: a `forced` or `agent_left` wrap-up is not evidence
@@ -632,7 +624,7 @@ export const agencyWrapupSeconds = histogram<'tenant_id' | 'resolution'>(meter, 
 /**
  * Contacts retired because of OUR fault, not their unavailability.
  *
- * §11 records that the shared 3-strike our-fault ledger has an unresearched bound
+ * The shared 3-strike our-fault ledger has an unresearched bound
  * and **no surface at all** — a contact retired by our own dropped sockets and
  * cancelled dials is invisible everywhere. That was already true with two
  * producers. It is a blocker for adding a third, so this is the surface, and it

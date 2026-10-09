@@ -1060,8 +1060,7 @@ describe('listAllForUser — the HISTORY read, closed rows included', () => {
   });
 
   it('never returns another tenant’s rows', async () => {
-    // The tenant predicate is in the same statement as the read, per rule 1 of
-    // docs/reference/magick-master/CLAUDE.md's RBAC section — a user id says nothing about which tenant is asking.
+    // The tenant predicate is in the same statement as the read, (tenant scoping is never left to the caller) — a user id says nothing about which tenant is asking.
     await agencyCampaignAgentRepository.assign({ ...base, campaign_id: CAMPAIGN_A });
     await agencyCampaignAgentRepository.assign({
       ...base,
@@ -1187,7 +1186,7 @@ describe('listAllForUser — the history is BOUNDED', () => {
   });
 
   it('keeps the tenant and user predicates alongside the window', async () => {
-    // Rule 1 of docs/reference/magick-master/CLAUDE.md's RBAC section: adding a window must not displace the
+    // Tenant scoping is never optional: adding a window must not displace the
     // scoping that makes the read safe.
     await agencyCampaignAgentRepository.assign({ ...base, campaign_id: CAMPAIGN_A });
     await agencyCampaignAgentRepository.assign({

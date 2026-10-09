@@ -2,7 +2,7 @@ import { superAdminAuditRepository } from '@magick-agency/db/repositories/super-
 
 /**
  * The super-admin routes write their audit row fire-and-forget
- * (`superAdminAuditRepository.log(...)`, not awaited by the route). In a suite that truncates between cases, a write still in flight when
+ * (`superAdminAuditRepository.log(...).catch(() => {})`, the audit write is fire-and-forget). In a suite that truncates between cases, a write still in flight when
  * the next `beforeEach` runs `truncateAll()` deadlocks with the TRUNCATE (the
  * INSERT holds `super_admin_audit_log` and wants `super_admins` for its FK; the
  * TRUNCATE takes them in the other order), failing whichever case comes next.

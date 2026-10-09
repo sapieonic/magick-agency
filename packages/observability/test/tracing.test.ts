@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Traced, withSpan } from '../src/tracing.js';
 
-// Core has no tracing tests (magic-voice-core/test/unit/utils has none); these
-// pin that the decorator and helper are inert without an SDK and keep results.
+// These pin that the decorator and helper are inert without an SDK and keep results.
 class Probe {
   @Traced('probe.run')
   async run(x: number): Promise<number> {

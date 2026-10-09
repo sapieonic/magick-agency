@@ -1,25 +1,19 @@
 /**
- * The three agency feature flags, ported from
- * `magic-voice-core/src/feature-flags/registry.ts` (core v1.123.2,
- * 4850d1d9ffc9eb9eab56d2ed482b9bd616edd103): same keys, defaults, scopes,
- * `envVar` names, `clientExposed`, owners, descriptions and comments
- * (extraction plan §3.2: "become agency flags with the same scopes and
- * defaults"; super-admins can override them per tenant and account).
+ * The three agency feature flags: keys, defaults, scopes, `envVar` names,
+ * `clientExposed`, owners and descriptions. Super-admins can override them per
+ * tenant and account.
  *
- * PORT NOTE (magick-agency): data and types only. Core's `defineFlag` registers
- * into a module-level `Map` and core's `resolveEnvDefault` reads `process.env`;
- * neither belongs in a package two browser apps import, so the registry and the
- * env resolution are the server's to build on top of {@link AGENCY_FLAGS}. The
- * `FlagDefinition` interface is core's verbatim (`registry.ts:15-37`) minus its
- * `validate` predicate, which is a function and none of these three flags sets.
+ * Data and types only. A registry that registers into a module-level `Map` and an
+ * env resolver that reads `process.env` do not belong in a package two browser
+ * apps import, so the registry and the env resolution are the server's to build
+ * on top of {@link AGENCY_FLAGS}. `FlagDefinition` has no `validate` predicate
+ * (a function), and none of these three flags needs one.
  */
 
-/** Core `registry.ts:15`. */
 export type FlagScope = 'global' | 'tenant' | 'account';
-/** Core `registry.ts:16`. */
 export type FlagType = 'boolean' | 'number' | 'string' | 'json';
 
-/** Core `registry.ts:18-37`, without `validate` (see the module note). */
+/** A flag definition, without `validate` (see the module note). */
 export interface FlagDefinition<T = unknown> {
   /** Unique catalog key (matches the `feature_flag_overrides.flag_key`). */
   key: string;
@@ -40,8 +34,8 @@ export interface FlagDefinition<T = unknown> {
 }
 
 /**
- * The definitions, frozen as core's `defineFlag` freezes each one
- * (`registry.ts:42-49`). Keyed by flag key.
+ * The definitions, frozen as the dialer runtime's `defineFlag` freezes each one
+ *. Keyed by flag key.
  */
 export const AGENCY_FLAGS = Object.freeze({
   /*
@@ -50,7 +44,7 @@ export const AGENCY_FLAGS = Object.freeze({
    * `dialer_call_analysis` to them — which meant a tenant enabling softphone
    * analysis silently started paying for transcription on every campaign call,
    * and a tenant turning it off lost agency analysis it had bought separately.
-   * Two products, two switches (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
+   * Two products, two switches.
    *
    * Deliberately a sibling of `dialer_call_analysis` rather than a child: the
    * `dialer_analysis_*` config block and the analysis worker are shared
@@ -84,10 +78,9 @@ export const AGENCY_FLAGS = Object.freeze({
    * `FF_AGENCY_CALL_ANALYSIS` has to be set alongside it there. The migration
    * header carries that as a deploy obligation.
    *
-   * PORT NOTE (magick-agency): in Magick Agency there is no softphone and no
-   * `dialer_call_analysis`, so the "two products" argument is historical; the
-   * cutover copies each tenant's EFFECTIVE value (plan §3.2/§10.5). The
-   * `default: false` reasoning (metered, consent-sensitive) still holds.
+   * There is no softphone and no `dialer_call_analysis` here, so the "two
+   * products" argument is historical. The `default: false` reasoning (metered,
+   * consent-sensitive) still holds.
    */
   agency_call_analysis: {
     key: 'agency_call_analysis',
@@ -97,29 +90,21 @@ export const AGENCY_FLAGS = Object.freeze({
     default: false,
     envVar: 'FF_AGENCY_CALL_ANALYSIS', // staging: FF_AGENCY_CALL_ANALYSIS=true
     scopes: ['global', 'tenant', 'account'],
-    clientExposed: true, // cusui shows/hides the agency analysis UI
+    clientExposed: true, // the console shows/hides the agency analysis UI
     owner: 'voice',
     description: 'Post-call analysis (transcript + summary + dimensions) for agency campaign calls',
   },
 
   // ── Agency dialer (human-agent outbound power dialing) ──────────────────────
-  // Off by default and it must STAY off until magick-master has shipped its side.
-  // Master's unified settlement endpoint rejects an unknown `call_type` with a
-  // 400, so enabling this for a tenant before master's settlement branch and the
-  // two rate-card rows are live would make every agency call fail to settle
-  // (docs/reference/magickvoice-platform/docs/agency-dialer-design.md §8). This flag is the deploy-ordering guard, so
-  // it belongs in the rollout checklist, not just in a doc.
-  //
-  // PORT NOTE (magick-agency): the settlement reason above does not apply — v1
-  // has no settlement (plan Decided #8). The flag survives as the per-tenant /
-  // per-account kill switch for the dialer, with the same default and scopes.
+  // Off by default. v1 has no settlement, so the flag is the per-tenant /
+  // per-account kill switch for the dialer.
   agency_dialer_enabled: {
     key: 'agency_dialer_enabled',
     type: 'boolean',
     default: false,
     envVar: 'FF_AGENCY_DIALER', // staging: FF_AGENCY_DIALER=true
     scopes: ['global', 'tenant', 'account'],
-    clientExposed: true, // cusui shows/hides the Agent + Supervisor consoles
+    clientExposed: true, // the console shows/hides the Agent + Supervisor consoles
     owner: 'voice',
     description: 'Agency dialer: human-agent outbound power dialing (campaigns, agent stations, pacing engine)',
   },
@@ -166,7 +151,7 @@ export const AGENCY_FLAGS = Object.freeze({
     envVar: 'FF_AGENCY_LATE_BINDING', // staging: FF_AGENCY_LATE_BINDING=true
     scopes: ['global', 'tenant', 'account'],
     // NOT client-exposed: the console receives the same frames in the same order,
-    // just later, so there is nothing for cusui to show or hide. A flag the client
+    // just later, so there is nothing for the console to show or hide. A flag the client
     // can read is a flag the client can branch on, and the whole point here is
     // that the console needs no knowledge of when the bind happened.
     owner: 'voice',
@@ -194,7 +179,7 @@ export type ClientExposedAgencyFlagKey = {
 
 /**
  * The client-exposed flag map the console reads (the agency successor of
- * `GET /proxy/feature-flags` → cusui `FeatureFlagMap`), narrowed to agency's
+ * `GET /proxy/feature-flags` → the console `FeatureFlagMap`), narrowed to agency's
  * exposed keys. `agency_late_binding` is deliberately absent — see its comment.
  */
 export type AgencyClientFlagMap = Record<ClientExposedAgencyFlagKey, boolean>;

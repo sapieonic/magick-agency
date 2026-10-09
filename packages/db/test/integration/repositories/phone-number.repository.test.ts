@@ -9,12 +9,10 @@ import {
 } from '../setup/platform-factories.js';
 
 /*
- * PORT NOTE (magick-agency): ported from master
- * test/integration/repositories/phone-number.repository.test.ts@a1f0756a (8 cases → 8),
- * verbatim except import paths (path rule; factories from `platform-factories`).
- * `pool_eligible` and `findLeastAssigned` are kept at the repository because the
- * column is in the baseline; nothing in agency calls `findLeastAssigned` (no
- * pooled number at tenant create, plan §3.4) and the wire contract omits the field.
+ * Factories come from `platform-factories`. `pool_eligible` and
+ * `findLeastAssigned` are kept at the repository because the column is in the
+ * baseline; nothing in agency calls `findLeastAssigned` (no pooled number at
+ * tenant create) and the wire contract omits the field.
  */
 
 // Redirect repository to test database

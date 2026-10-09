@@ -10,9 +10,9 @@ import {
 import type { MetricData } from '@opentelemetry/sdk-metrics';
 
 /**
- * A test-only OpenTelemetry metric reader: the server starts no OTel SDK yet, so the
- * suites install this reader on a fresh MeterProvider and read metrics through the SDK's
- * real aggregation. Gauges use DELTA temporality so each collection sees the latest value.
+ * A manual metric reader for tests. The application has no OTel SDK at runtime yet, so
+ * the reader class and its gauge temporality rule live here, and the suites read metrics
+ * through the real SDK aggregation.
  * `@opentelemetry/sdk-metrics` is an `apps/server` devDependency for this helper.
  */
 const GAUGE_INSTRUMENT_TYPES: ReadonlySet<InstrumentType> = new Set([

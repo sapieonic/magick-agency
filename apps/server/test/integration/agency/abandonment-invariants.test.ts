@@ -14,7 +14,7 @@ const { agencyAttemptRepository, agencyAbandonmentRepository } =
   await import('../../../src/db/repositories/agency.repository.js');
 
 /**
- * NEW (magick-agency, lane B1; plan §9). Two invariants, each with a test that fails
+ * Two invariants, each with a test that fails
  * if it breaks, run against real Postgres:
  *
  *  1. `answered_at` / `bridged_at` are NEVER back-filled. The abandonment predicate's
@@ -28,7 +28,7 @@ const { agencyAttemptRepository, agencyAbandonmentRepository } =
  *     difference is the SQL's `state = 'ended'` terminal filter, which is asserted
  *     on a live row — data on which the two could disagree.
  *
- * The source's equivalent (chaos/abandonment-predicate-agreement) needs the Phase 6
+ * The chaos suite's equivalent (chaos/abandonment-predicate-agreement) needs the full
  * dialer harness; this one drives the rows directly so it can ship with the
  * repository and is superseded, not replaced, by the chaos suite.
  */

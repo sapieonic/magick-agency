@@ -25,12 +25,12 @@ const { DEFAULT_ABANDONMENT_CEILING_PCT } = await import('../../../src/agency/ca
  * Postgres. A statement the database refuses to plan is indistinguishable, at
  * that tier, from one that works.
  *
- * `MAG-120` had already been through this: a renamed column reddened exactly one
+ * An earlier column rename had already been through this: a renamed column reddened exactly one
  * test, because the fixture supplies the keys and only the SQL-text assertion
  * notices. That is a guard against drift in a string, not evidence the query
  * runs.
  *
- * `AD-P4-C-02` made it sharper by adding a LEFT JOIN to `window24h()`. The
+ * Adding a LEFT JOIN to `window24h()`. The
  * abandonment predicate spliced into that statement names its columns
  * **unqualified** (`state`, `answered_at`, `bridged_at`, `outcome`), so the join
  * is one same-named column on `agency_campaigns` away from an `ambiguous column`
@@ -64,7 +64,7 @@ describe('agency supervisor stats (integration)', () => {
   });
 
   it('serves the CAMPAIGN ceiling, so the dashboard threshold is the guardrail line', async () => {
-    // `AD-P4-C-02` acceptance (d). Deliberately NOT the default: serving the
+    // Deliberately NOT the default: serving the
     // module constant here would pass against a default-3 campaign while the
     // guardrail fired on the column, drawing the supervisor's threshold in a
     // different place from the line that actually pauses their campaign.
@@ -100,7 +100,7 @@ describe('agency supervisor stats (integration)', () => {
 
   it('healthInputs — all five queries plan and execute against the real schema', async () => {
     // Added for the same reason as the `stats()` case above, immediately after
-    // making the same mistake: `AD-P4-C-01`'s health strip introduced five new
+    // making the same mistake: the health strip introduced five new
     // queries and not one integration test called them. They cover four tables
     // and three different GROUP BYs, and the unit tier mocks the pool.
     const campaign = await insertAgencyCampaign({ status: 'running' });
@@ -201,7 +201,7 @@ describe('agency supervisor stats (integration)', () => {
   });
 
   it('window24h joins the campaign without making the spliced predicate ambiguous', async () => {
-    // The LEFT JOIN `AD-P4-C-02` added. Executing it is the whole assertion —
+    // The LEFT JOIN added to `window24h()`. Executing it is the whole assertion —
     // `ABANDONED_ATTEMPT_PREDICATE_SQL` is spliced in with unqualified column
     // names, so this is where an `ambiguous column` would surface.
     await insertAgencyCampaign({ status: 'running' });
@@ -261,9 +261,9 @@ describe('agency supervisor stats (integration)', () => {
 });
 
 /**
- * ─── The agent floor (§C.4), against a real Postgres ─────────────────────────
+ * ─── The agent floor, against a real Postgres ─────────────────────────
  *
- * `MAG-148`. The floor already ships inside `stats()` — `supervisorAgents` is the
+ * The floor already ships inside `stats()` — `supervisorAgents` is the
  * `LEFT JOIN … GROUP BY` behind `agents[]` — but its only coverage was the unit
  * tier, where the pool is mocked, plus one integration assertion that the floor is
  * `[]` on an empty campaign. An empty result is exactly the answer a broken join
@@ -353,7 +353,7 @@ describe('agency supervisor stats — the agent floor (integration)', () => {
   });
 
   it('attributes by SESSION, so a rejoining agent starts this shift at zero', async () => {
-    // The §C.4 "this shift" semantic, and it is structural rather than a filter:
+    // The "this shift" semantic, and it is structural rather than a filter:
     // `agency_call_attempts.reserved_agent_id` is a FK to `agency_agent_sessions`
     // (migration 075), not to a user, so a session id cannot exist before its own
     // `joined_at`. There is no date bound to get wrong — but there IS a way to lose

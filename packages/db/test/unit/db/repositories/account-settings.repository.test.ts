@@ -10,12 +10,9 @@ vi.mock('../../../../src/connection.js', () => ({
 
 import { accountSettingsRepository } from '../../../../src/repositories/account-settings.repository.js';
 
-// PORT NOTE (magick-agency): ported from core
-// test/unit/db/repositories/account-settings.repository.test.ts@4850d1d9. The
-// `default_ai_pipeline` getter cases now exercise `getWebrtcMaxDurationSeconds`
-// (same dumb cached column read, the column agency adds); the two
-// `analyze_dialer_calls` cases are deleted (decision Q3b); the upsert binds 5
-// values, not 7. Ids stay non-UUID: the pool is mocked, nothing reaches Postgres.
+// The getter cases exercise `getWebrtcMaxDurationSeconds` (a plain cached column
+// read); there is no `analyze_dialer_calls` column (decision Q3b); the upsert
+// binds 5 values. Ids stay non-UUID: the pool is mocked, nothing reaches Postgres.
 
 const ROW = {
   tenant_id: 't1',

@@ -3,14 +3,11 @@ import { getTestPool } from './test-utils.js';
 import { insertAccount, insertTenant, insertUser } from './factories.js';
 
 /**
- * PORT NOTE (magick-agency, lane A): the identity/phone half of master's
- * `test/integration/setup/factories.ts@a1f0756a`, verbatim, for the platform
- * suites in packages/db and apps/server. A new file beside the lead's
- * `factories.ts` (which already carries master's `insertTenant` / `insertAccount`
- * / `insertUser`, re-exported here). Not carried: the credit, rate-card,
- * API-key, bulk-dispatch, contact-list and workflow factories (none of those
- * tables exist). `provisionTenant` drops its credit-balance row (no credits,
- * plan Decided #8); everything else it builds is master's.
+ * The identity/phone factories for the platform suites in packages/db and
+ * apps/server. `factories.ts` carries `insertTenant` / `insertAccount` /
+ * `insertUser`, re-exported here. There are no credit, rate-card, API-key,
+ * bulk-dispatch, contact-list or workflow factories (none of those tables
+ * exist), and `provisionTenant` creates no credit-balance row (no credits).
  */
 export { insertAccount, insertTenant, insertUser };
 
@@ -128,7 +125,7 @@ export async function insertPhoneAccountTag(overrides: Record<string, unknown> =
 
 /**
  * Provision a full tenant with user, account and membership.
- * Returns all created entities. (PORT NOTE: master's credit balance removed.)
+ * Returns all created entities. (No credit balance is created.)
  */
 export async function provisionTenant(opts: {
   role?: string;

@@ -1,15 +1,10 @@
 /**
- * Hand-maintained mirror of `magic-voice-core/src/agency/contracts.ts`.
+ * The console's view of the agency dialer wire contract.
  *
- * That file is the FROZEN cross-service contract and the wire truth — where it
- * and the design doc disagree, it wins. This is a copy because cusui cannot
- * import from core's source tree; keep it in lockstep, and when core announces
- * a contract change, change this file in the same PR.
- *
- * Only the members Phase 1 renders are mirrored. The unions are copied WHOLE
- * even where Phase 1 cannot reach every member (`wrapup`, `break`), because a
- * union that widens later is a breaking change for every exhaustive switch, and
- * copying the final shape now avoids that.
+ * The frozen contract in `../../agency` is the wire truth. This file declares the
+ * members the console renders, and the unions are declared WHOLE even where a
+ * member is not yet reachable (`wrapup`, `break`), because a union that widens
+ * later is a breaking change for every exhaustive switch.
  */
 
 export type AgencyAgentState =
@@ -46,7 +41,7 @@ export type AgencyAttemptOutcome =
    * nobody, while this is the phone stopping because WE stopped it — an agent, a
    * supervisor or a lifecycle event ending an attempt mid-ring.
    *
-   * Added after the 2026-09-08 pilot, where core labelled a cancelled ring
+   * Added after the 2026-09-08 pilot, where the dialer runtime labelled a cancelled ring
    * `abandoned` — putting dials no customer ever heard into the
    * compliance-facing bucket and making the pilot's numbers unreadable.
    */
@@ -59,7 +54,7 @@ export type AgencyAttemptOutcome =
  * is broken, which is a support ticket per unanswered call.
  *
  * ⚠️ **`canceled` is deliberately NOT a member**, even though it is now an
- * `AgencyAttemptOutcome`. Core's `releaseReasonFor` maps it onto
+ * `AgencyAttemptOutcome`. The dialer runtime's `releaseReasonFor` maps it onto
  * `agent_hangup` or `completed`, both of which already have copy — under late
  * binding a pre-answer cancel reaches no agent at all (there is nobody to
  * release), and with the flag off the only producer is the agent's own hangup,
@@ -119,9 +114,9 @@ export interface AgencyDisposition {
 }
 
 /**
- * One entry in `agency_campaigns.break_reasons` (core migration 078).
+ * One entry in `agency_campaigns.break_reasons` (migration 078).
  *
- * Campaign config is the **sole authority** on accepted break codes — core
+ * Campaign config is the **sole authority** on accepted break codes — the dialer runtime
  * validates `POST /sessions/:id/break` against this list and answers
  * `unknown_break_reason` with `allowed_codes`. An empty list is meaningful: the
  * workspace has configured none, and the console disables Break with a stated
@@ -145,10 +140,9 @@ export interface AgencyStationIntervals {
   reservation_lease_ms: number;
   countdown_ms: number;
   /**
-   * PORT NOTE (magick-agency, Phase 8, CONTRACT-DIFF §1): core's required
-   * `deferred_hangup_ms` — how long a live call is held open after the station socket
-   * drops, waiting for this session to reconnect (`AD-P2-C-07`). Optional here so a
-   * payload that lacks it degrades to cusui's copy rather than to a wrong number.
+   * How long a live call is held open after the station socket drops, waiting
+   * for this session to reconnect. Optional here so a payload that lacks it
+   * degrades to the console's default rather than to a wrong number.
    */
   deferred_hangup_ms?: number;
 }
@@ -171,7 +165,7 @@ export interface AgencySessionBootstrap {
   context_display: AgencyContextDisplay;
   intervals: AgencyStationIntervals;
   /**
-   * Set only when this campaign is a retry of another one (wire contract §4).
+   * Set only when this campaign is a retry of another one.
    *
    * **Absent for every non-retry campaign**, which is 100% of them today — so an
    * `undefined` here is the ordinary case and must render as *nothing at all*,
@@ -184,8 +178,8 @@ export interface AgencySessionBootstrap {
    * no interleaved `await` — and repeating a fixed sentence on it once per call
    * would spend that budget on copy.
    *
-   * ── `selection_summary` is BUILT IN CORE and rendered verbatim ─────────────
-   * Core composes it from the frozen `retry_selector` on the child campaign row,
+   * ── `selection_summary` is BUILT SERVER-SIDE and rendered unchanged ─────────────
+   * The dialer runtime composes it from the frozen `retry_selector` on the child campaign row,
    * so the sentence the agent reads and the query that produced their roster
    * cannot disagree. Re-deriving it here from anything this client holds would
    * be a second answer to the same question, and this client does not even have
@@ -205,9 +199,9 @@ export interface AgencyRetryContext {
   generation: number;
   parent_campaign_name: string;
   /**
-   * Human-readable rendering of the frozen selector, composed core-side.
+   * Human-readable rendering of the frozen selector, composed dialer-runtime-side.
    *
-   * Core's stated rule (contract §4), recorded here because a client that
+   * The server's rule, recorded here because a client that
    * "tidies" this into its own join would silently start disagreeing with the
    * roster: the selected `last_disposition` labels first — from the PARENT's
    * catalog where a label exists, else the raw code — then the `last_outcome`
@@ -221,16 +215,15 @@ export interface AgencyRetryContext {
  * `409` from `POST /proxy/agency/sessions` — the agent already holds a live
  * session on a **different** campaign in this tenant.
  *
- * Mirrors core's `AgencySessionCampaignConflict` (`src/agency/contracts.ts`) —
- * the names differ deliberately here rather than by accident; core's is the
- * authority. Master forwards status and body **verbatim**, so what core writes
+ * Mirrors `AgencySessionCampaignConflict` in `../../agency`, which is the
+ * authority. The public API layer forwards status and body **unchanged**, so what the dialer runtime writes
  * is what lands here.
  *
  * ── Why this error exists at all ──────────────────────────────────────────────
  * Live-uniqueness moved from `(campaign_id, agent_user_id)` to
  * `(tenant_id, agent_user_id)`: one human has one pair of ears, and two pacing
  * engines reserving the same person independently bridged two customers onto
- * them. The comment in core migration 074 ("an agent working three clients …
+ * them. The comment in migration 074 ("an agent working three clients …
  * three rows here, one per account's campaign") is the stale side of that
  * decision and was superseded deliberately.
  *
@@ -248,13 +241,13 @@ export interface AgencySessionConflict {
   /** Their state on that other campaign, so the copy can say whether they are mid-call. */
   state: AgencyAgentState;
   /**
-   * Core's own sentence.
+   * The dialer runtime's own sentence.
    *
    * The console does **not** render it on the ordinary path: it composes better
    * copy from the structured fields — a remedy that branches on `state`, and a
    * link to the station they are still joined to — neither of which a server
    * sentence can carry. This is the *degraded* fallback, for a body whose
-   * structured fields do not read. Core's sentence beats "something went wrong",
+   * structured fields do not read. The dialer runtime's sentence beats "something went wrong",
    * and when there is no campaign id to point at it is the only thing left to
    * say.
    */
@@ -266,11 +259,9 @@ export interface AgencySessionConflict {
  * `/break/cancel`, `/leave`).
  *
  * `pending_state` is the queued-break signal, and this body is the **fastest** of
- * its three sources rather than the only one. It said "the one place a Phase 2
- * surface renders from an HTTP response — there is no frame for a pending break",
- * which is now false twice over: the field rides on `agent_state` and on `ready`
- * too, and those are what a console that did not issue the request has. What is
- * still true is why this one exists — it lands before any frame does, and a pill
+ * its three sources rather than the only one: the field also rides on
+ * `agent_state` and on `ready`, and those are what a console that did not issue
+ * the request has. This one exists — it lands before any frame does, and a pill
  * that waited for the next transition would look like the agent's click did
  * nothing. Everything else here is reconciliation only: `agent_state` frames remain
  * the sole authority for the rail.
@@ -285,68 +276,35 @@ export interface AgencySessionStateResponse {
   /**
    * The break's reason code — **`break_reason`, not `pending_break_reason`.**
    *
-   * This mirror said `pending_break_reason` and core has never sent that name on
-   * an HTTP body (`agency.routes.ts` builds `AgencySessionStateResponse` with
-   * `break_reason`, and master proxies it byte-for-byte). The wrong name read as
-   * `undefined` at every call site; `useAgencyConsole` happened to fall back to
-   * the code it had just requested, which is why nothing visibly broke and why
-   * the drift survived — a silent `?? fallback` is the only thing standing
-   * between this and a queued break with no label.
+   * The HTTP body never carries `pending_break_reason` (`agency.routes.ts`
+   * builds `AgencySessionStateResponse` with `break_reason`, and the public API
+   * layer proxies it byte-for-byte). Reading the wrong name yields `undefined`,
+   * and a silent `?? fallback` is the only thing standing between that and a
+   * queued break with no label.
    *
    * Note the deliberate asymmetry with the socket: the FRAME
    * (`AgencyStationAgentStateFrame`) does carry `pending_break_reason`, because
    * there it sits beside `break_reason` and the two mean different things. On the
-   * response there is one field, and core sets it for both "on break" and "break
+   * response there is one field, and the dialer runtime sets it for both "on break" and "break
    * queued" — `pending_state` is what tells them apart.
    */
   break_reason?: string | null;
 }
 
 /**
- * Why an agent action was refused — core's closed `AgencyActionErrorCode` union,
- * mirrored (master allow-lists the same set through its error mask so these arrive
+ * Why an agent action was refused — the dialer runtime's closed `AgencyActionErrorCode` union
+ * (the public API layer allow-lists the same set through its error mask so these arrive
  * intact rather than as "contact support and quote this request id").
  *
  * **The console keys its copy off `code`**; `message` is only the fallback for a
  * code it does not recognise. That is the whole reason the union is closed.
  *
- * `invalid_dnc_scope` (`scope` on a mark-DNC is neither `campaign` nor
- * `tenant`) and `attempt_not_live` (a hangup on an attempt this replica is not
- * bridging and whose row is not terminal — `MAG-112`) were missing from this
- * copy for a full cycle: `agencyDncCopy.ts`'s `hangupFailureCopy` already keys
- * a branch on `'attempt_not_live'` and worked anyway, because every consumer
- * reads the code off `err.details.code` typed `unknown` rather than off this
- * union — inert today, wrong the moment a `Record<AgencyActionErrorCode, …>`
- * copy map or an exhaustive `switch` gets built on it (`MAG-154`).
- *
- * `AGENCY_ACTION_ERROR_CODES` below is the mechanical pin master already uses
- * (its own `MissingCode` trick, `agency-action-errors.ts`) — a code added to
+ * `AGENCY_ACTION_ERROR_CODES` below is the mechanical pin — a code added to
  * the union and forgotten in the list is a compile error, not a rediscovery of
  * this same drift.
  *
- * ── And it drifted again anyway, which is the part worth reading ────────────
- * `session_on_other_campaign` and `agent_on_live_call` went the same way: core
- * and master carried 18 members while this copy carried 16. The pin above could
- * not have caught it, because it is a check between the union and the list **in
- * this file** — both stayed internally consistent the whole time.
- *
- * Neither did the test that claimed to. `agencyActionErrorCodes.test.ts` was
- * written to catch "a code core adds and cusui never adds", but its expected set
- * was TRANSCRIBED from core by hand, so it drifted in lockstep and stayed green
- * for the whole cycle. A copy cannot detect drift from its own source.
- *
- * That test now READS the sibling — core's
- * `agency-s2s-contract.fixture.json`, which enumerates the codes and is
- * committed byte-identically in core and master — and `skipIf`s when core is not
- * checked out. So the cross-repo direction is guarded at last, with the caveat
- * that it only runs **from the superproject root**; cusui's own CI checks out
- * cusui alone and will skip it.
- *
- * Two consequences worth keeping straight. The two-sided pin below is not
- * protection against falling behind core — it only catches forgetting the list
- * after editing the union. And a green standalone `npm test` here has NOT
- * verified this union against core; run it from the platform root when you
- * change these codes.
+ * The pin only catches forgetting the list after editing the union; the
+ * authority for the codes is the union itself.
  */
 export type AgencyActionErrorCode =
   | 'missing_actor'
@@ -364,7 +322,7 @@ export type AgencyActionErrorCode =
   /**
    * `POST /sessions` refused: the agent already holds a live session on a
    * DIFFERENT campaign in this tenant (one live session per (tenant, agent)
-   * since core's migration 092). The only member that also sets `campaign_id` /
+   * since the dialer runtime's migration 092). The only member that also sets `campaign_id` /
    * `campaign_name` / `state` — {@link AgencySessionConflict} narrows this shape
    * for it, which is why that interface pins the code as a literal discriminant
    * rather than using this union.
@@ -379,9 +337,9 @@ export type AgencyActionErrorCode =
    *
    * **The console has no copy for this one**, and that is a real if narrow gap
    * rather than an oversight worth hiding: `agencyStationExit.ts` blocks Leave
-   * client-side for `reserved` / `on_call` / `wrapup`, so core's refusal is the
+   * client-side for `reserved` / `on_call` / `wrapup`, so the dialer runtime's refusal is the
    * backstop for the race where state changes between render and click. It is
-   * listed here because the union is a mirror of core's, not a list of what this
+   * listed here because the union is the full contract, not a list of what this
    * console happens to render — the drift below is exactly what listing only the
    * handled ones produces.
    */
@@ -396,9 +354,8 @@ export type AgencyActionErrorCode =
  *
  * `satisfies` pins it to the type in one direction (every listed value is a
  * valid code); {@link MissingAgencyActionErrorCode} below pins the other
- * (every code in the union is listed) — the same two-sided check master's
- * `AGENCY_ACTION_ERROR_CODES` uses, so this union cannot silently drift behind
- * core's again the way it just did.
+ * (every code in the union is listed) — the same two-sided check
+ * `AGENCY_ACTION_ERROR_CODES` uses, so this union cannot silently drift.
  */
 export const AGENCY_ACTION_ERROR_CODES = [
   'missing_actor',
@@ -425,7 +382,7 @@ export const AGENCY_ACTION_ERROR_CODES = [
  * Exhaustiveness in the other direction: every member of the union appears in
  * {@link AGENCY_ACTION_ERROR_CODES}. `satisfies` alone only proves the list
  * holds *valid* codes, not *all* of them, and a code present in the union but
- * missing from the list is exactly the failure mode `MAG-154` found — a code
+ * missing from the list is exactly the failure mode — a code
  * that compiles, is a real value of the type, and is simply never listed
  * anywhere that would have caught it.
  */
@@ -459,8 +416,7 @@ export interface AgencyDispositionResponse {
   /** ISO-8601; set when the disposition scheduled a retry or a callback. */
   next_attempt_at: string | null;
   /**
-   * PORT NOTE (magick-agency, Phase 8, CONTRACT-DIFF §1): core's `callback_requested_at` —
-   * what the agent ASKED for, echoed verbatim. `next_attempt_at` is the window-adjusted
+   * What the agent ASKED for, echoed unchanged. `next_attempt_at` is the window-adjusted
    * instant the dialer will actually call; when the two differ the console says what will
    * happen (`confirmationCopy`).
    */
@@ -500,7 +456,7 @@ export interface AgencyNotesResponse {
  * `contact_state: 'suppressed'` means **this campaign** will not dial the
  * contact again; `dnc_recorded: true` additionally means the tenant-wide
  * `dnc_entries` row landed, which is what makes "no campaign in this workspace"
- * true. Core populates it from master's answer and can only know it by asking —
+ * true. The dialer runtime populates it from the public API layer's answer and can only know it by asking —
  * so `false` is a real, reachable state, not a defensive default.
  */
 export interface AgencyDncResponse {
@@ -523,11 +479,11 @@ export interface AgencyPriorAttempt {
   /**
    * 1-based, **per contact row and therefore per campaign**.
    *
-   * ⚠️ It RESETS to 1 in a retry campaign (retry design DR-2: the child gets its
+   * ⚠️ It RESETS to 1 in a retry campaign (the child gets its
    * own `agency_contacts` row with `attempt_count = 0`). So once this list spans
    * a lineage it is no longer a global ordering and must never be rendered as
    * one — "attempt 2" means nothing to an agent when two campaigns each have
-   * one. Core's own read stopped ordering by it for exactly this reason.
+   * one. The dialer runtime's own read stopped ordering by it for exactly this reason.
    */
   attempt_number: number;
   outcome: AgencyAttemptOutcome | null;
@@ -535,23 +491,21 @@ export interface AgencyPriorAttempt {
   notes: string | null;
   ended_at: string | null;
 
-  // ── Lineage (retry campaigns, wire contract §5) ────────────────────────────
+  // ── Lineage (retry campaigns) ────────────────────────────
   //
-  // Declared REQUIRED because the contract declares them required, and because
-  // the merge order is core → master → cusui: by the time this client ships,
-  // every core serving it carries them. What is NOT assumed anywhere is that
+  // Declared REQUIRED because the contract declares them required. What is NOT assumed anywhere is that
   // they are populated — `groupPriorAttempts` treats a blank `campaign_id` as
-  // "this campaign", which is the only thing an older core could have meant,
+  // "this campaign", which is the only thing an older server could have meant,
   // and is why a stale payload degrades to today's flat list rather than to a
   // group headed by nothing.
 
   /** The campaign the dial belonged to. Not necessarily the one the agent is on. */
   campaign_id: string;
   /**
-   * That campaign's name, resolved by core from its own row.
+   * That campaign's name, resolved by the dialer runtime from its own row.
    *
    * The agent gets the NAME and nothing else about an ancestor campaign — no
-   * stats, no connect rate, no roster counts, no agent roster (DR-7). `agent` is
+   * stats, no connect rate, no roster counts, no agent roster. `agent` is
    * level 5 and holds exactly four `agency.*` permissions; a supervisor-gated
    * read reached from this screen would be the reason someone raises it.
    */
@@ -569,7 +523,7 @@ export interface AgencyReservedAttempt {
   caller_id: string;
   attempt_number: number;
   /**
-   * Every non-phone CSV column verbatim. **Always treat as untrusted display
+   * Every non-phone CSV column unchanged. **Always treat as untrusted display
    * text, never as markup** — it is operator-uploaded file content.
    */
   context: Record<string, unknown>;
@@ -586,27 +540,26 @@ export interface AgencyStationReadyFrame {
    * Set when the socket reconnected onto an attempt that is still live.
    *
    * **`AgencyActiveAttempt`, not `AgencyReservedAttempt`** — the difference is
-   * `bridged_at`, and it is the whole reconnect story (§A.13.1.1). This mirror
-   * carried the base type until now, so `bridged_at` never reached the console and
-   * a reconnect onto a live call rendered as ringing for the rest of the
-   * conversation.
+   * `bridged_at`, and it is the whole reconnect story. Typing it as
+   * the base type would drop `bridged_at`, and a reconnect onto a live call would
+   * render as ringing for the rest of the conversation.
    */
   active_attempt?: AgencyActiveAttempt;
   /**
    * Set when the reconnecting socket is in `wrapup`.
    *
-   * The wrap-up countdown is an in-process timer on core's replica, so it survived
-   * the socket drop — but the `wrapup` frame that opened it did not, and core does
+   * The wrap-up countdown is an in-process timer on the dialer runtime's replica, so it survived
+   * the socket drop — but the `wrapup` frame that opened it did not, and the dialer runtime does
    * **not** re-emit one. Without reading this, a reconnect mid-wrap-up leaves the
    * console with no anchor: no deadline, no held-reason, and — because the pad's
    * other unlock path keys off a retained attempt this socket never saw — no way
-   * to submit the disposition core is about to refuse `/available` over.
+   * to submit the disposition the dialer runtime is about to refuse `/available` over.
    */
   active_wrapup?: AgencyWrapupState;
   /**
    * The `released` this session missed while it was disconnected.
    *
-   * **Consumed-on-read in core.** `takeMissedRelease` clears as it reads
+   * **Consumed-on-read in the dialer runtime.** `takeMissedRelease` clears as it reads
    * (`agency.routes.ts`, "read it here, not inline in the frame, because … a
    * second call would return null"), so this frame is the *only* time it is ever
    * offered. A console that drops it does not merely delay the information — it
@@ -615,12 +568,12 @@ export interface AgencyStationReadyFrame {
    */
   missed_release?: AgencyMissedRelease;
   /**
-   * A break the agent asked for that core has accepted and not yet applied — the
+   * A break the agent asked for that dialer runtime has accepted and not yet applied — the
    * same name, type and meaning as on `AgencyStationAgentStateFrame`, chosen that
    * way deliberately so one badge renders from either frame with no new
    * vocabulary.
    *
-   * **This was recorded here as core's gap and core closed it** (`4f59d8b`). A
+   * A
    * queued break is announced exactly twice — on the HTTP response that queued it,
    * and on the `agent_state` beside it — and both die with the socket. The next
    * `agent_state` the agent gets is the one `releaseAgent` sends at the *end* of
@@ -628,7 +581,7 @@ export interface AgencyStationReadyFrame {
    * reconnected mid-wrap-up was told its state and its countdown and nothing about
    * the break waiting behind them.
    *
-   * **Core reads the queue with `peek`, not `take`** (`agency.routes.ts`,
+   * **The dialer runtime reads the queue with `peek`, not `take`** (`agency.routes.ts`,
    * `runtime.breaks.peek(sessionId)`), so reporting it here does not consume it:
    * `releaseAgent` still `take`s it when wrap-up ends and the agent still leaves
    * the pool. This is notice of something about to happen, not a receipt for a
@@ -664,7 +617,7 @@ export interface AgencyMissedRelease {
   ended_at: string;
 }
 
-/** Attempt lifecycle, mirrored from core's `AgencyAttemptState`. */
+/** Attempt lifecycle (`AgencyAttemptState`). */
 export type AgencyAttemptState =
   | 'queued'
   | 'dialing'
@@ -682,11 +635,11 @@ export type AgencyAttemptState =
  * is always null is one someone eventually reads as meaningful.
  *
  * **`bridged_at` is the ringing-vs-live discriminator and there is no client-side
- * substitute.** Core does not re-emit `bridged` on reconnect — deliberately, because
+ * substitute.** The dialer runtime does not re-emit `bridged` on reconnect — deliberately, because
  * the connect cue lives in that handler and dedupes per `attempt_id`, and a
  * reconnect after a full page load starts with an empty dedupe set, so a re-emitted
  * frame would play "customer connected" into a conversation nine minutes old
- * (§A.13.1.1). Anything waiting for a second `bridged` waits forever.
+ * Anything waiting for a second `bridged` waits forever.
  */
 export interface AgencyActiveAttempt extends AgencyReservedAttempt {
   /**
@@ -708,19 +661,18 @@ export interface AgencyStationReservedFrame {
 }
 
 /**
- * D5's 3-2-1 auto-connect countdown — **declared by core and emitted by nothing.**
+ * D5's 3-2-1 auto-connect countdown — **declared by the dialer runtime and emitted by nothing.**
  *
- * Mirrored because the union is copied whole, and kept mirrored on purpose after
- * the console's handler for it was deleted (`MAG-39` follow-up). Core declares
- * this frame in `contracts.ts` and there is **no `send` of it anywhere in core's
- * tree**: `grep "'countdown'" src/` finds the type, `intervals.countdown_ms`, and
- * prose. Nothing produces one, so a console handler for it was code that could
- * never run, writing fields nothing read.
+ * Kept in the union on purpose, with no console handler. The contract declares
+ * this frame and there is **no `send` of it anywhere in the dialer runtime**:
+ * `grep "'countdown'" src/` finds the type, `intervals.countdown_ms`, and
+ * prose. Nothing produces one, so a console handler for it would be code that
+ * could never run, writing fields nothing read.
  *
  * **Do not re-add a handler from this type.** The auto-connect countdown is a
  * feature that does not exist on either side; building the client half first
  * would make the console look like it works and leave the agent watching a
- * counter that never ticks. If core ever emits this, the handler comes back in
+ * counter that never ticks. If the dialer runtime ever emits this, the handler comes back in
  * the same PR as the emitter.
  *
  * The declaration stays so that the union still describes the wire faithfully and
@@ -760,13 +712,13 @@ export interface AgencyStationAgentStateFrame {
    * never mid-conversation.
    *
    * **`undefined` means nothing is queued, and that is load-bearing rather than
-   * merely absent.** Core's `/break/cancel` emits an `agent_state` with these
+   * merely absent.** The dialer runtime's `/break/cancel` emits an `agent_state` with these
    * fields omitted precisely to say the queue is empty (`agency.routes.ts`, "if
    * (cancelled) … send agent_state"), so a console that reads absence as "no
    * change" leaves a pill up for a break the agent already took back.
    *
    * The frame carries this and not just the HTTP response that queued it because
-   * **the queue outlives the request**: a supervisor can queue one the console
+   * **the queue outlives the request**: a supervisor can queue one console
    * never issued, and an agent who queues a break and then loses their socket must
    * still be told about it when the next transition frame lands.
    */
@@ -813,8 +765,8 @@ export interface AgencyStationErrorFrame {
 /**
  * Bridge-originated. **Diagnostic only.**
  *
- * `WebRtcBridgeManager` emits these onto the borrowed station socket and core
- * relays them verbatim. They describe the MEDIA LEG, not the attempt — a
+ * `WebRtcBridgeManager` emits these onto the borrowed station socket and the dialer runtime
+ * relays them unchanged. They describe the MEDIA LEG, not the attempt — a
  * console that drives UI from them is subtly wrong. In particular
  * `status: 'answered'` means the far end went off-hook, which is NOT the same
  * as audio reaching this agent.
@@ -834,12 +786,12 @@ export interface AgencyStationBridgeEndedFrame {
  *
  * This shares an origin with the two frames above and is emphatically NOT
  * diagnostic: it is the customer's voice. `payload` is base64 **PCM16, mono,
- * 16 kHz, little-endian** — core normalises both carriers to that before it
+ * 16 kHz, little-endian** — the voice engine normalises both carriers to that before it
  * writes to this socket, transcoding VoiceLink's A-law 8 kHz and passing VoBiz's
- * L16 16 kHz through verbatim (`webrtc-bridge-manager.ts:1154,1157`).
+ * L16 16 kHz through unchanged.
  *
  * The uplink frame is the **same envelope in the same encoding**
- * (`webrtc-bridge-manager.ts:1083`) — the asymmetry is entirely on core's far
+ * — the asymmetry is entirely on the voice engine's far
  * side, where it transcodes per carrier. The console therefore has one format to
  * produce and one to consume, and neither depends on which carrier is dialling.
  */
@@ -852,15 +804,13 @@ export interface AgencyStationMediaFrame {
  * Why wrap-up is being held open rather than counting down. `null` when it is
  * simply running against a deadline.
  */
-// PORT NOTE (magick-agency, Phase 8, CONTRACT-DIFF §1/§2): core's second hold reason,
-// `supervisor_hold` — "a supervisor is holding this agent out of the pool deliberately".
-// cusui lacked it, so the hold would have rendered as nothing; the console's `WrapupTimer`
-// now names it. Core @ `4850d1d9` declares it (`src/agency/contracts.ts:1418`) but nothing
-// produces it yet: no code path there sets `held_reason: 'supervisor_hold'`.
+// `supervisor_hold` means "a supervisor is holding this agent out of the pool
+// deliberately"; the console's `WrapupTimer` names it. Nothing produces it yet: no
+// code path sets `held_reason: 'supervisor_hold'`.
 export type AgencyWrapupHold = 'disposition_required' | 'supervisor_hold';
 
 /**
- * The wrap-up window (`AD-P2-C-02`).
+ * The wrap-up window.
  *
  * **`ends_at` is an ABSOLUTE instant, and the console reads it rather than
  * reconstructing it.** Reconstructing (`since + wrapup_seconds × 1000`) means
@@ -890,7 +840,7 @@ export interface AgencyWrapupState {
   /**
    * Whether the window will return the agent to the pool on its own.
    *
-   * **Trust this, not the campaign config.** For a timerless wrap-up core reports
+   * **Trust this, not the campaign config.** For a timerless wrap-up the dialer runtime reports
    * `false` even when the campaign sets `wrapup_auto_return: true`, because with
    * no window it cannot mean what it says. Echoing the config would pair
    * `auto_return: true` with `ends_at: null`, which is indistinguishable from
@@ -943,7 +893,7 @@ export type AgencyStationServerFrame =
   | AgencyStationMediaFrame;
 
 /**
- * Close codes core uses. The distinction that matters is **re-mint and retry**
+ * Close codes the dialer runtime uses. The distinction that matters is **re-mint and retry**
  * versus **re-bootstrap**: retrying a dead session forever is indistinguishable
  * from a network problem to the agent, and gives them nothing to act on.
  */

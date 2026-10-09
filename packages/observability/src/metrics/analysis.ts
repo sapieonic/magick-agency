@@ -1,10 +1,8 @@
 /**
- * Metric declarations owned by the analysis lane (lane D).
+ * Metric declarations owned by the dialer call analysis.
  *
- * Ported verbatim from magic-voice-core/src/utils/metrics.ts@4850d1d9, lines
- * 862-907 (same names, kinds, descriptions, units, buckets, label keys), except:
- * `dialer_analysis_settlement_pending_age_seconds` and its setter are NOT carried —
- * settlement is removed (plan §4).
+ * `dialer_analysis_settlement_pending_age_seconds` and its setter are deliberately
+ * absent — there is no settlement step.
  */
 import { meter } from '../meter.js';
 import { counter, gauge, histogram } from '../metric-instruments.js';

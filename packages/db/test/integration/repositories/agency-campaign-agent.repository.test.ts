@@ -345,8 +345,7 @@ describe('AgencyCampaignAgentRepository (integration)', () => {
       // production. With max: 2, the sixth `assign` simply hangs if any of the
       // first five failed to release — which is what the timeout would report.
       const smallPool = new pg.Pool({
-        // PORT NOTE (magick-agency): master's 5434 URL replaced by the agency
-        // harness's guarded TEST_DB_URL.
+        // The agency harness's guarded TEST_DB_URL.
         connectionString: TEST_DB_URL,
         max: 2,
       });

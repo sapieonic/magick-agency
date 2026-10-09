@@ -1,4 +1,3 @@
-// PORT NOTE (magick-agency): ported from master test/integration/cache/local-cache-invalidation.test.ts@a1f0756a (9 → 9); only the Redis target changed.
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import Redis from 'ioredis';
 import { TEST_REDIS_URL, assertSafeTestRedisUrl } from '../../helpers/test-redis.js';
@@ -20,9 +19,7 @@ vi.mock('../../../src/config/index.js', () => ({
 
 const { RedisCache } = await import('../../../src/cache/redis-cache.js');
 
-// PORT NOTE (magick-agency): master pointed this at its own test Redis
-// (`redis://localhost:6381`, a port agency must never touch). Agency's guarded
-// test Redis (6383, the worktree's non-zero db) is used, and every FLUSHDB goes
+// The guarded test Redis (6383, the worktree's non-zero db) is used, and every FLUSHDB goes
 // through `assertSafeTestRedisUrl()` first.
 assertSafeTestRedisUrl();
 const REDIS_URL = TEST_REDIS_URL;

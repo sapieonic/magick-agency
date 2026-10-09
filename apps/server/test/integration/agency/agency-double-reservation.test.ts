@@ -6,12 +6,10 @@ import { insertAgencyCampaign, insertAgencyContacts } from './agency-factories.j
 import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, uuidFor } from '../setup/factories.js';
 
 /*
- * PORT NOTE (magick-agency, Phase 6): ported from core
- * test/integration/agency/agency-double-reservation.test.ts@4850d1d9 — 9 cases, all
- * kept, no assertion weakened. Modified:
+ * Notes:
  *  - ids: the tenant/account/agent ids are UUID columns now. `TENANT`/`ACCOUNT` are the
- *    shared defaults the factories stamp on rows (core: 'test-tenant'/'test-account');
- *    `ACCOUNT_2`, `AGENT`, 'agent-alice', 'agent-bob' are `uuidFor(<core's label>)`;
+ *    shared defaults the factories stamp on rows;
+ *    `ACCOUNT_2`, `AGENT`, 'agent-alice', 'agent-bob' are `uuidFor(<label>)`;
  *    'other-tenant'/'other-account' are the shared `OTHER_TENANT`/`OTHER_ACCOUNT`.
  *  - DNC (decision B8): `makeWorld` and the other-tenant case no longer publish an empty
  *    `applyReplace` baseline into a Redis set — the registry is `new DncRegistry()`, a
@@ -21,14 +19,14 @@ import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, uuidFor } from '../setup/factori
  *  - the connection mock (agency's `@magick-agency/db`).
  */
 
-// PORT NOTE: core mocked `src/db/connection.js`; agency's pool lives in `@magick-agency/db`
+// The DB pool lives in `@magick-agency/db`
 // (the server's repositories import its root, packages/db's repositories `./connection`).
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
 vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
 vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: {}, // PORT NOTE: core stubbed `telephony.vobiz` (VoBiz deleted, plan §5)
+    telephony: {}, // no carrier config is needed
   },
 }));
 
@@ -74,21 +72,21 @@ type DialCommand = import('../../../src/agency/dial-dispatcher.js').DialCommand;
  * against the old schema, in the same file, on the same fixture.
  */
 
-const TENANT = DEFAULTS.tenantId; // PORT NOTE: UUID (core: 'test-tenant')
+const TENANT = DEFAULTS.tenantId; // UUID
 /**
  * TWO ACCOUNTS, one tenant — and that is forced rather than chosen.
  *
  * `uq_agency_campaign_running (tenant_id, account_id) WHERE status = 'running'`
- * (D9, migration 072) allows one running campaign per ACCOUNT, so two campaigns
+ * (migration 072) allows one running campaign per ACCOUNT, so two campaigns
  * that can dial at the same moment are necessarily in two accounts of the tenant.
  * That is exactly the shape 092's header calls out: `account_id` is deliberately
  * absent from the uniqueness key because "an agent moving between two accounts of
  * the same tenant is exactly the double-bridge case". An account-scoped index
  * would have left the entire reachable population of this defect unprotected.
  */
-const ACCOUNT = DEFAULTS.accountId; // PORT NOTE: UUID (core: 'test-account')
-const ACCOUNT_2 = uuidFor('test-account-2'); // PORT NOTE: UUID
-const AGENT = uuidFor('agent-one-pair-of-ears'); // PORT NOTE: UUID
+const ACCOUNT = DEFAULTS.accountId; // UUID
+const ACCOUNT_2 = uuidFor('test-account-2'); // UUID
+const AGENT = uuidFor('agent-one-pair-of-ears'); // UUID
 const REPLICA = 'replica-A';
 
 /**
@@ -137,8 +135,7 @@ async function makeWorld(): Promise<World> {
   // Without an applied version every pre-dial check answers `unavailable`, the
   // gate halts, and nothing dials — which is indistinguishable from the fix
   // working. Asserted rather than assumed, exactly as the chaos harness does.
-  // PORT NOTE (B8): no baseline to publish — the registry reads `dnc_entries`
-  // (core: `new DncRegistry(redis, '')` + `applyReplace({ … members: [] })`).
+  // Decision B8: no baseline to publish — the registry reads `dnc_entries`
   const dnc = new DncRegistry();
   if (await dnc.check(TENANT, '+919000000099', { accountId: null, campaignId: null }) !== 'clear') {
     throw new Error('the pre-dial gate still refuses this tenant — every case here would dial nothing');
@@ -183,7 +180,7 @@ async function join(campaignId: string, accountId: string, agentUserId = AGENT) 
 }
 
 /**
- * `joinOrRehydrate` **as it shipped with 074**, verbatim from the commit 092
+ * `joinOrRehydrate` **as it shipped with 074**, exactly as the commit 092
  * replaces — the only difference is the ON CONFLICT arbiter's name.
  *
  * The counterfactual cases need it because the two halves of this change are
@@ -436,8 +433,8 @@ describe('agency double reservation — one human, two campaigns (integration)',
     const campA = await dialableCampaign('A', ACCOUNT);
     const campB = await dialableCampaign('B', ACCOUNT_2);
 
-    const a = await join(campA.id, ACCOUNT, uuidFor('agent-alice')); // PORT NOTE: UUID
-    const b = await join(campB.id, ACCOUNT_2, uuidFor('agent-bob')); // PORT NOTE: UUID
+    const a = await join(campA.id, ACCOUNT, uuidFor('agent-alice')); // UUID
+    const b = await join(campB.id, ACCOUNT_2, uuidFor('agent-bob')); // UUID
     if (!a.ok || !b.ok) throw new Error('unreachable — two different humans');
     await goAvailable(world, a.session.id);
     await goAvailable(world, b.session.id);
@@ -458,12 +455,12 @@ describe('agency double reservation — one human, two campaigns (integration)',
     const ours = await dialableCampaign('ours', ACCOUNT);
     const theirs = await insertAgencyCampaign({
       name: 'theirs', status: 'running',
-      tenant_id: OTHER_TENANT, account_id: OTHER_ACCOUNT, // PORT NOTE: UUIDs
+      tenant_id: OTHER_TENANT, account_id: OTHER_ACCOUNT, // UUIDs
     });
     await insertAgencyContacts(theirs.id, 3, { tenant_id: OTHER_TENANT, account_id: OTHER_ACCOUNT });
 
     // The other tenant needs its own DNC baseline — the gate is per tenant.
-    // PORT NOTE (B8): no baseline to publish; the other tenant is authoritative with no
+    // Decision B8: no baseline to publish; the other tenant is authoritative with no
     // `dnc_entries` row. Asserted through the gate's own call instead.
     const dnc = new DncRegistry();
     expect(await dnc.check(OTHER_TENANT, '+919000000099', { accountId: OTHER_ACCOUNT, campaignId: theirs.id }))

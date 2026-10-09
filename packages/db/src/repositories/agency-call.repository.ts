@@ -9,31 +9,29 @@ import type {
 } from '../models/agency-call.model.js';
 
 /*
- * PORT NOTE (magick-agency): ported from core `src/db/repositories/webrtc-call.repository.ts`
- * (v1.123.2). Changes, each in PORTING.md:
+ * Notes on this repository:
  *  - every statement targets `agency_calls` (the baseline's rename of `webrtc_calls`);
  *  - `telephony_credential_id` (BYOC) and `sip_connection_id` (SIP) are gone from
  *    the INSERT and the list projection, as the baseline dropped the columns;
  *  - the default `provider` is `'voicelink'` (VoBiz is deleted; the baseline's
  *    column default is `'voicelink'` too);
  *  - `WebRtcCallScope` is `'agency'` only — the softphone (`'dialer'`) is
- *    deleted (plan §5), and `analysisFlagFor` returns `agency_call_analysis`.
- *    `scopeClause` keeps core's body, so untyped code that omits the scope still
+ *    absent, and `analysisFlagFor` returns `agency_call_analysis`.
+ *    `scopeClause` keeps its original body, so untyped code that omits the scope still
  *    fails closed to `campaign_id IS NULL` (see the scope unit test);
  *  - the flag definition comes from `@magick-agency/contracts/flags`, which the
  *    server's registry (`apps/server/src/feature-flags/registry.ts`) also reuses,
  *    because this package cannot import the server;
  *  - exported as `agencyCallRepository`, with `webrtcCallRepository` aliasing it
- *    so ported call sites compile unchanged.
- * The comment below is core's, verbatim; its file list describes core.
+ *    for call sites that use the older name.
  */
 
 /*
  * ─── What the required `scope` parameter does and does NOT audit ─────────────
  *
  * `findByIdScoped` and `listByTenant` take a required `scope`, and the compile
- * errors from adding it were the audit checklist for the read path
- * (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b). Anyone relying on that checklist should
+ * errors from adding it were the audit checklist for the read path.
+ * Anyone relying on that checklist should
  * know its edge: **it enumerates callers of these two methods, and nothing else.**
  * A reader that writes `FROM webrtc_calls` itself is invisible to it, because
  * there is no call site for the type checker to fail.
@@ -54,7 +52,7 @@ import type {
  *   counting both is the correct answer: revoking strands whichever calls are on
  *   that credential, so a scoped count would under-report and wave through a
  *   revoke that kills the other product's live calls. It is a platform-zone
- *   safety check (§7b's third zone), not a product read path.
+ *   safety check (a third zone, neither product's), not a product read path.
  *
  * The rule that separates them: **scope the reads that ANSWER A PRODUCT'S
  * QUESTION; do not scope the ones that answer the platform's.** If you add a
@@ -78,8 +76,7 @@ const WEBRTC_JSON_COLUMNS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * `campaign_id` is projected deliberately. It is the scope discriminator (see
- * `docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b) and the list could not label — or even
+ * `campaign_id` is projected deliberately. It is the scope discriminator and the list could not label — or even
  * recognise — a foreign row without it.
  *
  * All webrtc_calls columns except the heavy analysis JSONB blobs
@@ -113,8 +110,7 @@ const WEBRTC_LIST_COLUMNS = `
  * Which product owns the calls a read is asking for.
  *
  * `webrtc_calls` holds both products' calls and stays one table by design
- * (migration 076). This is the boundary between them
- * (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
+ * (migration 076). This is the boundary between them.
  *
  * **The enum's meaning is product ownership, not the shape of the predicate.**
  * `'dialer'` happens to resolve to `campaign_id IS NULL` today, but callers must
@@ -156,8 +152,8 @@ function scopeClause(scope: WebRtcCallScope): string {
  * header says why.
  */
 export function analysisFlagFor(scope: WebRtcCallScope): FlagDefinition<boolean> {
-  // PORT NOTE (magick-agency): agency product only — every call is an agency
-  // call, and `dialer_call_analysis` is not in agency's flag registry.
+  // Agency product only — every call is an agency call, and
+  // `dialer_call_analysis` is not in the flag registry.
   return AGENCY_FLAGS.agency_call_analysis;
 }
 
@@ -207,8 +203,7 @@ export class WebRtcCallRepository {
    * Also refuses the other product's rows. Every `/api/v1/webrtc-call/*` handler
    * reaches its record through this function, so pinning `scope: 'dialer'` there
    * is what makes an agency call invisible and untouchable through the softphone's
-   * routes — read, recording, hangup and erasure alike
-   * (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
+   * routes — read, recording, hangup and erasure alike.
    *
    * `scope` is required and has no default on purpose. A default would type-check
    * every call site immediately and silently leave them unaudited; the compile
@@ -240,8 +235,7 @@ export class WebRtcCallRepository {
   }
 
   /**
-   * One product's call history. `scope` selects which
-   * (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b) and is required — it sits ahead of the
+   * One product's call history. `scope` selects which and is required — it sits ahead of the
    * paging arguments precisely so it cannot be given a default.
    *
    * The scope is applied to the count query as well as the data query. Filtering
@@ -344,5 +338,5 @@ export class WebRtcCallRepository {
 }
 
 export const agencyCallRepository = new WebRtcCallRepository();
-/** Core's export name, kept so ported call sites compile unchanged. */
+/** The original export name, kept as an alias. */
 export const webrtcCallRepository = agencyCallRepository;
