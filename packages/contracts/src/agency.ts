@@ -1,31 +1,27 @@
-// PORT NOTE (magick-agency, packages/contracts): a verbatim port of
-// `magic-voice-core/src/agency/contracts.ts` at core v1.123.2
-// (4850d1d9ffc9eb9eab56d2ed482b9bd616edd103). The only changes are marked
-// `PORT NOTE` where they occur: `credits_low` removed from the stall vocabulary,
-// `AGENCY_CORE_STALL_CODES` folded into `AGENCY_STALL_PRIORITY`, and the
-// billing-only wire shapes deleted. Comments below that speak of "core",
-// "master" and "the proxy" describe the system this was ported FROM; in Magick
-// Agency one application plays both roles. See `../PORTING.md`.
+// Notes on vocabulary: "the dialer runtime" below means the private handler
+// instance reached through `callCore`; "the public API layer" is the main
+// Fastify app that validates, authorises and enriches requests. Both live in
+// the same application.
 /**
- * ─── AGENCY DIALER — FROZEN CROSS-SERVICE CONTRACT ──────────────────────────
+ * ─── AGENCY DIALER — FROZEN CONTRACT ────────────────────────────────────────
  *
  * Types only. This module has **no runtime behaviour** — it compiles to nothing —
  * so importing it can never pull the agency engine into a caller's graph.
  *
  * Frozen ahead of Phase 1 because three teams build against it in parallel:
- * magick-master proxies these shapes, magick-comms-cusui renders them, and QA
- * writes tests to them. Changing anything here after the freeze is a contract
+ * the public API layer forwards these shapes, the console renders them, and the
+ * tests are written against them. Changing anything here after the freeze is a contract
  * change: announce it, do not just edit it.
  *
- * Authority: docs/reference/magickvoice-platform/docs/agency-dialer-design.md (§2.4, §5, §6.1, §8, §9, D5, D10, D11).
- * Where this file and the design doc disagree, this file is what actually ships;
+ * Authority: the agency dialer design.
+ * Where this file and the design disagree, this file is what actually ships;
  * every such divergence is called out in a comment naming the reason.
  *
  * **Phase 2 amendment (the pool).** Everything wrap-up, break, disposition, notes
  * and reconnect needs is frozen in the section at the bottom of this file, plus
  * four *additive* changes to shapes frozen in Phase 1, each marked `P2:` where it
  * appears:
- *   1. `AgencyStationIntervals.deferred_hangup_ms` — new, required. Core is the
+ *   1. `AgencyStationIntervals.deferred_hangup_ms` — new, required. The dialer runtime is the
  *      only producer of this object, so a required field is additive for every
  *      consumer; the console needs it reliably to render a reconnect countdown.
  *   2. `AgencyStationReadyFrame.active_wrapup` / `.missed_release` /
@@ -43,17 +39,17 @@
  *
  * Vocabulary note: an **attempt** is one dial. A **session** is one agent's shift
  * on one campaign. A **station socket** is that session's long-lived WebSocket.
- * The station socket outlives every attempt on it — see §7 and
+ * The station socket outlives every attempt on it — see
  * `WebRtcBridgeManager.createBridgedCall`.
  */
 
 // ─── Shared enumerations ────────────────────────────────────────────────────
 
 /**
- * Agent lifecycle (§5.1). **Phase 1 implements `offline` / `available` /
+ * Agent lifecycle. **Phase 1 implements `offline` / `available` /
  * `reserved` / `on_call` only**; `wrapup` and `break` are declared here so the
  * union never widens later (a widening union is a breaking change for every
- * exhaustive `switch` in cusui), and are unreachable until Phase 2.
+ * exhaustive `switch` in the console), and are unreachable until Phase 2.
  */
 export type AgencyAgentState =
   | 'offline'
@@ -63,7 +59,7 @@ export type AgencyAgentState =
   | 'wrapup'
   | 'break';
 
-/** Attempt lifecycle (§5.2). `ended` is the single terminal state. */
+/** Attempt lifecycle. `ended` is the single terminal state. */
 export type AgencyAttemptState =
   | 'queued'
   | 'dialing'
@@ -72,7 +68,7 @@ export type AgencyAttemptState =
   | 'bridged'
   | 'ended';
 
-/** Contact lifecycle (§5.3). */
+/** Contact lifecycle. */
 export type AgencyContactState =
   | 'pending'
   | 'in_flight'
@@ -87,7 +83,7 @@ export type AgencyContactState =
  * `machine`; a call answered by voicemail is `connected` and the ONLY signal it
  * was a machine is the agent's disposition).
  *
- * `machine` is nonetheless declared because §2.1 lists it as a legal column value
+ * `machine` is nonetheless declared because the schema lists it as a legal column value
  * and a future AMD-enabled version would emit it. Nothing in v1 produces it.
  *
  * ── `canceled`: a dial WE stopped before anyone picked up ───────────────────
@@ -118,18 +114,16 @@ export type AgencyContactState =
  * directions: it lists `machine`, which nothing can produce under D1, and omits
  * `agent_disconnected`, `orphaned` and now `canceled`, all three of which are
  * produced constantly. This union is the vocabulary. Recorded here rather than by
- * amending a shipped migration — `MAG-133` covers exactly this class of
- * drift (its own example is migration 073's `suppressed_reason` comment) and its
- * AC 3 prescribes a note at the write site or a comment-only follow-up migration
- * over an in-place edit; migration 075 is not in that ticket's scope and should be
- * folded into it. Every gate on
+ * amending a shipped migration — a comment-only follow-up migration or a note at
+ * the write site is preferred over an in-place edit of an applied migration.
+ * Every gate on
  * this string is therefore TypeScript-side, and it is pinned in five places in
- * this repo alone — `spine-filters.ts`'s `ATTEMPT_OUTCOMES` (the read surface's
+ * the server alone — `spine-filters.ts`'s `ATTEMPT_OUTCOMES` (the read surface's
  * inverted `Record` check), `retry-summary.ts`'s `OUTCOME_COPY`,
  * `retry-policy.ts`'s `DEFAULT_RETRY_POLICY`, `campaign-config.ts`'s
- * `RETRY_POLICY_OUTCOMES` and `outcome-classifier.ts` itself — plus master's
- * `RETRY_POLICY_OUTCOMES` and cusui's `src/types/agency.ts`. Adding a member is a
- * three-repo change; `docs/reference/magickvoice-platform/agency.md` §6.4 is the register of pins like these.
+ * `RETRY_POLICY_OUTCOMES` and `outcome-classifier.ts` itself — plus the public API layer's
+ * `RETRY_POLICY_OUTCOMES` and the console's `src/types/agency.ts`. Adding a member
+ * means updating every one of those pins.
  */
 export type AgencyAttemptOutcome =
   | 'connected'
@@ -157,7 +151,7 @@ export type AgencyAttemptOutcome =
  * to each other by an agreement test; the compliance numerator keys on that and
  * must not start reading this. `abandon_reason IS NOT NULL` is not a substitute
  * for the predicate — the predicate deliberately catches abandoned attempts that
- * nobody labelled, which is how `AD-P2-C-11` was found.
+ * nobody labelled, which is how the gap was found.
  *
  * - `station_lost` — the agent's station was not there at the answer: either gone
  *   before we reached for the socket, or the `reserved` frame was refused. The
@@ -213,7 +207,7 @@ const _allAbandonReasonsListed: MissingAbandonReason extends never
   ? true : MissingAbandonReason = true;
 void _allAbandonReasonsListed;
 
-/** Campaign lifecycle (§2.1). */
+/** Campaign lifecycle. */
 export type AgencyCampaignStatus =
   | 'draft'
   | 'running'
@@ -225,7 +219,7 @@ export type AgencyCampaignStatus =
 // ─── Campaign-derived config the agent console needs ────────────────────────
 
 /**
- * One entry in `agency_campaigns.disposition_catalog` (§2.4).
+ * One entry in `agency_campaigns.disposition_catalog`.
  *
  * Precedence, stated once because it is easy to get backwards: a disposition's
  * `retry` / `terminal` / `suppress` **always** overrides the campaign's
@@ -257,7 +251,7 @@ export interface AgencyDisposition {
  * Which of a contact's arbitrary CSV columns matter, and in what order
  * (`agency_campaigns.context_display`, migration 072).
  *
- * §2.1 stores every non-phone CSV column verbatim and deliberately schemaless —
+ * The schema stores every non-phone CSV column unchanged and deliberately schemaless —
  * which is right for ingest and useless for rendering: a 41-column export gives
  * the agent a 41-row table with no signal about which four rows decide the call.
  * This is the operator's answer to that, set at campaign build time.
@@ -284,7 +278,7 @@ export interface AgencyContextDisplay {
 
 /**
  * A break reason offered to the agent. Phase 1 does not implement `break`
- * (§11 excludes it), but bootstrap advertises the catalog from day one so cusui
+ * (it is out of scope), but bootstrap advertises the catalog from day one so the console
  * builds the menu once rather than twice.
  *
  * **P2:** this list is campaign config (`agency_campaigns.break_reasons`, migration
@@ -300,7 +294,7 @@ export interface AgencyBreakReason {
   label: string;
   /**
    * **P2, advisory.** Whether time in this break counts as paid/available-adjacent
-   * for the operator's own reporting. Core stores and echoes it; nothing in core
+   * for the operator's own reporting. It is stored and echoed; nothing
    * branches on it. Present so the catalog does not need a second shape later.
    */
   is_paid?: boolean;
@@ -311,18 +305,18 @@ export interface AgencyBreakReason {
 export interface AgencyCreateSessionRequest {
   campaign_id: string;
   /**
-   * **Which agent is joining.** Master's user id, supplied by master from the
+   * **Which agent is joining.** The public API layer's user id, supplied by the public API layer from the
    * authenticated session (`resolveAgencyActor`) — never by the browser, which
    * could otherwise join a campaign as somebody else.
    *
-   * Declared here as of `MAG-118`. The handler in `agency.routes.ts` has always
-   * hard-required it, but this interface named only `campaign_id`/`session_id`,
-   * so master built its proxy schema against the contract, Zod stripped the
+   * Declared here because the handler in `agency.routes.ts` hard-requires it. An
+   * interface that named only `campaign_id`/`session_id` would let the public API
+   * layer build its schema against the contract, Zod stripped the
    * unknown key, and **every session create 400'd — no agent could join a
-   * campaign at all.** Master was right and core's own contract was the thing
+   * campaign at all.** The public API layer was right and the dialer runtime's own contract was the thing
    * lying; the fix is to say what the handler means rather than to relax it.
    *
-   * ── Why core does not derive it instead ──────────────────────────────────
+   * ── Why the dialer runtime does not derive it instead ──────────────────────────────────
    * Same objection that settled the DNC path: a supervisor acting for an agent
    * would be recorded as that agent, and on a record that follows a customer a
    * confidently-wrong actor is worse than an absent one.
@@ -332,12 +326,12 @@ export interface AgencyCreateSessionRequest {
    * an attempt* — a supervisor can disposition a call another agent took. There
    * is no equivalent for joining: a supervisor cannot go available as somebody
    * else, so an `on_behalf` here would have no rule to feed and no meaning to
-   * carry. See `MAG-106` for the mirror-image case where the field genuinely was
-   * owed (`AgencyDncRequest`).
+   * carry. See `AgencyDncRequest` for the mirror-image case where the field genuinely is
+   * owed.
    */
   agent_user_id: string;
   /**
-   * Optional resume hint. Core rehydrates from `agency_agent_sessions` regardless
+   * Optional resume hint. The dialer runtime rehydrates from `agency_agent_sessions` regardless
    * (D2: a restart drops every socket, and sessions are rehydrated rather than
    * recreated), so this only lets the client assert which session it thinks it had.
    */
@@ -349,7 +343,7 @@ export interface AgencyCreateSessionRequest {
  *
  * This is deliberately fat. The alternative — bootstrap thin, then fetch the
  * catalog / display config / intervals separately — puts HTTP requests on the
- * path between "agent goes available" and "first call arrives", and §9's ordering
+ * path between "agent goes available" and "first call arrives", and the context-push ordering
  * guarantee has no tolerance for that. Everything here is campaign config that
  * cannot change mid-session without a new session.
  */
@@ -357,13 +351,13 @@ export interface AgencySessionBootstrap {
   session_id: string;
   campaign_id: string;
   campaign_name: string;
-  /** master's user id, echoed back — core never resolves it to a name (D3). */
+  /** the public API layer's user id, echoed back — the dialer runtime never resolves it to a name (D3). */
   agent_user_id: string;
 
   /**
-   * The agent's state as core sees it right now.
+   * The agent's state as the dialer runtime sees it right now.
    *
-   * After a core or master restart this is `break`, never `available` (D2) — the
+   * After a restart of the dialer runtime or the public API layer this is `break`, never `available` (D2) — the
    * engine must not dial into a pool that has not demonstrably re-attached, so the
    * agent clicks once to go available. On a first join it is `offline`.
    * **Phase 1 note:** `break` is not implemented as a transition an agent can
@@ -392,7 +386,7 @@ export interface AgencySessionBootstrap {
    * bootstrap. It is also why there is no `reauth` control frame: nothing needs
    * re-authenticating on a socket that is already bound.
    *
-   * A browser `WebSocket` cannot set an `Authorization` header, so master cannot
+   * A browser `WebSocket` cannot set an `Authorization` header, so the public API layer cannot
    * authenticate the upgrade at all — **this token is the only authority on that
    * connection.** Refresh *before* this instant rather than discovering expiry on
    * a failed reconnect.
@@ -414,7 +408,7 @@ export interface AgencySessionBootstrap {
    * Timing the client must obey rather than hardcode. All milliseconds.
    *
    * These are liveness parameters only. **No business timeout appears here and
-   * none may be implemented as a Redis TTL** (§6.1): ring timeout, wrap-up length
+   * none may be implemented as a Redis TTL**: ring timeout, wrap-up length
    * and max call duration live in the attempt row, because a TTL cannot
    * distinguish "took too long" from "the process died".
    */
@@ -439,7 +433,7 @@ export interface AgencySessionBootstrap {
    * A one-line banner above the contact panel, plus the lineage-scoped
    * `prior_attempts` they already receive. NOT the parent's stats, connect rate,
    * roster counts or agent roster. The `agent` role is level 5 with exactly four
-   * `agency.*` permissions (`docs/reference/magickvoice-platform/agency.md` §7.1) and this feature must not become
+   * `agency.*` permissions (RBAC decision D6) and this feature must not become
    * the reason someone raises it — every field here is campaign-descriptive copy
    * about the campaign the agent is joined to.
    */
@@ -457,7 +451,7 @@ export interface AgencyRetryContext {
    * The parent campaign's name.
    *
    * `parent_campaign_id` is `ON DELETE SET NULL` (migration 111), so a campaign
-   * can legitimately be a retry whose parent no longer exists. Core serves a
+   * can legitimately be a retry whose parent no longer exists. The dialer runtime serves a
    * neutral placeholder in that case rather than dropping the banner: "this is a
    * second pass over a selection" stays true and useful even when the campaign it
    * came from is gone.
@@ -471,7 +465,7 @@ export interface AgencyRetryContext {
    * disagree. It is the campaign's own fact, exactly as migration 108's header
    * argues for the lifecycle columns.
    *
-   * The rendering rules are fixed in the wire contract §4: the selected
+   * The rendering rules are fixed: the selected
    * `last_disposition` labels (from the PARENT's catalog where a label exists,
    * else the raw code), then the `last_outcome` values in the console's own
    * outcome copy, then `never attempted` — in that order, comma-separated.
@@ -490,12 +484,12 @@ export interface AgencyRetryContext {
  * live sessions mean two pacing engines bridging two customers into one headset.
  *
  * ── The whole payload exists to be RENDERED, not logged ────────────────────
- * master forwards this **verbatim** — status and body, no re-shaping, no
+ * The public API layer forwards this unchanged — status and body, no re-shaping, no
  * special-casing (it already sits inside a `reply.code(result.status).send(result.body)`
- * path) — and cusui renders it as the only actionable form of this refusal:
+ * path) — and the console renders it as the only actionable form of this refusal:
  * "You're still joined to <campaign_name> (<state>). Leave that station first."
  * That is why the campaign's NAME is resolved here rather than left as an id:
- * core is the only party that can cheaply resolve it, and an id in a dialog is
+ * the dialer runtime is the only party that can cheaply resolve it, and an id in a dialog is
  * an error message the agent cannot act on.
  *
  * ── Why this EXTENDS `AgencyActionErrorResponse` rather than standing beside it ──
@@ -504,15 +498,15 @@ export interface AgencyRetryContext {
  * `allowed_codes` is a code-specific extra that only three of its members set.
  * `campaign_id` / `campaign_name` / `state` are the same thing for one member.
  *
- * The consequence that decided it is `message`. Master's error mask is keyed on
- * `AGENCY_ACTION_ERROR_CODES`, and until this code is mirrored there the mask
+ * The consequence that decided it is `message`. The public API layer's error mask is keyed on
+ * `AGENCY_ACTION_ERROR_CODES`, and unless this code is listed there the mask
  * rewrites the body into "contact support and quote this request id" — so a
  * structured-fields-only payload degrades to no explanation at all. `message` is
  * the FLOOR: a sentence that stands on its own in any generic error handler that
- * has never heard of this code. The structured fields are the ceiling — cusui
+ * has never heard of this code. The structured fields are the ceiling — the console
  * composes richer copy from them, and should, but nothing depends on it doing so.
  *
- * Reassignment deliberately does NOT resolve itself: master moves only its own
+ * Reassignment deliberately does NOT resolve itself: the public API layer moves only its own
  * assignment row and never touches a live session, so nobody is yanked off a
  * call. This 409 plus the console's Leave-station control is the escape hatch.
  */
@@ -523,7 +517,7 @@ export interface AgencySessionCampaignConflict extends AgencyActionErrorResponse
   campaign_name: string;
   /**
    * Their agent state on that campaign, read from Redis rather than the durable
-   * mirror (§5.1 — Redis is the authority on agent liveness). It is what makes
+   * mirror (Redis is the authority on agent liveness). It is what makes
    * both `message` and the console's own copy honest about whether leaving is
    * safe right now: `on_call` means finish the call, `break` means one click.
    */
@@ -534,7 +528,7 @@ export interface AgencyStationIntervals {
   /** How often the client sends `ping`. Design: 10s. */
   heartbeat_ms: number;
   /**
-   * How long core waits before declaring the socket dead. Design: 3 missed pings
+   * How long the dialer runtime waits before declaring the socket dead. Design: 3 missed pings
    * (30s), against a 45s `available`/`break` lease.
    *
    * Enforced by the silent-station sweep, which closes such a socket with `4408`.
@@ -542,19 +536,19 @@ export interface AgencyStationIntervals {
    * value served here, so the advertised number and the enforced one cannot drift.
    */
   heartbeat_grace_ms: number;
-  /** The `reserved`→dial lease. Design: 10s. Informational; core enforces it. */
+  /** The `reserved`→dial lease. Design: 10s. Informational; the dialer runtime enforces it. */
   reservation_lease_ms: number;
   /** D5's auto-connect countdown before audio bridges. Design: 3000. */
   countdown_ms: number;
   /**
-   * **P2, new and required.** How long core holds a live call open after the
+   * **P2, new and required.** How long the dialer runtime holds a live call open after the
    * station socket drops, waiting for the same session to reconnect and re-adopt
-   * it (`AD-P2-C-07`). Reconnect inside this window resumes the call with audio
+   * it. Reconnect inside this window resumes the call with audio
    * intact; outside it the call has already been torn down with
    * `outcome='agent_disconnected'`.
    *
    * **This is an in-process timer on the owning replica, never a Redis TTL** — a
-   * TTL cannot distinguish "took too long" from "the process died" (§6.1), and if
+   * TTL cannot distinguish "took too long" from "the process died", and if
    * the process died there is no bridge left to resume onto anyway. It is
    * advertised only so the console can render an honest "reconnecting — 12s"
    * countdown instead of retrying blindly into a call that is already gone.
@@ -568,22 +562,22 @@ export interface AgencyStationIntervals {
 // caller's heartbeat, and raw media relayed by the WebRTC bridge.
 //
 // **Consumers must not write an exhaustive switch that assumes only agency
-// frames.** The bridge borrows this socket per attempt (§7) and emits its own
+// frames.** The bridge borrows this socket per attempt and emits its own
 // `status` and `ended` frames onto it from `WebRtcBridgeManager.notifyBrowser` —
-// core does not intercept or rewrite them, so they arrive verbatim. This was
+// the station handler does not intercept or rewrite them, so they arrive unchanged. This was
 // found while implementing Phase 0 and is the single most likely thing to break a
-// client written from the design doc alone, which does not mention it.
+// client written from the design alone, which does not mention it.
 //
 // Every frame is JSON with an `event` discriminant. Non-JSON frames are ignored.
 
 /**
- * Frames the agent console sends to core.
+ * Frames the agent console sends to the station handler.
  *
  * **Only `ping` and `media` are read.** `AgencyStationHangupFrame` is retained in
  * the union deliberately — it is what a client was told to send, so removing it
  * outright would turn a documented no-op into a type error with no explanation
  * attached. It carries its own `@deprecated` and the enumeration that proved it
- * dead (`MAG-112`).
+ * dead.
  */
 export type AgencyStationClientFrame =
   | AgencyStationPingFrame
@@ -600,7 +594,7 @@ export interface AgencyStationPingFrame {
 /**
  * Outbound audio: base64 PCM16 @ 16kHz, matching the existing browser dialer's
  * frame exactly. The bridge transcodes per provider; the console does not.
- * Frames sent while no attempt is bridged are dropped by core, not an error.
+ * Frames sent while no attempt is bridged are dropped by the dialer runtime, not an error.
  */
 export interface AgencyStationMediaFrame {
   event: 'media';
@@ -608,7 +602,7 @@ export interface AgencyStationMediaFrame {
 }
 
 /**
- * **WITHDRAWN (`MAG-112`). Do not send this frame; nothing reads it.**
+ * **WITHDRAWN. Do not send this frame; nothing reads it.**
  *
  * Kept as a named type only so the union below can document the gap rather than
  * quietly dropping a shape clients were told to build against.
@@ -616,16 +610,15 @@ export interface AgencyStationMediaFrame {
  * It was never implemented. Enumerated 2026-08-12: the station socket carries
  * exactly two `message` listeners while an attempt is live —
  * `agency.routes.ts`'s own, which acts only on `event === 'ping'`, and the
- * bridge's borrowed-leg listener (`webrtc-bridge-manager.ts:975` →
- * `onBrowserMessage`), which acts only on `event === 'media'`. A `hangup` frame
- * fell off the end of both, silently. Core registered no HTTP route either, so
- * master's proxy 404'd and **an agent could not hang up by any advertised path.**
+ * bridge's borrowed-leg listener (in `webrtc-bridge-manager.ts`, `onBrowserMessage`), which acts only on `event === 'media'`. A `hangup` frame
+ * fell off the end of both, silently. No HTTP route existed either, so
+ * the public API layer's forward 404'd and **an agent could not hang up by any advertised path.**
  *
  * The route is now real, and this stays withdrawn rather than being implemented
  * alongside it. Two surfaces for one action means two ownership checks to keep in
  * step, and this one cannot carry an actor at all: the socket authenticates the
  * *session*, so a supervisor's `on_behalf` hangup has nowhere to live. A control
- * frame also returns no status, which is why cusui's HTTP call is the one the
+ * frame also returns no status, which is why the console's HTTP call is the one the
  * console can actually act on.
  *
  * @deprecated Use `POST /api/v1/agency/attempts/:id/hangup`.
@@ -635,7 +628,7 @@ export interface AgencyStationHangupFrame {
   attempt_id: string;
 }
 
-/** Frames core sends to the agent console. */
+/** Frames the dialer runtime sends to the agent console. */
 export type AgencyStationServerFrame =
   | AgencyStationReadyFrame
   | AgencyStationReservedFrame
@@ -661,10 +654,10 @@ export type AgencyStationServerFrame =
  * present ⇒ resumed, `missed_release` present ⇒ the attempt ended while the socket
  * was away and the agent never saw the `released` frame that said so.
  *
- * **Core does NOT re-emit `bridged` after this frame, deliberately.** An earlier
+ * **The dialer runtime does NOT re-emit `bridged` after this frame, deliberately.** An earlier
  * draft of this contract said it would, so that a reconnecting console could
  * restore its live panel through the ordinary code path. That was wrong, and the
- * reason is a client concern that turns out to be binding on core: the `bridged`
+ * reason is a client concern that turns out to be binding on the dialer runtime: the `bridged`
  * handler schedules the audible connect cue. The cue is deduped per `attempt_id`,
  * but a reconnect that follows a full page load starts with an empty dedupe set —
  * so a re-emitted `bridged` would play a "customer connected" cue in the middle of
@@ -766,11 +759,11 @@ export interface AgencyMissedRelease {
 }
 
 /**
- * **The context push.** §9's ordering guarantee lives entirely in this frame.
+ * **The context push.** The ordering guarantee lives entirely in this frame.
  *
  * Emitted synchronously at reservation — in the same tick, before the dial is
  * placed and therefore before the carrier can possibly answer. It is not emitted
- * on answer, and not from an async continuation: QA's decisive test answers the
+ * on answer, and not from an async continuation: the decisive test answers the
  * carrier synchronously within the dial tick, which a 3-second ring would
  * otherwise hide. The ordering is structural, not a race we usually win.
  *
@@ -795,7 +788,7 @@ export interface AgencyReservedAttempt {
   /** 1-based. */
   attempt_number: number;
   /**
-   * Every non-phone CSV column verbatim, original headers as keys. Render it with
+   * Every non-phone CSV column unchanged, original headers as keys. Render it with
    * `AgencyContextDisplay`. Values are whatever the CSV held — always treat as
    * untrusted display text, never as markup.
    */
@@ -815,7 +808,7 @@ export interface AgencyReservedAttempt {
  * fields necessary rather than decorative:
  *
  *  - `attempt_number` is PER CONTACT ROW and **resets in every retry campaign**
- *    (DR-2 — a retry is a fresh allowance, which is the point of authoring one).
+ *    (a retry is a fresh allowance, which is the point of authoring one).
  *    So "attempt 2" means nothing once attempts come from two campaigns, and the
  *    repository orders by `ended_at` rather than by this number for the same
  *    reason. It stays on the payload because it is still the honest answer to
@@ -841,7 +834,7 @@ export interface AgencyPriorAttempt {
   ended_at: string | null;
   /** The campaign this attempt was placed on — not necessarily the current one. */
   campaign_id: string;
-  /** That campaign's name, resolved core-side; the console has no way to. */
+  /** That campaign's name, resolved dialer-runtime-side; the console has no way to. */
   campaign_name: string;
   /** ISO-8601, or null if the attempt never dialled (refused a pre-dial gate, reaped). */
   dialed_at: string | null;
@@ -865,7 +858,7 @@ export interface AgencyStationBridgedFrame {
 /**
  * The attempt is over and the agent is free. **Always carries a `reason`.**
  *
- * The design doc referenced `released` without ever specifying it. Without a
+ * Without a
  * reason the console can only blank the panel, and an agent whose screen clears
  * with no explanation concludes the app is broken — which is a support ticket per
  * unanswered call, at volume. Every field below exists so the console can say
@@ -876,7 +869,7 @@ export interface AgencyStationReleasedFrame {
   attempt_id: string;
   reason: AgencyReleaseReason;
   /**
-   * Whether core expects a disposition for this attempt. True only when the call
+   * Whether the dialer runtime expects a disposition for this attempt. True only when the call
    * actually reached the agent; a `no_answer` needs no disposition. When true the
    * console must keep the panel up and prompt.
    */
@@ -902,7 +895,7 @@ export type AgencyReleaseReason =
   | 'failed'
   /** Number is not dialable — the contact is suppressed, not retried. */
   | 'invalid'
-  /** Answered with no agent to bridge to. Near-unreachable under D1 (§6). */
+  /** Answered with no agent to bridge to. Near-unreachable under D1. */
   | 'abandoned'
   /** The agent's own socket dropped mid-call and the carrier leg was torn down. */
   | 'agent_disconnected'
@@ -916,7 +909,7 @@ export type AgencyReleaseReason =
   | 'campaign_paused'
   | 'campaign_stopped'
   | 'supervisor_released'
-  /** The reaper found the attempt stranded by a crash (§6.2). */
+  /** The reaper found the attempt stranded by a crash. */
   | 'orphaned';
 
 /** Authoritative agent-state transition. The console must not infer state. */
@@ -930,12 +923,12 @@ export interface AgencyStationAgentStateFrame {
   /**
    * **P2.** A transition the agent asked for that has been accepted but not yet
    * applied — a break requested while `on_call` takes effect at the end of wrap-up
-   * (§5.1), never mid-conversation.
+   *, never mid-conversation.
    *
    * This exists on the *frame* and not only on the HTTP response that queued it
    * because the queue outlives the request: an agent who queues a break and then
    * loses their socket must still see "break pending" when they come back, and a
-   * supervisor action could queue one the console never issued. `undefined` means
+   * supervisor action could queue one console never issued. `undefined` means
    * nothing is queued — a console that only ever reads the HTTP response will show
    * a stale badge after any reconnect.
    */
@@ -1024,7 +1017,7 @@ export type AgencyStationErrorCode =
  * ── Bridge-originated. NOT generated by the agency layer. ──
  *
  * `WebRtcBridgeManager` emits these onto the borrowed station socket for the
- * duration of an attempt (`notifyBrowser`). They are relayed verbatim. Treat them
+ * duration of an attempt (`notifyBrowser`). They are relayed unchanged. Treat them
  * as diagnostic: `bridged` / `released` above are the authoritative agency
  * signals, and a console that drives its UI from `status`/`ended` will be subtly
  * wrong, because they describe the *media leg*, not the *attempt*.
@@ -1057,7 +1050,7 @@ export interface AgencyStationTokenResponse {
 }
 
 /**
- * Close codes core uses on the station socket, in the private-use range.
+ * Close codes the dialer runtime uses on the station socket, in the private-use range.
  *
  * The distinction that matters to the console is **re-mint and retry** versus
  * **re-bootstrap**: retrying a dead session forever looks identical to a network
@@ -1074,7 +1067,7 @@ export type AgencyStationCloseCode =
    * Mirrors HTTP 408 as the neighbours mirror 401/404/409. It is the enforcement
    * of a field this contract has always advertised, and it exists so that an
    * orphaned socket has a recovery path: a console whose heartbeat timer died
-   * while its socket stayed open is, from core's side, indistinguishable from an
+   * while its socket stayed open is, from the station handler's side, indistinguishable from an
    * agent who walked away — and until something closed it, nothing made the
    * console notice. A client that does not recognise the code must fall through to
    * its ordinary retry, which is what makes this safe to ship ahead of any console
@@ -1086,35 +1079,34 @@ export type AgencyStationCloseCode =
 
 // ─── Agent-native action routes ─────────────────────────────────────────────
 //
-// `POST /api/v1/agency/attempts/:id/{hangup,disposition,dnc}`, proxied by master
+// `POST /api/v1/agency/attempts/:id/{hangup,disposition,dnc}`, forwarded by the public API layer
 // at `/proxy/agency/attempts/:id/…` and gated at `agency.attempts.handle` /
 // `agency.attempts.dispose` / `agency.dnc.write`.
 //
 // These exist rather than reusing the generic call routes because D6 puts `agent`
-// at level 5, below every pre-existing permission floor — and because core can
+// at level 5, below every pre-existing permission floor — and because the dialer runtime can
 // verify the caller **is the reserved agent for that attempt**, an ownership check
 // `/webrtc-call/:id/end` has no way to express. A caller who is not the reserved
 // agent gets 403 `not_your_attempt`, not 404.
 
 /**
- * `POST /api/v1/agency/attempts/:id/hangup` (`MAG-112`).
+ * `POST /api/v1/agency/attempts/:id/hangup`.
  *
- * This said "No body" and carried no request interface at all, which contradicted
- * the ownership paragraph directly above it — "core can verify the caller **is the
- * reserved agent for that attempt**" is not checkable without an actor. Master
- * consequently proxied hangup with no body, so the check the contract promised
- * could never run and any tenant member holding `agency.attempts.handle` could
- * have hung up any other agent's live call.
+ * The request carries an actor (a body-less hangup would contradict
+ * the ownership paragraph directly above it) — "the dialer runtime can verify the caller **is the
+ * reserved agent for that attempt**" is not checkable without an actor. Without
+ * one the check could never run and any tenant member holding
+ * `agency.attempts.handle` could hang up any other agent's live call.
  *
  * Same shape as disposition and notes, for the same split-enforcement reason:
- * "is the reserved agent" is core's fact, "supervises" is master's.
+ * "is the reserved agent" is the dialer runtime's fact, "supervises" is the public API layer's.
  */
 export type AgencyHangupRequest = AgencyActorFields;
 
 /**
- * MAG-157: master denormalises this onto `platform_audit_log.campaign_id`.
- * Hang-up, disposition, DNC and session-state responses all carry it so MAG-158
- * can filter without treating `resource_id` as the campaign.
+ * The public API layer denormalises this onto `platform_audit_log.campaign_id`.
+ * Hang-up, disposition, DNC and session-state responses all carry it so the audit
+ * trail can filter without treating `resource_id` as the campaign.
  */
 export interface AgencyCampaignScoped {
   campaign_id: string;
@@ -1140,7 +1132,7 @@ export interface AgencyHangupResponse extends AgencyCampaignScoped {
 }
 
 /**
- * `POST /api/v1/agency/attempts/:id/disposition` (`AD-P2-C-04`).
+ * `POST /api/v1/agency/attempts/:id/disposition`.
  *
  * **P2 SUBMIT SEMANTICS — SETTLED. Safe to freeze a submit path against.**
  * The field list was frozen in Phase 1; what follows is the behaviour a client has
@@ -1187,8 +1179,8 @@ export interface AgencyDispositionResponse extends AgencyCampaignScoped {
    *
    * **In Phase 2 this is `completed`, or `pending` when a `callback_at` was
    * supplied — never anything else.** The `retry`/`terminal`/`suppress` precedence
-   * that can also produce `exhausted` or `suppressed` is `AD-P3-C-02`. A console
-   * must therefore not build a branch in P2 that only P3 can reach, and must not
+   * that can also produce `exhausted` or `suppressed` is the retry policy. A console
+   * must therefore not build a branch for outcomes only the retry policy can reach, and must not
    * infer "this contact is finished" from `completed` — under P3 the same
    * submission may return `pending`.
    */
@@ -1200,10 +1192,10 @@ export interface AgencyDispositionResponse extends AgencyCampaignScoped {
    * `callback_at`.** What the agent asked for is echoed separately as
    * {@link AgencyDispositionResponse.callback_requested_at}, and the two differ
    * whenever the requested time falls outside the contact's calling window: the
-   * pre-dial gate would refuse that dial anyway (`AD-P3-C-05`), so the response
+   * pre-dial gate would refuse that dial anyway, so the response
    * carries the window-adjusted time rather than a promise nothing will keep.
    *
-   * Non-null for a `callback_at`; under `AD-P3-C-02` it also starts carrying
+   * Non-null for a `callback_at`; under the retry policy it also starts carrying
    * policy-derived retry times. Honouring the datetime at all was Phase 2's one
    * piece of disposition semantics, and deliberately so: `requires_datetime` is
    * operator config that was already reachable, so capturing it and not acting on
@@ -1217,12 +1209,12 @@ export interface AgencyDispositionResponse extends AgencyCampaignScoped {
    */
   next_attempt_at: string | null;
   /**
-   * ISO-8601, or null. What the agent ASKED for, echoed back verbatim.
+   * ISO-8601, or null. What the agent ASKED for, echoed back unchanged.
    *
    * **Additive, and it exists so `next_attempt_at` can stop being an echo.**
    * `next_attempt_at` is now the instant the dialer will actually place the call —
    * a `callback_at` outside the contact's calling window is deferred to the next
-   * window open, because the pre-dial gate would refuse it anyway (`AD-P3-C-05`)
+   * window open, because the pre-dial gate would refuse it anyway
    * and the operator's window is the compliance boundary.
    *
    * Returning the raw request as `next_attempt_at` would have the console promise a
@@ -1232,8 +1224,8 @@ export interface AgencyDispositionResponse extends AgencyCampaignScoped {
    * happen rather than what was asked; when `callback_at` was not supplied both are
    * null.
    *
-   * **Deliberately NOT a rename of `next_attempt_at`.** cusui is compiled against
-   * this contract and a rename is a coordinated three-repo change for a field whose
+   * **Deliberately NOT a rename of `next_attempt_at`.** the console is compiled against
+   * this contract and a rename is a coordinated cross-app change for a field whose
    * meaning is being made *more* correct, not different.
    */
   callback_requested_at?: string | null;
@@ -1257,13 +1249,13 @@ export interface AgencyDispositionResponse extends AgencyCampaignScoped {
  * How far a mark-DNC reaches. The **only** thing a client asserts about scope.
  *
  *   * `campaign` — the campaign the marked attempt belongs to, and nothing else.
- *     Master writes a campaign-scoped `dnc_entries` row, which by design does NOT
- *     enter core's flat `dnc:{tenantId}` set (§2.3), so the in-campaign
- *     enforcement is core's Postgres suppression of every roster row carrying the
+ *     The public API layer writes a campaign-scoped `dnc_entries` row, which by design does NOT
+ *     enter the dialer runtime's flat `dnc:{tenantId}` set, so the in-campaign
+ *     enforcement is the dialer runtime's Postgres suppression of every roster row carrying the
  *     number. A customer asking one campaign to stop is not asking to be removed
  *     from campaigns they have never heard from.
  *   * `tenant` — every campaign the tenant runs, and every campaign it will run.
- *     Master writes an entry with no campaign, which is the kind that reaches the
+ *     The public API layer writes an entry with no campaign, which is the kind that reaches the
  *     flat set and blocks the number at dial time everywhere. This is the
  *     ESCALATION: the console gates it behind a permission and labels it in those
  *     words, and an agent may read that promise out to a customer, so it has to be
@@ -1278,8 +1270,8 @@ export type AgencyDncScope = 'campaign' | 'tenant';
 /**
  * Mark the contact on the line as Do Not Call.
  *
- * Core suppresses every roster row in the campaign carrying the number
- * immediately, and forwards the compliance record to master, which owns
+ * The dialer runtime suppresses every roster row in the campaign carrying the number
+ * immediately, and forwards the compliance record to the public API layer, which owns
  * `dnc_entries`. How far that record reaches is {@link scope}.
  */
 export interface AgencyDncRequest extends AgencyActorFields {
@@ -1288,7 +1280,7 @@ export interface AgencyDncRequest extends AgencyActorFields {
    * {@link AgencyDncScope}.
    *
    * The default is the NARROWER scope deliberately: a caller that knows nothing
-   * about scope — an older console, a script, master before its passthrough
+   * about scope — an older console, a script, the public API layer before its passthrough
    * shipped — must fail safe rather than escalate. The reverse default would have
    * every ignorant caller silently suppressing numbers across campaigns the
    * customer never mentioned, which is precisely the behaviour campaign-scoping
@@ -1297,8 +1289,8 @@ export interface AgencyDncRequest extends AgencyActorFields {
    * ⚠️ The client asserts the SCOPE and **never a campaign id**, which is why
    * there is no `campaign_id` field on this body and must not become one. The
    * route has already resolved the attempt's campaign before it reads this, so a
-   * client-supplied id would be both redundant and a caller asserting a fact core
-   * owns — the same argument master's `createSessionSchema` makes for deriving
+   * client-supplied id would be both redundant and a caller asserting a fact the dialer runtime
+   * owns — the same argument the public API layer's `createSessionSchema` makes for deriving
    * `agent_user_id` from the session rather than trusting the body.
    *
    * An unrecognised value is `400 invalid_dnc_scope`, not a quiet fall back to
@@ -1308,7 +1300,7 @@ export interface AgencyDncRequest extends AgencyActorFields {
    * green dashboard behind it.
    */
   scope?: AgencyDncScope;
-  /** Free text; stored on the master-side entry. */
+  /** Free text; stored on the public-API-side entry. */
   reason?: string;
   /**
    * Also disposition the attempt in the same call. Must be a catalog code.
@@ -1319,10 +1311,10 @@ export interface AgencyDncRequest extends AgencyActorFields {
    * unattributed one ({@link AgencyActorFields}, `checkActor`).
    *
    * A plain mark-DNC needs no actor, so the compliance path works with exactly
-   * what master sends today. ⚠️ **master's proxy currently injects no actor on
+   * what the public API layer sends today. ⚠️ **The public API layer currently injects no actor on
    * this route** — unlike its disposition/notes routes — so `added_by` lands NULL
-   * on the entry and this field is unreachable from the browser until MAG-107
-   * lands. Core deliberately does not substitute the attempt's reserved agent:
+   * on the entry and this field is unreachable from the browser until that
+   * injection is added. The dialer runtime deliberately does not substitute the attempt's reserved agent:
    * a supervisor marking someone else's attempt would be recorded as that agent,
    * and a confidently-wrong actor on an audit record is worse than a missing one.
    */
@@ -1335,16 +1327,16 @@ export interface AgencyDncResponse extends AgencyCampaignScoped {
   phone_e164: string;
   /** Always `suppressed` on success. */
   contact_state: AgencyContactState;
-  /** False when master accepted the suppression but the DNC list write is still
+  /** False when the public API layer accepted the suppression but the DNC list write is still
    *  in flight — the contact is suppressed locally either way. */
   dnc_recorded: boolean;
 }
 
 // ─── Session state routes ───────────────────────────────────────────────────
 //
-// `POST /api/v1/agency/sessions/:id/{available,break,break/cancel,leave}` (§8).
+// `POST /api/v1/agency/sessions/:id/{available,break,break/cancel,leave}`.
 // Phase 1 implements `available` and `leave`; `break` and `break/cancel` are Phase
-// 2 and their shapes are frozen here so master can proxy all four at once.
+// 2 and their shapes are frozen here so the public API layer can proxy all four at once.
 //
 // P2 adds a fifth, `force-available` — see {@link AgencyForceReturnRequest}. It is
 // listed separately because it is the only one an `agent` may not call.
@@ -1356,7 +1348,7 @@ export interface AgencySessionBreakRequest {
 
 /**
  * `POST /api/v1/agency/sessions/:id/break/cancel` — take back a **queued** break
- * (P2, `AD-P2-C-03`).
+ * (P2).
  *
  * A break requested while `on_call` is queued and applied at the end of wrap-up, so
  * there is a window — the rest of the conversation plus the wrap-up — during which
@@ -1383,7 +1375,7 @@ export interface AgencySessionStateResponse extends AgencyCampaignScoped {
   since: string;
   /**
    * Set when the transition was accepted but deferred — an agent who requests a
-   * break while `on_call` goes to break at wrap-up end, not immediately (§5.1).
+   * break while `on_call` goes to break at wrap-up end, not immediately.
    */
   pending_state?: AgencyAgentState;
   /** **P2.** Present when `pending_state` is `break`, or when `state` is `break`. */
@@ -1394,19 +1386,19 @@ export interface AgencySessionStateResponse extends AgencyCampaignScoped {
 // PHASE 2 — THE POOL
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Frozen ahead of implementation for the same reason Phase 1's block was: master
-// proxies these and cusui renders them, and both are structurally blocked behind
-// core for the whole phase.
+// Frozen ahead of implementation for the same reason Phase 1's block was: the public API layer
+// forwards these and the console renders them, and both are structurally blocked behind
+// the dialer runtime for the whole phase.
 //
 // Everything below serves four surfaces — wrap-up, break, disposition + notes, and
 // reconnect — and one rule runs through all of them: **no business timer is ever a
-// Redis TTL** (§6.1). Wrap-up length, the deferred-hangup window and the countdown
+// Redis TTL**. Wrap-up length, the deferred-hangup window and the countdown
 // all live in the attempt row and in process. The leases stay flat liveness
 // numbers, and `wrapup`'s lease is the same 15s heartbeat lease `available` holds.
 // If a future field here is expressed in seconds and a lease is derived from it,
 // that is the mistake this comment exists to prevent.
 
-// ─── Wrap-up (AD-P2-C-02) ───────────────────────────────────────────────────
+// ─── Wrap-up ───────────────────────────────────────────────────
 
 /**
  * Why an expired wrap-up did **not** return the agent to the pool.
@@ -1416,7 +1408,7 @@ export interface AgencySessionStateResponse extends AgencyCampaignScoped {
 export type AgencyWrapupHoldReason =
   /**
    * The call reached the agent, so a disposition is expected, and none has been
-   * submitted (§5.1: `wrapup → available` is conditional on it). The timer has
+   * submitted (`wrapup → available` is conditional on it). The timer has
    * lapsed and the agent stays in `wrapup` until they submit or a supervisor
    * forces the return. **The console must say why** — an agent whose countdown
    * hits zero and whose screen does not change concludes the app has hung.
@@ -1429,7 +1421,7 @@ export type AgencyWrapupHoldReason =
  * The whole of a wrap-up, as one value.
  *
  * **The deadline is absolute (`ends_at`), never a per-second countdown frame.**
- * Two reasons, both load-bearing: `AD-P2-U-01` requires the console's countdown to
+ * Two reasons, both load-bearing: the console's countdown must to
  * match the server within a second *and not drift over a shift*, which a client
  * ticking down from a delivered duration cannot promise; and a per-second frame
  * per agent is a frame storm on a socket that also carries live audio. The console
@@ -1452,7 +1444,7 @@ export interface AgencyWrapupState {
   /** The campaign's configured `wrapup_seconds` for this attempt. */
   seconds_total: number;
   auto_return: boolean;
-  /** Whether core expects a disposition before this agent returns to the pool. */
+  /** Whether the dialer runtime expects a disposition before this agent returns to the pool. */
   requires_disposition: boolean;
   disposition_submitted: boolean;
   held_reason: AgencyWrapupHoldReason | null;
@@ -1473,7 +1465,7 @@ export interface AgencyWrapupState {
  * and it is that frame.
  *
  * A campaign with `wrapup_seconds = 0` **and no disposition required** produces no
- * `wrapup` frame at all: the agent goes `on_call → available` directly (§5.1), and
+ * `wrapup` frame at all: the agent goes `on_call → available` directly, and
  * a console that waits for a wrap-up frame before re-enabling its idle UI would
  * hang on such a campaign.
  *
@@ -1503,10 +1495,10 @@ export interface AgencyStationWrapupFrame {
  * agent's own control and refuses while a disposition is outstanding: collapsing
  * the two would let an agent skip every disposition by clicking "available".
  *
- * Proxied at `/proxy/agency/sessions/:id/force-available` and gated at
+ * Forwarded at `/proxy/agency/sessions/:id/force-available` and gated at
  * `agency.supervise` (account_admin floor) — **not** reachable by an `agent` (D6).
  * The attempt is left `no_disposition` when one was outstanding, exactly as the
- * reaper's sweep would have (`AD-P2-C-08`), so forced and swept returns produce
+ * reaper's sweep would have, so forced and swept returns produce
  * one shape of data rather than two.
  */
 export interface AgencyForceReturnRequest {
@@ -1514,20 +1506,20 @@ export interface AgencyForceReturnRequest {
   reason?: string;
 }
 
-// ─── Agent-attributed actions (AD-P2-C-04, AD-P2-M-01) ──────────────────────
+// ─── Agent-attributed actions ───────────────────────────────────────────────
 
 /**
  * Who is performing an attempt-scoped action, on every such request body.
  *
- * **Core cannot evaluate master's RBAC**, so master asserts both facts and core
+ * **The dialer runtime cannot evaluate the public API layer's RBAC**, so the public API layer asserts both facts and the dialer runtime
  * enforces the ownership rule against them. That trust boundary already exists
- * (every `/proxy/*` call is master vouching for a caller); what is new is that
- * "the reserved agent" is a *core-side* fact master cannot check, and "holds a
- * supervisory capability" is a *master-side* fact core cannot check. Neither
- * service can enforce `AD-P2-M-01` alone, which is why these two fields exist
+ * (every `/proxy/*` call is the public API layer vouching for a caller); what is new is that
+ * "the reserved agent" is a *dialer-runtime-side* fact the public API layer cannot check, and "holds a
+ * supervisory capability" is a *public-API-side* fact the dialer runtime cannot check. Neither
+ * layer can enforce the rule alone, which is why these two fields exist
  * rather than a single opaque actor id.
  *
- * Rules core applies, in order:
+ * Rules the dialer runtime applies, in order:
  *  1. no `agent_user_id` ⇒ 400 `missing_actor`. There is no anonymous disposition;
  *     the disposition is the record of who said what about a customer.
  *  2. `agent_user_id` matches the attempt's reserved agent ⇒ allowed.
@@ -1536,10 +1528,10 @@ export interface AgencyForceReturnRequest {
  *  4. mismatch and `on_behalf` absent/false ⇒ 403 `not_your_attempt`.
  */
 export interface AgencyActorFields {
-  /** master's user id for the human performing the action (D3 — opaque to core). */
+  /** the public API layer's user id for the human performing the action (D3 — opaque to the dialer runtime). */
   agent_user_id?: string;
   /**
-   * master sets this **only** when the caller holds `agency.supervise` and is not
+   * the public API layer sets this **only** when the caller holds `agency.supervise` and is not
    * the reserved agent. An `agent` (level 5) can never cause it to be set.
    */
   on_behalf?: boolean;
@@ -1568,19 +1560,19 @@ export interface AgencyNotesResponse {
   updated_at: string;
 }
 
-// ─── Action-route errors (AD-P2-C-04 (a)/(b), AD-P2-M-01 (c)) ───────────────
+// ─── Action-route errors ────────────────────────────────────────────────────
 
 /**
  * Why an agent action was refused.
  *
- * These exist as a closed union because `AD-P2-M-01` requires master to surface
- * core's validation errors **intact**, and "intact" is not a property a free-text
+ * These exist as a closed union because the public API layer must to surface
+ * the dialer runtime's validation errors **intact**, and "intact" is not a property a free-text
  * message has: a proxy that re-words or flattens them leaves the console unable to
  * do anything but show a red box. The console keys its copy off `code`; `message`
  * is the fallback for a code it does not recognise.
  */
 export type AgencyActionErrorCode =
-  /** No `agent_user_id` on the request. master must always attribute the action. */
+  /** No `agent_user_id` on the request. the public API layer must always attribute the action. */
   | 'missing_actor'
   /** The caller is not the reserved agent and did not assert `on_behalf`. */
   | 'not_your_attempt'
@@ -1630,12 +1622,12 @@ export type AgencyActionErrorCode =
    * for it. Those fields are read against this code exactly as `allowed_codes` is
    * read against its three producers — nothing else sets them.
    *
-   * Carries the same OPEN obligation on master that `invalid_dnc_scope` carries:
+   * Carries the same OPEN obligation on the public API layer that `invalid_dnc_scope` carries:
    * it must be added to `AGENCY_ACTION_ERROR_CODES` there, or the error mask
    * rewrites it into "contact support and quote this request id" and the agent is
    * told to raise a ticket instead of to leave their other station. The
    * degradation is bounded and loud — the join is still refused with a 409 — which
-   * is why core ships the code rather than waiting.
+   * is why the dialer runtime ships the code rather than waiting.
    */
   | 'session_on_other_campaign'
   /**
@@ -1650,12 +1642,12 @@ export type AgencyActionErrorCode =
    * because both rows satisfy the index once the first has left.
    *
    * `releaseStationOnClose` has carried the same guard for socket close since
-   * `AD-P2-C-07`; this is the deliberate-leave half of the same rule. The remedy
-   * is `POST /attempts/:id/hangup`, or finishing the call — core will not end a
+   * the socket-close fix; this is the deliberate-leave half of the same rule. The remedy
+   * is `POST /attempts/:id/hangup`, or finishing the call — the dialer runtime will not end a
    * live conversation as a side effect of an agent tidying up.
    *
-   * Same OPEN obligation on master as the code above: mirror it in
-   * `AGENCY_ACTION_ERROR_CODES` or the mask replaces this explanation with
+   * Same obligation as the code above: list it in
+   * `AGENCY_ACTION_ERROR_CODES` or the public API layer's mask replaces this explanation with
    * "contact support and quote this request id".
    */
   | 'agent_on_live_call'
@@ -1663,13 +1655,13 @@ export type AgencyActionErrorCode =
   | 'no_station'
   /**
    * Hangup was asked for on an attempt this replica is not bridging, and whose row
-   * is not terminal either (`MAG-112`). Distinct from a terminal attempt, which is
+   * is not terminal either. Distinct from a terminal attempt, which is
    * an idempotent success — an agent's hangup routinely races the customer's, and
    * erroring on that would show a failure for the thing that just happened.
    *
    * Reachable in exactly one situation today: the bridging replica restarted while
-   * the row was live. The bridge session is in-process memory (§6.1) and there is
-   * no cross-replica hangup channel, so core says so instead of returning a
+   * the row was live. The bridge session is in-process memory and there is
+   * no cross-replica hangup channel, so the dialer runtime says so instead of returning a
    * success that hangs up nothing.
    */
   | 'attempt_not_live'
@@ -1681,7 +1673,7 @@ export type AgencyActionErrorCode =
  * The body of every 4xx from an agency action route.
  *
  * Shape matches the platform's existing error convention (`error` + `message`)
- * with `code` added, so master's proxy passes it through unchanged and existing
+ * with `code` added, so the public API layer's proxy passes it through unchanged and existing
  * client error handling still finds the fields it expects.
  */
 export interface AgencyActionErrorResponse {
@@ -1706,23 +1698,23 @@ export interface AgencyActionErrorResponse {
    *     customer.
    *
    * The name is now wrong for the third producer and is kept anyway: it is
-   * frozen contract surface that master proxies through unchanged and cusui
-   * compiles against, so renaming it is a cross-repo change that buys accuracy in
+   * frozen contract surface that public API layer forwards unchanged and the console
+   * compiles against, so renaming it is a cross-app change that buys accuracy in
    * a doc comment. Recorded here instead.
    */
   allowed_codes?: string[];
 }
 
-// ─── Campaign stats (AD-P2-C-06's rolling rate) ─────────────────────────────
+// ─── Campaign stats (including the rolling abandonment rate) ────────────────
 
 /**
  * `GET /api/v1/agency-campaigns/:id/stats`.
  *
- * Frozen now because Phase 2 adds the abandonment numbers to it and master's
+ * Frozen now because Phase 2 adds the abandonment numbers to it and the public API layer's
  * supervisor payload reads them. Counts are point-in-time; the rate is not.
  *
  * `contacts_pending` and `retries_pending` are genuinely different questions and
- * both are shown (§5.3) — `next_attempt_at` can be hours out, so "list exhausted"
+ * both are shown — `next_attempt_at` can be hours out, so "list exhausted"
  * and "campaign complete" are not the same thing.
  */
 /**
@@ -1742,7 +1734,7 @@ export type AgencyAgentLiveState = AgencyAgentState;
 export type AgencyAgentsByState = Record<AgencyAgentLiveState, number>;
 
 /**
- * One agent on the supervisor's floor — UX spec §C.4.
+ * One agent on the supervisor's floor.
  *
  * The floor is sorted by RISK, not alphabetically, and the risk rules need
  * `state_since` rather than a pre-computed duration: the tile ticks live, so a
@@ -1753,10 +1745,9 @@ export interface AgencySupervisorAgent {
    * The agent's SESSION id — what every supervisor control is addressed to.
    *
    * `POST /agency/sessions/:id/force-available` takes this, not `agent_user_id`,
-   * and §C.4's drawer offers exactly that control for the stuck-in-wrap-up case
-   * §5.1 anticipates. Without it the floor renders and none of its controls can be
+   * and the console's agent drawer offers exactly that control for the stuck-in-wrap-up case. Without it the floor renders and none of its controls can be
    * wired: the query already `GROUP BY s.id`, so the id was one projection away
-   * from being on the wire and the omission would only have surfaced in cusui.
+   * from being on the wire and the omission would only have surfaced in the console.
    *
    * Distinct from `agent_user_id`, and the difference matters — a session is one
    * shift on one campaign, while the user id is the person. Controls act on the
@@ -1764,8 +1755,8 @@ export interface AgencySupervisorAgent {
    */
   session_id: string;
   /**
-   * Master's user id for the person. **Core never resolves it to a name** (D3) —
-   * there is no user table here. Rendering §C.1's "Ravi"/"Sunita" needs master to
+   * The public API layer's user id for the person. **The dialer runtime never resolves it to a name** (D3) —
+   * there is no user table here. Rendering an agent's display name needs the public API layer to
    * enrich this on the proxy hop; it is the only service that knows identity.
    */
   agent_user_id: string;
@@ -1773,7 +1764,7 @@ export interface AgencySupervisorAgent {
   /** ISO instant of the last state transition. The console derives time-in-state. */
   state_since: string;
   /**
-   * Whether this agent's station socket is currently held — §C.4's risk rank 4,
+   * Whether this agent's station socket is currently held — the console's risk rank 4,
    * "disconnected / heartbeat lost".
    *
    *   * `true`  — the ownership key `agency:station:{session_id}` is present, so a
@@ -1785,9 +1776,9 @@ export interface AgencySupervisorAgent {
    *     "this agent is disconnected" on a floor a supervisor is about to act on.
    *     Same rule, and the same shape, as `concurrency_in_use`.
    *
-   * ── Why this is a boolean and NOT a `last_heartbeat` timestamp (MAG-148) ──────
+   * ── Why this is a boolean and NOT a `last_heartbeat` timestamp ──────────────────
    *
-   * Because core has no such timestamp to give. The obvious source,
+   * Because there is no such timestamp to give. The obvious source,
    * `agency_agent_sessions.last_heartbeat`, is **never renewed** — the only writer,
    * `AgencyAgentSessionRepository.heartbeat()`, has no callers; the station ping
    * renews the Redis key and never touches the row. Migration 074 states the rule
@@ -1798,9 +1789,9 @@ export interface AgencySupervisorAgent {
    * So serving it would have shipped well-formed ISO data meaning "when this shift
    * began", under a name promising liveness — marking every agent disconnected
    * minutes after they join, most confidently the ones working longest. That is the
-   * `AD-P4-C-04` defect wearing a disguise: not an absent field, but a plausible
+   * missing-producer defect wearing a disguise: not an absent field, but a plausible
    * one. Redis holds a TTL, not an instant, so a boolean is the whole truth
-   * available and the contract says only what core can produce.
+   * available and the contract says only what the dialer runtime can produce.
    *
    * **Composed by the ROUTE, not the repository** — see
    * {@link AGENCY_AGENT_ROUTE_FIELDS}. It is a Redis read, and `stats()` is SQL.
@@ -1833,15 +1824,15 @@ export const AGENCY_AGENT_ROUTE_FIELDS =
  *
  * Derived rather than hand-written: the repository returning this and the route
  * annotating the full {@link AgencySupervisorAgent} means a field with no producer
- * cannot compile, which is the `AD-P4-C-04` guarantee applied to the nested row.
+ * cannot compile, which is the no-producerless-field guarantee applied to the nested row.
  */
 export type AgencySupervisorAgentRow =
   Omit<AgencySupervisorAgent, (typeof AGENCY_AGENT_ROUTE_FIELDS)[number]>;
 
 /**
- * ─── THE HEALTH STRIP'S DIAGNOSES (§C.2) ────────────────────────────────────
+ * ─── THE HEALTH STRIP'S DIAGNOSES ────────────────────────────────────
  *
- * UX spec §C.2 ranks eight conditions and shows the first that matches. The
+ * The health strip ranks eight conditions and shows the first that matches. The
  * ranking is by **what a supervisor should do about it**, not by severity: a
  * compliance stop outranks a staffing problem, which outranks a capacity one,
  * because acting on the wrong one wastes the minutes the strip exists to save.
@@ -1850,24 +1841,22 @@ export type AgencySupervisorAgentRow =
  * `AGENCY_STALL_PRIORITY`.
  */
 export type AgencyStallCode =
-  /** 1. Auto-paused by the abandonment guardrail (`AD-P4-C-02`). */
+  /** 1. Auto-paused by the abandonment guardrail. */
   | 'auto_paused_abandonment'
-  /** 2. The DNC check is unavailable, so dialing fails CLOSED (design §2.3). */
+  /** 2. The DNC check is unavailable, so dialing fails CLOSED (DNC is tenant-wide). */
   | 'dnc_unavailable'
   /** 3. Nobody is available to take a call. */
   | 'no_agents_available'
-  /** 4. At the account concurrency ceiling (D10 / CR-2). */
+  /** 4. At the account concurrency ceiling (D10). */
   | 'concurrency_saturated'
   /** 5. Everything left is outside its calling window. */
   | 'outside_calling_hours'
-  /** 6. Nothing dialable now, but retries are scheduled (§5.3). */
+  /** 6. Nothing dialable now, but retries are scheduled. */
   | 'list_exhausted_retries_pending'
-  // PORT NOTE (magick-agency): core's priority 7, `credits_low`, is REMOVED.
-  // Core never produced it (master inserted it while proxying, from a balance
-  // core did not hold), and Magick Agency v1 has no credits at all (extraction
-  // plan §3.3). Leaving it declared but unproducible is the pattern `docs/reference/magickvoice-platform/agency.md`
-  // §6.4 warns about. The remaining seven keep their relative order; the
-  // ordinals in these comments are core's and are kept verbatim.
+  // Priority 7 (`credits_low`) is intentionally absent: v1 has no credits, and a
+  // code that is declared but never produced is a trap for exhaustive consumers.
+  // The remaining codes keep their relative order and the ordinals in these
+  // comments.
   /** 8. An unusual share of recent dials failed — possibly a carrier problem. */
   | 'elevated_failure_rate';
 
@@ -1888,31 +1877,25 @@ export const AGENCY_STALL_PRIORITY: readonly AgencyStallCode[] = [
 ] as const;
 
 /**
- * PORT NOTE (magick-agency): core exported `AGENCY_CORE_STALL_CODES` here — the
- * subset of {@link AGENCY_STALL_PRIORITY} core could produce, i.e. every code
- * except `credits_low`, which master inserted while proxying because only
- * master held a balance. That split had a reason only while two services
- * produced one payload. Magick Agency is one application that produces every
- * stall code itself, and `credits_low` is removed outright (no billing in v1 —
- * extraction plan §3.3), so the two lists became identical and the second one
- * is deleted. **{@link AGENCY_STALL_PRIORITY} is the single list**: a test that
- * asserted the assembler emits only `AGENCY_CORE_STALL_CODES` should now assert
- * against `AGENCY_STALL_PRIORITY`. `credits_low` returns with metering, if at
- * all, as an additive member with a real producer.
+ * **{@link AGENCY_STALL_PRIORITY} is the single list** of stall codes: one
+ * application produces every code itself, so there is no separate "producible
+ * subset". A test that checks the assembler emits only known codes should assert
+ * against it. `credits_low` is absent (no billing in v1); it would return with
+ * metering, if at all, as an additive member with a real producer.
  */
 
 /**
  * A diagnosis together with the evidence for it.
  *
  * A discriminated union rather than `{ code, detail: Record<string, unknown> }`
- * because §C.2 requires each message to name its own numbers ("abandonment 3.4%
+ * because each message must to name its own numbers ("abandonment 3.4%
  * is over your 3% limit", "6 agents on shift, 0 available"), and an untyped bag
  * would let the console read a field the producer never set — rendering "NaN% is
  * over your undefined% limit" at exactly the moment a supervisor needs the truth.
  *
- * No arm carries a pre-formatted sentence. Copy is the console's (§0.2), and a
+ * No arm carries a pre-formatted sentence. Copy is the console's, and a
  * server-rendered string cannot be localised, pluralised, or shortened for the
- * <1024px layout §C.6 requires.
+ * <1024px layout.
  */
 export type AgencyStall =
   | {
@@ -1925,7 +1908,7 @@ export type AgencyStall =
   | {
       code: 'dnc_unavailable';
       /**
-       * Per-tenant, not per-campaign: the DNC set is tenant-flat (design §2.3), so
+       * Per-tenant, not per-campaign: the DNC set is tenant-flat, so
        * every campaign in the tenant is stopped by the same fault.
        */
       tenant_wide: true;
@@ -1933,7 +1916,7 @@ export type AgencyStall =
   | {
       code: 'no_agents_available';
       agents_on_shift: number;
-      /** Break codes to counts, so §C.2 can render "5 on break (Lunch)". */
+      /** Break codes to counts, so the console can render "5 on break (Lunch)". */
       on_break_by_reason: Record<string, number>;
       on_call: number;
       /** ISO-8601, or null when this campaign has never dialed. */
@@ -1955,8 +1938,7 @@ export type AgencyStall =
       retries_pending: number;
       next_retry_at: string | null;
     }
-  // PORT NOTE (magick-agency): core's `credits_low` arm (master's
-  // `estimated_connects_remaining`) is removed with the code itself — see
+  // There is no `credits_low` arm: the code itself is absent — see
   // `AgencyStallCode`.
   | {
       code: 'elevated_failure_rate';
@@ -1974,10 +1956,10 @@ export interface AgencyCampaignStats {
   contacts_completed: number;
   contacts_suppressed: number;
   /**
-   * Contacts retired by running out of retry budget (`AD-P3-C-04`).
+   * Contacts retired by running out of retry budget.
    *
-   * A separate bucket rather than folded into `contacts_completed`, because §5.3
-   * makes exhaustion its own STATE precisely so a supervisor can tell "we worked
+   * A separate bucket rather than folded into `contacts_completed`, because
+   * exhaustion is its own STATE precisely so a supervisor can tell "we worked
    * this list to its cap" from "this outcome was never retryable". Without it
    * `contacts_total` does not equal the sum of the buckets and the missing
    * contacts are invisible — the one direction nobody checks, since the number
@@ -2010,15 +1992,15 @@ export interface AgencyCampaignStats {
    * most of its dials on redials look like one that reached everybody first time.
    *
    * `attempt_number` is derived at insert from `MAX(attempt_number)` over the
-   * contact's attempts (`AD-P2-C-12`), NOT from `agency_contacts.attempt_count` —
+   * contact's attempts, NOT from `agency_contacts.attempt_count` —
    * so an our-fault redial (a dropped station socket, a reaper requeue) is counted
    * here even though it never spent the customer's retry allowance. That is the
    * honest reading of "dials that were not the first": the number was called
    * again, whoever's fault it was.
    *
-   * **Optional on the wire**, and it is the only counter here that is. Core always
-   * produces it; the `?` is for master and the console, which may be talking to a
-   * core that predates it. Absent means "this core does not report it", never zero.
+   * **Optional on the wire**, and it is the only counter here that is. The dialer runtime always
+   * produces it; the `?` is for the public API layer and the console, which may be talking to a
+   * the dialer runtime that predates it. Absent means "this dialer runtime does not report it", never zero.
    */
   attempts_retried?: number;
   agents_live: number;
@@ -2031,7 +2013,7 @@ export interface AgencyCampaignStats {
    * abandoned badly this morning and has been clean since would keep showing a bad
    * rate, and one that has been running an hour would show a rate built from
    * almost no calls. The window is anchored on wall-clock, so it spans restarts and
-   * spans campaigns (`AD-P2-C-06` acceptance (b)).
+   * spans campaigns.
    */
   abandoned_24h: number;
   /** Answered attempts over the same rolling 24h window — the rate's denominator. */
@@ -2044,11 +2026,11 @@ export interface AgencyCampaignStats {
    */
   abandonment_rate_24h_pct: number | null;
 
-  // ── AD-P4-C-01: the supervisor dashboard ──────────────────────────────────
+  // ── the supervisor dashboard ──────────────────────────────────
 
   /** Live agents by state. Replaces nothing — `agents_live` stays as the total. */
   agents_by_state: AgencyAgentsByState;
-  /** The floor, unsorted. Risk ordering is the console's (§C.4). */
+  /** The floor, unsorted. Risk ordering is the console's. */
   agents: AgencySupervisorAgent[];
 
   /**
@@ -2081,10 +2063,10 @@ export interface AgencyCampaignStats {
    * Whether this campaign's disposition catalog actually contains `voicemail`.
    *
    * **`false` means `machine_connects` is not measuring anything**, and the console
-   * must say so rather than render a confident `0`. Master injects a default catalog
+   * must say so rather than render a confident `0`. The public API layer injects a default catalog
    * containing the code when the field is absent (`DEFAULT_DISPOSITION_CATALOG`), but
-   * a campaign created before that shipped — or created directly against core,
-   * bypassing master — can still have `[]`, and an agent cannot submit a code the
+   * a campaign created before that shipped — or created directly against the dialer runtime,
+   * bypassing the public API layer — can still have `[]`, and an agent cannot submit a code the
    * catalog does not offer. Same lesson as `abandonment_rate_24h_pct`: "no evidence"
    * and "zero" are different facts, and only one of them is reassuring.
    */
@@ -2099,7 +2081,7 @@ export interface AgencyCampaignStats {
    * **This is the first thing that has ever counted `is_success`.** The flag has
    * been on {@link AgencyDisposition} since migration 072, is settable in the
    * campaign builder and is styled on the agent's disposition pad; until now its
-   * only other reference in core was a type check in the config validator, i.e.
+   * only other reference in the dialer runtime was a type check in the config validator, i.e.
    * the platform confirmed the operator's answer was a boolean and then discarded
    * it. An operator could mark `Sale` a success, watch agents submit it all day,
    * and find no number anywhere that had noticed.
@@ -2130,22 +2112,22 @@ export interface AgencyCampaignStats {
 
   /**
    * Average handle time, in seconds, **excluding voicemail-dispositioned attempts**
-   * (§C.3, D1).
+   *.
    *
    * Measured `ended_at − bridged_at` — the AGENT's leg. Deliberately not the
    * persisted `talk_seconds`, which is anchored on `answered_at` (the carrier's
    * answer) and is nonzero even when no agent ever bridged: an abandoned attempt
-   * settles `completed` carrying the apology clip's talk time (`MAG-119`). Averaging
+   * settles `completed` carrying the apology clip's talk time. Averaging
    * that column would fold ring-to-bridge latency and abandoned calls into a number
    * whose whole purpose is to describe agent work.
    */
   aht_seconds: number | null;
-  /** The same average with voicemail included — §C.3's "raw figure on hover". */
+  /** The same average with voicemail included — the console's "raw figure on hover". */
   aht_seconds_including_machine: number | null;
 
   /**
    * Average wrap-up, in seconds — the supervisor's tuning input for
-   * `wrapup_seconds` (§C.3).
+   * `wrapup_seconds`.
    *
    * Averages `disposition_submitted`, `auto_return` and `agent_returned`; see 088 for
    * why `forced`, `agent_left` and `campaign_stopped` are excluded. `null` until
@@ -2153,11 +2135,11 @@ export interface AgencyCampaignStats {
    */
   avg_wrapup_seconds: number | null;
 
-  /** The configured ceiling the rate is drawn against (§C.3, amber at 75%). */
+  /** The configured ceiling the rate is drawn against. */
   abandonment_ceiling_pct: number;
 
   /**
-   * §C.2's health strip: the single highest-priority reason this campaign is not
+   * The health strip: the single highest-priority reason this campaign is not
    * dialing, or `null` for "running normally".
    *
    * One diagnosis, not a list, because the strip shows one — a supervisor reading
@@ -2175,11 +2157,11 @@ export interface AgencyCampaignStats {
   other_stalls: AgencyStallCode[];
 
   /**
-   * The account's configured concurrency ceiling (D10 / CR-2).
+   * The account's configured concurrency ceiling (D10).
    *
    * A READ-OUT, never a control. Per D10 there is no tenant-facing setter, and
-   * grouping this with start/pause/stop would itself be an affordance claim. See
-   * `AD-P4-M-02` / MAG-69 for the reversal, which is not in scope here.
+   * grouping this with start/pause/stop would itself be an affordance claim. A tenant-facing
+   * setter is out of scope.
    */
   concurrency_limit: number;
 
@@ -2194,7 +2176,7 @@ export interface AgencyCampaignStats {
    */
   concurrency_in_use: number | null;
 
-  // §C.3's per-tile hour-over-hour delta is NOT here, and this is the second
+  // The per-tile hour-over-hour delta is NOT here, and this is the second
   // deliberate omission rather than an oversight.
   //
   // A `previous_hour` block was built and removed before shipping. It carried the
@@ -2218,7 +2200,7 @@ export interface AgencyCampaignStats {
  * Every field of {@link AgencyCampaignStats}, as runtime-enumerable data.
  *
  * The one runtime export in an otherwise types-only module, and it earns the
- * exception (`AD-P4-C-04`). Three required fields shipped with no producer at all,
+ * exception. Three required fields shipped with no producer at all,
  * through two separate holes — and only one of them is reachable by a type:
  *
  *  1. **The producer not writing a declared field.** `stats()` returned
@@ -2236,18 +2218,18 @@ export interface AgencyCampaignStats {
  * the three fields someone remembered. It is typed `Record<keyof …, true>`, so a
  * field added to the interface and not here fails `npm run lint` — which is the
  * whole reason it lives in `src/` rather than beside the test that consumes it:
- * core's `tsconfig.json` excludes `test/`, so the identical guard written there
+ * the dialer runtime's `tsconfig.json` excludes `test/`, so the identical guard written there
  * would be type-checked by nothing and would rot without ever going red.
  */
 /**
  * The fields the ROUTE composes rather than the repository.
  *
- * `AD-P4-C-01`'s health strip needs DNC health, the account concurrency guard's
+ * The supervisor dashboard's health strip needs DNC health, the account concurrency guard's
  * live counter and calling-hours evaluation — none of which a repository can
  * see. So the payload now has two producers, and `stats()` returns an `Omit` of
  * exactly this set.
  *
- * The `AD-P4-C-04` guarantee is unchanged and still enforced in one place: the
+ * The no-producerless-field guarantee is unchanged and still enforced in one place: the
  * route annotates its literal `const payload: AgencyCampaignStats`, so a new
  * required field is a compile error at whichever producer fails to supply it.
  * This constant exists so a test can assert the SPLIT is what it claims, rather
@@ -2304,7 +2286,7 @@ export const AGENCY_CAMPAIGN_STATS_FIELDS: Record<keyof AgencyCampaignStats, tru
 // `GET /agency/campaigns/:id/activity`:
 //
 //   * that is a second request per page view, for two fields;
-//   * it is gated on `audit.read` in master — a DIFFERENT permission from
+//   * it is gated on `audit.read` in the public API layer — a DIFFERENT permission from
 //     `agency.supervise`, so a supervisor who may start a campaign may not be
 //     able to see when they started it;
 //   * and `audit_logs` has a retention horizon (`retention-purge.ts` drops whole
@@ -2317,21 +2299,21 @@ export const AGENCY_CAMPAIGN_STATS_FIELDS: Record<keyof AgencyCampaignStats, tru
 /**
  * Who caused a campaign's CURRENT status.
  *
- * `user_id` is master's user id — opaque to core (D3), the same kind of value as
+ * `user_id` is the public API layer's user id — opaque to the dialer runtime (D3), the same kind of value as
  * `agency_call_attempts.dispositioned_by_user_id` (migration 079) and
  * `agency_agent_sessions.agent_user_id`.
  *
  * `name` is `string | null` rather than `string`, and the null is not laziness.
- * **Core has no user table** (D3): there is nothing here to resolve an id to a
- * name against, so the only name core can serve is the one master sent AT THE
+ * **The dialer runtime has no user table** (D3): there is nothing here to resolve an id to a
+ * name against, so the only name the dialer runtime can serve is the one public API layer sent AT THE
  * MOMENT OF THE TRANSITION. A stored id with no name is therefore a real state —
- * an older master, or a direct S2S caller that sent an id and no display name —
+ * an older public API layer, or a direct S2S caller that sent an id and no display name —
  * and it is a different fact from "nobody caused this". The console renders the id
  * in that case; inventing a name from the id, or dropping the actor entirely
  * because half of it is missing, would both lose information the row is holding.
  *
  * ⚠️ The name is a SNAPSHOT and is never refreshed. A user who is later renamed in
- * master keeps their old name on transitions that already happened, which is the
+ * the public API layer keeps their old name on transitions that already happened, which is the
  * correct reading for a historical record (it says who pressed the button as they
  * were known then) and the wrong one for a directory. Same choice, same reason, as
  * migration 079 storing `dispositioned_on_behalf` rather than re-deriving it.
@@ -2367,22 +2349,22 @@ export interface AgencyCampaignActor {
  * not happen — `null` has to keep meaning "we do not know who".
  */
 export interface AgencyCampaignTransitionRequest {
-  /** master's user id for the human pressing the control. */
+  /** the public API layer's user id for the human pressing the control. */
   actor_user_id?: string;
-  /** Their display name, as master knows it now. Absent ⇒ the actor is id-only. */
+  /** Their display name, as the public API layer knows it now. Absent ⇒ the actor is id-only. */
   actor_name?: string;
 }
 
 // ─── Retry campaigns ────────────────────────────────────────────────────────
 //
-// `docs/reference/magickvoice-platform/docs/agency-campaign-retry-wire-contract.md` §1–§2. A supervisor narrows a
+// A supervisor narrows a
 // finished campaign's Contacts tab until it shows the rows they mean, presses
 // "Retry these contacts", and the filter they were already looking at becomes the
 // selector for a NEW campaign seeded from those rows.
 //
-// The single highest-leverage decision in the design (DR-3) is that this reuses
+// The single highest-leverage decision in the design is that this reuses
 // the contacts-list filter language rather than inventing a second one: the
-// selectable facts live only in core's `agency_contacts`, core already has a
+// selectable facts live only in the dialer runtime's `agency_contacts`, the dialer runtime already has a
 // filter vocabulary over them that is exhaustively pinned against the type unions
 // (`spine-filters.ts`), and "full flexibility" is answered by that vocabulary
 // rather than by a parallel one that will drift from it.
@@ -2397,7 +2379,7 @@ export interface AgencyCampaignTransitionRequest {
  * second one — `retrySelectionConditions` in `agency.repository.ts`.
  *
  * Every field is snake_case because this shape is BOTH the wire shape and the
- * value frozen into `agency_campaigns.retry_selector` (DR-5). The camelCase
+ * value frozen into `agency_campaigns.retry_selector`. The camelCase
  * `AgencyContactFilters` it is translated into is an internal SQL-builder shape
  * and deliberately not this.
  *
@@ -2414,7 +2396,7 @@ export interface AgencyCampaignTransitionRequest {
  * ── `suppressed_reason` is narrower here than on the contacts list ──────────
  *
  * `max_attempts` and `manual` only. `dnc` and `invalid` are refused with their
- * own message (DR-4): a DNC suppression is a customer's recorded request, not an
+ * own message: a DNC suppression is a customer's recorded request, not an
  * operator choice, and "a bad number does not become good" is the settled rule
  * that `resolveRetryDecision` already routes `invalid` to `suppressed` for. Both
  * are ALSO excluded unconditionally from the seeding predicate whatever the
@@ -2490,7 +2472,7 @@ export interface AgencyRetrySelector {
  * rule exists to prevent.
  */
 export interface AgencyRetryPreview {
-  /** Contacts the selector matched AND that DR-4 did not remove — what would be seeded. */
+  /** Contacts the selector matched AND that the DNC exclusion did not remove — what would be seeded. */
   matched: number;
   /**
    * `matched`, bucketed. Both maps sum to `matched`.
@@ -2504,7 +2486,7 @@ export interface AgencyRetryPreview {
   by_last_outcome: Record<string, number>;
   by_last_disposition: Record<string, number>;
   /**
-   * Rows the selector matched that DR-4 removed anyway.
+   * Rows the selector matched that the DNC exclusion removed anyway.
    *
    * Not decoration. A supervisor who selects "everything suppressed" and gets 40
    * instead of 300 must be told the other 260 were DNC and invalid, or they will
@@ -2524,7 +2506,7 @@ export interface AgencyRetryPreview {
  *
  * A discriminated union on `idempotent_replay`, not on the status code, so a
  * client reads one field instead of inferring intent from `201` vs `200`. Every
- * consumer must handle both arms: master compiles against this file and the
+ * consumer must handle both arms: the public API layer compiles against this file and the
  * console renders from it, and a type that admitted only the `201` made
  * `contacts_seeded` look like a `number` on the one path this whole mechanism
  * exists to make safe — the replay after a lost response, where it is `null`.
@@ -2644,7 +2626,7 @@ export type AgencyCampaignStatsBucket = Omit<AgencyAgentStatsBucket, 'occupancy'
 
 /**
  * `GET /api/v1/agency-campaigns/:id/stats/series?from=&to=&bucket=day|week|month`.
- * Master proxies it at `/proxy/agency/campaigns/:campaignId/stats/series`.
+ * The public API layer proxies it at `/proxy/agency/campaigns/:campaignId/stats/series`.
  *
  * ── The window is HALF-OPEN `[from, to)` ────────────────────────────
  *
@@ -2946,7 +2928,7 @@ export interface AgencyAgentStatsTotals {
  * useful rows here: it is an agent who was on the floor and never dialled.
  */
 export interface AgencyAgentStats {
-  /** Echoed back — master's user id, opaque to core (D3). */
+  /** Echoed back — the public API layer's user id, opaque to the dialer runtime (D3). */
   agent_user_id: string;
   /** Echoed so a consumer never has to infer the grouping from the labels. */
   bucket: AgencyStatsBucketUnit;
@@ -2995,7 +2977,7 @@ export interface AgencyAgentStats {
 //
 // ── `account_id` is a PREDICATE, and a tenant-wide roster is not reachable ───
 //
-// Core scopes every statement on `agency_agent_sessions.tenant_id` AND
+// The dialer runtime scopes every statement on `agency_agent_sessions.tenant_id` AND
 // `.account_id`. A tenant-wide roster is a separate future mode with its own
 // route; it must be impossible to obtain one by omitting a parameter, which is
 // why neither is a filter with a default.
@@ -3037,7 +3019,7 @@ export type AgencyRosterSort =
  * cannot be checked, and an uncheckable rate is the one a supervisor acts on.
  */
 export interface AgencyRosterAgentRow {
-  /** master's user id, opaque to core (D3). Core has no user table and can only ever serve a UUID; master adds the name. */
+  /** the public API layer's user id, opaque to the dialer runtime (D3). The dialer runtime has no user table and can only ever serve a UUID; the public API layer adds the name. */
   agent_user_id: string;
   attempts: number;
   connected: number;
@@ -3178,7 +3160,7 @@ export interface AgencyRosterPercentiles {
  * Every agent who dialled in the window and scope, INCLUDING one whose
  * membership was later revoked: the cohort is "the floor that week", and a
  * supervisor comparing against it wants the floor as it actually was. This is
- * deliberately NOT affected by master's `include_inactive`, which controls which
+ * deliberately NOT affected by the public API layer's `include_inactive`, which controls which
  * ROWS are returned, not what they are measured against. A benchmark that moved
  * when you toggled a row filter would be a different number under the same name.
  *
@@ -3243,7 +3225,7 @@ export interface AgencyRosterBenchmark {
    * ── Why they are POOLED here and must not be derived from `rows` ───────────
    *
    * A consumer summing the visible rows would get a number that MOVES when
-   * master's `include_inactive` toggle moves, because that toggle removes rows.
+   * the public API layer's `include_inactive` toggle moves, because that toggle removes rows.
    * This object's own contract (above) forbids exactly that: the benchmark is the
    * floor as it actually was, and a benchmark that changed when you flipped a row
    * filter would be a different number under the same name.
@@ -3350,8 +3332,8 @@ export interface AgencyRosterPage {
 //     with no meaning that a console would nonetheless render. Comparison stays on
 //     the roster.
 //   * **No `agent_user_id` filter**, on either service. Same reason as the roster:
-//     core has no user table, `agent_user_id` is an opaque string to it (D3), so
-//     core cannot validate tenancy on a caller-supplied id — master's `memberships`
+//     the dialer runtime has no user table, `agent_user_id` is an opaque string to it (D3), so
+//     the dialer runtime cannot validate tenancy on a caller-supplied id — the public API layer's `memberships`
 //     is the only place that boundary can exist. Filtering to a person is the
 //     per-agent record's job.
 
@@ -3383,7 +3365,7 @@ export type AgencyGroupDimension =
  * and a union of 21 combinations is a shape no consumer would narrow correctly.
  */
 export interface AgencyGroupKey {
-  /** master's user id, opaque to core (D3). master adds `agent_name` beside it. */
+  /** the public API layer's user id, opaque to the dialer runtime (D3). the public API layer adds `agent_name` beside it. */
   agent_user_id?: string;
   campaign_id?: string;
   /**
@@ -3546,10 +3528,10 @@ export type AgencyGroupSort =
  * facts, and no "showing X of Y" fraction is derivable from them ─────────────
  *
  * The roster's R1 ruling applies here unchanged, because the mechanism is the
- * same: core applies `limit`, and only then does master drop rows whose agent has
- * no active membership. Master therefore cannot produce a post-filter population
- * count — that would need the filter applied before the limit, i.e. master shipping
- * every active agent id to core on a GET. So a default read can legitimately return
+ * same: the dialer runtime applies `limit`, and only then does the public API layer drop rows whose agent has
+ * no active membership. The public API layer therefore cannot produce a post-filter population
+ * count — that would need the filter applied before the limit, i.e. the public API layer shipping
+ * every active agent id to the dialer runtime on a GET. So a default read can legitimately return
  * 190 rows with `total_groups: 400` and `inactive_omitted: 10`. They are rendered
  * as separate true statements: a population readout, a truncation notice only when
  * `total_groups > rows.length + inactive_omitted`, and a hidden-members notice only
@@ -3578,7 +3560,7 @@ export type AgencyGroupSort =
  * `campaign_id` remedy and not the `group_by=campaign` one. Read that field's note
  * before labelling anything with it.
  *
- * ⚠️ **The reconciliation asymmetry master's layer creates, which a console must
+ * ⚠️ **The reconciliation asymmetry the public API layer's layer creates, which a console must
  * not present without saying so.** A campaign-grouped total INCLUDES a departed
  * agent's attempts, because the row is an aggregate over everyone who dialled and
  * there is nothing to drop. An agent-grouped view of the same campaign EXCLUDES
@@ -3646,28 +3628,23 @@ export interface AgencyGroupPage {
   rows: AgencyGroupRow[];
 }
 
-// ─── Billing wire shapes — REMOVED in the Magick Agency port ────────────────
+// ─── Billing wire shapes — intentionally absent ─────────────────────────────
 //
-// PORT NOTE (magick-agency, packages/contracts): core declared three billing-only
-// shapes here — `AgencyConnectedCallSettlementFields`, `AgencyAttemptBatchCallType`
-// and `AgencyAttemptBatchSettlementPayload` — together with the ratified notes on
-// how core's settlement dispatcher reaches master. Magick Agency v1 has no
-// credits, billing, settlement or attempt batching (extraction plan v4.2, Decided
-// #8 and §3.3), so they are deleted rather than carried as unproducible types.
-// Usage facts stay on the rows agency owns (`agency_call_attempts`,
-// `agency_calls`, `dialer_analysis_jobs.analysis_audio_seconds`) for metering
-// later. Each removed declaration has a row in `packages/contracts/PORTING.md`.
+// v1 has no credits, billing, settlement or attempt batching, so no such wire
+// shapes are declared. Usage facts stay on the rows agency owns
+// (`agency_call_attempts`, `agency_calls`,
+// `dialer_analysis_jobs.analysis_audio_seconds`) for metering later.
 
-// ─── Supervisor read surface — the attempt spine (MAG-159) ──────────────────
+// ─── Supervisor read surface — the attempt spine ────────────────────────────
 //
 // `agency_call_attempts` opens migration 075 with "the audit spine. One row per
-// dial", and until MAG-159 nothing read it: the campaign page served aggregate
+// dial", and without these pages nothing reads it: the campaign page served aggregate
 // counters, `/agency/campaigns/:id/contacts` was an upload form despite the
 // name, and `/app/calls/dialer/history` — a CALL list — structurally cannot show
 // an attempt that never connected, a suppressed contact, or a disposition.
 //
 // These two pages are the operational record: what the campaign did to whom.
-// They are deliberately NOT the control-plane trail (MAG-157/MAG-158's
+// They are deliberately NOT the control-plane trail (the
 // `audit_logs`), which answers who pressed which button.
 //
 // ── Three privacy decisions are frozen into these shapes, not left to render ─
@@ -3675,7 +3652,7 @@ export interface AgencyGroupPage {
 // 1. **`context` appears on ONE shape only** — `AgencyContactDetail`, the
 //    single-contact drill-down — and never on a list row. Columns the operator
 //    marked `Ignore` at ingest are already absent from the stored JSONB
-//    (master's `agency-csv-ingest.ts` drops them before the row is written, so
+//    (the public API layer's `agency-csv-ingest.ts` drops them before the row is written, so
 //    the exclusion is enforced at ingest and not merely at render), but
 //    `context_display.hidden` is a *render* rule, and this surface has a wider
 //    audience than the agent screen it was written for. A client rendering
@@ -3684,17 +3661,17 @@ export interface AgencyGroupPage {
 //    list and out of the CSV export by construction.
 //
 // 2. **Phone numbers are served in full, to `agency.supervise` holders only.**
-//    §C.4's masking is not implemented anywhere yet and inventing a second
+//    No masking rule exists yet and inventing a second
 //    masking rule here — one that the agent floor would then not share — is how
 //    two rules drift. The supervisor floor is `account_admin`, which is also the
 //    floor for the DNC list and the roster upload: the number is not new
-//    information to this reader. What IS new is bulk: master audits the CSV
+//    information to this reader. What IS new is bulk: the public API layer audits the CSV
 //    export (`agency_export.attempts` / `agency_export.contacts`) with the
 //    filters and row count, so a mass extraction leaves a trail even though it
 //    needs no extra permission.
 //
 // 3. **`notes` are included, deliberately.** They are agent-typed free text and
-//    are excluded from the AUDIT trail on purpose (master's
+//    are excluded from the AUDIT trail on purpose (the public API layer's
 //    `proxy-agency-agent.routes.ts` — an audit row records the catalog code, not
 //    customer content). This is not the audit trail: notes are operational
 //    content on the contact record, and "we dialled this number four times and
@@ -3706,7 +3683,7 @@ export interface AgencyGroupPage {
  * One dial, as a supervisor reads it.
  *
  * Timestamps are ISO-8601 strings on the wire. `agent_user_id` is resolved
- * through `agency_agent_sessions` so the row names a PERSON (master's user id),
+ * through `agency_agent_sessions` so the row names a PERSON (the public API layer's user id),
  * never the session UUID that `reserved_agent_id` holds — a session id is
  * meaningless to everyone who would open this page.
  */
@@ -3730,7 +3707,7 @@ export interface AgencyAttemptRow {
   phone_e164: string;
   caller_id: string;
   /**
-   * The agent who held this attempt, as master's user id — resolved from
+   * The agent who held this attempt, as the public API layer's user id — resolved from
    * `reserved_agent_id`'s session row. NULL when the attempt was never reserved
    * (it failed before an agent was on it) or the session row is gone.
    */
@@ -3793,7 +3770,7 @@ export interface AgencyContactRow {
  */
 export interface AgencyContactDetail extends AgencyContactRow {
   /**
-   * Every non-phone CSV column the operator did not mark `Ignore`, verbatim.
+   * Every non-phone CSV column the operator did not mark `Ignore`, unchanged.
    * Render through `AgencyContextDisplay` and honour `hidden`; treat every value
    * as untrusted display text, never as markup.
    */
@@ -3810,8 +3787,8 @@ export interface AgencyContactDetail extends AgencyContactRow {
  * failure looks like rows randomly missing. A keyset asks for "the rows after
  * this exact one" and is unaffected by anything written since.
  *
- * `next_cursor` is **opaque** — base64url, and its contents are core's business.
- * Master passes it through untouched; a client that parses it is coupling to an
+ * `next_cursor` is **opaque** — base64url, and its contents are the dialer runtime's business.
+ * The public API layer passes it through untouched; a client that parses it is coupling to an
  * encoding that carries no compatibility promise.
  *
  * There is deliberately **no `total`**. Counting the filtered set is a second

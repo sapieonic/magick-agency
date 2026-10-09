@@ -1,11 +1,11 @@
 /**
- * The console-facing agency HTTP/WS wire shapes (ported from cusui), as one
+ * The console-facing agency HTTP/WS wire shapes, as one
  * module. Re-exported from the package root as the `AgencyApi` namespace; also
  * importable per file, e.g. `@magick-agency/contracts/api/agency/agency-stats`.
  *
  * These are what the merged server must RETURN to the console — not the same as
- * the core contract at the package root (`../../agency`), even where a name is
- * shared. `./CONTRACT-DIFF.md` lists every difference.
+ * the dialer runtime contract at the package root (`../../agency`), even where a name is
+ * shared.
  */
 
 export * from './agency';
@@ -20,6 +20,6 @@ export * from './webrtc-call';
 export * from './attempt-call';
 export * from './shared';
 
-// Declared identically in cusui's `agency.ts` and `agency-campaign.ts`; the
+// Declared identically in the console's `agency.ts` and `agency-campaign.ts`; the
 // explicit re-export picks one so the two `export *` lines do not conflict.
 export type { AgencyCampaignStatus } from './agency';
