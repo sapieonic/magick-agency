@@ -5,7 +5,7 @@ You are lane C of the Magick Agency build: the browser↔PSTN human bridge, the 
 **Worktree:** `/Users/manasnilorout/Personal/Sapionic/magick-agency-lane-c`, branch `lane-c/voice-engine` (already created off `main` by the lead).
 
 ## Plan sections
-`docs/agency-extraction-plan.md` §5 (all), §8 Phase 5, §9 (*agency dials only on its own VoiceLink account, and its guard is the only admitter there*); `docs/seams.md` §3.1 (the bridge API you must keep — binding), §3.2 (analysis hooks you call), §3.3 (concurrency control you implement); `agency.md` §5 (lifecycle, late binding, the five things easy to get wrong) and §7.3 (the 1s bind budget).
+`docs/history/extraction-plan-v4.2.md` §5 (all), §8 Phase 5, §9 (*agency dials only on its own VoiceLink account, and its guard is the only admitter there*); `docs/seams.md` §3.1 (the bridge API you must keep — binding), §3.2 (analysis hooks you call), §3.3 (concurrency control you implement); `docs/reference/magickvoice-platform/agency.md` §5 (lifecycle, late binding, the five things easy to get wrong) and §7.3 (the 1s bind budget).
 
 ## Sources (core v1.123.2 @ 4850d1d9) — same relative paths under `apps/server/src/` (format-patch fidelity is the point; plan §5)
 - Bridge: `src/core/webrtc-bridge-manager.ts` (2,441), `src/core/webrtc-bridge-session.ts`, `src/utils/audio-fir.ts`, `src/utils/audio.ts` (what the bridge uses), `src/core/paced-audio-streamer.ts` (+ `paced-frame-queue.ts` if the streamer needs it), `src/core/webhook-url-builder.ts`, the Redis ws-token store the bridge uses for leg tokens.

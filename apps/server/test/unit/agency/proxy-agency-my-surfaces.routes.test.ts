@@ -545,7 +545,7 @@ describe('the supervisory twins', () => {
        * `memberships` is master's, so this boundary exists only here.
        *
        * 404 rather than 403 because a cross-tenant id and a nonexistent one must be
-       * indistinguishable — rule 3 of CLAUDE.md's RBAC section. A 403 would confirm
+       * indistinguishable — rule 3 of docs/reference/magick-master/CLAUDE.md's RBAC section. A 403 would confirm
        * the user id exists somewhere.
        */
       mocks.findAnyByUserAndTenant.mockResolvedValue([]);

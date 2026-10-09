@@ -96,7 +96,7 @@ export type AuditActionGroup = 'Campaign' | 'Calls' | 'Staffing' | 'Team';
  * ── Three values, and the third arrived exactly as this note predicted ──────
  * `'ai'` and `'agency'` are the two PRODUCTS, spelled the same way E8's
  * telemetry super-property will spell them so the two axes can be read together
- * across repos. The three-zone model (`docs/agency-dialer-design.md` §7b) also
+ * across repos. The three-zone model (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b) also
  * names a **platform** zone — team, credits, API keys, settings — that is shared
  * by design; the previous revision of this paragraph said master wrote no audit
  * action for it *yet*, and that this union would gain `'platform'` when it did.
@@ -186,7 +186,7 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_campaign.stopped', label: 'Campaign stopped', group: 'Campaign', product: 'agency' },
   // The label says "retry campaign", never "retry", because `attempts_retried`
   // on the campaign stats already means a WITHIN-campaign redial of one contact
-  // (`agency.md` §7.4). Two unrelated things called "retry" on adjacent surfaces
+  // (`docs/reference/magickvoice-platform/agency.md` §7.4). Two unrelated things called "retry" on adjacent surfaces
   // is how an operator reads a roster of 812 new contacts as 812 redials.
   { value: 'agency_campaign.retry_created', label: 'Retry campaign created', group: 'Campaign', product: 'agency' },
 
@@ -255,7 +255,7 @@ export const PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY = [
  */
 export const PLATFORM_AUDIT_PRODUCT_VOCABULARY = [
   { value: 'agency', label: 'Agency dialer' },
-  // The shared zone (docs/agency-dialer-design.md §7b): team, credits, API keys,
+  // The shared zone (docs/reference/magickvoice-platform/docs/agency-dialer-design.md §7b): team, credits, API keys,
   // settings. "Workspace" rather than "Platform" because an operator reading
   // this control is picking which half of their SUBSCRIPTION an action belongs
   // to, and "platform" is our word for the service, not theirs for the thing

@@ -23,7 +23,7 @@ const log = createChildLogger({ component: 'voicelink-adapter' });
  * WebSocket we own and POSTs lifecycle events to a `webhook_url` we own. The WS
  * protocol is Twilio/VoBiz-shaped JSON.
  *
- * Material differences from z99 (see docs/voicelink-telephony-implementation-plan.md):
+ * Material differences from z99 (see docs/reference/magic-voice-core/docs/voicelink-telephony-implementation-plan.md):
  * - Audio is **A-law 8 kHz** (`audio/alaw`), carrier-FORCED — an A-law↔PCM16
  *   codec was added to src/utils/audio.ts (resolveTelephonyAudioFormat returns
  *   `pcma` for voicelink).

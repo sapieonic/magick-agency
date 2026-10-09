@@ -25,7 +25,7 @@ would call. That design was rejected (recorded by the lead from the planning ses
 itself only lists the version). The reason is the answer-time decision: when the carrier reports
 an answer, the dialer must decide in the same synchronous run whether a reserved agent is still
 there to bridge to, write the agent's panel, and bind the audio, or else take the abandoned path.
-`agency.md` §5 ("The parts that are easy to get wrong") spells out why there must be no `await`
+[`agency.md`](reference/magickvoice-platform/agency.md) §5 ("The parts that are easy to get wrong") spells out why there must be no `await`
 between those steps; a fast carrier delivers `bridged` right after `answered`. A network hop
 between the dialer and the bridge puts an `await` exactly there. So agency owns its bridge and its
 carrier account.

@@ -55,7 +55,7 @@ export interface CampaignTabsProps {
    * pages render this bar as soon as they have a campaign `id`, before their
    * own campaign fetch resolves — `campaign?.status` is `undefined` for that
    * first render, and the click event is not fired with a guessed status
-   * (see `CLAUDE.md`'s note against a hardcoded `'running'` fallback here).
+   * (see `docs/reference/magick-comms-cusui/CLAUDE.md`'s note against a hardcoded `'running'` fallback here).
    */
   campaignStatus?: string;
 }

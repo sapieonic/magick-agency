@@ -15,7 +15,7 @@ import type { WebRtcCallRecord } from './webrtc-call';
 
 /**
  * Why the call is or is not here. Core's own vocabulary, forwarded through
- * master untouched (`docs/agency-dialer-design.md` §7b).
+ * master untouched (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
  *
  * The distinction between the last two is not cosmetic. The attempt→call link is
  * deliberately un-FK'd and both sides purge on independent retention windows, so

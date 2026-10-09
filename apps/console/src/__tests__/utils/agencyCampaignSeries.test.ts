@@ -42,7 +42,7 @@ import type { AgencyCampaignSeries } from '../../types/agency-campaign-series';
  * future, a range longer than core's cap) are assertions rather than something
  * that happens to hold on the day the suite is run.
  *
- * The suite is pinned to `TZ=UTC` (see CLAUDE.md, "Testing Patterns"), which is
+ * The suite is pinned to `TZ=UTC` (see docs/reference/magick-comms-cusui/CLAUDE.md, "Testing Patterns"), which is
  * why an instant can be compared to a literal at all. Nothing here needs a
  * second zone: the one zone-sensitive derivation this module reaches —
  * `bucketDay`, for the bar labels — already has a `*.timezone.test.tsx` of its

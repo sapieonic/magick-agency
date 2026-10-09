@@ -277,7 +277,7 @@ const DEFAULT_WEBRTC_MAX_DURATION_SECONDS = 1800;
 
 /**
  * Orchestrates WebRTC human-bridge calls: browser leg ⇄ core ⇄ VoBiz PSTN leg,
- * no AI pipeline. See docs/webrtc-human-calling-design.md.
+ * no AI pipeline. See docs/reference/magic-voice-core/docs/webrtc-human-calling-design.md.
  *
  * Concurrency is **shared** with AI voice calls — this manager reuses
  * CallManager's public guards + triggerDequeue() rather than its own pool, so a
@@ -446,7 +446,7 @@ export class WebRtcBridgeManager {
    * Place an outbound leg that bridges to a **borrowed** media socket — one the
    * caller already has open and will keep open after this call ends.
    *
-   * This is the agency dialer's entry point (docs/agency-dialer-design.md §7). The
+   * This is the agency dialer's entry point (docs/reference/magickvoice-platform/docs/agency-dialer-design.md §7). The
    * agent's station socket is opened once at shift start and reused across
    * hundreds of attempts, so the bridge **attaches and detaches it per attempt and
    * never closes it**. Concretely, and in contrast to {@link createCall}:

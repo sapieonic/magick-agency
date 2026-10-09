@@ -19,7 +19,7 @@ const log = createChildLogger({ component: 'webrtc-call-routes' });
 
 /**
  * WebRTC human calling routes (browser→PSTN bridge). See
- * docs/webrtc-human-calling-design.md.
+ * docs/reference/magic-voice-core/docs/webrtc-human-calling-design.md.
  *
  * The PSTN media-stream WebSocket leg is registered unauthenticated at the plugin
  * root (VoiceLink, guarded by its purpose-bound provider token).

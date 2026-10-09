@@ -28,7 +28,7 @@
  * about callers. (The design doc previously stated the opposite — that these
  * three "cannot be removed from a catalog … because the retry engine, the
  * scheduler and the DNC path each depend on one of them existing" — a claim
- * this file falsified and `docs/agency-dialer-delivery-plan.md` has since been
+ * this file falsified and `docs/reference/magickvoice-platform/docs/agency-dialer-delivery-plan.md` has since been
  * corrected to match; do not reintroduce it here from an old copy of that doc.)
  *
  * Worse, enforcing it would break a case core supports on purpose.

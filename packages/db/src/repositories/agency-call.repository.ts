@@ -33,7 +33,7 @@ import type {
  *
  * `findByIdScoped` and `listByTenant` take a required `scope`, and the compile
  * errors from adding it were the audit checklist for the read path
- * (`docs/agency-dialer-design.md` §7b). Anyone relying on that checklist should
+ * (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b). Anyone relying on that checklist should
  * know its edge: **it enumerates callers of these two methods, and nothing else.**
  * A reader that writes `FROM webrtc_calls` itself is invisible to it, because
  * there is no call site for the type checker to fail.
@@ -79,7 +79,7 @@ const WEBRTC_JSON_COLUMNS: ReadonlySet<string> = new Set([
 
 /**
  * `campaign_id` is projected deliberately. It is the scope discriminator (see
- * `docs/agency-dialer-design.md` §7b) and the list could not label — or even
+ * `docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b) and the list could not label — or even
  * recognise — a foreign row without it.
  *
  * All webrtc_calls columns except the heavy analysis JSONB blobs
@@ -114,7 +114,7 @@ const WEBRTC_LIST_COLUMNS = `
  *
  * `webrtc_calls` holds both products' calls and stays one table by design
  * (migration 076). This is the boundary between them
- * (`docs/agency-dialer-design.md` §7b).
+ * (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
  *
  * **The enum's meaning is product ownership, not the shape of the predicate.**
  * `'dialer'` happens to resolve to `campaign_id IS NULL` today, but callers must
@@ -208,7 +208,7 @@ export class WebRtcCallRepository {
    * reaches its record through this function, so pinning `scope: 'dialer'` there
    * is what makes an agency call invisible and untouchable through the softphone's
    * routes — read, recording, hangup and erasure alike
-   * (`docs/agency-dialer-design.md` §7b).
+   * (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
    *
    * `scope` is required and has no default on purpose. A default would type-check
    * every call site immediately and silently leave them unaudited; the compile
@@ -241,7 +241,7 @@ export class WebRtcCallRepository {
 
   /**
    * One product's call history. `scope` selects which
-   * (`docs/agency-dialer-design.md` §7b) and is required — it sits ahead of the
+   * (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b) and is required — it sits ahead of the
    * paging arguments precisely so it cannot be given a default.
    *
    * The scope is applied to the count query as well as the data query. Filtering

@@ -9,7 +9,7 @@ import {
 import type { AgencyDisposition } from '@magick-agency/contracts/agency';
 
 // ---------------------------------------------------------------------------
-// The retry selector's parse rules — `MagickVoice-platform/docs/agency-campaign-retry-wire-contract.md`
+// The retry selector's parse rules — `docs/reference/magickvoice-platform/docs/agency-campaign-retry-wire-contract.md`
 // §1, which is FROZEN and implemented independently by three repos.
 //
 // Every refusal in §1's table is exercised here, because an ambiguity in that

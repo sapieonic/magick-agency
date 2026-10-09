@@ -17,7 +17,7 @@
  * writes tests to them. Changing anything here after the freeze is a contract
  * change: announce it, do not just edit it.
  *
- * Authority: docs/agency-dialer-design.md (§2.4, §5, §6.1, §8, §9, D5, D10, D11).
+ * Authority: docs/reference/magickvoice-platform/docs/agency-dialer-design.md (§2.4, §5, §6.1, §8, §9, D5, D10, D11).
  * Where this file and the design doc disagree, this file is what actually ships;
  * every such divergence is called out in a comment naming the reason.
  *
@@ -129,7 +129,7 @@ export type AgencyContactState =
  * `retry-policy.ts`'s `DEFAULT_RETRY_POLICY`, `campaign-config.ts`'s
  * `RETRY_POLICY_OUTCOMES` and `outcome-classifier.ts` itself — plus master's
  * `RETRY_POLICY_OUTCOMES` and cusui's `src/types/agency.ts`. Adding a member is a
- * three-repo change; `agency.md` §6.4 is the register of pins like these.
+ * three-repo change; `docs/reference/magickvoice-platform/agency.md` §6.4 is the register of pins like these.
  */
 export type AgencyAttemptOutcome =
   | 'connected'
@@ -439,7 +439,7 @@ export interface AgencySessionBootstrap {
    * A one-line banner above the contact panel, plus the lineage-scoped
    * `prior_attempts` they already receive. NOT the parent's stats, connect rate,
    * roster counts or agent roster. The `agent` role is level 5 with exactly four
-   * `agency.*` permissions (`agency.md` §7.1) and this feature must not become
+   * `agency.*` permissions (`docs/reference/magickvoice-platform/agency.md` §7.1) and this feature must not become
    * the reason someone raises it — every field here is campaign-descriptive copy
    * about the campaign the agent is joined to.
    */
@@ -1865,7 +1865,7 @@ export type AgencyStallCode =
   // PORT NOTE (magick-agency): core's priority 7, `credits_low`, is REMOVED.
   // Core never produced it (master inserted it while proxying, from a balance
   // core did not hold), and Magick Agency v1 has no credits at all (extraction
-  // plan §3.3). Leaving it declared but unproducible is the pattern `agency.md`
+  // plan §3.3). Leaving it declared but unproducible is the pattern `docs/reference/magickvoice-platform/agency.md`
   // §6.4 warns about. The remaining seven keep their relative order; the
   // ordinals in these comments are core's and are kept verbatim.
   /** 8. An unusual share of recent dials failed — possibly a carrier problem. */
@@ -2375,7 +2375,7 @@ export interface AgencyCampaignTransitionRequest {
 
 // ─── Retry campaigns ────────────────────────────────────────────────────────
 //
-// `MagickVoice-platform/docs/agency-campaign-retry-wire-contract.md` §1–§2. A supervisor narrows a
+// `docs/reference/magickvoice-platform/docs/agency-campaign-retry-wire-contract.md` §1–§2. A supervisor narrows a
 // finished campaign's Contacts tab until it shows the rows they mean, presses
 // "Retry these contacts", and the filter they were already looking at becomes the
 // selector for a NEW campaign seeded from those rows.

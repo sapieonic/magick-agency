@@ -1,7 +1,7 @@
 /**
  * ─── RETRY CAMPAIGNS — THE THREE BOUNDS, FIXED ACROSS THREE REPOS ───────────
  *
- * `MagickVoice-platform/docs/agency-campaign-retry-wire-contract.md` §8 pins these values so core,
+ * `docs/reference/magickvoice-platform/docs/agency-campaign-retry-wire-contract.md` §8 pins these values so core,
  * magick-master and magick-comms-cusui agree about what is refusable. Only core
  * ENFORCES them — master and cusui echo the numbers into copy ("up to 100,000
  * contacts") — which is exactly why they need one home rather than being spelled
@@ -17,7 +17,7 @@
  * number is dialled within one campaign, keyed by outcome, with
  * `OUR_FAULT_REDIAL_BOUND` sitting underneath it. This file is about RETRY
  * CAMPAIGNS: a supervisor authoring a second campaign over a subset of a first
- * one's roster. `agency.md` §7.4 records the same trap on the stats surface,
+ * one's roster. `docs/reference/magickvoice-platform/agency.md` §7.4 records the same trap on the stats surface,
  * where `attempts_retried` already means within-campaign redials and must not be
  * reused for this.
  */
@@ -85,7 +85,7 @@ export const RETRY_MAX_GENERATION = 10;
  * feeds is the one payload whose latency the whole design guards hardest.
  *
  * Lifted out of the SQL so the number the contract publishes and the number the
- * query enforces are the same token. `agency.md` §7.5 calls this the display
+ * query enforces are the same token. `docs/reference/magickvoice-platform/agency.md` §7.5 calls this the display
  * bound on a deep chain, alongside {@link RETRY_MAX_GENERATION}.
  */
 export const PRIOR_ATTEMPT_LIMIT = 20;

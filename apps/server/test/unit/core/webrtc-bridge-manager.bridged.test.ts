@@ -38,7 +38,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //    before the "station never closed" check, so that check still runs after finalization.
 
 // ---------------------------------------------------------------------------
-// The borrowed-socket contract (docs/agency-dialer-design.md §7).
+// The borrowed-socket contract (docs/reference/magickvoice-platform/docs/agency-dialer-design.md §7).
 //
 // The agency dialer inverts the bridge's socket lifetime: the agent's station
 // socket is opened once at shift start and reused across hundreds of attempts.

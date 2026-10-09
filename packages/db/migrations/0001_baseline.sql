@@ -1579,7 +1579,7 @@ COMMENT ON COLUMN agency_agent_session_events.from_state IS
 -- source: core 075 + 079 (disposition actor) + 081 (billing/metering index) + 088
 -- (wrap-up measurement) + 090 + 095 + 104 (indexes) + 119 (abandon_reason).
 --
--- One row per dial (docs/agency-dialer-design.md §2.1). `webrtc_call_id` is the
+-- One row per dial (docs/reference/magickvoice-platform/docs/agency-dialer-design.md §2.1). `webrtc_call_id` is the
 -- back-reference to the media leg, now an `agency_calls.id` (column name kept so
 -- ported SQL is unchanged).
 CREATE TABLE agency_call_attempts (

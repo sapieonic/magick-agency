@@ -5,7 +5,7 @@ You are lane C of the Magick Agency build: the browser↔PSTN human bridge, the 
 **Worktree:** `/Users/manasnilorout/Personal/Sapionic/magick-agency-lane-c`, branch `lane-c/voice-engine` (already created off `main` by the lead).
 
 ## Plan sections
-`docs/agency-extraction-plan.md` §5 (all), §8 Phase 5, §9 (*agency dials only on its own VoiceLink account, and its guard is the only admitter there*); `docs/seams.md` §3.1 (the bridge API you must keep — binding), §3.2 (analysis hooks you call), §3.3 (concurrency control you implement); `agency.md` §5 (lifecycle, late binding, the five things easy to get wrong) and §7.3 (the 1s bind budget).
+`docs/history/extraction-plan-v4.2.md` §5 (all), §8 Phase 5, §9 (*agency dials only on its own VoiceLink account, and its guard is the only admitter there*); `docs/seams.md` §3.1 (the bridge API you must keep — binding), §3.2 (analysis hooks you call), §3.3 (concurrency control you implement); `docs/reference/magickvoice-platform/agency.md` §5 (lifecycle, late binding, the five things easy to get wrong) and §7.3 (the 1s bind budget).
 
 ## Sources (core v1.123.2 @ 4850d1d9) — same relative paths under `apps/server/src/` (format-patch fidelity is the point; plan §5)
 - Bridge: `src/core/webrtc-bridge-manager.ts` (2,441), `src/core/webrtc-bridge-session.ts`, `src/utils/audio-fir.ts`, `src/utils/audio.ts` (what the bridge uses), `src/core/paced-audio-streamer.ts` (+ `paced-frame-queue.ts` if the streamer needs it), `src/core/webhook-url-builder.ts`, the Redis ws-token store the bridge uses for leg tokens.
@@ -35,7 +35,7 @@ Create `apps/server/src/telephony/voicelink/voicelink-carrier.fixture.json`: Voi
 
 **Sources are read-only.** Git submodules of `/Users/manasnilorout/Personal/Sapionic/MagickVoice-platform`: `magic-voice-core` (v1.123.2, 4850d1d9ffc9eb9eab56d2ed482b9bd616edd103), `magick-master` (v3.24.0, a1f0756a58a63bf8a19baf74298a702f9fe7b430), `magick-comms-cusui` (v2.96.0, ee5beb4400ec1fb5fdf6049871681ae6875e8d29). Check `git -C <sub> rev-parse HEAD` first. Never modify, checkout, stash or run tests in them (their tests would hit other stacks' databases).
 
-**Read first, in this order:** `docs/seams.md` (the path rule, your lane-owned files, the seams you provide or consume — binding), `CLAUDE.md`, `docs/decisions.md`, `packages/db/BASELINE.md` (the schema you build against), the spec `/Users/manasnilorout/Personal/Sapionic/MagickVoice-platform/docs/agency-extraction-plan.md` v4.2 (the sections named in your brief), and `/Users/manasnilorout/Personal/Sapionic/MagickVoice-platform/agency.md` §3–§7 for domain invariants.
+**Read first, in this order:** `docs/seams.md` (the path rule, your lane-owned files, the seams you provide or consume — binding), `CLAUDE.md`, `docs/decisions.md`, `packages/db/BASELINE.md` (the schema you build against), the spec `docs/history/extraction-plan-v4.2.md` v4.2 (the sections named in your brief), and `docs/reference/magickvoice-platform/agency.md` §3–§7 for domain invariants.
 
 **Port verbatim.** Same SQL, constants, Lua, comments and tests. The only allowed changes are the plan's: hop collapses (S2S/proxy → in-process), re-keying onto `agency_calls`, billing/settlement removal, VoBiz/SIP/softphone/BYOC deletion, and import paths forced by the path rule. Every changed or deleted file, function or test gets a row in your section of `PORTING.md`: `source path@sha` → destination, `verbatim | modified | deleted`, reason. Every modification gets an equivalence test; every deletion is listed.
 

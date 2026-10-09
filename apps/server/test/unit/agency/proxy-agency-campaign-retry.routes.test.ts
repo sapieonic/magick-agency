@@ -18,7 +18,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 
 /**
  * **Retry campaigns at the proxy boundary — the four obligations master carries
- * on the create** (`MagickVoice-platform/docs/agency-campaign-retry-wire-contract.md` §6).
+ * on the create** (`docs/reference/magickvoice-platform/docs/agency-campaign-retry-wire-contract.md` §6).
  *
  * ── The obligation this file exists for ────────────────────────────────────
  * A retry INHERITS its parent's config (DR-10). Core copies seventeen columns

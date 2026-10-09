@@ -14,7 +14,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 // Q3's reference check, at the route: a live agency campaign vetoes retiring the
 // analysis profile it depends on.
 //
-// Analysis profiles stay a SHARED primitive (docs/agency-dialer-design.md §7b,
+// Analysis profiles stay a SHARED primitive (docs/reference/magickvoice-platform/docs/agency-dialer-design.md §7b,
 // Q3) — the softphone attaches one per call, an agency campaign names one in its
 // config or names none and inherits the account default — but only the primary
 // app can author or retire one, and master gates PUT/DELETE on

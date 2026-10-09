@@ -7,7 +7,7 @@
  * these maps and the `humanizeStatus` / `humanizeToken` helpers instead of
  * hand-rolling `status.replace(/_/g, ' ')` or scattering string literals.
  *
- * See docs/core-ui-redesign/02-design-spec.md for the canonical copy dictionary.
+ * See docs/reference/magick-comms-cusui/docs/core-ui-redesign/02-design-spec.md for the canonical copy dictionary.
  */
 // PORT NOTE (magick-agency): cusui's `TYPE_LABELS` / `SOURCE_LABELS` (broadcast
 // channel and source names, typed from `types/bulk-dispatch-job`) and

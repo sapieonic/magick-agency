@@ -9,7 +9,7 @@
  * instance rather than running `main()`. Delete that line and every suite stays
  * green while the alert silently never fires again.
  *
- * This repo has been bitten by exactly that shape before — CLAUDE.md records
+ * This repo has been bitten by exactly that shape before — docs/reference/magic-voice-core/CLAUDE.md records
  * `gemini_backend_breaker_open` shipping prom-client-only, so the flagship alert
  * "could never have fired".
  *

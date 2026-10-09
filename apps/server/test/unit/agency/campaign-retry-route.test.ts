@@ -16,7 +16,7 @@ import Fastify from 'fastify';
 // repos implement against independently: master allow-lists the three `409`
 // codes in its error mask, and a code core emits that master has not mirrored is
 // rewritten into "contact support and quote this request id" — status intact,
-// explanation destroyed, nothing red anywhere (`agency.md` §6.2). So the codes
+// explanation destroyed, nothing red anywhere (`docs/reference/magickvoice-platform/agency.md` §6.2). So the codes
 // themselves are asserted as strings, not merely the statuses.
 //
 // The second thing pinned is that a retry create refuses every body `POST /`

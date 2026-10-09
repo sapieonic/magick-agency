@@ -49,7 +49,7 @@ export interface AnalysisPreflightError {
  * agency campaign whose analysis is switched on and enabled one whose is not —
  * inconsistent in both directions, and the 403 direction locked an agency-only
  * tenant out of the very feature the flag split exists to sell them
- * (`docs/agency-dialer-design.md` §7b). Each writer knows which product it is,
+ * (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b). Each writer knows which product it is,
  * so each says so.
  *
  * Required and undefaulted, for the reason the repository's `scope` is: a default

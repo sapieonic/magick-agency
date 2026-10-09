@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * `notification_deliveries` — the claim-before-send idempotency ledger.
  *
  * This repository is the ONLY thing between an at-least-once trigger and
- * duplicate mail (CLAUDE.md, Notifications). Nothing upstream is exactly-once:
+ * duplicate mail (docs/reference/magick-master/CLAUDE.md, Notifications). Nothing upstream is exactly-once:
  * EventBridge is at-least-once by contract, the trigger Lambda retries any
  * non-2xx, an operator re-runs the internal route by hand, and a retry after a
  * timeout reaches a DIFFERENT master instance while the first is still working
@@ -82,7 +82,7 @@ describe('notificationDeliveryRepository.claim', () => {
   });
 
   it('keeps tenant_id IN the conflict target — a two-tenant admin gets BOTH digests', async () => {
-    // The bug this pins was real, not hypothetical (CLAUDE.md, migration 072).
+    // The bug this pins was real, not hypothetical (docs/reference/magick-master/CLAUDE.md, migration 072).
     // Drop `tenant_id` from the key and a consultant who is account_admin in
     // tenants A and B receives A's digest; B's INSERT — same event_key, same
     // period, same inbox — hits the conflict, returns zero rows, and is skipped

@@ -14,7 +14,7 @@ const { agencyCampaignRepository } = await import(
  * ─── Q3's reference check, against a real Postgres ───────────────────────────
  *
  * Two predicates stop a primary-app admin retiring an analysis profile a live
- * agency campaign depends on (`docs/agency-dialer-design.md` §7b, Q3), because
+ * agency campaign depends on (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b, Q3), because
  * there are two ways to depend on one:
  *
  * - `findLiveDependentsOnAnalysisProfile` — campaigns that NAME this profile.

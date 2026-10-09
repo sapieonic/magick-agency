@@ -2145,7 +2145,7 @@ describe('every campaign route carries its RBAC permission', () => {
     ['post', '/campaigns/:id/pause', 'agency.supervise'],
     ['post', '/campaigns/:id/resume', 'agency.supervise'],
     ['post', '/campaigns/:id/stop', 'agency.supervise'],
-    // Retry campaigns (`MagickVoice-platform/docs/agency-campaign-retry-wire-contract.md` §6). Three
+    // Retry campaigns (`docs/reference/magickvoice-platform/docs/agency-campaign-retry-wire-contract.md` §6). Three
     // routes on three different floors, which is the whole reason they are worth
     // a comment here rather than three quiet rows:
     //
@@ -2158,7 +2158,7 @@ describe('every campaign route carries its RBAC permission', () => {
     //  - the CREATE is the only route on this plugin carrying TWO permissions,
     //    and they share a floor today: `proxy.contact_lists.write` because it
     //    creates a campaign, `agency.supervise` because it acts on another
-    //    campaign's call results (`agency.md` §7.1 — different in kind, not just
+    //    campaign's call results (`docs/reference/magickvoice-platform/agency.md` §7.1 — different in kind, not just
     //    in floor). Naming both is what keeps the route correct if either moves.
     //  - LINEAGE is `proxy.contact_lists.read`, back at `viewer`, because it is
     //    navigation — names, statuses, generations — every field of which a

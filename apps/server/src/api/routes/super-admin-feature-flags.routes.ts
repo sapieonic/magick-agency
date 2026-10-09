@@ -94,7 +94,7 @@ const auditFlagChange = (
  * Super-admin feature-flag management. There is no flag allow-list: every key
  * the registry declares is manageable. Writes record the authenticated
  * super-admin's id as `updated_by` and are audited in `super_admin_audit_log`.
- * Tech-plan: feature-flags-tech-plan.md §A2.
+ * Tech-plan: docs/reference/magic-voice-core/docs/superpowers/plans/feature-flags-tech-plan.md §A2.
  */
 export async function superAdminFeatureFlagsRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', superAdminMiddleware);

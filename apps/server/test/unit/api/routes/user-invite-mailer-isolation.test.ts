@@ -90,7 +90,7 @@ vi.mock('../../../../src/cache/redis-cache.js', () => ({
  * The mailer is mocked, and both of its exports are listed.
  *
  * A partial factory would fail the moment the route reads the export it omits —
- * the hazard this repo's CLAUDE.md records for the posthog and telephony mocks.
+ * the hazard master's docs/reference/magick-master/CLAUDE.md records for the posthog and telephony mocks.
  * `InviteEmailResult` is a type-only import in the route, so it needs nothing here.
  */
 vi.mock('../../../../src/notifications/invite-mailer.js', () => ({

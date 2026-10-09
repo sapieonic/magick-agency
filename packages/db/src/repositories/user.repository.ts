@@ -246,7 +246,7 @@ export class UserRepository {
    * polls every 5 seconds and which carries the whole live floor. A per-row
    * lookup there is an N+1 on the hot path — 30 agents on shift is 30 serial
    * round trips per poll, per open dashboard. See the "No per-item loops over
-   * I/O" rule in CLAUDE.md.
+   * I/O" rule in docs/reference/magick-master/CLAUDE.md.
    *
    * ── The tenant predicate is the security property, not an optimisation ─────
    * `agent_user_id` arrives from CORE, which holds no user table and does no
@@ -254,7 +254,7 @@ export class UserRepository {
    * gave it at some point in the past. An unscoped `WHERE id = ANY(...)` would
    * therefore happily resolve an id belonging to another tenant and put that
    * person's name on this tenant's dashboard. This is the exact class of defect
-   * rule 1 in CLAUDE.md's RBAC section describes: `requirePermission` proves the
+   * rule 1 in docs/reference/magick-master/CLAUDE.md's RBAC section describes: `requirePermission` proves the
    * caller's ROLE and never looks at the target row, so the tenant predicate has
    * to be in the same statement as the read.
    *

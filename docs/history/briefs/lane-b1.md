@@ -5,7 +5,7 @@ You are lane B1 of the Magick Agency build: core's agency domain modules, core's
 **Worktree:** `/Users/manasnilorout/Personal/Sapionic/magick-agency-lane-b1`, branch `lane-b1/domain-data` (already created off `main` by the lead).
 
 ## Plan sections
-`docs/agency-extraction-plan.md` §1 (the DNC collapse row), §2, §6, §8 Phase 4, §9; `docs/decisions.md` B8 (DNC design — binding) and B12 (where the repository lives — binding); `agency.md` §2–§5.
+`docs/history/extraction-plan-v4.2.md` §1 (the DNC collapse row), §2, §6, §8 Phase 4, §9; `docs/decisions.md` B8 (DNC design — binding) and B12 (where the repository lives — binding); `docs/reference/magickvoice-platform/agency.md` §2–§5.
 
 ## Sources (core v1.123.2 @ 4850d1d9)
 - **Your modules:** every file in `magic-voice-core/src/agency/` EXCEPT:

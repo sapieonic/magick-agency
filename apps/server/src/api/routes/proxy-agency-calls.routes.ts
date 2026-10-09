@@ -126,7 +126,7 @@ async function requireOwningAccountRecording(
  * application's shell, gated on the primary application's `calls.dialer`
  * capability, with the campaign context and the list the reader came from both
  * gone. There was nowhere else for that link to point
- * (`docs/agency-dialer-design.md` §7b).
+ * (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
  *
  * This is that somewhere. Two routes, both thin proxies to core's
  * `/agency-campaigns/:id/attempts/:attemptId` surface.
@@ -267,7 +267,7 @@ const NON_ANALYTICS_CALL_FIELDS = [
  * Buffer as `application/octet-stream`. The one body on that route a console
  * MUST be able to parse is the refusal: `call_purged` is what lets it say "this
  * recording has aged out" instead of "the platform is broken"
- * (`docs/agency-dialer-design.md` §7b makes that distinction the point of the
+ * (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b makes that distinction the point of the
  * whole surface), and `no_recording` is a different sentence again. A reader that
  * branches on content type cannot reach either through octet-stream.
  *

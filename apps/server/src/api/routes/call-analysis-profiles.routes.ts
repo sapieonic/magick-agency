@@ -172,7 +172,7 @@ export async function callAnalysisProfilesRoutes(
 
   /**
    * Q3's reference check: a live agency campaign vetoes removing the profile it
-   * depends on (`docs/agency-dialer-design.md` §7b).
+   * depends on (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
    *
    * Analysis profiles are a **shared primitive** — the softphone attaches one per
    * call, an agency campaign names one in its config, or names none and inherits

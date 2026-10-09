@@ -825,7 +825,7 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
    * `membership_id` is caller-supplied. The membership is fetched through a
    * tenant-scoped lookup, so a membership in another tenant and a nonexistent
    * one are one `null` and one 404 — indistinguishable, by construction rather
-   * than by a convention somebody has to maintain. CLAUDE.md's RBAC rule 1 and
+   * than by a convention somebody has to maintain. docs/reference/magick-master/CLAUDE.md's RBAC rule 1 and
    * rule 3.
    *
    * ── Role-gated on the TARGET membership's role ────────────────────────────

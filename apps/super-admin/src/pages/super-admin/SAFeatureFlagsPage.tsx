@@ -77,7 +77,7 @@ interface PendingNumberEdit {
  * Platform-wide Feature Flags registry. The flag-first home: browse the whole
  * catalog, set each flag's GLOBAL default (audited, with optional expiry), and
  * roll a flag out across many tenants. Per-tenant overrides live on the tenant
- * detail page. UX: docs/superpowers/plans/feature-flags-ux-redesign.md.
+ * detail page. UX: docs/reference/magick-comms-cusui/docs/superpowers/plans/feature-flags-ux-redesign.md.
  */
 export default function SAFeatureFlagsPage() {
   const [catalog, setCatalog] = useState<FeatureFlagCatalogEntry[]>([]);

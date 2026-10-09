@@ -376,7 +376,7 @@ describe('the recording link stays inside the agency workspace', () => {
    * This link used to point at `/app/calls/dialer/history/:id` — out of
    * `AgencyLayout`, into the primary application's shell, onto a
    * `calls.dialer`-gated route, with the campaign context and this very list
-   * gone (`docs/agency-dialer-design.md` §7b). It pointed there because that
+   * gone (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b). It pointed there because that
    * was the only place a call detail existed.
    *
    * It now points at the agency's own detail page, and the assertion is on the

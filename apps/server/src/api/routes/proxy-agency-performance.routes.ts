@@ -380,7 +380,7 @@ const agentParamsSchema = z.object({
  *
  * ── Why this is needed at all ─────────────────────────────────────────────
  * `requirePermission` proves the caller's ROLE and never looks at the target row
- * — the rule stated at the top of CLAUDE.md's RBAC section, and the shape of two
+ * — the rule stated at the top of docs/reference/magick-master/CLAUDE.md's RBAC section, and the shape of two
  * separate cross-tenant defects already found in this service. `agent_user_id` is
  * an opaque string to core: it has no user table and no tenant check of its own
  * over that column (design D3, and `agency_agent_sessions.agent_user_id` has no

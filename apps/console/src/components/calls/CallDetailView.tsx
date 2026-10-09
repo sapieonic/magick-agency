@@ -40,7 +40,7 @@ export type { RecordingOutcome };
  * the softphone had a detail page. So the agency workspace linked its attempt
  * rows into `/app/calls/dialer/history/:id`: the other product's shell, gated on
  * the other product's capability, with the campaign context and the list the
- * reader came from both gone (`docs/agency-dialer-design.md` §7b).
+ * reader came from both gone (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
  *
  * The call SHAPE is genuinely shared — same table, same timing, same recording
  * and summary sections — so the fix is one view with two callers, not two views.
@@ -269,7 +269,7 @@ function FactItem({ fact }: { fact: CallFact }) {
  *
  * Exported alongside the view itself, because these facts belong to the PRODUCT
  * rather than to the call. An agency attempt outlives its call by
- * design (`docs/agency-dialer-design.md` §7b: the link is un-FK'd and the two
+ * design (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b: the link is un-FK'd and the two
  * sides purge on independent windows), so the attempt's record has to render on a
  * page where there is no call for this view to draw at all. Rendering it there
  * through this component rather than a second card of its own is what keeps one

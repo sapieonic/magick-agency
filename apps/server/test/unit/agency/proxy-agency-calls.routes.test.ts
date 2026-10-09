@@ -7,7 +7,7 @@ import { PERMISSION_MATRIX, type MembershipRole } from '@magick-agency/contracts
  *
  * The surface whose absence made the agency workspace link its attempt rows into
  * `/app/calls/dialer/history/:id` — the primary application's shell, gated on the
- * primary application's capability (`docs/agency-dialer-design.md` §7b).
+ * primary application's capability (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
  *
  * ── What this file is actually for ─────────────────────────────────────────
  *

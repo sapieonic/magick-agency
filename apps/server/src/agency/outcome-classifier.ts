@@ -253,7 +253,7 @@ function isInvalidNumber(raw: string): boolean {
  * whole `released` frame when no panel was ever delivered. With the flag off, the
  * only thing that cancels a ring is the agent's own hangup, and `agent_hangup`
  * already carries copy for exactly that ("You ended the call."). A new reason
- * would therefore be a fifth mirror (`agency.md` §6.2 — core's union, master's
+ * would therefore be a fifth mirror (`docs/reference/magickvoice-platform/agency.md` §6.2 — core's union, master's
  * mask allow-list, cusui's union, `releaseMessageFor`) bought for a frame that
  * either is not sent or already reads correctly.
  *

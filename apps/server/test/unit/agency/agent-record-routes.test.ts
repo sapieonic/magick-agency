@@ -21,7 +21,7 @@ import type { FastifyReply } from 'fastify';
 //
 // These routes serve every phone number, note and disposition one agent has
 // touched, ACROSS campaigns. Core registers auth middleware PER ROUTE PLUGIN, not
-// globally (root CLAUDE.md), and this repository has already shipped that mistake
+// globally (docs/reference/magic-voice-core/CLAUDE.md), and this repository has already shipped that mistake
 // once: `agencyInternalRoutes` was mounted as a sibling of `internalRoutes`,
 // inherited none of its hooks, and left the roster-ingest route reachable
 // unauthenticated (MAG-89).

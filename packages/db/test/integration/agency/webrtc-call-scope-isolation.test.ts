@@ -16,7 +16,7 @@ const { webrtcCallRepository } = await import(
  *
  * `webrtc_calls` holds both products' calls and stays one table by design
  * (migration 076). The boundary is a read-path predicate at the repository
- * (`docs/agency-dialer-design.md` §7b), and this suite asserts the resulting
+ * (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b), and this suite asserts the resulting
  * behaviour against real SQL rather than the query text.
  *
  * ── Why the seven routes are tested as two functions ────────────────────────

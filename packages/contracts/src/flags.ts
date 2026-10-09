@@ -50,7 +50,7 @@ export const AGENCY_FLAGS = Object.freeze({
    * `dialer_call_analysis` to them — which meant a tenant enabling softphone
    * analysis silently started paying for transcription on every campaign call,
    * and a tenant turning it off lost agency analysis it had bought separately.
-   * Two products, two switches (`docs/agency-dialer-design.md` §7b).
+   * Two products, two switches (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
    *
    * Deliberately a sibling of `dialer_call_analysis` rather than a child: the
    * `dialer_analysis_*` config block and the analysis worker are shared
@@ -107,7 +107,7 @@ export const AGENCY_FLAGS = Object.freeze({
   // Master's unified settlement endpoint rejects an unknown `call_type` with a
   // 400, so enabling this for a tenant before master's settlement branch and the
   // two rate-card rows are live would make every agency call fail to settle
-  // (docs/agency-dialer-design.md §8). This flag is the deploy-ordering guard, so
+  // (docs/reference/magickvoice-platform/docs/agency-dialer-design.md §8). This flag is the deploy-ordering guard, so
   // it belongs in the rollout checklist, not just in a doc.
   //
   // PORT NOTE (magick-agency): the settlement reason above does not apply — v1

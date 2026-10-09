@@ -735,8 +735,8 @@ export async function agencyCampaignRoutes(
    *
    * ── AUTH AND THE FLAG, and why the plugin is the whole answer ─────────────
    *
-   * Core registers auth middleware PER ROUTE PLUGIN, not globally (root
-   * CLAUDE.md), and `agencyInternalRoutes` in `agency.routes.ts` carries the scar
+   * Core registers auth middleware PER ROUTE PLUGIN, not globally (see
+   * docs/reference/magic-voice-core/CLAUDE.md), and `agencyInternalRoutes` in `agency.routes.ts` carries the scar
    * of exactly that — a roster-ingest route shipped unauthenticated because it
    * inherited nothing from its sibling plugin (MAG-89). Being on THIS plugin gives
    * this route the `preHandler` hook, and the two lines below give it the feature
@@ -809,7 +809,7 @@ export async function agencyCampaignRoutes(
   // beside `/stats`, with the same auth, the same feature gate and the same
   // `requireOwned` scoping. Being on THIS plugin is what gives it all three:
   // core's auth middleware is registered per-route-plugin rather than globally
-  // (root CLAUDE.md), and `agencyInternalRoutes` in `agency.routes.ts` carries
+  // (docs/reference/magic-voice-core/CLAUDE.md), and `agencyInternalRoutes` in `agency.routes.ts` carries
   // the scar of exactly that — a roster-ingest route shipped unauthenticated
   // because it inherited nothing from its sibling plugin.
   //
@@ -1168,7 +1168,7 @@ export async function agencyCampaignRoutes(
   //
   // All three routes are on THIS plugin, which is what gives them auth, the
   // feature gate and `requireOwned`'s tenant/account scoping. Core registers auth
-  // middleware per route plugin rather than globally (root CLAUDE.md), and
+  // middleware per route plugin rather than globally (docs/reference/magic-voice-core/CLAUDE.md), and
   // `agencyInternalRoutes` carries the scar of exactly that — a roster-ingest
   // route shipped unauthenticated because it inherited nothing from its sibling
   // plugin. Getting it wrong here would ship an unauthenticated endpoint that

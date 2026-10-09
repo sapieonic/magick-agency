@@ -54,7 +54,7 @@ export const AGENCY_UUID_RE =
  * `/agency/campaigns/:id`, inside `AgencyLayout`, with its attempts at
  * `/agency/campaigns/:id/attempts/:attemptId`. Mailing an agency supervisor a
  * link into the AI application's shell is the exact bug this whole scope
- * isolation exists to remove (`docs/agency-dialer-design.md` §7b: *a link that
+ * isolation exists to remove (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b: *a link that
  * crosses shells is a bug even when the data it lands on is correct*), and an
  * email is the worst place to reintroduce it — a link in an inbox outlives every
  * redirect we would later add to cover for it.
@@ -194,7 +194,7 @@ export type AgencyCampaignCompletionResult =
  * The consequence worth stating: an `agent` (level 5) is NOT notified. That is
  * the design and not an omission — an agent takes calls on a campaign and does
  * not own its outcome, and the way to serve an agent is an agency-native
- * surface, never a role level. `docs/agency-dialer-design.md` §7b's
+ * surface, never a role level. `docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b's
  * "what this section does not license".
  */
 const SUPERVISE_FLOOR = ROLE_HIERARCHY[PERMISSION_MATRIX['agency.supervise']];

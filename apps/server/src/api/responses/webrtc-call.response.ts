@@ -12,7 +12,7 @@ import type { WebRtcCallRecord } from '@magick-agency/db/models/agency-call.mode
  * ── Why `recordingPath` is a required argument ──────────────────────────────
  *
  * `webrtc_calls` serves two products, and each has its own routes
- * (`docs/agency-dialer-design.md` §7b). A softphone call's recording is at
+ * (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b). A softphone call's recording is at
  * `/api/v1/webrtc-call/:id/recording`; an agency leg's is under its campaign's
  * attempt, and the softphone path would 404 for it because that plugin's reads
  * are pinned to the dialer scope.

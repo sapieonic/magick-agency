@@ -5,7 +5,7 @@ You are lane B2 of the Magick Agency build: master's agency domain modules — C
 **Worktree:** `/Users/manasnilorout/Personal/Sapionic/magick-agency-lane-b2`, branch `lane-b2/domain-master` (created off `main` by the lead after B1 merged).
 
 ## Plan sections
-`docs/agency-extraction-plan.md` §1 (the "in-process ingest" and "one campaign" rows), §2 (the master row: proxies collapsed into direct calls; drop the billing contract, settlement and the `credits_low` overlay), §6, §8 Phase 4, §9; `docs/decisions.md` B7 (both audit tables: the activity trail merges `audit_logs` and `platform_audit_log`), B8 (DNC), B9 (lane split), B12, B14 (the S3 module); `agency.md` §2–§6.
+`docs/history/extraction-plan-v4.2.md` §1 (the "in-process ingest" and "one campaign" rows), §2 (the master row: proxies collapsed into direct calls; drop the billing contract, settlement and the `credits_low` overlay), §6, §8 Phase 4, §9; `docs/decisions.md` B7 (both audit tables: the activity trail merges `audit_logs` and `platform_audit_log`), B8 (DNC), B9 (lane split), B12, B14 (the S3 module); `docs/reference/magickvoice-platform/agency.md` §2–§6.
 
 ## Dependencies and order of work
 
@@ -45,7 +45,7 @@ Commit after each module. Do not create stand-ins for another lane's files; wait
 
 **Sources are read-only.** Git submodules of `/Users/manasnilorout/Personal/Sapionic/MagickVoice-platform`: `magic-voice-core` (v1.123.2, 4850d1d9ffc9eb9eab56d2ed482b9bd616edd103), `magick-master` (v3.24.0, a1f0756a58a63bf8a19baf74298a702f9fe7b430), `magick-comms-cusui` (v2.96.0, ee5beb4400ec1fb5fdf6049871681ae6875e8d29). Read them only via `git -C <sub> show <sha>:<path>`. Never modify, checkout, stash or run tests in them (their tests would hit other stacks' databases).
 
-**Read first, in this order:** `docs/seams.md` (the path rule, your lane-owned files, the seams you provide or consume — binding), `CLAUDE.md`, `docs/decisions.md`, `packages/db/BASELINE.md` (the schema you build against), the spec `/Users/manasnilorout/Personal/Sapionic/MagickVoice-platform/docs/agency-extraction-plan.md` v4.2 (the sections named above), `/Users/manasnilorout/Personal/Sapionic/MagickVoice-platform/agency.md` §3–§7 for domain invariants, and lane B1's section of `PORTING.md` (what's already ported, and its DNC notes).
+**Read first, in this order:** `docs/seams.md` (the path rule, your lane-owned files, the seams you provide or consume — binding), `CLAUDE.md`, `docs/decisions.md`, `packages/db/BASELINE.md` (the schema you build against), the spec `docs/history/extraction-plan-v4.2.md` v4.2 (the sections named above), `docs/reference/magickvoice-platform/agency.md` §3–§7 for domain invariants, and lane B1's section of `PORTING.md` (what's already ported, and its DNC notes).
 
 **Port verbatim.** Same SQL, constants, comments and tests. The only allowed changes are the plan's: hop collapses (S2S/proxy → in-process), re-keying onto `agency_calls`, billing/settlement removal, VoBiz/SIP/softphone/BYOC deletion, and import paths forced by the path rule. Every changed or deleted file, function or test gets a row in your section of `PORTING.md` (under "Lane B — domain and data", a `### Lane B2` subsection): `source path@sha` → destination, `verbatim | modified | deleted`, reason. Every modification gets an equivalence test; every deletion is listed.
 

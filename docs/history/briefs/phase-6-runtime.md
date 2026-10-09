@@ -15,13 +15,13 @@ Lanes A, B1, B2, C and D are all merged on `main`. You build on them.
 **Worktree:** `/Users/manasnilorout/Personal/Sapionic/magick-agency-p6`, branch `phase-6/runtime` (off `main`). **Test DB:** `magick_agency_test_p6`, Redis db 7, set in `.test-env.local.json`.
 
 ## Plan sections
-- `agency-extraction-plan.md`:
+- `docs/history/extraction-plan-v4.2.md`:
   - §5, the voice engine the runtime drives;
   - §6;
   - §8 Phase 6: "Pacing, dialer, station registry, reaper, wrap-up, breaks, SQL-derived gauges. **No attempt batcher.**"
   - §9.
-- `agency.md` §3 (agent state machine: Redis is authoritative, the DB row is a mirror; lease TTLs and reaping), §4 (the pacing engine's leader lease and `SKIP LOCKED` claiming), §5 (the full call lifecycle, including the abandoned path), and §7.
-- `docs/agency-dialer-design.md` D1–D11 in the MagickVoice-platform repo.
+- `docs/reference/magickvoice-platform/agency.md` §3 (agent state machine: Redis is authoritative, the DB row is a mirror; lease TTLs and reaping), §4 (the pacing engine's leader lease and `SKIP LOCKED` claiming), §5 (the full call lifecycle, including the abandoned path), and §7.
+- `docs/reference/magickvoice-platform/docs/agency-dialer-design.md` D1–D11.
 - `docs/seams.md` §3.1 (bridge API, which you consume), §3.2 (bridge → analysis hooks), §3.3 (`ConcurrencyControl`).
 - Decisions B8 (the DNC collapse) and B13 in `docs/decisions.md`.
 
