@@ -1,0 +1,272 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.heading {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.description {
+  margin: 3px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.headerIcon {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+/*
+  The roster's filter row: campaign, window, sort — and the count readout, pushed
+  to the far end.
+
+  A row of labelled fields rather than the spine lists' `FiltersCard`. That card
+  is a bordered panel with its own "Filters" header, which is right when the
+  filters are a dense set the reader opens and works through; here there are three
+  controls above a table inside a card that already has a heading, and a second
+  bordered box inside the first reads as a nested screen.
+*/
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fieldLabel {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.control {
+  min-width: 150px;
+  max-width: 260px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+/* Pushed to the end of the row: it describes the table below rather than
+   belonging to any one control above it. */
+.countReadout {
+  margin: 0 0 6px auto;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+  What is NOT on screen: a truncated roster, or members master dropped. Same
+  weight as the description above the table — these are sentences a reader has to
+  actually read, and a smaller grey would make them the thing that gets skipped.
+*/
+.note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/*
+  A retry that lives INSIDE a `.note`, for a failure that is one line of a working
+  screen rather than the screen failing.
+
+  The campaign-contribution view's own total can fail on its own while every row is
+  on screen and readable, and the paragraph saying so described itself as retryable
+  while the only Retry on the surface sat in the rows-error branch — a state that,
+  by definition, is not the one being rendered. An `ErrorAlert` here would be worse
+  than none: it claims the page failed, next to a page that did not.
+
+  ── No `composes`, deliberately ─────────────────────────────────────────────
+  `.back` (a pill) is declared further down this file, and `composes` resolves in
+  FILE ORDER — a forward reference fails `vite build` while `tsc --noEmit` stays
+  clean, which is the exact break `.contributionEntry`'s comment records. A control
+  in running prose wants to look like a link rather than a pill in any case.
+*/
+.retryInline {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.retryInline:hover {
+  color: var(--text-primary);
+}
+
+.retryInline:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/*
+  How to read what is on screen, rather than what is missing from it — the pooled
+  cohort caveat. Heavier than `.note` and tinted, because it qualifies every number
+  below it and it sits ABOVE the table: a caveat the reader skips is a caveat that
+  did not happen.
+*/
+.warning {
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--warning, var(--border-strong));
+  border-radius: var(--radius);
+  background: var(--warning-subtle, var(--bg-tertiary));
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.inactiveRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ── The drill-down ──────────────────────────────────────────────────────── */
+
+.drilldownHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.back:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/*
+  The way into the campaign-contribution view, in the section header rather than in
+  the filter row: it is a different QUESTION about the campaign already in scope,
+  not another control over the roster's rows — and a button inside a group labelled
+  "Roster filters" would be announced as one.
+
+  Deliberately the same pill as `.back`, which is the control that returns from it.
+  One shape for "move between these two screens", in both directions.
+
+  ── It must stay BELOW `.back`, and that is not a style preference ──────────
+  `composes` is resolved by `postcss-modules-scope` in FILE ORDER, so a forward
+  reference fails the production build with "referenced class name ... not found".
+  This rule sat above `.back` and broke `vite build` while `tsc --noEmit` stayed
+  clean — `npm run lint` is only `tsc` and never parses CSS, so nothing but the
+  build catches it. `.agentStatic` in `RosterTable.module.css` obeys the same rule
+  by sitting after `.rowButton`.
+*/
+.contributionEntry {
+  composes: back;
+  flex-shrink: 0;
+}
+
+.drilldownName {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* The one-frame window while account resolution is still in flight. Centred so
+   the spinner does not sit against the section's left edge, where it reads as a
+   loading row rather than as the whole section waiting. */
+.centred {
+  display: flex;
+  justify-content: center;
+  padding: 24px 0;
+}
+
+.empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/*
+  The dial history beneath the figures. Separated by a rule rather than nested in a
+  second card: it is the same person and the same question, one level of detail
+  down, and boxing it would read as a different subject.
+*/
+.attempts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-light);
+}
+
+.attemptsHeading {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+}

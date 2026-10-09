@@ -1,0 +1,10 @@
+{
+  "name": "Magick Agency",
+  "shortName": "MA",
+  "colors": {
+    "accent": "#7c5cfc",
+    "accentHover": "#9b82ff",
+    "accentLight": "#6a4de4",
+    "accentLightHover": "#5a40ce"
+  }
+}

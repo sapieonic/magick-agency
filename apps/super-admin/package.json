@@ -1,0 +1,30 @@
+{
+  "name": "@magick-agency/super-admin",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Tenants, users, numbers, limits, settings, flags, usage counts.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5176",
+    "build": "vite build",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@magick-agency/contracts": "workspace:*",
+    "lucide-react": "^0.500.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.1.1"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "happy-dom": "^20.8.4",
+    "typescript": "~5.7.3",
+    "vite": "^6.0.5",
+    "vitest": "^4.1.8"
+  }
+}

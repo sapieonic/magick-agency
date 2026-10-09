@@ -1,0 +1,82 @@
+.facts {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+}
+
+.fact {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.fact:last-child {
+  border-bottom: none;
+}
+
+.fact dt {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.fact dd {
+  margin: 0;
+  text-align: right;
+  font-size: 13px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* `unknown` is styled as muted text, NOT as a warning: "we couldn't check" is
+   not a problem with the agent, and colouring it like one would send a
+   supervisor after a fault of ours as if it were a fault of theirs. */
+.fact dd[data-tone='ok'] { color: var(--success, #16a34a); }
+.fact dd[data-tone='bad'] { color: var(--warning); }
+.fact dd[data-tone='unknown'] { color: var(--text-muted); }
+
+.mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.reasonLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.optional {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.reason {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  resize: vertical;
+}

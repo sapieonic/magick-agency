@@ -1,0 +1,118 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.playBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--gradient-purple);
+  color: white;
+  padding: 0;
+  min-height: auto;
+  box-shadow: var(--shadow-sm), 0 0 12px rgba(124, 92, 252, 0.2);
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+
+.playBtn:hover {
+  box-shadow: var(--shadow-md), 0 0 20px rgba(124, 92, 252, 0.3);
+  transform: scale(1.05);
+}
+
+.playBtn:active {
+  transform: scale(0.95);
+}
+
+.time {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 90px;
+}
+
+.muteBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-muted);
+  padding: 0;
+  min-height: auto;
+  margin-left: auto;
+  transition: all var(--transition);
+}
+
+.muteBtn:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+/* ── Waveform Bars ───────────────────────────────── */
+
+.waveform {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 56px;
+  cursor: pointer;
+  padding: 4px 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.loadingBars {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  height: 100%;
+}
+
+.bar {
+  flex: 1;
+  min-width: 2px;
+  border-radius: 2px;
+  background: var(--bg-elevated);
+  transition: background-color 0.1s ease, height 0.15s ease;
+}
+
+.barPlayed {
+  background: var(--accent);
+}
+
+.barHover {
+  background: var(--accent-subtle);
+}
+
+.bar:hover {
+  background: var(--accent-hover);
+}
+
+/* ── Responsive ──────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .waveform {
+    height: 40px;
+  }
+
+  .playBtn {
+    width: 36px;
+    height: 36px;
+  }
+}

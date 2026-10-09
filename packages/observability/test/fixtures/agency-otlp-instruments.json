@@ -1,0 +1,205 @@
+[
+  {
+    "name": "agency_abandoned_reason_total",
+    "kind": "Counter",
+    "description": "Abandoned attempts by cause",
+    "attributes": [
+      "campaign_id",
+      "reason",
+      "tenant_id"
+    ]
+  },
+  {
+    "name": "agency_abandoned_total",
+    "kind": "Counter",
+    "description": "Agency dialer attempts a customer answered that reached no agent",
+    "attributes": [
+      "campaign_id",
+      "tenant_id"
+    ]
+  },
+  {
+    "name": "agency_abandonment_rate_24h",
+    "kind": "ObservableGauge",
+    "description": "Rolling 24h abandonment rate, percent (numerator/denominator also exported)",
+    "attributes": [
+      "campaign_id",
+      "tenant_id"
+    ]
+  },
+  {
+    "name": "agency_abandonment_window_abandoned_24h",
+    "kind": "ObservableGauge",
+    "description": "Abandoned attempts in the rolling 24h window (the rate numerator)",
+    "attributes": [
+      "campaign_id",
+      "tenant_id"
+    ]
+  },
+  {
+    "name": "agency_abandonment_window_answered_24h",
+    "kind": "ObservableGauge",
+    "description": "Answered attempts in the rolling 24h window (the rate denominator)",
+    "attributes": [
+      "campaign_id",
+      "tenant_id"
+    ]
+  },
+  {
+    "name": "agency_answer_latency_seconds",
+    "kind": "Histogram",
+    "description": "Seconds from dial to the carrier answer, for attempts that answered",
+    "unit": "s",
+    "advice": {
+      "explicitBucketBoundaries": [
+        2,
+        4,
+        6,
+        8,
+        10,
+        15,
+        20,
+        25,
+        30,
+        45
+      ]
+    },
+    "attributes": [
+      "tenant_id"
+    ]
+  },
+  {
+    "name": "agency_answered_total",
+    "kind": "Counter",
+    "description": "Agency dialer attempts the carrier reported answered",
+    "attributes": [
+      "campaign_id",
+      "tenant_id"
+    ]
+  },
+  {
+    "name": "agency_attempt_hold_seconds",
+    "kind": "Histogram",
+    "description": "Seconds an agent was held for one attempt, from dial to attempt settle, by outcome (wrap-up is separate)",
+    "unit": "s",
+    "advice": {
+      "explicitBucketBoundaries": [
+        1,
+        5,
+        10,
+        15,
+        20,
+        25,
+        30,
+        40,
+        50,
+        60,
+        90,
+        120,
+        180,
+        300,
+        600
+      ]
+    },
+    "attributes": [
+      "outcome",
+      "tenant_id"
+    ]
+  },
+  {
+    "name": "agency_bind_latency_seconds",
+    "kind": "Histogram",
+    "description": "Seconds from the carrier answer to the agent station socket attaching (budget: 1s)",
+    "unit": "s",
+    "advice": {
+      "explicitBucketBoundaries": [
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.15,
+        0.25,
+        0.5,
+        0.75,
+        1,
+        2
+      ]
+    },
+    "attributes": [
+      "tenant_id"
+    ]
+  },
+  {
+    "name": "agency_bind_total",
+    "kind": "Counter",
+    "description": "Late-bind attempts by result: bound, or the AgencyAbandonReason that stopped it",
+    "attributes": [
+      "campaign_id",
+      "result",
+      "tenant_id"
+    ]
+  },
+  {
+    "name": "agency_live_attempts_current",
+    "kind": "ObservableGauge",
+    "description": "Agency dialer attempts that have not reached `ended`, by attempt state",
+    "attributes": [
+      "campaign_id",
+      "state",
+      "tenant_id"
+    ]
+  },
+  {
+    "name": "agency_our_fault_retirement_total",
+    "kind": "Counter",
+    "description": "Contacts permanently retired by exhausting the our-fault redial ledger",
+    "attributes": [
+      "campaign_id",
+      "outcome",
+      "tenant_id"
+    ]
+  },
+  {
+    "name": "agency_predial_gate_total",
+    "kind": "Counter",
+    "description": "Pre-dial gate decisions, by gate and what the tick did about it",
+    "attributes": [
+      "action",
+      "campaign_id",
+      "gate"
+    ]
+  },
+  {
+    "name": "agency_tick_idle_total",
+    "kind": "Counter",
+    "description": "Ticks that dialed nothing, by benign reason (no agents, no slots, no contacts)",
+    "attributes": [
+      "campaign_id",
+      "reason"
+    ]
+  },
+  {
+    "name": "agency_wrapup_seconds",
+    "kind": "Histogram",
+    "description": "Wrap-up duration in seconds, by resolution",
+    "unit": "s",
+    "advice": {
+      "explicitBucketBoundaries": [
+        2,
+        5,
+        8,
+        12,
+        18,
+        25,
+        35,
+        50,
+        75,
+        120
+      ]
+    },
+    "attributes": [
+      "resolution",
+      "tenant_id"
+    ]
+  }
+]

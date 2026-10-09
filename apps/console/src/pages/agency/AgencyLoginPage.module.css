@@ -1,0 +1,327 @@
+/*
+  The agency door's own styling.
+
+  Deliberately NOT an import of `pages/auth/LoginPage.module.css`. The two pages
+  share a shape — split panel, centred card — but not a purpose: that sheet
+  carries the promo banner, the signup tabs, the phone-input overrides and the
+  festive decor, none of which exist here, and reaching into it would couple the
+  agency door to every change made for the marketing page. The overlap is a few
+  dozen lines of form styling and the app's own CSS variables do the rest.
+*/
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  position: relative;
+  overflow: hidden;
+}
+
+/*
+  Quieter than `/login`'s. That page is selling; this one is a door somebody opens
+  at the start of a shift, twice a day, for years.
+*/
+.bgGlow {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 15% 25%, rgba(20, 184, 166, 0.14), transparent 55%),
+    radial-gradient(ellipse at 85% 75%, rgba(124, 92, 252, 0.10), transparent 55%);
+  pointer-events: none;
+}
+
+.layout {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: 100%;
+  max-width: 880px;
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+/* ── Left panel: who this door is for ─────────── */
+
+.leftPanel {
+  flex: 1;
+  background: var(--gradient-purple);
+  padding: 48px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  position: relative;
+}
+
+.brand {
+  position: relative;
+}
+
+.brandLogo {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.02em;
+}
+
+.brandProduct {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+  margin-top: 2px;
+  margin-bottom: 12px;
+}
+
+.brandTagline {
+  font-size: 15px;
+  color: rgba(255, 255, 255, 0.82);
+  line-height: 1.5;
+}
+
+.personas {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  position: relative;
+}
+
+.persona {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.personaIcon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  flex-shrink: 0;
+}
+
+.personaTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+  margin-bottom: 3px;
+}
+
+.personaDesc {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.55;
+}
+
+.leftFooter {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  line-height: 1.55;
+  position: relative;
+  margin-top: auto;
+}
+
+/* ── Right panel: the form ────────────────────── */
+
+.card {
+  background: var(--bg-secondary);
+  padding: 40px;
+  width: 100%;
+  max-width: 400px;
+  flex-shrink: 0;
+}
+
+/* Standalone card — the forgot-password and unrecognised-account views, which
+   render without the left panel beside them. */
+.page > .card {
+  position: relative;
+  z-index: 1;
+  border-radius: var(--radius-2xl);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  max-width: 420px;
+}
+
+.logo {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 800;
+  text-align: center;
+  background: var(--gradient-purple);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 4px;
+}
+
+.tagline {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-bottom: 28px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.formHint {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+}
+
+.error {
+  background: var(--danger-subtle, rgba(239, 68, 68, 0.1));
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--danger, #ef4444);
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.forgotLink {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-top: 8px;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.forgotLink:hover {
+  text-decoration: underline;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.googleBtn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.googleBtn:hover:not(:disabled) {
+  background: var(--bg-tertiary, var(--bg-primary));
+  border-color: var(--border-strong, var(--border));
+}
+
+.googleBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/*
+  The exit to `/login`. Quiet on purpose — it is for the minority who opened the
+  wrong door, and giving it any more weight would read as an invitation to leave
+  a page most visitors are on correctly.
+*/
+.crossLink {
+  margin: 20px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.crossLink a {
+  color: var(--accent);
+}
+
+/* ── Notice views (forgot-password sent, unrecognised account) ── */
+
+.noticeBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.noticeTitle {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: center;
+  margin: 0 0 12px;
+}
+
+.noticeBody {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0 0 16px;
+}
+
+.strong {
+  color: var(--text-primary);
+}
+
+/* ── Narrow viewports ─────────────────────────── */
+
+/*
+  The left panel is the only thing that goes. It carries no control the visitor
+  needs — the personas strip explains the page, it does not operate it — and
+  stacking it above the form on a phone would push the password field below the
+  fold on the device an agent is most likely signing in from between calls.
+*/
+@media (max-width: 760px) {
+  .layout {
+    max-width: 420px;
+  }
+
+  .leftPanel {
+    display: none;
+  }
+
+  .card {
+    max-width: none;
+    padding: 32px 24px;
+  }
+}

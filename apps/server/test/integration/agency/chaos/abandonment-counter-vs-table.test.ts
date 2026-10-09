@@ -1,0 +1,561 @@
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+/*
+ * PORT NOTE (magick-agency, Phase 6): ported from core
+ * test/integration/agency/chaos/abandonment-counter-vs-table.test.ts@4850d1d9 — 9 cases, all kept. Modified only in
+ * harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
+ * `/connection` entry, which packages/db's repositories import); the config stub
+ * drops `telephony.vobiz` (VoBiz deleted, plan §5); import specifiers per the path
+ * rule (domain leaves, `@magick-agency/contracts/agency`). The metric reader is core's `test/helpers/otel-metric-reader.ts`, ported at the same path.
+ */
+import { closeTestPool, getTestPool, truncateAll } from '../../setup/test-utils.js';
+
+// A real meter provider, installed before any product module creates its
+// instruments (vi.hoisted runs ahead of every import), so the harness's
+// `metricValue` reads what an export would actually carry.
+await vi.hoisted(async () => {
+  const { installMetricReader } = await import('../../../helpers/otel-metric-reader.js');
+  installMetricReader();
+});
+
+// PORT NOTE: core mocked `src/db/connection.js`; agency's pool lives in `@magick-agency/db`
+// (the server's repositories import its root, packages/db's repositories `./connection`).
+vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
+vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
+vi.mock('../../../../src/config/index.js', () => ({
+  config: {
+    redis: { keyPrefix: '' },
+    telephony: {}, // PORT NOTE: core stubbed `telephony.vobiz` (VoBiz deleted, plan §5)
+  },
+}));
+
+const {
+  createChaosWorld, attempts, abandonedCount, assertAbandonmentPredicatesAgree,
+  metricValue, SCRIPTED_ANSWER_LEAD_MS,
+} = await import('./harness.js');
+const { ABANDONMENT_BRIDGE_GRACE_MS } = await import('@magick-agency/domain/abandonment-predicate');
+const { refreshAbandonmentWindow } = await import('../../../../src/agency/abandonment-metrics.js');
+
+type World = Awaited<ReturnType<typeof createChaosWorld>>;
+
+const ABANDONED_TOTAL = 'agency_abandoned_total';
+const ANSWERED_TOTAL = 'agency_answered_total';
+const WINDOW_ABANDONED = 'agency_abandonment_window_abandoned_24h';
+const WINDOW_ANSWERED = 'agency_abandonment_window_answered_24h';
+
+/**
+ * ─── THE COUNTER-VS-TABLE CROSS-CHECK (`AD-P2-C-06` acceptance (a)) ─────────
+ *
+ * §10 states the criterion in one sentence: *"a cross-check that the Prometheus
+ * counters agree: `agency_abandoned_total` equals that count"*. Nothing had ever
+ * checked it, because until this file **nothing in the platform read a metric
+ * VALUE back** — §12.3.1: unit suites stub the instruments, so they can only
+ * ever pin names and label sets. So the reader is greenfield (`metricValue` in
+ * the harness, reading the real OTel meter provider through the reader installed
+ * above) and it is worth building because `AD-P4-C-02`'s auto-pause reads the
+ * metric, not the table.
+ *
+ * ── Why this file is separate from `abandonment-predicate-agreement.test.ts` ─
+ *
+ * That file compares two pieces of **SQL** — §10's audit query and core's
+ * `ABANDONED_ATTEMPT_PREDICATE_SQL`. This one compares SQL against an **in-process
+ * counter**, which is a different question with a different failure mode: two
+ * queries drift when someone edits one of them, whereas a counter and a table
+ * drift when the *trigger* for incrementing is not the same condition the table
+ * filters on. The first is a maintenance hazard; the second is a live compliance
+ * defect, and this file found one (see the last describe block).
+ *
+ * ── The §16.6 fourth-pattern discipline, applied again ─────────────────────
+ *
+ * An agreement check proves nothing on data where the two sides cannot disagree.
+ * For a counter-versus-table pair that means: on the happy path both are zero, and
+ * zero-equals-zero is the same vacuity as `toBeGreaterThan(0)`. So every case here
+ * runs on data that produces a **non-zero** answer on at least one side, and the
+ * ones that assert zero say what makes zero the right answer.
+ *
+ * ── Metric hygiene ────────────────────────────────────────────────────────
+ *
+ * `agencyAbandonedTotal` and friends are module-global and cumulative for the life
+ * of the process, and a cumulative OTel counter cannot be reset in-process (the
+ * prom-client registry this used to `resetMetrics()` is gone). Isolation comes
+ * from the labels instead: every world inserts a fresh campaign row with its own
+ * UUID, and every read filters on `campaign_id`, so each case's series holds
+ * exactly what THAT case produced — the same number a scrape after a restart
+ * would see.
+ */
+describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () => {
+  let world: World;
+
+  beforeEach(async () => {
+    await truncateAll();
+  });
+  afterEach(async () => {
+    await world?.teardown();
+    world = undefined as never;
+  });
+  afterAll(closeTestPool);
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // §10.1's own falsifier. Owed twice and never paid.
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe('the two timestamps are genuinely distinct on a bridged row', () => {
+    /**
+     * §10.1 names this the falsifier for its entire finding, and says why it is
+     * cheap: *"without it, a fix that keeps collapsing the two timestamps passes
+     * every other test in §10."*
+     *
+     * The unit tier cannot supply it. `abandoned-call-path.test.ts` proves the
+     * abandoned SHAPE — answered, never bridged — and a call that never bridged
+     * has no `bridged_at` to be equal to. Only a genuinely bridged row can show
+     * that the two writes are two instants, and only the integration tier has one.
+     *
+     * **Asserted as an exact equality against the instant the bridge emitted, not
+     * as `bridged_at > answered_at`.** The inequality is satisfied by any dialer
+     * that writes *some* earlier timestamp — including one that invents its own,
+     * which is exactly what `AD-P2-C-11` was: `answered_at` written from
+     * `bridgedAt`, and `T-P2d` returning 0 for months. An exact comparison against
+     * the carrier's reported instant is the only form that can tell "persisted what
+     * the bridge said" from "persisted something plausible".
+     */
+    it('persists the carrier instant EXACTLY, and it is not the bridge instant', async () => {
+      world = await createChaosWorld({ agents: 1, contacts: 1, maxConcurrentCalls: 1 });
+      const w = world;
+      w.bridge.setDefaultScript({ answer: true, bridge: true, status: 'completed', talkTimeSeconds: 12 });
+      await w.bringOnline(w.agents[0]!);
+      await w.runUntilQuiescent();
+
+      const [row] = await attempts(w.campaignId);
+      expect(row).toBeDefined();
+      expect(row!.state).toBe('ended');
+      // Genuinely bridged — the precondition the whole case rests on. Without it
+      // this is the abandoned shape the unit tier already covers.
+      expect(row!.bridged_at, 'the call never bridged — nothing to compare against').not.toBeNull();
+      expect(row!.answered_at).not.toBeNull();
+
+      const emitted = w.bridge.answeredAtFor(row!.id);
+      expect(emitted, 'the bridge never reported an answer instant').toBeDefined();
+      // The lead must be non-zero, or "the two instants are distinct" would rest on
+      // however long a DB round trip happened to take — a clock-derived accident
+      // dressed as a property, and the exact-value rule exists for precisely that.
+      expect(SCRIPTED_ANSWER_LEAD_MS).toBeGreaterThan(0);
+
+      // ── The assertion §10.1 asked for, in its strongest form ──────────────
+      // Exact to the millisecond, against the value the bridge emitted. A dialer
+      // that back-filled from `bridgedAt` reds here with a diff of ~40ms; one that
+      // called `new Date()` in the handler reds with a diff of whatever the DB
+      // round trip cost, which an inequality would have accepted.
+      expect(row!.answered_at!.getTime()).toBe(emitted!.getTime());
+
+      // And the pair is distinct, stated separately because it is the claim §10.1
+      // makes and a reader should not have to derive it from the line above.
+      expect(row!.bridged_at!.getTime()).not.toBe(row!.answered_at!.getTime());
+      const deltaMs = row!.bridged_at!.getTime() - row!.answered_at!.getTime();
+      // Bridge strictly after answer, by at least the lead the carrier reported.
+      // Lower bound is exact (the harness constant, imported not re-derived); the
+      // upper bound is `N`, because a bridged call must NOT be abandoned and a
+      // delta past the grace would make this row satisfy the predicate.
+      expect(deltaMs).toBeGreaterThanOrEqual(SCRIPTED_ANSWER_LEAD_MS);
+      expect(deltaMs).toBeLessThan(ABANDONMENT_BRIDGE_GRACE_MS);
+
+      // Which is the consumed form of the claim: the row is compliant, both halves
+      // agree it is, and the counter never fired.
+      expect(await assertAbandonmentPredicatesAgree(w.campaignId)).toBe(0);
+      expect(await metricValue(ABANDONED_TOTAL, { campaign_id: w.campaignId })).toBeUndefined();
+    });
+
+    /**
+     * The denominator is counted on the ANSWER, not on the bridge — asserted where
+     * it is consumed (§16.6 q2) rather than at the increment site.
+     *
+     * Two attempts, one bridged and one answered-but-never-bridged. A denominator
+     * counted on `bridged` reads 1 and looks entirely reasonable; the abandonment
+     * rate it produces is then `1/1 = 100%` on a campaign whose true rate is 50%,
+     * or `0/1 = 0%` on one whose true rate is 100% — wrong in whichever direction
+     * the run happens to take, and both readings are self-consistent.
+     */
+    it('counts the answer and not the bridge, so the denominator includes unbridged calls', async () => {
+      world = await createChaosWorld({ agents: 1, contacts: 2, maxConcurrentCalls: 1 });
+      const w = world;
+      await w.bringOnline(w.agents[0]!);
+
+      w.bridge.setDefaultScript({ answer: true, bridge: true, status: 'completed', talkTimeSeconds: 4 });
+      await w.tick();
+      // Second contact: the carrier answers and the bridge never completes.
+      w.bridge.setDefaultScript({ answer: true, bridge: false, status: 'failed' });
+      await w.runUntilQuiescent();
+
+      const rows = await attempts(w.campaignId);
+      expect(rows).toHaveLength(2);
+      expect(rows.filter((r) => r.bridged_at !== null)).toHaveLength(1);
+      expect(rows.filter((r) => r.answered_at !== null)).toHaveLength(2);
+
+      // Exact. `toBeGreaterThan(1)` would pass against a counter that fired twice
+      // for the bridged call and never for the other.
+      expect(await metricValue(ANSWERED_TOTAL, { campaign_id: w.campaignId })).toBe(2);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // The canonical abandoned call — and the first time this suite has had one.
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe('a genuinely abandoned call', () => {
+    /**
+     * Carrier answers into a station that is gone: design §6.2, `AD-P2-C-05`.
+     *
+     * **No scenario in this suite has ever reached this path.** Every abandonment
+     * assertion in the chaos suite is `toBe(0)`, and `roster-exactly-once`'s
+     * non-vacuity case reaches the predicate's `bridged_at IS NULL` arm with
+     * `outcome = 'abandoned'` explicitly asserted to be 0. The reason was
+     * mechanical rather than an oversight: `ScriptedBridge` had neither
+     * `playClipToCarrierThenHangUp` nor `forceEndWithOutcome`, both of which
+     * `abandonAnsweredCall` calls unconditionally — so the path threw a `TypeError`
+     * into a fire-and-forget subscription and any scenario built on it would have
+     * gone green. §16.6's third pattern, found by grepping the product for what it
+     * calls on the object the harness hands it.
+     *
+     * The sequence is the real one: dial, park the call ringing, the agent's socket
+     * goes away, THEN the carrier picks up. Ordering matters — answering first and
+     * dropping after gives a bridged call and a completely different path.
+     */
+    async function answeredIntoALostStation() {
+      world = await createChaosWorld({ agents: 1, contacts: 1, maxConcurrentCalls: 1 });
+      const w = world;
+      w.bridge.setDefaultScript({ answer: false, bridge: false, status: 'completed', holdAtRing: true });
+      const sessionId = w.agents[0]!.sessionId;
+      await w.bringOnline(w.agents[0]!);
+      await w.tick();
+
+      const [ringing] = await attempts(w.campaignId);
+      expect(ringing, 'nothing was dialed').toBeDefined();
+      expect(ringing!.state).toBe('dialing');
+      expect(ringing!.answered_at, 'the call answered before the drop — wrong sequence').toBeNull();
+
+      const drop = await w.chaos.dropStation(sessionId);
+      expect(drop.attemptId).toBe(ringing!.id);
+      // The call is still LIVE after the drop, held by the deferred-hangup window.
+      // Without this the carrier can never answer into a lost station and the whole
+      // path is unreachable — which is why it is asserted rather than assumed.
+      expect(drop.graceArmed, 'the bridge hung up on the drop — the carrier can never answer').toBe(true);
+      expect(w.stations.isLocallyOwned(sessionId), 'the station is still owned locally').toBe(false);
+
+      // The carrier picks up. `false` means the product ended the call from inside
+      // the answered handler, which is what abandoning IS — so the return value is
+      // the assertion, not a status code to ignore.
+      //
+      // `expect: 'abandoned'` sets the absorption barrier to the terminal write and
+      // nothing earlier. It is a declaration the harness CHECKS, not a hint: a call
+      // that survives still returns `true` and reds on the next line.
+      const survived = await w.bridge.answerRinging(ringing!.id, { expect: 'abandoned' });
+      expect(survived, 'the call survived the answer — nothing abandoned it').toBe(false);
+
+      return { w, attemptId: ringing!.id };
+    }
+
+    it('is stamped abandoned, and the counter and the table both say ONE', async () => {
+      const { w, attemptId } = await answeredIntoALostStation();
+
+      const [row] = await attempts(w.campaignId);
+      expect(row!.id).toBe(attemptId);
+      expect(row!.state).toBe('ended');
+      expect(row!.outcome).toBe('abandoned');
+      // The customer was on the line and no media ever reached an agent. Both
+      // facts, because the outcome label alone is the classifier's opinion and the
+      // two columns are the data §10 measures.
+      expect(row!.answered_at).not.toBeNull();
+      expect(row!.bridged_at).toBeNull();
+
+      // ── The `answered`-phase write, where it is the ONLY writer ────────────
+      // This assertion is here and not only on the bridged row because the two
+      // rows exercise different code. Found by falsification: emitting the
+      // `answered` phase with NO instant (so `agency-dialer.ts:290` falls back to
+      // `?? new Date()`) reddened nothing on the bridged row — the `bridged`
+      // handler passes `ev.answeredAt` and `answered_at = COALESCE($6, answered_at)`
+      // lets a non-null incoming value WIN, so the later write silently repaired
+      // the earlier one.
+      //
+      // ⚠️ That is also a live rule-3 defect in the product's own prose:
+      // `agency-dialer.ts:348` calls the column "first-write-wins … so the
+      // `answered` phase's value stands". It is not — COALESCE($6, existing) takes
+      // $6 whenever $6 is non-null, i.e. the LAST non-null write wins. The
+      // protection is real but comes entirely from that handler passing
+      // `ev.answeredAt` rather than `bridgedAt`; the mechanism the comment credits
+      // does not exist, and a reader who trusts it would conclude that passing
+      // `bridgedAt` there is harmless. It would collapse the two timestamps exactly
+      // as `AD-P2-C-11` did.
+      //
+      // An abandoned call never reaches the `bridged` handler, so here the
+      // `answered` phase is the only writer and this comparison is the only thing
+      // that can see it stamp its own clock instead of the carrier's.
+      const emitted = w.bridge.answeredAtFor(attemptId);
+      expect(emitted, 'the bridge never reported an answer instant').toBeDefined();
+      expect(row!.answered_at!.getTime()).toBe(emitted!.getTime());
+
+      // ── The cross-check, on data where a disagreement is reachable ────────
+      // The table says one. So must the counter, and so must §10's own query.
+      expect(await abandonedCount(w.campaignId)).toBe(1);
+      expect(await assertAbandonmentPredicatesAgree(w.campaignId)).toBe(1);
+      expect(
+        await metricValue(ABANDONED_TOTAL, { campaign_id: w.campaignId }),
+        'agency_abandoned_total disagrees with the table on an abandoned call',
+      ).toBe(1);
+      // The denominator too: this call was answered, so it is in the sample.
+      expect(await metricValue(ANSWERED_TOTAL, { campaign_id: w.campaignId })).toBe(1);
+    });
+
+    /**
+     * The gauge the auto-pause guardrail will actually read (`AD-P4-C-02`),
+     * compared to the table it is derived from.
+     *
+     * A third leg rather than a restatement: `agency_abandoned_total` is an
+     * in-process counter incremented at the settle site, while
+     * `agency_abandonment_window_abandoned_24h` is a gauge published from a grouped
+     * SQL aggregate on a timer. They can disagree — a `refreshAbandonmentWindow`
+     * that grouped wrong, labelled wrong, or published a stale row would leave the
+     * counter correct and the guardrail's number wrong, which is the direction that
+     * matters because the guardrail does not read the counter.
+     */
+    it('publishes the window gauges from the same rows, labelled per campaign', async () => {
+      const { w } = await answeredIntoALostStation();
+
+      // The gauges are absent until the refresh runs — asserted, so "the refresh
+      // published this" cannot be confused with "the value was already there".
+      expect(await metricValue(WINDOW_ABANDONED, { campaign_id: w.campaignId })).toBeUndefined();
+      await refreshAbandonmentWindow();
+
+      expect(await metricValue(WINDOW_ABANDONED, { campaign_id: w.campaignId }))
+        .toBe(await abandonedCount(w.campaignId));
+      expect(await metricValue(WINDOW_ANSWERED, { campaign_id: w.campaignId })).toBe(1);
+      // 1 of 1. Published, and NOT suppressed — the null-rate rule is about zero
+      // answered calls, not about an inconveniently high rate.
+      expect(await metricValue('agency_abandonment_rate_24h', { campaign_id: w.campaignId })).toBe(100);
+
+      // Labelled with THIS campaign's real id, not a fixture string. The guardrail
+      // pauses a campaign by id; a series labelled with anything else is unusable
+      // to it, and a test that read the series by index would not notice.
+      expect(await metricValue(WINDOW_ABANDONED, {
+        tenant_id: w.tenantId, campaign_id: w.campaignId,
+      })).toBe(1);
+    });
+
+    /**
+     * The apology clip arm, stated as a checked fact rather than left ambiguous.
+     *
+     * With no `abandon_announcement_id` the dialer must take the bare-hangup arm:
+     * `resolveAbandonClip` returns `not_configured` and nothing is played. The
+     * assertion is on `clipPlays` being EMPTY, which is the honest record that
+     * §16.7 criterion 4's "the apology clip is untested at any tier" still stands —
+     * and now with a reason: `resolveAbandonClip` only yields a hash for an
+     * announcement backed by real TTS output or an S3 audio file, and the
+     * integration stack has neither. A future fixture that configures one is what
+     * closes that gap; the harness verb exists so that fixture does not silently
+     * break the path the day it arrives.
+     */
+    it('hangs up bare when no apology is configured, and the attempt is still recorded', async () => {
+      const { w } = await answeredIntoALostStation();
+
+      expect(w.bridge.clipPlays, 'a clip was played with no announcement configured').toEqual([]);
+      // The accounting is the mechanism, the clip is the courtesy (migration 080).
+      expect((await attempts(w.campaignId))[0]!.outcome).toBe('abandoned');
+      expect(await abandonedCount(w.campaignId)).toBe(1);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // Zero on both sides — and why that is not this file's evidence.
+  // ═════════════════════════════════════════════════════════════════════════
+
+  it('a LIVE answered-but-unbridged call is counted by neither, which is the point of the terminal filter', async () => {
+    world = await createChaosWorld({ agents: 1, contacts: 2, maxConcurrentCalls: 1 });
+    const w = world;
+    w.bridge.setDefaultScript({
+      answer: true, bridge: false, status: 'completed', holdAfterAnswer: true,
+    });
+    await w.bringOnline(w.agents[0]!);
+    await w.tick();
+
+    const [row] = await attempts(w.campaignId);
+    // The three preconditions that make the terminal filter observable. Dropping
+    // any one returns this to data both halves treat identically.
+    expect(row!.answered_at).not.toBeNull();
+    expect(row!.bridged_at).toBeNull();
+    expect(row!.state).not.toBe('ended');
+
+    // The table declines to count it — `AD-P4-C-02` must not pause a campaign for
+    // a call that is still connecting.
+    expect(await assertAbandonmentPredicatesAgree(w.campaignId)).toBe(0);
+    // And so does the numerator counter, which fires only at the settle site. The
+    // denominator, however, HAS fired: the customer really did answer. That
+    // asymmetry is the design and it is asserted rather than described — a
+    // numerator counted at the answer would report this live call as abandoned.
+    expect(await metricValue(ABANDONED_TOTAL, { campaign_id: w.campaignId })).toBeUndefined();
+    expect(await metricValue(ANSWERED_TOTAL, { campaign_id: w.campaignId })).toBe(1);
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // What the cross-check found. This is the whole reason the ticket wanted it.
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe('an answered call whose bridge simply failed', () => {
+    /**
+     * Carrier answers, the bridge never completes, the call ends `failed`. The
+     * station is owned throughout, so `abandonAnsweredCall` never runs and the
+     * classifier labels the attempt `failed` rather than `abandoned`.
+     *
+     * This row is `roster-exactly-once`'s non-vacuity case, and that test already
+     * asserts the two facts that matter: §10's predicate counts it, and
+     * `outcome = 'abandoned'` does not.
+     */
+    async function answeredThenBridgeFailed() {
+      world = await createChaosWorld({ agents: 1, contacts: 1, maxConcurrentCalls: 1 });
+      const w = world;
+      w.bridge.setDefaultScript({ answer: true, bridge: false, status: 'failed' });
+      await w.bringOnline(w.agents[0]!);
+      await w.runUntilQuiescent();
+      return w;
+    }
+
+    it('satisfies the ratified abandonment definition in the table', async () => {
+      const w = await answeredThenBridgeFailed();
+      const [row] = await attempts(w.campaignId);
+
+      // The regulator's question is "did a customer pick up and reach nobody", and
+      // the answer here is yes. WHY the bridge failed is not part of the
+      // definition — which is exactly what makes the `bridged_at IS NULL` arm the
+      // independent one, and why `8da1bea` ratified it.
+      expect(row!.state).toBe('ended');
+      expect(row!.answered_at).not.toBeNull();
+      expect(row!.bridged_at).toBeNull();
+      // Not stamped `abandoned` — the classifier has no way to know it should be.
+      expect(row!.outcome).toBe('failed');
+
+      expect(await assertAbandonmentPredicatesAgree(w.campaignId)).toBe(1);
+      // The guardrail's number is right, and that is the reassuring half: the
+      // window gauge is SQL over the same predicate, so the compliance control
+      // sees this call.
+      await refreshAbandonmentWindow();
+      expect(await metricValue(WINDOW_ABANDONED, { campaign_id: w.campaignId })).toBe(1);
+    });
+
+    /**
+     * ─── §10's EQUALITY, NOW TRUE — AND WHAT IT COST TO GET HERE ─────────────
+     *
+     * **This was a standing `it.fails` for one commit, and it is the reason
+     * `8641e81` exists.** §10 states the criterion as an equality: *"the Prometheus
+     * counters agree: `agency_abandoned_total` equals that count"*. It did not. The
+     * two sides were keyed on different things:
+     *
+     * - the **table** counted a row that is terminal, answered and never bridged —
+     *   the definition ratified at `8da1bea`, keyed on DATA;
+     * - the **counter** incremented only on `outcome === 'abandoned'`, stamped only
+     *   by `abandonAnsweredCall`, which runs only when no live station owns the
+     *   agent at answer time — keyed on the CLASSIFIER'S LABEL.
+     *
+     * So every answered-but-unbridged call that failed for any *other* reason (the
+     * bridge failed, the carrier hung up between answer and bridge, a socket died in
+     * that window) was abandoned in the table and invisible to the counter —
+     * under-reporting, in the direction that looks compliant, reachable only at the
+     * concurrency Phase 2 introduces. Core's framing is the sharper one and is worth
+     * keeping: abandonment and outcome are **different axes**, and the counter had
+     * collapsed them.
+     *
+     * `8641e81` re-keyed the counter on predicate-satisfaction at the settle site, so
+     * this is now a plain assertion. **Do not re-wrap it in `it.fails` to make a
+     * future red go away** — that is the trap §16.8 names, and it would pin the
+     * defect back as the contract while still passing.
+     *
+     * Two things this case cannot see, both asserted elsewhere rather than assumed:
+     * the reaper's orphan path (next case), and anything the window gauge covers —
+     * see `satisfies the ratified abandonment definition in the table` above.
+     */
+    it('§10s equality holds: the counter and the table agree on this row', async () => {
+      const w = await answeredThenBridgeFailed();
+
+      const table = await abandonedCount(w.campaignId);
+      // Asserted before the comparison: agreement on zero would be vacuous, and
+      // this row is the one the fix was made for.
+      expect(table).toBe(1);
+      expect(
+        await metricValue(ABANDONED_TOTAL, { campaign_id: w.campaignId }),
+        'the counter is keyed on the classifier label again — an answered call whose '
+        + 'bridge failed is abandoned by the ratified definition and must be counted',
+      ).toBe(table);
+    });
+
+    /**
+     * ─── THE IRREDUCIBLE RESIDUE, ASSERTED SO NOBODY TRIPS OVER IT ───────────
+     *
+     * Raised by core alongside the fix and worth a test rather than a note: the
+     * counter is **process-local and incremented at the settle site**, so an attempt
+     * settled by a path with **no in-process record** is counted by the table and
+     * invisible to the counter. The reaper's post-crash orphan sweep is exactly that
+     * path — `reapByIds` drives rows terminal in SQL, having never held a
+     * `liveByAttempt` entry.
+     *
+     * This is **not** a bug and must not be "fixed" by making the reaper increment:
+     * a counter that counted rows this process never handled would be lying about
+     * its own scope, and the number that must survive a restart is the SQL window
+     * gauge — which does, and which is what `AD-P4-C-02` reads.
+     *
+     * It is asserted because the consequence is a **trap for the next person**: any
+     * future scenario that kills a replica mid-attempt and then compares counter to
+     * table will find the counter low by exactly these rows. Discovered as a
+     * mysterious off-by-N in a chaos run, that reads as a regression in the fix
+     * above. Pinned here, it reads as the design.
+     */
+    it('a reaped orphan is counted by the table and NOT by the counter, which is correct', async () => {
+      world = await createChaosWorld({ agents: 1, contacts: 1, maxConcurrentCalls: 1 });
+      const w = world;
+      // Answered, never bridged, and left LIVE — the row a replica death strands.
+      w.bridge.setDefaultScript({
+        answer: true, bridge: false, status: 'completed', holdAfterAnswer: true,
+      });
+      await w.bringOnline(w.agents[0]!);
+      await w.tick();
+
+      const [live] = await attempts(w.campaignId);
+      expect(live!.answered_at, 'the carrier never answered — nothing to reap').not.toBeNull();
+      expect(live!.bridged_at).toBeNull();
+      expect(live!.state).not.toBe('ended');
+
+      // The counter has seen the ANSWER (in-process) but no settle.
+      expect(await metricValue(ANSWERED_TOTAL, { campaign_id: w.campaignId })).toBe(1);
+      expect(await metricValue(ABANDONED_TOTAL, { campaign_id: w.campaignId })).toBeUndefined();
+
+      // The replica dies with the call in flight: no terminal event will ever be
+      // emitted, so only the reaper can clear the row.
+      expect(w.bridge.orphanHeld()).toBe(1);
+      w.chaos.killRenewers();
+      await w.reaper.reapOnStartup();
+
+      const [reaped] = await attempts(w.campaignId);
+      expect(reaped!.state).toBe('ended');
+      expect(reaped!.outcome).toBe('orphaned');
+
+      // The TABLE counts it — terminal, answered, never bridged. A customer picked
+      // up and reached nobody, whatever killed the replica.
+      expect(await assertAbandonmentPredicatesAgree(w.campaignId)).toBe(1);
+      // The COUNTER cannot, and must not pretend to. `undefined`, not 0 — the series
+      // was never created, which is the honest record of "this process never saw it".
+      expect(
+        await metricValue(ABANDONED_TOTAL, { campaign_id: w.campaignId }),
+        'the reaper is incrementing the in-process counter — it is counting rows this '
+        + 'process never handled, and the counter no longer means what its name says',
+      ).toBeUndefined();
+      // CONTROL for the line above. An absent series is also what a cleared registry
+      // looks like, so `toBeUndefined()` on its own cannot tell "nothing incremented
+      // it" from "nothing is being measured at all" — and the second would make this
+      // case pass no matter what the reaper did. The answered counter survives the
+      // reap, so the registry is demonstrably live at the moment of that assertion.
+      expect(
+        await metricValue(ANSWERED_TOTAL, { campaign_id: w.campaignId }),
+        'the registry was cleared mid-test — the absent-series assertion above proves nothing',
+      ).toBe(1);
+
+      // And the number that DOES survive a restart is right, which is why the
+      // asymmetry is affordable.
+      await refreshAbandonmentWindow();
+      expect(await metricValue(WINDOW_ABANDONED, { campaign_id: w.campaignId })).toBe(1);
+    });
+  });
+});

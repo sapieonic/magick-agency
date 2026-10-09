@@ -1,0 +1,224 @@
+/*
+  The cross-campaign attempt list. Almost all of the furniture — the filter card,
+  the chips, the fields, the table, the "load more" row — comes from
+  `SpineListLayout.module.css`, which is shared with the campaign-scoped Attempts,
+  Roster and Activity views. What is here is only what this surface adds: the
+  campaign column's degraded state, the write-up cell, and the two notes that
+  exist to stop the reader assuming something untrue.
+
+  Nothing here forks the shared layout. Three copies of a filter card is how the
+  first three spine pages drifted into three checkbox styles and three card
+  paddings, and that is exactly what the shared module was extracted to end.
+*/
+
+.panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/*
+  Stated on the page rather than left to be inferred from the numbers being
+  legible. The second half — that there is no export — is not an apology: it tells
+  a reader who was about to go looking for a download button that there is nothing
+  to find, which is cheaper than the search.
+*/
+.privacyNote {
+  flex: 1 1 320px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.chipGroup {
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/*
+  Full weight, not a tooltip. Both notes this class carries — the date range's
+  semantics and the write-up list's incompleteness — are things a reader would
+  otherwise learn by noticing a row missing, and that is the one way of finding
+  out that also costs them their trust in the rest of the list.
+*/
+.groupNote {
+  margin: 0 0 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+  max-width: 68ch;
+}
+
+.codeEntry {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.codeEntry > label {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.select:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+.when {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.numeric {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/*
+  Muted and italic rather than blank. Every cell that uses this is a real fact with
+  a reason behind it — a campaign the row belonged to that we cannot name, a call
+  nobody wrote up — and an empty cell reads as data we failed to load, which is the
+  opposite of the truth.
+*/
+.mutedCell {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.outcome::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.outcome[data-outcome='connected'] {
+  background: var(--success-subtle, rgba(47, 158, 68, 0.12));
+  color: var(--success, #2f9e44);
+}
+
+/*
+  Abandoned keeps the warning colour it has on the campaign view. On an agent's own
+  list it is the one outcome that is explicitly NOT about them — the customer
+  answered and the system had nobody free — so it must not sit in the same grey as
+  a no-answer.
+*/
+.outcome[data-outcome='abandoned'] {
+  background: var(--warning-subtle, rgba(245, 166, 35, 0.12));
+  color: var(--warning, #f5a623);
+}
+
+.outcome[data-outcome='failed'],
+.outcome[data-outcome='invalid'],
+.outcome[data-outcome='orphaned'],
+.outcome[data-outcome='agent_disconnected'] {
+  background: var(--danger-subtle, rgba(214, 69, 69, 0.12));
+  color: var(--danger, #d64545);
+}
+
+.onBehalf {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--bg-tertiary, var(--bg-secondary));
+  color: var(--text-muted);
+}
+
+/* The agent's own words, under the code they filed it against. Wrapped rather
+   than truncated: a note cut off mid-sentence is the half that mattered. */
+.notes {
+  display: block;
+  margin-top: 4px;
+  max-width: 34ch;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/* The link out to the agency's own call detail. Matches the campaign attempts
+   view's affordance, because it is the same destination reached from the other
+   list of the same rows. */
+.callLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--accent-subtle);
+  color: var(--accent-hover);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: background 0.15s ease;
+}
+
+.callLink:hover {
+  background: var(--accent-glow);
+}
+
+.moreError {
+  margin: 12px 0 0;
+  color: var(--danger, #d64545);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.srOnly {
+  composes: sr-only from global;
+}
+
+@media (max-width: 640px) {
+  .codeEntry {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

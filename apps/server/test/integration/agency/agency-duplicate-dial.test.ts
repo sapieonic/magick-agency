@@ -1,0 +1,377 @@
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type pg from 'pg';
+import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
+import {
+  CLAIM_SELECT_SQL,
+  CLAIM_SQL,
+  createContentionPool,
+  insertAgencyAttempt,
+  insertAgencyCampaign,
+  insertAgencyContact,
+  insertAgencyContacts,
+  insertAgentSession,
+} from './agency-factories.js';
+import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, uuidFor } from '../setup/factories.js';
+
+vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
+const { agencyAttemptRepository, agencyContactRepository } = await import(
+  '../../../src/db/repositories/agency.repository.js'
+);
+
+/**
+ * Duplicate dialing — falsifying the correctness claim (§4.1, §2.1).
+ *
+ * The design leans on two mechanisms and is explicit that either alone has a
+ * failure mode we cannot accept: the Redis leader lease is the EFFICIENCY
+ * mechanism, and `FOR UPDATE SKIP LOCKED` + `uq_agency_attempt_live` is the
+ * CORRECTNESS mechanism. They are tested separately here, because a test that
+ * exercises both at once cannot tell you which one fired — and an earlier draft
+ * of the design shipped a *vacuous* uniqueness index that prevented nothing and
+ * was caught only in review. Assume nothing is safe because a doc says so.
+ *
+ * Note on coverage of `SKIP LOCKED` across this repo: five repositories use it,
+ * and outside `dialer-analysis-job.repository.test.ts` the coverage is a
+ * `expect(sql).toContain('FOR UPDATE SKIP LOCKED')` string assertion at the unit
+ * tier — which passes against a claim query that is never executed. Nothing here
+ * asserts on SQL text.
+ */
+
+const LIVE_STATES = ['queued', 'dialing', 'ringing', 'answered', 'bridged'] as const;
+
+describe('agency duplicate-dial backstop (integration)', () => {
+  beforeEach(truncateAll);
+  afterAll(closeTestPool);
+
+  // ── The index, in isolation ───────────────────────────────────────────────
+
+  it('T-D1: uq_agency_attempt_live rejects a second live attempt on one contact', async () => {
+    const campaign = await insertAgencyCampaign();
+    const contact = await insertAgencyContact(campaign.id);
+
+    await insertAgencyAttempt(campaign.id, contact.id, { state: 'dialing', attempt_number: 1 });
+
+    await expect(
+      insertAgencyAttempt(campaign.id, contact.id, { state: 'queued', attempt_number: 2 }),
+    ).rejects.toMatchObject({
+      code: '23505',
+      // Assert the CONSTRAINT NAME, not just the code. `uq_agency_attempt_number`
+      // is also a unique index on this table and would satisfy a code-only
+      // assertion while proving nothing about the live-attempt backstop.
+      constraint: 'uq_agency_attempt_live',
+    });
+  });
+
+  it('T-D2: the index does NOT block a retry after the prior attempt ended', async () => {
+    // Without this, an index tightened to a plain UNIQUE (contact_id) passes
+    // T-D1 and silently makes every retry impossible — a failure that presents
+    // as "the campaign completed early", not as an error.
+    const campaign = await insertAgencyCampaign();
+    const contact = await insertAgencyContact(campaign.id);
+
+    const first = await insertAgencyAttempt(campaign.id, contact.id, { state: 'dialing', attempt_number: 1 });
+    await getTestPool().query(
+      `UPDATE agency_call_attempts SET state = 'ended', outcome = 'no_answer' WHERE id = $1`,
+      [first.id],
+    );
+
+    const second = await insertAgencyAttempt(campaign.id, contact.id, { state: 'queued', attempt_number: 2 });
+    expect(second.id).toBeTruthy();
+    expect(second.attempt_number).toBe(2);
+  });
+
+  it('T-D3: the predicate is not vacuous — every live-state pairing is rejected', async () => {
+    // A vacuous predicate can pass T-D1 by accident under one state pairing.
+    // Ten ordered pairs plus the five same-state pairs cover the whole surface.
+    const campaign = await insertAgencyCampaign();
+
+    for (const first of LIVE_STATES) {
+      for (const second of LIVE_STATES) {
+        const contact = await insertAgencyContact(campaign.id);
+        await insertAgencyAttempt(campaign.id, contact.id, { state: first, attempt_number: 1 });
+
+        await expect(
+          insertAgencyAttempt(campaign.id, contact.id, { state: second, attempt_number: 2 }),
+        ).rejects.toMatchObject({ code: '23505', constraint: 'uq_agency_attempt_live' });
+      }
+    }
+  });
+
+  it('T-D3b: the index definition is exactly what the design specifies', async () => {
+    // Deliberately brittle. This index backs a compliance-adjacent guarantee and
+    // its predicate changing should require a human to update a test and think
+    // about why — which is precisely what did NOT happen when the vacuous
+    // version shipped.
+    const { rows } = await getTestPool().query<{ indexdef: string }>(
+      `SELECT indexdef FROM pg_indexes
+        WHERE tablename = 'agency_call_attempts' AND indexname = 'uq_agency_attempt_live'`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.indexdef).toBe(
+      'CREATE UNIQUE INDEX uq_agency_attempt_live ON public.agency_call_attempts ' +
+      'USING btree (contact_id) WHERE ((state)::text <> \'ended\'::text)',
+    );
+  });
+
+  // ── A genuine race ────────────────────────────────────────────────────────
+
+  it('T-D4: 16 concurrent inserts for one contact yield exactly one live attempt', async () => {
+    const campaign = await insertAgencyCampaign();
+    const pool = createContentionPool(20);
+
+    try {
+      // Repeated, because a single run of a race test proves very little.
+      for (let round = 0; round < 20; round++) {
+        const contact = await insertAgencyContact(campaign.id);
+
+        const results = await Promise.allSettled(
+          Array.from({ length: 16 }, (_, i) =>
+            pool.query(
+              `INSERT INTO agency_call_attempts
+                 (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, state)
+               VALUES ($1, $2, '${DEFAULTS.tenantId}', '${DEFAULTS.accountId}', 1, '+919000000001', 'queued')`,
+              [campaign.id, contact.id],
+            ),
+          ),
+        );
+
+        const fulfilled = results.filter((r) => r.status === 'fulfilled');
+        const rejected = results.filter((r) => r.status === 'rejected');
+
+        expect(fulfilled).toHaveLength(1);
+        expect(rejected).toHaveLength(15);
+        // Every loser must be the backstop refusing, not some other error.
+        for (const r of rejected) {
+          expect((r as PromiseRejectedResult).reason).toMatchObject({ code: '23505' });
+        }
+
+        const { rows } = await getTestPool().query<{ n: string }>(
+          `SELECT COUNT(*)::text AS n FROM agency_call_attempts
+            WHERE contact_id = $1 AND state <> 'ended'`,
+          [contact.id],
+        );
+        expect(Number(rows[0]!.n)).toBe(1);
+      }
+    } finally {
+      await pool.end();
+    }
+  }, 60_000);
+
+  it('T-D5: two leaders racing the claim — SKIP LOCKED hands the contact to exactly one', async () => {
+    // `Promise.all` on two claim queries does NOT reliably produce overlapping
+    // transactions, so the overlap is forced by holding A's transaction open
+    // across B's attempt.
+    const campaign = await insertAgencyCampaign();
+    const contact = await insertAgencyContact(campaign.id);
+
+    const pool = createContentionPool(4);
+    const a = await pool.connect();
+    const b = await pool.connect();
+
+    try {
+      // 1. Leader A claims and HOLDS the row lock.
+      await a.query('BEGIN');
+      const aSelected = await a.query<{ id: string }>(CLAIM_SELECT_SQL, [campaign.id, 1]);
+      expect(aSelected.rows).toHaveLength(1);
+      expect(aSelected.rows[0]!.id).toBe(contact.id);
+
+      // 2. Leader B runs the identical claim while A holds it.
+      //    SKIP LOCKED means this returns ZERO ROWS rather than blocking. If the
+      //    query ever loses SKIP LOCKED, this statement blocks on A's lock and
+      //    the test times out — a distinguishable failure, not a false pass.
+      await b.query('BEGIN');
+      const bSelected = await b.query<{ id: string }>(CLAIM_SELECT_SQL, [campaign.id, 1]);
+      expect(bSelected.rows).toHaveLength(0);
+
+      // 3. A commits the claim.
+      await a.query(`UPDATE agency_contacts SET state = 'in_flight' WHERE id = $1`, [contact.id]);
+      await a.query('COMMIT');
+
+      // 4. B retries: the row is no longer `pending`, so it is not re-claimable.
+      const bRetry = await b.query<{ id: string }>(CLAIM_SELECT_SQL, [campaign.id, 1]);
+      expect(bRetry.rows).toHaveLength(0);
+      await b.query('COMMIT');
+
+      const { rows } = await getTestPool().query<{ n: string }>(
+        `SELECT COUNT(*)::text AS n FROM agency_contacts
+          WHERE campaign_id = $1 AND state = 'in_flight'`,
+        [campaign.id],
+      );
+      expect(Number(rows[0]!.n)).toBe(1);
+    } finally {
+      await a.query('ROLLBACK').catch(() => {});
+      await b.query('ROLLBACK').catch(() => {});
+      a.release();
+      b.release();
+      await pool.end();
+    }
+  });
+
+  it('T-D5b: a rolled-back claim releases the contact rather than losing it', async () => {
+    // The inverse arm. Without it the suite cannot distinguish "SKIP LOCKED
+    // works" from "the row was permanently stranded by the loser".
+    const campaign = await insertAgencyCampaign();
+    const contact = await insertAgencyContact(campaign.id);
+
+    const pool = createContentionPool(4);
+    const a = await pool.connect();
+    const b = await pool.connect();
+
+    try {
+      await a.query('BEGIN');
+      const aSelected = await a.query<{ id: string }>(CLAIM_SELECT_SQL, [campaign.id, 1]);
+      expect(aSelected.rows).toHaveLength(1);
+
+      await b.query('BEGIN');
+      expect((await b.query(CLAIM_SELECT_SQL, [campaign.id, 1])).rows).toHaveLength(0);
+
+      // A dies instead of committing.
+      await a.query('ROLLBACK');
+
+      const bRetry = await b.query<{ id: string }>(CLAIM_SELECT_SQL, [campaign.id, 1]);
+      expect(bRetry.rows).toHaveLength(1);
+      expect(bRetry.rows[0]!.id).toBe(contact.id);
+      await b.query('COMMIT');
+    } finally {
+      a.release();
+      b.release();
+      await pool.end();
+    }
+  });
+
+  it('T-D5c: concurrent claimDialable calls partition the roster, never overlap', async () => {
+    // The repository's real query, driven concurrently. The assertion that
+    // matters is DISJOINTNESS — a count-only assertion can pass while two
+    // leaders both hold the same contact.
+    const campaign = await insertAgencyCampaign();
+    await insertAgencyContacts(campaign.id, 40);
+
+    const claims = await Promise.all([
+      agencyContactRepository.claimDialable(campaign.id, 10),
+      agencyContactRepository.claimDialable(campaign.id, 10),
+      agencyContactRepository.claimDialable(campaign.id, 10),
+      agencyContactRepository.claimDialable(campaign.id, 10),
+    ]);
+
+    const ids = claims.flat().map((c) => c.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.length).toBeLessThanOrEqual(40);
+
+    const { rows } = await getTestPool().query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM agency_contacts
+        WHERE campaign_id = $1 AND state = 'in_flight'`,
+      [campaign.id],
+    );
+    expect(Number(rows[0]!.n)).toBe(ids.length);
+  });
+
+  it('T-D6: a split-brain leader pair never produces two live attempts for one contact', async () => {
+    // Simulates the design's "GC pause, network partition, clock skew" window
+    // without needing any of them: two independent claim+create loops racing
+    // over one roster with no coordination at all. The leader lease is the
+    // mechanism this test deliberately does NOT have.
+    const campaign = await insertAgencyCampaign();
+    const session = await insertAgentSession(campaign.id);
+    await insertAgencyContacts(campaign.id, 60);
+
+    let backstopRefusals = 0;
+
+    const leader = async (): Promise<void> => {
+      for (let tick = 0; tick < 30; tick++) {
+        const contacts = await agencyContactRepository.claimDialable(campaign.id, 3);
+        for (const contact of contacts) {
+          const attempt = await agencyAttemptRepository.create({
+            campaignId: campaign.id,
+            contactId: contact.id,
+            tenantId: campaign.tenant_id,
+            accountId: campaign.account_id,
+            callerId: '+919000000001',
+            reservedAgentId: session.id,
+          });
+          // `create` returns null when the backstop refused — the repository
+          // swallowing 23505 is itself part of the contract: a duplicate the
+          // index catches but the engine crashes on is still an outage.
+          if (attempt === null) backstopRefusals++;
+        }
+      }
+    };
+
+    await Promise.all([leader(), leader()]);
+
+    // THE assertion: no contact ever carried two live attempts.
+    const { rows: dupes } = await getTestPool().query<{ contact_id: string; n: string }>(
+      `SELECT contact_id, COUNT(*)::text AS n FROM agency_call_attempts
+        WHERE campaign_id = $1 AND state <> 'ended'
+        GROUP BY contact_id HAVING COUNT(*) > 1`,
+      [campaign.id],
+    );
+    expect(dupes).toEqual([]);
+
+    // And no contact was dialed more times than it was claimed.
+    const { rows: total } = await getTestPool().query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM agency_call_attempts WHERE campaign_id = $1`,
+      [campaign.id],
+    );
+    expect(Number(total[0]!.n)).toBeLessThanOrEqual(60);
+
+    // Sanity: the loops really did overlap. If this is 0 the test degenerated
+    // into two sequential leaders and proved nothing about contention, so it is
+    // reported rather than asserted — the run is still valid, just less useful.
+    if (backstopRefusals === 0) {
+      // eslint-disable-next-line no-console
+      console.warn('[T-D6] no backstop refusals observed — leaders may not have overlapped');
+    }
+  }, 60_000);
+
+  // ── The other two live-uniqueness guarantees ──────────────────────────────
+
+  it('T-M5: only one campaign per account may be `running` (D9)', async () => {
+    await insertAgencyCampaign({ status: 'running' });
+
+    await expect(insertAgencyCampaign({ status: 'running' })).rejects.toMatchObject({
+      code: '23505',
+      constraint: 'uq_agency_campaign_running',
+    });
+
+    // A different account is unaffected...
+    await expect(
+      insertAgencyCampaign({ status: 'running', account_id: OTHER_ACCOUNT }),
+    ).resolves.toBeTruthy();
+    // ...and the predicate really is partial, not blanket uniqueness.
+    await expect(insertAgencyCampaign({ status: 'paused' })).resolves.toBeTruthy();
+    await expect(insertAgencyCampaign({ status: 'draft' })).resolves.toBeTruthy();
+  });
+
+  it('T-M6: one live session per agent per TENANT, reusable after leaving', async () => {
+    // Widened from per-campaign by migration 092. The rule this pins is now the
+    // second assertion, not the first: the same-campaign case was already
+    // refused under 074, and a test that only covered it would stay green if 092
+    // were reverted.
+    const campaign = await insertAgencyCampaign();
+    const first = await insertAgentSession(campaign.id, { agent_user_id: uuidFor('agent-1') });
+
+    await expect(
+      insertAgentSession(campaign.id, { agent_user_id: uuidFor('agent-1') }),
+    ).rejects.toMatchObject({ code: '23505', constraint: 'uq_agency_agent_live_tenant' });
+
+    // A SECOND campaign — and a second account of the same tenant, which is the
+    // case 074 explicitly allowed. `account_id` is deliberately not in the key:
+    // an agent moving between two accounts still has one pair of ears, and the
+    // reservation CAS is keyed per session, so two live rows would be two
+    // independently reservable agents.
+    const other = await insertAgencyCampaign({ account_id: OTHER_ACCOUNT });
+    await expect(
+      insertAgentSession(other.id, { agent_user_id: uuidFor('agent-1'), account_id: OTHER_ACCOUNT }),
+    ).rejects.toMatchObject({ code: '23505', constraint: 'uq_agency_agent_live_tenant' });
+
+    // ...but a different TENANT is untouched — the scope is tenant, not global,
+    // so a shared-services structure that reuses an operator id still works.
+    await expect(
+      insertAgentSession(campaign.id, { agent_user_id: uuidFor('agent-1'), tenant_id: OTHER_TENANT }),
+    ).resolves.toBeTruthy();
+
+    await getTestPool().query('UPDATE agency_agent_sessions SET left_at = now() WHERE id = $1', [first.id]);
+    await expect(
+      insertAgentSession(campaign.id, { agent_user_id: uuidFor('agent-1') }),
+    ).resolves.toBeTruthy();
+  });
+});

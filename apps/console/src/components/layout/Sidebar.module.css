@@ -1,0 +1,344 @@
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.logoSection {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 16px 16px;
+  height: var(--topbar-height);
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.logoMark {
+  flex-shrink: 0;
+  display: block;
+}
+
+.logo {
+  font-family: var(--font-display);
+  /* The rail widens to the brand name (see brandSidebarWidth) so the wordmark
+     fits at this size on one line; ellipsis is the safety net past the cap. */
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  background: var(--gradient-purple);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  user-select: none;
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Collapsed sidebar ---- */
+.collapsed .logoSection {
+  justify-content: center;
+  padding: 16px 0;
+}
+
+.collapsed .navItem {
+  justify-content: center;
+  margin: 0 8px;
+  padding: 8px 0;
+}
+
+.collapsed .navIcon {
+  opacity: 0.85;
+}
+
+.closeBtn {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  padding: 4px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  min-height: auto;
+  transition: color var(--transition);
+}
+
+.closeBtn:hover {
+  color: var(--text-primary);
+}
+
+.searchSection {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.searchWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 10px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  padding: 7px 28px 7px 30px;
+  font-size: 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.searchInput::placeholder {
+  color: var(--text-muted);
+}
+
+.searchInput:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+
+.searchClear {
+  position: absolute;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  min-height: auto;
+  border-radius: 50%;
+  transition: color var(--transition);
+}
+
+.searchClear:hover {
+  color: var(--text-primary);
+}
+
+.sectionDescription {
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 0 20px 4px;
+  opacity: 0.7;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+
+.nav {
+  flex: 1;
+  padding: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.section {
+  margin-bottom: 4px;
+}
+
+/* Collapsible section header (button) */
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 10px 20px 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  user-select: none;
+  transition: color var(--transition);
+}
+
+.sectionHeader:hover {
+  color: var(--text-secondary);
+}
+
+/* Non-collapsible section header (div) */
+.sectionHeaderStatic {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 10px 20px 6px;
+  user-select: none;
+}
+
+.sectionLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sectionIcon {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+/* Chevron icon */
+.chevron {
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  margin: 0 8px;
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: all var(--transition);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.navItem:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.navItemActive {
+  color: var(--accent-hover);
+  background: var(--accent-subtle);
+}
+
+.navItemActive:hover {
+  color: var(--accent-hover);
+  background: var(--accent-subtle);
+}
+
+.navIcon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  opacity: 0.7;
+}
+
+.navItemActive .navIcon {
+  opacity: 1;
+}
+
+/*
+  The workspace switch sits between the nav and the version footer, and takes
+  `margin-top: auto` so it pins to the bottom whether or not the nav fills the
+  column. When it is hidden (no capability / no flag / not a supervisor) the
+  footer reclaims the same rule, so the layout is unchanged for everyone else.
+*/
+.workspaceSwitch {
+  margin: auto 8px 4px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: all var(--transition);
+}
+
+.workspaceSwitch:hover {
+  color: var(--accent-hover);
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.workspaceLabel {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspaceIcon {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
+.workspaceArrow {
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: transform var(--transition);
+}
+
+.workspaceSwitch:hover .workspaceArrow {
+  opacity: 1;
+  transform: translateX(2px);
+}
+
+.versionFooter {
+  margin-top: auto;
+  flex-shrink: 0;
+  padding: 12px 20px max(12px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border-light);
+}
+
+/* With the switch present, `auto` has already been spent above it. */
+.workspaceSwitch + .versionFooter {
+  margin-top: 0;
+}
+
+.versionLabel {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+@media (max-width: 768px) {
+  .closeBtn {
+    display: flex;
+  }
+}

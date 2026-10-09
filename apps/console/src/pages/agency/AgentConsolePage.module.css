@@ -1,0 +1,953 @@
+/*
+ * Agent Console — Phase 1.
+ *
+ * Two rules encoded here rather than left to convention:
+ *
+ * 1. GEOMETRY IS FROZEN. The three body columns are fixed widths in a fixed
+ *    order and do not change between states. A control that moves 12px between
+ *    "ringing" and "connected" is a misclick, and a misclick on this screen
+ *    hangs up on a human being.
+ * 2. NO LOOPING ANIMATION except the single state dot. This screen is in an
+ *    agent's field of view for eight hours.
+ *
+ * Only design tokens — no hardcoded colour literals. Several existing modules
+ * in this codebase inline rgba() values; that is the pattern to avoid, not to
+ * follow, because it breaks the light/dark themes silently.
+ */
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/*
+ * The connect cue's VISUAL escalation (§A.4.3.1).
+ *
+ * Fires only when the audible cue cannot carry the information — muted, an
+ * `AudioContext` the browser will not run, or the agent's own `always`. For that
+ * agent this is not a second channel, it is the only one, so it is a full-shell
+ * border flash rather than a badge somewhere in the periphery.
+ *
+ * **This is connect's alone.** All three cues get a rail flash
+ * (`StateRail.module.css`, driven by `VISUAL_CUE_SPECS`); scope is the fourth axis
+ * separating them and it is spent here, on the event that means a stranger is now
+ * speaking. Adding get-ready or disconnect to this rule would take that axis away
+ * and give an agent three whole-screen flashes per call.
+ *
+ * Rule 2 above still holds: this is a ONE-SHOT animation on an attribute the hook
+ * clears after `VISUAL_CUE_SPECS.connect.durationMs` (900ms, matched below), never
+ * a loop. `forwards` is deliberate — the attribute is removed before the fill could
+ * matter, and without it a dropped frame at the end leaves the border lit.
+ */
+.shell[data-connect-flash='true'] {
+  animation: connectFlash 900ms ease-out forwards;
+}
+
+@keyframes connectFlash {
+  0% {
+    box-shadow: inset 0 0 0 4px var(--accent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /*
+   * Reduced motion is not "no signal". An agent who cannot hear the cue AND has
+   * motion reduced would otherwise get nothing at all, so the fade is replaced by
+   * a static border for the same window rather than removed.
+   */
+  .shell[data-connect-flash='true'] {
+    animation: none;
+    box-shadow: inset 0 0 0 4px var(--accent);
+  }
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+  flex: 0 0 56px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding-right: 16px;
+}
+
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/*
+ * Recording is a dot PLUS the word. In several jurisdictions the agent must
+ * announce recording, and they cannot announce what they cannot see — an icon
+ * alone is not disclosure.
+ */
+.recording {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.recordingDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+/*
+ * Muted, disclosed in the header. Same shape as `.recording` above and for the
+ * same reason: a state the agent must be able to read without hunting for the
+ * control that set it. Warning weight, not danger — being muted is a thing they
+ * chose, and it is one click from undone.
+ */
+.muted {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warning, #d29922);
+}
+
+.mutedDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning, #d29922);
+}
+
+/*
+ * The microphone banner. Full-bleed under the header and danger weight, because
+ * it is the one failure on this screen with no other symptom: everything looks
+ * like a working call right up until the customer says "hello?" twice and hangs
+ * up. It outranks `.presenceRefusal` for the same reason `.actionFailure` does.
+ */
+.micFailure {
+  margin: 0;
+  padding: 8px 20px;
+  font-size: 0.875rem;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+/*
+ * The in-banner recovery. Inline with the sentence rather than a block button:
+ * it is the end of the remedy clause, not a separate decision, and on a mid-call
+ * reload the agent is reading this while a customer waits.
+ */
+.micFailureAction {
+  margin-left: 8px;
+  padding: 2px 10px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--danger);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.healthPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.healthDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+.healthPill[data-state='reconnecting'] .healthDot,
+.healthPill[data-state='connecting'] .healthDot {
+  background: var(--warning);
+}
+
+.healthPill[data-state='session_gone'] .healthDot,
+.healthPill[data-state='superseded'] .healthDot,
+/*
+  `disconnected` MUST be here. The dot's default is `--success`, so a state whose
+  whole meaning is "you are not receiving calls" rendered a healthy green dot
+  beside the word "Disconnected" — the label was named explicitly and the
+  indicator was left to the fallback, which is the same defect one layer down and
+  in the channel a supervisor glances at. §A.3 requires text, icon and colour to
+  agree; two of the three disagreed.
+*/
+.healthPill[data-state='disconnected'] .healthDot {
+  background: var(--danger);
+}
+
+/* ── State rail ─────────────────────────────────────────────────────────── */
+
+.rail {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 64px;
+  flex: 0 0 64px;
+  padding: 0 20px 0 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-tertiary);
+}
+
+/* Colour is never the only channel — the label carries the same information
+   as text, so the tint is reinforcement rather than the signal itself. */
+.railAccent {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--text-muted);
+}
+
+.rail_info { background: var(--info-subtle); }
+.rail_info .railAccent { background: var(--info); }
+
+.rail_warning { background: var(--warning-subtle); }
+.rail_warning .railAccent { background: var(--warning); }
+
+.rail_success { background: var(--success-subtle); }
+.rail_success .railAccent { background: var(--success); }
+
+.rail_danger { background: var(--danger-subtle); }
+.rail_danger .railAccent { background: var(--danger); }
+
+.railLabel {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.railDetail {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.countdown {
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+.goAvailable {
+  margin-left: auto;
+  height: 48px;
+  padding: 0 24px;
+  border: none;
+  border-radius: var(--radius-md, 8px);
+  background: var(--accent);
+  color: var(--bg-primary);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.goAvailable:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/*
+ * A disabled control always carries a visible stated reason. A bare greyed
+ * button reads as "you lack permission today", which invites a support ticket
+ * that has no resolution.
+ */
+.blockedReason {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* ── Body: the frozen three-column grid ─────────────────────────────────── */
+
+.body {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr) 320px;
+  gap: 20px;
+  padding: 20px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.body:focus {
+  outline: none;
+}
+
+.colContact,
+.colDetail,
+.colOutcome,
+.colActions {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--bg-secondary);
+  padding: 16px;
+}
+
+.colActions {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: stretch;
+  gap: 8px;
+}
+
+/* ── Contact column ─────────────────────────────────────────────────────── */
+
+.dialled {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin: 0 0 4px;
+}
+
+.attemptMeta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0 0 16px;
+}
+
+.heroList {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.heroField {
+  margin: 0;
+}
+
+.heroLabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0 0 2px;
+}
+
+/* Values the agent must read are never --text-muted. */
+.heroValue {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.autoSelected {
+  margin: 12px 0 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* ── Detail column ──────────────────────────────────────────────────────── */
+
+.fieldList {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 20px;
+}
+
+.field {
+  min-width: 0;
+}
+
+/* A long header clamps to two lines rather than a single-line ellipsis —
+   one line of a 60-character header tells the agent nothing. */
+.fieldLabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0 0 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.fieldValue {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+/*
+ * §A.6.3 — the field filter. Sits above the field list at every density: this
+ * is deliberately its own block rather than folded into `.fieldList` so it
+ * never scrolls out of view with the rows it filters.
+ */
+.fieldFilter {
+  margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Same visible label + shortcut-chip shape as `NotesField`'s `.label`/`.shortcut` —
+   the console's one existing convention for "here is a field, and here is the
+   key that reaches it". */
+.fieldFilterLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.fieldFilterKey {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+.fieldFilterInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.fieldFilterInput::placeholder {
+  color: var(--text-secondary);
+}
+
+.fieldFilterCount {
+  margin: 0;
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.fieldFilterEmpty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/*
+ * "Matching characters are marked" (§A.6.3), never colour alone (§A.11) — the
+ * background plus bold weight is a second channel a colour-blind agent or a
+ * badly calibrated floor monitor still sees.
+ */
+.filterMatch {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--text-primary);
+  font-weight: 700;
+  border-radius: 2px;
+}
+
+.emptyFields {
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.emptyFields summary {
+  cursor: pointer;
+  padding: 6px 0;
+}
+
+.priorAttempts {
+  margin-top: 20px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+/*
+ * One campaign's worth of history.
+ *
+ * The rule sits ABOVE each group except the first, so a single-campaign
+ * history — the 100% case today — is visually identical to what it was before
+ * grouping existed: one heading, one list, no divider. The structure only
+ * becomes visible when there is more than one pass to separate.
+ */
+.priorGroup + .priorGroup {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+.priorGroupTitle {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.priorGroupName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.priorGroupCount {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.sectionTitle {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin: 0 0 8px;
+}
+
+.priorList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.priorItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.priorOutcome {
+  font-weight: 600;
+}
+
+/*
+ * A disposition code this campaign's catalog cannot name — routine once history
+ * spans a lineage, because the parent's catalog is not (and must not be) here.
+ *
+ * Monospaced and lighter, so it reads as the identifier it is rather than as a
+ * label somebody wrote. The campaign name in the group heading above is the
+ * explanation, which is why this needs no words of its own.
+ */
+.priorOutcome[data-unlabelled] {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.priorNote {
+  color: var(--text-secondary);
+}
+
+/* ── Release / idle ─────────────────────────────────────────────────────── */
+
+.releasePanel {
+  padding: 8px 0;
+}
+
+.releaseHeadline {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* Server-authored text, clamped to two lines. */
+.releaseSubtext {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.emptyState {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.idleHeadline {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.idleHint {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+/*
+ * The waiting middle column. Calm on purpose: this panel is in view for hours,
+ * and it must not look like a dashboard. No controls — see IdleGuide.
+ */
+.idleGuide {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 100%;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 12px 8px;
+}
+
+.idleGuideHeading {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.idleGuideIntro {
+  margin: 0 0 20px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.idleKeyGroupLabel {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.idleKeys {
+  list-style: none;
+  margin: 0 0 18px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.idleKeys:last-child {
+  margin-bottom: 0;
+}
+
+.idleKeyRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.idleKeyChip {
+  flex: 0 0 auto;
+  min-width: 4.5rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 6px;
+  text-align: center;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+/* ── Hang up ────────────────────────────────────────────────────────────── */
+
+/*
+ * Bottom-right: the corner is the easiest target to hit under pressure, and
+ * this control is always in the same place regardless of state.
+ */
+.hangup {
+  height: 56px;
+  border: none;
+  border-radius: var(--radius-md, 8px);
+  background: var(--danger);
+  color: var(--bg-primary);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.hangup:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.fatal {
+  margin: auto;
+  max-width: 480px;
+  padding: 24px;
+  text-align: center;
+}
+
+/* The join-conflict screen's link back to the station the agent is still joined
+   to. Only that screen carries a primary action, because only that refusal has a
+   remedy the console can point at. */
+.fatalAction {
+  display: inline-block;
+  margin-top: 16px;
+  padding: 8px 16px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--accent);
+  color: #fff;
+  font-size: var(--text-sm, 14px);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/* The escape hatch, quieter than a remedy: it does not fix anything, it only
+   gets the agent off a screen that has no other navigation on it. On BOTH fatal
+   screens — each one otherwise strands whichever role cannot reach a campaign
+   page, and the console is full-viewport with no sidebar behind it. */
+.fatalEscape {
+  display: block;
+  margin-top: 12px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm, 14px);
+  text-decoration: underline;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/*
+ * Column 3 — the outcome. Same shell as the other columns so the three-column
+ * geometry is literally one rule: a column that sized itself would drift the
+ * moment its content changed, and geometry drift on this screen is a misclick
+ * that hangs up on a person (§A.2).
+ */
+.colOutcome {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/*
+ * The action bar. Fixed height in every state, because the controls in it are the
+ * ones an agent reaches for without looking.
+ */
+.actionBar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  min-height: 64px;
+}
+
+.save {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 18px;
+  border: none;
+  border-radius: var(--radius-md, 8px);
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/*
+ * Mute. Secondary weight — it sits next to the two controls that end things
+ * (DNC, Hang up) and must not read as one of them. Geometry matches `.save` so
+ * the action bar's row height never changes between states (§1, frozen
+ * geometry): a bar that grows 4px when a call connects moves every control
+ * under the agent's cursor.
+ */
+.mute {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Pressed state carries colour as well as `aria-pressed`, so the toggle is not
+   distinguishable by assistive technology alone. */
+.mute[aria-pressed='true'] {
+  border-color: var(--warning, #d29922);
+  color: var(--warning, #d29922);
+}
+
+.mute:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.save .shortcut {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  opacity: 0.75;
+}
+
+/* Pushes hang-up to the far end, away from everything else an agent presses. */
+.actionBar > *:last-child {
+  margin-left: auto;
+}
+
+/*
+ * A refusal, not an alarm. Core declined the presence change and said why; the
+ * agent's next action is in the sentence. Warning weight rather than danger —
+ * nothing failed, and `attempt_not_dispositionable` is the system working.
+ */
+.presenceRefusal {
+  margin: 0;
+  padding: 8px 20px;
+  font-size: 0.875rem;
+  color: var(--warning, #d29922);
+  background: color-mix(in srgb, var(--warning, #d29922) 8%, transparent);
+}
+
+/*
+ * The retry banner.
+ *
+ * Full-bleed like `.micFailure` and `.presenceRefusal` above it, and quieter
+ * than both on purpose: those two are a fault and a refusal, this is standing
+ * context. `--accent-subtle` rather than any status hue — nothing here is
+ * wrong, and an amber strip across the top of the console for a whole shift
+ * would train the agent to stop reading amber.
+ *
+ * It is campaign-constant (read from the bootstrap), so it is present for the
+ * whole session or absent for the whole session and never moves the console
+ * beneath it mid-call. See the comment at its render site.
+ */
+.retryBanner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+  margin: 0;
+  padding: 8px 20px;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--accent-subtle);
+  border-bottom: 1px solid var(--border);
+}
+
+.retryBannerLead {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.retryBannerBody {
+  min-width: 0;
+}
+
+/*
+ * Danger weight, deliberately unlike `.presenceRefusal` above (`MAG-112`).
+ *
+ * That one is a refusal — the system working, and the agent's next action is in
+ * the sentence. This one means the agent pressed Hang up, believes the call is
+ * over, and **is still connected to a customer**. Nothing else on this screen
+ * has that consequence, so nothing else gets this weight.
+ */
+.actionFailure {
+  flex-basis: 100%;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+/* Muted: the queued break was promoted, which is the ordinary outcome. */
+.breakAlreadyStarted {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+/*
+ * The lost-disposition line. Deliberately quiet and deliberately in the idle
+ * slot: it reports customer A's loss to an agent who may already be talking to
+ * customer B, so it must not compete with the call in front of them.
+ */
+.lostDisposition {
+  margin: 12px 0 0;
+  font-size: 0.875rem;
+  color: var(--warning, #d29922);
+}
+
+/* Beside the submit control, never a toast (§A.13.6). */
+.blockReason {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}

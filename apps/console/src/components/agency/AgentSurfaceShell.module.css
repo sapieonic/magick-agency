@@ -1,0 +1,107 @@
+/*
+  The frame shared by the full-viewport agent surfaces — "My performance" and
+  "My calls". Extracted from `AgentPerformancePage.module.css` when the second one
+  arrived: two copies of a header, a back link and a supervisor note is how the two
+  pages an agent moves between start looking like two different products.
+
+  Outside both shells, for the reason `/station` and `/dialer` are: an `agent` is
+  level 5 and inherits no navigation, so a shell here would be chrome around
+  nothing. Unlike the station these pages hold no socket, so the header carries an
+  ordinary link back.
+*/
+
+.shell {
+  min-height: 100vh;
+  padding: var(--space-6, 24px) var(--space-4, 16px) 48px;
+  background: var(--bg-primary);
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+  max-width: 1160px;
+  margin: 0 auto;
+}
+
+.centred {
+  display: flex;
+  justify-content: center;
+  padding: 48px 0;
+}
+
+/*
+ * A column, so the nav lands BELOW the heading rather than beside it.
+ *
+ * This was a row with `justify-content: space-between` back when the second child
+ * was a `.headerLinks` div holding two small text links (both since deleted, along
+ * with the rule). It survived the move to `AgentNav` unnoticed because
+ * nothing about a row stops compiling when its second child grows. The nav's
+ * three pills are wider than those links, `.headerMain` carries `min-width: 0`
+ * so the line never wraps, and the title got squeezed while the pills stacked
+ * vertically on the right — the exact degradation the comment in
+ * `AgentSurfaceShell.tsx` says must not happen.
+ */
+.header {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  /*
+   * No gap: `AgentNav` carries its own `margin-top`, which it needs in the other
+   * place it is mounted (`AgentHomePage`, straight after card content). A gap here
+   * would stack with it and space the nav twice as far from the title as it sits
+   * from the content there — the same nav at two different distances on two
+   * screens an agent moves between.
+   */
+  gap: 0;
+}
+
+.headerMain {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  border-radius: var(--radius);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.title {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.subtitle {
+  margin: 3px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.note {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.note a {
+  color: var(--accent);
+}

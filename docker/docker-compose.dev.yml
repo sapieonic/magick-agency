@@ -1,0 +1,44 @@
+# Dev AND test infrastructure for magick-agency, on ports no other MagickVoice
+# stack uses (core 5432/6379, master 5433/6380, master test 5434/6381, core
+# test 5433/6380). Never point anything here at those ports: core's integration
+# suite once flushdb'd master's dev Redis.
+#
+#   Postgres 5436 — databases `magick_agency` (dev) and `magick_agency_test`
+#   Redis    6383 — db 0 dev, db 1 test (only db 1 is ever flushed, by tests)
+#
+#   pnpm infra:up     start and wait for health
+#   pnpm infra:reset  drop the volume
+name: magick-agency
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: magick-agency-postgres
+    environment:
+      POSTGRES_DB: magick_agency
+      POSTGRES_USER: magick_agency
+      POSTGRES_PASSWORD: magick_agency_password
+    ports:
+      - "5436:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U magick_agency -d magick_agency_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: magick-agency-redis
+    ports:
+      - "6383:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:

@@ -1,0 +1,71 @@
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* ── Search ── */
+.searchBar {
+  position: relative;
+  max-width: 360px;
+  margin-bottom: 16px;
+}
+
+.searchIcon {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  padding-left: 36px;
+}
+
+/* ── Tenant name cell ── */
+.nameCell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nameIcon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.nameTitle {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.nameSlug {
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* ── Create form ── */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 13px;
+  padding: 8px 12px;
+  background: var(--danger-subtle);
+  border-radius: var(--radius);
+  border: 1px solid var(--danger-subtle);
+}

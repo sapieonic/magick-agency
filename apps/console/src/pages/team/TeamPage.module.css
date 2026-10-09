@@ -1,0 +1,334 @@
+/* ── Layout ───────────────────────────────────── */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.loadingWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+}
+
+/* ── Table Card ──────────────────────────────── */
+
+.tableCard {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.tableWrap {
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+/* ── Name Cell ───────────────────────────────── */
+
+.nameCell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent-subtle);
+  color: var(--accent-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.email {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* ── Role Badge ──────────────────────────────── */
+
+.roleBadge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* ── Account / Invited ───────────────────────── */
+/* `.invited` was `.joined`, renamed with the column: it styles the cell
+   rendering `membership.created_at`, which is when the invite was WRITTEN and
+   never when the person signed up. The Invite badge beside it reuses
+   `.roleBadge` and has no class of its own. */
+
+.account {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* The Invite cell when master sent no `invite_state` at all — an older server,
+   or a cached SPA outliving a rollback. Muted and unweighted on purpose: it is
+   an absence of information, and it must not read as a third STATE sitting
+   alongside Pending and Joined. See `InviteStateBadge`. */
+.inviteUnknown {
+  color: var(--text-muted);
+}
+
+.invited {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ── Actions Dropdown ────────────────────────── */
+
+.actionsWrap {
+  position: relative;
+}
+
+.actionsButton {
+  padding: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  border-radius: var(--radius);
+  transition: all var(--transition);
+}
+
+.actionsButton:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.actionsBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9099;
+}
+
+/* Portaled to document.body with fixed coords from JS so table overflow cannot clip it. */
+.actionsMenu {
+  position: fixed;
+  z-index: 9100;
+  min-width: 180px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  animation: fadeIn 100ms ease-out;
+}
+
+.actionsSubWrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.actionsItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all var(--transition);
+  text-align: left;
+}
+
+.actionsItem:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.actionsItemDanger {
+  color: var(--danger);
+}
+
+.actionsItemDanger:hover {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.actionsChevron {
+  margin-left: auto;
+}
+
+.roleSubmenu {
+  padding: 4px 0 4px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.roleOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all var(--transition);
+  text-align: left;
+}
+
+.roleOption:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.roleOptionDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Modal ────────────────────────────────────── */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  animation: fadeIn 150ms ease-out;
+}
+
+.modal {
+  width: 100%;
+  max-width: 460px;
+  margin: 16px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  animation: slideUp 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 20px 0;
+}
+
+.modalTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.modalClose {
+  padding: 4px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.modalClose:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.modalBody {
+  padding: 16px 20px 20px;
+}
+
+.modalFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+/* ── Invite hand-off panel ───────────────────── */
+
+/* The sentence that says no email was sent. Sized as body copy rather than as a
+   caption: it is the panel's subject, not an aside beneath it. */
+.handoffLead {
+  margin: 0 0 16px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.handoffLead strong {
+  color: var(--text-primary);
+}
+
+/* Sits under the copyable link it explains, so it takes the caption size the
+   rest of the page gives to secondary notes. */
+.handoffNote {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* ── Animations ──────────────────────────────── */
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ── Responsive ──────────────────────────────── */
+
+@media (max-width: 768px) {
+  .tableCard {
+    border-radius: var(--radius);
+  }
+
+  .nameCell {
+    min-width: 140px;
+  }
+}

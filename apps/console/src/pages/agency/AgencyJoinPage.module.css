@@ -1,0 +1,675 @@
+/*
+  The invite landing page.
+
+  ── Built beside `AgencyLoginPage.module.css`, not on top of it ─────────────
+  Deliberately not an import of that sheet, for the reason it gives for not
+  importing `LoginPage.module.css`: shared shape is not shared purpose, and a
+  page that reaches into another page's stylesheet inherits every change made for
+  the other one. What is shared is the design SYSTEM — the same tokens, the same
+  type scale (26 / 24 / 17 / 15 / 13 / 12), the same spacing rhythm, the same
+  quiet two-radial glow, the same two-panel composition — so an agent who lands
+  here today and sees `/agency/login` tomorrow is looking at one product.
+
+  ── Everything colour comes from a token ────────────────────────────────────
+  No literal accents anywhere. `--accent` is injected per brand at build time
+  (`brands/<name>/brand.config.json` → `__BRAND__` → `src/brand/index.ts`), so a
+  hardcoded `#7c5cfc` would render the Samarthya whitelabel — whose accent is a
+  gold `#c9a063` with a `flat` elevation style — as MagickVoice purple on the
+  first screen its agents ever see. The only literal colours in this file are
+  Google's four brand fills in the button's SVG, which live in the markup.
+
+  Both themes are covered by the tokens themselves: `global.css` redefines the
+  whole palette under `[data-theme='light']`, so nothing here needs a second
+  block. The one exception is called out where it appears.
+*/
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+  position: relative;
+  overflow: hidden;
+}
+
+/*
+  The same restrained wash as the agency door — teal low-left, accent high-right —
+  so the two pages read as one surface. Teal is a fixed palette hue rather than
+  the brand accent, which is what stops the pair collapsing into one colour on a
+  brand whose accent is already warm.
+*/
+.glow {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 12% 20%, var(--accent-subtle), transparent 55%),
+    radial-gradient(ellipse at 88% 80%, rgba(20, 184, 166, 0.1), transparent 55%);
+  pointer-events: none;
+}
+
+/*
+  Card first, steps second — in the DOM as well as on screen.
+
+  The card carries every control; the steps carry reassurance. On a phone that
+  ordering is the layout (they stack), and on a desktop `row-reverse` puts the
+  steps on the left where the login door's panel is, without the DOM having to
+  lead with the half nobody came for. Tab order and screen-reader order follow
+  the DOM, so the agent reaches the buttons first either way.
+*/
+.layout {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  max-width: 460px;
+}
+
+.card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-lg);
+  padding: 36px 32px;
+  width: 100%;
+}
+
+/* ── Masthead ─────────────────────────────────── */
+
+.wordmark {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 800;
+  background: var(--gradient-purple);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.02em;
+}
+
+.eyebrow {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 2px 0 24px;
+}
+
+/*
+  The invitation itself, and the one place this page raises its voice.
+
+  20px against the card's 13px body is a deliberate step above the login door's
+  17px notice heading: that one titles a message, this one IS the message. Set
+  in the display face because it is the sentence somebody reads once and decides
+  on, and `-0.015em` because the display face is drawn loose at this size.
+*/
+.title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  line-height: 1.3;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--text-primary);
+  margin: 0 0 10px;
+  /* Keeps the headline under ~46 characters a line at every width the card takes. */
+  text-wrap: balance;
+}
+
+.lede {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0 0 16px;
+}
+
+.strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/*
+  The invited address, set apart from the sentence above it.
+
+  A quiet inset row rather than another line of prose: it is the identity being
+  claimed, it is the value the whole flow has historically got wrong, and it is
+  the same string the read-only field below carries. `word-break` because an
+  address is one unbroken token and a long one would otherwise push the card
+  wider than the viewport on a narrow phone.
+*/
+.address {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 24px;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13.5px;
+  word-break: break-all;
+}
+
+.address svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* ── The two ways in ──────────────────────────── */
+
+.googleBtn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 11px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+}
+
+.googleBtn:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+  border-color: var(--accent);
+}
+
+.googleBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/*
+  The password path, one click from the primary rather than hidden behind a
+  disclosure triangle. It is the reason this page exists — an invited agent with
+  no Google account had no way in at all before it — so it must not look like an
+  advanced option, and it must not compete with the button above.
+*/
+.secondaryChoice {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 9px 12px;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.secondaryChoice:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.secondaryChoice:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 22px 0 18px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ── The credential form ──────────────────────── */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+}
+
+/*
+  The read-only address. Dimmed text on a dimmed ground, so it reads as settled
+  rather than broken — a `disabled` grey would say "this is unavailable", which is
+  the opposite of what is true here. `cursor: default` stops a text caret
+  appearing over a field nothing can be typed into.
+
+  The `!important` is not laziness and must not be deleted. `global.css` styles
+  fields with `input:where(:not([type='checkbox'], [type='radio']))` — `:where()`
+  is specificity zero, so that rule is (0,0,1) and this class beats it — but the
+  light-theme override beside it is `[data-theme='light'] input:where(…)`, which
+  is (0,1,1) and OUT-SPECIFIES a CSS-Module class. Without the `!important` this
+  field takes the white field background in light theme only, and looks exactly
+  like the editable box the whole design says it is not — in one theme, with
+  nothing in this suite able to see it.
+*/
+.readOnlyInput {
+  color: var(--text-secondary);
+  background: var(--bg-tertiary) !important;
+  cursor: default;
+}
+
+.fieldNote {
+  margin: 7px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* ── Password strength ────────────────────────── */
+
+.strength {
+  margin-top: 9px;
+}
+
+.strengthTrack {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+/*
+  Width is set inline from the score; the colour is set here, per score, so the
+  two cannot disagree about what a rung means. `transition` on width only —
+  a colour that crossfades through the intervening hues reads as a value passing
+  through states it never had.
+*/
+.strengthFill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--danger);
+  transition: width var(--transition);
+}
+
+.strengthFill[data-score='2'] { background: var(--warning); }
+.strengthFill[data-score='3'] { background: var(--accent); }
+.strengthFill[data-score='4'] { background: var(--success); }
+
+.strengthText {
+  margin: 7px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/*
+  The word ("Weak", "Strong") carries the same colour as the bar and is followed
+  by the advice in the muted body colour. Colour is never the only signal here —
+  the word says it too — which is what keeps the meter readable for anybody who
+  cannot separate the four fills.
+*/
+.strengthLabel {
+  font-weight: 600;
+  color: var(--danger);
+  margin-right: 6px;
+}
+
+.strengthLabel[data-score='2'] { color: var(--warning); }
+.strengthLabel[data-score='3'] { color: var(--accent); }
+.strengthLabel[data-score='4'] { color: var(--success); }
+
+/* ── The address-mismatch confirmation ────────── */
+
+/*
+  Bordered and tinted with `--warning`, not `--danger`.
+
+  Nothing has failed: the agent signed in successfully with an account that is
+  very likely theirs, and linking it is a legitimate answer. A red panel would
+  read as an error and push people to back out of a choice they are allowed to
+  make — while a plain card would let the difference slide past, which is the
+  whole failure this screen exists to stop.
+*/
+.mismatch {
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-lg);
+  background: var(--warning-subtle);
+  padding: 18px;
+}
+
+.mismatchTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 10px;
+}
+
+/* The heading takes focus when this appears, so it needs a ring of its own —
+   the global `:focus-visible` rule covers buttons and links, not headings. */
+.mismatchTitle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.mismatchBody {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0 0 12px;
+  word-break: break-word;
+}
+
+/*
+  Stacked, full width, confirm above decline.
+
+  Side by side at 13px the two labels are near-identical in length and weight,
+  and this is the one decision on the page that must not be answered by aiming
+  at whichever button the thumb is already over.
+*/
+.mismatchActions {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 4px;
+}
+
+.mismatchActions button {
+  width: 100%;
+}
+
+/* ── Errors, expiry, outcomes ─────────────────── */
+
+.errorText {
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius);
+  background: var(--danger-subtle);
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/*
+  The way onward from an error that HAS one — today, master's `identity_in_use`
+  conflict, where the fix is to sign in with the colliding account rather than to
+  try this page again. Inside the alert box rather than under it, because the
+  sentence and its remedy are one thing to read: master's message says "sign in
+  with it directly" and this is the only place on the page that can be pressed to
+  do so.
+*/
+.errorLink {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--danger);
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+/*
+  A link out of here that is refused because a claim is in flight — see
+  `GuardedLink`. Styled rather than removed, so the affordance stays where the
+  visitor left it and comes back the moment the claim settles.
+
+  Deliberately no `pointer-events: none`: the refusal is the component's own
+  `preventDefault`, which covers a keyboard Enter as well as a click, and hiding
+  the pointer from it would only make the two disagree about what happened.
+*/
+.errorLink[aria-disabled='true'],
+.stepsFooter a[aria-disabled='true'] {
+  opacity: 0.55;
+  cursor: default;
+  text-decoration: none;
+}
+
+.expiry {
+  margin: 20px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.outcomeTitle {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--text-primary);
+  margin: 0 0 12px;
+  text-wrap: balance;
+}
+
+.outcomeBody {
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  margin: 0 0 20px;
+}
+
+/* ── Loading skeleton ─────────────────────────── */
+
+/*
+  The card's own shape, held for the length of one request, so the invitation
+  arrives into a box that is already there rather than replacing something a
+  different size. Nothing here guesses at content: no placeholder name, no
+  placeholder role, no button that looks pressable.
+*/
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skelLine,
+.skelBlock,
+.skelButton {
+  display: block;
+  position: relative;
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  /* Clips the sweep below, which is what lets it start and end off the bar. */
+  overflow: hidden;
+}
+
+.skelLine { height: 13px; }
+.skelBlock { height: 54px; margin-top: 4px; }
+.skelButton { height: 42px; margin-top: 8px; }
+
+/*
+  The sweep, and its base `transform` IS its own `from` frame — which is
+  load-bearing rather than redundant.
+
+  `prefers-reduced-motion` does not stop an animation in this app: the global
+  block at the foot of `global.css` collapses every one to `0.01ms` and a single
+  iteration, so the animation still RUNS, instantly, and the element lands
+  wherever its fill-mode plus base styles put it. Written without the base
+  translate, this shimmer therefore reverted to `translateX(0)` and parked a
+  permanent pale band across the middle of every skeleton bar — which is the exact
+  defect `global.css` documents having shipped once on a progress bar.
+*/
+.skelLine::after,
+.skelBlock::after,
+.skelButton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--bg-elevated),
+    transparent
+  );
+  animation: joinShimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes joinShimmer {
+  to { transform: translateX(100%); }
+}
+
+.skeletonStatus {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 22px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── What happens next ────────────────────────── */
+
+/*
+  A panel rather than a gradient slab.
+
+  The login door's left panel runs `--gradient-purple` at full bleed with white
+  text on it, which works there because it is chrome. Here it is content somebody
+  reads carefully, once, and body copy at 12px on a saturated gradient is the
+  hardest thing on either page to read — so this keeps the page's own surface and
+  spends the accent on the three markers instead.
+*/
+.steps {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--bg-secondary);
+  padding: 22px 24px;
+}
+
+.stepsHeading {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 16px;
+}
+
+.stepList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.step {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+}
+
+/*
+  Icon and ordinal in one mark. The icon says what the step IS at a glance; the
+  small numeral says these three happen in order, which is the thing the panel is
+  actually claiming. Numbering is earned here — each step is unreachable until
+  the one above it is done — rather than being applied to a list because a list
+  can be numbered.
+*/
+.stepMark {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--radius);
+  background: var(--accent-subtle);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stepNumber {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+}
+
+.stepTitle {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 3px;
+}
+
+.stepDesc {
+  display: block;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+/*
+  The exit for somebody who already finished this. Quiet, at the bottom of the
+  panel rather than beside the buttons: on a claimed invite the terminal screen
+  offers the same link as its primary action, so this one is only for the person
+  who arrived at a live invite they have effectively already used.
+*/
+.stepsFooter {
+  margin: 18px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-light);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.stepsFooter a {
+  color: var(--accent);
+}
+
+/* ── Wide viewports ───────────────────────────── */
+
+/*
+  The two-panel composition, and the point at which it stops helping.
+
+  Below 900px the panels would each be under ~420px, which puts the three step
+  descriptions on four lines apiece beside a form — so the stack above IS the
+  layout for a phone, and this block is the enhancement rather than the other way
+  round. That ordering matters on this page specifically: it is opened from an
+  email, and an email is read on a phone at least as often as on a desktop.
+*/
+@media (min-width: 900px) {
+  .layout {
+    flex-direction: row-reverse;
+    align-items: flex-start;
+    justify-content: center;
+    max-width: 900px;
+    gap: 28px;
+  }
+
+  .card {
+    flex: 0 0 460px;
+  }
+
+  .steps {
+    flex: 1 1 auto;
+    /* Aligns the panel's first line with the card's wordmark rather than its
+       border, so the two columns read from the same baseline. */
+    margin-top: 24px;
+    background: transparent;
+    border: none;
+    padding: 0 4px;
+  }
+
+  .stepsFooter {
+    border-top-color: var(--border);
+  }
+}

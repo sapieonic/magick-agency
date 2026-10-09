@@ -1,0 +1,106 @@
+/* No new design tokens (§0.1 principle 5, §1). The focus ring is the global
+   `button:focus-visible` rule and is NOT overridden here — criterion (d) is
+   asserted on a visible ring, so overriding it would quietly fail the criterion
+   while every test still passed. */
+
+.wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+}
+
+.trigger {
+  height: 40px;
+  padding: 0 var(--space-4, 16px);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: var(--text-sm, 14px);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.trigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Busy is `aria-disabled`, never `:disabled` — the element must stay focusable. */
+.trigger[aria-disabled='true'] {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Discoverability without a tutorial (§A.9): agents who never press `?` still
+   learn `B` from looking at the button for a week. */
+.shortcut {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+}
+
+.blockedReason {
+  font-size: var(--text-xs, 12px);
+  color: var(--text-muted);
+  max-width: 22ch;
+  line-height: 1.35;
+}
+
+.popover {
+  z-index: 60;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: var(--space-2, 8px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* No entry animation. §A.3 allows exactly one looping animation on this screen
+     and it is the rail's pulse dot; a popover that animates in also delays the
+     moment the focus ring is legible. */
+}
+
+.rejection {
+  margin: 0 0 var(--space-2, 8px);
+  padding: var(--space-2, 8px);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--warning-subtle, var(--bg-tertiary));
+  color: var(--text-primary);
+  font-size: var(--text-xs, 12px);
+  line-height: 1.4;
+}
+
+.item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--text-sm, 14px);
+  cursor: pointer;
+}
+
+.item:hover,
+.item[data-active='true'] {
+  background: var(--bg-elevated);
+}
+
+.item[aria-disabled='true'] {
+  opacity: 0.6;
+  cursor: default;
+}

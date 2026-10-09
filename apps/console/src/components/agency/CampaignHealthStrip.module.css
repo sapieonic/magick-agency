@@ -1,0 +1,296 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.wrap[data-mode='readouts'] {
+  gap: 0;
+  margin-top: 0;
+}
+
+/* ── The diagnosis ──────────────────────────────────────────────────────────
+   One horizontal row: icon chip, the sentence and its evidence run, then the
+   actions pinned right. `align-items: center` is what keeps a one-line
+   diagnosis from leaving the buttons floating at the top of a short banner;
+   the disclosure list growing the body simply re-centres them.
+
+   Every amber here is `color-mix`ed off `--warning` rather than hardcoded, so
+   the banner is a dark amber on light paper and a light amber on the dark
+   theme's own `--warning-subtle` — the mockup's literal `#7a5410` would be
+   unreadable on the second one.
+─────────────────────────────────────────────────────────────────────────────*/
+.diagnosis {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  border: 1px solid color-mix(in srgb, var(--warning) 32%, transparent);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius-lg);
+  background: var(--warning-subtle);
+}
+
+.diagnosisIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--warning) 16%, transparent);
+  color: var(--warning);
+}
+
+.diagnosisBody {
+  min-width: 0;
+}
+
+.headline {
+  color: color-mix(in srgb, var(--warning) 70%, var(--text-primary));
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+/* The facts read across, separated by a column gap rather than by punctuation
+   or three stacked paragraphs. It wraps, so a long run on a narrow rail becomes
+   two lines of facts and never a paragraph. */
+.evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 2px;
+  color: color-mix(in srgb, var(--warning) 62%, var(--text-primary));
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.evidence > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.evidence strong {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.advice {
+  margin-top: 4px;
+  color: color-mix(in srgb, var(--warning) 52%, var(--text-secondary));
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.others {
+  margin-top: 8px;
+}
+
+.othersToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--warning) 24%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: color-mix(in srgb, var(--warning) 62%, var(--text-primary));
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.othersToggle:hover {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--border));
+  color: var(--text-primary);
+}
+
+.othersList {
+  margin: 7px 0 0 20px;
+  padding: 0;
+  list-style: disc;
+  color: color-mix(in srgb, var(--warning) 55%, var(--text-secondary));
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+/* The one thing a supervisor can DO about the blocker, at the end of the
+   sentence that describes it. `margin-left: auto` is the whole layout: it takes
+   the empty right half the old stacked banner left behind. */
+.diagnosisActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.diagnosisAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 13px;
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+  border-radius: 9px;
+  background: var(--bg-secondary);
+  color: color-mix(in srgb, var(--warning) 70%, var(--text-primary));
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.diagnosisAction:hover {
+  border-color: color-mix(in srgb, var(--warning) 65%, transparent);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.diagnosisAction:active {
+  transform: scale(0.98);
+}
+
+/* Below this the banner is no longer a row — the actions would squeeze the
+   evidence into a column of single words long before they ran out of room. */
+@media (max-width: 900px) {
+  .diagnosis {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .diagnosisActions {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+
+/* ── The read-outs, as rail rows ────────────────────────────────────────────
+   A header line with the label and its value pushed right, a meter, then the
+   detail sentence. Rows are separated by a hairline rather than boxed, because
+   they sit inside a panel that is already a card.
+─────────────────────────────────────────────────────────────────────────────*/
+.readouts {
+  display: flex;
+  flex-direction: column;
+}
+
+.readout {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 14px 0;
+  min-width: 0;
+}
+
+.readout:first-child {
+  padding-top: 0;
+}
+
+.readout + .readout {
+  border-top: 1px solid var(--border-light);
+}
+
+.readoutHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.readoutLabel {
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.readoutValue {
+  color: var(--text-primary);
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Used only when the number is KNOWN and at or near its ceiling. An unreadable
+   count is never styled as an alert — "we don't know" is not "you're at the
+   limit", and colouring it the same would send a supervisor after the wrong
+   problem. */
+.readoutValueAlert {
+  composes: readoutValue;
+  color: var(--warning);
+}
+
+.readoutDetail {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* ── Meters ────────────────────────────────────────────────────────────────
+   `.meter` clips its fill; `.meterTrack` does not, because the abandonment
+   ceiling tick deliberately overhangs the track top and bottom.
+
+   Neither ever renders a zero-width fill: the component omits the element
+   entirely when there is nothing to draw, so an empty track means "not drawn"
+   and can never be mistaken for "measured at nothing".
+─────────────────────────────────────────────────────────────────────────────*/
+.meter {
+  position: relative;
+  overflow: hidden;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+}
+
+.meterTrack {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+}
+
+.meterFill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.meterFillAlert {
+  composes: meterFill;
+  background: var(--warning);
+}
+
+/* Proximity to the campaign's own ceiling, which the track's full width is. */
+.meterFill[data-band='ok'] {
+  background: var(--success);
+}
+
+.meterFill[data-band='near'] {
+  background: var(--warning);
+}
+
+.meterFill[data-band='over'] {
+  background: var(--danger);
+}
+
+.meterCeiling {
+  position: absolute;
+  top: -3px;
+  left: calc(100% - 2px);
+  width: 2px;
+  height: 14px;
+  border-radius: 1px;
+  background: var(--danger);
+}

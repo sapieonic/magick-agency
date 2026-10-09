@@ -1,0 +1,122 @@
+.page {
+  max-width: 1240px;
+}
+
+/*
+  Stated on the page rather than left to be inferred from the numbers being
+  legible: this table and its export are the personal data of everyone on the
+  roster, and the supervisor reading it is not the agent the masking rules in
+  the UX spec were written about.
+*/
+.privacyNote {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 8px 0 12px;
+}
+
+.stateFilter {
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+
+.when {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.numeric {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.phoneLink {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--border);
+}
+
+.phoneLink:hover {
+  border-bottom-color: currentColor;
+}
+
+/*
+  Muted rather than blank. An attempt with no agent and no recording is a real
+  row and the most misreadable thing on this page — an em dash reads as data we
+  failed to load, which is the opposite of the truth.
+*/
+.mutedCell {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.state::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.state[data-state='completed'] {
+  background: var(--success-subtle, rgba(47, 158, 68, 0.12));
+  color: var(--success, #2f9e44);
+}
+
+/*
+  Suppressed is the state this whole page exists to make visible, so it is the
+  one that is coloured rather than left as a grey pill among six.
+*/
+.state[data-state='suppressed'] {
+  background: var(--warning-subtle, rgba(245, 166, 35, 0.12));
+  color: var(--warning, #f5a623);
+}
+
+.state[data-state='exhausted'] {
+  background: var(--danger-subtle, rgba(214, 69, 69, 0.12));
+  color: var(--danger, #d64545);
+}
+
+/*
+  Not part of the customer's retry allowance — a redial after one of OUR faults
+  must not read as us having called them more times than the campaign permits.
+*/
+.ourFault {
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.suppressedReason {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.srOnly {
+  composes: sr-only from global;
+}
+

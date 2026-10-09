@@ -1,0 +1,135 @@
+/* No new design tokens (§0.1 principle 5), and the global
+   `button:focus-visible` ring is NOT overridden — the console's keyboard
+   criterion is asserted on a visible ring. */
+
+.wrap {
+  display: flex;
+  align-items: center;
+}
+
+/* Matched to the cue-settings trigger and the status pills beside it: the
+   console's geometry is frozen, so a control in the header must not change the
+   header's height in any state. */
+.trigger {
+  height: 28px;
+  width: 28px;
+  /*
+    Load-bearing. The global `button` rule sets `padding: 9px 18px`. This
+    control is a 28×28 icon well, and with `box-sizing: border-box` that
+    padding leaves a negative content box — the gear clips to nothing and the
+    button reads as an empty square. Cue settings next door is a labelled
+    pill, so it never hits this.
+  */
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.trigger svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.trigger:hover,
+.trigger[aria-expanded='true'] {
+  background: var(--bg-elevated, var(--bg-secondary));
+  border-color: var(--border-strong, var(--border));
+}
+
+.popover {
+  z-index: 60;
+  min-width: 260px;
+  max-width: min(340px, calc(100vw - 16px));
+  padding: var(--space-2, 8px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* No entry animation — §A.3 allows exactly one looping animation on this
+     screen (the rail's pulse dot), and an animated popover delays the moment the
+     focus ring is legible. */
+}
+
+.item {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.itemIcon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+
+.itemBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.item:hover,
+.item:focus-visible {
+  background: var(--bg-elevated);
+  text-decoration: none;
+}
+
+/* Refused, never `:disabled` — see the component comment. */
+.item[aria-disabled='true'] {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.itemLabel {
+  font-size: var(--text-sm, 14px);
+  font-weight: 600;
+  color: inherit;
+}
+
+/* The two acts are only distinguishable by what they promise, so the promise is
+   part of the item rather than a tooltip. */
+.itemHint {
+  font-size: var(--text-xs, 12px);
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.blockedReason {
+  margin: 0 0 var(--space-2, 8px);
+  padding: 0 var(--space-3, 12px);
+  font-size: var(--text-xs, 12px);
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+/* Separates the two ways OUT of the station from the two links that are not a
+   way out at all — see the component's third-group note. A hairline rather than
+   a heading: the group is two items long and a label would be more chrome than
+   the thing it labels. */
+.divider {
+  height: 1px;
+  margin: var(--space-2, 8px) var(--space-3, 12px);
+  border: 0;
+  background: var(--border);
+}

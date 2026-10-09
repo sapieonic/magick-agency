@@ -1,0 +1,259 @@
+.page {
+  max-width: 1100px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.headerCopy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.state {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+  color: var(--text-secondary);
+}
+
+.state[data-state='suppressed'] {
+  border-color: var(--warning, #f5a623);
+  color: var(--warning, #f5a623);
+}
+
+.state[data-state='completed'] {
+  border-color: var(--success, #2f9e44);
+  color: var(--success, #2f9e44);
+}
+
+.summary {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 4px 0 12px;
+}
+
+/*
+  A sentence, not a table cell. "Why did you stop calling me" is the most likely
+  reason someone opened this page, and it is answered in prose or it is not
+  answered.
+*/
+.suppressed {
+  display: block;
+  padding: 10px 12px;
+  margin: 0 0 16px;
+  border: 1px solid var(--warning, #f5a623);
+  border-radius: var(--radius);
+  background: rgba(245, 166, 35, 0.1);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.section {
+  margin: 20px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sectionTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 12px;
+}
+
+.sectionLink {
+  font-size: 12px;
+}
+
+.mutedNote {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.contextGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px 20px;
+  margin: 0;
+}
+
+.contextField {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.contextLabel {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.contextValue {
+  font-size: 13px;
+  color: var(--text-primary);
+  margin: 0;
+  word-break: break-word;
+}
+
+.provenance {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 14px 0 0;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th {
+  text-align: left;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  vertical-align: top;
+}
+
+.when {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.numeric {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/*
+  Bounded, and wrapping. Notes are agent-typed free text with no length rule
+  worth trusting; an unbounded column pushes every other one off the screen.
+*/
+.notes {
+  max-width: 280px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/*
+  Muted rather than blank: an attempt with no agent and no recording is a real
+  row, and an em dash reads as data we failed to load.
+*/
+.mutedCell {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.onBehalf {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--bg-tertiary, var(--bg-secondary));
+  color: var(--text-muted);
+}
+
+.recordingLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/*
+  Columns uploaded with no value, behind a disclosure — the same shape the agent
+  console uses. Collapsed so a 40-column file does not bury the fields that
+  carry information, present so the reader can tell "this column was empty" from
+  "this column was never uploaded". On a screen answering "what did you hold
+  about me", those are different answers.
+*/
+.emptyFields {
+  margin-top: 14px;
+  font-size: 13px;
+}
+
+.emptyFields summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.emptyFields .contextGrid {
+  margin-top: 10px;
+}
+
+.more {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+  padding: 12px;
+  border-top: 1px solid var(--border-light);
+}
+
+/* A pagination failure, reported beside its own control — see the page. */
+.moreError {
+  margin: 0;
+  font-size: 13px;
+  text-align: center;
+  color: var(--danger, #d64545);
+}

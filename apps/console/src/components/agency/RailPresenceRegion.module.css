@@ -1,0 +1,43 @@
+/* No new tokens (§0.1 principle 5). The focus ring comes from the global
+   `button:focus-visible` rule and must NOT be overridden anywhere in this
+   feature (§1.1). */
+
+.region {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  margin-left: auto;
+}
+
+.elapsed {
+  font-size: var(--text-sm, 14px);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.presence {
+  /* 40px per §A.13.3. Geometry is frozen: this must not change between states,
+     because a control that moves 12px is a misclick and a misclick on this
+     screen hangs up on a human being. */
+  height: 40px;
+  padding: 0 var(--space-4, 16px);
+  border: none;
+  border-radius: var(--radius-md, 8px);
+  background: var(--accent);
+  color: #fff;
+  font-size: var(--text-sm, 14px);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.presence:hover[aria-disabled='true'] {
+  cursor: default;
+}
+
+/* `aria-disabled`, never `:disabled` — the element must stay focusable, or the
+   browser blurs it and a keyboard agent is dropped to `<body>`. */
+.presence[aria-disabled='true'] {
+  opacity: 0.6;
+}

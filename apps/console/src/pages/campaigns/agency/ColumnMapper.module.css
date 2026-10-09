@@ -1,0 +1,102 @@
+.mapper {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fileLine {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.ambiguous {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  border-left: 3px solid var(--warning);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--bg-tertiary);
+  vertical-align: middle;
+}
+
+.table thead th {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.columnName {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+  max-width: 220px;
+  overflow-wrap: anywhere;
+}
+
+.samples {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.roleSelect {
+  min-width: 160px;
+}
+
+/* A mapped phone or timezone row is legible at a glance without colour alone —
+   the select itself carries the label. */
+.table tr[data-role='phone'] .columnName::after {
+  content: ' ✱';
+  color: var(--accent);
+}
+
+.table tr[data-role='ignore'] {
+  opacity: 0.6;
+}
+
+.block {
+  margin: 0;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.validity {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.timezoneNote,
+.ignoreNote,
+.countryNote {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Sits with the phone-column evidence above it — the country code is only
+   meaningful once the operator knows which column holds the number. */
+.countryCode {
+  max-width: 420px;
+  margin: 0;
+}

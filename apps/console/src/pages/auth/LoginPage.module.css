@@ -1,0 +1,510 @@
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  position: relative;
+  overflow: hidden;
+}
+
+.bgGlow {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 20% 30%, rgba(124, 92, 252, 0.18), transparent 50%),
+    radial-gradient(ellipse at 80% 70%, rgba(20, 184, 166, 0.12), transparent 50%);
+  pointer-events: none;
+}
+
+/* ── Promo Banner ─────────────────────────────── */
+
+.banner {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  max-width: 900px;
+  margin-bottom: 16px;
+  background: var(--accent-subtle);
+  border: 1px solid rgba(124, 92, 252, 0.25);
+  border-radius: var(--radius-lg);
+  padding: 10px 40px 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--accent-hover);
+  line-height: 1.5;
+}
+
+.bannerIcon {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.bannerClose {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--accent);
+  opacity: 0.6;
+  cursor: pointer;
+  padding: 4px;
+  min-height: auto;
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius);
+  transition: opacity var(--transition);
+}
+
+.bannerClose:hover {
+  opacity: 1;
+}
+
+[data-theme='light'] .bgGlow {
+  background:
+    radial-gradient(ellipse at 20% 28%, rgba(106, 77, 228, 0.14), transparent 52%),
+    radial-gradient(ellipse at 80% 74%, rgba(13, 148, 136, 0.1), transparent 48%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.28), transparent 55%);
+}
+
+/* ── Two-column layout ────────────────────────── */
+
+.layout {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: 0;
+  width: 100%;
+  max-width: 900px;
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.layoutCentered {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Left Panel ───────────────────────────────── */
+
+.leftPanel {
+  flex: 1;
+  background: var(--gradient-purple);
+  padding: 48px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  position: relative;
+  overflow: hidden;
+}
+
+.leftPanel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 80% 10%, rgba(255, 255, 255, 0.1), transparent 50%),
+    radial-gradient(ellipse at 20% 90%, rgba(0, 0, 0, 0.15), transparent 50%);
+  pointer-events: none;
+}
+
+[data-theme='light'] .leftPanel::before {
+  background:
+    radial-gradient(ellipse at 80% 10%, rgba(255, 255, 255, 0.22), transparent 50%),
+    radial-gradient(ellipse at 20% 90%, rgba(47, 34, 112, 0.1), transparent 52%);
+}
+
+.brand {
+  position: relative;
+}
+
+.brandLogo {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.02em;
+  margin-bottom: 10px;
+}
+
+.festiveMark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.tricolor {
+  display: inline-grid;
+  grid-template-rows: 1fr 1fr 1fr;
+  width: 14px;
+  height: 10px;
+  border-radius: 1px;
+  overflow: hidden;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+
+.tricolor .saffron { background: var(--tricolor-saffron); }
+.tricolor .white { background: var(--tricolor-white); }
+.tricolor .green { background: var(--tricolor-green); }
+
+.festiveCardMark {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  /* Saffron-cream — `--text-secondary` on the dark card was a whisper. */
+  color: #f0c27a;
+  margin: -18px 0 22px;
+}
+
+[data-theme='light'] .festiveCardMark {
+  color: #8a5a12;
+}
+
+.festiveCardMark::before,
+.festiveCardMark::after {
+  content: '';
+  display: inline-block;
+  width: 18px;
+  height: 2px;
+  margin: 0 8px;
+  vertical-align: middle;
+  background: linear-gradient(90deg, var(--tricolor-saffron), var(--tricolor-white) 50%, var(--tricolor-green));
+  border-radius: 1px;
+}
+
+/* Independence Day: saffron / green glows instead of the year-round purple / teal.
+   Dark gets a stronger wash — 0.22 saffron on #0c0c11 was barely a tint. */
+.festive .bgGlow {
+  background:
+    radial-gradient(ellipse at 12% 8%, rgba(255, 153, 51, 0.42), transparent 48%),
+    radial-gradient(ellipse at 88% 92%, rgba(19, 136, 8, 0.34), transparent 46%),
+    radial-gradient(ellipse at 50% 50%, rgba(255, 255, 255, 0.04), transparent 55%);
+}
+
+.festive .leftPanel {
+  background:
+    linear-gradient(180deg, rgba(255, 153, 51, 0.34), transparent 32%),
+    linear-gradient(0deg, rgba(19, 136, 8, 0.3), transparent 30%),
+    var(--gradient-purple);
+}
+
+/* Tricolor cap across the login card so the flag isn't only a 4px viewport hairline. */
+.festive .layout::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(
+    90deg,
+    var(--tricolor-saffron) 0 33.333%,
+    var(--tricolor-white) 33.333% 66.666%,
+    var(--tricolor-green) 66.666% 100%
+  );
+  z-index: 4;
+  pointer-events: none;
+}
+
+[data-theme='light'] .festive .bgGlow {
+  background:
+    radial-gradient(ellipse at 18% 22%, rgba(255, 153, 51, 0.22), transparent 52%),
+    radial-gradient(ellipse at 82% 78%, rgba(19, 136, 8, 0.14), transparent 50%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.28), transparent 55%);
+}
+
+[data-theme='light'] .festive .leftPanel {
+  background:
+    linear-gradient(180deg, rgba(255, 153, 51, 0.22), transparent 28%),
+    linear-gradient(0deg, rgba(19, 136, 8, 0.2), transparent 26%),
+    var(--gradient-purple);
+}
+
+.brandTagline {
+  font-size: 15px;
+  color: rgba(255, 255, 255, 0.8);
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+.features {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  position: relative;
+}
+
+.feature {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.featureIcon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  flex-shrink: 0;
+}
+
+.featureTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+  margin-bottom: 3px;
+}
+
+.featureDesc {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.5;
+}
+
+.leftFooter {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  position: relative;
+  margin-top: auto;
+}
+
+/* ── Right Panel (form card) ──────────────────── */
+
+.card {
+  background: var(--bg-secondary);
+  padding: 40px;
+  width: 100%;
+  max-width: 420px;
+  flex-shrink: 0;
+}
+
+/* Standalone card (forgot password, super-admin) */
+.page > .card,
+.layoutCentered > .card {
+  border-radius: var(--radius-2xl);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  max-width: 420px;
+}
+
+[data-theme='light'] .page > .card,
+[data-theme='light'] .layoutCentered > .card,
+[data-theme='light'] .layout {
+  box-shadow: var(--shadow-lg);
+}
+
+.logo {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 800;
+  text-align: center;
+  background: var(--gradient-purple);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 4px;
+}
+
+.tagline {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-bottom: 28px;
+}
+
+.tabs {
+  display: flex;
+  gap: 0;
+  background: var(--bg-primary);
+  border-radius: var(--radius);
+  padding: 3px;
+  margin-bottom: 24px;
+}
+
+.tab {
+  flex: 1;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: transparent;
+  transition: all var(--transition);
+}
+
+.tab:hover {
+  color: var(--text-secondary);
+}
+
+.tabActive {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.field label {
+  margin-bottom: 6px;
+}
+
+/* react-phone-number-input — make the country selector + number input read as
+   one cohesive bordered row matching the global input styling. */
+.phoneInput {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 12px;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+[data-theme='light'] .phoneInput {
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+.phoneInput:focus-within {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+/* inner number input inherits the container's box instead of its own */
+.phoneInput :global(.PhoneInputInput) {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 9px 0;
+  box-shadow: none;
+}
+
+.phoneInput :global(.PhoneInputInput):focus {
+  border: none;
+  box-shadow: none;
+}
+
+.phoneInput :global(.PhoneInputCountry) {
+  margin: 0;
+}
+
+.phoneInput :global(.PhoneInputCountrySelectArrow) {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.fieldError {
+  display: block;
+  margin-top: 6px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 13px;
+  padding: 8px 12px;
+  background: var(--danger-subtle);
+  border-radius: var(--radius);
+  border: 1px solid rgba(245, 101, 101, 0.2);
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.googleBtn {
+  width: 100%;
+  padding: 10px 18px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-weight: 500;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  transition: all var(--transition);
+}
+
+.googleBtn:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.forgotLink {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  padding: 0;
+  margin-top: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.forgotLink:hover {
+  text-decoration: underline;
+}
+
+/* ── Responsive ───────────────────────────────── */
+
+@media (max-width: 768px) {
+  .leftPanel {
+    display: none;
+  }
+
+  .layout {
+    max-width: 420px;
+    border-radius: var(--radius-2xl);
+  }
+
+  .card {
+    max-width: 100%;
+    padding: 28px 20px;
+  }
+
+  .banner {
+    font-size: 12px;
+  }
+}

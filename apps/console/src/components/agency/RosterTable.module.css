@@ -1,0 +1,490 @@
+/*
+  The roster table. Same tokens and the same table shape as the agency spine lists
+  (`SpineListLayout.module.css`) and the per-campaign breakdown in
+  `AgentPerformancePanel.module.css` — a supervisor moving between the roster, an
+  attempts list and one person's figures should not be able to tell they are three
+  components.
+
+  ── Two tables share this stylesheet, on purpose ─────────────────────────────
+  `ContributionTable` imports it as well. The two are the same table in every
+  respect the eye can see — the same header, the same three absence states, the
+  same pinned footer carrying the figure the rows are read against — and the whole
+  argument for that component reusing the roster's cells and vocabulary applies
+  with more force to its metrics: a second stylesheet is how the same `subline`
+  ends up two shades apart on two screens a supervisor moves between in one click.
+
+  Only `.agentStatic` below is contribution-only, and it is for the one row there
+  that is not a person: a group whose key carries no `agent_user_id`.
+*/
+
+.tableWrap {
+  /* Wide by construction: nine columns, one of them a chart. It scrolls INSIDE
+     its own box so the page body never scrolls sideways. */
+  overflow: auto;
+  /*
+    A ceiling, so the box scrolls VERTICALLY too — which is what makes the sticky
+    header and the sticky team row below mean anything. `position: sticky` is
+    relative to the nearest scrolling ancestor, so on a box that only ever grows
+    the header would pin to a position it never leaves and the component's own
+    comment ("every bullet is measured against this row, so it stays on screen
+    with them") would stay false, as it was.
+
+    `min()` rather than a flat `vh`: a short viewport must not get a table two rows
+    tall, and a very tall one does not need eight hundred pixels of chrome-free
+    roster to make the point.
+  */
+  max-height: min(72vh, 780px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th {
+  padding: 10px 14px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+/*
+  The header stays while the rows scroll under it. On a roster of two hundred
+  agents a column of percentages with no headings above it is a column nobody can
+  read — which one is the connect rate and which the conversion rate is exactly
+  the confusion this table's vocabulary was fixed to remove.
+
+  The bottom border is redrawn as an inset shadow because a collapsed-border table
+  paints its borders on the table, not on the cell, so the real border scrolls away
+  with the rows while the sticky cell stays.
+*/
+.table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+
+.table td {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  vertical-align: middle;
+}
+
+.table tbody th {
+  padding: 6px 8px 6px 6px;
+  background: none;
+  border-bottom: 1px solid var(--border-light);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 13px;
+  white-space: normal;
+}
+
+.table td[data-numeric='true'],
+.table thead th[data-numeric='true'] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.table tbody tr:hover td {
+  background: var(--bg-tertiary);
+}
+
+/* ── Sortable headers ────────────────────────────────────────────────────── */
+
+/*
+  A column of two lines rather than a row: the label with its sort arrow, then the
+  column's definition beneath it. Stacked so a hint never pushes the arrow off the
+  end of a narrow column.
+*/
+.sortButton {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.sortButton:hover {
+  color: var(--text-primary);
+}
+
+.sortButton[data-active='true'] {
+  color: var(--text-primary);
+}
+
+/* Visible, and not the browser's default outline-on-a-transparent-button, which
+   disappears against the header's own background on several themes. */
+.sortButton:focus-visible,
+.rowButton:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
+.sortIdle {
+  opacity: 0.45;
+}
+
+/* The label and its arrow, on one line. */
+.headLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/*
+  The denominator, on the header. Lower case and lighter than the label: it is a
+  definition rather than a heading, and a second line of uppercase tracking would
+  read as two columns.
+*/
+.headHint {
+  /* Wraps, unlike the label above it: `.table th` is `nowrap` so a column stays as
+     wide as its heading, and a definition long enough to be useful would otherwise
+     set the column's width and push the figures apart. */
+  max-width: 15ch;
+  white-space: normal;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
+/* A header inside a right-aligned column still needs its button pushed right,
+   because the button is an inline-flex box narrower than the cell. Its two stacked
+   lines align to that same edge, so the label sits over its own figures rather
+   than over the column beside it. */
+.table thead th[data-numeric='true'] .sortButton {
+  align-items: flex-end;
+  width: 100%;
+}
+
+/* ── The agent cell ──────────────────────────────────────────────────────── */
+
+.agentCell {
+  min-width: 210px;
+}
+
+.rowButton {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rowButton:hover {
+  background: var(--bg-tertiary);
+}
+
+/*
+  The same cell WITHOUT the affordance — `ContributionTable`'s agent column, in the
+  one state that cannot drill anywhere.
+
+  Its rows normally DO open a person (the id and the name on an `agent`-grouped row
+  are the whole shape those panels need). What this class is for is the row that is
+  not a person: an `agent`-grouped group with no `agent_user_id` in its key. A
+  button that looked identical and led nowhere would be worse than a plain cell, so
+  the layout is shared and the interaction is not, rather than a disabled button
+  pretending to be one.
+*/
+.agentStatic {
+  composes: rowButton;
+  cursor: default;
+}
+
+.agentStatic:hover {
+  background: none;
+}
+
+.avatar {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--bg-tertiary, var(--bg-secondary));
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.agentText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The fallback for an unresolvable `agent_name`. Deliberately distinguishable
+   from a real name — it is an id, and a supervisor should be able to tell.
+   Mirrors `AgentFloor.module.css`, which made the same decision on the tile. */
+.nameFallback {
+  composes: name;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.subline {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ── Metric cells ───────────────────────────────────────────────────────── */
+
+.value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+  An absence, in either of its two forms. Both are typographically LIGHTER than a
+  measurement and neither is a number — the point is that the eye scanning the
+  column skips them rather than reading them as small values.
+*/
+.unmeasured,
+.withheld {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: inherit;
+}
+
+.absentText {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+/*
+  A withheld rate says WORDS, and they carry a little more weight than an em dash
+  because they are a finding about the row rather than a blank. Never a percentage
+  in grey: a faint number is still a number, and it is the one that gets quoted.
+*/
+.withheld .absentText {
+  color: var(--text-secondary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/*
+  Utilisation: the percentage, then the seconds it was divided from. The column is
+  right-aligned, so the basis line is too — a left-aligned subline under a
+  right-aligned figure reads as belonging to the cell beside it.
+*/
+.utilisation {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: flex-end;
+}
+
+.utilisation .subline {
+  text-align: right;
+}
+
+/* ── The bullet ─────────────────────────────────────────────────────────── */
+
+.connectCell {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 150px;
+}
+
+.bullet {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg-tertiary, var(--bg-secondary));
+  overflow: hidden;
+}
+
+/* The cohort's inter-quartile band — the thing that makes the row's own bar
+   readable. Behind the value bar, so an agent inside the band still shows both. */
+.bulletBand {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--border-strong, var(--border));
+  opacity: 0.55;
+}
+
+.bulletMedian {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text-muted);
+}
+
+/* The agent's own rate. A single accent for every row: colouring by band
+   position would make the bar's HUE the finding, and the finding already has a
+   word for it in the flag column. */
+.bulletValue {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+/* ── The flag chip ──────────────────────────────────────────────────────── */
+
+/*
+  The chip names its METRIC now ("Conversion rate below the band"), which is
+  longer than the word it replaced — deliberately, so the finding can be read and
+  quoted without hovering. So it wraps inside a bounded cell rather than forcing
+  the table wider: the columns of figures are what the reader is scanning.
+*/
+.flag {
+  display: inline-block;
+  max-width: 15ch;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-tertiary, var(--bg-secondary));
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+
+/*
+  Tint only. Every chip already carries its own word, so the colour is a second
+  channel and never the only one — see the component's note.
+*/
+.flag[data-kind='below_band'] {
+  border-color: var(--warning);
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.flag[data-kind='above_band'] {
+  border-color: var(--success, #16a34a);
+  color: var(--success, #16a34a);
+}
+
+/* `no_dials` is gone — core cannot produce a zero-dial row. See `rosterFlag`. */
+.flag[data-kind='thin'] {
+  color: var(--text-muted);
+}
+
+/* ── The pinned cohort row ──────────────────────────────────────────────── */
+
+/*
+  Pinned to the bottom of the scroll box, for the reason the component states:
+  every bullet in the table is measured against this row, and a legend you have to
+  scroll to is a legend that is not there when the number is read. Same
+  inset-shadow trick as the header, for the same collapsed-border reason.
+*/
+.teamRow td,
+.teamRow th {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding: 11px 14px;
+  border-top: none;
+  border-bottom: none;
+  box-shadow: inset 0 1px 0 var(--border);
+  background: var(--bg-tertiary);
+  vertical-align: top;
+}
+
+.teamRow th {
+  text-transform: none;
+  letter-spacing: 0;
+  white-space: normal;
+}
+
+.teamName {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.teamRate {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: inherit;
+}
+
+.teamPooled {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ratedCount {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* The band sentences wrap rather than force the table wider than the columns
+   above them, which are what the reader is actually scanning. */
+.teamRow .subline {
+  white-space: normal;
+}
+
+.srOnly {
+  composes: sr-only from global;
+}

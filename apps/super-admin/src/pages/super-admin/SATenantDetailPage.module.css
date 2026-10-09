@@ -1,0 +1,262 @@
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* ── Tab strip ── */
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+  overflow-x: auto;
+}
+
+.tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 14px;
+  margin-bottom: -1px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--transition), border-color var(--transition);
+}
+
+.tab:hover {
+  color: var(--text-secondary);
+}
+
+.tabActive {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ── Sections ── */
+.section {
+  margin-bottom: 28px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.sectionHeader h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.headerBtns {
+  display: flex;
+  gap: 8px;
+}
+
+.hint {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.success {
+  color: var(--success);
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+/* ── Tables (concurrency, custom inline-edit) ── */
+.table {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th {
+  text-align: left;
+  padding: 10px 16px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+
+.table td {
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.table tr:last-child td {
+  border-bottom: none;
+}
+
+/* ── Concurrency inline edit ── */
+.concurrencyInput {
+  width: 80px;
+  font-family: var(--font-mono);
+  text-align: center;
+}
+
+.concurrencyActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.providerSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.providerSummary span,
+.legacyLabel {
+  padding: 3px 7px;
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.providerAllocationEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.confirmRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.confirmRow input {
+  margin-top: 0.2rem;
+}
+
+.concurrencyTotal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.concurrencyTotal strong {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 22px;
+}
+
+.warningBox {
+  padding: 10px 12px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.providerMeta {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.providerWarning {
+  margin-top: 4px;
+  color: var(--warning);
+  font-size: 11px;
+}
+
+.msgSuccess {
+  font-size: 11px;
+  color: var(--success);
+}
+
+.msgError {
+  font-size: 11px;
+  color: var(--danger);
+}
+
+/* ── Icon button (unassign) ── */
+.iconBtn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 6px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  min-height: auto;
+  transition: all var(--transition);
+}
+
+.iconBtn:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-subtle);
+}
+
+/* ── Forms (modals) ── */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 0;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 13px;
+  padding: 8px 12px;
+  background: var(--danger-subtle);
+  border-radius: var(--radius);
+  border: 1px solid var(--danger-subtle);
+}
+
+@media (max-width: 768px) {
+  .table {
+    overflow-x: auto;
+  }
+}

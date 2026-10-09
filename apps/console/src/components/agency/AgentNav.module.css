@@ -1,0 +1,56 @@
+/*
+  Wraps rather than scrolls: three short labels fit on any viewport an agent
+  works at, and a horizontally scrolling nav hides destinations behind a gesture
+  on the one component whose job is saying what exists.
+*/
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full, 999px);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  text-decoration: none;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.item:hover {
+  background: var(--bg-tertiary, var(--bg-secondary));
+  color: var(--text-primary);
+  border-color: var(--border-strong, var(--border));
+}
+
+/*
+  The current entry is a `<span>`, so it never takes `:hover` and cannot be
+  pressed. It is distinguished by colour AND weight rather than colour alone —
+  `aria-current` carries it for assistive tech, and the extra weight is what
+  makes it readable for anybody who cannot separate the two backgrounds.
+*/
+.current {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+  cursor: default;
+}
+
+.current:hover {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+  color: var(--accent);
+}

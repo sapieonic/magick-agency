@@ -1,0 +1,70 @@
+/*
+ * One line in the campaign header, under the timeline.
+ *
+ * Sized and coloured like `.timeline` and `.updated` beside it — this is
+ * another header fact about the campaign, not a callout — and it renders
+ * nothing at all when the campaign is in no chain, which is almost always.
+ */
+
+.strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.headline {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.headline svg {
+  color: var(--text-muted);
+}
+
+.chain {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.entry,
+.entryCurrent {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.entry {
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  text-decoration: none;
+  transition: all var(--transition);
+}
+
+.entry:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+/* Where you already are: filled rather than outlined, so the current pass is
+   findable in a chain of several without reading every label. */
+.entryCurrent {
+  color: var(--text-primary);
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+}

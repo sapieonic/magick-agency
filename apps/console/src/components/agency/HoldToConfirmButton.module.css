@@ -1,0 +1,82 @@
+/* No new tokens (§1). Red = a call is being ended, per the feature-wide mapping. */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+}
+
+.button {
+  position: relative;
+  overflow: hidden;
+  /* 56px per §A.7.1. Geometry is frozen — this height never changes between
+     phases, because a control that moves 12px is a misclick and a misclick here
+     hangs up on a human being. */
+  height: 56px;
+  padding: 0 var(--space-4, 16px);
+  border: none;
+  border-radius: var(--radius-md, 8px);
+  background: var(--danger);
+  color: #fff;
+  font-size: var(--text-sm, 14px);
+  font-weight: 600;
+  cursor: pointer;
+  /* So a press-and-hold does not scroll the page on a touch device. */
+  touch-action: none;
+  user-select: none;
+}
+
+.button[aria-disabled='true'] {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* The fill. A 24%-white overlay, left-to-right, driven ENTIRELY by `transform` —
+   never `width`, which animates layout and janks on a screen that is also decoding
+   audio, and a stuttering fill reads as an unresponsive button.
+
+   `transform` and `transition` are set imperatively by the component, because a
+   cancel must reset with NO transition while a hold must animate over exactly the
+   gesture duration. */
+.fill {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.24);
+  transform: scaleX(0);
+  transform-origin: left center;
+  pointer-events: none;
+}
+
+.label {
+  position: relative;
+  /* Above the fill, so the label stays legible as it sweeps past. */
+  z-index: 1;
+}
+
+.hint,
+.blockedReason {
+  font-size: var(--text-xs, 12px);
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.error {
+  font-size: var(--text-xs, 12px);
+  font-weight: 600;
+  color: var(--danger);
+  line-height: 1.35;
+}
+
+@media (max-width: 767px) {
+  .button {
+    /* The global mobile minimum still applies; 56px already clears 44px, but this
+       pins it if the height above is ever reduced. */
+    min-height: 44px;
+  }
+}
+
+/* NOTE: no `prefers-reduced-motion` rule removing the fill's transition. It is a
+   progress indicator for a destructive action, not decoration, and removing it
+   removes the only feedback that the gesture is working. Reduced motion is honoured
+   by dropping hover/press transitions, which this button does not have. */

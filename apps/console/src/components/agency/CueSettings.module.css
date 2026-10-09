@@ -1,0 +1,120 @@
+/* No new design tokens (§0.1 principle 5, §1), and the global
+   `button:focus-visible` / `input:focus-visible` rings are NOT overridden — the
+   console's keyboard criterion is asserted on a visible ring, so overriding it
+   here would quietly fail the criterion with every test still passing. */
+
+.wrap {
+  display: flex;
+  align-items: center;
+}
+
+/* Sits in the header next to the recording and connection pills, so it reads as
+   part of the same status strip rather than as a call control. Height matched to
+   those pills; the console's geometry rule means it must not resize between
+   states, and nothing here does. */
+.trigger {
+  height: 28px;
+  padding: 0 var(--space-3, 12px);
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: var(--text-xs, 12px);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.popover {
+  z-index: 60;
+  min-width: 280px;
+  max-width: min(360px, calc(100vw - 16px));
+  padding: var(--space-3, 12px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+  /* No entry animation: §A.3 allows exactly one looping animation on this screen
+     (the rail's dot), and an animated popover also delays the moment the focus
+     ring is legible. */
+}
+
+.group {
+  margin: 0;
+  padding: 0;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+}
+
+.legend {
+  padding: 0;
+  margin-bottom: var(--space-2, 8px);
+  font-size: var(--text-xs, 12px);
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2, 8px);
+  cursor: pointer;
+  font-size: var(--text-sm, 14px);
+  color: var(--text-primary);
+}
+
+.optionText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.3;
+}
+
+.optionHint {
+  font-size: var(--text-xs, 12px);
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.volume {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  padding-top: var(--space-3, 12px);
+  border-top: 1px solid var(--border);
+}
+
+.volumeLabel {
+  grid-column: 1 / -1;
+  font-size: var(--text-xs, 12px);
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.volumeValue {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs, 12px);
+  color: var(--text-secondary);
+  min-width: 4ch;
+  text-align: right;
+}
+
+.volumeHint {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: var(--text-xs, 12px);
+  color: var(--text-muted);
+  line-height: 1.35;
+}

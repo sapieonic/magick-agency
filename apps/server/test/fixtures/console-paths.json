@@ -1,0 +1,2525 @@
+{
+  "_source": "cusui ee5beb44 src/api + src/config.ts",
+  "paths": [
+    {
+      "method": "POST",
+      "path": "/proxy/agency/sessions",
+      "source": "src/api/agency.ts:43",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/sessions/:id/station-token",
+      "source": "src/api/agency.ts:64",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/sessions/:id/available",
+      "source": "src/api/agency.ts:78",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/sessions/:id/leave",
+      "source": "src/api/agency.ts:92",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/attempts/:id/hangup",
+      "source": "src/api/agency.ts:110",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/sessions/:id/break",
+      "source": "src/api/agency.ts:138",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/sessions/:id/break/cancel",
+      "source": "src/api/agency.ts:163",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/sessions/:id/force-available",
+      "source": "src/api/agency.ts:201",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/attempts/:id/disposition",
+      "source": "src/api/agency.ts:229",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/attempts/:id/dnc",
+      "source": "src/api/agency.ts:276",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/attempts/:id/notes",
+      "source": "src/api/agency.ts:359",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/my-assignment",
+      "source": "src/api/agency.ts:396",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/my-assignments",
+      "source": "src/api/agency.ts:428",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/agents",
+      "source": "src/api/agency.ts:463",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/campaigns/:id/agents",
+      "source": "src/api/agency.ts:490",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/agency/campaigns/:id/agents/:userId",
+      "source": "src/api/agency.ts:505",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/ingest/limits",
+      "source": "src/api/agencyCampaigns.ts:54",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/ingest/upload",
+      "source": "src/api/agencyCampaigns.ts:71",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/ingest/analyze",
+      "source": "src/api/agencyCampaigns.ts:96",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/ingest/jobs",
+      "source": "src/api/agencyCampaigns.ts:116",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/ingest/jobs/:id",
+      "source": "src/api/agencyCampaigns.ts:128",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/ingest/jobs/:id/cancel",
+      "source": "src/api/agencyCampaigns.ts:144",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/ingest/jobs/:id/rejected.csv",
+      "source": "src/api/agencyCampaigns.ts:164",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns",
+      "source": "src/api/agencyCampaigns.ts:186",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id",
+      "source": "src/api/agencyCampaigns.ts:199",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/campaigns",
+      "source": "src/api/agencyCampaigns.ts:208",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "PATCH",
+      "path": "/proxy/agency/campaigns/:id",
+      "source": "src/api/agencyCampaigns.ts:230",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/stats",
+      "source": "src/api/agencyCampaigns.ts:256",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/campaigns/:id/start",
+      "source": "src/api/agencyCampaigns.ts:282",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16) (`${action}` = start)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/campaigns/:id/pause",
+      "source": "src/api/agencyCampaigns.ts:282",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16) (`${action}` = pause)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/campaigns/:id/resume",
+      "source": "src/api/agencyCampaigns.ts:282",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16) (`${action}` = resume)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/campaigns/:id/stop",
+      "source": "src/api/agencyCampaigns.ts:282",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16) (`${action}` = stop)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/retry/preview",
+      "source": "src/api/agencyCampaigns.ts:321",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/campaigns/:id/retry",
+      "source": "src/api/agencyCampaigns.ts:350",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/lineage",
+      "source": "src/api/agencyCampaigns.ts:373",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/activity",
+      "source": "src/api/agencyActivity.ts:43",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/activity.csv",
+      "source": "src/api/agencyActivity.ts:96",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/stats/series",
+      "source": "src/api/agencyCampaignSeries.ts:52",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16) (ENDPOINTS.proxy.agency.campaignStatsSeries, src/config.ts:292)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/attempts",
+      "source": "src/api/agencySpine.ts:76",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/contacts",
+      "source": "src/api/agencySpine.ts:94",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/contacts/:contactId",
+      "source": "src/api/agencySpine.ts:109",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/attempts/:attemptId",
+      "source": "src/api/agencySpine.ts:156",
+      "status": "served",
+      "reason": "agency call read (master proxy-agency-calls.routes.ts; Phase 8 helper p8-calls)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/attempts/:attemptId/recording",
+      "source": "src/api/agencySpine.ts:222",
+      "status": "served",
+      "reason": "agency call read (master proxy-agency-calls.routes.ts; Phase 8 helper p8-calls); the console fetches these bytes itself and plays a blob URL (it never follows `recording_url`)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/attempts.csv",
+      "source": "src/api/agencySpine.ts:289",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16) (`${kind}.csv`, kind = 'attempts')"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/contacts.csv",
+      "source": "src/api/agencySpine.ts:289",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16) (`${kind}.csv`, kind = 'contacts')"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/my-stats",
+      "source": "src/api/agencyStats.ts:84",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16) (ENDPOINTS.proxy.agency.myStats)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/agents/:userId/stats",
+      "source": "src/api/agencyStats.ts:107",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16) (ENDPOINTS.proxy.agency.agentStats)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/agents/stats",
+      "source": "src/api/agencyStats.ts:190",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16) (ENDPOINTS.proxy.agency.agentsStats)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/agents/grouped-stats",
+      "source": "src/api/agencyStats.ts:298",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16) (ENDPOINTS.proxy.agency.agentsGroupedStats)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/my-attempts",
+      "source": "src/api/agencyStats.ts:364",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16) (ENDPOINTS.proxy.agency.myAttempts)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/agents/:userId/attempts",
+      "source": "src/api/agencyStats.ts:380",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16) (ENDPOINTS.proxy.agency.agentAttempts)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/my-campaigns",
+      "source": "src/api/agencyStats.ts:410",
+      "status": "served",
+      "reason": "agency route (master proxy-agency-*.routes.ts @ a1f0756a, ported by Phase 8 at the console path, decision B16) (ENDPOINTS.proxy.agency.myCampaigns)"
+    },
+    {
+      "method": "GET",
+      "path": "/dnc",
+      "source": "src/api/dnc.ts:40",
+      "status": "served",
+      "reason": "DNC (master dnc.routes.ts, already registered by agencyPlugin under /dnc)"
+    },
+    {
+      "method": "POST",
+      "path": "/dnc",
+      "source": "src/api/dnc.ts:72",
+      "status": "served",
+      "reason": "DNC (master dnc.routes.ts, already registered by agencyPlugin under /dnc)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/dnc/:id",
+      "source": "src/api/dnc.ts:86",
+      "status": "served",
+      "reason": "DNC (master dnc.routes.ts, already registered by agencyPlugin under /dnc)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/call-analysis-profiles",
+      "source": "src/api/call-analysis-profiles.ts:28",
+      "status": "served",
+      "reason": "analysis profiles (lane D's profile routes); console path is /proxy/call-analysis-profiles, lane D mounts them at /api/v1/call-analysis-profiles today, so Phase 8 must serve this path"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/call-analysis-profiles/:id",
+      "source": "src/api/call-analysis-profiles.ts:41",
+      "status": "served",
+      "reason": "analysis profiles (lane D's profile routes); console path is /proxy/call-analysis-profiles, lane D mounts them at /api/v1/call-analysis-profiles today, so Phase 8 must serve this path"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/call-analysis-profiles",
+      "source": "src/api/call-analysis-profiles.ts:51",
+      "status": "served",
+      "reason": "analysis profiles (lane D's profile routes); console path is /proxy/call-analysis-profiles, lane D mounts them at /api/v1/call-analysis-profiles today, so Phase 8 must serve this path"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/call-analysis-profiles/:id",
+      "source": "src/api/call-analysis-profiles.ts:66",
+      "status": "served",
+      "reason": "analysis profiles (lane D's profile routes); console path is /proxy/call-analysis-profiles, lane D mounts them at /api/v1/call-analysis-profiles today, so Phase 8 must serve this path"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/call-analysis-profiles/:id",
+      "source": "src/api/call-analysis-profiles.ts:80",
+      "status": "served",
+      "reason": "analysis profiles (lane D's profile routes); console path is /proxy/call-analysis-profiles, lane D mounts them at /api/v1/call-analysis-profiles today, so Phase 8 must serve this path"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/feature-flags",
+      "source": "src/api/feature-flags.ts:11",
+      "status": "not_served",
+      "reason": "served at /feature-flags, console updated (lead ruling, Phase 8)"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/session",
+      "source": "src/api/auth.ts:6",
+      "status": "served",
+      "reason": "platform route ported by lane A (PORTING.md Lane A A.1/A.3)"
+    },
+    {
+      "method": "GET",
+      "path": "/auth/me",
+      "source": "src/api/auth.ts:13",
+      "status": "served",
+      "reason": "platform route ported by lane A (PORTING.md Lane A A.1/A.3)"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts",
+      "source": "src/api/accounts.ts:6",
+      "status": "served",
+      "reason": "platform route ported by lane A (PORTING.md Lane A A.1/A.3)"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/mine",
+      "source": "src/api/accounts.ts:28",
+      "status": "served",
+      "reason": "platform route ported by lane A (PORTING.md Lane A A.1/A.3)"
+    },
+    {
+      "method": "POST",
+      "path": "/accounts",
+      "source": "src/api/accounts.ts:39",
+      "status": "not_served",
+      "reason": "tenant/account CRUD: not ported by lane A (no tenant.update / account.* permission in contracts rbac, decision Q3e)"
+    },
+    {
+      "method": "PUT",
+      "path": "/accounts/:id",
+      "source": "src/api/accounts.ts:50",
+      "status": "not_served",
+      "reason": "tenant/account CRUD: not ported by lane A (no tenant.update / account.* permission in contracts rbac, decision Q3e)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/accounts/:id",
+      "source": "src/api/accounts.ts:57",
+      "status": "not_served",
+      "reason": "tenant/account CRUD: not ported by lane A (no tenant.update / account.* permission in contracts rbac, decision Q3e)"
+    },
+    {
+      "method": "GET",
+      "path": "/tenants",
+      "source": "src/api/tenants.ts:7",
+      "status": "not_served",
+      "reason": "tenant/account CRUD: not ported by lane A (no tenant.update / account.* permission in contracts rbac, decision Q3e)"
+    },
+    {
+      "method": "PUT",
+      "path": "/tenants/:id",
+      "source": "src/api/tenants.ts:15",
+      "status": "not_served",
+      "reason": "tenant/account CRUD: not ported by lane A (no tenant.update / account.* permission in contracts rbac, decision Q3e) (TenantSettingsPage edits AI pipeline/provider settings)"
+    },
+    {
+      "method": "GET",
+      "path": "/tenants/:id/members",
+      "source": "src/api/tenants.ts:56",
+      "status": "served",
+      "reason": "platform route ported by lane A (PORTING.md Lane A A.1/A.3)"
+    },
+    {
+      "method": "POST",
+      "path": "/users/invite",
+      "source": "src/api/users.ts:15",
+      "status": "served",
+      "reason": "platform route ported by lane A (PORTING.md Lane A A.1/A.3)"
+    },
+    {
+      "method": "PUT",
+      "path": "/users/:id/role",
+      "source": "src/api/users.ts:22",
+      "status": "served",
+      "reason": "platform route ported by lane A (PORTING.md Lane A A.1/A.3)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/users/:id/membership",
+      "source": "src/api/users.ts:29",
+      "status": "served",
+      "reason": "platform route ported by lane A (PORTING.md Lane A A.1/A.3)"
+    },
+    {
+      "method": "GET",
+      "path": "/invites/:token",
+      "source": "src/api/invites.ts:176",
+      "status": "served",
+      "reason": "platform route ported by lane A (PORTING.md Lane A A.1/A.3)"
+    },
+    {
+      "method": "POST",
+      "path": "/invites/:token/claim",
+      "source": "src/api/invites.ts:223",
+      "status": "served",
+      "reason": "platform route ported by lane A (PORTING.md Lane A A.1/A.3)"
+    },
+    {
+      "method": "POST",
+      "path": "/invites/resend",
+      "source": "src/api/invites.ts:294",
+      "status": "served",
+      "reason": "platform route ported by lane A (PORTING.md Lane A A.1/A.3)"
+    },
+    {
+      "method": "GET",
+      "path": "/notifications/preferences",
+      "source": "src/api/notifications.ts:25",
+      "status": "served",
+      "reason": "platform route ported by lane A (PORTING.md Lane A A.1/A.3)"
+    },
+    {
+      "method": "PUT",
+      "path": "/notifications/preferences",
+      "source": "src/api/notifications.ts:40",
+      "status": "served",
+      "reason": "platform route ported by lane A (PORTING.md Lane A A.1/A.3)"
+    },
+    {
+      "method": "POST",
+      "path": "/notifications/digests/preview",
+      "source": "src/api/notifications.ts:58",
+      "status": "not_served",
+      "reason": "credits usage digest preview: not ported (lane A deleted POST /notifications/digests/preview, plan \u00a73.5)"
+    },
+    {
+      "method": "GET",
+      "path": "/governance/effective",
+      "source": "src/api/governance.ts:23",
+      "status": "not_served",
+      "reason": "governance: not ported, replaced by the session settings map (plan \u00a73.2)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/governance/catalog",
+      "source": "src/api/governance.ts:28",
+      "status": "not_served",
+      "reason": "super-admin governance: not ported (plan \u00a73.2, governance replaced by per-account settings and feature flags)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/governance/:tenantId",
+      "source": "src/api/governance.ts:38",
+      "status": "not_served",
+      "reason": "super-admin governance: not ported (plan \u00a73.2, governance replaced by per-account settings and feature flags)"
+    },
+    {
+      "method": "PUT",
+      "path": "/super-admin/governance/:tenantId/overrides",
+      "source": "src/api/governance.ts:45",
+      "status": "not_served",
+      "reason": "super-admin governance: not ported (plan \u00a73.2, governance replaced by per-account settings and feature flags)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/super-admin/governance/:tenantId/overrides",
+      "source": "src/api/governance.ts:55",
+      "status": "not_served",
+      "reason": "super-admin governance: not ported (plan \u00a73.2, governance replaced by per-account settings and feature flags)"
+    },
+    {
+      "method": "GET",
+      "path": "/audit-log",
+      "source": "src/api/audit.ts:52",
+      "status": "not_served",
+      "reason": "audit-log page: not ported (lane A), open"
+    },
+    {
+      "method": "GET",
+      "path": "/api-keys",
+      "source": "src/api/api-keys.ts:36",
+      "status": "not_served",
+      "reason": "platform API keys: not ported (plan \u00a72 \"API keys\", decision #5)"
+    },
+    {
+      "method": "POST",
+      "path": "/api-keys",
+      "source": "src/api/api-keys.ts:41",
+      "status": "not_served",
+      "reason": "platform API keys: not ported (plan \u00a72 \"API keys\", decision #5)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api-keys/:id",
+      "source": "src/api/api-keys.ts:48",
+      "status": "not_served",
+      "reason": "platform API keys: not ported (plan \u00a72 \"API keys\", decision #5)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/login",
+      "source": "src/api/super-admin.ts:177",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/me",
+      "source": "src/api/super-admin.ts:201",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/tenants",
+      "source": "src/api/super-admin.ts:207",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/tenants/:id",
+      "source": "src/api/super-admin.ts:211",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/super-admin/tenants/:id",
+      "source": "src/api/super-admin.ts:215",
+      "status": "not_served",
+      "reason": "super-admin tenant delete: not ported (lane A deleted DELETE /tenants/:id)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/tenants",
+      "source": "src/api/super-admin.ts:219",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/tenants/:id/users",
+      "source": "src/api/super-admin.ts:226",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/tenants/:id/credits",
+      "source": "src/api/super-admin.ts:233",
+      "status": "not_served",
+      "reason": "super-admin credits: not ported (plan decision #8; lane A deleted the credits routes)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/tenants/:id/credits/deduct",
+      "source": "src/api/super-admin.ts:240",
+      "status": "not_served",
+      "reason": "super-admin credits: not ported (plan decision #8; lane A deleted the credits routes)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/tenants/:id/credits/reconcile",
+      "source": "src/api/super-admin.ts:253",
+      "status": "not_served",
+      "reason": "super-admin credits: not ported (plan decision #8; lane A deleted the credits routes)"
+    },
+    {
+      "method": "PUT",
+      "path": "/super-admin/tenants/:id/settings",
+      "source": "src/api/super-admin.ts:259",
+      "status": "not_served",
+      "reason": "super-admin tenant service settings (AI pipeline/provider): not ported (lane A); per-account settings replace it (plan \u00a73.2)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/users",
+      "source": "src/api/super-admin.ts:268",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/tenants/:id/accounts",
+      "source": "src/api/super-admin.ts:352",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "PUT",
+      "path": "/super-admin/tenants/:id/accounts/:accountId/concurrency",
+      "source": "src/api/super-admin.ts:361",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts) (also updateProviderConcurrency, src/api/super-admin.ts:381)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/tenants/:id/accounts/:accountId/concurrency",
+      "source": "src/api/super-admin.ts:371",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/tenants/:id/accounts/:accountId/concurrency/retry-sync",
+      "source": "src/api/super-admin.ts:391",
+      "status": "not_served",
+      "reason": "provider concurrency retry-sync (core sync): not ported (lane A deleted it with coreInternalRequest)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/feature-flags",
+      "source": "src/api/super-admin.ts:399",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/feature-flags/resolve",
+      "source": "src/api/super-admin.ts:408",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "PUT",
+      "path": "/super-admin/feature-flags/:flagKey/overrides",
+      "source": "src/api/super-admin.ts:415",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/super-admin/feature-flags/:flagKey/overrides",
+      "source": "src/api/super-admin.ts:425",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/feature-flags/:flagKey/overrides/bulk",
+      "source": "src/api/super-admin.ts:435",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "PUT",
+      "path": "/super-admin/change-password",
+      "source": "src/api/super-admin.ts:444",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/admins",
+      "source": "src/api/super-admin.ts:453",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/admins",
+      "source": "src/api/super-admin.ts:457",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/super-admin/admins/:id",
+      "source": "src/api/super-admin.ts:464",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/admins/:id/reactivate",
+      "source": "src/api/super-admin.ts:468",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "PUT",
+      "path": "/super-admin/admins/:id/password",
+      "source": "src/api/super-admin.ts:475",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/audit",
+      "source": "src/api/super-admin.ts:496",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/tenants/:id/credits/transactions",
+      "source": "src/api/super-admin.ts:505",
+      "status": "not_served",
+      "reason": "super-admin credits: not ported (plan decision #8; lane A deleted the credits routes)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/dispatch-lanes",
+      "source": "src/api/super-admin.ts:511",
+      "status": "not_served",
+      "reason": "super-admin dispatch lanes: not ported (plan \u00a73.4 \"Left out: dispatch lanes\")"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/dispatch-lanes/:tenantId/:dispatchType",
+      "source": "src/api/super-admin.ts:518",
+      "status": "not_served",
+      "reason": "super-admin dispatch lanes: not ported (plan \u00a73.4 \"Left out: dispatch lanes\")"
+    },
+    {
+      "method": "PUT",
+      "path": "/super-admin/dispatch-lanes/:tenantId/:dispatchType",
+      "source": "src/api/super-admin.ts:531",
+      "status": "not_served",
+      "reason": "super-admin dispatch lanes: not ported (plan \u00a73.4 \"Left out: dispatch lanes\")"
+    },
+    {
+      "method": "DELETE",
+      "path": "/super-admin/dispatch-lanes/:tenantId/:dispatchType",
+      "source": "src/api/super-admin.ts:541",
+      "status": "not_served",
+      "reason": "super-admin dispatch lanes: not ported (plan \u00a73.4 \"Left out: dispatch lanes\")"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/dispatch-lanes-queue-depth",
+      "source": "src/api/super-admin.ts:545",
+      "status": "not_served",
+      "reason": "super-admin dispatch lanes: not ported (plan \u00a73.4 \"Left out: dispatch lanes\")"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/telephony-providers",
+      "source": "src/api/super-admin.ts:551",
+      "status": "served",
+      "reason": "super-admin provider list, read-only (lead 979c8b5: POST /super-admin/phone-numbers needs a provider_id to pick from); create/update stay not ported"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/telephony-providers",
+      "source": "src/api/super-admin.ts:561",
+      "status": "not_served",
+      "reason": "super-admin telephony providers / credentials / BYOC: not ported (plan \u00a73.4 \"Left out: SIP ... AI telephony credentials\"; lane A deleted telephony-provider CRUD)"
+    },
+    {
+      "method": "PUT",
+      "path": "/super-admin/telephony-providers/:id",
+      "source": "src/api/super-admin.ts:572",
+      "status": "not_served",
+      "reason": "super-admin telephony providers / credentials / BYOC: not ported (plan \u00a73.4 \"Left out: SIP ... AI telephony credentials\"; lane A deleted telephony-provider CRUD)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/phone-numbers",
+      "source": "src/api/super-admin.ts:587",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/phone-numbers/:id",
+      "source": "src/api/super-admin.ts:593",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/phone-numbers",
+      "source": "src/api/super-admin.ts:605",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "PUT",
+      "path": "/super-admin/phone-numbers/:id",
+      "source": "src/api/super-admin.ts:617",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/super-admin/phone-numbers/:id",
+      "source": "src/api/super-admin.ts:624",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/phone-numbers/:id/reactivate",
+      "source": "src/api/super-admin.ts:628",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/phone-numbers/:id/delete",
+      "source": "src/api/super-admin.ts:632",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/phone-numbers/:id/assign",
+      "source": "src/api/super-admin.ts:636",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/super-admin/phone-numbers/:id/assign/:tenantId",
+      "source": "src/api/super-admin.ts:643",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/tenants/:id/phone-numbers",
+      "source": "src/api/super-admin.ts:650",
+      "status": "served",
+      "reason": "super-admin route ported by lane A (super-admin*.routes.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/alerts/catalog",
+      "source": "src/api/superAdminAlerts.ts:16",
+      "status": "not_served",
+      "reason": "super-admin alerts: not ported (master alerting module; not in plan \u00a73.4 scope)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/alerts/voice/status",
+      "source": "src/api/superAdminAlerts.ts:19",
+      "status": "not_served",
+      "reason": "super-admin alerts: not ported (master alerting module; not in plan \u00a73.4 scope)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/alerts/channels",
+      "source": "src/api/superAdminAlerts.ts:22",
+      "status": "not_served",
+      "reason": "super-admin alerts: not ported (master alerting module; not in plan \u00a73.4 scope)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/alerts/channels",
+      "source": "src/api/superAdminAlerts.ts:27",
+      "status": "not_served",
+      "reason": "super-admin alerts: not ported (master alerting module; not in plan \u00a73.4 scope)"
+    },
+    {
+      "method": "PUT",
+      "path": "/super-admin/alerts/channels/:id",
+      "source": "src/api/superAdminAlerts.ts:30",
+      "status": "not_served",
+      "reason": "super-admin alerts: not ported (master alerting module; not in plan \u00a73.4 scope)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/super-admin/alerts/channels/:id",
+      "source": "src/api/superAdminAlerts.ts:33",
+      "status": "not_served",
+      "reason": "super-admin alerts: not ported (master alerting module; not in plan \u00a73.4 scope)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/alerts/definitions",
+      "source": "src/api/superAdminAlerts.ts:36",
+      "status": "not_served",
+      "reason": "super-admin alerts: not ported (master alerting module; not in plan \u00a73.4 scope)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/alerts/definitions",
+      "source": "src/api/superAdminAlerts.ts:43",
+      "status": "not_served",
+      "reason": "super-admin alerts: not ported (master alerting module; not in plan \u00a73.4 scope)"
+    },
+    {
+      "method": "PUT",
+      "path": "/super-admin/alerts/definitions/:id",
+      "source": "src/api/superAdminAlerts.ts:46",
+      "status": "not_served",
+      "reason": "super-admin alerts: not ported (master alerting module; not in plan \u00a73.4 scope)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/super-admin/alerts/definitions/:id",
+      "source": "src/api/superAdminAlerts.ts:49",
+      "status": "not_served",
+      "reason": "super-admin alerts: not ported (master alerting module; not in plan \u00a73.4 scope)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/alerts/definitions/:id/test",
+      "source": "src/api/superAdminAlerts.ts:52",
+      "status": "not_served",
+      "reason": "super-admin alerts: not ported (master alerting module; not in plan \u00a73.4 scope)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/tenants/:id/telephony-credentials",
+      "source": "src/api/superAdminTelephony.ts:42",
+      "status": "not_served",
+      "reason": "super-admin telephony providers / credentials / BYOC: not ported (plan \u00a73.4 \"Left out: SIP ... AI telephony credentials\"; lane A deleted telephony-provider CRUD)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/tenants/:id/telephony-credentials",
+      "source": "src/api/superAdminTelephony.ts:50",
+      "status": "not_served",
+      "reason": "super-admin telephony providers / credentials / BYOC: not ported (plan \u00a73.4 \"Left out: SIP ... AI telephony credentials\"; lane A deleted telephony-provider CRUD)"
+    },
+    {
+      "method": "PUT",
+      "path": "/super-admin/telephony-credentials/:id",
+      "source": "src/api/superAdminTelephony.ts:57",
+      "status": "not_served",
+      "reason": "super-admin telephony providers / credentials / BYOC: not ported (plan \u00a73.4 \"Left out: SIP ... AI telephony credentials\"; lane A deleted telephony-provider CRUD)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/super-admin/telephony-credentials/:id",
+      "source": "src/api/superAdminTelephony.ts:65",
+      "status": "not_served",
+      "reason": "super-admin telephony providers / credentials / BYOC: not ported (plan \u00a73.4 \"Left out: SIP ... AI telephony credentials\"; lane A deleted telephony-provider CRUD) (also ?force=true)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/telephony-credentials/:id/verify",
+      "source": "src/api/superAdminTelephony.ts:68",
+      "status": "not_served",
+      "reason": "super-admin telephony providers / credentials / BYOC: not ported (plan \u00a73.4 \"Left out: SIP ... AI telephony credentials\"; lane A deleted telephony-provider CRUD)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/tenants/:id/byoc-phone-numbers",
+      "source": "src/api/superAdminTelephony.ts:71",
+      "status": "not_served",
+      "reason": "super-admin telephony providers / credentials / BYOC: not ported (plan \u00a73.4 \"Left out: SIP ... AI telephony credentials\"; lane A deleted telephony-provider CRUD)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/tenants/:id/byoc-phone-numbers",
+      "source": "src/api/superAdminTelephony.ts:80",
+      "status": "not_served",
+      "reason": "super-admin telephony providers / credentials / BYOC: not ported (plan \u00a73.4 \"Left out: SIP ... AI telephony credentials\"; lane A deleted telephony-provider CRUD)"
+    },
+    {
+      "method": "PUT",
+      "path": "/super-admin/byoc-phone-numbers/:id",
+      "source": "src/api/superAdminTelephony.ts:91",
+      "status": "not_served",
+      "reason": "super-admin telephony providers / credentials / BYOC: not ported (plan \u00a73.4 \"Left out: SIP ... AI telephony credentials\"; lane A deleted telephony-provider CRUD)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/super-admin/byoc-phone-numbers/:id",
+      "source": "src/api/superAdminTelephony.ts:95",
+      "status": "not_served",
+      "reason": "super-admin telephony providers / credentials / BYOC: not ported (plan \u00a73.4 \"Left out: SIP ... AI telephony credentials\"; lane A deleted telephony-provider CRUD)"
+    },
+    {
+      "method": "POST",
+      "path": "/super-admin/byoc-phone-numbers/:id/accounts",
+      "source": "src/api/superAdminTelephony.ts:101",
+      "status": "not_served",
+      "reason": "super-admin telephony providers / credentials / BYOC: not ported (plan \u00a73.4 \"Left out: SIP ... AI telephony credentials\"; lane A deleted telephony-provider CRUD)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/usage/summary",
+      "source": "src/api/superAdminUsage.ts:33",
+      "status": "not_served",
+      "reason": "super-admin credits usage/fleet: not ported (lane A deleted super-admin-usage.routes.ts; replaced by NEW GET /super-admin/usage counts, plan \u00a73.3)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/usage/fleet",
+      "source": "src/api/superAdminUsage.ts:42",
+      "status": "not_served",
+      "reason": "super-admin credits usage/fleet: not ported (lane A deleted super-admin-usage.routes.ts; replaced by NEW GET /super-admin/usage counts, plan \u00a73.3)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/usage/records",
+      "source": "src/api/superAdminUsage.ts:47",
+      "status": "not_served",
+      "reason": "super-admin credits usage/fleet: not ported (lane A deleted super-admin-usage.routes.ts; replaced by NEW GET /super-admin/usage counts, plan \u00a73.3)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/usage/export/meta",
+      "source": "src/api/superAdminUsage.ts:51",
+      "status": "not_served",
+      "reason": "super-admin credits usage/fleet: not ported (lane A deleted super-admin-usage.routes.ts; replaced by NEW GET /super-admin/usage counts, plan \u00a73.3)"
+    },
+    {
+      "method": "GET",
+      "path": "/super-admin/usage/export",
+      "source": "src/api/superAdminUsage.ts:64",
+      "status": "not_served",
+      "reason": "super-admin credits usage/fleet: not ported (lane A deleted super-admin-usage.routes.ts; replaced by NEW GET /super-admin/usage counts, plan \u00a73.3)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/calls",
+      "source": "src/api/calls.ts:30",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\")"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/calls/:id",
+      "source": "src/api/calls.ts:34",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\")"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/calls",
+      "source": "src/api/calls.ts:38",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\")"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/calls/:id/end",
+      "source": "src/api/calls.ts:45",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\")"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/calls/:id/retry-analysis",
+      "source": "src/api/calls.ts:51",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\")"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/calls/bulk",
+      "source": "src/api/calls.ts:57",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\")"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/calls/batches/:batchId/cancel",
+      "source": "src/api/calls.ts:68",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\")"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/calls/export",
+      "source": "src/api/calls.ts:101",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\") (src/api/exportCsv.ts:126, no field list)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/calls/export",
+      "source": "src/api/calls.ts:101",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\") (src/api/exportCsv.ts:120, with a field list)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/calls/concurrency",
+      "source": "src/api/calls.ts:123",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\")"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/calls/concurrency-limits",
+      "source": "src/api/calls.ts:133",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\")"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/calls/concurrency/reset",
+      "source": "src/api/calls.ts:137",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\")"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/calls/:id/recording",
+      "source": "src/api/calls.ts:149",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\")"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/stats",
+      "source": "src/api/stats.ts:6",
+      "status": "not_served",
+      "reason": "AI-call dashboard stats/analytics: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/analytics/activity-timeline",
+      "source": "src/api/analytics.ts:21",
+      "status": "not_served",
+      "reason": "AI-call dashboard stats/analytics: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/static-calls/analytics",
+      "source": "src/api/analytics.ts:32",
+      "status": "not_served",
+      "reason": "static calls / announcements / audio files (TTS broadcast): not ported (plan \u00a72 \"TTS\", AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/schedules/:id/analytics",
+      "source": "src/api/analytics.ts:40",
+      "status": "not_served",
+      "reason": "schedules / recurring schedules: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/metadata",
+      "source": "src/api/metadata.ts:6",
+      "status": "not_served",
+      "reason": "AI metadata (/proxy/metadata): not ported (lane A deleted metadata-cache, plan \u00a72)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/voices",
+      "source": "src/api/voices.ts:6",
+      "status": "not_served",
+      "reason": "TTS/AI voices: not ported (plan \u00a72 \"TTS\")"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/browser-call/prompts",
+      "source": "src/api/browser-call.ts:34",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\")"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/browser-call/prompts/:id",
+      "source": "src/api/browser-call.ts:38",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\")"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/browser-call/start",
+      "source": "src/api/browser-call.ts:42",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\")"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/browser-call/:id/end",
+      "source": "src/api/browser-call.ts:49",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\")"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/webrtc-call/caller-ids",
+      "source": "src/api/webrtc-call.ts:32",
+      "status": "not_served",
+      "reason": "WebRTC softphone (dialer product, not agency): not ported (lane C deleted the softphone API, plan \u00a72 \"delete the softphone branches\")"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/webrtc-call",
+      "source": "src/api/webrtc-call.ts:50",
+      "status": "not_served",
+      "reason": "WebRTC softphone (dialer product, not agency): not ported (lane C deleted the softphone API, plan \u00a72 \"delete the softphone branches\")"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/webrtc-call/:id/end",
+      "source": "src/api/webrtc-call.ts:67",
+      "status": "not_served",
+      "reason": "WebRTC softphone (dialer product, not agency): not ported (lane C deleted the softphone API, plan \u00a72 \"delete the softphone branches\")"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/webrtc-call",
+      "source": "src/api/webrtc-call.ts:91",
+      "status": "not_served",
+      "reason": "WebRTC softphone (dialer product, not agency): not ported (lane C deleted the softphone API, plan \u00a72 \"delete the softphone branches\")"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/webrtc-call/:id",
+      "source": "src/api/webrtc-call.ts:105",
+      "status": "not_served",
+      "reason": "WebRTC softphone (dialer product, not agency): not ported (lane C deleted the softphone API, plan \u00a72 \"delete the softphone branches\")"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/webrtc-call/:id/retry-analysis",
+      "source": "src/api/webrtc-call.ts:127",
+      "status": "not_served",
+      "reason": "WebRTC softphone (dialer product, not agency): not ported (lane C deleted the softphone API, plan \u00a72 \"delete the softphone branches\")"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/webrtc-call/:id/transcript",
+      "source": "src/api/webrtc-call.ts:145",
+      "status": "not_served",
+      "reason": "WebRTC softphone (dialer product, not agency): not ported (lane C deleted the softphone API, plan \u00a72 \"delete the softphone branches\")"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/webrtc-call/:id/recording",
+      "source": "src/api/webrtc-call.ts:168",
+      "status": "not_served",
+      "reason": "WebRTC softphone (dialer product, not agency): not ported (lane C deleted the softphone API, plan \u00a72 \"delete the softphone branches\")"
+    },
+    {
+      "method": "GET",
+      "path": "/credits",
+      "source": "src/api/credits.ts:10",
+      "status": "not_served",
+      "reason": "credits/billing: not ported (plan decision #8, \u00a73.3)"
+    },
+    {
+      "method": "GET",
+      "path": "/credits/transactions",
+      "source": "src/api/credits.ts:27",
+      "status": "not_served",
+      "reason": "credits/billing: not ported (plan decision #8, \u00a73.3)"
+    },
+    {
+      "method": "POST",
+      "path": "/credits/allocate",
+      "source": "src/api/credits.ts:34",
+      "status": "not_served",
+      "reason": "credits/billing: not ported (plan decision #8, \u00a73.3)"
+    },
+    {
+      "method": "POST",
+      "path": "/credits/deallocate",
+      "source": "src/api/credits.ts:44",
+      "status": "not_served",
+      "reason": "credits/billing: not ported (plan decision #8, \u00a73.3)"
+    },
+    {
+      "method": "GET",
+      "path": "/credits/rate-card",
+      "source": "src/api/credits.ts:51",
+      "status": "not_served",
+      "reason": "credits/billing: not ported (plan decision #8, \u00a73.3)"
+    },
+    {
+      "method": "GET",
+      "path": "/phone-numbers",
+      "source": "src/api/phone-numbers.ts:12",
+      "status": "served",
+      "reason": "caller-ID list for the agency CallerIdPicker (src/pages/agency/CallerIdPicker.tsx:41 via hooks/usePhoneNumbers.ts:16): master phone-number.routes.ts GET / ported by Phase 8 (agency.phone_numbers.read; BYOC half deleted)"
+    },
+    {
+      "method": "POST",
+      "path": "/phone-numbers/:id/tags",
+      "source": "src/api/phone-numbers.ts:19",
+      "status": "not_served",
+      "reason": "tenant phone tagging / inbound routing: not ported (inbound is an AI surface; lane A ported the super-admin inventory only)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/phone-numbers/:id/tags/:accountId",
+      "source": "src/api/phone-numbers.ts:26",
+      "status": "not_served",
+      "reason": "tenant phone tagging / inbound routing: not ported (inbound is an AI surface; lane A ported the super-admin inventory only)"
+    },
+    {
+      "method": "GET",
+      "path": "/phone-numbers/inbound-config",
+      "source": "src/api/phone-numbers.ts:32",
+      "status": "not_served",
+      "reason": "tenant phone tagging / inbound routing: not ported (inbound is an AI surface; lane A ported the super-admin inventory only)"
+    },
+    {
+      "method": "PUT",
+      "path": "/phone-numbers/:id/inbound",
+      "source": "src/api/phone-numbers.ts:41",
+      "status": "not_served",
+      "reason": "tenant phone tagging / inbound routing: not ported (inbound is an AI surface; lane A ported the super-admin inventory only)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/phone-numbers/:id/inbound",
+      "source": "src/api/phone-numbers.ts:52",
+      "status": "not_served",
+      "reason": "tenant phone tagging / inbound routing: not ported (inbound is an AI surface; lane A ported the super-admin inventory only)"
+    },
+    {
+      "method": "GET",
+      "path": "/phone-numbers/:id/inbound/conflict-check",
+      "source": "src/api/phone-numbers.ts:62",
+      "status": "not_served",
+      "reason": "tenant phone tagging / inbound routing: not ported (inbound is an AI surface; lane A ported the super-admin inventory only)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/sip/connections",
+      "source": "src/api/sip.ts:22",
+      "status": "not_served",
+      "reason": "SIP connections: not ported (plan \u00a72 \"SIP\", decision #5)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/sip/connections/:id",
+      "source": "src/api/sip.ts:26",
+      "status": "not_served",
+      "reason": "SIP connections: not ported (plan \u00a72 \"SIP\", decision #5)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/sip/connections",
+      "source": "src/api/sip.ts:34",
+      "status": "not_served",
+      "reason": "SIP connections: not ported (plan \u00a72 \"SIP\", decision #5)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/sip/connections/:id",
+      "source": "src/api/sip.ts:46",
+      "status": "not_served",
+      "reason": "SIP connections: not ported (plan \u00a72 \"SIP\", decision #5)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/sip/connections/:id",
+      "source": "src/api/sip.ts:53",
+      "status": "not_served",
+      "reason": "SIP connections: not ported (plan \u00a72 \"SIP\", decision #5)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/sip/connections/:id/stats",
+      "source": "src/api/sip.ts:59",
+      "status": "not_served",
+      "reason": "SIP connections: not ported (plan \u00a72 \"SIP\", decision #5)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/sip/connections/:id/test",
+      "source": "src/api/sip.ts:63",
+      "status": "not_served",
+      "reason": "SIP connections: not ported (plan \u00a72 \"SIP\", decision #5)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/prompts",
+      "source": "src/api/prompts.ts:21",
+      "status": "not_served",
+      "reason": "prompts / AI tools: not ported (plan \u00a72, AI surface) (also listPromptsPage, :53)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/prompts/:id",
+      "source": "src/api/prompts.ts:65",
+      "status": "not_served",
+      "reason": "prompts / AI tools: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/prompts",
+      "source": "src/api/prompts.ts:69",
+      "status": "not_served",
+      "reason": "prompts / AI tools: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/prompts/:id",
+      "source": "src/api/prompts.ts:76",
+      "status": "not_served",
+      "reason": "prompts / AI tools: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/prompts/:id",
+      "source": "src/api/prompts.ts:83",
+      "status": "not_served",
+      "reason": "prompts / AI tools: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/prompts/enhance",
+      "source": "src/api/prompts.ts:89",
+      "status": "not_served",
+      "reason": "prompts / AI tools: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/prompts/:id/tools",
+      "source": "src/api/prompt-tools.ts:6",
+      "status": "not_served",
+      "reason": "prompts / AI tools: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/prompts/:id/tools",
+      "source": "src/api/prompt-tools.ts:10",
+      "status": "not_served",
+      "reason": "prompts / AI tools: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/prompts/:id/tools/:toolId",
+      "source": "src/api/prompt-tools.ts:17",
+      "status": "not_served",
+      "reason": "prompts / AI tools: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/prompts/:id/tools/:toolId",
+      "source": "src/api/prompt-tools.ts:24",
+      "status": "not_served",
+      "reason": "prompts / AI tools: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/platform-tools",
+      "source": "src/api/prompt-tools.ts:30",
+      "status": "not_served",
+      "reason": "prompts / AI tools: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/prompts/autopilot/capabilities",
+      "source": "src/api/autopilot.ts:131",
+      "status": "not_served",
+      "reason": "autopilot (AI authoring assistant): not ported (plan \u00a72, AI surface) (transport at src/api/autopilot.ts:61)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/prompts/autopilot/stream",
+      "source": "src/api/autopilot.ts:686",
+      "status": "not_served",
+      "reason": "autopilot (AI authoring assistant): not ported (plan \u00a72, AI surface) (SSE; transport at src/api/autopilot.ts:62)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/automations/autopilot/capabilities",
+      "source": "src/api/autopilot.ts:131",
+      "status": "not_served",
+      "reason": "autopilot (AI authoring assistant): not ported (plan \u00a72, AI surface) (transport at src/api/autopilot.ts:68)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/automations/autopilot/stream",
+      "source": "src/api/autopilot.ts:686",
+      "status": "not_served",
+      "reason": "autopilot (AI authoring assistant): not ported (plan \u00a72, AI surface) (SSE; transport at src/api/autopilot.ts:69)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/ivr-workflows/autopilot/capabilities",
+      "source": "src/api/autopilot.ts:131",
+      "status": "not_served",
+      "reason": "autopilot (AI authoring assistant): not ported (plan \u00a72, AI surface) (transport at src/api/autopilot.ts:75)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/ivr-workflows/autopilot/stream",
+      "source": "src/api/autopilot.ts:686",
+      "status": "not_served",
+      "reason": "autopilot (AI authoring assistant): not ported (plan \u00a72, AI surface) (SSE; transport at src/api/autopilot.ts:76)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/ivr-workflows",
+      "source": "src/api/ivr.ts:13",
+      "status": "not_served",
+      "reason": "IVR: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/ivr-workflows/:id",
+      "source": "src/api/ivr.ts:17",
+      "status": "not_served",
+      "reason": "IVR: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/ivr-workflows",
+      "source": "src/api/ivr.ts:21",
+      "status": "not_served",
+      "reason": "IVR: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/ivr-workflows/:id",
+      "source": "src/api/ivr.ts:28",
+      "status": "not_served",
+      "reason": "IVR: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/ivr-workflows/:id",
+      "source": "src/api/ivr.ts:35",
+      "status": "not_served",
+      "reason": "IVR: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/ivr-workflows/:id/export",
+      "source": "src/api/ivr.ts:41",
+      "status": "not_served",
+      "reason": "IVR: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/ivr-calls",
+      "source": "src/api/ivr.ts:83",
+      "status": "not_served",
+      "reason": "IVR: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/ivr-calls/:id",
+      "source": "src/api/ivr.ts:87",
+      "status": "not_served",
+      "reason": "IVR: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/ivr-calls/export",
+      "source": "src/api/ivr.ts:116",
+      "status": "not_served",
+      "reason": "IVR: not ported (plan \u00a72, AI surface) (src/api/exportCsv.ts:126)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/ivr-calls/export",
+      "source": "src/api/ivr.ts:116",
+      "status": "not_served",
+      "reason": "IVR: not ported (plan \u00a72, AI surface) (src/api/exportCsv.ts:120)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/ivr-calls/batches/:batchId/cancel",
+      "source": "src/api/ivr.ts:131",
+      "status": "not_served",
+      "reason": "IVR: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/ivr-calls",
+      "source": "src/api/ivr.ts:170",
+      "status": "not_served",
+      "reason": "IVR: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/announcements",
+      "source": "src/api/announcements.ts:56",
+      "status": "not_served",
+      "reason": "static calls / announcements / audio files (TTS broadcast): not ported (plan \u00a72 \"TTS\", AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/announcements",
+      "source": "src/api/announcements.ts:61",
+      "status": "not_served",
+      "reason": "static calls / announcements / audio files (TTS broadcast): not ported (plan \u00a72 \"TTS\", AI surface)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/announcements/:id",
+      "source": "src/api/announcements.ts:68",
+      "status": "not_served",
+      "reason": "static calls / announcements / audio files (TTS broadcast): not ported (plan \u00a72 \"TTS\", AI surface)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/announcements/:id",
+      "source": "src/api/announcements.ts:75",
+      "status": "not_served",
+      "reason": "static calls / announcements / audio files (TTS broadcast): not ported (plan \u00a72 \"TTS\", AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/audio-files",
+      "source": "src/api/announcements.ts:107",
+      "status": "not_served",
+      "reason": "static calls / announcements / audio files (TTS broadcast): not ported (plan \u00a72 \"TTS\", AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/audio-files",
+      "source": "src/api/announcements.ts:155",
+      "status": "not_served",
+      "reason": "static calls / announcements / audio files (TTS broadcast): not ported (plan \u00a72 \"TTS\", AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/audio-files/:id/url",
+      "source": "src/api/announcements.ts:165",
+      "status": "not_served",
+      "reason": "static calls / announcements / audio files (TTS broadcast): not ported (plan \u00a72 \"TTS\", AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/announcements/:id/preview-tts",
+      "source": "src/api/announcements.ts:196",
+      "status": "not_served",
+      "reason": "static calls / announcements / audio files (TTS broadcast): not ported (plan \u00a72 \"TTS\", AI surface)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/audio-files/:id",
+      "source": "src/api/announcements.ts:203",
+      "status": "not_served",
+      "reason": "static calls / announcements / audio files (TTS broadcast): not ported (plan \u00a72 \"TTS\", AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/static-calls",
+      "source": "src/api/announcements.ts:246",
+      "status": "not_served",
+      "reason": "static calls / announcements / audio files (TTS broadcast): not ported (plan \u00a72 \"TTS\", AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/static-calls",
+      "source": "src/api/announcements.ts:284",
+      "status": "not_served",
+      "reason": "static calls / announcements / audio files (TTS broadcast): not ported (plan \u00a72 \"TTS\", AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/static-calls/batches/:batchId/cancel",
+      "source": "src/api/announcements.ts:295",
+      "status": "not_served",
+      "reason": "static calls / announcements / audio files (TTS broadcast): not ported (plan \u00a72 \"TTS\", AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/static-calls/export",
+      "source": "src/api/announcements.ts:326",
+      "status": "not_served",
+      "reason": "static calls / announcements / audio files (TTS broadcast): not ported (plan \u00a72 \"TTS\", AI surface) (src/api/exportCsv.ts:126)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/static-calls/export",
+      "source": "src/api/announcements.ts:326",
+      "status": "not_served",
+      "reason": "static calls / announcements / audio files (TTS broadcast): not ported (plan \u00a72 \"TTS\", AI surface) (src/api/exportCsv.ts:120)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/schedules",
+      "source": "src/api/schedules.ts:6",
+      "status": "not_served",
+      "reason": "schedules / recurring schedules: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/schedules",
+      "source": "src/api/schedules.ts:20",
+      "status": "not_served",
+      "reason": "schedules / recurring schedules: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/schedules/:id",
+      "source": "src/api/schedules.ts:24",
+      "status": "not_served",
+      "reason": "schedules / recurring schedules: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/schedules/:id/contacts",
+      "source": "src/api/schedules.ts:35",
+      "status": "not_served",
+      "reason": "schedules / recurring schedules: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/schedules/:id/cancel",
+      "source": "src/api/schedules.ts:39",
+      "status": "not_served",
+      "reason": "schedules / recurring schedules: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/recurring-schedules",
+      "source": "src/api/recurring-schedules.ts:15",
+      "status": "not_served",
+      "reason": "schedules / recurring schedules: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/recurring-schedules",
+      "source": "src/api/recurring-schedules.ts:29",
+      "status": "not_served",
+      "reason": "schedules / recurring schedules: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/recurring-schedules/:id",
+      "source": "src/api/recurring-schedules.ts:37",
+      "status": "not_served",
+      "reason": "schedules / recurring schedules: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/recurring-schedules/:id",
+      "source": "src/api/recurring-schedules.ts:46",
+      "status": "not_served",
+      "reason": "schedules / recurring schedules: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/recurring-schedules/:id/cancel",
+      "source": "src/api/recurring-schedules.ts:57",
+      "status": "not_served",
+      "reason": "schedules / recurring schedules: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/recurring-schedules/:id/pause",
+      "source": "src/api/recurring-schedules.ts:65",
+      "status": "not_served",
+      "reason": "schedules / recurring schedules: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/recurring-schedules/:id/resume",
+      "source": "src/api/recurring-schedules.ts:73",
+      "status": "not_served",
+      "reason": "schedules / recurring schedules: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/recurring-schedules/:id/instances",
+      "source": "src/api/recurring-schedules.ts:86",
+      "status": "not_served",
+      "reason": "schedules / recurring schedules: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/bulk-dispatch-jobs",
+      "source": "src/api/bulk-dispatch-jobs.ts:39",
+      "status": "not_served",
+      "reason": "bulk dispatch / contact lists: not ported (plan \u00a72 \"bulk dispatch\")"
+    },
+    {
+      "method": "GET",
+      "path": "/bulk-dispatch-jobs/summary",
+      "source": "src/api/bulk-dispatch-jobs.ts:67",
+      "status": "not_served",
+      "reason": "bulk dispatch / contact lists: not ported (plan \u00a72 \"bulk dispatch\")"
+    },
+    {
+      "method": "GET",
+      "path": "/bulk-dispatch-jobs/:id",
+      "source": "src/api/bulk-dispatch-jobs.ts:79",
+      "status": "not_served",
+      "reason": "bulk dispatch / contact lists: not ported (plan \u00a72 \"bulk dispatch\")"
+    },
+    {
+      "method": "POST",
+      "path": "/bulk-dispatch-jobs/:id/cancel",
+      "source": "src/api/bulk-dispatch-jobs.ts:103",
+      "status": "not_served",
+      "reason": "bulk dispatch / contact lists: not ported (plan \u00a72 \"bulk dispatch\")"
+    },
+    {
+      "method": "POST",
+      "path": "/bulk-dispatch-jobs/:id/stop-remaining",
+      "source": "src/api/bulk-dispatch-jobs.ts:116",
+      "status": "not_served",
+      "reason": "bulk dispatch / contact lists: not ported (plan \u00a72 \"bulk dispatch\")"
+    },
+    {
+      "method": "GET",
+      "path": "/bulk-dispatch-jobs/:id/analytics",
+      "source": "src/api/bulk-dispatch-jobs.ts:128",
+      "status": "not_served",
+      "reason": "bulk dispatch / contact lists: not ported (plan \u00a72 \"bulk dispatch\")"
+    },
+    {
+      "method": "POST",
+      "path": "/bulk-dispatch-jobs/:id/retry",
+      "source": "src/api/bulk-dispatch-jobs.ts:144",
+      "status": "not_served",
+      "reason": "bulk dispatch / contact lists: not ported (plan \u00a72 \"bulk dispatch\")"
+    },
+    {
+      "method": "GET",
+      "path": "/contact-lists",
+      "source": "src/api/contact-lists.ts:18",
+      "status": "not_served",
+      "reason": "bulk dispatch / contact lists: not ported (plan \u00a72 \"bulk dispatch\")"
+    },
+    {
+      "method": "GET",
+      "path": "/contact-lists/:id",
+      "source": "src/api/contact-lists.ts:22",
+      "status": "not_served",
+      "reason": "bulk dispatch / contact lists: not ported (plan \u00a72 \"bulk dispatch\")"
+    },
+    {
+      "method": "DELETE",
+      "path": "/contact-lists/:id",
+      "source": "src/api/contact-lists.ts:26",
+      "status": "not_served",
+      "reason": "bulk dispatch / contact lists: not ported (plan \u00a72 \"bulk dispatch\")"
+    },
+    {
+      "method": "POST",
+      "path": "/contact-lists",
+      "source": "src/api/contact-lists.ts:50",
+      "status": "not_served",
+      "reason": "bulk dispatch / contact lists: not ported (plan \u00a72 \"bulk dispatch\")"
+    },
+    {
+      "method": "GET",
+      "path": "/contact-lists/template",
+      "source": "src/api/contact-lists.ts:82",
+      "status": "not_served",
+      "reason": "bulk dispatch / contact lists: not ported (plan \u00a72 \"bulk dispatch\")"
+    },
+    {
+      "method": "POST",
+      "path": "/threads/follow-up",
+      "source": "src/api/threads.ts:23",
+      "status": "not_served",
+      "reason": "threads (AI follow-up conversations): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/threads/:id",
+      "source": "src/api/threads.ts:36",
+      "status": "not_served",
+      "reason": "threads (AI follow-up conversations): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/threads/:id/timeline",
+      "source": "src/api/threads.ts:45",
+      "status": "not_served",
+      "reason": "threads (AI follow-up conversations): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/threads",
+      "source": "src/api/threads.ts:59",
+      "status": "not_served",
+      "reason": "threads (AI follow-up conversations): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/threads/by-call/:callId",
+      "source": "src/api/threads.ts:77",
+      "status": "not_served",
+      "reason": "threads (AI follow-up conversations): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/escalation-destinations",
+      "source": "src/api/escalation.ts:21",
+      "status": "not_served",
+      "reason": "escalation destinations (AI live transfer): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/escalation-destinations/:id",
+      "source": "src/api/escalation.ts:33",
+      "status": "not_served",
+      "reason": "escalation destinations (AI live transfer): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/escalation-destinations",
+      "source": "src/api/escalation.ts:41",
+      "status": "not_served",
+      "reason": "escalation destinations (AI live transfer): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/escalation-destinations/:id",
+      "source": "src/api/escalation.ts:58",
+      "status": "not_served",
+      "reason": "escalation destinations (AI live transfer): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/escalation-destinations/:id",
+      "source": "src/api/escalation.ts:69",
+      "status": "not_served",
+      "reason": "escalation destinations (AI live transfer): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/escalation-destinations/caller-ids",
+      "source": "src/api/escalation.ts:87",
+      "status": "not_served",
+      "reason": "escalation destinations (AI live transfer): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/escalation-destinations/:id/test",
+      "source": "src/api/escalation.ts:107",
+      "status": "not_served",
+      "reason": "escalation destinations (AI live transfer): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/knowledge-bases",
+      "source": "src/api/catalogs.ts:31",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface) (also src/api/documents.ts:32)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/knowledge-bases/:id",
+      "source": "src/api/catalogs.ts:35",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface) (also src/api/documents.ts:36)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/knowledge-bases/:id/mapping",
+      "source": "src/api/catalogs.ts:44",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/knowledge-bases/:id",
+      "source": "src/api/catalogs.ts:51",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface) (also src/api/documents.ts:40)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/knowledge-bases/:id/preview",
+      "source": "src/api/catalogs.ts:66",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/knowledge-bases/:id/analytics",
+      "source": "src/api/catalogs.ts:96",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/knowledge-bases/:id/settings",
+      "source": "src/api/catalogs.ts:119",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "PATCH",
+      "path": "/proxy/knowledge-bases/:id/items",
+      "source": "src/api/catalogs.ts:148",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/knowledge-bases",
+      "source": "src/api/catalogs.ts:177",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/knowledge-bases/:id/file",
+      "source": "src/api/catalogs.ts:197",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/knowledge-bases/:id/document-preview",
+      "source": "src/api/documents.ts:57",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/knowledge-bases/documents",
+      "source": "src/api/documents.ts:97",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/knowledge-bases/:id/documents",
+      "source": "src/api/documents.ts:115",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/knowledge-bases/:id/documents/:docId",
+      "source": "src/api/documents.ts:125",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/knowledge-bases/:id/documents/:docId/approve",
+      "source": "src/api/documents.ts:135",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/knowledge-bases/:id/documents/:docId/reject",
+      "source": "src/api/documents.ts:148",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/knowledge-bases/:id/documents/:docId",
+      "source": "src/api/documents.ts:161",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/knowledge-bases/:id/documents/:docId/source-url",
+      "source": "src/api/documents.ts:171",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/knowledge-bases/:id/chunks",
+      "source": "src/api/documents.ts:195",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/knowledge-bases/:id/documents",
+      "source": "src/api/documents.ts:211",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/knowledge-bases/:id/documents/:docId/file",
+      "source": "src/api/documents.ts:235",
+      "status": "not_served",
+      "reason": "knowledge bases: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/automations",
+      "source": "src/api/automations.ts:48",
+      "status": "not_served",
+      "reason": "automations: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/automations/:id",
+      "source": "src/api/automations.ts:56",
+      "status": "not_served",
+      "reason": "automations: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/automations",
+      "source": "src/api/automations.ts:64",
+      "status": "not_served",
+      "reason": "automations: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/automations/:id",
+      "source": "src/api/automations.ts:76",
+      "status": "not_served",
+      "reason": "automations: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/automations/:id",
+      "source": "src/api/automations.ts:87",
+      "status": "not_served",
+      "reason": "automations: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/automations/:id/dry-run",
+      "source": "src/api/automations.ts:98",
+      "status": "not_served",
+      "reason": "automations: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/automations/context-schema",
+      "source": "src/api/automations.ts:111",
+      "status": "not_served",
+      "reason": "automations: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/automations/:id/runs",
+      "source": "src/api/automations.ts:140",
+      "status": "not_served",
+      "reason": "automations: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/automations/runs/:runId",
+      "source": "src/api/automations.ts:152",
+      "status": "not_served",
+      "reason": "automations: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/automations/:id/executions",
+      "source": "src/api/automations.ts:190",
+      "status": "not_served",
+      "reason": "automations: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/automations/executions/:executionId",
+      "source": "src/api/automations.ts:211",
+      "status": "not_served",
+      "reason": "automations: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/automations/executions/:executionId/cancel",
+      "source": "src/api/automations.ts:254",
+      "status": "not_served",
+      "reason": "automations: not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/connections",
+      "source": "src/api/messaging.ts:53",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/connections/:id",
+      "source": "src/api/messaging.ts:57",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/messaging/connections/:id/verify",
+      "source": "src/api/messaging.ts:61",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/messaging/connections",
+      "source": "src/api/messaging.ts:71",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/messaging/connections/:id",
+      "source": "src/api/messaging.ts:83",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/messaging/connections/:id",
+      "source": "src/api/messaging.ts:90",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/connections/:id/stats",
+      "source": "src/api/messaging.ts:96",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/connections/:id/invite-link",
+      "source": "src/api/messaging.ts:100",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/connections/:id/qr",
+      "source": "src/api/messaging.ts:104",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/connections/:id/contacts",
+      "source": "src/api/messaging.ts:115",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/connections/:id/groups",
+      "source": "src/api/messaging.ts:130",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/connections/:id/groups/:groupId",
+      "source": "src/api/messaging.ts:144",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/templates",
+      "source": "src/api/messaging.ts:156",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/templates/:id",
+      "source": "src/api/messaging.ts:160",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/messaging/templates",
+      "source": "src/api/messaging.ts:164",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/messaging/templates/:id",
+      "source": "src/api/messaging.ts:171",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/messaging/templates/:id",
+      "source": "src/api/messaging.ts:178",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/messaging/templates/sync",
+      "source": "src/api/messaging.ts:184",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/messages",
+      "source": "src/api/messaging.ts:206",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/messages/:id",
+      "source": "src/api/messaging.ts:210",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/messages/batches/:batchId",
+      "source": "src/api/messaging.ts:214",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/email-templates",
+      "source": "src/api/messaging.ts:226",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/email-templates/:id",
+      "source": "src/api/messaging.ts:230",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/messaging/email-templates",
+      "source": "src/api/messaging.ts:234",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/messaging/email-templates/:id",
+      "source": "src/api/messaging.ts:241",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/messaging/email-templates/:id",
+      "source": "src/api/messaging.ts:248",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/messaging/messages",
+      "source": "src/api/messaging.ts:258",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/media",
+      "source": "src/api/messaging.ts:295",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/media/:id",
+      "source": "src/api/messaging.ts:299",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/proxy/messaging/media/:id",
+      "source": "src/api/messaging.ts:303",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/messaging/media",
+      "source": "src/api/messaging.ts:323",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/messaging/media/:id/content",
+      "source": "src/api/messaging.ts:356",
+      "status": "not_served",
+      "reason": "messaging (WhatsApp/email): not ported (plan \u00a72, AI surface)"
+    },
+    {
+      "method": "WS",
+      "path": "/proxy/agency/station/:sessionId",
+      "source": "src/hooks/useAgencyStation.ts:1260",
+      "status": "served",
+      "reason": "agency station socket: URL is `station_ws_url` from POST /proxy/agency/sessions/:id/station-token (src/api/agency.ts:64), rewritten by master onto /proxy/agency/station/:sessionId?token= (master proxy-agency-station.routes.ts:184-199); Phase 8 mounts Phase 6's station handler here"
+    },
+    {
+      "method": "WS",
+      "path": "/proxy/media-stream/:callId",
+      "source": "src/hooks/useBrowserCall.ts:95",
+      "status": "not_served",
+      "reason": "AI calls: not ported (plan decision #9, \u00a72 \"every AI surface\") (browser AI call media; ws_url from POST /proxy/browser-call/start)"
+    },
+    {
+      "method": "WS",
+      "path": "/proxy/webrtc-call/:id/browser-stream",
+      "source": "src/hooks/useWebRtcCall.ts:325",
+      "status": "not_served",
+      "reason": "WebRTC softphone (dialer product, not agency): not ported (lane C deleted the softphone API, plan \u00a72 \"delete the softphone branches\") (built by src/utils/webrtc-ws.ts from `browser_ws_url` + ?token=)"
+    }
+  ]
+}

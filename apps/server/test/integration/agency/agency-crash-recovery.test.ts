@@ -1,0 +1,356 @@
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { closeTestPool, closeTestRedis, flushTestRedis, getTestPool, truncateAll } from '../setup/test-utils.js';
+import { DncRegistry } from '../../../src/agency/dnc-registry.js';
+import {
+  insertAgencyAttempt,
+  insertAgencyCampaign,
+  insertAgencyContact,
+  insertAgencyContacts,
+  insertAgentSession,
+  noLiveAttempts,
+} from './agency-factories.js';
+import { uuidFor } from '../setup/factories.js';
+
+/*
+ * PORT NOTE (magick-agency, Phase 6): ported from core
+ * test/integration/agency/agency-crash-recovery.test.ts@4850d1d9 — 6 cases, all kept.
+ * Modified: the connection mock (agency's `@magick-agency/db`); `agent_user_id`
+ * literals are UUIDs (`uuidFor('agent-2')`, the baseline types the column UUID);
+ * `idleLeader`'s registry (decision B8) — core built `new DncRegistry(null, '')`, a
+ * registry with no Redis that answers `unavailable` to everything. The collapsed
+ * registry takes a repository instead of Redis, so the same "answers `unavailable` to
+ * everything" registry is one whose `dnc_entries` read always fails (it maps every
+ * failed read to `unavailable`, never `clear`).
+ */
+
+// PORT NOTE: core mocked `src/db/connection.js`; agency's pool lives in `@magick-agency/db`
+// (the server's repositories import its root, packages/db's repositories `./connection`).
+vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
+vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
+
+const { AgencyReaper } = await import('../../../src/agency/reaper.js');
+const { PacingEngine } = await import('../../../src/agency/pacing-engine.js');
+const {
+  agencyCampaignRepository,
+  agencyAttemptRepository,
+} = await import('../../../src/db/repositories/agency.repository.js');
+
+/**
+ * T-C — crash recovery (§6.2).
+ *
+ * `gracefulShutdown()` handles SIGTERM. It does not handle SIGKILL, OOM or a hard
+ * crash, and those strand rows in states INVISIBLE to the pacing loop: contacts
+ * in `in_flight` (not `pending`, so never re-claimed) and attempts in
+ * `queued`/`dialing`/`ringing` (counted as occupied, so they permanently shrink
+ * the dialing target). The documented failure is SILENT contact loss and a
+ * campaign that can never reach `completed` — so counting is the whole test.
+ *
+ * A real `kill -9` of the core process is NOT automated here and I am not going
+ * to pretend otherwise: core's integration harness runs in-process and there is
+ * no precedent in 163 integration files for spawning it as a child. What IS
+ * automated is the state a SIGKILL leaves behind, written directly, plus the
+ * negative case that proves the reaper is load-bearing. The real signal drill is
+ * a recorded manual exercise (D-CRASH in the test plan).
+ */
+
+const LIVE_ATTEMPT_STATES = ['queued', 'dialing', 'ringing', 'answered', 'bridged'] as const;
+
+/** A pacing engine with no agents and no Redis: every tick goes straight to finalize. */
+function idleLeader(broadcasts: unknown[]) {
+  const stations = {
+    isLocallyOwned: () => false,
+    ownerOf: async () => null,
+    socketFor: () => undefined,
+    send: () => false,
+    broadcast: (_campaignId: string, frame: unknown) => {
+      broadcasts.push(frame);
+      return 0;
+    },
+  };
+  const agents = { get: async () => null, set: async () => {}, reserve: async () => 'lost' as const };
+  const dispatcher = { dispatch: async () => {} };
+  // A registry with no Redis, which answers `unavailable` to everything — and that
+  // is correct here rather than a shortcut. `agents.reserve` always returns 'lost',
+  // so `dialUpTo` returns before it claims a contact and the pre-dial gates are
+  // never reached: this leader exists to drive finalize, and it must not become
+  // able to dial by accident.
+  // PORT NOTE (B8): core's `new DncRegistry(null, '')` — see the header.
+  const dnc = new DncRegistry({
+    findSuppressed: async () => { throw new Error('no DNC store in this leader'); },
+  });
+  return new PacingEngine(
+    null, '', 'replica-test', stations as never, agents as never, dispatcher as never, dnc,
+  );
+}
+
+describe('agency crash recovery (integration)', () => {
+  beforeEach(async () => {
+    await truncateAll();
+    await flushTestRedis();
+  });
+  afterAll(async () => {
+    await closeTestRedis();
+    await closeTestPool();
+  });
+
+  it('T-C1: the startup reaper recovers every stranded row and leaves the roster whole', async () => {
+    const campaign = await insertAgencyCampaign({ status: 'running', contacts_total: 12 });
+    const session = await insertAgentSession(campaign.id, { state: 'on_call' });
+    await insertAgentSession(campaign.id, { state: 'available', agent_user_id: uuidFor('agent-2') }); // PORT NOTE: UUID column
+    await insertAgentSession(campaign.id, { state: 'reserved', agent_user_id: uuidFor('agent-3') }); // PORT NOTE: UUID column
+
+    // 5 contacts stranded mid-dial, one per live attempt state.
+    const stranded = [];
+    for (const state of LIVE_ATTEMPT_STATES) {
+      const contact = await insertAgencyContact(campaign.id, { state: 'in_flight' });
+      await insertAgencyAttempt(campaign.id, contact.id, { state, reserved_agent_id: session.id });
+      stranded.push(contact);
+    }
+    // 7 untouched contacts, so "whole roster" means something.
+    await insertAgencyContacts(campaign.id, 7);
+
+    const reaper = new AgencyReaper(noLiveAttempts());
+    const { attempts, agents } = await reaper.reapOnStartup();
+
+    expect(attempts).toBe(5);
+    expect(agents).toBe(3);
+
+    // Every attempt is terminal, and labelled as what it was.
+    const { rows: liveAttempts } = await getTestPool().query(
+      `SELECT id, state, outcome FROM agency_call_attempts
+        WHERE campaign_id = $1 AND state <> 'ended'`,
+      [campaign.id],
+    );
+    expect(liveAttempts).toEqual([]);
+    const { rows: outcomes } = await getTestPool().query<{ outcome: string; n: string }>(
+      `SELECT outcome, COUNT(*)::text AS n FROM agency_call_attempts
+        WHERE campaign_id = $1 GROUP BY outcome`,
+      [campaign.id],
+    );
+    expect(outcomes).toEqual([{ outcome: 'orphaned', n: '5' }]);
+
+    // Every stranded contact is back on the roster and dialable.
+    for (const contact of stranded) {
+      const { rows } = await getTestPool().query<{ state: string; last_outcome: string }>(
+        'SELECT state, last_outcome FROM agency_contacts WHERE id = $1',
+        [contact.id],
+      );
+      expect(rows[0]!.state).toBe('pending');
+      expect(rows[0]!.last_outcome).toBe('orphaned');
+    }
+
+    // ── ROSTER WHOLENESS ────────────────────────────────────────────────
+    // The failure §6.2 describes is silent LOSS, so the count is the assertion.
+    const { rows: census } = await getTestPool().query<{ state: string; n: string }>(
+      `SELECT state, COUNT(*)::text AS n FROM agency_contacts
+        WHERE campaign_id = $1 GROUP BY state`,
+      [campaign.id],
+    );
+    const byState = Object.fromEntries(census.map((r) => [r.state, Number(r.n)]));
+    expect(byState['pending']).toBe(12);
+    expect(byState['in_flight'] ?? 0).toBe(0);
+    expect(byState['connected'] ?? 0).toBe(0);
+
+    const total = Object.values(byState).reduce((a, b) => a + b, 0);
+    expect(total).toBe(campaign.contacts_total);
+
+    // Every agent is offline — no station socket survived the process.
+    const { rows: liveAgents } = await getTestPool().query(
+      `SELECT id FROM agency_agent_sessions WHERE campaign_id = $1 AND state <> 'offline'`,
+      [campaign.id],
+    );
+    expect(liveAgents).toEqual([]);
+  });
+
+  it('T-C2: a crashed campaign can still reach `completed`', async () => {
+    const campaign = await insertAgencyCampaign({ status: 'running', contacts_total: 6 });
+    const session = await insertAgentSession(campaign.id, { state: 'on_call' });
+
+    const contacts = await insertAgencyContacts(campaign.id, 6);
+    // Three stranded by the crash, three never dialed.
+    for (const c of contacts.slice(0, 3)) {
+      await getTestPool().query(`UPDATE agency_contacts SET state = 'in_flight' WHERE id = $1`, [c.id]);
+      await insertAgencyAttempt(campaign.id, c.id, { state: 'ringing', reserved_agent_id: session.id });
+    }
+
+    const broadcasts: unknown[] = [];
+    const leader = idleLeader(broadcasts);
+
+    // ── The negative case FIRST: without reaping, the campaign is wedged. ──
+    // This is what makes T-C2 a real test rather than a tautology — it proves
+    // the reaper is the thing doing the work.
+    expect(await agencyCampaignRepository.countOutstanding(campaign.id)).toBe(6);
+    await leader.tickOnce(campaign.id);
+    expect((await agencyCampaignRepository.findById(campaign.id))!.status).toBe('running');
+
+    // ── Reap, then drain the roster as a normal run would. ────────────────
+    await new AgencyReaper(noLiveAttempts()).reapOnStartup();
+    expect(await agencyCampaignRepository.countOutstanding(campaign.id)).toBe(6);
+
+    await getTestPool().query(
+      `UPDATE agency_contacts SET state = 'completed', last_outcome = 'connected' WHERE campaign_id = $1`,
+      [campaign.id],
+    );
+
+    await leader.tickOnce(campaign.id);
+
+    const finished = await agencyCampaignRepository.findById(campaign.id);
+    expect(finished!.status).toBe('completed');
+    expect(finished!.completed_at).not.toBeNull();
+
+    // Every contact reached a terminal state — none silently lost on the way.
+    const { rows } = await getTestPool().query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM agency_contacts
+        WHERE campaign_id = $1 AND state IN ('completed','exhausted','suppressed')`,
+      [campaign.id],
+    );
+    expect(Number(rows[0]!.n)).toBe(campaign.contacts_total);
+
+    // Idle agents are told the list drained — they are outside every
+    // per-attempt frame's reach, so without this they stare at a dead screen.
+    expect(broadcasts).toContainEqual(
+      expect.objectContaining({
+        event: 'campaign_state',
+        status: 'completed',
+        reason: 'list_exhausted',
+        dialing: false,
+      }),
+    );
+  });
+
+  it('T-C3: the periodic sweep reaps a leaked attempt but never a live one', async () => {
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+
+    const leaked = await insertAgencyContact(campaign.id, { state: 'in_flight' });
+    const leakedAttempt = await insertAgencyAttempt(campaign.id, leaked.id, { state: 'ringing' });
+    // Older than max_ring + max_call_duration.
+    await getTestPool().query(
+      `UPDATE agency_call_attempts SET created_at = now() - interval '4 hours' WHERE id = $1`,
+      [leakedAttempt.id],
+    );
+
+    // ── The "live" arm must be live for a REASON, not merely young ──────────
+    // This attempt is backdated past the leak floor exactly like the leaked one,
+    // so age cannot be what saves it. It is `bridged` and declared to the reaper
+    // as driven by this replica, which is the only difference between the two
+    // rows — and therefore the only thing the assertion below can be measuring.
+    //
+    // As originally written this row was created at `now()` and survived purely
+    // on the age filter, which made the test's name ("never a live one") a claim
+    // its body could not check: the sweep consulted no liveness signal at all
+    // when this was written, and passed. §16.6 rule 1 — the fixture supplied the
+    // answer. `AD-P2-C-08`.
+    const live = await insertAgencyContact(campaign.id, { state: 'in_flight' });
+    const liveAttempt = await insertAgencyAttempt(campaign.id, live.id, { state: 'bridged' });
+    await getTestPool().query(
+      `UPDATE agency_call_attempts SET created_at = now() - interval '4 hours' WHERE id = $1`,
+      [liveAttempt.id],
+    );
+
+    const swept = await new AgencyReaper({
+      // Arm 1: this replica is driving the bridged attempt. A real
+      // `AgencyDialer` reports exactly this from `liveByAttempt`.
+      activeAttemptIds: () => [liveAttempt.id],
+      // Arm 2 deliberately says "no station anywhere", so arm 1 is the sole
+      // protection — which is also the production shape inside an
+      // `AD-P2-C-07` deferred-hangup window, where the agent's socket has
+      // closed and its Redis ownership key is already deleted.
+      ownerOf: async () => null,
+    }).sweepOnce();
+    expect(swept).toBe(1);
+
+    expect((await agencyAttemptRepository.findById(leakedAttempt.id))!.state).toBe('ended');
+    expect((await agencyAttemptRepository.findById(leakedAttempt.id))!.outcome).toBe('orphaned');
+
+    // BOTH arms, or the test proves nothing: a real conversation in progress must
+    // survive a sweep that reaped its equally-old neighbour in the same pass.
+    const stillLive = await agencyAttemptRepository.findById(liveAttempt.id);
+    expect(stillLive!.state).toBe('bridged');
+    expect(stillLive!.outcome).toBeNull();
+    // And its contact was not handed back to the roster to be dialed a second
+    // time while the customer is still on the line.
+    const liveContact = await getTestPool().query(
+      'SELECT state FROM agency_contacts WHERE id = $1', [live.id],
+    );
+    expect(liveContact.rows[0].state).toBe('in_flight');
+  });
+
+  it('T-C3b: a live attempt held by ANOTHER replica survives too', async () => {
+    // The multi-replica arm, which no unit-tier mock can prove against real rows.
+    // `liveByAttempt` is per-process, so once core scales out this is the only
+    // thing stopping replica A reaping replica B's live conversations. §6.2:
+    // "non-terminal and owned by a replica whose heartbeat is gone" — so a
+    // heartbeat that is NOT gone must be respected whoever owns it.
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const contact = await insertAgencyContact(campaign.id, { state: 'in_flight' });
+    const session = await insertAgentSession(campaign.id, { state: 'on_call' });
+    const attempt = await insertAgencyAttempt(campaign.id, contact.id, {
+      state: 'bridged', reserved_agent_id: session.id,
+    });
+    await getTestPool().query(
+      `UPDATE agency_call_attempts SET created_at = now() - interval '4 hours' WHERE id = $1`,
+      [attempt.id],
+    );
+
+    const swept = await new AgencyReaper({
+      // Nothing local — this replica knows nothing about the call.
+      activeAttemptIds: () => [],
+      // But some other replica holds the agent's station socket.
+      ownerOf: async (sessionId) => (sessionId === session.id ? 'replica-B' : null),
+    }).sweepOnce();
+
+    expect(swept).toBe(0);
+    expect((await agencyAttemptRepository.findById(attempt.id))!.state).toBe('bridged');
+  });
+
+  it('T-C5: the startup reaper is idempotent', async () => {
+    // A reaper that re-reaps its own output double-counts attempts and would
+    // burn retry budget on every restart.
+    const campaign = await insertAgencyCampaign({ status: 'running', contacts_total: 3 });
+    const contacts = await insertAgencyContacts(campaign.id, 3);
+    for (const c of contacts) {
+      await getTestPool().query(`UPDATE agency_contacts SET state = 'in_flight' WHERE id = $1`, [c.id]);
+      await insertAgencyAttempt(campaign.id, c.id, { state: 'dialing' });
+    }
+
+    const reaper = new AgencyReaper(noLiveAttempts());
+    const first = await reaper.reapOnStartup();
+    expect(first.attempts).toBe(3);
+
+    const before = await getTestPool().query(
+      'SELECT id, state, outcome, ended_at FROM agency_call_attempts ORDER BY id',
+    );
+
+    const second = await reaper.reapOnStartup();
+    expect(second.attempts).toBe(0);
+    expect(second.agents).toBe(0);
+
+    const after = await getTestPool().query(
+      'SELECT id, state, outcome, ended_at FROM agency_call_attempts ORDER BY id',
+    );
+    expect(after.rows).toEqual(before.rows);
+  });
+
+  it('T-C6: reaping does not violate the live-attempt backstop on the retry', async () => {
+    // After a reap the contact is dialable again, so the NEXT attempt must be
+    // insertable. If the reaper left an attempt non-terminal — or if the
+    // uniqueness predicate were wrong — this is where it surfaces, as a
+    // campaign that can never dial a recovered contact again.
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const contact = await insertAgencyContact(campaign.id, { state: 'in_flight' });
+    await insertAgencyAttempt(campaign.id, contact.id, { state: 'ringing', attempt_number: 1 });
+
+    await new AgencyReaper(noLiveAttempts()).reapOnStartup();
+
+    const retry = await agencyAttemptRepository.create({
+      campaignId: campaign.id,
+      contactId: contact.id,
+      tenantId: campaign.tenant_id,
+      accountId: campaign.account_id,
+      callerId: '+919000000001',
+      reservedAgentId: (await insertAgentSession(campaign.id)).id,
+    });
+    expect(retry).not.toBeNull();
+    expect(retry!.attempt_number).toBe(2);
+  });
+});

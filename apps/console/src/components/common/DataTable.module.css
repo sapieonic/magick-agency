@@ -1,0 +1,193 @@
+.wrapper {
+  position: relative;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.scrollContainer {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Scroll shadow indicators */
+.scrollContainer.canScrollRight::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 24px;
+  pointer-events: none;
+  background: linear-gradient(to left, var(--bg-secondary), transparent);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+  z-index: 2;
+}
+
+.table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 600;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* Sortable header button — inherits the th typography */
+.sortButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sortButton:hover {
+  color: var(--text-secondary);
+}
+
+.sortButton.sortActive {
+  color: var(--accent);
+}
+
+.sortIdleIcon {
+  opacity: 0.5;
+}
+
+.table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* `.table th`/`.table td` already set text-align (left) with (0,1,1)
+   specificity, which a bare `.alignRight`/`.alignCenter` class cannot beat —
+   so these repeat the `.table th`/`.table td` compound to win the override.
+   Keep the declarations in the compound rule: a comment between `td` and
+   `.alignRight` is discarded by the tokenizer rather than splitting the
+   selector, so the earlier shape silently moved `text-align` into a bare
+   `.alignRight` rule that lost the cascade and left every right-aligned
+   column rendering left. */
+.table th.alignRight,
+.table td.alignRight {
+  text-align: right;
+  /* Right-aligned columns are numeric in practice — figures line up on the
+     decimal/ones place instead of proportional glyph widths drifting them. */
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+  The skeleton bar is a block with a percentage width, so `text-align` on the
+  cell cannot move it — a right-aligned column loaded left-aligned and then
+  jumped. `margin-left: auto` is what actually pushes it.
+*/
+.table td.alignRight .skeletonCell {
+  margin-left: auto;
+}
+
+.table th.alignCenter,
+.table td.alignCenter {
+  text-align: center;
+}
+
+.table tbody tr {
+  transition: background-color var(--transition);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.clickableRow {
+  cursor: pointer;
+}
+
+.clickableRow:hover {
+  background: var(--bg-elevated);
+}
+
+.clickableRow:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.table tbody tr:not(.clickableRow):hover {
+  background: var(--bg-elevated);
+}
+
+/* Skeleton loading rows */
+.skeletonCell {
+  height: 14px;
+  border-radius: var(--radius);
+  background: linear-gradient(
+    90deg,
+    var(--bg-tertiary) 25%,
+    var(--bg-elevated) 50%,
+    var(--bg-tertiary) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.emptyRow td {
+  text-align: center;
+  padding: 40px 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* ── Mobile: sticky first column ───────────────── */
+@media (max-width: 768px) {
+  .table th:first-child,
+  .table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--bg-secondary);
+  }
+
+  .clickableRow td:first-child {
+    background: var(--bg-secondary);
+  }
+
+  .clickableRow:hover td:first-child {
+    background: var(--bg-elevated);
+  }
+
+  /* Subtle border on the right of the frozen column */
+  .table th:first-child,
+  .table td:first-child {
+    box-shadow: 2px 0 4px rgba(0, 0, 0, 0.15);
+    clip-path: inset(0 -4px 0 0);
+  }
+}

@@ -1,0 +1,76 @@
+/* No new tokens (§1). Tones map to the existing semantic colours. */
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.shortcut {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+.textarea {
+  /* Mono 13px per the global textarea rule (§A.7.3). */
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 96px;
+  resize: vertical;
+  padding: var(--space-2, 8px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.textarea:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.status {
+  margin: 0;
+  font-size: var(--text-xs, 12px);
+  line-height: 1.4;
+  /* Reserve the line's height so the column does not shift as the state changes.
+     A status line that appears and disappears moves the action bar under the
+     agent's cursor while they are reaching for Save. */
+  min-height: 1.4em;
+}
+
+/* Weight rises with tone as well as colour — set inline from `status.weight`, so
+   these carry colour only and the two channels cannot drift apart. */
+.status[data-tone='muted'] {
+  color: var(--text-muted);
+}
+
+.status[data-tone='warning'] {
+  color: var(--warning);
+}
+
+.status[data-tone='danger'] {
+  color: var(--danger);
+}
+
+.disabledReason {
+  margin: 0;
+  font-size: var(--text-xs, 12px);
+  color: var(--text-muted);
+}

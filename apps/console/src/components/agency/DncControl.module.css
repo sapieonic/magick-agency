@@ -1,0 +1,50 @@
+.wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--danger);
+  background: transparent;
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.button:hover:not(:disabled) {
+  background: var(--bg-elevated);
+}
+
+.button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.shortcut {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.reason {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.failure {
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.outcome {
+  font-size: 12px;
+  color: var(--text-secondary);
+}

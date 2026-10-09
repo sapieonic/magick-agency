@@ -1,0 +1,66 @@
+/* No new tokens, no new palette (§0.1 principle 5, §1). */
+
+.wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  min-width: 0;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1, 4px);
+  padding: 2px var(--space-2, 8px);
+  border-radius: var(--radius-full);
+  background: var(--warning-subtle);
+  color: var(--warning-strong, var(--text-primary));
+  font-size: var(--text-xs, 12px);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.chipText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 20px hit target inside a chip. Small, but it is a secondary action beside
+     text and the keyboard path is the primary one. */
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.cancel:hover:not(:disabled) {
+  background: var(--warning);
+  color: var(--surface);
+}
+
+/* `aria-disabled`, not `:disabled` — the element stays focusable so a keyboard
+   agent is never dropped to `<body>` mid-call. */
+.cancel[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The focus ring must be visible: criterion (d) asserts one at every step. */
+.cancel:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--primary));
+  outline-offset: 1px;
+}
+
+.error {
+  color: var(--danger);
+  font-size: var(--text-xs, 12px);
+}

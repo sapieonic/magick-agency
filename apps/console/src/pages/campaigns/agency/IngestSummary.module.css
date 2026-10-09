@@ -1,0 +1,173 @@
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.warning {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  border-left: 3px solid var(--warning);
+}
+
+.warningText {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.terminalNotice {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.counters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.counter {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+}
+
+.value {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.counter[data-counter='rejected'] .value {
+  color: var(--danger);
+}
+
+.label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.reconciliation {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.breakdowns {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.dnc {
+  color: var(--text-primary);
+}
+
+/* Visually its own block, matching `.warning`'s treatment — it is a caveat on
+   the accepted count, not another line of the rejected breakdown. */
+.coreRefused {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  border-left: 3px solid var(--warning);
+}
+
+.coreRefusedText {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.coreRefusedSample {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.reasons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reasonsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.reasonsTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.reasonList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+}
+
+.reason {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--bg-secondary);
+}
+
+.reason:last-child {
+  border-bottom: none;
+}
+
+.reasonCount {
+  min-width: 64px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.reasonLabel {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.truncated,
+.downloadError {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.downloadError {
+  color: var(--danger);
+}

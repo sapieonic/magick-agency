@@ -1,0 +1,104 @@
+.searchRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.searchBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  flex: 1 1 240px;
+  /* Floor so the placeholder never truncates to illegibility; the tenant
+     picker's own 300px min-width means the row needs to wrap (see below)
+     rather than keep squeezing this field past this point. */
+  min-width: 180px;
+}
+
+.searchBar input {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.searchBar input::placeholder {
+  color: var(--text-muted);
+}
+
+.resultCount {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.emailCell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+}
+
+.pendingBadge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  color: var(--warning);
+  background: rgba(245, 166, 35, 0.12);
+}
+
+.memberships {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tenantChip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.roleLabel {
+  color: var(--text-muted);
+}
+
+.noTenant {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.dateCell {
+  white-space: nowrap;
+}
+
+/* The sidebar (240px) stays fixed until 768px, so the row's *available*
+   width shrinks well before the viewport itself hits that breakpoint.
+   Wrap earlier so the tenant picker's 300px floor never squeezes the
+   search field down to an unreadable width while both sit on one line. */
+@media (max-width: 900px) {
+  .searchRow {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 768px) {
+  .searchRow {
+    gap: 8px;
+  }
+
+  .memberships {
+    gap: 6px;
+  }
+}

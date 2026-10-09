@@ -1,0 +1,110 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5, 20px);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3, 12px);
+  flex-wrap: wrap;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-2xl, 24px);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5, 20px);
+}
+
+.campaign {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+  padding: var(--space-4, 16px);
+  border: 1px solid var(--border-subtle, var(--border));
+  border-radius: var(--radius-lg, 12px);
+  background: var(--bg-secondary, transparent);
+}
+
+.campaignHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3, 12px);
+  flex-wrap: wrap;
+}
+
+.campaignName {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  min-width: 0;
+}
+
+.campaignLink {
+  font-size: var(--text-base, 16px);
+  font-weight: 600;
+  color: var(--text-primary);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.campaignLink:hover {
+  text-decoration: underline;
+}
+
+/* One campaign's stats read failing must not blank the others, so the note is
+   scoped to its own card rather than raised to the page. */
+.statsError {
+  margin: 0;
+  font-size: var(--text-xs, 12px);
+  color: var(--text-muted);
+}
+
+/* The two questions this page answers, as a segmented control in the header.
+   Only rendered for a role that holds `agency.supervise` — see the page. */
+.tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+}
+
+.tab {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tab[data-selected='true'] {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.tab:hover:not([data-selected='true']) {
+  color: var(--text-primary);
+}
+
+/* The region the two header tabs control. Keeps the page's own column spacing so
+   wrapping the two branches in a tabpanel changes nothing visually. */
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5, 20px);
+}

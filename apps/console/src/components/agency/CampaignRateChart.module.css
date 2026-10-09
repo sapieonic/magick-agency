@@ -1,0 +1,215 @@
+/* The Section owns the card, so this owns no surface of its own. */
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* The plot scrolls inside its own box rather than forcing the page wide. */
+.plot {
+  overflow-x: auto;
+}
+
+/*
+  The width and height ATTRIBUTES govern, because they are the measured pixel
+  size and the `viewBox` matches them — see `useChartWidth`. A `width: 100%`
+  here would re-introduce the scaling the measurement exists to remove, one
+  frame at a time on every resize. `min-width` keeps a very narrow container
+  scrolling rather than crushing the plot; `.plot` takes the overflow.
+*/
+.svg {
+  display: block;
+  max-width: 100%;
+  min-width: 320px;
+  height: auto;
+}
+
+/* Recessive chrome: hairline, solid, one step off the surface. Never dashed —
+   dashing competes with two data lines that are themselves strokes. */
+.grid {
+  stroke: var(--border-light);
+  stroke-width: 1;
+}
+
+.axis {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+/* Axis text wears a text token, never a series colour. */
+.tick,
+.dayLabel {
+  fill: var(--text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* `--accent` and `--teal`, the pair the day-by-day bar chart uses and argues
+   for. Deliberately NOT `--success`: the status tokens mean good/bad and are
+   reserved for that — a connect rate is an identity, not a verdict. */
+.strokeConnect {
+  stroke: var(--accent);
+}
+
+.strokeConversion {
+  stroke: var(--teal);
+}
+
+.fillConnect {
+  fill: var(--accent);
+}
+
+.fillConversion {
+  fill: var(--teal);
+}
+
+/* An isolated measured day, and the end-of-line marker. Both carry a surface
+   ring so they stay separable where the two series cross. */
+.dot {
+  stroke: var(--bg-secondary);
+  stroke-width: 1.5;
+}
+
+.marker {
+  stroke: var(--bg-secondary);
+  stroke-width: 2;
+}
+
+.endLabel {
+  fill: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.hit {
+  fill: transparent;
+}
+
+.day:hover .hit {
+  fill: var(--accent-subtle);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  align-self: center;
+}
+
+.swatchConnect {
+  background: var(--accent);
+}
+
+.swatchConversion {
+  background: var(--teal);
+}
+
+.legendLabel {
+  font-weight: 600;
+}
+
+/* The denominator, quieter than the series name but on the same line as it —
+   the two rates are measured out of different things and must never read as two
+   bare percentages. */
+.legendDenominator {
+  color: var(--text-muted);
+}
+
+.note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  max-width: 68ch;
+}
+
+.disclosure {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: underline;
+}
+
+.disclosure:hover {
+  color: var(--text-primary);
+}
+
+.tableScroll {
+  overflow-x: auto;
+}
+
+/*
+  Capped, not full-width.
+
+  The campaign workspace is `max-width: 2400px` and centred, so a `width: 100%`
+  table on a desktop screen spreads three or five short numeric columns across
+  two thousand pixels — the reader's eye has to travel the width of the monitor
+  to get from a date to its figure, which is the row-scanning failure a table is
+  supposed to avoid. `min-width` keeps the columns from collapsing on a phone,
+  where `.tableScroll` takes over.
+*/
+.table {
+  width: 100%;
+  max-width: 980px;
+  min-width: 320px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.caption {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: left;
+  padding-bottom: 6px;
+}
+
+.table th,
+.table td {
+  padding: 5px 10px 5px 0;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  text-align: left;
+  font-weight: 500;
+}
+
+.table thead th {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.table td {
+  font-variant-numeric: tabular-nums;
+}

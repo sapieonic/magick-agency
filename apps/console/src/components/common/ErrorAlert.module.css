@@ -1,0 +1,46 @@
+.container {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  background: var(--danger-subtle);
+  border: 1px solid rgba(245, 101, 101, 0.2);
+  border-radius: var(--radius-lg);
+}
+
+.icon {
+  flex-shrink: 0;
+  color: var(--danger);
+  margin-top: 1px;
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+}
+
+.message {
+  font-size: 13px;
+  color: var(--danger);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.retryButton {
+  margin-top: 10px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--danger);
+  background: rgba(245, 101, 101, 0.1);
+  border: 1px solid rgba(245, 101, 101, 0.25);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.retryButton:hover {
+  background: var(--danger);
+  color: white;
+  border-color: var(--danger);
+}

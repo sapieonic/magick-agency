@@ -1,0 +1,393 @@
+/*
+  The best-hours matrix — 7 rows × 24 columns, one campaign's week.
+
+  ── Why this is not `RosterTable.module.css` ─────────────────────────────────
+  That stylesheet is deliberately shared by two components (the roster and the
+  contribution table) because they are the same table in every respect the eye can
+  see: the same header, the same three absence states, the same pinned footer. The
+  compare tray joins them for exactly that reason and imports it unchanged.
+
+  A 168-cell colour matrix is not that table. It has no metric columns, no pinned
+  cohort row and no per-row prose; what it does have is a colour ramp, which that
+  stylesheet has nothing of and must not gain — a ramp defined there would be
+  inherited by two tables that render no colour at all. So the shared sheet stays
+  shared, and everything specific to a heatmap lives here.
+
+  ── The palette is defined THREE times on purpose ────────────────────────────
+  A colour defined only inside a media query borrows the host theme, which is the
+  defect this block exists to avoid. So:
+
+    1. bare `:root` — the complete palette. This app's `:root` is DARK
+       (`global.css` sets `color-scheme: dark` there and overrides to light under
+       `[data-theme='light']`), so the bare block is the dark ramp. That polarity is
+       the repo's, not an inversion of intent: every colour has a definition that
+       does not depend on a media query or an attribute.
+    2. `@media (prefers-color-scheme: light)` guarded `:root:not([data-theme='dark'])`
+       — the frame before `ThemeProvider`'s effect stamps the attribute, on a
+       browser that prefers light. Without this the first paint of a light-mode
+       session shows a dark ramp on a light page.
+    3. the explicit `[data-theme='light']` block — the reader's own choice, which
+       wins in both directions because it is what the provider actually sets.
+
+  ── Sequential single hue, never red → green ─────────────────────────────────
+  One hue, five steps, light to dark. Diverging red/green is the most common
+  heatmap palette and the least accessible, and there is no meaningful midpoint for
+  a connect rate to diverge AROUND — 30% is not "neutral" on a campaign whose floor
+  median is 30%. The hue is the brand accent, so a whitelabel's map reads as part of
+  the same product as the roster beside it.
+
+  Every cell carries its number as text, so the colour is the scan and never the
+  measurement. Nothing on this surface is conveyed by hue alone.
+*/
+
+:root {
+  /* Dark: a tint of the accent over the card, deepening to the accent itself. */
+  --bh-step-0-bg: rgba(124, 92, 252, 0.14);
+  --bh-step-1-bg: rgba(124, 92, 252, 0.28);
+  --bh-step-2-bg: rgba(124, 92, 252, 0.44);
+  --bh-step-3-bg: rgba(124, 92, 252, 0.64);
+  --bh-step-4-bg: rgba(124, 92, 252, 0.88);
+  --bh-step-0-fg: #d9d4f7;
+  --bh-step-1-fg: #e6e2fb;
+  --bh-step-2-fg: #f1eeff;
+  --bh-step-3-fg: #ffffff;
+  --bh-step-4-fg: #ffffff;
+
+  /*
+    Off the ramp, all three of them — and none of them is a pale step of it. A pale
+    colour is still a position on the scale, which is the whole reason a thin cell
+    may not be given the ramp's bottom step.
+  */
+  --bh-thin-bg: rgba(255, 255, 255, 0.05);
+  --bh-thin-stripe: rgba(255, 255, 255, 0.16);
+  --bh-thin-fg: #b4b4c2;
+  --bh-zero-bg: rgba(255, 255, 255, 0.025);
+  --bh-zero-fg: #8a8a9c;
+  --bh-absent-bg: transparent;
+  --bh-absent-line: rgba(255, 255, 255, 0.06);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --bh-step-0-bg: #ece8fd;
+    --bh-step-1-bg: #d6cdfa;
+    --bh-step-2-bg: #b5a4f4;
+    --bh-step-3-bg: #8e73ec;
+    --bh-step-4-bg: #6a4de4;
+    --bh-step-0-fg: #2b2350;
+    --bh-step-1-fg: #241d47;
+    --bh-step-2-fg: #1d1740;
+    /*
+      DARK on step 3, not white — the one contrast failure on this ramp.
+      #ffffff on #8e73ec computes to 3.61:1, and these figures are 10px, so
+      4.5:1 applies (not the 3:1 large-text allowance). #150f33 on the same
+      background is 5.06:1. Step 4 keeps white because #ffffff on #6a4de4 is
+      5.53:1 and a dark foreground there would be 3.04:1 — the flip is where
+      the ramp genuinely crosses over.
+    */
+    --bh-step-3-fg: #150f33;
+    --bh-step-4-fg: #ffffff;
+
+    --bh-thin-bg: rgba(84, 94, 126, 0.07);
+    --bh-thin-stripe: rgba(84, 94, 126, 0.26);
+    --bh-thin-fg: #4a5165;
+    --bh-zero-bg: rgba(84, 94, 126, 0.035);
+    --bh-zero-fg: #697084;
+    --bh-absent-bg: transparent;
+    --bh-absent-line: rgba(84, 94, 126, 0.1);
+  }
+}
+
+[data-theme='light'] {
+  --bh-step-0-bg: #ece8fd;
+  --bh-step-1-bg: #d6cdfa;
+  --bh-step-2-bg: #b5a4f4;
+  --bh-step-3-bg: #8e73ec;
+  --bh-step-4-bg: #6a4de4;
+  --bh-step-0-fg: #2b2350;
+  --bh-step-1-fg: #241d47;
+  --bh-step-2-fg: #1d1740;
+  /* 5.06:1 against #8e73ec, where white was 3.61:1. See the media block above. */
+  --bh-step-3-fg: #150f33;
+  --bh-step-4-fg: #ffffff;
+
+  --bh-thin-bg: rgba(84, 94, 126, 0.07);
+  --bh-thin-stripe: rgba(84, 94, 126, 0.26);
+  --bh-thin-fg: #4a5165;
+  --bh-zero-bg: rgba(84, 94, 126, 0.035);
+  --bh-zero-fg: #697084;
+  --bh-absent-bg: transparent;
+  --bh-absent-line: rgba(84, 94, 126, 0.1);
+}
+
+/* ── The scroll box ─────────────────────────────────────────────────────── */
+
+/*
+  24 columns do not fit a phone, and the PAGE BODY must never scroll sideways — so
+  the matrix scrolls inside its own box, exactly as the roster's table does. The
+  weekday column is sticky inside that box: a row of hour figures with no weekday
+  beside it is a row nobody can read, and it is the first thing to leave the
+  viewport when the box scrolls.
+*/
+.wrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.matrix {
+  border-collapse: separate;
+  border-spacing: 2px;
+  padding: 8px 10px 10px;
+  font-size: 11px;
+}
+
+.matrix th {
+  padding: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* The hour axis. Uppercase tracking would make two digits read as a heading. */
+.hourHead {
+  min-width: 30px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+  The weekday, pinned to the left edge of the scroll box. `position: sticky` needs
+  a background of its own or the cells scroll visibly underneath it.
+*/
+.dayHead {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  padding: 0 10px 0 4px;
+  text-align: left;
+  background: var(--bg-secondary);
+}
+
+.corner {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--bg-secondary);
+}
+
+/*
+  A weekday that was never in the window, marked on the ROW HEADER as well as in
+  its cells. The cells are blank by design, and a blank row with a normal-weight
+  label beside it is exactly the thing E4 is about: it reads as a weekday that
+  connected nobody.
+*/
+.dayHead[data-covered='false'] {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.dayOut {
+  display: block;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.cell {
+  padding: 0;
+}
+
+/* ── One cell ──────────────────────────────────────────────────────────── */
+
+/*
+  The number is the answer and the colour is the scan, so the swatch is a box with
+  text in it rather than a coloured square with a tooltip. `tabular-nums` keeps a
+  column of percentages one width; `min-height` keeps an empty out-of-window cell
+  the same size as a full one, so a sparse map still reads as a grid.
+*/
+.swatch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  min-height: 24px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.swatch[data-state='measured'][data-step='0'] {
+  background: var(--bh-step-0-bg);
+  color: var(--bh-step-0-fg);
+}
+
+.swatch[data-state='measured'][data-step='1'] {
+  background: var(--bh-step-1-bg);
+  color: var(--bh-step-1-fg);
+}
+
+.swatch[data-state='measured'][data-step='2'] {
+  background: var(--bh-step-2-bg);
+  color: var(--bh-step-2-fg);
+}
+
+.swatch[data-state='measured'][data-step='3'] {
+  background: var(--bh-step-3-bg);
+  color: var(--bh-step-3-fg);
+}
+
+.swatch[data-state='measured'][data-step='4'] {
+  background: var(--bh-step-4-bg);
+  color: var(--bh-step-4-fg);
+}
+
+/*
+  Too few calls to rate — hatched, and NOT a pale step of the ramp. The stripes are
+  what make it legible as "not enough calls" rather than as a low value: a reader
+  scanning for the darkest square skips a hatched one, and a reader scanning for a
+  pale one reads it as the bottom of the scale. It still shows its DIAL COUNT,
+  because "we barely called then" is itself the answer to a rostering question.
+*/
+.swatch[data-state='withheld'] {
+  background-color: var(--bh-thin-bg);
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--bh-thin-stripe) 0,
+    var(--bh-thin-stripe) 1px,
+    transparent 1px,
+    transparent 5px
+  );
+  color: var(--bh-thin-fg);
+  font-weight: 500;
+}
+
+/*
+  Dials, but no denominator for THIS view's rate — an hour that dialled and reached
+  nobody, on the conversion view. Flat rather than hatched: "nothing to divide" and
+  "too few to trust" are different findings, and it also shows its dial count.
+*/
+.swatch[data-state='unmeasured'] {
+  background: var(--bh-thin-bg);
+  color: var(--bh-thin-fg);
+  font-weight: 500;
+}
+
+/* In the window, and nobody dialled. A real zero and a real finding, so it prints
+   one — faintly, because a column of zeroes is not what the reader is scanning for. */
+.swatch[data-state='no_dials'] {
+  background: var(--bh-zero-bg);
+  color: var(--bh-zero-fg);
+  font-weight: 500;
+}
+
+/*
+  Never in the window, and never in the reader's way. An outline and nothing else:
+  no colour, no zero, no rate — the treatment has to read as *not asked*, and any
+  fill at all would put it somewhere on the scale.
+*/
+.swatch[data-state='out_of_window'],
+.swatch[data-state='unknown_coverage'] {
+  background: var(--bh-absent-bg);
+  box-shadow: inset 0 0 0 1px var(--bh-absent-line);
+}
+
+/* ── The legend ─────────────────────────────────────────────────────────── */
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.ramp {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.rampSwatch {
+  width: 18px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.rampSwatch[data-step='0'] {
+  background: var(--bh-step-0-bg);
+}
+
+.rampSwatch[data-step='1'] {
+  background: var(--bh-step-1-bg);
+}
+
+.rampSwatch[data-step='2'] {
+  background: var(--bh-step-2-bg);
+}
+
+.rampSwatch[data-step='3'] {
+  background: var(--bh-step-3-bg);
+}
+
+.rampSwatch[data-step='4'] {
+  background: var(--bh-step-4-bg);
+}
+
+.keySwatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 5px;
+  vertical-align: -2px;
+  border-radius: 2px;
+}
+
+.keySwatch[data-state='withheld'] {
+  background-color: var(--bh-thin-bg);
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--bh-thin-stripe) 0,
+    var(--bh-thin-stripe) 1px,
+    transparent 1px,
+    transparent 5px
+  );
+}
+
+/*
+  Dialled, but nothing to divide — the conversion view's own fourth state. Flat and
+  unhatched, exactly as the cell is: it is a different finding from "too few to
+  trust", and the legend has to carry the same distinction the grid draws or the key
+  is telling the reader about a map they are not looking at.
+*/
+.keySwatch[data-state='unmeasured'] {
+  background: var(--bh-thin-bg);
+}
+
+.keySwatch[data-state='no_dials'] {
+  background: var(--bh-zero-bg);
+}
+
+.keySwatch[data-state='out_of_window'] {
+  background: var(--bh-absent-bg);
+  box-shadow: inset 0 0 0 1px var(--bh-absent-line);
+}
+
+.key {
+  white-space: nowrap;
+}
+
+.srOnly {
+  composes: sr-only from global;
+}

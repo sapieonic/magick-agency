@@ -1,0 +1,2128 @@
+{
+  "description": "VoiceLink carrier fixture: raw webhook bodies -> normalizeVoicelinkWebhook / parseVoicelinkWebhook / classifyVoicelinkOutcome. Every body is transcribed from a magic-voice-core test (source field: file > test name, core@4850d1d9). Pinned byte-identical with core's future copy (plan section 5, docs/seams.md section 5); edit both copies in one cross-repo change.",
+  "parsedNullMeans": "parseVoicelinkWebhook returned null (informational or unknown event)",
+  "dispositionNullMeans": "the metadata key is absent",
+  "classificationNullMeans": "not a terminal event; classifyVoicelinkOutcome is not run",
+  "entries": [
+    {
+      "name": "initiated-nested-null",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"still returns null for call.initiated\"",
+      "callId": "c",
+      "body": {
+        "event": "call.initiated",
+        "call": {
+          "id": "x"
+        }
+      },
+      "parsed": null,
+      "normalized": {
+        "event": "call.initiated",
+        "providerCallId": "x",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": null
+    },
+    {
+      "name": "initiated-adapter-capture",
+      "source": "test/unit/telephony/voicelink/voicelink.adapter.test.ts > \"call.initiated → benign informational error event (no real transition)\"",
+      "callId": "vl-call-77",
+      "body": {
+        "event": "call.initiated",
+        "timestamp": "2026-07-11T13:49:42.070+05:30",
+        "call": {
+          "id": "vl-call-77",
+          "direction": "outbound",
+          "status": "initiated"
+        }
+      },
+      "parsed": null,
+      "normalized": {
+        "event": "call.initiated",
+        "providerCallId": "vl-call-77",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "INITIATED",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": null
+    },
+    {
+      "name": "ringing-nested",
+      "source": "test/unit/telephony/voicelink/voicelink.adapter.test.ts > \"call.ringing → ringing\"",
+      "callId": "vl-call-77",
+      "body": {
+        "event": "call.ringing",
+        "timestamp": "2026-07-11T13:49:42.070+05:30",
+        "call": {
+          "id": "vl-call-77",
+          "direction": "outbound",
+          "status": "ringing",
+          "ringingAt": "x"
+        }
+      },
+      "parsed": {
+        "eventType": "ringing",
+        "providerCallId": "vl-call-77",
+        "callId": "vl-call-77",
+        "direction": "outbound",
+        "dispositionStatus": null,
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.ringing",
+        "providerCallId": "vl-call-77",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "RINGING",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": null
+    },
+    {
+      "name": "answered-nested",
+      "source": "test/unit/telephony/voicelink/voicelink.adapter.test.ts > \"call.answered → answer (billing-critical anchor)\"",
+      "callId": "vl-call-77",
+      "body": {
+        "event": "call.answered",
+        "timestamp": "2026-07-11T13:49:42.070+05:30",
+        "call": {
+          "id": "vl-call-77",
+          "direction": "outbound",
+          "status": "answered",
+          "answeredAt": "x"
+        }
+      },
+      "parsed": {
+        "eventType": "answer",
+        "providerCallId": "vl-call-77",
+        "callId": "vl-call-77",
+        "direction": "outbound",
+        "dispositionStatus": null,
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.answered",
+        "providerCallId": "vl-call-77",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ANSWERED",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "",
+        "answeredAt": "x",
+        "wasAnswered": false
+      },
+      "classification": null
+    },
+    {
+      "name": "answered-inbound",
+      "source": "test/unit/telephony/voicelink/voicelink.adapter.test.ts > \"maps direction=inbound when reported\"",
+      "callId": "vl-call-77",
+      "body": {
+        "event": "call.answered",
+        "timestamp": "2026-07-11T13:49:42.070+05:30",
+        "call": {
+          "id": "vl-call-77",
+          "direction": "inbound"
+        }
+      },
+      "parsed": {
+        "eventType": "answer",
+        "providerCallId": "vl-call-77",
+        "callId": "vl-call-77",
+        "direction": "inbound",
+        "dispositionStatus": null,
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.answered",
+        "providerCallId": "vl-call-77",
+        "direction": "inbound",
+        "callStatus": "",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": null
+    },
+    {
+      "name": "ringing-with-teardown-fields-no-disposition",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"non-terminal %s carries no disposition\" (row call.ringing)",
+      "callId": "c5",
+      "body": {
+        "event": "call.ringing",
+        "call": {
+          "id": "v5",
+          "status": "ended",
+          "hangupCause": "16 - Normal Clearing",
+          "hangupReason": "Normal Clearing",
+          "sipStatus": "200"
+        }
+      },
+      "parsed": {
+        "eventType": "ringing",
+        "providerCallId": "v5",
+        "callId": "c5",
+        "direction": "outbound",
+        "dispositionStatus": null,
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.ringing",
+        "providerCallId": "v5",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "16 - Normal Clearing",
+        "hangupReason": "Normal Clearing",
+        "sipStatus": "200",
+        "wasAnswered": false
+      },
+      "classification": null
+    },
+    {
+      "name": "unknown-event",
+      "source": "test/unit/telephony/voicelink/voicelink.adapter.test.ts > \"unknown event → benign informational error event\"",
+      "callId": "vl-call-77",
+      "body": {
+        "event": "call.somethingNew",
+        "timestamp": "2026-07-11T13:49:42.070+05:30",
+        "call": {
+          "id": "vl-call-77",
+          "direction": "outbound"
+        }
+      },
+      "parsed": null,
+      "normalized": {
+        "event": "call.somethingnew",
+        "providerCallId": "vl-call-77",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": null
+    },
+    {
+      "name": "ended-answered-capture",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"an ANSWERED call.ended still maps to hangup via answeredAt (it has no callStatus)\"",
+      "callId": "our-call-id",
+      "body": {
+        "event": "call.ended",
+        "call": {
+          "id": "fecdd5a7-5d14-415f-9222-a0f99b655cb0",
+          "direction": "outbound",
+          "status": "ended",
+          "hangupCause": "16",
+          "answeredAt": "2026-07-11T12:09:59.000+05:30",
+          "endedAt": "2026-07-11T12:10:03.847+05:30",
+          "durationSec": 4,
+          "sipStatus": "200"
+        }
+      },
+      "parsed": {
+        "eventType": "hangup",
+        "providerCallId": "fecdd5a7-5d14-415f-9222-a0f99b655cb0",
+        "callId": "our-call-id",
+        "direction": "outbound",
+        "dispositionStatus": "completed",
+        "dispositionCause": "16"
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "fecdd5a7-5d14-415f-9222-a0f99b655cb0",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "16",
+        "hangupReason": "",
+        "sipStatus": "200",
+        "durationSec": 4,
+        "answeredAt": "2026-07-11T12:09:59.000+05:30",
+        "endedAt": "2026-07-11T12:10:03.847+05:30",
+        "wasAnswered": true
+      },
+      "classification": {
+        "status": "completed",
+        "outcome": "remote_hangup",
+        "rawCause": "ended|16"
+      }
+    },
+    {
+      "name": "ended-answered-zero-duration",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"a zero-duration answered call.ended is still answered (durationSec 0 is not \\\"unanswered\\\")\"",
+      "callId": "our-call-id",
+      "body": {
+        "event": "call.ended",
+        "call": {
+          "id": "c",
+          "status": "ended",
+          "hangupCause": "16",
+          "answeredAt": "2026-07-11T13:18:57.000+05:30",
+          "durationSec": 0,
+          "sipStatus": "200"
+        }
+      },
+      "parsed": {
+        "eventType": "hangup",
+        "providerCallId": "c",
+        "callId": "our-call-id",
+        "direction": "outbound",
+        "dispositionStatus": "completed",
+        "dispositionCause": "16"
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "c",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "16",
+        "hangupReason": "",
+        "sipStatus": "200",
+        "durationSec": 0,
+        "answeredAt": "2026-07-11T13:18:57.000+05:30",
+        "wasAnswered": true
+      },
+      "classification": {
+        "status": "completed",
+        "outcome": "remote_hangup",
+        "rawCause": "ended|16"
+      }
+    },
+    {
+      "name": "ended-answered-labelled",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"ANSWERED → hangup + dispositionStatus=completed\"",
+      "callId": "c1",
+      "body": {
+        "event": "call.ended",
+        "call": {
+          "id": "v1",
+          "status": "ended",
+          "hangupCause": "16",
+          "sipStatus": "200",
+          "answeredAt": "2026-08-08T11:10:35.000+05:30",
+          "durationSec": 22
+        }
+      },
+      "parsed": {
+        "eventType": "hangup",
+        "providerCallId": "v1",
+        "callId": "c1",
+        "direction": "outbound",
+        "dispositionStatus": "completed",
+        "dispositionCause": "16"
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "v1",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "16",
+        "hangupReason": "",
+        "sipStatus": "200",
+        "durationSec": 22,
+        "answeredAt": "2026-08-08T11:10:35.000+05:30",
+        "wasAnswered": true
+      },
+      "classification": {
+        "status": "completed",
+        "outcome": "remote_hangup",
+        "rawCause": "ended|16"
+      }
+    },
+    {
+      "name": "ended-unanswered-null-answeredAt",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"an UNANSWERED call.ended (no callStatus, null answeredAt) is an error, not a hangup\"",
+      "callId": "our-call-id",
+      "body": {
+        "event": "call.ended",
+        "call": {
+          "id": "carrier-x",
+          "direction": "outbound",
+          "status": "ended",
+          "hangupCause": "19 - No answer from user",
+          "answeredAt": null,
+          "endedAt": "2026-08-07T10:18:35.000+05:30",
+          "durationSec": null
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "carrier-x",
+        "callId": "our-call-id",
+        "direction": "outbound",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": "19 - No answer from user"
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "carrier-x",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "19 - No answer from user",
+        "hangupReason": "",
+        "sipStatus": "",
+        "endedAt": "2026-08-07T10:18:35.000+05:30",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": "ended|19 - no answer from user"
+      }
+    },
+    {
+      "name": "ended-declined-clean-teardown",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"DECLINED → error + dispositionStatus=busy, carrier wording preserved\"",
+      "callId": "c2",
+      "body": {
+        "event": "call.ended",
+        "call": {
+          "id": "v2",
+          "status": "ended",
+          "hangupCause": "16 - Normal Clearing",
+          "hangupReason": "Normal Clearing",
+          "sipStatus": "200"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "v2",
+        "callId": "c2",
+        "direction": "outbound",
+        "dispositionStatus": "busy",
+        "dispositionCause": "Normal Clearing"
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "v2",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "16 - Normal Clearing",
+        "hangupReason": "Normal Clearing",
+        "sipStatus": "200",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "busy",
+        "outcome": "not_reached",
+        "rawCause": "ended|normal clearing|16 - normal clearing"
+      }
+    },
+    {
+      "name": "ended-switched-off-clean-teardown",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"SWITCHED OFF → error + dispositionStatus=busy (same disposition as DECLINED)\"",
+      "callId": "c3",
+      "body": {
+        "event": "call.ended",
+        "call": {
+          "id": "v3",
+          "status": "ended",
+          "hangupCause": "16 - Normal Clearing",
+          "hangupReason": "Normal Clearing",
+          "sipStatus": "200"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "v3",
+        "callId": "c3",
+        "direction": "outbound",
+        "dispositionStatus": "busy",
+        "dispositionCause": "Normal Clearing"
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "v3",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "16 - Normal Clearing",
+        "hangupReason": "Normal Clearing",
+        "sipStatus": "200",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "busy",
+        "outcome": "not_reached",
+        "rawCause": "ended|normal clearing|16 - normal clearing"
+      }
+    },
+    {
+      "name": "ended-clean-teardown-no-reason",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"sipStatus %j → %s\" (row \"200\" → busy)",
+      "callId": "c",
+      "body": {
+        "event": "call.ended",
+        "call": {
+          "status": "ended",
+          "hangupCause": "16 - Normal Clearing",
+          "sipStatus": "200"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "busy",
+        "dispositionCause": "16 - Normal Clearing"
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "16 - Normal Clearing",
+        "hangupReason": "",
+        "sipStatus": "200",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "busy",
+        "outcome": "not_reached",
+        "rawCause": "ended|16 - normal clearing"
+      }
+    },
+    {
+      "name": "ended-cause16-non200-failed",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"a genuine fault with cause 16 but a non-200 SIP stays failed\"",
+      "callId": "c",
+      "body": {
+        "event": "call.ended",
+        "call": {
+          "status": "ended",
+          "hangupCause": "16 - Normal Clearing",
+          "sipStatus": "503"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "failed",
+        "dispositionCause": "16 - Normal Clearing"
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "16 - Normal Clearing",
+        "hangupReason": "",
+        "sipStatus": "503",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "failed",
+        "outcome": "ended|16 - normal clearing",
+        "rawCause": "ended|16 - normal clearing"
+      }
+    },
+    {
+      "name": "ended-cause116-not-cause16",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"cause \\\"116\\\" does not match cause 16 (token boundary, not substring)\"",
+      "callId": "c",
+      "body": {
+        "event": "call.ended",
+        "call": {
+          "status": "ended",
+          "hangupCause": "116 - Bogus",
+          "sipStatus": "200"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "failed",
+        "dispositionCause": "116 - Bogus"
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "116 - Bogus",
+        "hangupReason": "",
+        "sipStatus": "200",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "failed",
+        "outcome": "ended|116 - bogus",
+        "rawCause": "ended|116 - bogus"
+      }
+    },
+    {
+      "name": "ended-unrecognised-cause-sip200-failed",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"an unrecognized cause on SIP 200 stays failed (we cannot say what happened)\"",
+      "callId": "c",
+      "body": {
+        "event": "call.ended",
+        "call": {
+          "status": "ended",
+          "hangupCause": "99 - Something New",
+          "sipStatus": "200"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "failed",
+        "dispositionCause": "99 - Something New"
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "99 - Something New",
+        "hangupReason": "",
+        "sipStatus": "200",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "failed",
+        "outcome": "ended|99 - something new",
+        "rawCause": "ended|99 - something new"
+      }
+    },
+    {
+      "name": "ended-fault-cause-normal-clearing-reason",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"fault cause %s + hangupReason \\\"Normal Clearing\\\" stays failed\" (row \"34 - No circuit available\")",
+      "callId": "c",
+      "body": {
+        "event": "call.ended",
+        "call": {
+          "status": "ended",
+          "hangupCause": "34 - No circuit available",
+          "hangupReason": "Normal Clearing",
+          "sipStatus": "200"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "failed",
+        "dispositionCause": "Normal Clearing"
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "34 - No circuit available",
+        "hangupReason": "Normal Clearing",
+        "sipStatus": "200",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "failed",
+        "outcome": "ended|normal clearing|34 - no circuit available",
+        "rawCause": "ended|normal clearing|34 - no circuit available"
+      }
+    },
+    {
+      "name": "ended-q850-17-user-busy",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"a real Q.850 17 still classifies busy through the existing text branch\"",
+      "callId": "c",
+      "body": {
+        "event": "call.ended",
+        "call": {
+          "status": "ended",
+          "hangupCause": "17 - User busy",
+          "hangupReason": "User busy",
+          "sipStatus": "486"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "busy",
+        "dispositionCause": "User busy"
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "17 - User busy",
+        "hangupReason": "User busy",
+        "sipStatus": "486",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "busy",
+        "outcome": "busy",
+        "rawCause": "ended|user busy|17 - user busy"
+      }
+    },
+    {
+      "name": "ended-sip487-canceled",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"sipStatus \\\"487\\\" yields canceled, proving it did NOT fall to clean-teardown\"",
+      "callId": "c",
+      "body": {
+        "event": "call.ended",
+        "call": {
+          "status": "ended",
+          "hangupCause": "16 - Normal Clearing",
+          "sipStatus": "487"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "canceled",
+        "dispositionCause": "16 - Normal Clearing"
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "16 - Normal Clearing",
+        "hangupReason": "",
+        "sipStatus": "487",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "canceled",
+        "outcome": "canceled",
+        "rawCause": "ended|16 - normal clearing"
+      }
+    },
+    {
+      "name": "ended-numeric-nested",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"a numerically-encoded payload still classifies busy (nested shape)\"",
+      "callId": "c",
+      "body": {
+        "event": "call.ended",
+        "call": {
+          "status": "ended",
+          "hangupCause": 16,
+          "sipStatus": 200
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "busy",
+        "dispositionCause": "16"
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "16",
+        "hangupReason": "",
+        "sipStatus": "200",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "busy",
+        "outcome": "not_reached",
+        "rawCause": "ended|16"
+      }
+    },
+    {
+      "name": "ended-numeric-flat",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"a numerically-encoded payload still classifies busy (flat shape)\"",
+      "callId": "c",
+      "body": {
+        "event": "call.ended",
+        "hangupCause": 16,
+        "sipStatus": 200
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "busy",
+        "dispositionCause": "16"
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "",
+        "hangupCause": "16",
+        "hangupReason": "",
+        "sipStatus": "200",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "busy",
+        "outcome": "not_reached",
+        "rawCause": "16"
+      }
+    },
+    {
+      "name": "ended-numeric-sip486",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"coercion did not break the pre-existing numeric SIP %s branch → %s\" (row 486 → busy)",
+      "callId": "c",
+      "body": {
+        "event": "call.ended",
+        "call": {
+          "status": "ended",
+          "sipStatus": 486
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "busy",
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "486",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "busy",
+        "outcome": "busy",
+        "rawCause": "ended"
+      }
+    },
+    {
+      "name": "ended-numeric-sip480",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"coercion did not break the pre-existing numeric SIP %s branch → %s\" (row 480 → no_answer)",
+      "callId": "c",
+      "body": {
+        "event": "call.ended",
+        "call": {
+          "status": "ended",
+          "sipStatus": 480
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "480",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": "ended"
+      }
+    },
+    {
+      "name": "ended-nested-wins-over-flat",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"nested call.* wins over the flat top-level field\"",
+      "callId": "c",
+      "body": {
+        "event": "call.ended",
+        "call": {
+          "status": "ended",
+          "hangupCause": "16 - Normal Clearing",
+          "sipStatus": "200"
+        },
+        "hangupCause": "38 - Network out of order",
+        "sipStatus": "503"
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "busy",
+        "dispositionCause": "16 - Normal Clearing"
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "ENDED",
+        "hangupCause": "16 - Normal Clearing",
+        "hangupReason": "",
+        "sipStatus": "200",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "busy",
+        "outcome": "not_reached",
+        "rawCause": "ended|16 - normal clearing"
+      }
+    },
+    {
+      "name": "ended-empty",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"an empty/absent payload degrades to empty strings, never throws\"",
+      "callId": "c",
+      "body": {
+        "event": "call.ended"
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "failed",
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.ended",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "failed",
+        "outcome": "telephony_error",
+        "rawCause": ""
+      }
+    },
+    {
+      "name": "failed-live-incident-no-answer-503",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"the live incident call.failed payload classifies as no_answer\"",
+      "callId": "our-call-id",
+      "body": {
+        "event": "call.failed",
+        "call": {
+          "id": "5fb5ac1a-2218-42d3-8846-f6e106d733a4",
+          "status": "failed",
+          "hangupCause": "38 - Network out of order",
+          "answeredAt": null,
+          "callStatus": "NO ANSWER",
+          "hangupReason": "Network out of order",
+          "sipStatus": "503"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "5fb5ac1a-2218-42d3-8846-f6e106d733a4",
+        "callId": "our-call-id",
+        "direction": "outbound",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": "Network out of order"
+      },
+      "normalized": {
+        "event": "call.failed",
+        "providerCallId": "5fb5ac1a-2218-42d3-8846-f6e106d733a4",
+        "direction": "outbound",
+        "callStatus": "NO ANSWER",
+        "status": "FAILED",
+        "hangupCause": "38 - Network out of order",
+        "hangupReason": "Network out of order",
+        "sipStatus": "503",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": "no answer|failed|network out of order|38 - network out of order"
+      }
+    },
+    {
+      "name": "failed-no-answer-480",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"marks an unanswered call.failed as no_answer, not a generic failure\"",
+      "callId": "our-call-id",
+      "body": {
+        "event": "call.failed",
+        "call": {
+          "id": "f69611cd-27b6-4896-b76c-99a8a7030032",
+          "direction": "outbound",
+          "from": "919429390268",
+          "to": "9372533128",
+          "status": "failed",
+          "hangupCause": "19 - User alerting, no answer",
+          "answeredAt": null,
+          "callStatus": "NO ANSWER",
+          "hangupReason": "User alerting, no answer",
+          "sipStatus": "480"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "f69611cd-27b6-4896-b76c-99a8a7030032",
+        "callId": "our-call-id",
+        "direction": "outbound",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": "User alerting, no answer"
+      },
+      "normalized": {
+        "event": "call.failed",
+        "providerCallId": "f69611cd-27b6-4896-b76c-99a8a7030032",
+        "direction": "outbound",
+        "callStatus": "NO ANSWER",
+        "status": "FAILED",
+        "hangupCause": "19 - User alerting, no answer",
+        "hangupReason": "User alerting, no answer",
+        "sipStatus": "480",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": "no answer|failed|user alerting, no answer|19 - user alerting, no answer"
+      }
+    },
+    {
+      "name": "failed-no-answer-480-no-reason",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"prefers the carrier wording, and falls back to the Q.850-prefixed cause\"",
+      "callId": "c",
+      "body": {
+        "event": "call.failed",
+        "call": {
+          "id": "f69611cd-27b6-4896-b76c-99a8a7030032",
+          "direction": "outbound",
+          "from": "919429390268",
+          "to": "9372533128",
+          "status": "failed",
+          "hangupCause": "19 - User alerting, no answer",
+          "answeredAt": null,
+          "callStatus": "NO ANSWER",
+          "sipStatus": "480"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "f69611cd-27b6-4896-b76c-99a8a7030032",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": "19 - User alerting, no answer"
+      },
+      "normalized": {
+        "event": "call.failed",
+        "providerCallId": "f69611cd-27b6-4896-b76c-99a8a7030032",
+        "direction": "outbound",
+        "callStatus": "NO ANSWER",
+        "status": "FAILED",
+        "hangupCause": "19 - User alerting, no answer",
+        "hangupReason": "",
+        "sipStatus": "480",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": "no answer|failed|19 - user alerting, no answer"
+      }
+    },
+    {
+      "name": "failed-callstatus-only",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"omits dispositionCause rather than restating the status as the reason\"",
+      "callId": "c",
+      "body": {
+        "event": "call.failed",
+        "call": {
+          "id": "c1",
+          "callStatus": "NO ANSWER"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "c1",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.failed",
+        "providerCallId": "c1",
+        "direction": "outbound",
+        "callStatus": "NO ANSWER",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": "no answer"
+      }
+    },
+    {
+      "name": "failed-busy-486-text",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"marks a busy call busy\"",
+      "callId": "our-call-id",
+      "body": {
+        "event": "call.failed",
+        "call": {
+          "id": "c1",
+          "callStatus": "BUSY",
+          "sipStatus": "486",
+          "hangupReason": "User Busy"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "c1",
+        "callId": "our-call-id",
+        "direction": "outbound",
+        "dispositionStatus": "busy",
+        "dispositionCause": "User Busy"
+      },
+      "normalized": {
+        "event": "call.failed",
+        "providerCallId": "c1",
+        "direction": "outbound",
+        "callStatus": "BUSY",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "User Busy",
+        "sipStatus": "486",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "busy",
+        "outcome": "busy",
+        "rawCause": "busy|user busy"
+      }
+    },
+    {
+      "name": "failed-adapter-capture",
+      "source": "test/unit/telephony/voicelink/voicelink.adapter.test.ts > \"call.failed → error\"",
+      "callId": "vl-call-77",
+      "body": {
+        "event": "call.failed",
+        "timestamp": "2026-07-11T13:49:42.070+05:30",
+        "call": {
+          "id": "vl-call-77",
+          "direction": "outbound",
+          "status": "failed",
+          "callStatus": "NO ANSWER",
+          "hangupCause": "38 - Network out of order",
+          "sipStatus": "503"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "vl-call-77",
+        "callId": "vl-call-77",
+        "direction": "outbound",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": "38 - Network out of order"
+      },
+      "normalized": {
+        "event": "call.failed",
+        "providerCallId": "vl-call-77",
+        "direction": "outbound",
+        "callStatus": "NO ANSWER",
+        "status": "FAILED",
+        "hangupCause": "38 - Network out of order",
+        "hangupReason": "",
+        "sipStatus": "503",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": "no answer|failed|38 - network out of order"
+      }
+    },
+    {
+      "name": "failed-network-fault",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"network/format faults are unaffected by the new branch\" (38 / 503)",
+      "callId": "c",
+      "body": {
+        "event": "call.failed",
+        "call": {
+          "status": "failed",
+          "hangupCause": "38 - Network out of order",
+          "hangupReason": "Network out of order",
+          "sipStatus": "503"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "failed",
+        "dispositionCause": "Network out of order"
+      },
+      "normalized": {
+        "event": "call.failed",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "FAILED",
+        "hangupCause": "38 - Network out of order",
+        "hangupReason": "Network out of order",
+        "sipStatus": "503",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "failed",
+        "outcome": "failed|network out of order|38 - network out of order",
+        "rawCause": "failed|network out of order|38 - network out of order"
+      }
+    },
+    {
+      "name": "failed-invalid-number-format",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"network/format faults are unaffected by the new branch\" (28 / 484)",
+      "callId": "c",
+      "body": {
+        "event": "call.failed",
+        "call": {
+          "status": "failed",
+          "hangupCause": "28 - Invalid number format",
+          "hangupReason": "Invalid number format",
+          "sipStatus": "484"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "failed",
+        "dispositionCause": "Invalid number format"
+      },
+      "normalized": {
+        "event": "call.failed",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "FAILED",
+        "hangupCause": "28 - Invalid number format",
+        "hangupReason": "Invalid number format",
+        "sipStatus": "484",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "failed",
+        "outcome": "failed|invalid number format|28 - invalid number format",
+        "rawCause": "failed|invalid number format|28 - invalid number format"
+      }
+    },
+    {
+      "name": "completed-answered-nested",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"reads the observed NESTED shape (body.call.*)\"",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "call": {
+          "id": "carrier-1",
+          "direction": "outbound",
+          "callStatus": "ANSWERED",
+          "durationSec": 4,
+          "recordingUrl": "https://rec/abc.mp3",
+          "hangupCause": "16"
+        }
+      },
+      "parsed": {
+        "eventType": "hangup",
+        "providerCallId": "carrier-1",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "completed",
+        "dispositionCause": "16"
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "carrier-1",
+        "direction": "outbound",
+        "callStatus": "ANSWERED",
+        "status": "",
+        "hangupCause": "16",
+        "hangupReason": "",
+        "sipStatus": "",
+        "durationSec": 4,
+        "recordingUrl": "https://rec/abc.mp3",
+        "wasAnswered": true
+      },
+      "classification": {
+        "status": "completed",
+        "outcome": "remote_hangup",
+        "rawCause": "answered|16"
+      }
+    },
+    {
+      "name": "completed-answered-flat-inbound",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"reads the documented FLAT shape (top-level callId/callStatus/duration/recordingUrl)\"",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "callId": "1764828073.53871",
+        "callStatus": "ANSWER",
+        "direction": "inbound",
+        "duration": 8,
+        "recordingUrl": "https://example.com/recording.wav"
+      },
+      "parsed": {
+        "eventType": "hangup",
+        "providerCallId": "1764828073.53871",
+        "callId": "c",
+        "direction": "inbound",
+        "dispositionStatus": "completed",
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "1764828073.53871",
+        "direction": "inbound",
+        "callStatus": "ANSWER",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "",
+        "durationSec": 8,
+        "recordingUrl": "https://example.com/recording.wav",
+        "wasAnswered": true
+      },
+      "classification": {
+        "status": "completed",
+        "outcome": "remote_hangup",
+        "rawCause": "answer"
+      }
+    },
+    {
+      "name": "completed-answered-flat",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"classifies a FLAT answered call.completed as hangup (not error) with real id\"",
+      "callId": "our-call-id",
+      "body": {
+        "event": "call.completed",
+        "callId": "1764828073.53871",
+        "callStatus": "ANSWER",
+        "duration": 8,
+        "recordingUrl": "https://example.com/recording.wav"
+      },
+      "parsed": {
+        "eventType": "hangup",
+        "providerCallId": "1764828073.53871",
+        "callId": "our-call-id",
+        "direction": "outbound",
+        "dispositionStatus": "completed",
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "1764828073.53871",
+        "direction": "outbound",
+        "callStatus": "ANSWER",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "",
+        "durationSec": 8,
+        "recordingUrl": "https://example.com/recording.wav",
+        "wasAnswered": true
+      },
+      "classification": {
+        "status": "completed",
+        "outcome": "remote_hangup",
+        "rawCause": "answer"
+      }
+    },
+    {
+      "name": "completed-answered-diagnostics",
+      "source": "test/unit/telephony/voicelink/voicelink.adapter.test.ts > \"preserves failure diagnostics + recordingUrl in metadata\"",
+      "callId": "vl-call-77",
+      "body": {
+        "event": "call.completed",
+        "timestamp": "2026-07-11T13:49:42.070+05:30",
+        "call": {
+          "id": "vl-call-77",
+          "direction": "outbound",
+          "status": "ended",
+          "callStatus": "ANSWERED",
+          "hangupCause": "16",
+          "hangupReason": "Normal Clearing",
+          "sipStatus": "200",
+          "answeredAt": "2026-07-11T13:50:06.000+05:30",
+          "endedAt": "2026-07-11T13:50:27.000+05:30",
+          "durationSec": 21,
+          "recordingUrl": "https://voiceflowai.elisiontec.com/rec/abc.mp3"
+        }
+      },
+      "parsed": {
+        "eventType": "hangup",
+        "providerCallId": "vl-call-77",
+        "callId": "vl-call-77",
+        "direction": "outbound",
+        "dispositionStatus": "completed",
+        "dispositionCause": "Normal Clearing"
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "vl-call-77",
+        "direction": "outbound",
+        "callStatus": "ANSWERED",
+        "status": "ENDED",
+        "hangupCause": "16",
+        "hangupReason": "Normal Clearing",
+        "sipStatus": "200",
+        "durationSec": 21,
+        "answeredAt": "2026-07-11T13:50:06.000+05:30",
+        "endedAt": "2026-07-11T13:50:27.000+05:30",
+        "recordingUrl": "https://voiceflowai.elisiontec.com/rec/abc.mp3",
+        "wasAnswered": true
+      },
+      "classification": {
+        "status": "completed",
+        "outcome": "remote_hangup",
+        "rawCause": "answered|ended|normal clearing|16"
+      }
+    },
+    {
+      "name": "completed-late-answered",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"the LATE call.completed for an ANSWERED call still reads completed\"",
+      "callId": "c8",
+      "body": {
+        "event": "call.completed",
+        "call": {
+          "id": "v8",
+          "status": "ended",
+          "callStatus": "ANSWERED",
+          "hangupCause": "16",
+          "hangupReason": "16",
+          "answeredAt": "2026-08-08T11:10:35.000+05:30",
+          "durationSec": 22
+        }
+      },
+      "parsed": {
+        "eventType": "hangup",
+        "providerCallId": "v8",
+        "callId": "c8",
+        "direction": "outbound",
+        "dispositionStatus": "completed",
+        "dispositionCause": "16"
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "v8",
+        "direction": "outbound",
+        "callStatus": "ANSWERED",
+        "status": "ENDED",
+        "hangupCause": "16",
+        "hangupReason": "16",
+        "sipStatus": "",
+        "durationSec": 22,
+        "answeredAt": "2026-08-08T11:10:35.000+05:30",
+        "wasAnswered": true
+      },
+      "classification": {
+        "status": "completed",
+        "outcome": "remote_hangup",
+        "rawCause": "answered|ended|16|16"
+      }
+    },
+    {
+      "name": "completed-late-not-taken",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"the LATE call.completed classifies no_answer, not busy — and that is expected\"",
+      "callId": "c7",
+      "body": {
+        "event": "call.completed",
+        "call": {
+          "id": "v7",
+          "status": "ended",
+          "callStatus": "NO ANSWER",
+          "hangupCause": "16 - Normal Clearing",
+          "hangupReason": "16 - Normal Clearing"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "v7",
+        "callId": "c7",
+        "direction": "outbound",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": "16 - Normal Clearing"
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "v7",
+        "direction": "outbound",
+        "callStatus": "NO ANSWER",
+        "status": "ENDED",
+        "hangupCause": "16 - Normal Clearing",
+        "hangupReason": "16 - Normal Clearing",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": "no answer|ended|16 - normal clearing|16 - normal clearing"
+      }
+    },
+    {
+      "name": "completed-not-answered-adapter",
+      "source": "test/unit/telephony/voicelink/voicelink.adapter.test.ts > \"call.completed (NOT answered) → error — terminal-but-failed\"",
+      "callId": "vl-call-77",
+      "body": {
+        "event": "call.completed",
+        "timestamp": "2026-07-11T13:49:42.070+05:30",
+        "call": {
+          "id": "vl-call-77",
+          "direction": "outbound",
+          "status": "failed",
+          "callStatus": "NO ANSWER",
+          "hangupCause": "38 - Network out of order"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "vl-call-77",
+        "callId": "vl-call-77",
+        "direction": "outbound",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": "38 - Network out of order"
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "vl-call-77",
+        "direction": "outbound",
+        "callStatus": "NO ANSWER",
+        "status": "FAILED",
+        "hangupCause": "38 - Network out of order",
+        "hangupReason": "",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": "no answer|failed|38 - network out of order"
+      }
+    },
+    {
+      "name": "completed-nested-wins-empty-signals",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"nested wins when both shapes are present\"",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "callId": "flat-id",
+        "call": {
+          "id": "nested-id"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "nested-id",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "failed",
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "nested-id",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "failed",
+        "outcome": "telephony_error",
+        "rawCause": ""
+      }
+    },
+    {
+      "name": "completed-no-answer-stray-answeredAt",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"an explicit NO ANSWER callStatus outranks a stray answeredAt\"",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "call": {
+          "id": "c",
+          "callStatus": "NO ANSWER",
+          "answeredAt": "2026-08-07T10:18:00.000+05:30"
+        }
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "c",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "c",
+        "direction": "outbound",
+        "callStatus": "NO ANSWER",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "",
+        "answeredAt": "2026-08-07T10:18:00.000+05:30",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": "no answer"
+      }
+    },
+    {
+      "name": "completed-noanswer-collapsed",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"keyword \\\"no answer\\\" / \\\"no-answer\\\" / \\\"noanswer\\\" → no_answer\" (callStatus NOANSWER)",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "callStatus": "NOANSWER"
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "NOANSWER",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": "noanswer"
+      }
+    },
+    {
+      "name": "completed-no-answer-hyphen",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"keyword \\\"no answer\\\" / \\\"no-answer\\\" / \\\"noanswer\\\" → no_answer\" (hangupReason no-answer)",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "hangupReason": "no-answer"
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": "no-answer"
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "no-answer",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": "no-answer"
+      }
+    },
+    {
+      "name": "completed-no-answer-underscore",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"separator-drift spellings of NO ANSWER do not read as answered\" (NO_ANSWER; the classification arm is the `no_answer` substring)",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "callStatus": "NO_ANSWER"
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "NO_ANSWER",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": "no_answer"
+      }
+    },
+    {
+      "name": "completed-timeout",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"keyword \\\"timeout\\\" → no_answer\"",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "hangupReason": "ring timeout"
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": "ring timeout"
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "ring timeout",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": "ring timeout"
+      }
+    },
+    {
+      "name": "completed-sip408",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"SIP 408 (request timeout) → no_answer\"",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "sipStatus": "408"
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "408",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": ""
+      }
+    },
+    {
+      "name": "completed-sip480",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"SIP 480 (temporarily unavailable) → no_answer\"",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "sipStatus": "480"
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "no_answer",
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "480",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "no_answer",
+        "outcome": "no_answer",
+        "rawCause": ""
+      }
+    },
+    {
+      "name": "completed-busy-text",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"keyword \\\"busy\\\" (in hangupReason) → busy\"",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "hangupReason": "User Busy"
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "busy",
+        "dispositionCause": "User Busy"
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "User Busy",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "busy",
+        "outcome": "busy",
+        "rawCause": "user busy"
+      }
+    },
+    {
+      "name": "completed-sip486",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"SIP 486 (busy) → busy regardless of other signals\"",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "sipStatus": "486"
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "busy",
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "486",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "busy",
+        "outcome": "busy",
+        "rawCause": ""
+      }
+    },
+    {
+      "name": "completed-cancel-text",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"keyword \\\"cancel\\\" → canceled\"",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "status": "CANCELLED"
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "canceled",
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "CANCELLED",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "canceled",
+        "outcome": "canceled",
+        "rawCause": "cancelled"
+      }
+    },
+    {
+      "name": "completed-reject-text",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"keyword \\\"reject\\\" → canceled\"",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "hangupReason": "Call Rejected"
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "canceled",
+        "dispositionCause": "Call Rejected"
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "Call Rejected",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "canceled",
+        "outcome": "canceled",
+        "rawCause": "call rejected"
+      }
+    },
+    {
+      "name": "completed-declin-text",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"keyword \\\"declin\\\" (declined) → canceled\"",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "hangupReason": "Declined by callee"
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "canceled",
+        "dispositionCause": "Declined by callee"
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "Declined by callee",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "canceled",
+        "outcome": "canceled",
+        "rawCause": "declined by callee"
+      }
+    },
+    {
+      "name": "completed-sip487",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"SIP 487 (request terminated / cancel) → canceled\"",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "sipStatus": "487"
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "canceled",
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "487",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "canceled",
+        "outcome": "canceled",
+        "rawCause": ""
+      }
+    },
+    {
+      "name": "completed-unknown-callstatus-failed",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"unknown cause → failed (raw retained)\"",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "callStatus": "WEIRD"
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "failed",
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "WEIRD",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "failed",
+        "outcome": "weird",
+        "rawCause": "weird"
+      }
+    },
+    {
+      "name": "completed-unrecognised-cause-only",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"an unrecognized hangupCause-only input → failed with the raw cause preserved\"",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "hangupCause": "38"
+      },
+      "parsed": {
+        "eventType": "error",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "failed",
+        "dispositionCause": "38"
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "",
+        "status": "",
+        "hangupCause": "38",
+        "hangupReason": "",
+        "sipStatus": "",
+        "wasAnswered": false
+      },
+      "classification": {
+        "status": "failed",
+        "outcome": "38",
+        "rawCause": "38"
+      }
+    },
+    {
+      "name": "completed-answered-wins-over-busy",
+      "source": "test/unit/telephony/voicelink/voicelink.webhook.test.ts > \"answered wins over a busy signal (an answered call is completed)\"",
+      "callId": "c",
+      "body": {
+        "event": "call.completed",
+        "callStatus": "ANSWERED",
+        "sipStatus": "486"
+      },
+      "parsed": {
+        "eventType": "hangup",
+        "providerCallId": "",
+        "callId": "c",
+        "direction": "outbound",
+        "dispositionStatus": "completed",
+        "dispositionCause": null
+      },
+      "normalized": {
+        "event": "call.completed",
+        "providerCallId": "",
+        "direction": "outbound",
+        "callStatus": "ANSWERED",
+        "status": "",
+        "hangupCause": "",
+        "hangupReason": "",
+        "sipStatus": "486",
+        "wasAnswered": true
+      },
+      "classification": {
+        "status": "completed",
+        "outcome": "remote_hangup",
+        "rawCause": "answered"
+      }
+    }
+  ]
+}

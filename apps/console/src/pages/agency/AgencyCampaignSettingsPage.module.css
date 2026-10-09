@@ -1,0 +1,104 @@
+.page {
+  max-width: 760px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 8px;
+}
+
+.title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.liveNote {
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  background: rgba(245, 166, 35, 0.08);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.basics {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+}
+
+.fieldError {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.flag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.flag input[disabled] {
+  cursor: not-allowed;
+}
+
+.hint {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+/*
+  Deliberately not styled as an error. A capability being off is a fact about
+  the account, not a mistake the operator made — and the message names the
+  capability so they know what to ask for.
+*/
+.gateNotice {
+  padding: 8px 10px;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius);
+  background: rgba(245, 166, 35, 0.06);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.linkButton {
+  margin-top: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.blockCopy {
+  font-size: 12px;
+  color: var(--text-muted);
+}

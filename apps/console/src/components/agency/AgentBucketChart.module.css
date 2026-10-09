@@ -1,0 +1,182 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.heading {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* The plot scrolls inside its own box rather than forcing the page wide. A
+   month of bars on a narrow phone is the ordinary case, not the edge. */
+.plot {
+  overflow-x: auto;
+}
+
+.svg {
+  display: block;
+  width: 100%;
+  min-width: 320px;
+  height: auto;
+}
+
+/* Recessive chrome: hairline, solid, one step off the surface. Never dashed —
+   dashing adds noise that competes with the data. */
+.grid {
+  stroke: var(--border-light);
+  stroke-width: 1;
+}
+
+.axis {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+/* Axis text wears a text token, never a series colour. */
+.tick,
+.dayLabel {
+  fill: var(--text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.peak {
+  fill: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.attempts {
+  fill: var(--accent);
+}
+
+/* `--teal` and NOT `--success`: the status tokens mean good/bad and are reserved
+   for that. A conversation is an identity, not a verdict. */
+.connected {
+  fill: var(--teal);
+}
+
+.hit {
+  fill: transparent;
+}
+
+.group:hover .hit {
+  fill: var(--accent-subtle);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.swatchAttempts {
+  background: var(--accent);
+}
+
+.swatchConnected {
+  background: var(--teal);
+}
+
+/* The timezone caveat sits at full weight beside the chart rather than behind a
+   tooltip: a caveat you have to hover to find is one the chart gets read
+   without. */
+.note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.disclosure {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: underline;
+}
+
+.disclosure:hover {
+  color: var(--text-primary);
+}
+
+.tableScroll {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.caption {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: left;
+  padding-bottom: 6px;
+}
+
+.table th,
+.table td {
+  padding: 5px 10px 5px 0;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  text-align: left;
+  font-weight: 500;
+}
+
+.table thead th {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.table td {
+  font-variant-numeric: tabular-nums;
+}

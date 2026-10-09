@@ -1,0 +1,153 @@
+.container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 16px 0;
+}
+
+/* 'split' layout: the count label hard left, the controls hard right —
+   deliberately not justify-content: center like the default. */
+.container.split {
+  justify-content: flex-start;
+}
+
+.container.flush {
+  padding: 0;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* Only pin the controls to the right when the label is on the left of a
+   split layout; in the default centered layout this must not fire, or it
+   would override justify-content: center on .container. */
+.split .controls {
+  margin-left: auto;
+}
+
+.rangeLabel {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pageSize {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pageSizeLabel {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/*
+  Two traps here, both from `global.css`'s own `select` rule, and both cost the
+  control its affordance.
+
+  1. That rule supplies the dropdown chevron as a `background-image` plus 32px
+     of right padding. Declaring the `background` SHORTHAND resets
+     `background-image` to `none`, and a `padding` shorthand drops the 32px — so
+     the menu rendered as a plain bordered box with a number in it and nothing
+     saying it could be opened. `background-color` and the long-hand paddings
+     leave the chevron alone.
+  2. `[data-theme='light'] select` is (0,1,1) and therefore BEATS a bare
+     one-class selector, so in light theme the ground reverted to a near-white
+     with an inset highlight — white-on-white beside `--bg-tertiary` pager
+     buttons. The theme-scoped override below is what actually wins.
+
+  `ScheduleConfig.module.css` is the existing correct precedent in this repo;
+  `AgentAttemptsPanel.module.css` has the same bug, so this is a house mistake
+  worth naming rather than a one-off — and it matters more here because this is
+  a shared primitive that follows `pageSizeOptions` onto every surface.
+*/
+.pageSizeSelect {
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  padding-block: 6px;
+  padding-left: 10px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color var(--transition);
+}
+
+:global([data-theme='light']) .pageSizeSelect {
+  background-color: var(--bg-tertiary);
+  box-shadow: none;
+}
+
+.pageSizeSelect:focus {
+  border-color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pageSizeSelect {
+    transition: none;
+  }
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.button:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.info {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.info strong {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.pageInput {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  padding: 2px 4px;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.pageInput:focus {
+  border-color: var(--accent);
+}

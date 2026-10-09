@@ -1,0 +1,15 @@
+/*
+  The attempt's own record, under the empty state that says why there is no call.
+
+  Its own stack rather than the whole column's: `CallDetailView` supplies the
+  24px card rhythm on the ordinary path and this branch does not render it, while
+  the breadcrumb trail and the section bar above both carry their own margins —
+  so a gap on the outer div would push the section bar off the line it holds on
+  every other campaign screen.
+*/
+.attemptRecord {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin-top: 24px;
+}

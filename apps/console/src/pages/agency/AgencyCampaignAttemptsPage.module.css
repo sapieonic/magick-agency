@@ -1,0 +1,171 @@
+.page {
+  max-width: 1240px;
+}
+
+/*
+  Stated on the page rather than left to be inferred from the numbers being
+  legible: this table and its export are the personal data of everyone on the
+  roster, and the supervisor reading it is not the agent the masking rules in
+  the UX spec were written about.
+*/
+.privacyNote {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 8px 0 12px;
+}
+
+.pinnedNote {
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 8px 12px;
+  margin: 12px 0 0;
+  border-left: 3px solid var(--primary, var(--border));
+  background: var(--bg-secondary);
+  border-radius: var(--radius);
+}
+
+.outcomeFilter {
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.outcomes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+
+.when {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.numeric {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.phoneLink {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--border);
+}
+
+.phoneLink:hover {
+  border-bottom-color: currentColor;
+}
+
+/*
+  Muted rather than blank. An attempt with no agent and no recording is a real
+  row and the most misreadable thing on this page — an em dash reads as data we
+  failed to load, which is the opposite of the truth.
+*/
+.mutedCell {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.outcome::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.outcome[data-outcome='connected'] {
+  background: var(--success-subtle, rgba(47, 158, 68, 0.12));
+  color: var(--success, #2f9e44);
+}
+
+/*
+  Abandoned gets a warning colour of its own. It is the one outcome that is a
+  compliance fact rather than a call result — the customer answered and we had
+  nobody to give them to.
+*/
+.outcome[data-outcome='abandoned'] {
+  background: var(--warning-subtle, rgba(245, 166, 35, 0.12));
+  color: var(--warning, #f5a623);
+}
+
+.outcome[data-outcome='failed'],
+.outcome[data-outcome='invalid'],
+.outcome[data-outcome='orphaned'],
+.outcome[data-outcome='agent_disconnected'] {
+  background: var(--danger-subtle, rgba(214, 69, 69, 0.12));
+  color: var(--danger, #d64545);
+}
+
+.onBehalf {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--bg-tertiary, var(--bg-secondary));
+  color: var(--text-muted);
+}
+
+.recordingLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--accent-subtle);
+  color: var(--accent-hover);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: background 0.15s ease;
+}
+
+.recordingLink:hover {
+  background: var(--accent-glow);
+}
+
+.srOnly {
+  composes: sr-only from global;
+}
+
+/* This campaign records no calls — stated once above the table rather than
+   discovered one drill-down at a time. `--warning` because it withdraws
+   something the Call column appears to offer, but muted: nothing is broken and
+   an operator may well have turned recording off on purpose. */
+.recordingNote {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 12px;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  background: var(--warning-subtle);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.recordingNote svg {
+  flex-shrink: 0;
+  color: var(--warning);
+}

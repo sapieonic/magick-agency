@@ -1,0 +1,25 @@
+{
+  "name": "magick-agency",
+  "private": true,
+  "description": "Magick Agency: human-agent outbound power dialing, as one self-sufficient application.",
+  "packageManager": "pnpm@10.30.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "lint": "pnpm -r --workspace-concurrency=4 run lint",
+    "test": "pnpm -r --workspace-concurrency=4 run test",
+    "test:integration": "pnpm -r --workspace-concurrency=1 run test:integration",
+    "build": "pnpm -r run build",
+    "infra:up": "docker compose -f docker/docker-compose.dev.yml up -d --wait",
+    "infra:down": "docker compose -f docker/docker-compose.dev.yml down",
+    "infra:reset": "docker compose -f docker/docker-compose.dev.yml down -v",
+    "migrate:up": "pnpm --filter @magick-agency/db run migrate:up"
+  },
+  "devDependencies": {
+    "@types/node": "^22.12.0",
+    "esbuild": "^0.27.3",
+    "typescript": "~5.7.3",
+    "vitest": "^4.1.8"
+  }
+}

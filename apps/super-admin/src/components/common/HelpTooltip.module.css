@@ -1,0 +1,89 @@
+.wrapper {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+}
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: color var(--transition);
+  flex-shrink: 0;
+}
+
+.icon:hover {
+  color: var(--accent);
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 9500;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  text-transform: none;
+  white-space: normal;
+  width: max-content;
+  max-width: 260px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+
+.tooltipVisible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Arrow uses a CSS variable --arrow-left set by JS for dynamic positioning */
+.arrow {
+  position: absolute;
+  left: var(--arrow-left, 50%);
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+}
+
+.arrowAbove {
+  bottom: -6px;
+  border-top: 6px solid var(--border);
+}
+
+.arrowAbove::after {
+  content: '';
+  position: absolute;
+  left: -6px;
+  bottom: 1px;
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid var(--bg-elevated);
+}
+
+.arrowBelow {
+  top: -6px;
+  border-bottom: 6px solid var(--border);
+}
+
+.arrowBelow::after {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 1px;
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 6px solid var(--bg-elevated);
+}

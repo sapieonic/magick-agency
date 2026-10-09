@@ -1,0 +1,29 @@
+{
+  "name": "@magick-agency/db",
+  "version": "0.0.0",
+  "private": true,
+  "description": "pg pool, repositories and the squashed baseline migration.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": { ".": "./src/index.ts", "./*": "./src/*.ts" },
+  "scripts": {
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "test:integration": "vitest run -c vitest.config.integration.ts",
+    "migrate:up": "node-pg-migrate up --migrations-dir migrations --migrations-table pgmigrations",
+    "migrate:down": "node-pg-migrate down --migrations-dir migrations --migrations-table pgmigrations"
+  },
+  "dependencies": {
+    "@magick-agency/contracts": "workspace:*",
+    "@magick-agency/domain": "workspace:*",
+    "@magick-agency/observability": "workspace:*",
+    "node-pg-migrate": "^8.0.4",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.12.0",
+    "@types/pg": "^8.11.11",
+    "typescript": "~5.7.3",
+    "vitest": "^4.1.8"
+  }
+}

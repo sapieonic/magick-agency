@@ -1,0 +1,21 @@
+{
+  "name": "@magick-agency/domain",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pure agency rules (state machine constants, retry, classifier, calling hours, abandonment). No I/O.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": { ".": "./src/index.ts", "./*": "./src/*.ts" },
+  "scripts": {
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@magick-agency/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.12.0",
+    "typescript": "~5.7.3",
+    "vitest": "^4.1.8"
+  }
+}

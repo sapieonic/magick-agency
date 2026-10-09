@@ -1,0 +1,271 @@
+/* No new tokens (§1). The semantic mapping is fixed for the whole feature and must
+   not vary by screen: green = a human is on the line; amber = something is pending
+   or the agent is not taking calls; red = a call is being ended, or something
+   failed. */
+
+.rail {
+  /* 64px, full width, directly under the header. Geometry is frozen — the rail's
+     height never changes between states, because everything below it would move. */
+  height: 64px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  padding: 0 var(--space-4, 16px);
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+
+/* The left accent bar — one of the three channels (text, icon/colour, position)
+   that never carry state alone. */
+.accent {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--text-muted);
+}
+
+.tone_neutral {
+  background: var(--bg-tertiary);
+}
+
+.tone_info {
+  background: var(--info-subtle);
+}
+.tone_info .accent {
+  background: var(--info);
+}
+
+.tone_success {
+  background: var(--success-subtle);
+}
+.tone_success .accent {
+  background: var(--success);
+}
+
+.tone_warning {
+  background: var(--warning-subtle);
+}
+.tone_warning .accent {
+  background: var(--warning);
+}
+
+.tone_danger {
+  background: var(--danger-subtle);
+}
+.tone_danger .accent {
+  background: var(--danger);
+}
+
+.label {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.detail {
+  font-size: var(--text-sm, 14px);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 40px mono per §1.4 — the call timer is the one large numeral on the screen. 300
+   weight so a big number does not shout. */
+.talkTimer {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 40px;
+  font-weight: 300;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.blockedReason {
+  font-size: var(--text-xs, 12px);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* On break the rail is hatched as well as dimmed — quiet, with no streaming data
+   (§A.4.7). The hatch is a SECOND channel, so `break` is distinguishable from
+   `offline` without relying on tint: §A.3 gives both `--bg-tertiary`, and the hatch
+   is the only thing that separates "I have stepped away" from "I have not started".
+   Keyed on `data-hatched` rather than the tone for exactly that reason. */
+.rail[data-hatched='true'] {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 6px,
+    rgba(128, 128, 128, 0.06) 6px,
+    rgba(128, 128, 128, 0.06) 12px
+  );
+}
+
+@media (max-width: 1023px) {
+  .rail {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+  .talkTimer {
+    font-size: 28px;
+  }
+}
+
+/* ── The cue's visual channel (§A.4.3.1's visual half, `AD-P2-U-07`) ────────────
+ *
+ * Fires only when the audible cue cannot carry the information — muted, an
+ * `AudioContext` the browser will not run, or the agent's own `always` override.
+ * For that agent this is not a second channel, it is the only one, so all three
+ * cues get one and **the three must be separable by sight.**
+ *
+ * ── Nothing here is a colour, and that is the whole design ────────────────────
+ * All three flashes use the SAME `--accent`. §A.4.3.1 gave the audio distinct
+ * rhythm and contour rather than distinct pitch because pitch is what a listener
+ * in a noisy room loses first; colour is the same trap one channel over, and an
+ * agent may be colour-blind — which is precisely the kind of agent this channel
+ * exists for. Painting connect green and disconnect red would look like a
+ * distinction and be none.
+ *
+ * ── The rendering is a function of `VISUAL_CUE_SPECS`, not of the cue's name ──
+ * Every property below comes from either a custom property the component set from
+ * that table (`--cue-pulses`, `--cue-pulse-duration`) or from `[data-cue-travel]`.
+ * There is deliberately NO `[data-cue-flash='connect']` rule: keying on the name
+ * would let the table say three things while the screen showed one. Two cues with
+ * the same (pulses, travel, duration) triple therefore render identically, and two
+ * with different triples cannot — which is what makes the DOM assertions in
+ * `AgentConsolePage.cueVisual.test.tsx` assertions about what the agent sees.
+ *
+ *   get-ready  3 × still  — three knocks over the whole rail, no direction
+ *   connect    1 × up     — one long sweep bottom→top, the longest of the three
+ *   disconnect 2 × down   — two quick falls, inverted against connect
+ *
+ * Rule 2 of this feature (no looping animation) holds: the iteration count is
+ * finite and the hook removes the element after the cue's own `durationMs`.
+ */
+.cueFlash {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  background: var(--accent);
+  /* Both from the table. A cue that changed its pulse count without changing what
+     is on screen would be a lie the tests could not catch. */
+  animation-duration: var(--cue-pulse-duration);
+  animation-iteration-count: var(--cue-pulses);
+  animation-timing-function: ease-out;
+  animation-fill-mode: forwards;
+}
+
+/* No direction: the band covers the rail and knocks. */
+.cueFlash[data-cue-travel='still'] {
+  top: 0;
+  bottom: 0;
+  animation-name: cueKnock;
+}
+
+/* A travelling band. 8px of the rail's 64px, so the movement is the signal. */
+.cueFlash[data-cue-travel='up'],
+.cueFlash[data-cue-travel='down'] {
+  top: 0;
+  height: 8px;
+  animation-name: cueTravelUp;
+}
+
+.cueFlash[data-cue-travel='down'] {
+  animation-name: cueTravelDown;
+}
+
+@keyframes cueKnock {
+  0% {
+    opacity: 0;
+  }
+  40% {
+    opacity: 0.32;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Bottom → top. 56px = the rail's 64px less the band's 8px. */
+@keyframes cueTravelUp {
+  0% {
+    opacity: 0.15;
+    transform: translateY(56px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes cueTravelDown {
+  0% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0.15;
+    transform: translateY(56px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /*
+   * Reduced motion is not "no signal" — an agent who cannot hear the cue AND has
+   * motion reduced would otherwise get nothing at all. The animation is replaced
+   * by a static treatment that is still THREE distinguishable things, on the axis
+   * that survives when travel cannot: **position**. Whole rail / top edge / bottom
+   * edge, held for the same window the hook holds the element.
+   */
+  .cueFlash {
+    animation: none;
+    opacity: 0.32;
+    transform: none;
+  }
+  .cueFlash[data-cue-travel='up'] {
+    top: 0;
+    bottom: auto;
+  }
+  .cueFlash[data-cue-travel='down'] {
+    top: auto;
+    bottom: 0;
+  }
+}
+
+/*
+  The recovery control (§A.8.2's Reconnect, §A.8.3's reclaim).
+
+  40px and `white-space: nowrap`, matching `RailPresenceRegion`'s `.presence` —
+  the frozen-geometry rule applies to every control on this rail, not just the
+  presence one, and this one appears in exactly the states where an agent is
+  already clicking in a hurry.
+*/
+.recovery {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  margin-left: var(--space-3, 12px);
+}
+
+.recoveryPrimary {
+  height: 40px;
+  padding: 0 var(--space-4, 16px);
+  border: none;
+  border-radius: var(--radius-md, 8px);
+  background: var(--accent);
+  color: #fff;
+  font-size: var(--text-sm, 14px);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}

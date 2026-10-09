@@ -1,0 +1,153 @@
+/* Toolbar: client-side scanning aids over the loaded page */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.searchBox {
+  position: relative;
+  flex: 1 1 280px;
+  min-width: 220px;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  padding-left: 36px;
+}
+
+.actionSelect {
+  width: 220px;
+}
+
+.dateInput {
+  width: 150px;
+}
+
+.resourceInput {
+  width: 180px;
+}
+
+/* Cells */
+.dateCell {
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.actor {
+  color: var(--text-secondary);
+}
+
+.actionBadge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.resourceCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.resourceBadge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Details preview chips */
+.detailsEmpty {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.detailsChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  max-width: 200px;
+  overflow: hidden;
+}
+
+.chipKey {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+.chipVal {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+
+.chipMore {
+  font-size: 11px;
+  color: var(--accent-hover);
+  padding: 2px 4px;
+}
+
+/* Detail modal JSON */
+.json {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+@media (max-width: 768px) {
+  .actionSelect {
+    width: 100%;
+  }
+
+  .json {
+    font-size: 12px;
+  }
+}

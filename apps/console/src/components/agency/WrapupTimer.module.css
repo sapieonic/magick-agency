@@ -1,0 +1,53 @@
+/* No new tokens (§1). Colour is the feature-wide semantic: amber = something is
+   pending or the agent is not taking calls. */
+
+.region {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  margin-left: auto;
+}
+
+/* The bar is PRIMARY — a shrinking length is legible in peripheral vision and a
+   number is not. Rendered only when there is a real deadline. */
+.track {
+  display: block;
+  width: 140px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+
+.fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--warning);
+  transform-origin: left center;
+  /* Matches the repaint cadence so the bar moves continuously rather than in four
+     visible steps a second. Linear: an eased bar lies about how much time is
+     left. */
+  transition: transform 250ms linear;
+}
+
+/* Secondary. Mono + tabular so the digits do not jitter as they change. */
+.digits {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-sm, 14px);
+  color: var(--text-secondary);
+}
+
+.heldReason {
+  font-size: var(--text-xs, 12px);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fill {
+    transition: none;
+  }
+}

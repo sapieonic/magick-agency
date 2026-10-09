@@ -1,0 +1,109 @@
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: background var(--transition);
+}
+
+.row:hover {
+  background: var(--bg-tertiary);
+}
+
+.number {
+  font-family: var(--font-mono, monospace);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.label {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.default {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent-hover);
+  background: var(--accent-subtle);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.hint,
+.status {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.excluded {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.error {
+  font-size: 13px;
+  color: var(--danger);
+}
+
+.empty {
+  padding: 14px 16px;
+  border: 1px dashed var(--warning);
+  border-radius: var(--radius);
+  background: rgba(245, 166, 35, 0.06);
+}
+
+.emptyTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.emptyBody {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+/* Own-carrier (BYOC) marker. Sits before `.default`, which takes the row's
+   `margin-left: auto` and must stay the right-most chip. */
+.byocBadge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 14%, transparent);
+  padding: 2px 6px;
+  border-radius: 4px;
+}

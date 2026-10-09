@@ -1,0 +1,188 @@
+.page {
+  max-width: 1100px;
+}
+
+/*
+  Amber and full-width, matching the dashboard's "Live updates paused" strip.
+  This is not decoration: the whole point of the `partial` flag is that a short
+  trail must announce itself, so it gets the same weight as the content.
+*/
+.partialBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  margin: 12px 0;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  background: rgba(245, 166, 35, 0.1);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.partialBanner svg {
+  color: var(--warning);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/*
+  Quieter than the partial banner, and deliberately so: the retention horizon is
+  a standing fact about the data, not something that just went wrong. It is
+  still prose rather than a footnote, because a truncated trail that looks
+  complete is the failure it exists to prevent.
+*/
+.retention {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 8px 0 12px;
+}
+
+.actionFilter {
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.when {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.action {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.systemActor {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.target {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.targetType {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.targetId {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.detail {
+  max-width: 340px;
+  line-height: 1.5;
+}
+
+.noDetail {
+  color: var(--text-muted);
+}
+
+.rawDetail {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rawDetail li {
+  display: flex;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.rawKey {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.sourceTag {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  white-space: nowrap;
+  cursor: help;
+}
+
+/*
+  A dialer row's "who" is the calling application, not a person — muted and
+  marked so it can never be mistaken for the name of whoever acted.
+*/
+.clientActor {
+  color: var(--text-muted);
+}
+
+/*
+  A key-authenticated row's "who" is a CREDENTIAL, not a person and not the
+  system (86d45t7rm). Marked so it can never be read as either: master used to
+  record the key's creator here, so these rows once looked exactly like that
+  person's, and dropping the creator without marking the row would have left
+  them looking like the scheduler's.
+
+  Not `--ember`: nothing here is in motion, and ember colours what the platform
+  is DOING. This is a category on a settled record.
+*/
+.keyActor {
+  color: var(--text-secondary);
+}
+
+.keyActorLabel {
+  font-style: italic;
+  cursor: help;
+}
+
+/*
+  Standing context for the "Recorded by" column, stated once instead of on
+  every row's title attribute — see ACTIVITY_SOURCE_LEGEND for why.
+*/
+.sourceLegend {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+
+/*
+  The client-actor cell's accessible description lives behind focus rather
+  than a `title`, so it needs its own visible focus ring — it isn't a button
+  or link, so it falls outside the global button/a/[role=button] rule.
+*/
+.clientActorLabel:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Present in the accessibility tree only. The offscreen clip itself lives once,
+   in `global.css` — the same treatment is needed from modules that cannot see
+   each other's classes (the workspace Audit Log exposes its wire values this
+   way too), and a private second copy is how the two drift apart. */
+.srOnly {
+  composes: sr-only from global;
+}
+
+/*
+ * The credential id beside a key actor's name. Muted and smaller than the name:
+ * the NAME is what a supervisor recognises, the id is what they paste into the
+ * key list.
+ */
+.keyActorId {
+  font-size: 11px;
+  color: var(--color-text-muted, #6b7280);
+}

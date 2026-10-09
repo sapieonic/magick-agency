@@ -1,0 +1,105 @@
+/* The dot and its halo are two pseudo-elements on one sizing box, not a scaled
+   parent with a nested child. Nesting compounds the transforms, so the halo's
+   reach would depend on where the dot happened to be in its own breath. */
+.liveDot {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  /* Both pseudo-elements paint `currentColor`, so the `color` prop is the whole
+     colour mechanism: a caller that needs the dot to follow its own state colour
+     passes `currentColor` and inherits, with no second code path here. */
+  color: var(--ember);
+}
+
+.liveDot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* Not live: present, but visibly not moving. A dot at full strength alongside a
+   pulsing one reads as a second live thing. */
+.liveDot:not(.pulsing)::before {
+  opacity: 0.5;
+}
+
+/* The heartbeat. The dot breathes and a separate ring expands out of it and
+   fades, on one shared 2s period — that pairing is what separates "something is
+   happening" from a blinking light, which is the decorative version. */
+.pulsing::before {
+  animation: liveDotBeat 2s ease-in-out infinite;
+}
+
+/* `opacity: 0` is the halo's RESTING state, not a redundant start value. The
+   global reduced-motion block does not stop animations — it runs them in 0.01ms
+   — so an element with no fill-mode reverts to its base styles, and a base of
+   `opacity: 1` would leave a solid disc sitting on top of the dot. The media
+   query below is what puts the ring back deliberately. */
+.pulsing::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0;
+  pointer-events: none;
+  animation: liveDotHalo 2s ease-out infinite;
+}
+
+@keyframes liveDotBeat {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 0.78;
+  }
+}
+
+@keyframes liveDotHalo {
+  0% {
+    transform: scale(1);
+    opacity: 0.45;
+  }
+  /* Fully faded well before the period ends, so the ring reads as one departing
+     pulse rather than a ring that is always present at some opacity. */
+  70%, 100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+/*
+ * Reduced motion is not "no signal" — the house rule from `AgentConsolePage` and
+ * `StateRail`, and here it is load-bearing for the palette rather than for one
+ * cue.
+ *
+ * Ember and `--warning` sit 25deg apart, the narrowest pair we have, and the only
+ * thing separating them at dot size is that EMBER MOVES. The global kill-switch
+ * in `global.css` stops every animation app-wide, so for a reader on reduced
+ * motion that separator does not weaken — it disappears, and a live dot becomes
+ * an orange warning dot.
+ *
+ * So the halo does not vanish with the motion; it is held as a static ring
+ * around the dot. A dot-inside-a-ring is a different SHAPE from any status dot
+ * in the app, which is an axis that survives when travel cannot.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .pulsing::before {
+    transform: none;
+    opacity: 1;
+  }
+  .pulsing::after {
+    /* Beats the global `animation-duration: 0.01ms !important`, which would
+       otherwise run this to its faded end state and leave nothing. */
+    animation: none !important;
+    transform: scale(2.3);
+    /* A ring, not a disc: filled, it would just read as a bigger dot. */
+    background: transparent;
+    border: 1px solid currentColor;
+    opacity: 0.55;
+  }
+}

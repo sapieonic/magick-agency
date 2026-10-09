@@ -1,0 +1,46 @@
+/* Full-viewport and deliberately empty around the message: this screen renders
+   INSTEAD of `AppLayout`, so there is no sidebar, no top bar and nothing to
+   click on. An agent seeing this has one thing to do and it is not on screen. */
+
+.shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6, 24px);
+  background: var(--bg-primary);
+}
+
+.card {
+  max-width: 44ch;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3, 12px);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-xl, 20px);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.body {
+  margin: 0;
+  font-size: var(--text-sm, 14px);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.action {
+  margin-top: var(--space-2, 8px);
+  padding: var(--space-2, 8px) var(--space-4, 16px);
+  border-radius: var(--radius-md, 8px);
+  background: var(--accent);
+  color: #fff;
+  font-size: var(--text-sm, 14px);
+  font-weight: 600;
+  text-decoration: none;
+}

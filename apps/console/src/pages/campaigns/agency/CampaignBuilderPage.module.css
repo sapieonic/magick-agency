@@ -1,0 +1,351 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  /* Height leftover after agency chrome: topbar + content padding + this
+     page's breadcrumbs/title/stepper. The workspace then fills it so a
+     one-field step is a panel, not a stamp on empty background. */
+  --builder-chrome: 16.75rem;
+  container-type: inline-size;
+  container-name: builder;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.error {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  border-left: 3px solid var(--danger);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 16px;
+  align-items: stretch;
+  min-height: calc(100dvh - var(--builder-chrome));
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.cardHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 20px 10px;
+  flex-shrink: 0;
+}
+
+.cardKicker {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.cardTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.cardTitle:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 3px;
+}
+
+.cardHelper {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.cardBody {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 20px 16px;
+  overflow: auto;
+}
+
+.card[data-step='basics'] .cardBody,
+.card[data-step='hours'] .cardBody {
+  max-width: 36rem;
+}
+
+.stepFill {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.fieldHint,
+.recommend {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.recommend {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--accent-subtle);
+  color: var(--text-secondary);
+}
+
+.dropzone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex: 1;
+  min-height: 220px;
+  padding: 32px 24px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-tertiary);
+  text-align: center;
+}
+
+.dropzoneActive {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.dropzoneCopy {
+  margin: 0;
+  max-width: 28rem;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.fileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.limits,
+.busy,
+.blockReason,
+.dryRunNote {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.dryRunNote {
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+
+.ingestActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 12px;
+}
+
+/* The import bar. See `AgencyCampaignContactsPage.module.css` for why the reset
+   is scoped to `[value]` and why each vendor pseudo-element needs its own rule —
+   CSS Modules leave the two copies no shared scope. */
+.progress progress[value] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border: none;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+}
+
+.progress progress[value]::-webkit-progress-bar {
+  background: var(--bg-tertiary);
+  border-radius: 999px;
+}
+
+.progress progress[value]::-webkit-progress-value {
+  background: var(--ember);
+  border-radius: 999px;
+}
+
+.progress progress[value]::-moz-progress-bar {
+  background: var(--ember);
+  border-radius: 999px;
+}
+
+.progressLine {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.review {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reviewRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+}
+
+.reviewRow[data-warning='true'] {
+  border-left: 3px solid var(--warning);
+}
+
+.reviewLabel {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.reviewValue {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+
+.reviewNote {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  padding: 12px 20px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.saved {
+  font-size: 13px;
+  color: var(--success);
+}
+
+.savedLink {
+  color: var(--accent-hover);
+  font-weight: 600;
+}
+
+/*
+  Collapse on the PAGE width, not the viewport. Agency already spent 240px
+  on the sidebar, so a 1024 laptop is ~736px of builder — too narrow for a
+  240px rail beside a form.
+*/
+.railSlot {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+@container builder (max-width: 880px) {
+  .workspace {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .railSlot {
+    display: none;
+  }
+
+  .card {
+    min-height: min(28rem, calc(100dvh - var(--builder-chrome)));
+  }
+}
+
+@media (max-width: 768px) {
+  .page {
+    --builder-chrome: 13.5rem;
+  }
+
+  .cardHeader,
+  .cardBody,
+  .footer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}

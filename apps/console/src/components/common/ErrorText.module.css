@@ -1,0 +1,5 @@
+/* Forces the request-id chip onto its own line below the message text, even
+   when the surrounding container lays its children out inline. */
+.chipRow {
+  display: block;
+}
