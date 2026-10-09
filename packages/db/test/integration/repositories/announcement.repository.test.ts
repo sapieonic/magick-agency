@@ -1,10 +1,7 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/integration/repositories/announcement.repository.test.ts@4850d1d9.
-// Changed: connection/repository paths (packages/db layout); tenant/account labels wrapped in
-// `uuidFor` (UUID columns); `insertAnnouncement` comes from ../setup/clip-factories.js (audio-type
-// default). Decision 4 (uploaded clip only — tts_text/tts_voice/tts_language dropped, type CHECKed
-// to 'audio'): deleted 'inserts a TTS announcement and returns the record' and 'uses default voice
-// and language when not provided' (and so the now-empty 'create' describe); 'updates announcement
-// fields' no longer sets/asserts tts_text. Type-only: `rows[0]!.id` (packages/db tsconfig typechecks tests).
+// Tenant/account labels are wrapped in `uuidFor` (UUID columns); `insertAnnouncement` comes from
+// ../setup/clip-factories.js (audio-type default). Announcements are uploaded clips only
+// (type CHECKed to 'audio'; no tts_text/tts_voice/tts_language columns). Type-only: `rows[0]!.id`
+// (packages/db tsconfig typechecks tests).
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { vi } from 'vitest';
 import { randomUUID } from 'node:crypto';

@@ -5,15 +5,11 @@ import { getTestPool, closeTestPool, truncateAll } from '../setup/test-utils.js'
 import { insertAccountSettings, uuidFor } from '../setup/factories.js';
 
 /*
- * PORT NOTE (magick-agency): ported from core
- * test/integration/repositories/account-settings.repository.test.ts@4850d1d9.
- *  - Ids: every free-form tenant/account label is wrapped in `uuidFor(label)`
- *    and `uniqueKey()` returns UUIDs (the baseline types both columns UUID).
- *  - `default_ai_pipeline` (AI pipeline selection) is not a column: its four
- *    write-path cases are DELETED; its three getter cases now cover
- *    `getWebrtcMaxDurationSeconds` (the column agency adds, plan §3.2), seeded
- *    directly because the upsert does not write it; the two remaining mentions
- *    (COALESCE and write-through cases) use `analyze_calls` instead.
+ * Ids: every free-form tenant/account label is wrapped in `uuidFor(label)`
+ * and `uniqueKey()` returns UUIDs (the baseline types both columns UUID).
+ * `default_ai_pipeline` is not a column. The getter cases cover
+ * `getWebrtcMaxDurationSeconds` (seeded directly because the upsert does not
+ * write it); the COALESCE and write-through cases use `analyze_calls`.
  */
 
 // Redirect repository to test database

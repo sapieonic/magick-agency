@@ -4,10 +4,9 @@ import { getTestPool, closeTestPool, truncateAll } from '../setup/test-utils.js'
 import { uuidFor } from '../setup/factories.js';
 
 /*
- * NEW (magick-agency, lane A, authorised by the lead): real-Postgres coverage of
- * `accountSettingsRepository.setWebrtcMaxDurationSeconds`, the writer half of
- * `getWebrtcMaxDurationSeconds` (plan §3.2 moved core's
- * `webrtc_max_duration_seconds` flag onto `account_settings`). No core source.
+ * Real-Postgres coverage of `accountSettingsRepository.setWebrtcMaxDurationSeconds`,
+ * the writer half of `getWebrtcMaxDurationSeconds` (the
+ * `webrtc_max_duration_seconds` flag lives on `account_settings`).
  *
  * Pins: insert-or-update on `(tenant_id, account_id)`; the write touches ONLY
  * this column (concurrency, its mode/version and both toggles keep their

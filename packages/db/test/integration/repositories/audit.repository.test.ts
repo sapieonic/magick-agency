@@ -4,11 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { getTestPool, closeTestPool, truncateAll } from '../setup/test-utils.js';
 import { uuidFor } from '../setup/factories.js';
 
-// PORT NOTE (magick-agency): ported from core
-// test/integration/repositories/audit.repository.test.ts@4850d1d9. Changes:
-// tenant/account labels are wrapped in `uuidFor` (UUID columns); the logger mock
-// targets `@magick-agency/observability`. `event_data.campaign_id` values stay
-// core's strings (JSONB, not a UUID column).
+// Tenant/account labels are wrapped in `uuidFor` (UUID columns); the logger mock
+// targets `@magick-agency/observability`. `event_data.campaign_id` values are
+// plain strings (JSONB, not a UUID column).
 
 // Redirect repository to test database
 vi.mock('../../../src/connection.js', () => ({
@@ -29,10 +27,9 @@ vi.mock('@magick-agency/observability', () => ({
 // Must import AFTER vi.mock
 const { auditRepository: typedAuditRepository } = await import('../../../src/repositories/audit.repository.js');
 
-// PORT NOTE (magick-agency): core type-checks no test file; agency's lint does.
-// These assertions read rows as `Record<string, unknown>` (snake_case, as
-// Postgres returns them), so the reads are typed that way here — the runtime is
-// core's exactly.
+// Tests are typechecked by lint. These assertions read rows as
+// `Record<string, unknown>` (snake_case, as Postgres returns them), so the reads
+// are typed that way here.
 type Rows<F extends (...a: never[]) => unknown> = (...a: Parameters<F>) => Promise<Record<string, unknown>[]>;
 const auditRepository = typedAuditRepository as unknown as Omit<typeof typedAuditRepository, 'findByCallId' | 'findByTenant' | 'findFiltered'> & {
   findByCallId: Rows<typeof typedAuditRepository.findByCallId>;

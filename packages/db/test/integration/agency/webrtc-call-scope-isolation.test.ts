@@ -16,7 +16,7 @@ const { webrtcCallRepository } = await import(
  *
  * `webrtc_calls` holds both products' calls and stays one table by design
  * (migration 076). The boundary is a read-path predicate at the repository
- * (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b), and this suite asserts the resulting
+ * (see docs/architecture.md), and this suite asserts the resulting
  * behaviour against real SQL rather than the query text.
  *
  * ── Why the seven routes are tested as two functions ────────────────────────
@@ -47,19 +47,13 @@ const { webrtcCallRepository } = await import(
  */
 
 /*
- * PORT NOTE (magick-agency): ported from core
- * test/integration/agency/webrtc-call-scope-isolation.test.ts@4850d1d9. The
- * softphone (scope `'dialer'`) is deleted; `'agency'` is the only scope.
- *  - DELETED (4): the "findByIdScoped — the six by-id routes" cases. Their
- *    subject is the softphone's six routes; the agency-scope refusal of a
- *    campaign-less row is the "mirror image" case below, kept.
- *  - MODIFIED (5): the "listByTenant" cases now list the AGENCY scope, with
- *    campaign-less rows (`campaign_id: null`, the old softphone shape) as the
- *    rows the scope must neither return nor count.
- *  - MODIFIED (1): the partition case asserts the agency page excludes exactly
- *    the campaign-less rows (no `'dialer'` page to compare against).
- *  - Ids are UUIDs (core: 'test-tenant' / 'test-account' / 'other-tenant'); the
- *    table is `agency_calls`. The comment above is core's and describes core.
+ * `'agency'` is the only scope: there is no softphone (`'dialer'`) page. The
+ * "listByTenant" cases list the AGENCY scope, with campaign-less rows
+ * (`campaign_id: null`) as the rows the scope must neither return nor count,
+ * and the partition case asserts the agency page excludes exactly those rows.
+ * The agency-scope refusal of a campaign-less row is the "mirror image" case
+ * below. Ids are UUIDs and the table is `agency_calls`; the comment above
+ * describes the softphone-era routes the predicate was introduced for.
  */
 const TENANT = DEFAULTS.tenantId;
 const ACCOUNT = DEFAULTS.accountId;
@@ -247,7 +241,7 @@ describe('webrtc_calls dialer/agency scope isolation (integration)', () => {
         });
       }
 
-      // PORT NOTE: no `'dialer'` page exists; the complement is the campaign-less rows.
+      // No `'dialer'` page exists; the complement is the campaign-less rows.
       const agencyPage = await webrtcCallRepository.listByTenant(TENANT, ACCOUNT, 'agency', 50, 0);
 
       expect(agencyPage.total).toBe(4);

@@ -1,4 +1,4 @@
-// PORT NOTE (magick-agency): ported from master test/integration/repositories/tenant.repository.test.ts@a1f0756a (13 → 13) on real Postgres via the master pattern (`src/connection.js` → the test pool); import specifiers remapped.
+// Real Postgres: `src/connection.js` is pointed at the test pool.
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { vi } from 'vitest';
 import { getTestPool, closeTestPool, truncateAll } from '../setup/test-utils.js';

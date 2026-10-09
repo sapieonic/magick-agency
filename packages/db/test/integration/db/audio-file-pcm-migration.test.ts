@@ -1,8 +1,7 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/integration/db/audio-file-pcm-migration.test.ts@4850d1d9.
-// Agency has no migration 067: the three PCM columns are created inline by the squashed baseline
-// (packages/db/migrations/0001_baseline.sql), so this suite now pins the BASELINE's audio_files
-// shape. Only changes: tenant/account labels wrapped in `uuidFor` (UUID columns);
-// `insertAudioFile` comes from ../setup/clip-factories.js. Every case kept.
+// The three PCM columns are created inline by the squashed baseline
+// (packages/db/migrations/0001_baseline.sql), so this suite pins the BASELINE's audio_files
+// shape. Tenant/account labels are wrapped in `uuidFor` (UUID columns);
+// `insertAudioFile` comes from ../setup/clip-factories.js.
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { insertAudioFile } from '../setup/clip-factories.js';

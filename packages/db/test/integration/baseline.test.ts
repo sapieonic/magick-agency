@@ -26,8 +26,6 @@ import {
  * globalSetup has already dropped the schema and applied every migration, so the
  * fact that this file runs at all is the "migrates on a throwaway Postgres" check.
  *
- * Assertions ported from the source suites cite their origin as
- * `core:<path>` / `master:<path>` (magic-voice-core v1.123.2, magick-master v3.24.0).
  */
 
 const pool = () => getTestPool();
@@ -177,7 +175,7 @@ describe('baseline schema — structure', () => {
     for (const [table, column] of absent) {
       expect((await columnsOf(table)).has(column), `${table}.${column} should not exist`).toBe(false);
     }
-    // ...while the metering facts plan §3.3 keeps are still there.
+    // ...while the metering facts kept for metering are still there.
     expect((await columnsOf('dialer_analysis_jobs')).has('analysis_audio_seconds')).toBe(true);
     expect(await indexDef('idx_agency_attempts_billing')).toBeDefined();
   });
@@ -287,7 +285,7 @@ describe('baseline schema — structure', () => {
     }
   });
 
-  it('agency.md §2 uq_agency_agent_live is superseded by core 093 — only the tenant index exists', async () => {
+  it('uq_agency_agent_live is superseded — only the tenant index exists', async () => {
     expect(await indexDef('uq_agency_agent_live')).toBeUndefined();
     expect(await indexDef('uq_agency_agent_live_tenant')).toBe(
       'CREATE UNIQUE INDEX uq_agency_agent_live_tenant ON public.agency_agent_sessions ' +
@@ -424,7 +422,7 @@ describe('triggers', () => {
   });
 });
 
-describe('the uniqueness constraints that carry the design (agency.md §2)', () => {
+describe('the uniqueness constraints that carry the design (docs/architecture.md)', () => {
   beforeEach(() => truncateAll());
 
   // core:test/integration/agency/agency-duplicate-dial.test.ts T-M5
@@ -768,7 +766,7 @@ describe('checks, cascades and foreign keys', () => {
     }
   });
 
-  it('lead decisions: no dnc_sync_state, no analyze_dialer_calls, VoiceLink defaults (B8, Q3b)', async () => {
+  it('decided defaults: no dnc_sync_state, no analyze_dialer_calls, VoiceLink defaults (B8, Q3b)', async () => {
     const { rows: t } = await pool().query(`SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'dnc_sync_state'`);
     expect(t).toHaveLength(0);
     const { rows: c } = await pool().query(

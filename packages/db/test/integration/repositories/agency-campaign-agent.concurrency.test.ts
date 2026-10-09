@@ -51,8 +51,7 @@ import { insertAccount, insertTenant, insertUser } from '../setup/factories.js';
  * to script.
  */
 
-// PORT NOTE (magick-agency): master hard-coded its own test DB (5434). The
-// agency harness's guarded URL is used instead — never another stack's port.
+// The agency harness's guarded URL is used, never another stack's port.
 import { TEST_DB_URL } from '../../helpers/test-db.js';
 
 interface Interleave {
