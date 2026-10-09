@@ -3,7 +3,7 @@
  *
  * In MagickVoice this was a hand mirror: master's `src/rbac/roles.ts` (the
  * authority) and cusui's `src/utils/permissions.ts` (a copy that had to be kept
- * "in lockstep", `agency.md` §6.4 "Role hierarchy"). Magick Agency imports this
+ * "in lockstep", `docs/reference/magickvoice-platform/agency.md` §6.4 "Role hierarchy"). Magick Agency imports this
  * module on both sides, so the mirror — and the class of bug where the UI shows
  * a control the API 403s, or hides one it would allow — goes away.
  *
@@ -98,7 +98,7 @@ export type Permission =
   | 'agency.flags.read'
   // Campaign reads (list, detail, stats, roster, analytics) and writes (create,
   // PATCH, roster upload). In MagickVoice these rode the contact-list
-  // permissions (`agency.md` §7.1, "Campaign writes … floor at
+  // permissions (`docs/reference/magickvoice-platform/agency.md` §7.1, "Campaign writes … floor at
   // `proxy.contact_lists.write`").
   | 'agency.campaigns.read'
   | 'agency.campaigns.write'

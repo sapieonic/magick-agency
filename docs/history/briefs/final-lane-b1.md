@@ -1,0 +1,57 @@
+# Lane B1 — agency domain and data, core half (plan Phase 4)
+
+You are lane B1 of the Magick Agency build: core's agency domain modules, core's 7,006-line agency repository, and the DNC collapse. Mechanical but large: precision over speed. A separate lane (B2) ports master's agency services after you merge; the runtime (pacing, dialer, station, reaper) is Phase 6, not yours.
+
+**Worktree:** `/Users/manasnilorout/Personal/Sapionic/magick-agency-lane-b1`, branch `lane-b1/domain-data` (already created off `main` by the lead).
+
+## Plan sections
+`docs/history/extraction-plan-v4.2.md` §1 (the DNC collapse row), §2, §6, §8 Phase 4, §9; `docs/decisions.md` B8 (DNC design — binding) and B12 (where the repository lives — binding); `docs/reference/magickvoice-platform/agency.md` §2–§5.
+
+## Sources (core v1.123.2 @ 4850d1d9)
+- **Your modules:** every file in `magic-voice-core/src/agency/` EXCEPT:
+  - Phase 6 runtime (not yours, do not port): `pacing-engine`, `agency-dialer`, `dial-dispatcher`, `station-registry`, `station-token`, `reaper`, `wrapup-manager`, `break-manager`, `runtime`, `abandonment-guardrail`, `abandonment-metrics`, `live-concurrency-metrics`, `abandon-clip`, `pre-dial-gates`, `agent-state-machine`;
+  - billing, deleted: `attempt-batcher`, and whatever of `attempt-batch-reference` only billing uses (the repository imports its `AgencyAttemptHourBucket` type — if that type serves only the billing sweep, delete it and the repository methods behind it; list them);
+  - already ported: `contracts.ts` → `@magick-agency/contracts/agency`; `agency-s2s-contract.fixture.json` retires.
+- **Repository:** `src/db/repositories/agency.repository.ts` + `src/db/models/agency.model.ts` → `apps/server/src/db/repositories/` and `apps/server/src/db/models/` (decision B12). Re-key webrtc_calls joins onto `agency_calls` (column names unchanged). Delete billing-only methods (attempt batches / settlement sweep) and SIP columns (`sip_connection_id` is gone from the baseline). The repository must keep every other method and its SQL verbatim. If it references a table or column the baseline lacks, stop and report.
+- **DNC (decision B8):** core `dnc-registry.ts`, `dnc-mark.ts` (+ `agency-dnc-outbox.*` only as far as `dnc-mark` needs it after the collapse), and master `src/dnc/{dnc.service,dnc.repository}.ts` (+ master `dnc_entries` model). The collapse: the dial-time check becomes an indexed read of `dnc_entries` (tenant-wide, account and campaign scopes, `uq_dnc_scope` semantics unchanged) that **fails closed** — a DB error is the `unavailable`/halt result core's registry returned for a Redis fault, so `pre-dial-gates` (Phase 6) aborts the whole claimed batch. Keep core's registry's exported API (function names, result union) so `pre-dial-gates.ts` ports unchanged; document the internals change in PORTING.md and test fail-closed on a real DB error. The agent's mark (`dnc-mark`) writes `dnc_entries` directly at the scope it computes (campaign id = campaign scope; omitted = the explicit tenant-wide escalation; account scope refused with `invalid_dnc_scope`), in one transaction, and returns the WRITTEN scope as master's echo did. Not ported: master `dnc-sync.{service,client}`, core `dnc-resync`, the Redis set, versions, and the outbox forwarder (`dnc-outbox.ts`) — the outbox table stays for the later rollback mirror. Master's DNC list/add/delete service (the supervisor DNC page) IS ported (`dnc.service.ts`), minus its core-sync calls.
+- **Leaf modules → `packages/domain`:** a module with no imports at all, or importing only `@magick-agency/contracts` and other leaves, goes to `packages/domain/src/<same file name>`; everything else stays at `apps/server/src/agency/<file>`. Importers reference domain modules by subpath (`@magick-agency/domain/abandonment-predicate`). List the split in PORTING.md.
+- **Tests:** for every module you port, its tests from `magic-voice-core/test/unit/agency/` and `test/integration/agency/` (and `test/unit/db/`, `test/integration/repositories/` where they cover the repository). Route tests (`*-route.test.ts`, `*-routes.test.ts`, `agency-internal-*`) are Phase 8; runtime tests are Phase 6; `attempt-batcher.test.ts`, `s2s-contract.test.ts`, `dnc-sync-route`, `dnc-resync`, `dnc-outbox`, `dnc-synced-dual-emit` are deleted/deferred — list each with its reason. If a test file covers both your module and a runtime/route module, port the cases for yours and list the rest as deferred to Phase 6/8 by name.
+  - Before porting, write the plan: a table in your PORTING.md section of every core agency test file (all 86 unit + 41 integration) → `B1 | Phase 6 | Phase 8 | deleted`, with the source `it(` count. The lead checks this table.
+- Repository tests that the source ran against a mocked pool: keep the port AND run each method's SQL at least once against the real Postgres (5436). UUID ids everywhere now — fixture changes are recorded modifications.
+
+## Contracts you build against (do not edit)
+`@magick-agency/contracts/agency` (+ `errors`), the baseline schema, the shared infrastructure in `docs/seams.md` §4 (you will need `agency-call.repository`, `account-settings.repository`, the feature-flag service, `auditLogger`).
+
+## Exit gate (plan §8 Phase 4)
+- unit test counts equal the source suites for every module you ported, minus the listed billing deletions and the listed Phase 6/8 deferrals;
+- repository tests on real Postgres;
+- §9 invariants you carry, each with a test that fails if it breaks: one live attempt per contact (`uq_agency_attempt_live` + the `SKIP LOCKED` claim — test two concurrent claims on real Postgres); one running campaign per account; `answered_at`/`bridged_at` never back-filled and the abandonment predicate unchanged (SQL and in-process halves agree); DNC fails closed; `OUR_FAULT_REDIAL_BOUND` is a ceiling no policy raises.
+## Ground rules (every lane)
+
+**Where you work.** Your own git worktree of `/Users/manasnilorout/Personal/Sapionic/magick-agency`, path and branch given above. Never touch the main checkout or another lane's worktree. Commit on your branch only, with scoped adds (`git add <paths>`): never `git add -A`, `git add .`, or `git stash`. Commit messages: conventional-commit subject, then a blank line, then `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` as the last line. Do not push. Do not open PRs. Do not touch GitHub, any vendor console, or anyone's inbox.
+
+**Sources are read-only.** Git submodules of `/Users/manasnilorout/Personal/Sapionic/MagickVoice-platform`: `magic-voice-core` (v1.123.2, 4850d1d9ffc9eb9eab56d2ed482b9bd616edd103), `magick-master` (v3.24.0, a1f0756a58a63bf8a19baf74298a702f9fe7b430), `magick-comms-cusui` (v2.96.0, ee5beb4400ec1fb5fdf6049871681ae6875e8d29). Check `git -C <sub> rev-parse HEAD` first. Never modify, checkout, stash or run tests in them (their tests would hit other stacks' databases).
+
+**Read first, in this order:** `docs/seams.md` (the path rule, your lane-owned files, the seams you provide or consume — binding), `CLAUDE.md`, `docs/decisions.md`, `packages/db/BASELINE.md` (the schema you build against), the spec `docs/history/extraction-plan-v4.2.md` v4.2 (the sections named in your brief), and `docs/reference/magickvoice-platform/agency.md` §3–§7 for domain invariants.
+
+**Port verbatim.** Same SQL, constants, Lua, comments and tests. The only allowed changes are the plan's: hop collapses (S2S/proxy → in-process), re-keying onto `agency_calls`, billing/settlement removal, VoBiz/SIP/softphone/BYOC deletion, and import paths forced by the path rule. Every changed or deleted file, function or test gets a row in your section of `PORTING.md`: `source path@sha` → destination, `verbatim | modified | deleted`, reason. Every modification gets an equivalence test; every deletion is listed.
+
+**Contracts and schema are fixed.** Build against `@magick-agency/contracts`, `packages/db/migrations/0001_baseline.sql`, the shared infrastructure in `docs/seams.md` §4, and the seams in `apps/server/src/seams/`. Never edit those on your branch. If one of them cannot be met as written, or you need a column, method or type that is not there, **STOP that item and report it** (what, why, the exact source line that needs it). Do not adapt the contract, do not add a migration, do not work around it.
+
+**Lane-owned files only.** Your config block, route plugin, bootstrap file and metrics file are listed in `docs/seams.md` §2. Everything else you create must be a new file on the path rule. If you need to change a lead-owned file, stop and report.
+
+**Tests are the evidence.**
+- Port the source's tests for every module you port. Your exit evidence is the count Vitest prints, compared file by file with the source suite (count the source's `it(`/`test(` cases yourself, including `it.each` expansions). Deliberately deleted tests are listed in `PORTING.md` with the reason.
+- Run tests from inside the package directory (`cd apps/server && pnpm test`, `cd packages/db && pnpm test:integration`), never from the repo root. dotenv resolves from cwd.
+- Never `--reporter=basic` (doesn't exist in Vitest 4; exits 0 having run nothing). A run with no printed counts is not a run.
+- Repository and SQL tests run on the REAL Postgres: agency's test DB on port **5436** (`packages/db/test/helpers/test-db.ts`), Redis **6383 db 1** (`apps/server/test/helpers/test-redis.ts`). A mocked pool hides SQL drift. Never point anything at 5432/5433/5434/6379/6380/6381 — they belong to other stacks and their dev data. Integration suites share one database: run them one file at a time (the configs already set `fileParallelism: false`) and never leave a background run going.
+- `pnpm lint` in each package you touch must pass; it typechecks tests too.
+- Every plan §9 invariant your lane carries gets a test that fails if it breaks — port the existing one or write it.
+
+**Known traps on this project.** Zod `.refine` runs on a dirty result after a failed `.regex`, so guard `BigInt`/`JSON.parse` inside refinements or a 400 becomes a 500. Enumerate routes from Fastify's `onRoute` hook, never by grep. A parameter used in two SQL contexts must be typed at each use (`42P08` otherwise; only real Postgres catches it). An optional create-input field plus an explicit INSERT column list typechecks and silently drops the value. Wrapping a call changes its arity: forwarding an optional arg as `undefined` breaks `toHaveBeenCalledWith`. `src/config/index.ts` exits the process on invalid config; tests get a complete env from `test/setup/unit-env.ts`.
+
+**Report back** (under ~800 words): branch name and final commit SHA; the exact test commands you ran and their printed counts, per package, beside the source suites' counts; every PORTING.md deletion; anything you stopped on (contract gaps), with the source lines; anything you are unsure of. Do not claim green without counts.
+
+**Your test database.** Your worktree has an untracked `.test-env.local.json` pointing integration suites at your own database (`magick_agency_test_lane_<x>`) and Redis db, so lanes never truncate each other. Do not delete or commit it. Integration globalSetup drops and re-migrates YOUR database on every run.
+
+**Dependencies.** `pnpm install` has been run in your worktree. Add a dependency only if a ported module needs one the source used (same major version as the source's package.json), in the right package.json, and say so in your report.

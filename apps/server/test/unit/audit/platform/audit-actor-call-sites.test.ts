@@ -33,7 +33,7 @@ import { resolve, join } from 'node:path';
  * written yet.
  *
  * The repo already uses this pattern for the same class of problem —
- * `test/unit/auth/api-key-route-blocks.test.ts` — and CLAUDE.md names it as one
+ * `test/unit/auth/api-key-route-blocks.test.ts` — and docs/reference/magick-master/CLAUDE.md names it as one
  * of "the two guards that keep this from regressing". The comment stripper below
  * is that file's, for the reason its docstring gives at length: this codebase
  * documents holes by quoting the old code, so a raw-text assertion fails on the

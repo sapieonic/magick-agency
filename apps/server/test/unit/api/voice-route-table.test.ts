@@ -1,5 +1,5 @@
 // NEW (magick-agency, lane C): lane C's route surface, enumerated from Fastify's own
-// `onRoute` hook (never by grep, agency.md §6.4). Exactly the two carrier surfaces the
+// `onRoute` hook (never by grep, docs/reference/magickvoice-platform/agency.md §6.4). Exactly the two carrier surfaces the
 // agency path uses survive from core's webrtc-call and webhooks route files, under core's
 // prefixes; the softphone's control API, its `/browser-stream` leg and the VoBiz WebRTC
 // webhooks are deleted (PORTING.md, Lane C).

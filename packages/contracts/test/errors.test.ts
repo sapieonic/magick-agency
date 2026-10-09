@@ -21,7 +21,7 @@ import { AgencyApi } from '../src/index';
  * f96c0057067a25f6b8c633fc96acfb3e, byte-identical to master's copy at
  * a1f0756a58a63bf8a19baf74298a702f9fe7b430).
  *
- * 18 members. `agency.md` §6.2 says 16; that count predates
+ * 18 members. `docs/reference/magickvoice-platform/agency.md` §6.2 says 16; that count predates
  * `session_on_other_campaign` and `agent_on_live_call`.
  */
 const CORE_FIXTURE_ACTION_ERROR_CODES = [

@@ -47,7 +47,7 @@ export class AudioDecodeError extends Error {
   }
 }
 
-// ── Toolchain routing (MEASURED — see docs/voicelink-audio-file-announcements-contract.md §4) ─
+// ── Toolchain routing (MEASURED — see docs/reference/magic-voice-core/docs/voicelink-audio-file-announcements-contract.md §4) ─
 //
 // The contract predicted `mpg123` would cover wav/ogg too ("exit 0 on both") and
 // that it should therefore be preferred everywhere for its free downmix. That is
@@ -96,7 +96,7 @@ const AUDIO_DECODE_TMP_DIR = process.env['AUDIO_DECODE_TMP_DIR'] || os.tmpdir();
 /** Prefix for the per-decode temp dir; also what the cleanup assertions look for. */
 export const DECODE_TMP_PREFIX = 'audio-decode-';
 
-// ── Truncation guard (see docs/voicelink-audio-file-announcements-contract.md §9.6) ─
+// ── Truncation guard (see docs/reference/magic-voice-core/docs/voicelink-audio-file-announcements-contract.md §9.6) ─
 //
 // A truncated-but-partially-decodable file is the ONE input class that produces a
 // silent call rather than an error: 90% off a 0.5s MP3 still decodes — to 1.1ms of

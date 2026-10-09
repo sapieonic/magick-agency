@@ -446,7 +446,7 @@ async function assertCampaignInScope(
     // roster-clear route carries it.
     //
     // A campaign in another account and one that does not exist answer
-    // identically, which is the non-oracle property rule 3 of CLAUDE.md's RBAC
+    // identically, which is the non-oracle property rule 3 of docs/reference/magick-master/CLAUDE.md's RBAC
     // section requires — and it is core's 404, so master does not even learn
     // which it was.
     reply.code(404).send({
@@ -812,7 +812,7 @@ export async function proxyAgencyStaffingRoutes(app: FastifyInstance): Promise<v
    * ── Two 404s, and neither is a 403 ─────────────────────────────────────────
    * A `user_id` with no membership in this tenant, and a campaign core does not
    * have, both answer 404. A 403 on the first would confirm the user id exists
-   * somewhere, which is exactly the oracle rule 3 of CLAUDE.md's RBAC section
+   * somewhere, which is exactly the oracle rule 3 of docs/reference/magick-master/CLAUDE.md's RBAC section
    * forbids.
    */
   app.post<{ Params: { id: string } }>('/campaigns/:id/agents', {

@@ -48,7 +48,7 @@ import styles from './AgencyAttemptCallPage.module.css';
  * primary application's shell, gated on the primary application's `calls.dialer`
  * capability, with the campaign context and the list the reader was reading both
  * gone. The link pointed there because that was the only place the endpoint
- * existed (`docs/agency-dialer-design.md` §7b).
+ * existed (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
  *
  * It renders the shared `CallDetailView`, because the call shape genuinely is the
  * same — one `webrtc_calls` row either way. What is different is everything

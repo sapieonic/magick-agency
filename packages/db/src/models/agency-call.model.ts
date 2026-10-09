@@ -1,6 +1,6 @@
 // ─── WebRTC Human Calls ─────────────────────────────────────────────
 //
-// A browser→PSTN human bridge call (see docs/webrtc-human-calling-design.md).
+// A browser→PSTN human bridge call (see docs/reference/magic-voice-core/docs/webrtc-human-calling-design.md).
 // No AI pipeline; the browser leg and the VoBiz leg are relayed directly.
 //
 // PORT NOTE (magick-agency): ported from core `src/db/models/webrtc-call.model.ts`

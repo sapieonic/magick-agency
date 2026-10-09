@@ -24,7 +24,7 @@ import { RETRY_NO_OUTCOME } from '@magick-agency/contracts/agency';
  * The console's outcome copy, mirrored.
  *
  * ⚠️ **A HAND-MIRRORED TABLE**, like the four the platform already carries
- * (`agency.md` §6.2/§6.4). Its twin is `ATTEMPT_OUTCOME_LABELS` in
+ * (`docs/reference/magickvoice-platform/agency.md` §6.2/§6.4). Its twin is `ATTEMPT_OUTCOME_LABELS` in
  * `magick-comms-cusui/src/types/agency-spine.ts`, and the wire contract §4
  * requires this string to be rendered "with the console's existing outcome copy"
  * so that all three repos read the same sentence.

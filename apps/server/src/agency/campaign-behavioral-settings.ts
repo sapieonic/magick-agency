@@ -21,7 +21,7 @@ const log = createChildLogger({ component: 'campaign-behavioral-settings' });
  * (`request.tenantId`, `request.accountId`) and refuses unless the column is
  * EXPLICITLY true — a NULL column resolves to the documented default `false`
  * (`settings/agency-account-settings.ts`), the same default the governance keys
- * had (`agency.md` §7.2). Master's two other paths are gone with governance: the
+ * had (`docs/reference/magickvoice-platform/agency.md` §7.2). Master's two other paths are gone with governance: the
  * `config.governance.enabled` kill switch (no governance) and the section-level
  * `requireCapability('agency')` (the app IS agency). Failure posture is master's:
  * no tenant context, or a settings read that throws, FAILS CLOSED with the same

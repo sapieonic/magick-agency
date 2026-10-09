@@ -14,7 +14,7 @@ const log = createChildLogger({ component: 'invite-mailer' });
  * `import 'dotenv/config'` against a `.env` that is gitignored and untracked. So
  * ANY module that imports it statically drags a process-killing side effect into
  * the import graph of everything that reaches that module — which is the hazard
- * the platform CLAUDE.md states outright: *"their Zod schemas are imported
+ * the MagickVoice superproject's docs/reference/magickvoice-platform/CLAUDE.md states outright: *"their Zod schemas are imported
  * transitively by many tests — so a missing `.env` fails unit tests, not just
  * `npm run dev`."*
  *

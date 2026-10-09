@@ -906,7 +906,7 @@ describe('MAG-137: a late `bridged` write cannot resurrect a settled attempt', (
     //
     // So the trade is a rare lost `bridged_at` on an unclean shutdown against a
     // reproducible stuck agent, and this is the safer side of it. The durability
-    // gap is real and is recorded in `agency.md` §11 — closing it needs the mirror
+    // gap is real and is recorded in `docs/reference/magickvoice-platform/agency.md` §11 — closing it needs the mirror
     // write made order-safe (the agent-session mirror has no `only_from`), not a
     // reshuffle of these three statements.
     //

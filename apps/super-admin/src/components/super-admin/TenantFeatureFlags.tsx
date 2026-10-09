@@ -55,7 +55,7 @@ interface PendingNumberEdit {
  * Inherit/On/Off control. Reads core's resolve contract through master's
  * super-admin lane; writes thread the admin id as updated_by server-side.
  * Platform-wide defaults and cross-tenant rollout live on the global Feature
- * Flags registry, not here. UX: docs/superpowers/plans/feature-flags-ux-redesign.md.
+ * Flags registry, not here. UX: docs/reference/magick-comms-cusui/docs/superpowers/plans/feature-flags-ux-redesign.md.
  */
 export function TenantFeatureFlags({ tenantId, accounts }: Props) {
   const [catalog, setCatalog] = useState<FeatureFlagCatalogEntry[]>([]);

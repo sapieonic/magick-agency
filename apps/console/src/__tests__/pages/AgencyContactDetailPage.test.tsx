@@ -322,7 +322,7 @@ describe('the recording link stays inside the agency workspace', () => {
    * The destination is now the agency's own call detail, gated on `agency` and
    * floored at `agency.supervise` — which is what this page already requires. So
    * there is no such viewer, the branch is dead, and its removal is the fix
-   * rather than a regression (`docs/agency-dialer-design.md` §7b).
+   * rather than a regression (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
    */
   it('links without a calls.dialer capability, because the destination does not need one', async () => {
     mocks.isEnabled.mockImplementation((capability: string) => capability !== 'calls.dialer');

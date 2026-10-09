@@ -4,7 +4,7 @@ import type { Role } from '../types/auth';
 /**
  * PORT NOTE (magick-agency): cusui's `src/utils/permissions.ts` @ ee5beb44 was a
  * hand-maintained mirror of master's `ROLE_HIERARCHY` and `PERMISSION_MATRIX`,
- * and it had to be kept "in lockstep" with master (`agency.md` §6.4) — the class
+ * and it had to be kept "in lockstep" with master (`docs/reference/magickvoice-platform/agency.md` §6.4) — the class
  * of bug where the UI shows a control the API 403s, or hides one it would allow.
  * Magick Agency has ONE matrix, `@magick-agency/contracts/rbac`, imported by the
  * server and by this console, so the mirror is gone and this module re-exports

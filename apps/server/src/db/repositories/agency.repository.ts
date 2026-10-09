@@ -2562,7 +2562,7 @@ export class AgencyCampaignRepository {
 
   /**
    * Campaigns that would break if this analysis profile stopped being usable —
-   * the read half of Q3's reference check (`docs/agency-dialer-design.md` §7b).
+   * the read half of Q3's reference check (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
    *
    * `agency_campaigns.analysis_profile_id` is **live configuration**: the pacing
    * engine passes it into `createBridgedCall` on every dial, which stamps it onto

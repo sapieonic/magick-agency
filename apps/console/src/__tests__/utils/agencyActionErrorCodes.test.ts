@@ -28,7 +28,7 @@ import { AGENCY_ACTION_ERROR_CODES, type AgencyActionErrorCode } from '../../typ
  * cusui's own CI checks out only cusui. Reading a sibling that is not there must
  * not red the build, so this `skipIf`s — the same convention core's and master's
  * `s2s-contract.test.ts` use for their cross-repo halves. The consequence is the
- * one the platform CLAUDE.md states plainly: **this check only runs from the
+ * one the MagickVoice superproject's docs/reference/magickvoice-platform/CLAUDE.md states plainly: **this check only runs from the
  * superproject root**, and a green standalone run has not verified it. That is
  * a weaker guarantee than a local assertion, and still strictly better than a
  * transcription that cannot fail.

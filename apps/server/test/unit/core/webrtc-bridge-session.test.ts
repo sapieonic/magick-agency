@@ -303,7 +303,7 @@ describe('WebRtcBridgeSession.destroy', () => {
   });
 });
 
-// ── Borrowed browser leg (docs/agency-dialer-design.md §7) ──────────────────
+// ── Borrowed browser leg (docs/reference/magickvoice-platform/docs/agency-dialer-design.md §7) ──────────────────
 describe('WebRtcBridgeSession borrowed browser leg', () => {
   it('defaults to owning its browser socket', () => {
     expect(makeSession().browserWsOwned).toBe(true);

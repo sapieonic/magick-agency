@@ -10,7 +10,9 @@
  * field, and NO outbound coalescer (frames are accepted as emitted).
  *
  * Protocol reverse-engineered live on 2026-07-11 — see
- * `experiment/FINDINGS.md` and `docs/voicelink-telephony-implementation-plan.md`.
+ * `docs/reference/magic-voice-core/docs/voicelink-telephony-implementation-plan.md`.
+ * (Core's comment also cited `experiment/FINDINGS.md`, a write-up that was never
+ * committed to core, so no copy exists.)
  */
 
 export interface VoicelinkConfig {

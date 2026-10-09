@@ -687,7 +687,7 @@ export class AgencyIngestJobRepository {
    * premise that "master's ingest runs in-process, so a job in `running` at boot
    * has no worker and will never progress." That premise holds for a lone
    * process but not for this service's actual topology: master runs multiple
-   * replicas behind a load balancer (see root CLAUDE.md — cache invalidation,
+   * replicas behind a load balancer (see docs/reference/magick-master/CLAUDE.md — cache invalidation,
    * rate limiting, and the lane scheduler all exist *because* there is more than
    * one instance). A `POST /agency-campaigns/:id/roster` request lands on
    * whichever replica the balancer picks, and that replica's in-process ingest

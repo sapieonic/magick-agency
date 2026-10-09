@@ -516,7 +516,7 @@ describe('agency agent surfaces — access control through the REAL chain (integ
 
     it.each(twins)('agents/:userId/%s: 404 — never 403 — for an agent in ANOTHER tenant', async (suffix) => {
       /**
-       * Rule 3 of CLAUDE.md's RBAC section: a cross-tenant id and a nonexistent one
+       * Rule 3 of docs/reference/magick-master/CLAUDE.md's RBAC section: a cross-tenant id and a nonexistent one
        * must be indistinguishable, or the response is a user-id oracle. This is the
        * boundary core CANNOT enforce on master's behalf — `agent_user_id` is an
        * opaque string to core, with no user table and no FK behind it (D3), so it

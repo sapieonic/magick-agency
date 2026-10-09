@@ -76,8 +76,8 @@ const MAX_AGENT_USER_ID_LENGTH = 100;
  *
  * ── AUTH AND THE FLAG ARE ON THIS PLUGIN, and that is the whole risk here ────
  *
- * **Core registers auth middleware PER ROUTE PLUGIN, not globally** (root
- * CLAUDE.md), and this repository has already shipped that mistake once:
+ * **Core registers auth middleware PER ROUTE PLUGIN, not globally** (see
+ * docs/reference/magic-voice-core/CLAUDE.md), and this repository has already shipped that mistake once:
  * `agencyInternalRoutes` was mounted as a sibling of `internalRoutes`, inherited
  * none of its hooks, and left the roster-ingest route reachable unauthenticated
  * (MAG-89). These routes serve every phone number, note and disposition an agent

@@ -3,11 +3,13 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 Magick Agency: the agency dialer (human-agent outbound power dialing) as one self-sufficient app,
-extracted from the MagickVoice platform. Spec:
-`../MagickVoice-platform/docs/agency-extraction-plan.md` (v4.2). Domain
-invariants: `../MagickVoice-platform/agency.md`. Status: `docs/build-status.md`.
-Decisions: `docs/decisions.md`. Port ledger: `PORTING.md`. Lane seams and file ownership:
-`docs/seams.md`. Resuming lead work: `docs/lead-handoff.md`.
+extracted from the MagickVoice platform. Start with `docs/README.md` (status, doc map, reading
+order). Status: `docs/status.md`. How it is built: `docs/architecture.md`. Decisions (cited by ID
+in comments): `docs/decisions.md`. Port ledger: `PORTING.md`. Path rule, lane-owned files and
+seams: `docs/seams.md`. Running and deploying: `docs/operations.md`. The plan the build followed:
+`docs/history/extraction-plan-v4.2.md` (v4.2, frozen). Domain invariants:
+`docs/reference/magickvoice-platform/agency.md`. MagickVoice design docs that comments cite are
+copied under `docs/reference/`; nothing here points outside the repo.
 
 ## Rules that are not negotiable
 

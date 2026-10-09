@@ -425,7 +425,7 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
       // that matters there. (A live *announced* attempt is arguably also worth
       // refusing — `on_call` has the same unconditional-write problem — but that
       // is pre-existing behaviour on a path late binding does not change, so it is
-      // recorded in `agency.md` §11 rather than altered here.)
+      // recorded in `docs/reference/magickvoice-platform/agency.md` §11 rather than altered here.)
       //
       // Same `agent_on_live_call` code as `/leave`, and for the same reason: a new
       // `AgencyActionErrorCode` is a four-place change and master's error mask

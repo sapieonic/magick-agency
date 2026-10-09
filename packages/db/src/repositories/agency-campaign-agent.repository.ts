@@ -196,7 +196,7 @@ export class AgencyCampaignAgentRepository {
    * index is now per-campaign and this returns the set.
    *
    * Tenant-scoped in the same statement as the read, per rule 1 of the RBAC
-   * section in CLAUDE.md — an assignment id is not a capability and a user id
+   * section in docs/reference/magick-master/CLAUDE.md — an assignment id is not a capability and a user id
    * says nothing about which tenant is asking.
    *
    * `ORDER BY assigned_at ASC, id ASC` is a STABLE total order, not a ranking:
@@ -270,7 +270,7 @@ export class AgencyCampaignAgentRepository {
    * in one transaction share a timestamp to the microsecond, and a bare
    * `assigned_at` would let equal rows come back in a different order per read.
    *
-   * Tenant-scoped in the same statement as the read, per rule 1 of CLAUDE.md's
+   * Tenant-scoped in the same statement as the read, per rule 1 of docs/reference/magick-master/CLAUDE.md's
    * RBAC section.
    *
    * ── BOUNDED, which an earlier revision of this docstring said it was not ───

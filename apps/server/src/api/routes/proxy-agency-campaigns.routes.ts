@@ -2169,16 +2169,15 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
 
   // ─── Retry campaigns ──────────────────────────────────────────────────────
   //
-  // The frozen wire contract these obligations are numbered against lives in the
-  // PLATFORM SUPERPROJECT, not in this repository:
-  // `MagickVoice-platform/docs/agency-campaign-retry-wire-contract.md`.
+  // The frozen wire contract these obligations are numbered against was a
+  // MagickVoice superproject document. PORT NOTE (magick-agency): a verbatim copy
+  // now lives in this repository:
+  // `docs/reference/magickvoice-platform/docs/agency-campaign-retry-wire-contract.md`.
   //
-  // It is a cross-service document — three repos implement it independently and
-  // none of them owns it — so it sits beside the submodules rather than inside
-  // one, next to `agency-campaign-retry-design.md`. Every `§n` in this file and
-  // in the retry tests refers to that file. A standalone clone of this repo will
-  // not have it; check out the superproject
-  // (`git submodule update --init --recursive`) to read it.
+  // It is a cross-service document — three repos implemented it independently and
+  // none of them owned it — and its companion design is beside it,
+  // `docs/reference/magickvoice-platform/docs/agency-campaign-retry-design.md`.
+  // Every `§n` in this file and in the retry tests refers to the wire contract.
   //
   // A retry campaign is an ORDINARY campaign in every respect (DR-1): its own
   // roster, its own pacing leader, its own settlement, its own lifecycle. Three
@@ -2235,7 +2234,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    * `agency.supervise` (`account_admin`), the same floor as the attempt spine
    * and the campaign controls next door and NOT the `proxy.contact_lists.read`
    * (`viewer`) that `GET /campaigns/:id` carries. The distinction is the one
-   * `agency.md` §7.1 draws about that permission being different in kind rather
+   * `docs/reference/magickvoice-platform/agency.md` §7.1 draws about that permission being different in kind rather
    * than in floor: this read is a breakdown of how a campaign's calls WENT —
    * outcomes and dispositions per cohort — which is the supervisory record, not
    * the campaign's configuration. It is also the first half of an action, and
@@ -2270,7 +2269,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    * *acting on another campaign's call results* (`agency.supervise`). Both floor
    * at `account_admin` today, so naming both changes nothing about who gets in —
    * which is exactly why it has to be written down rather than simplified to
-   * one. `agency.md` §7.1 records `agency.supervise` as different in KIND, not
+   * one. `docs/reference/magickvoice-platform/agency.md` §7.1 records `agency.supervise` as different in KIND, not
    * just in floor; the day either floor moves, this route is still correct, and
    * a tenant narrowing an API key's scopes can narrow one without silently
    * losing the other. Ordered supervise-first so the 403 a non-supervisor sees
@@ -2898,7 +2897,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    *
    * **Registered only when `AGENCY_ROSTER_REPLACE_ENABLED` is set**, following
    * this platform's established shape — an entire subsystem registers only if
-   * its config says so, and root CLAUDE.md's rule of thumb that a missing route
+   * its config says so, and docs/reference/magickvoice-platform/CLAUDE.md's rule of thumb that a missing route
    * in a running service usually means an unset env var. A destructive surface
    * that is visible but always fails is worse than one that is not there.
    *

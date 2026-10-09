@@ -10,7 +10,7 @@ import type { DncAddSummary, DncEntry } from '../../types/dnc';
  * is not, or an entry nobody can find in order to correct it. Every case below
  * is one of those.
  *
- * Q2 (`docs/agency-isolation-handoff.md` §3) adds a second class of the same
+ * Q2 (`docs/reference/magickvoice-platform/docs/agency-isolation-handoff.md` §3) adds a second class of the same
  * failure: a promise that is true but reads wider than it is. DNC is
  * **agency-only** — core's dial-time gate lives in `agency/pre-dial-gates.ts`
  * and nothing in AI dispatch consults it — so copy presenting the list as

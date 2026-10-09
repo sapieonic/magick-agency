@@ -453,7 +453,7 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
     it('never returns another tenant’s or another person’s rows, even under the ceiling', async () => {
       /**
        * The tenant and user predicates sit in the same statement as the read (rule
-       * 1 of CLAUDE.md's RBAC section). Worth asserting alongside the ceiling
+       * 1 of docs/reference/magick-master/CLAUDE.md's RBAC section). Worth asserting alongside the ceiling
        * specifically: a `LIMIT` applied to an under-scoped query returns 200 rows
        * of somebody else's history and looks exactly as healthy as this does.
        */

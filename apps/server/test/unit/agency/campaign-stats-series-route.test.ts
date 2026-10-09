@@ -16,7 +16,7 @@ import type { FastifyReply } from 'fastify';
 // ── The two assertions this file exists for ────────────────────────────────
 //
 // 1. **AUTH.** Core registers auth middleware PER ROUTE PLUGIN, not globally
-//    (root CLAUDE.md), and this repository has already shipped that mistake
+//    (docs/reference/magic-voice-core/CLAUDE.md), and this repository has already shipped that mistake
 //    once: `agencyInternalRoutes` was mounted as a sibling of `internalRoutes`,
 //    inherited none of its hooks, and left the roster-ingest route reachable
 //    unauthenticated (MAG-89). So the test asserts the middleware actually RUNS

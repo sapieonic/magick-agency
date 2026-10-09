@@ -83,7 +83,7 @@ describe('MembershipRepository', () => {
 
     it('keeps the tenant predicate in the same statement as the read', async () => {
       // Dropping the status filter widens WHO is visible, never WHICH TENANT —
-      // rule 1 of CLAUDE.md's RBAC section, and the property that keeps a user who
+      // rule 1 of docs/reference/magick-master/CLAUDE.md's RBAC section, and the property that keeps a user who
       // was never here answering 404.
       mocks.pool.query.mockResolvedValue({ rows: [] });
       await repo.findAnyByUserAndTenant('u-1', 't-2');
@@ -122,7 +122,7 @@ describe('MembershipRepository', () => {
     const memberRow = { ...row, user_id: USER_A, tenant_id: TENANT };
 
     it('SELECTs both ids in ONE statement, not one query per id', async () => {
-      // The "no per-item loops over I/O" rule in CLAUDE.md: the roster reads up to
+      // The "no per-item loops over I/O" rule in docs/reference/magick-master/CLAUDE.md: the roster reads up to
       // `limit` (200) memberships to decide which rows survive, and asked through
       // the singleton that is 200 round trips.
       mocks.pool.query.mockResolvedValue({ rows: [memberRow] });
@@ -135,7 +135,7 @@ describe('MembershipRepository', () => {
     });
 
     it('keeps the tenant predicate in the SAME statement as the read', async () => {
-      // Rule 1 of CLAUDE.md's RBAC section. Widening WHO is visible (no status
+      // Rule 1 of docs/reference/magick-master/CLAUDE.md's RBAC section. Widening WHO is visible (no status
       // filter, below) must never widen WHICH TENANT — a user who was never here
       // has to resolve to nothing so the caller drops their row.
       mocks.pool.query.mockResolvedValue({ rows: [] });

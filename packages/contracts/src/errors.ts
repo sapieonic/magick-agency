@@ -3,7 +3,7 @@
  *
  * ── Why this file exists ────────────────────────────────────────────────────
  * In MagickVoice these vocabularies were hand-mirrored across three repos and
- * pinned by a byte-identical S2S fixture (`agency.md` §6.1–§6.4): core's
+ * pinned by a byte-identical S2S fixture (`docs/reference/magickvoice-platform/agency.md` §6.1–§6.4): core's
  * `AgencyActionErrorCode` union, master's `AGENCY_ACTION_ERROR_CODES` mirror and
  * error-mask allow-list, and cusui's own copy. A code added in one place and not
  * the others was rewritten by master's error mask into "contact support and
@@ -38,7 +38,7 @@ export type { AgencyActionErrorCode, AgencyStationErrorCode } from './agency';
  * `magic-voice-core/src/agency/contracts.ts`, ported as `./agency`), cross-checked
  * against `actionErrorCodes.codes` in core's `agency-s2s-contract.fixture.json`.
  *
- * ⚠️ **18 members, not 16.** `agency.md` §6.2 (and the brief this package was
+ * ⚠️ **18 members, not 16.** `docs/reference/magickvoice-platform/agency.md` §6.2 (and the brief this package was
  * built from) say 16; that count predates `session_on_other_campaign` and
  * `agent_on_live_call`. Core's union, core's fixture, master's mirror and cusui's
  * mirror all carry 18 at the pinned SHAs, and `test/errors.test.ts` snapshots the
@@ -135,10 +135,10 @@ void _allRosterCodesListed;
 // In MagickVoice these were never a union anywhere: master allow-listed them
 // one string at a time in `FORWARDABLE_ERROR_CODES`
 // (`magick-master/src/api/middleware/error-mask.middleware.ts`, master v3.24.0 —
-// lines 139-141, 163-164, 220, 247; the brief's `:106-160` is `agency.md` §6.4's
+// lines 139-141, 163-164, 220, 247; the brief's `:106-160` is `docs/reference/magickvoice-platform/agency.md` §6.4's
 // older line range), deliberately OUTSIDE `AGENCY_ACTION_ERROR_CODES` because
 // they are not members of core's action union. The member set is exactly the
-// seven `agency.md` §6.4 names as "Campaign-lifecycle codes". Each comment below
+// seven `docs/reference/magickvoice-platform/agency.md` §6.4 names as "Campaign-lifecycle codes". Each comment below
 // condenses master's allow-list comment for that code.
 
 export type AgencyCampaignLifecycleErrorCode =
@@ -193,7 +193,7 @@ void _allLifecycleCodesListed;
  * `not_your_attempt` and `campaign_not_running` are ALSO members of
  * {@link AgencyActionErrorCode}; the two vocabularies overlap by design (one is a
  * socket frame, one an HTTP body), and each list states its own union whole.
- * `session_ended` is NOT a station frame code — `agency.md` §6.4 lists it beside
+ * `session_ended` is NOT a station frame code — `docs/reference/magickvoice-platform/agency.md` §6.4 lists it beside
  * these only because master allow-listed it via the action list.
  */
 export const AGENCY_STATION_ERROR_CODES = [

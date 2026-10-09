@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * extends a lock that still exists, preventing resurrection of an expired and
  * reconciled lock, which would double-count against the counter.
  *
- * §6b of escalate-to-human-transfer-design.md: "The concurrency slot is
+ * §6b of docs/reference/magic-voice-core/docs/escalate-to-human-transfer-design.md: "The concurrency slot is
  * actually held now. Both guards gained `extendLock`, and the transfer extends
  * to the destination's `max_transfer_seconds` + grace — the same problem the
  * WebRTC bridge solves with its TTL override."

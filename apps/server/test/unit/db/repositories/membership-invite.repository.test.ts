@@ -166,7 +166,7 @@ describe('MembershipInviteRepository', () => {
 
     it('puts the tenant boundary in the STATEMENT, not in a downstream if', async () => {
       /**
-       * CLAUDE.md's RBAC rule 1, on the only tenant-route-reachable write here.
+       * docs/reference/magick-master/CLAUDE.md's RBAC rule 1, on the only tenant-route-reachable write here.
        * `POST /invites/resend` takes `membership_id` from a request body, and a
        * membership id travels in URLs, logs and support threads — so "the caller
        * knew the id" is never evidence they may act on it. The route does resolve

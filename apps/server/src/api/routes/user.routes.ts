@@ -777,7 +777,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
      * ── Ordering, and why it is this way round ─────────────────────────────
      * The role write is the authoritative change and the cache `del` is what makes
      * it take effect across instances at once (see the local-cache section of
-     * CLAUDE.md — that broadcast is why `PUT /:id/role` deletes the key at all).
+     * docs/reference/magick-master/CLAUDE.md — that broadcast is why `PUT /:id/role` deletes the key at all).
      * Staffing is neither: closing a row revokes nothing. So the order is
      * authoritative write → invalidation → tidy-up, and a failure in the tidy-up
      * leaves a stale navigation entry rather than a stale permission.

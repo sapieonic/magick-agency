@@ -1,10 +1,19 @@
 # Decisions
 
-Settled decisions come from the plan (v4.2, approved by Manas 2026-10-08) and are
-not reopened here. Open decisions are built with a default and marked
-**default, pending Manas** until he ratifies them.
+Every decision that shapes Magick Agency, with its ID, in one place. Read it when you need to
+know whether something is settled, why the code departs from the verbatim port, or what is still
+waiting on someone. Source comments cite entries here by ID (`B8`, `Q6 (Manas, 2026-10-09)`), so
+IDs are never renumbered or reused. As of 2026-10-09.
 
-## Settled (plan v4.2)
+Status words: **settled** (from the approved plan, not reopened here); **default, pending Manas**
+(built with the plan's recommended option, not yet ratified); **open** (no default; a cutover
+concern); **decided — keep** (Manas ruled the build's behaviour stays); **decided — changed** (Manas
+ruled a change, and it is implemented).
+
+Commit SHAs cited in this file and in `PORTING.md` refer to the local build history
+(`main-full-history`), not to GitHub; see [`history/README.md`](history/README.md).
+
+## 1. Settled (plan v4.2, approved by Manas 2026-10-08)
 
 | # | Decision |
 |---|---|
@@ -17,7 +26,14 @@ not reopened here. Open decisions are built with a default and marked
 | S7 | AI calling out of scope |
 | S8 | Stack: Node 22 + Fastify + TS + raw pg + node-pg-migrate + Vitest; Vite + React UIs; pnpm workspaces |
 
-## Open decisions (plan §7), built with defaults
+The plan's own wording of these, and the history of how it got there (v1–v4.2), is in
+[`intent-and-plan.md`](intent-and-plan.md) and the frozen plan,
+[`history/extraction-plan-v4.2.md`](history/extraction-plan-v4.2.md).
+
+## 2. Plan §7 decisions
+
+The plan listed nine decisions it still needed. The build used the recommended option where
+there was one and recorded it as **default, pending Manas**.
 
 | # | Question | Default used by the build | Status |
 |---|---|---|---|
@@ -31,7 +47,29 @@ not reopened here. Open decisions are built with a default and marked
 | 8 | Domain, freeze vs port tax, rollback window | — (cutover concern; 7 days proposed) | open |
 | 9 | Metering | Not in v1 | open item |
 
-## Build decisions (lead, during the build)
+## 3. Build decisions (lead, during the build)
+
+In one line each:
+
+- **B1** one `tsconfig` per package, tests included, so lint catches a broken test.
+- **B2** workspace packages consumed as TypeScript source; no inter-package build step.
+- **B3** one Postgres (5436, two DBs) and one Redis (6383, db 0 dev / db 1 test) for dev and test.
+- **B4** one lane-owned file per lane for config, routes and background work.
+- **B5** server keeps CommonJS runtime semantics (esbuild `format: cjs`).
+- **B6** Grafana `local.agency` selector deferred; it lives in the superproject. Still not done.
+- **B7** both audit tables kept (`audit_logs` and `platform_audit_log`), one process writes both.
+- **B8** DNC collapse: one table, indexed fail-closed dial-time read, one transactional mark.
+- **B9** lane B split into B1 (core) then B2 (master).
+- **B10** shared infrastructure is lead-owned and landed before the lanes.
+- **B11** cross-lane seams are fixed files in `apps/server/src/seams/`.
+- **B12** core's agency repository stays at core's path in `apps/server`, to avoid a package cycle.
+- **B13** the guard host counts live bridged calls, so self-heal stays armed during calls.
+- **B14** one S3 module; master's two extra functions appended to core's file.
+- **B15** roster replace/clear keeps refusing (core never had the supersede endpoint).
+- **B16** the API serves the console's existing paths; master→core hops run in-process.
+- **B17** no MagickVoice links or branding; the product is "Magick Agency".
+
+The full entries:
 
 | # | Decision | Why |
 |---|---|---|
@@ -53,15 +91,16 @@ not reopened here. Open decisions are built with a default and marked
 | B16 | The merged API serves the console's existing paths (cusui @ `ee5beb44` → master: `/proxy/agency/...`, `/dnc/...`, `/super-admin/...`); each master handler's hop to core collapses into core's handler body in-process | The console ports with only its API base changed; the `/proxy` prefix is cosmetic and can be renamed after cutover in one coordinated change. Core's route files become handler modules, not URL surfaces. |
 | B17 | Branding: no MagickVoice links (Manas, 2026-10-09). Magick Agency is a standalone product: no link to, and no user-visible mention of, MagickVoice in the console, super-admin or anything the server sends. Console default brand pack `magick-agency` ("Magick Agency" / "MA"; MagickVoice logo, favicon, tagline and `promotions` dropped; the mark is a text tile); the `docs.magickvoice.com` page-guide link is deleted; originators `magick-agency-console` / `magick-agency-super-admin`; localStorage keys `magick-agency-*`; server `PLATFORM_BRAND_NAME` default "Magick Agency" (product noun "Magick Agency Dialer"), masked errors say "contact support" with no address, CSV preambles say "Magick Agency". The console's `/app` is its own platform zone (Team, Notifications, Call summaries), not MagickVoice, so it stays and the "Back to MagickVoice" exits are relabelled "Team & settings" (agency shell) and "Go to settings" (`AgentHomePage`, `WorkspaceExit`). A source guard per package fails on any non-comment MagickVoice mention. Internal `x-mgkvc-*` header names are wire and unchanged (follow-up) | Manas's ruling: "this shouldn't have any linking present". Details and tests: `PORTING.md` §8.9, super-admin §9.5, console §9.6 |
 
-## Questions raised during the build — decided by Manas (2026-10-09)
+## 4. Open-question rulings (Manas, 2026-10-09)
 
-Implemented on branch `fix/open-questions` (see PORTING.md "Open-question fixes", OQ-1..OQ-8). Each
-departure from the verbatim port carries a `Q<n> (Manas, 2026-10-09)` code comment and a mutation-checked test.
+Implemented on branch `fix/open-questions` (see `PORTING.md` "Open-question fixes", OQ-1..OQ-8).
+Each departure from the verbatim port carries a `Q<n> (Manas, 2026-10-09)` code comment and a
+mutation-checked test. Q3 was not ruled on; it is in §5.
 
 | # | Question | Ruling | Status |
 |---|---|---|---|
 | Q1 | Verify the production Postgres TLS certificate? | Yes. When TLS is on (production) the certificate is verified (`rejectUnauthorized: true`). `DB_SSL_CA` takes the PEM **text** of a private CA (literal `\n` allowed; a path or other non-PEM value is a boot error); `DB_SSL_REJECT_UNAUTHORIZED=false` is the only opt-out (strict `true`/`false`). TLS parameters in `DATABASE_URL` (`ssl`, `sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `sslnegotiation`, any case) are refused at config parse, because pg lets them replace these settings. (OQ-4) | **Decided — changed** |
-| Q2 | Action error codes: 18, not 16 | 18 is correct; `agency.md` §6.2 is stale. | **Decided — keep** |
+| Q2 | Action error codes: 18, not 16 | 18 is correct; [`agency.md`](reference/magickvoice-platform/agency.md) §6.2 is stale. | **Decided — keep** |
 | Q4 | Platform audit `actor_type` no longer has `api_key` | Phase 10 cutover maps copied master rows with `actor_type = 'api_key'` to `system`, keeping the key name in `details`. Record only; nothing built now. | **Decided — keep (Phase 10)** |
 | Q5 | Cache invalidation when Redis is down | Revocations retry the Redis DEL (3 attempts) and log at ERROR on final failure. A revocation route that is idempotent on retry answers 503 `cache_invalidation_failed` (the role-change routes, tenant and super-admin); one that is not keeps its 2xx and relies on the error log (both membership-removal routes: a retry 404s before the delete). Non-revocation invalidations keep swallowing. TTLs: membership 30 min, user 20 min, tenant/account records 5 min, local layer 5 s (off by default). No metric fits; none added. Agency has no tenant/account soft-delete route. (OQ-6) | **Decided — changed** |
 | Q6 | Bridge leg and webhook tokens fail open | Middle option: a missing token when Redis ANSWERED is refused; Redis absent/erroring still accepts (never hard-fail a live call); a wrong token is refused. Kept working explicitly: VoiceLink's late terminal posts (recording URL) after teardown — the webhook token now lives 2h past the call end instead of being deleted; a token whose SET failed at mint — remembered in-process and still accepted. No other leg used the fallback (provider/webhook tokens are stored before the dial; nothing verifies a browser token any more). The "SET failed at mint" memo is **process-local** — sound only on a single replica (D2): with more than one replica, a token minted (and failed) on one replica and verified on another loses that excuse and is refused, so scaling out needs the memo shared or the excuse dropped. **Deployment invariant:** Redis must keep these keys for their TTL (persistence on; `noeviction`, or `volatile-*` with nothing else competing): a key evicted or lost to a non-persistent restart is now a refusal that cuts the live call's carrier leg and status webhooks; each such refusal logs a warning (`WebRTC WS token missing while Redis answered`). (OQ-5) | **Decided — changed** |
@@ -80,8 +119,18 @@ Other rulings of 2026-10-09 (not numbered questions):
 | Audit partitions | Dropped after 85 days (`AUDIT_RETENTION_DAYS` default, `auditPartitions.retentionDays`). | **Decided — keep** |
 | `findActiveSuccessor` | Verified already tenant/account-scoped in agency (`packages/db/src/repositories/call-analysis-profile.repository.ts`: `dead.tenant_id = $2 AND dead.account_id = $3`, caller's scope from the route), a recorded security deviation from core. | **Decided — keep (verified)** |
 
-## Still open
+## 5. Still open
 
-| # | Question | Context |
-|---|---|---|
-| Q3 | Contracts follow-ups decided by the lead | (a) the session settings map is keyed by `account_id` across every account the caller's memberships reach; (b) the softphone-only `analyze_dialer_calls` toggle is not part of agency's settings (its only reader was the bridge's gate 3, deleted per `docs/seams.md` §3.2); (c) usage counts carry seconds and window on `dialed_at`; (d) new super-admin shapes (change role, revoke, add to account) are produced by lane A; (e) `tenant.update` / `account.update` are added only if lane A finds a console page that needs them (contract change through the lead). |
+| # | Question | Context | Owner |
+|---|---|---|---|
+| Q3 | Contracts follow-ups decided by the lead | (a) the session settings map is keyed by `account_id` across every account the caller's memberships reach; (b) the softphone-only `analyze_dialer_calls` toggle is not part of agency's settings (its only reader was the bridge's gate 3, deleted per [`seams.md`](seams.md) §3.2); (c) usage counts carry seconds and window on `dialed_at`; (d) new super-admin shapes (change role, revoke, add to account) are produced by lane A; (e) `tenant.update` / `account.update` are added only if lane A finds a console page that needs them (contract change through the lead). | Manas (ratify), lead (the reasoning) |
+| — | `supervisor_hold` | Declared in the contract, never produced (core is the same). Keep, remove, or build a producer | Manas |
+| — | Shutdown grace | The completion-notice drain is 30 s and Docker's default stop grace is 10 s. Recommendation: `stop_grace_period: 45s` in the production compose file (none exists in this repo yet). Also: should `stop()` await an in-flight pacing tick (a tick parked past the `stopped` guard can finish after the drain; core has the same shape)? | Manas |
+| 1, 3–6 | Plan §7 defaults | Built, pending ratification (§2) | Manas |
+| 2, 7, 8 | Plan §7 open items | Existing numbers, cutover style, domain / freeze / rollback window | Manas, at cutover |
+| 9 | Metering | Out of v1; design not started | Manas |
+| B6 | Grafana selector | Superproject change, needs its own branch | whoever does cutover |
+| B15 | Roster supersede | Building it means three schema changes plus a replace lock; `AGENCY_ROSTER_REPLACE_ENABLED` stays off until then | Manas |
+| B17 | Internal header names | `x-mgkvc-*` names are on the in-process wire only; renaming is a follow-up | lead |
+| — | Core fixes found during the port | Core's unscoped `findActiveSuccessor`; the core half of the byte-identical carrier fixture. Both are later core PRs | MagickVoice core |
+| — | Gated items | Phase 0 vendor setup; Playwright happy path (real Firebase); production parity diff; dark pilot; real VoiceLink call and real recording analysed; Phase 10 cutover | Manas |

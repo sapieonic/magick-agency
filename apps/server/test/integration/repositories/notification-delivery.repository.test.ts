@@ -13,7 +13,7 @@
  *     produce it. A mock returns the rows it was handed.
  *   - Which four columns are in `uq_notification_deliveries_claim`. Drop
  *     `tenant_id` from the index and every unit test still passes — the mock has
- *     no index to disagree with. CLAUDE.md records that exact defect: a person
+ *     no index to disagree with. docs/reference/magick-master/CLAUDE.md records that exact defect: a person
  *     administering two tenants received the first workspace's digest and had
  *     the second silently skipped as a duplicate. It is asserted explicitly
  *     below.

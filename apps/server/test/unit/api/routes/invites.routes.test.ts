@@ -1099,7 +1099,7 @@ describe('POST /invites/resend', () => {
 
   it('hands the TENANT to the issuer, which puts it in the revoke statement', async () => {
     /**
-     * CLAUDE.md's RBAC rule 1: the boundary belongs in the same statement as the
+     * docs/reference/magick-master/CLAUDE.md's RBAC rule 1: the boundary belongs in the same statement as the
      * write, not only in the lookup above it. The statement is now
      * `createSupersedingOutstanding`'s (pinned in the repository suite); what
      * this route owes it is the tenant the caller was actually authenticated

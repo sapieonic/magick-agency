@@ -138,7 +138,7 @@ Dropped from master's matrix: `credit.read`, `credit.allocate`, `tenant.update`,
 
 ## 5. Discrepancies found while porting
 
-1. **18 action codes, not 16.** Core's union, core's fixture, master's list and cusui's list all have 18 (`session_on_other_campaign`, `agent_on_live_call` are the two `agency.md` §6.2 omits). The package carries 18; the test snapshot is the fixture's list.
-2. **Error-mask line range.** The brief's `error-mask.middleware.ts:106-160` is `agency.md` §6.4's older range; at `master@a1f0756` the seven lifecycle codes sit at `:139-141, :163-164, :220, :247`, and `:106-160` now also holds non-agency intro-audio codes and station codes.
-3. **`agency.md` §6.4 / `contracts.ts` line refs** (e.g. `AgencyActionErrorCode` "at `:1286`") are stale; it is at `:1574` in core@4850d1d.
+1. **18 action codes, not 16.** Core's union, core's fixture, master's list and cusui's list all have 18 (`session_on_other_campaign`, `agent_on_live_call` are the two `docs/reference/magickvoice-platform/agency.md` §6.2 omits). The package carries 18; the test snapshot is the fixture's list.
+2. **Error-mask line range.** The brief's `error-mask.middleware.ts:106-160` is `docs/reference/magickvoice-platform/agency.md` §6.4's older range; at `master@a1f0756` the seven lifecycle codes sit at `:139-141, :163-164, :220, :247`, and `:106-160` now also holds non-agency intro-audio codes and station codes.
+3. **`docs/reference/magickvoice-platform/agency.md` §6.4 / `contracts.ts` line refs** (e.g. `AgencyActionErrorCode` "at `:1286`") are stale; it is at `:1574` in core@4850d1d.
 4. **`/accounts/mine` has no permission** in master; the "account read" the plan names is `account.read` behind `GET /accounts`.

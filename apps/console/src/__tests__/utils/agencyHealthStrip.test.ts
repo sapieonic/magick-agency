@@ -201,7 +201,7 @@ describe('stallCopy — each arm names its own evidence', () => {
     // core never emits it" (master inserted the arm from its balance). Agency v1
     // has no credits, and plan §3.3 removes the code from the union AND the
     // console's health-strip copy, because a declared-but-unproducible code is the
-    // pattern `agency.md` warns about. This is that deletion's test.
+    // pattern `docs/reference/magickvoice-platform/agency.md` warns about. This is that deletion's test.
     const removed = 'credits_low' as AgencyStallCode;
     expect(AGENCY_STALL_PRIORITY).not.toContain(removed);
     expect(Object.keys(AGENCY_STALL_LABELS)).not.toContain('credits_low');

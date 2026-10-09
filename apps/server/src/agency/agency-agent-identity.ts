@@ -91,7 +91,7 @@ export function foldHighestRole(
  * Attach identity to a campaign's staffing rows.
  *
  * ONE query for the whole list, never one per row — the "no per-item loops over
- * I/O" rule in CLAUDE.md, and the same N+1 `findDisplayNamesInTenant` was
+ * I/O" rule in docs/reference/magick-master/CLAUDE.md, and the same N+1 `findDisplayNamesInTenant` was
  * introduced to avoid.
  *
  * A user id that resolves to nothing — deleted, or belonging to another tenant —

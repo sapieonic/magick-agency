@@ -951,7 +951,7 @@ describe('POST /campaigns/:id/agents', () => {
 
   it('answers 404 — not 403 — for a user who is not a member of this tenant', async () => {
     // 403 would confirm the user id exists somewhere, which is the id-oracle the
-    // RBAC rules in CLAUDE.md forbid. A cross-tenant id and a nonexistent one must
+    // RBAC rules in docs/reference/magick-master/CLAUDE.md forbid. A cross-tenant id and a nonexistent one must
     // be indistinguishable.
     mocks.findByUserAndTenant.mockResolvedValue([]);
     const app = await buildApp({ role: 'account_admin' });
@@ -1263,7 +1263,7 @@ describe('campaign ownership is proved on ALL THREE routes, not just the write',
    * than the write surface guarding the same rows is backwards.
    *
    * `requirePermission` proves the caller's ROLE and never looks at the target
-   * row (CLAUDE.md's RBAC section, rule 1), so nothing in the middleware chain
+   * row (docs/reference/magick-master/CLAUDE.md's RBAC section, rule 1), so nothing in the middleware chain
    * could have caught this. These cases are per-route on purpose: the defect was
    * precisely that the three routes disagreed.
    */

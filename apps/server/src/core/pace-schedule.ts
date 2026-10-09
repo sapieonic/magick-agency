@@ -26,7 +26,7 @@
  * DELIBERATELY PURE AND IMPORT-FREE. Every method takes `now` rather than
  * reading a clock, so the schedule has no notion of wall time, no I/O and no
  * imports at all — the same discipline `playout-clock.ts` and
- * `credential-seam.ts` follow, for the reason recorded in CLAUDE.md: a module
+ * `credential-seam.ts` follow, for the reason recorded in docs/reference/magic-voice-core/CLAUDE.md: a module
  * that reads `src/config/index.js` drags in a module body that can
  * `process.exit(1)`, which passes locally and kills the suite in CI. It is also
  * what makes the streamer's refactor onto this class provably behaviour-

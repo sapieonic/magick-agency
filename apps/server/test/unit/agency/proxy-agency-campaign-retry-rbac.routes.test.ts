@@ -4,7 +4,7 @@ import type { MembershipRole } from '@magick-agency/contracts/rbac';
 
 /**
  * **The three retry routes' RBAC floors, asserted by execution**
- * (`MagickVoice-platform/docs/agency-campaign-retry-wire-contract.md` §6).
+ * (`docs/reference/magickvoice-platform/docs/agency-campaign-retry-wire-contract.md` §6).
  *
  * ── Why by execution, and why a file of its own ───────────────────────────
  * `proxy-agency-campaigns.routes.test.ts` stubs `requirePermission` to a no-op

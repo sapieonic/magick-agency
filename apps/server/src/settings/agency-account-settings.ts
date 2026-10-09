@@ -16,7 +16,7 @@ import type {
  *
  * ── What `null` in the row resolves to, and why ────────────────────────────
  *  - `allow_recording` → `false`. The field is the successor of governance
- *    `agency.recording`, whose default was `false` (`agency.md` §7.2: "default
+ *    `agency.recording`, whose default was `false` (`docs/reference/magickvoice-platform/agency.md` §7.2: "default
  *    false throughout … this dials real people at volume"). The per-field
  *    campaign-write assert reads this value, so the null case must be the safe
  *    direction. NOTE: the baseline column comment says core's call-start default

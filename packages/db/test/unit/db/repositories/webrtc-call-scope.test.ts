@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * `webrtc_calls` holds both products' calls — softphone legs (`campaign_id IS
  * NULL`) and agency power-dialer legs (`campaign_id IS NOT NULL`) — and stays one
  * table by design (migration 076). The boundary between the two is therefore a
- * read-path predicate, and `docs/agency-dialer-design.md` §7b puts it at the
+ * read-path predicate, and `docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b puts it at the
  * repository rather than at the routes.
  *
  * That placement is what these tests are pinning. All seven tenant-facing

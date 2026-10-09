@@ -88,7 +88,7 @@ function isLiveInviteCollision(err: unknown): boolean {
  * {@link MembershipInviteRepository.createSupersedingOutstanding} takes a
  * `tenant_id` and puts it in the same statement as its revoke, following the
  * `findByIdInTenant` convention `user.routes.ts` argues for at length and
- * CLAUDE.md's RBAC rule 1: it is reachable from `POST /invites/resend` with a
+ * docs/reference/magick-master/CLAUDE.md's RBAC rule 1: it is reachable from `POST /invites/resend` with a
  * caller-supplied `membership_id`, and a membership id travels in URLs, logs and
  * support threads, so "the caller knew the id" is never evidence that the caller
  * may act on it. The route's own tenant-scoped membership lookup already refuses
@@ -148,7 +148,7 @@ export class MembershipInviteRepository {
    * allows.
    *
    * ── `tenant_id` is in the revoke's own predicate ───────────────────────────
-   * CLAUDE.md's RBAC rule 1, on the only tenant-route-reachable write in this
+   * docs/reference/magick-master/CLAUDE.md's RBAC rule 1, on the only tenant-route-reachable write in this
    * repository. `POST /invites/resend` takes `membership_id` from a request body
    * and does resolve it through a tenant-scoped membership lookup first — so
    * this predicate refuses nothing that route lets through today. It is here

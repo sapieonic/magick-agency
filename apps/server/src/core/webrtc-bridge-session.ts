@@ -104,7 +104,7 @@ export class WebRtcBridgeSession {
    * agency dialer's agent station socket is opened once at shift start and reused
    * across hundreds of attempts, so closing it at the end of one call would log
    * the agent out after their first conversation. A borrowed socket is
-   * *detached*, never closed. See docs/agency-dialer-design.md §7.
+   * *detached*, never closed. See docs/reference/magickvoice-platform/docs/agency-dialer-design.md §7.
    */
   browserWsOwned: boolean = true;
 

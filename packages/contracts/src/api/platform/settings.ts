@@ -29,7 +29,7 @@ export interface AgencyAccountSettings {
   /**
    * Whether campaigns on this account may record human↔human calls. Successor
    * of governance `agency.recording` (default `false`, and that default is the
-   * safe direction but is NOT a consent mechanism — `agency.md` §7.2).
+   * safe direction but is NOT a consent mechanism — `docs/reference/magickvoice-platform/agency.md` §7.2).
    */
   allow_recording: boolean;
   /** Whether campaign calls may be analysed. Successor of governance `agency.analytics`. */
