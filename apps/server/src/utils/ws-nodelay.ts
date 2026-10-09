@@ -1,6 +1,5 @@
-// PORT NOTE (magick-agency, Phase 8): master `src/utils/ws-nodelay.ts`@a1f0756a, verbatim. Used by
-// the station route (`api/routes/proxy-agency-station.routes.ts`) on the agent's socket, as master
-// did on its agent leg. `MEDIA_WS_CLIENT_OPTIONS` is kept for fidelity (no outbound socket here).
+// Used by the station route (`api/routes/proxy-agency-station.routes.ts`) on the agent's
+// socket. `MEDIA_WS_CLIENT_OPTIONS` currently has no user: no route here opens an outbound socket.
 import type { Logger } from 'pino';
 import type { WebSocket as WsWebSocket } from 'ws';
 
@@ -15,21 +14,13 @@ import type { WebSocket as WsWebSocket } from 'ws';
  * with delayed ACK, which is where the worst cases come from. **Node enables it
  * on every socket by default.**
  *
- * Core disables it on all three legs it owns (`disableNagle` in
- * `magic-voice-core/src/core/webrtc-bridge-manager.ts`): the browser leg, the
- * borrowed agency station leg, and the carrier leg. Master's proxies sit
- * *between* two of those, so a proxy that skips this re-introduces on the way
- * through exactly what core turned off on either side of it, in both
- * directions.
+ * The voice engine disables it on the legs it owns (its own private
+ * `disableNagle` in `src/core/webrtc-bridge-manager.ts`). A socket that skips
+ * this re-introduces exactly what the engine turned off, in both directions.
  *
- * **There are THREE such proxies in master, not two**, and the third was missed
- * on the first pass: `proxy-agency-station` (the agent console),
- * `proxy-media-stream` (the AI browser call) and `proxy-webrtc-call` (the
- * browser→PSTN dialer's own media leg). The miss came from searching for the
- * *absence* of `setNoDelay`, which finds what is already fixed and cannot
- * enumerate what is not — `grep "websocket: true" src/` is the query that
- * answers "which routes carry media", and it is the one to use when adding a
- * fourth.
+ * To find every route that carries media, search for `websocket: true` under
+ * `src/` — not for the *absence* of `setNoDelay`, which finds what is already
+ * fixed and cannot enumerate what is not.
  *
  * ── Call it at the right moment ─────────────────────────────────────────────
  * `_socket` only exists once a TCP connection does. For an inbound (server)
@@ -38,7 +29,7 @@ import type { WebSocket as WsWebSocket } from 'ws';
  *
  * ── Why a failure is logged and not thrown ──────────────────────────────────
  * `_socket` is not part of `ws`'s public type and could disappear in a major
- * version. A proxy that refused to carry a phone call because it could not tune
+ * version. A socket handler that refused to carry a phone call because it could not tune
  * a socket option would be a worse outcome than one that carries it slightly
  * late, so this degrades rather than fails.
  *
@@ -69,10 +60,9 @@ export function disableNagle(
  * Options for an upstream `ws` client on a media path.
  *
  * Per-message deflate on a few hundred bytes of audio buys nothing and costs
- * latency and CPU, which is why core registers its WebSocket server with
- * `perMessageDeflate: false`. Core would therefore decline the extension
- * anyway — this stops master *offering* it, so the two ends cannot drift into
- * negotiating compression if core's config ever changes.
+ * latency and CPU. This stops the client *offering* the extension, so the two
+ * ends cannot drift into negotiating compression if the server's config ever
+ * changes.
  *
  * `Object.freeze` and not merely `as const`: `as const` is erased at compile
  * time, so a single shared object handed to three `new WsWebSocket(...)` calls

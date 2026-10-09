@@ -182,7 +182,7 @@ describe('AgentPerformancePanel — the headline trio', () => {
 
   it('says the dialer placed the call, not that it was placed TO the agent', () => {
     /**
-     * "Calls placed to you" is backwards for an outbound predictive dialer: core
+     * "Calls placed to you" is backwards for an outbound predictive dialer: the server
      * places the dial to a CUSTOMER and reserves the agent onto it. An agent
      * reading that their dials were "placed to" them would reasonably conclude
      * this screen is counting inbound calls.

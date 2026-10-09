@@ -1,14 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 /*
- * PORT NOTE (magick-agency): ported from core test/unit/utils/recording-url.test.ts
- * @4850d1d9. The signing secret is `config.recordingUrlSigningSecret` (set through the
- * mocked config) instead of process.env, and core's `config.webhooks.secret`
- * fallback is gone; the suite's cases are unchanged.
- *
- * PORT NOTE (magick-agency, Phase 8): the default `basePath` is agency's only playback route,
- * `/api/v1/webrtc-recordings` (core's AI-calls `/api/v1/recordings` is not ported; lane D review
- * carry-forward). MODIFIED (2): the first two cases assert the new default path.
+ * The signing secret is `config.recordingUrlSigningSecret` (set through the mocked
+ * config), with no fallback. The default `basePath` is the only playback route,
+ * `/api/v1/webrtc-recordings`; the first two cases assert that default path.
  */
 const { mockConfig } = vi.hoisted(() => ({
   mockConfig: { recordingUrlSigningSecret: 'test-secret-do-not-use-in-prod-1234567890' as string | undefined },

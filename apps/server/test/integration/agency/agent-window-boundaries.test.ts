@@ -264,7 +264,7 @@ describe('agent window boundaries — /stats is half-open, /attempts is closed (
 
     const stats = await agencyAgentStatsRepository.stats(scope, { from: FROM, to: TO, bucket: 'day' });
     // One, not two. `a.dialed_at IS NOT NULL` is what makes this the right number,
-    // and it is also what makes migration 104's partial index unusable by the
+    // and it is also what makes the partial index `idx_agency_attempts_agent_dialed` unusable by the
     // sibling route.
     expect(stats.totals.attempts).toBe(1);
     expect(stats.buckets).toHaveLength(1);

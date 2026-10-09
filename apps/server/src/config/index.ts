@@ -6,7 +6,7 @@ export type { AppConfig } from './schema.js';
 export { parseConfig } from './load.js';
 
 /**
- * Exits on invalid config, like core and master: a half-configured process
+ * Exits on invalid config: a half-configured process
  * that boots is worse than one that refuses to. Every issue is printed with
  * its path so the operator can fix them all in one pass.
  */

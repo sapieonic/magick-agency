@@ -69,7 +69,7 @@ describe('AgencyCampaignRepository.create — against a real Postgres', () => {
     });
 
     expect(campaign.id).toBeTruthy();
-    // The COALESCE fallbacks, which must agree with migration 072's column
+    // The COALESCE fallbacks, which must agree with the column
     // defaults. Postgres renders `TIME` as `HH:MM:SS`.
     expect(campaign.calling_window_start).toBe('09:00:00');
     expect(campaign.calling_window_end).toBe('20:00:00');
@@ -135,7 +135,7 @@ describe('AgencyCampaignRepository.create — against a real Postgres', () => {
     expect(reloaded!.calling_window_start).toBe('08:30:00');
     expect(reloaded!.calling_days).toEqual([6, 7]);
 
-    // 078's column, which the create route never populates today — so the
+    // The `break_reasons` column, which the create route never populates today — so the
     // COALESCE fallback is the only path it has, and it is `::jsonb`-cast.
     const { rows } = await getTestPool().query<{ break_reasons: unknown }>(
       'SELECT break_reasons FROM agency_campaigns WHERE id = $1',

@@ -3,7 +3,7 @@ import type { PoolClient } from 'pg';
 import { getPool } from '@magick-agency/db';
 
 /**
- * `dnc_entries` access (migration `050_dnc.sql`, design §2.3).
+ * `dnc_entries` access.
  *
  * ── The one rule this module exists to hold ─────────────────────────────────
  * DNC is a compliance control, so **every read here fails closed**: a query that
@@ -28,7 +28,7 @@ export interface DncEntryRecord {
   tenant_id: string;
   /** NULL ⇒ tenant-wide. */
   account_id: string | null;
-  /** NULL ⇒ every campaign. Core-owned id; no FK (separate databases). */
+  /** NULL ⇒ every campaign. No FK. */
   campaign_id: string | null;
   phone_e164: string;
   source: DncSource;
@@ -50,9 +50,9 @@ export interface DncEntryInput {
 
 /**
  * One number's outcome from an add. `created: false` is a SUCCESS — re-adding a
- * number already on the list is idempotent, not a conflict (same reasoning as
- * core's re-submitted disposition: the caller's intent is already satisfied, and
- * an error would be about a detail they cannot act on).
+ * number already on the list is idempotent, not a conflict (same reasoning as a
+ * re-submitted disposition: the caller's intent is already satisfied, and an
+ * error would be about a detail they cannot act on).
  */
 export interface DncInsertResult {
   phone_e164: string;
@@ -113,9 +113,8 @@ export const SCOPE_SENTINEL = '00000000-0000-0000-0000-000000000000';
  * That combination is the failure this whole feature exists to prevent, in the
  * direction it exists to prevent it in:
  *
- *   1. The nil-scoped row inserts. It is not tenant-wide, so no version is
- *      taken, nothing is published, and `listTenantWidePhones` excludes it.
- *      Nothing looks wrong.
+ *   1. The nil-scoped row inserts. It is not tenant-wide, and nothing looks
+ *      wrong.
  *   2. A genuine "never call this number again" escalation arrives later with no
  *      scope at all. Its `ON CONFLICT` **collides with the nil row** and does
  *      nothing; the fallback SELECT's `COALESCE($n, SENTINEL)` matches that same
@@ -185,7 +184,7 @@ const UQ_DNC_SCOPE_TARGET = `(
   phone_e164
 )`;
 
-/** A tenant-wide row is one with BOTH scope columns NULL — see §2.3. */
+/** A tenant-wide row is one with BOTH scope columns NULL. */
 export function isTenantWide(input: { account_id?: string | null; campaign_id?: string | null }): boolean {
   return (input.account_id ?? null) === null && (input.campaign_id ?? null) === null;
 }
@@ -200,11 +199,9 @@ export class DncRepository {
    * this number and why. A regulator-sourced row must not be relabelled `agent`
    * because an agent later marked the same number.
    *
-   * PORT NOTE (magick-agency, decision B8): the master→core sync is gone, so there
-   * is no `dnc_sync_state` version to bump here and the result carries no
-   * `syncVersion` / `addedTenantWide`. The write is still ONE transaction. With
-   * `opts.client` the insert joins the CALLER's transaction instead (the agent's
-   * mark writing this row beside its own attempt bookkeeping): this method then
+   * The write is ONE transaction (decision B8). With `opts.client` the insert
+   * joins the CALLER's transaction instead (the agent's mark writing this row
+   * beside its own attempt bookkeeping): this method then
    * neither begins, commits, rolls back nor releases, so a failure anywhere in
    * the caller's transaction takes the DNC row with it.
    */
@@ -279,9 +276,8 @@ export class DncRepository {
    *
    * **One query per batch, served by `idx_dnc_entries_tenant_phone`.** The
    * `COALESCE` unique index cannot answer this — it is prefixed on the scope
-   * expressions, so a per-number probe would seq-scan. That plain index is why
-   * design §2.3 requires it in addition to the unique one, and this is its only
-   * caller shape.
+   * expressions, so a per-number probe would seq-scan. That is why the plain
+   * index exists beside the unique one, and this is its only caller shape.
    *
    * Returns a Set of the *matched* numbers, never a per-number boolean map: a
    * map invites `map[phone]` on a number that was not queried, which is
@@ -315,12 +311,9 @@ export class DncRepository {
   /**
    * Remove one entry.
    *
-   * PORT NOTE (magick-agency, decision B8): master's version also decided, inside
-   * the same transaction, whether the delete made the number dialable again
-   * tenant-wide and took the `dnc_sync_state` version core had to `SREM` it with.
-   * There is no flat set and no version any more, so this is the single `DELETE`
-   * statement and nothing else; the dial-time check reads `dnc_entries` itself, so
-   * the row's absence IS the number becoming dialable again, atomically.
+   * The single `DELETE` statement and nothing else (decision B8): the dial-time
+   * check reads `dnc_entries` itself, so the row's absence IS the number becoming
+   * dialable again, atomically.
    *
    * `accountScope`, when passed, additionally requires `account_id = $3` —
    * an account-scoped caller (`dnc.routes.ts`) may only remove a row it

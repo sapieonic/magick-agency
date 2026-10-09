@@ -201,8 +201,8 @@ describe('the retry banner', () => {
     expect(banner.textContent).toContain('Q3 Winback');
   });
 
-  it('renders core’s selection summary verbatim', async () => {
-    // Core builds it from the frozen selector on the child's row, so the
+  it('renders the API’s selection summary unchanged', async () => {
+    // The API builds it from the frozen selector on the child's row, so the
     // sentence the agent reads and the query that put this contact in front of
     // them cannot disagree. Re-deriving it here would be a second answer.
     mocks.createAgencySession.mockResolvedValue(RETRY_BOOTSTRAP);
@@ -270,7 +270,7 @@ describe('prior attempts across a lineage', () => {
     ).toBeTruthy();
   });
 
-  it('keeps each group newest-first, as core ordered them', async () => {
+  it('keeps each group newest-first, as the API ordered them', async () => {
     await onCall(
       attempt([
         prior({ attempt_number: 3, notes: 'third' }),

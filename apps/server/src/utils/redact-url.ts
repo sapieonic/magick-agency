@@ -75,9 +75,9 @@ export const CREDENTIAL_PATH_LITERALS: ReadonlyMap<string, ReadonlySet<string>> 
  * defensive copy, so a caller (and a test) can compare by `===` to ask "did this
  * URL carry a secret?".
  *
- * The query string is preserved verbatim. It is not where any credential in this
+ * The query string is preserved as-is. It is not where any credential in this
  * service travels, and dropping it would take the one thing a "customer says the
- * filter is wrong" ticket is answered from. Fragments cannot appear in a
+ * filter is wrong" report is answered from. Fragments cannot appear in a
  * server-side `request.url` at all; the split tolerates one rather than relying
  * on that.
  */

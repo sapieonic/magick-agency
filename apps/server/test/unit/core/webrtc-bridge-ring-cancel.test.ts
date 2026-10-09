@@ -1,32 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// PORT NOTE (magick-agency): ported from core test/unit/core/webrtc-bridge-ring-cancel.test.ts@4850d1d9
-// (16 cases → 15). Mock specifiers follow the new paths (logger → @magick-agency/observability,
-// webrtc-call repository → @magick-agency/db agency-call repository, account settings → the
-// @magick-agency/db repository with `getWebrtcMaxDurationSeconds` → null = the flag mock's 1800);
-// the feature-flag mock is gone (no longer imported). The default provider is now VoiceLink (core:
-// VoBiz), so `BRIDGED` dials VoiceLink: 'stays silent on a cancel-capable carrier, and hangs the
-// leg up', 'hangs the carrier leg up once the dial finally yields an id' and 'leaves an ordinary
-// dial alone (no hangup when nothing tore the call down)' are textually unchanged but now run on
-// VoiceLink (an unanswered VoiceLink teardown finalizes at once, as VoBiz's did).
-//
-// DELETED (1):
-//  - 'refuses to return answer XML for a settled call (the VoBiz twin)' — `handleVobizAnswer` is
-//    deleted with VoBiz; its VoiceLink sibling ('ignores a VoiceLink `answer` webhook in the same
-//    window — the pilot carrier') is kept.
-//
-// MODIFIED (8) — settlement assertions removed (agency never settles, plan §9; the settlement
-// dispatcher is gone): every `mockDispatchSettlement` count is now the count of
-// `trackWebrtcCallCompleted`, the terminal analytics event `endCall` emits exactly once at the same
-// point, and its payload fields map `call_id`/`status`/`outcome`/`talk_time_seconds` →
-// `callId`/`status`/`outcome`/`talkTimeSeconds`. Cases: 'finalizes immediately as canceled, never
-// entering `ending`, and leaves no live session', 'refuses it INSIDE the settle window too, while
-// the session is still in the map', 'settles exactly once even when the carrier`s own call.ended
-// lands afterwards', 'ignores a media `start` that arrives inside the settle window', 'ignores a
-// VoiceLink `answer` webhook in the same window — the pilot carrier', 'still accepts the terminal
-// webhook during `ending` — the confirmation must land', 'holds the session in `ending` until the
-// carrier confirms, and settles once when it does', 'waits the full 45s before giving up on the
-// confirmation (and not 20s)'.
+// The default provider is VoiceLink, so `BRIDGED` dials VoiceLink (an unanswered VoiceLink
+// teardown finalizes at once). The terminal analytics event `trackWebrtcCallCompleted`, which
+// `endCall` emits exactly once, is what the "settles exactly once" cases count; its payload
+// fields are `callId`/`status`/`outcome`/`talkTimeSeconds`.
 
 // ---------------------------------------------------------------------------
 // The ring-cancel fix, and the confirm-timeout split.
@@ -41,7 +18,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // it, and the relay opened into a dismissed console. Traced end to end on
 // callId 064836f1-8915-49f8-9c5a-c741f3cdd2af: dial 10:36:04.155, agent hangup
 // 09.541, PSTN connect + answer 12.44, relay open 12.454, ended 27.968
-// `completed` / `talkTime: 16`, 769/668 frames relayed, settlement dispatched.
+// `completed` / `talkTime: 16`, 769/668 frames relayed.
 //
 // So these tests are about a session's PRESENCE IN THE MAP, not about the
 // status string: finalizing immediately is what makes the later connect hit the
@@ -66,8 +43,8 @@ vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
     telephony: {
-      vobiz: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/vobiz' },
-      voicelink: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/voicelink' },
+      vobiz: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/vobiz' },
+      voicelink: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/voicelink' },
     },
   },
 }));
@@ -109,8 +86,7 @@ vi.mock('../../../src/telephony/factory.js', () => ({
 }));
 
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn() } }));
-// PORT NOTE: hoisted so the terminal analytics event can stand in for core's settlement
-// dispatch (agency never settles, plan §9). Both fire exactly once per `endCall`.
+// Hoisted so the terminal analytics event can be counted: it fires exactly once per `endCall`.
 const { mockAnalytics } = vi.hoisted(() => ({
   mockAnalytics: {
     trackWebrtcCallInitiated: vi.fn(),
@@ -540,9 +516,9 @@ describe('the pre-answer capability warning', () => {
   });
 
   it('stays silent on a cancel-capable carrier, and hangs the leg up', async () => {
-    mockAdapter.capabilities = { cancelRinging: true }; // vobiz: DELETE /Call/{id}/
+    mockAdapter.capabilities = { cancelRinging: true };
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
-    await mgr.createBridgedCall({ ...BRIDGED, browserSocket: fakeStationWs() as any }); // vobiz
+    await mgr.createBridgedCall({ ...BRIDGED, browserSocket: fakeStationWs() as any });
 
     await mgr.forceEndWithOutcome('att-1', 'agent_hangup');
 

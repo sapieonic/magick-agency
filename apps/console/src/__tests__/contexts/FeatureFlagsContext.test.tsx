@@ -118,7 +118,7 @@ describe('resolution + anti-flicker status contract', () => {
 
   it('does NOT fetch when accountId is missing (flags are account-scoped) — stays loading', () => {
     // tenant resolved but active account not yet — firing here would 400 at
-    // core ("Missing required header: x-mgkvc-account") and hide every gate.
+    // the server ("Missing required header: x-mgkvc-account") and hide every gate.
     mockAuthAndTenant({ id: 'u1' }, 't1', null);
     const { result } = renderHook(() => useFeatureFlags(), { wrapper });
     expect(fetchFeatureFlags).not.toHaveBeenCalled();
@@ -131,7 +131,7 @@ describe('resolution + anti-flicker status contract', () => {
      * The infinite spinner, at its source.
      *
      * With no `accountId` this context never fires a request — correctly, since
-     * core 400s without `x-mgkvc-account`. But it also reported `'loading'`
+     * the server 400s without `x-mgkvc-account`. But it also reported `'loading'`
      * unconditionally, and when `TenantContext` has *failed* to resolve an account
      * there is nothing left to load: the wait never ends, and `RequireFlag` draws
      * a spinner for the life of the session. An `agent` (role level 5, below

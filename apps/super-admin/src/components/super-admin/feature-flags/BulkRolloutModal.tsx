@@ -21,7 +21,7 @@ interface Props {
  */
 export function BulkRolloutModal({ flags, initialFlag, onClose, onApplied }: Props) {
   // Only boolean + tenant-scopable flags can take a true/false bulk value, and
-  // a flag master's policy bars from bulk (transcript logging) is never offered.
+  // a flag the server's policy bars from bulk (transcript logging) is never offered.
   const candidates = flags.filter(canBulkRollOut);
   const [flagKey, setFlagKey] = useState(initialFlag.key);
   const [tenantIds, setTenantIds] = useState('');

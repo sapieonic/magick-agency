@@ -2,13 +2,11 @@
 #
 #   docker build -f docker/Dockerfile -t magick-agency-server .
 #
-# Ported from core `docker/Dockerfile:1-30`@4850d1d9. PORT NOTE (magick-agency): the
-# build stage (core :2-7) is a pnpm workspace build (esbuild bundles `apps/server` and the
-# `@magick-agency/*` packages into dist/; `pnpm deploy` then lays out only the
-# server's production node_modules) where core ran `npm ci && npm run build`.
-# The runtime stage's apt layer (core :12-19) is verbatim. Dropped from core's
-# runtime: `src/prompts/templates` and `web-client/index.html` (:24-25, AI calling,
-# not carried), port 9090 (:28, no metrics endpoint; docs/status.md "Not built").
+# Two stages. The build stage is a pnpm workspace build: esbuild bundles
+# `apps/server` and the `@magick-agency/*` packages into dist/, then `pnpm deploy`
+# lays out only the server's production node_modules. The runtime stage adds the
+# audio decoders, the bundle, those node_modules and the migrations. No metrics
+# port is exposed (no metrics endpoint; docs/status.md "Not built").
 #
 # Node: `node:22-slim` tracks the 22 line. dist/migrate.js loads node-pg-migrate
 # (ESM-only) from a CJS bundle through require(esm), on by default from 22.12.

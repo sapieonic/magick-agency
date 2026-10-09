@@ -1,4 +1,4 @@
-// PORT NOTE (magick-agency): ported from master test/unit/db/repositories/membership.repository.test.ts@a1f0756a — verbatim except import specifiers and the type-only casts marked below.
+// Type-only casts are marked below: tests are typechecked (decision B1).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ pool: { query: vi.fn(), connect: vi.fn() } }));
@@ -83,7 +83,7 @@ describe('MembershipRepository', () => {
 
     it('keeps the tenant predicate in the same statement as the read', async () => {
       // Dropping the status filter widens WHO is visible, never WHICH TENANT —
-      // rule 1 of docs/reference/magick-master/CLAUDE.md's RBAC section, and the property that keeps a user who
+      // tenant scoping is never optional, and the property that keeps a user who
       // was never here answering 404.
       mocks.pool.query.mockResolvedValue({ rows: [] });
       await repo.findAnyByUserAndTenant('u-1', 't-2');
@@ -104,9 +104,9 @@ describe('MembershipRepository', () => {
      * The SET form of `findAnyByUserAndTenant`, and it had no direct test at all —
      * only route tests over a mocked repository, which cannot see any of the
      * properties below. That gap matters more than the usual missing-unit-test
-     * because the UUID short-circuit is LOAD-BEARING: the ids come from core's
-     * response body, where `agent_user_id` is an opaque string with no `uuid`
-     * column behind it (design D3), so a malformed one is reachable — and inside
+     * because the UUID short-circuit is LOAD-BEARING: the ids come from the internal
+     * handler's response body, where `agent_user_id` is an opaque string with no `uuid`
+     * column behind it, so a malformed one is reachable — and inside
      * `= ANY($1::uuid[])` it raises Postgres `22P02`, which propagates as a 500
      * that `errorMaskHook` turns into "contact support and quote this request id".
      * One junk id in a roster page would take the whole supervisor screen down as
@@ -122,7 +122,7 @@ describe('MembershipRepository', () => {
     const memberRow = { ...row, user_id: USER_A, tenant_id: TENANT };
 
     it('SELECTs both ids in ONE statement, not one query per id', async () => {
-      // The "no per-item loops over I/O" rule in docs/reference/magick-master/CLAUDE.md: the roster reads up to
+      // No per-item loops over I/O: the roster reads up to
       // `limit` (200) memberships to decide which rows survive, and asked through
       // the singleton that is 200 round trips.
       mocks.pool.query.mockResolvedValue({ rows: [memberRow] });
@@ -135,7 +135,7 @@ describe('MembershipRepository', () => {
     });
 
     it('keeps the tenant predicate in the SAME statement as the read', async () => {
-      // Rule 1 of docs/reference/magick-master/CLAUDE.md's RBAC section. Widening WHO is visible (no status
+      // Tenant scoping is never optional. Widening WHO is visible (no status
       // filter, below) must never widen WHICH TENANT — a user who was never here
       // has to resolve to nothing so the caller drops their row.
       mocks.pool.query.mockResolvedValue({ rows: [] });
@@ -178,8 +178,8 @@ describe('MembershipRepository', () => {
       expect(params[0]).toEqual([USER_A]);
     });
 
-    it('accepts an UPPER-case uuid, which core can legitimately send', async () => {
-      // `agent_user_id` is opaque to core, so case is not normalised upstream. The
+    it('accepts an UPPER-case uuid, which the dialer runtime can legitimately send', async () => {
+      // `agent_user_id` is opaque to the dialer runtime, so case is not normalised upstream. The
       // shape check must not reject a perfectly valid id — and the `::uuid` cast
       // matches it — which is why the regex is case-insensitive.
       mocks.pool.query.mockResolvedValue({ rows: [memberRow] });
@@ -203,15 +203,15 @@ describe('MembershipRepository', () => {
 
     it('does not query AT ALL for an empty list, or one that is all junk', async () => {
       // `ANY('{}'::uuid[])` matches nothing, so the query would be correct and
-      // pointless. The route reaches this whenever core returns a page of rows
-      // whose ids are all unusable, which is a real shape (R4's third state).
+      // pointless. The route reaches this whenever the handler returns a page of rows
+      // whose ids are all unusable, which is a real shape (an id with no membership row at all).
       expect(await repo.findAnyByUsersAndTenant([], TENANT)).toEqual([]);
       expect(await repo.findAnyByUsersAndTenant(['nope', ''], TENANT)).toEqual([]);
       expect(mocks.pool.query).not.toHaveBeenCalled();
     });
 
     it('does not query for a malformed TENANT id either', async () => {
-      // The tenant is master's own (`request.tenantId`), so this should be
+      // The tenant is the public API layer's own (`request.tenantId`), so this should be
       // unreachable — and it is checked anyway because the failure mode is the
       // same `22P02` on `$2::uuid`, and "should be unreachable" is how the first
       // one got shipped.
@@ -296,7 +296,7 @@ describe('MembershipRepository', () => {
       expect(sql[1]).toContain("status = 'active'");
       expect(sql[1]).toContain("status <> 'active'");
       expect(sql[1]).toContain('tenant_id = $3');
-      // PORT NOTE (magick-agency): type-only cast — agency's tsconfig typechecks tests (B1), master's did not.
+      // Type-only cast — the tsconfig typechecks tests (decision B1).
       expect((client.query.mock.calls[1] as unknown[])[1]).toEqual(['tenant_admin', 'm-1', 't-1']);
       expect(sql[2]).toContain('UPDATE membership_invites');
       expect(sql[2]).toContain('claimed_at IS NULL');

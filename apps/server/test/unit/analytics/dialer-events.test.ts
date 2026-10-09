@@ -2,11 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { CallAnalysisResult } from '@magick-agency/db/models/call.model';
 
 /*
- * Ported from the dialer cases of core test/unit/analytics/{posthog,llm-observability}.test.ts
- * @4850d1d9 (lane D wrote them against its `analysis-events.ts` stand-in; the lead moved
- * the emitters into `posthog.ts` / `llm-observability.ts` at lane C's merge). They now run
+ * The dialer analytics emitters (`posthog.ts` / `llm-observability.ts`) run
  * through the real shared transport (`analytics/client.ts`) over a mocked `posthog-node`,
- * as lane C's `posthog.test.ts` does. Covers: the event name and properties, the PII
+ * as `posthog.test.ts` does. Covers: the event name and properties, the PII
  * posture (no summary / transcript / custom dimension values), the LLM-observability
  * gate, and no-op-without-a-client.
  */

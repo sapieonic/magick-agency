@@ -2,9 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ query: vi.fn() }));
 
-// PORT NOTE (magick-agency): ported from core test/unit/audit/audit-retention.test.ts@4850d1d9;
-// only the mocked specifiers changed (the pool is `@magick-agency/db`'s, the
-// logger `@magick-agency/observability`'s).
+// The pool is mocked from `@magick-agency/db`, the logger from `@magick-agency/observability`.
 vi.mock('@magick-agency/db', () => ({ getPool: () => ({ query: mocks.query }) }));
 vi.mock('@magick-agency/observability', () => ({
   createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),

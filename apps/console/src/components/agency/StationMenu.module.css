@@ -1,4 +1,4 @@
-/* No new design tokens (§0.1 principle 5), and the global
+/* No new design tokens ( principle 5), and the global
    `button:focus-visible` ring is NOT overridden — the console's keyboard
    criterion is asserted on a visible ring. */
 
@@ -55,7 +55,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  /* No entry animation — §A.3 allows exactly one looping animation on this
+  /* No entry animation allows exactly one looping animation on this
      screen (the rail's pulse dot), and an animated popover delays the moment the
      focus ring is legible. */
 }

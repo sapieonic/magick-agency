@@ -1,20 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
- * ─── THE DIALER/AGENCY SCOPE PREDICATE ──────────────────────────────────────
+ * ─── THE CALL SCOPE PREDICATE ───────────────────────────────────────────────
  *
- * `webrtc_calls` holds both products' calls — softphone legs (`campaign_id IS
- * NULL`) and agency power-dialer legs (`campaign_id IS NOT NULL`) — and stays one
- * table by design (migration 076). The boundary between the two is therefore a
- * read-path predicate, and `docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b puts it at the
- * repository rather than at the routes.
+ * Agency power-dialer legs in `agency_calls` carry `campaign_id IS NOT NULL`.
+ * The scope boundary is a read-path predicate, and the design
+ * (docs/architecture.md) puts it at the repository rather than at the routes.
  *
- * That placement is what these tests are pinning. All seven tenant-facing
- * `/api/v1/webrtc-call/*` handlers — list, detail, recording, recording-url, end,
- * retry-analysis and transcript erasure — reach their record through exactly two
- * functions, `listByTenant` and `findByIdScoped`. So the predicate living in those
- * two is what makes an agency call invisible AND untouchable through the
- * softphone's routes, and a regression here silently re-opens all seven at once.
+ * That placement is what these tests are pinning. Scoped reads reach their record
+ * through exactly two functions, `listByTenant` and `findByIdScoped`, so the
+ * predicate living in those two is the whole boundary, and a regression here
+ * silently re-opens every scoped read at once.
  *
  * The route-level unit tests cannot catch that: they mock the repository
  * wholesale, so they would pass against an unfiltered query. These assert the SQL
@@ -33,16 +29,10 @@ vi.mock('../../../../src/connection.js', () => ({
 import { WebRtcCallRepository } from '../../../../src/repositories/agency-call.repository.js';
 
 /*
- * PORT NOTE (magick-agency): ported from core
- * test/unit/db/repositories/webrtc-call-scope.test.ts@4850d1d9. The softphone
- * (`'agency'` scope) is deleted, so `WebRtcCallScope` is `'agency'` only:
- *  - DELETED: "refuses agency rows with campaign_id IS NULL" (its subject is the
- *    dialer predicate).
- *  - MODIFIED: the remaining findByIdScoped/listByTenant cases pass `'agency'`
- *    and assert `campaign_id IS NOT NULL`; the table is `agency_calls`.
- *  - KEPT verbatim: the agency-scope cases, the required-scope case (scopeClause
- *    keeps core's body, so untyped code still fails closed to the narrower
- *    `campaign_id IS NULL`), and the unscoped findById case.
+ * `WebRtcCallScope` is `'agency'` only, so the findByIdScoped/listByTenant cases
+ * pass `'agency'` and assert `campaign_id IS NOT NULL`; the table is `agency_calls`.
+ * Also covered: the required-scope case (untyped code still fails closed to the
+ * narrower `campaign_id IS NULL`) and the unscoped findById case.
  */
 
 const repo = new WebRtcCallRepository();
@@ -83,7 +73,7 @@ describe('WebRtcCallRepository — dialer/agency scope predicate', () => {
 
     /**
      * The count and the page must agree. Filtering only the data query would show
-     * the right rows under a total that counts the other product's calls, and the
+     * the right rows under a total that counts out-of-scope calls, and the
      * pager would run off the end into empty pages — a subtler bug than no filter
      * at all, because the visible list looks correct.
      */
@@ -121,8 +111,8 @@ describe('WebRtcCallRepository — dialer/agency scope predicate', () => {
 
     /**
      * The list projection must carry the discriminator. Without it the list cannot
-     * label — or even recognise — a row from the other product, which is what made
-     * the original leak invisible from the response payload.
+     * label — or even recognise — an out-of-scope row, which is what would make a
+     * leak invisible from the response payload.
      *
      * Asserted against the SELECT LIST specifically, not the whole statement. The
      * WHERE clause says `campaign_id IS NULL` on every one of these queries, so a
@@ -138,9 +128,9 @@ describe('WebRtcCallRepository — dialer/agency scope predicate', () => {
   });
 
   /**
-   * The other half of the split. `scope: 'agency'` is what the agency read path
-   * passes, and it must be the exact complement of `'agency'` — anything else and
-   * a call belongs to both products or to neither.
+   * `scope: 'agency'` is what the agency read path passes, and it must be the
+   * exact complement of the fallback — anything else and a call belongs to both
+   * populations or to neither.
    */
   describe("scope: 'agency'", () => {
     it('selects the complementary predicate on findByIdScoped', async () => {
@@ -183,12 +173,11 @@ describe('WebRtcCallRepository — dialer/agency scope predicate', () => {
    * gated subtree.
    *
    * What the runtime half adds is real either way: the direction of the fallback.
-   * Reached from untyped code, this yields the softphone's narrower predicate and
-   * never the agency one — failing closed toward the product that does not hold
-   * the other's rows.
+   * Reached from untyped code, this yields the `campaign_id IS NULL` predicate and
+   * never the agency one — failing closed away from agency rows.
    */
   describe('scope is required', () => {
-    it('is a compile error to omit, and falls back to the dialer scope at runtime', async () => {
+    it('is a compile error to omit, and falls back to campaign_id IS NULL at runtime', async () => {
       // @ts-expect-error — `scope` is required; this must not compile.
       await repo.listByTenant('t1', 'a1');
 
@@ -199,7 +188,7 @@ describe('WebRtcCallRepository — dialer/agency scope predicate', () => {
 
   /**
    * `findById` is deliberately NOT scoped. The bridge, settlement and the analysis
-   * runner handle both products' calls and reach rows through it; scoping it would
+   * runner handle every call and reach rows through it; scoping it would
    * break agency call handling rather than isolate it. It is not tenant-facing.
    */
   describe('findById (deliberately unscoped)', () => {

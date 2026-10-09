@@ -91,14 +91,14 @@ import styles from './AgentAnalyticsSection.module.css';
  * the server can compute a percentile over agents this client has not fetched.
  *
  * That also removed this component's `useTeam()` call. The roster carries
- * `agent_name` on every row (master enriches it in one query on the proxy hop), so
+ * `agent_name` on every row (the API enriches it in one query on the proxy hop), so
  * there is no longer a reason to read `GET /tenants/:id/members` here — and one
  * fewer request is one fewer thing to 403. It also means the roster shows exactly
  * the people who DIALLED, which is what the old picker could not do: it listed
  * every member of the tenant, most of whom had never held a station.
  *
  * ── The gate is `agency.supervise`, exactly ────────────────────────────────
- * Master floors `GET /agency/agents/stats`, `…/agents/:userId/stats` and
+ * The API floors `GET /agency/agents/stats`, `…/agents/:userId/stats` and
  * `…/attempts` on `agency.supervise`. Anything looser renders a surface whose
  * first read 403s; anything tighter hides it from an `account_admin` who holds it.
  * The gate is the PARENT component rather than an early return inside, because
@@ -203,8 +203,8 @@ function AgentAnalyticsPanel({ campaigns }: { campaigns: readonly AgencyCampaign
   /**
    * ONE campaign by default, and this is the most consequential line in the file.
    *
-   * The roster used to open with `campaignId: null`. Core applies no campaign
-   * predicate when the parameter is absent and master forwards without defaulting,
+   * The roster used to open with `campaignId: null`. The API applies no campaign
+   * predicate when the parameter is absent and the API forwards without defaulting,
    * so the DEFAULT screen pooled every campaign in the account — and the median,
    * the middle-half band and the per-row chips were all computed against that pool.
    * A telecaller agency runs several dealerships at once, each with its own lead
@@ -254,7 +254,7 @@ function AgentAnalyticsPanel({ campaigns }: { campaigns: readonly AgencyCampaign
 
       There is deliberately no test asserting a loop that cannot currently happen:
       it would pass with this line removed, and a green assertion over an unreachable
-      state is the MAG-106 pattern. The test below pins the reachable half — repeated
+      state is a false-confidence pattern. The test below pins the reachable half — repeated
       renders with the same empty list issue one read.
     */
     setFilters((prev) => {
@@ -266,7 +266,7 @@ function AgentAnalyticsPanel({ campaigns }: { campaigns: readonly AgencyCampaign
   /**
    * The person being drilled into, or `null` for whichever list is showing.
    *
-   * A {@link NamedAgent} — an id and the name master resolved — because that is
+   * A {@link NamedAgent} — an id and the name the API resolved — because that is
    * exactly what the drill-down uses, and re-deriving the name would mean either a
    * second lookup or a blank caption. It used to be the whole roster row, and the
    * row's other twenty fields were never read: widening it to the two that are is
@@ -350,7 +350,7 @@ function AgentAnalyticsPanel({ campaigns }: { campaigns: readonly AgencyCampaign
    * selection could never survive to be pruned.
    *
    * Nothing about `useAgentRoster` changed to make this work. The tray is still
-   * mounted only on `ready` and still fetches nothing (E7); what moved is the
+   * mounted only on `ready` and still fetches nothing; what moved is the
    * ownership of two values whose whole purpose is to span a refetch.
    */
   const [compareOpen, setCompareOpen] = useState(false);
@@ -499,9 +499,9 @@ function AgentAnalyticsPanel({ campaigns }: { campaigns: readonly AgencyCampaign
   }, [page, compareSelected]);
 
   /*
-    Rows empty, but rows HIDDEN — a third answer, and an ordinary master response
-    rather than a shape violation: core returns two revoked agents, master filters
-    both and answers `200 { rows: [], inactive_omitted: 2, total_agents: 2 }`. It
+    Rows empty, but rows HIDDEN — a third answer, and an ordinary API response
+    rather than a shape violation: the dialer runtime returns two revoked agents, the server
+    filters both and answers `200 { rows: [], inactive_omitted: 2, total_agents: 2 }`. It
     used to render "nobody was handed a call in this window" AND "2 former members
     hidden — they dialled in this window" AND "2 agents dialled", simultaneously.
     `useAgentRoster` now reserves `empty` for "nothing to show and nothing hidden",
@@ -509,7 +509,7 @@ function AgentAnalyticsPanel({ campaigns }: { campaigns: readonly AgencyCampaign
 
     ── WHY it is empty is three answers, not one ─────────────────────────────
     This was `rows.length === 0` and the sentence said everyone had left the team.
-    Master drops rows for two independent reasons and only one of them is a
+    The API drops rows for two independent reasons and only one of them is a
     departure: `unattributed_omitted` is an id with no membership record of any
     status, which the toggle CANNOT reveal, so telling the reader to tick it is
     advice that does nothing — and calling those people former colleagues is a
@@ -922,7 +922,7 @@ function AgentAnalyticsPanel({ campaigns }: { campaigns: readonly AgencyCampaign
         It takes the page this section is already rendering and reads its rows and its
         `benchmark`. Nothing is fetched, so nothing in it can disagree with the table
         directly above it — and there was a server-shaped alternative that had to be
-        refused: master holds ONE query whitelist shared by `/my-stats` and its
+        refused: the API holds ONE query whitelist shared by `/my-stats` and its
         supervisory twin, so a `compare_to` param for a "vs team" line would expose it
         on the agent's own scorecard in the same edit, and the cohort band is
         supervisor-only.
@@ -1009,7 +1009,7 @@ function SelectedAgent({
   onBack,
 }: {
   /**
-   * Who is being looked at — an id and the name master resolved, and nothing else.
+   * Who is being looked at — an id and the name the API resolved, and nothing else.
    *
    * It was the whole roster row, and only these two fields were ever read. Narrowing
    * the prop to what it uses is what lets a CONTRIBUTION row open this screen: a
@@ -1032,7 +1032,7 @@ function SelectedAgent({
 }) {
   const userId = agent.agent_user_id;
   /*
-    The name master already resolved, through the same fallback the live floor uses
+    The name the API already resolved, through the same fallback the live floor uses
     — so an unresolvable agent is captioned with a marked-as-an-id stand-in rather
     than a blank, and never with a name this client invented.
   */

@@ -25,7 +25,7 @@
 }
 
 /*
- * The connect cue's VISUAL escalation (§A.4.3.1).
+ * The connect cue's VISUAL escalation.
  *
  * Fires only when the audible cue cannot carry the information — muted, an
  * `AudioContext` the browser will not run, or the agent's own `always`. For that
@@ -195,7 +195,7 @@
   whole meaning is "you are not receiving calls" rendered a healthy green dot
   beside the word "Disconnected" — the label was named explicitly and the
   indicator was left to the fallback, which is the same defect one layer down and
-  in the channel a supervisor glances at. §A.3 requires text, icon and colour to
+  in the channel a supervisor glances at. requires text, icon and colour to
   agree; two of the three disagreed.
 */
 .healthPill[data-state='disconnected'] .healthDot {
@@ -402,7 +402,7 @@
 }
 
 /*
- * §A.6.3 — the field filter. Sits above the field list at every density: this
+ * — the field filter. Sits above the field list at every density: this
  * is deliberately its own block rather than folded into `.fieldList` so it
  * never scrolls out of view with the rows it filters.
  */
@@ -468,7 +468,7 @@
 }
 
 /*
- * "Matching characters are marked" (§A.6.3), never colour alone (§A.11) — the
+ * "Matching characters are marked", never colour alone — the
  * background plus bold weight is a second channel a colour-blind agent or a
  * badly calibrated floor monitor still sees.
  */
@@ -778,7 +778,7 @@
  * Column 3 — the outcome. Same shell as the other columns so the three-column
  * geometry is literally one rule: a column that sized itself would drift the
  * moment its content changed, and geometry drift on this screen is a misclick
- * that hangs up on a person (§A.2).
+ * that hangs up on a person.
  */
 .colOutcome {
   display: flex;
@@ -824,7 +824,7 @@
 /*
  * Mute. Secondary weight — it sits next to the two controls that end things
  * (DNC, Hang up) and must not read as one of them. Geometry matches `.save` so
- * the action bar's row height never changes between states (§1, frozen
+ * the action bar's row height never changes between states (frozen
  * geometry): a bar that grows 4px when a call connects moves every control
  * under the agent's cursor.
  */
@@ -866,7 +866,7 @@
 }
 
 /*
- * A refusal, not an alarm. Core declined the presence change and said why; the
+ * A refusal, not an alarm. The API declined the presence change and said why; the
  * agent's next action is in the sentence. Warning weight rather than danger —
  * nothing failed, and `attempt_not_dispositionable` is the system working.
  */
@@ -915,7 +915,7 @@
 }
 
 /*
- * Danger weight, deliberately unlike `.presenceRefusal` above (`MAG-112`).
+ * Danger weight, deliberately unlike `.presenceRefusal` above.
  *
  * That one is a refusal — the system working, and the agent's next action is in
  * the sentence. This one means the agent pressed Hang up, believes the call is
@@ -946,7 +946,7 @@
   color: var(--warning, #d29922);
 }
 
-/* Beside the submit control, never a toast (§A.13.6). */
+/* Beside the submit control, never a toast. */
 .blockReason {
   font-size: 0.875rem;
   color: var(--text-secondary);

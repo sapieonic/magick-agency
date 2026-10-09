@@ -10,10 +10,6 @@
 # directory for the ${...} values below (web build args, published ports), and
 # `env_file` hands it to the server as its environment.
 #
-# Ported in part from core `docker/docker-compose.yml:5-8,67-77,105-112`@4850d1d9
-# (build context, env_file, depends_on health, restart policy, the Redis image).
-# Everything else is NEW.
-#
 # DEPLOYMENT INVARIANTS (docs/operations.md "Deployment invariants"):
 #   1. ONE replica of `server`. Never `--scale server=N` or `deploy.replicas`:
 #      the agency runtime, the bridge's unstored-token memo and every sweep

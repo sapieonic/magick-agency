@@ -33,18 +33,18 @@ const BASE = {
 
 describe('the subject and headline', () => {
   it('is the product owner’s exact sentence', () => {
-    // Pinned verbatim. The wording was specified, not derived, and a paraphrase
+    // Pinned exactly. The wording was specified, not derived, and a paraphrase
     // is the kind of change that lands in review as an improvement.
-    // PORT NOTE (magick-agency, decision B17): the brand is `Magick Agency`, so
-    // the noun is "Magick Agency Dialer" (master: "MagickVoice Agency Dialer").
+    // Decision B17: the brand is `Magick Agency`, so the noun is
+    // "Magick Agency Dialer".
     expect(renderAgentInviteEmail(BASE).subject)
       .toBe("You've been added to the Magick Agency Dialer");
   });
 
   it('composes the product noun from the brand — only the brand half moves', () => {
     /**
-     * "Agency Dialer" is the shipped name across master's governance catalog and
-     * three cusui surfaces (`RequireCapability`, `DialerUnavailable`,
+     * "Agency Dialer" is the shipped name across the governance catalog and
+     * the console surfaces (`RequireCapability`, `DialerUnavailable`,
      * `returnPath`). An invitee whose first contact with us names a product that
      * appears nowhere in the app they then open is worse off than one who sees
      * no branding at all — so the noun is fixed and the company name is the
@@ -56,8 +56,7 @@ describe('the subject and headline', () => {
   });
 
   it('does not double "Agency" when the brand already ends with it (B17)', () => {
-    // NEW in Magick Agency: the default brand is `Magick Agency`, and master's
-    // composition would have produced "Magick Agency Agency Dialer".
+    // The default brand is `Magick Agency`, and a plain composition would have produced "Magick Agency Agency Dialer".
     expect(agencyProductName('Magick Agency')).toBe('Magick Agency Dialer');
     expect(agencyProductName('Acme agency ')).toBe('Acme agency Dialer');
     // Only a whole trailing word counts.
@@ -91,7 +90,7 @@ describe('the supporting line', () => {
     /**
      * "Someone has set you up" reads like a phishing mail, which is the one
      * impression this message cannot afford. `inviter_name` is typed
-     * `string | null` on the API contract for the same reason: master genuinely
+     * `string | null` on the API contract for the same reason: the server genuinely
      * may not be able to name them.
      */
     const { textBody } = renderAgentInviteEmail({ ...BASE, inviterName: null });

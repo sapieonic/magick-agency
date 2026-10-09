@@ -273,7 +273,7 @@ describe('bucketStartSql / bucketTruncSql', () => {
     // every unresolvable zone to UTC in one more place than the repository owns.
     //
     // So the assertion is that the zone position holds the caller's expression
-    // VERBATIM — nothing added, for any unit and any expression.
+    // UNCHANGED — nothing added, for any unit and any expression.
     const zoneOperand = (unit: typeof AGENT_STATS_BUCKETS[number], tz: string): string => {
       const match = /AT TIME ZONE (.*)\)\)$/.exec(bucketTruncSql(unit, 'a.dialed_at', tz));
       if (!match) throw new Error(`no AT TIME ZONE operand in ${bucketTruncSql(unit, 'a.dialed_at', tz)}`);
@@ -318,7 +318,7 @@ describe('successDispositionSql', () => {
   });
 
   it('guards on element SHAPE, because the catalog\'s elements are unconstrained', () => {
-    // Migration 072 CHECKs only that the column is a JSON array. A malformed
+    // The column CHECKs only that the column is a JSON array. A malformed
     // catalog must not take a stats read down — same defensiveness as
     // `resolveDisposition`.
     expect(sql).toContain("jsonb_typeof(e) = 'object'");
@@ -385,7 +385,7 @@ describe('foldOccupancy', () => {
   });
 
   it('drops an unknown state rather than inventing a key', () => {
-    // Migration 105's CHECK and `AgencyAgentState` agree today. If a seventh state
+    // The `to_state` CHECK and `AgencyAgentState` agree today. If a seventh state
     // is added to one and not the other, an invented key is one the console's
     // exhaustive switch cannot render — and all six promised keys would still be
     // there, so nothing would look wrong.
@@ -427,7 +427,7 @@ describe('zeroOccupancy is ONE shape reached by three different causes', () => {
    * genuinely different things, and the repository's own comment calls the
    * collapse out as a contract limitation rather than an accident:
    *
-   *   1. **The agent has no events.** A session predating migration 105. The
+   *   1. **The agent has no events.** A session with no recorded transitions. The
    *      honest answer is "we recorded nothing".
    *   2. **The occupancy read FAILED.** `stats()` catches, warns, and substitutes
    *      `[]` so the attempt numbers still reach the caller. `AgencyAgentOccupancy`
@@ -435,7 +435,7 @@ describe('zeroOccupancy is ONE shape reached by three different causes', () => {
    *      way to say "not measured" on this payload.
    *   3. **Every row carried a state the contract does not know.** `foldOccupancy`
    *      drops an unknown state rather than inventing a key, so a vocabulary drift
-   *      between migration 105's CHECK and `AgencyAgentState` empties the block.
+   *      between the `to_state` CHECK and `AgencyAgentState` empties the block.
    *
    * All three produce byte-identical output. The tests below pin that, because the
    * property a consumer relies on is not "it is zeros" but "it is ALWAYS THE SAME
@@ -646,8 +646,8 @@ describe('parseRosterQuery: the window rules are imported, not restated', () => 
     // predicate its occupancy index is reachable through. This one names no agent,
     // so `rosterOccupancyTotals` differences every transition of every agent in the
     // ACCOUNT — an ~N-fold cost in a floor of N. Neither statement may carry a
-    // `LIMIT` (the benchmark needs the whole pre-`limit` cohort) and core sets no
-    // `statement_timeout`, so the window is the only bound there is.
+    // `LIMIT` (the benchmark needs the whole pre-`limit` cohort) and no
+    // `statement_timeout` is set, so the window is the only bound there is.
     const tooWide = parseRosterQuery({ from: '2025-01-01', to: '2026-08-24' });
     expect(rosterIssue(tooWide, 'from')).toContain(String(ROSTER_MAX_WINDOW_DAYS));
     // Named explicitly rather than only compared, so a future edit that "restored
@@ -935,7 +935,7 @@ describe('rosterPercentiles: the `percentile_cont` reading, null when empty', ()
 // WHICH question this read can answer lives — including the one rule that has no
 // counterpart anywhere else on this surface: a well-formed request, every value in
 // its vocabulary, that still cannot be answered because a time bucket across
-// campaigns in different zones is not one column (contract D5).
+// campaigns in different zones is not one column.
 //
 // ── The thresholds in this section, and which case pins each ────────────────
 //
@@ -1052,7 +1052,7 @@ describe('parseGroupedStatsQuery: `group_by` is required, whitelisted and capped
   });
 });
 
-describe('parseGroupedStatsQuery: a time dimension needs an unambiguous zone (D5)', () => {
+describe('parseGroupedStatsQuery: a time dimension needs an unambiguous zone', () => {
   // Buckets are cut in the CAMPAIGN's own `default_timezone`, so across campaigns
   // in different zones "the 18:00 row" is several local 18:00s summed into one
   // number that describes no hour anywhere. There is deliberately no implicit UTC
@@ -1105,15 +1105,15 @@ describe('parseGroupedStatsQuery: a time dimension needs an unambiguous zone (D5
     // the two `campaign,<time>` remedies — and `groupBy.some(needsZone)` and
     // `groupBy.every(needsZone)` agree on every one of those. They differ ONLY on a
     // pair holding one zoned dimension and one non-zoned dimension that is not
-    // `campaign`. Mutating that `some` to `every` therefore left the whole core
+    // `campaign`. Mutating that `some` to `every` therefore left the whole
     // suite green while ANSWERING these three requests: `agent,day` would sum one
     // agent's attempts across campaigns in Asia/Kolkata and Europe/London into a
     // single "2026-08-19" row, and `agent,hour_of_day` into a single "18:00" — which
-    // is exactly the reading D5 exists to refuse, on the third of the three screens
+    // is exactly the reading the zone rule exists to refuse, on the third of the three screens
     // the cap of two dimensions was sized for (`agent`+`day`, a trend).
     //
     // FALSIFICATION: change `some` to `every` in `groupByIsZoned` — the shared
-    // quantifier D5's condition now reads — and all three expectations below fail.
+    // quantifier the zone rule now reads — and all three expectations below fail.
     // (It also flips `resolved_timezone` to a string on these shapes, which
     // `groupedPageHasSingleZone`'s own block below pins.)
     for (const groupBy of ['agent,day', 'agent,hour_of_day', 'disposition,day_of_week']) {
@@ -1298,9 +1298,9 @@ describe('parseGroupedStatsQuery: sort, order and limit', () => {
   });
 });
 
-// ─── the page's single zone (02b E3) ────────────────────────────────────────
+// ─── the page's single zone ────────────────────────────────────────
 
-describe('groupByIsZoned: one quantifier, shared with D5\'s refusal', () => {
+describe('groupByIsZoned: one quantifier, shared with the zone refusal', () => {
   it('is true for each zoned dimension and false for each unzoned one', () => {
     for (const dimension of ['day', 'day_of_week', 'hour_of_day'] as const) {
       expect(groupByIsZoned([dimension]), dimension).toBe(true);
@@ -1312,7 +1312,7 @@ describe('groupByIsZoned: one quantifier, shared with D5\'s refusal', () => {
 
   it('is `some`, not `every` — a mixed pair IS cut in a zone', () => {
     // The one shape the two quantifiers disagree on, and the reason this is a named
-    // function rather than an inline `some` at each of its two call sites: D5's
+    // function rather than an inline `some` at each of its two call sites: the zone
     // refusal and `resolved_timezone` must agree about what "zoned" means, or a
     // page gets bucketed in a zone it then declines to name.
     //
@@ -1341,9 +1341,9 @@ describe('groupedPageHasSingleZone: BOTH halves, and the second is the load-bear
   it('is FALSE for `campaign` + a time dimension with no campaign_id filter', () => {
     // ── The case the whole predicate turns on ─────────────────────────────────
     //
-    // D5 accepts a time dimension on EITHER of two remedies and only ONE of them
+    // The zone rule accepts a time dimension on EITHER of two remedies and only ONE of them
     // narrows the read to a single zone. `group_by=campaign,hour_of_day` with no
-    // filter is a legal 200 (pinned by the D5 block above, and by the route test)
+    // filter is a legal 200 (pinned by the zone-rule block above, and by the route test)
     // spanning every campaign in the account — `default_timezone` is per campaign
     // with no account-level uniqueness, so those rows are cut in N zones and there
     // is no one label for the page.
@@ -1375,7 +1375,7 @@ describe('groupedPageHasSingleZone: BOTH halves, and the second is the load-bear
 
   it('agrees with the parser: every read it calls single-zoned is one the parser ALLOWS', () => {
     // The two rules meet on real requests rather than on hand-built params. A
-    // predicate that reported "one zone" for a request D5 refuses would be
+    // predicate that reported "one zone" for a request the zone rule refuses would be
     // describing a page that cannot exist.
     const zoned = parseGroupedStatsQuery({
       ...GROUP_QUERY, group_by: 'day_of_week,hour_of_day', campaign_id: ONE_CAMPAIGN,

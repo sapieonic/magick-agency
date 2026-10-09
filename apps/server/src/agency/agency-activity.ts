@@ -1,30 +1,32 @@
 import type { AuditLogRecord } from '@magick-agency/db/models/platform/audit.model';
 import type { PlatformAuditActorType } from '../audit/platform/catalog.js';
 // The CSV primitives, and the formula guard in particular, live in one leaf
-// module shared with MAG-159's attempts/roster exports — see that file for why
-// a second copy of an injection guard is a defect rather than a duplication.
+// module shared with the attempts/roster exports — see that file for why a
+// second copy of an injection guard is a defect rather than a duplication.
 import { preambleLine, sanitizePreambleValue, toCsvLine } from './agency-csv.js';
 
 /**
- * The campaign activity trail: master's audit rows and core's, merged into one
- * time-ordered stream (MAG-158).
+ * The campaign activity trail: the two audit tables' rows, merged into one
+ * time-ordered stream.
  *
  * ── Why this is application code and not a query ────────────────────────────
- * The two audit stores are separate databases with different schemas. Core's
- * `audit_logs` has `event_type` / `event_category` / `severity` / `event_data` /
- * `actor` / `timestamp`; master's `platform_audit_log` has `action` /
- * `resource_type` / `resource_id` / `details` / `user_id` / `created_at`. They
- * share no connection and no vocabulary, so there is no join to write — master
- * fetches core's page over S2S and interleaves it here.
+ * Two audit tables with different schemas are kept (decision B7). `audit_logs`
+ * (the dialer half, source `'core'`) has `event_type` / `event_category` /
+ * `severity` / `event_data` / `actor` / `timestamp`; `platform_audit_log` (the
+ * console half, source `'master'`) has `action` / `resource_type` /
+ * `resource_id` / `details` / `user_id` / `created_at`. They share no
+ * vocabulary, so there is no join to write — `agency-activity.service.ts` reads
+ * a page from each and interleaves them here.
  *
  * ── The two halves are complementary, not redundant ─────────────────────────
- * Both services write `agency_campaign.paused`, and both rows belong in the
- * trail: master's records that a supervisor pressed Pause, core's records that
- * the campaign actually transitioned. `source` is what tells them apart, which
- * is why it is a first-class field rather than an implementation detail. The
- * rows only core has are the ones a compliance reviewer came for — the
- * auto-pause with its measured abandonment rate — and the rows only master has
- * are the dispositions, DNC marks and staffing changes.
+ * Both halves record `agency_campaign.paused`, and both rows belong in the
+ * trail: the `platform_audit_log` row records that a supervisor pressed Pause,
+ * the `audit_logs` row records that the campaign actually transitioned. `source`
+ * is what tells them apart, which is why it is a first-class field rather than an
+ * implementation detail. The rows only `audit_logs` has are the ones a compliance
+ * reviewer came for — the auto-pause with its measured abandonment rate — and the
+ * rows only `platform_audit_log` has are the dispositions, DNC marks and staffing
+ * changes.
  *
  * ── Pagination is keyset, and it has to be ──────────────────────────────────
  * Two OFFSET-paginated sources cannot be merged coherently: an OFFSET counts
@@ -41,23 +43,23 @@ export type ActivitySource = 'master' | 'core';
 /**
  * What kind of principal a merged row is attributed to.
  *
- * The three values master persists (`PlatformAuditActorType`) plus `'unknown'`,
- * which is NOT a fourth thing that can be written — it is how a row whose
- * attribution was never recorded reports itself. Two shapes land on it:
- * master's rows from before migration 067 (`actor_type IS NULL`), and core's,
- * which have no equivalent column at all and only ever carried an originator
- * string. Saying `unknown` is the honest report; the alternative — inferring
- * `human` from "there is a name" — is precisely the inference 86d45t7rm exists
- * to stop, one layer up.
+ * The values `platform_audit_log` persists (`PlatformAuditActorType`) plus
+ * `'unknown'`, which is NOT another thing that can be written — it is how a row
+ * whose attribution was never recorded reports itself. Two shapes land on it:
+ * `platform_audit_log` rows from before the `actor_type` column existed
+ * (`actor_type IS NULL`), and `audit_logs` rows, which have no equivalent column
+ * at all and only ever carry an originator string. Saying `unknown` is the honest
+ * report; the alternative — inferring `human` from "there is a name" — is
+ * precisely the inference the `actor_type` column exists to stop, one layer up.
  *
  * ⚠️ `'unknown'` appears in NO served vocabulary, and that is a deliberate
  * asymmetry rather than an oversight. `PLATFORM_AUDIT_ACTOR_TYPE_VOCABULARY`
- * (served on `GET /audit-log`) labels only the three values master WRITES,
- * because it is a filter list and "not recorded" is an absence rather than a
- * value to select — it is a date range wearing a different name. This union has
- * a fourth member because it describes what a merged ROW can report, which is a
- * different question. The consequence for a client: the activity trail can hand
- * back an `actor.type` the vocabulary does not label, so cusui owns that string.
+ * (served on `GET /audit-log`) labels only the values that are WRITTEN, because
+ * it is a filter list and "not recorded" is an absence rather than a value to
+ * select — it is a date range wearing a different name. This union has an extra
+ * member because it describes what a merged ROW can report, which is a different
+ * question. The consequence for a client: the activity trail can hand back an
+ * `actor.type` the vocabulary does not label, so the console owns that string.
  * Render it as "unattributed" or fall back to `display`; do not render the raw
  * enum, and do not treat it as `system` (see {@link ActivityActor}).
  */
@@ -71,39 +73,38 @@ export type ActivityActorType = PlatformAuditActorType | 'unknown';
  * `agency-agent-identity.ts` states and this follows.
  *
  * ── `type` is the fact; `system` is what to RENDER, and they can differ ─────
- * `system: true` used to be the WHOLE of "no human behind this row", and it was
- * computed from `user_id === null`. That inference is no longer sound on
- * master's half: after 86d45t7rm a key-authenticated row deliberately has no
- * `user_id`, and reading it as `system` would report "nothing human was
- * involved" about an action somebody's credential performed — the opposite
- * conclusion, on the one surface whose job is to be believable.
+ * `system` is not computed from `user_id === null`. A null `user_id` is not by
+ * itself proof that nothing human was behind a `platform_audit_log` row, and
+ * reading it as `system` where a person or their credential acted would report
+ * "nothing human was involved" — the opposite conclusion, on the one surface
+ * whose job is to be believable. `actor_type` records the fact instead.
  *
  * So `type` is the recorded fact and `system` is the rendering flag, and on a
- * POST-067 row they agree exactly (`system === (type === 'system')`).
+ * row that has an `actor_type` they agree exactly (`system === (type ===
+ * 'system')`).
  *
- * ⚠️ **On a PRE-067 row they deliberately disagree**, and a client must not
- * "simplify" one into the other. Such a row reports `type: 'unknown'` — nothing
- * was recorded, and saying otherwise is the invention this whole change removes
- * — while `system` keeps the legacy `user_id === null` reading so the row
- * renders exactly as it always did. Every background write in every campaign
- * trail from before the migration is that shape: `{ type: 'unknown', system:
- * true }`. Rewriting an actor column as `type === 'system'` would flip all of
- * them from "system" to an unhandled `'unknown'`, which is a visible rewrite of
- * history for a change whose whole promise was that history renders unchanged.
+ * ⚠️ **On a row with no `actor_type` they deliberately disagree**, and a client
+ * must not "simplify" one into the other. Such a row reports `type: 'unknown'` —
+ * nothing was recorded, and saying otherwise is an invention — while `system`
+ * keeps the legacy `user_id === null` reading so the row renders exactly as it
+ * always did. Every background write in every campaign trail from before the
+ * column is that shape: `{ type: 'unknown', system: true }`. Rewriting an actor
+ * column as `type === 'system'` would flip all of them from "system" to an
+ * unhandled `'unknown'`, which is a visible rewrite of history.
  *
  * So: read `system` to decide what to show; read `type` to know whether the
  * human/key distinction was actually captured for that row.
  *
  * `display` carries whatever names the actor best: a person's display name or
- * email, the API key's name, or — for a system row — the mechanism that acted,
- * which is the fact a reviewer needs.
+ * email, or — for a system row — the mechanism that acted, which is the fact a
+ * reviewer needs.
  */
 export interface ActivityActor {
   type: ActivityActorType;
   /**
    * Whether to render this row as having no human behind it.
    *
-   * Equals `type === 'system'` on every row written since migration 067. On an
+   * Equals `type === 'system'` on every row that has an `actor_type`. On an
    * older row it is the legacy `user_id === null` reading while `type` is
    * `'unknown'` — see the interface header before assuming the two are
    * interchangeable.
@@ -111,20 +112,16 @@ export interface ActivityActor {
   system: boolean;
   user_id: string | null;
   /**
-   * The platform API key that acted, when `type === 'api_key'`. Null otherwise —
-   * including on core's rows, which have no notion of master's credentials.
-   *
-   * The person who MINTED the key is deliberately not here and is not `user_id`:
-   * that is `platform_api_keys.created_by`, a fact about the credential rather
-   * than about this action. Copying it into an actor field is the defect this
-   * whole field exists to replace.
+   * Always `null`: there are no platform API keys in v1 (`docs/decisions.md`,
+   * "Platform API keys"). The key stays on the shape because the contracts'
+   * `ActivityActor` carries it.
    */
   api_key_id: string | null;
   display: string | null;
 }
 
 export interface ActivityRow {
-  /** Globally unique across both stores — the per-store ids share no namespace. */
+  /** Globally unique across both tables — the per-table ids share no namespace. */
   id: string;
   /** ISO 8601. */
   at: string;
@@ -152,17 +149,15 @@ export const ACTIVITY_DEFAULT_LIMIT = 50;
 /**
  * The interactive page ceiling — a UI page size, and nothing more.
  *
- * It was 99 rather than 100 because core's `/internal/audit-logs` capped a
- * request at 100 and the merge asks each source for `limit + 1`, so a merged
- * limit of 100 asked core for 101, got a 400, and degraded every full-size page
- * to `partial` — a failure that looked exactly like core being down. Core's cap
- * is now 1000, so 99 is no longer forced by it; it stays because a supervisor's
- * screen renders tens of rows, and the constraint it was chosen for still binds
- * every page size here:
+ * 99 because a supervisor's screen renders tens of rows. The constraint that
+ * binds every page size here is the repositories' own clamp:
  *
- *   **`<page size> + 1` must be `<=` core's `/internal/audit-logs` cap.**
+ *   **`<page size> + 1` must be `<=` `AUDIT_FIND_MAX_LIMIT` (1000).**
  *
- * That applies to {@link ACTIVITY_EXPORT_PAGE_SIZE} as well, and it is pinned by
+ * The merge asks each table for `limit + 1`, and `auditRepository.findFiltered`
+ * silently clamps a larger request to its cap — so an over-sized page loses its
+ * look-ahead row and the merge reads it as the end of the trail. That applies to
+ * {@link ACTIVITY_EXPORT_PAGE_SIZE} as well, and it is pinned by
  * `describe('the page ceiling')` in `test/unit/agency/agency-activity.test.ts`.
  */
 export const ACTIVITY_MAX_LIMIT = 99;
@@ -171,15 +166,15 @@ export const ACTIVITY_MAX_LIMIT = 99;
  * The page size the CSV export walks with.
  *
  * The export is not paging for a reader, it is draining the whole filtered trail
- * — and every page costs one master `SELECT`, one S2S round trip to core and one
- * identity lookup, all in series. At the interactive page size a 5000-row export
- * was ~51 of those trips end to end; at 500 it is ~10.
+ * — and every page costs two audit `SELECT`s and one identity lookup. At the
+ * interactive page size a 5000-row export would be ~51 of those pages; at 500 it
+ * is ~10.
  *
  * Bounded above by the same invariant as {@link ACTIVITY_MAX_LIMIT}: the merge
- * asks each source for `limit + 1`, so `ACTIVITY_EXPORT_PAGE_SIZE + 1` must fit
- * inside core's request cap (1000) and inside master's own repository ceiling.
- * Overrun core's and every full-size page 400s into `partial`, which on this
- * route is a 424 refusal of the whole export.
+ * asks each table for `limit + 1`, so `ACTIVITY_EXPORT_PAGE_SIZE + 1` must fit
+ * inside both repositories' clamps (1000 each). Overrun them and every full-size
+ * page is silently shortened, so the export would stop early while reporting
+ * itself complete.
  */
 export const ACTIVITY_EXPORT_PAGE_SIZE = 500;
 
@@ -195,109 +190,87 @@ export const ACTIVITY_EXPORT_MAX_ROWS = 5000;
  * Wall-clock budget for the export loop.
  *
  * The row ceiling bounds how much is written, not how long the writing takes:
- * every page is a live round trip to core, and a core that is answering slowly
- * rather than failing keeps the loop legal and unbounded. Without a deadline the
- * handler holds its Fastify connection, its Postgres client and an undici socket
- * for as long as core cares to take — and a compliance export is exactly the
- * request an operator retries when nothing comes back, so the slow case
- * multiplies itself.
+ * every page is a set of live database reads, and a database that is answering
+ * slowly rather than failing keeps the loop legal and unbounded. Without a
+ * deadline the handler holds its Fastify connection and its Postgres clients for
+ * as long as the reads take — and a compliance export is exactly the request an
+ * operator retries when nothing comes back, so the slow case multiplies itself.
  *
- * 30s is chosen against the reader, not against core: it sits inside the
- * browser's patience and well inside the 300s undici header timeout the proxy
- * layer runs with, so the export gives up on its own terms rather than being cut
- * off mid-file by a socket. Expiry is reported like the row ceiling — a short
- * file must never be handed over as a complete one — and carries its own
- * reason, because "narrow the date range" is the wrong remedy for a slow
- * dependency.
+ * 30s is chosen against the reader: it sits inside the browser's patience, so the
+ * export gives up on its own terms rather than being cut off mid-file. The
+ * deadline is checked between pages, at the bottom of the loop. Expiry is
+ * reported like the row ceiling — a short file must never be handed over as a
+ * complete one — and carries its own reason, because "narrow the date range" is
+ * the wrong remedy for a slow dependency.
  */
 export const ACTIVITY_EXPORT_TIME_BUDGET_MS = 30_000;
 
 /**
- * Floor on the per-page core timeout the export derives from its budget.
+ * Floor on a per-page timeout derived from the export budget.
  *
- * The export's deadline check runs at the BOTTOM of its loop, deliberately, so
- * the budget can never expire before any work has been done — which means the
- * first page is entitled to run even if the clock has somehow already passed the
- * deadline when it starts. Without a floor, "entitled to run" would mean
- * "entitled to run under `AbortSignal.timeout(0)`", i.e. an instantly-aborted
- * page reported as a truncated EMPTY export, which is the outcome that check
- * exists to prevent.
- *
- * It applies to the first page only. Every later page is reached through that
- * bottom check, so its remainder is already positive and is used verbatim — a
- * page starting with 1ms left should abort at once, because the deadline is the
- * answer at that point.
- *
- * So the honest statement of the bound is `budget + one floor`, not `budget`.
- * What matters is that it is nowhere near the 300s undici header timeout a core
- * call falls back to with no `timeoutMs` at all, which is the hole this constant
- * exists alongside closing.
+ * Nothing in `src/` reads this today: the export loop applies no per-page
+ * timeout, because `fetchActivityPage` is two database reads with no
+ * `AbortSignal` to arm. The bound on a slow export is the between-pages deadline
+ * check against {@link ACTIVITY_EXPORT_TIME_BUDGET_MS}, which runs at the BOTTOM
+ * of the loop so the budget can never expire before any work has been done.
  */
 export const ACTIVITY_EXPORT_MIN_PAGE_TIMEOUT_MS = 5_000;
 
 /**
- * Bound on the ownership probe — the campaign read that runs BEFORE either
+ * Bound for the ownership probe — the campaign read that runs BEFORE either
  * audit read on both activity routes.
  *
- * **Its own budget, not a draw against the export's, and the reason is that the
- * probe is not part of the export.** It runs identically on the JSON route,
- * which has no wall-clock budget to draw from; and on the CSV route a probe that
- * consumed the export's allowance would produce a `time_limit` truncation whose
- * stated remedy ("retry to continue past this point") describes a trail that was
- * never reached at all. Two bounds, each answering for its own call, is the only
- * arrangement where the reported reason is true.
+ * Not applied to any call in `src/` today. The probe is `callCore` into the
+ * internal handler's campaign read, which runs in-process: there is no transport
+ * to time out (`timeoutMs` is accepted and ignored), and a failing read
+ * propagates rather than landing on a degraded branch. The figure stays as the
+ * reference other budgets are compared against (`TRANSITION_ACTOR_LOOKUP_TIMEOUT_MS`
+ * is argued against it, and the suites compare to it).
  *
- * Shorter than the export budget because it is one small read of one row, and
- * because everything downstream of it is still ahead: a probe allowed to eat 30s
- * leaves nothing for the pages it exists to authorise.
- *
- * A probe that times out lands on `proxyToCore`'s catch, i.e. the UNVERIFIED
- * branch — master-side scoping, `partial` on the JSON route and a 424 refusal on
- * the CSV one. That is the correct outcome and not a truncation: a core too slow
- * to confirm who owns the campaign has not told us the trail is short, it has
- * told us nothing, and an export cannot be assembled from that.
+ * Its reasoning still holds for any bound placed on the probe: it is its own
+ * budget, not a draw against the export's, because the probe is not part of the
+ * export — it runs identically on the JSON route, which has no wall-clock budget,
+ * and on the CSV route a probe that consumed the export's allowance would produce
+ * a `time_limit` truncation whose stated remedy describes a trail that was never
+ * reached. And it is shorter than the export budget because it is one small read
+ * of one row with everything downstream still ahead.
  */
 export const ACTIVITY_OWNERSHIP_PROBE_TIMEOUT_MS = 10_000;
 
 /** Why an export stopped before the trail ran out. Reported, never swallowed. */
 export type ActivityExportTruncation = 'row_limit' | 'time_limit';
 
-/** Actor prefix core uses for rows with no HTTP caller behind them. */
+/** Actor prefix the dialer runtime stamps on `audit_logs` rows with no caller behind them. */
 const SYSTEM_ACTOR_PREFIX = 'system:';
 
 // ── Normalisation ───────────────────────────────────────────────────────────
 
 /**
- * One of master's rows.
+ * One `platform_audit_log` row.
  *
  * `display` is resolved by the caller, which holds the user and API-key tables;
  * an unresolvable id yields `null` rather than dropping the row. A deleted
  * user's — or a revoked key's — actions are still part of the trail, and hiding
  * them would be the one omission an audit cannot afford.
  *
- * ── The attribution is READ from the row, no longer inferred ────────────────
- * This used to compute `system` as `user_id === null`, which was sound only
- * while a null `user_id` had exactly one cause (a background write). Since
- * 86d45t7rm it has two: a key-authenticated action deliberately records the
- * CREDENTIAL and no user, and rendering that as `system` would tell a reviewer
- * nothing human was involved in an action somebody's key performed.
- * `row.actor_type` is now the answer, and it is written at every audited call
- * site in the service.
+ * ── The attribution is READ from the row, not inferred ──────────────────────
+ * `system` is not computed as `user_id === null`, which is sound only while a
+ * null `user_id` has exactly one cause (a background write). `row.actor_type` is
+ * the answer, and it is written at every audited call site in the service.
  *
  * ── …except on rows that predate the column, which keep the old reading ─────
- * `actor_type IS NULL` means "written before migration 067", and there is
- * nothing to read. Those rows fall back to the exact inference this function
- * made before the column existed, so historical rows render today as they
- * rendered yesterday — a display change on old rows would look like the trail
- * being rewritten. `type` reports `'unknown'` for them regardless, so a client
- * that wants to know whether the distinction was actually recorded can ask,
- * while `system`/`display` stay bit-for-bit what they were.
+ * `actor_type IS NULL` means "written before the column existed", and there is
+ * nothing to read. Those rows fall back to the `user_id === null` inference, so
+ * historical rows render as they always rendered — a display change on old rows
+ * would look like the trail being rewritten. `type` reports `'unknown'` for them
+ * regardless, so a client that wants to know whether the distinction was actually
+ * recorded can ask, while `system`/`display` stay bit-for-bit what they were.
  */
 export function normalizeMasterRow(
   row: AuditLogRecord,
   displayNames: ReadonlyMap<string, string | null>,
 ): ActivityRow {
-  // The legacy reading, used ONLY to keep pre-067 rows rendering unchanged.
+  // The legacy reading, used ONLY to keep rows with no `actor_type` rendering unchanged.
   const legacySystem = row.user_id === null;
   const isSystem = row.actor_type === null ? legacySystem : row.actor_type === 'system';
 
@@ -310,8 +283,8 @@ export function normalizeMasterRow(
       type: row.actor_type ?? 'unknown',
       system: isSystem,
       user_id: row.user_id,
-      // PORT NOTE (magick-agency): no API keys (decision #5). The wire shape still carries the
-      // key, always null, so `@magick-agency/contracts/api/agency` `ActivityActor` is met.
+      // No platform API keys in v1. The wire shape still carries the key, always
+      // null, so `@magick-agency/contracts/api/agency` `ActivityActor` is met.
       api_key_id: null,
       display: resolveMasterDisplay(row, isSystem, displayNames),
     },
@@ -321,14 +294,12 @@ export function normalizeMasterRow(
 }
 
 /**
- * What to show in the actor column for one of master's rows.
+ * What to show in the actor column for one `platform_audit_log` row.
  *
- * A key's row names the KEY ("Zapier integration"), never its creator: naming
- * the creator on the screen is the same misattribution as naming them in the
- * column, and it is the one a reader would actually act on. An unresolvable key
- * falls back to a bare label rather than to a raw uuid, for the reason
- * `resolveDisplayNames` gives about people — a uuid identifies nobody — and
- * `api_key_id` is on the row for anyone who needs the id itself.
+ * A system row shows `'system'`. Otherwise the resolved name for `user_id`, or
+ * `null` when there is no user or the id does not resolve — never a raw uuid,
+ * for the reason `resolveDisplayNames` gives: a uuid identifies nobody, and
+ * `user_id` is on the row for anyone who needs the id itself.
  */
 function resolveMasterDisplay(
   row: AuditLogRecord,
@@ -339,7 +310,7 @@ function resolveMasterDisplay(
   return row.user_id === null ? null : displayNames.get(row.user_id) ?? null;
 }
 
-/** One row as core's `GET /internal/audit-logs` returns it. */
+/** One `audit_logs` row, as `readCore` (`agency-activity.service.ts`) enumerates it. */
 export interface CoreAuditLogRow {
   id: string;
   timestamp: string;
@@ -353,17 +324,17 @@ export interface CoreAuditLogRow {
 }
 
 /**
- * One of core's rows.
+ * One `audit_logs` row.
  *
- * Core has no `resource_type`/`resource_id` columns, so the target is derived:
- * an agency row carries the campaign in `event_data.campaign_id` (which is what
- * migration 094's expression index covers), and a call-scoped row carries
+ * `audit_logs` has no `resource_type`/`resource_id` columns, so the target is
+ * derived: an agency row carries the campaign in `event_data.campaign_id` (which
+ * is what `idx_audit_logs_campaign_id` covers), and a call-scoped row carries
  * `call_id`. Neither is invented — a row with no derivable target reports
  * nulls rather than being filed against the campaign by assumption.
  *
  * `severity` is folded into `detail` rather than promoted to a column of its
- * own: master has no equivalent, and a field that exists on half a merged
- * stream reads as missing data on the other half.
+ * own: `platform_audit_log` has no equivalent, and a field that exists on half a
+ * merged stream reads as missing data on the other half.
  */
 export function normalizeCoreRow(row: CoreAuditLogRow): ActivityRow {
   const actor = row.actor ?? null;
@@ -383,33 +354,32 @@ export function normalizeCoreRow(row: CoreAuditLogRow): ActivityRow {
     source: 'core',
     action: row.event_type,
     actor: {
-      // Core stamps `system:<mechanism>` when nothing human triggered the write.
-      // A bare actor is an originator string, not a user id — core has no user
-      // table (design D3) — so `user_id` stays null and the string is the
-      // display, which is the whole of the identity core can offer.
+      // The dialer runtime stamps `system:<mechanism>` when nothing human
+      // triggered the write. A bare actor is an originator string, not a user id
+      // — `audit_logs.actor` is free text — so `user_id` stays null and the
+      // string is the display, which is the whole of the identity the row
+      // offers.
       //
-      // A non-system core actor is `'unknown'`, NOT `'human'`. Core has no
-      // notion of master's platform API keys and its originator string cannot
-      // say whether a person was behind the call — claiming `human` would be
-      // manufacturing exactly the fact master added `actor_type` because nobody
-      // had recorded it. Whether core should carry the discriminator too is the
-      // open half of 86d45t7rm.
+      // A non-system `audit_logs` actor is `'unknown'`, NOT `'human'`. The
+      // originator string cannot say whether a person was behind the call —
+      // claiming `human` would be manufacturing exactly the fact
+      // `platform_audit_log.actor_type` exists to record. `audit_logs` carries
+      // no such discriminator today.
       //
       // ── `type` and `system` DIVERGE on a null actor, deliberately ─────────
       // Only the explicit `system:` prefix PROVES the write was automatic. A
-      // null actor is core having recorded nothing — `parseCoreBody` also
-      // normalises a non-string to null — and "I could not work out who" is not
-      // "no caller existed". Reading it as `system` is the strongest claim on
-      // the enum manufactured out of missing data, which is the ambiguity in
-      // core's own `last_transition_by` that this ticket exists to stop
-      // recreating (`proxy-agency-campaigns.routes.ts` states it at length:
-      // `system` and `unattributed` are opposite conclusions for an incident).
+      // null actor is the row having recorded nothing, and "I could not work
+      // out who" is not "no caller existed". Reading it as `system` is the
+      // strongest claim on the enum manufactured out of missing data — the same
+      // ambiguity a null `last_transition_by` carries on the campaign row
+      // (`proxy-agency-campaigns.routes.ts` states it at length: `system` and
+      // `unattributed` are opposite conclusions for an incident).
       //
-      // `system` keeps the pre-067 reading unchanged, exactly as
+      // `system` keeps the legacy reading unchanged, exactly as
       // `normalizeMasterRow` does for a NULL `actor_type`: it is what the page
-      // renders from, and a display shift on historical core rows reads as the
-      // audit being rewritten. So: read `system` to RENDER, `type` to know
-      // whether the distinction was actually captured.
+      // renders from, and a display shift on historical rows reads as the audit
+      // being rewritten. So: read `system` to RENDER, `type` to know whether the
+      // distinction was actually captured.
       type: actor !== null && actor.startsWith(SYSTEM_ACTOR_PREFIX) ? 'system' : 'unknown',
       system: actor === null || actor.startsWith(SYSTEM_ACTOR_PREFIX),
       user_id: null,
@@ -493,7 +463,7 @@ function lastPositionFrom(rows: readonly ActivityRow[], source: ActivitySource):
   for (let i = rows.length - 1; i >= 0; i -= 1) {
     const row = rows[i]!;
     // The prefix is this module's own (`master:` / `core:`); the repositories
-    // are handed the store's own id, so it has to come back off here.
+    // are handed the table's own id, so it has to come back off here.
     if (row.source === source) return { at: row.at, id: row.id.slice(source.length + 1) };
   }
   return null;
@@ -567,13 +537,14 @@ export const ACTIVITY_CSV_COLUMNS = [
   'target_type',
   'target_id',
   'detail',
-  // ── The two 86d45t7rm columns are APPENDED, and that placement is the point ──
+  // ── The two actor-type columns are APPENDED, and that placement is the point ──
   //
-  // They belong beside `actor`: `actor_type` says which of the identity columns
-  // to read, because a row reading `api_key` with an empty `actor_user_id` is
-  // FULLY attributed (the credential is named), while the same empty cell under
-  // `human` is a name that could not be resolved — and nothing else in the row
-  // distinguishes those. That is a real legibility argument and it lost to a
+  // They belong beside `actor`: `actor_type` says how to read the identity
+  // columns — an empty `actor_user_id` under `system` is a complete attribution,
+  // the same empty cell under `human` is a name that could not be resolved, and
+  // under `unknown` the distinction was never recorded — and nothing else in the
+  // row distinguishes those. (`actor_api_key_id` is always empty: there are no
+  // platform API keys in v1.) That is a real legibility argument and it lost to a
   // bigger one.
   //
   // This file calls the column set "a fixed contract a spreadsheet reads", and
@@ -653,7 +624,7 @@ export interface ActivityCsvPreambleInput {
   campaignId: string;
   campaignName: string | null;
   tenantId: string;
-  /** The account core's rows were scoped to (`ownedCampaign.coreAccountId`), not the raw request header. */
+  /** The account the `audit_logs` rows were scoped to — the campaign row's own `account_id`, not the raw request header. */
   accountId: string;
   /** `null` means the filter was never supplied — distinct from an (impossible) empty list. */
   actions: string[] | null;
@@ -663,7 +634,7 @@ export interface ActivityCsvPreambleInput {
   truncated: ActivityExportTruncation | null;
   /** Only meaningful when `truncated === 'row_limit'`; mirrors `ACTIVITY_EXPORT_MAX_ROWS`. */
   rowLimit: number;
-  /** `null` when core answered but carried no readable retention horizon — reported, not omitted. */
+  /** `null` when no readable retention horizon was available — reported, not omitted. */
   retention: ActivityCsvPreambleRetention | null;
 }
 
@@ -706,7 +677,7 @@ export function buildActivityCsvPreamble(input: ActivityCsvPreambleInput): strin
         : `unknown (source: ${sanitizePreambleValue(input.retention.source)})`;
 
   return [
-    // PORT NOTE (magick-agency, decision B17): "Magick Agency" (master: "MagickVoice platform").
+    // The product name, decision B17.
     preambleLine('Magick Agency — campaign activity export'),
     preambleLine(`Generated: ${input.generatedAt.toISOString()} (UTC)`),
     preambleLine(`Campaign: ${name} (id: ${sanitizePreambleValue(input.campaignId)})`),

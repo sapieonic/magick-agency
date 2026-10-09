@@ -10,7 +10,7 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
-// PORT NOTE (magick-agency, decision B17): renamed from cusui's `magickvoice-theme`; no stored values to migrate.
+// Decision B17: the key is brand-specific to Magick Agency.
 const STORAGE_KEY = 'magick-agency-theme';
 
 function getInitialTheme(): Theme {

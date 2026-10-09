@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// AD-P2-C-05 — resolving the apology clip an abandoned call plays.
+// Resolving the apology clip an abandoned call plays.
 //
 // The property under test is not "it returns a hash". It is that **no input
 // makes this throw**, because every caller is a live customer who has just
@@ -14,26 +14,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //
 // Self-contained mock harness (project convention: no shared test utilities).
 //
-// PORT NOTE (magick-agency, Phase 6). Ported from core
-// test/unit/agency/abandon-clip.test.ts@4850d1d9 (16 cases → 11). Decision #4
-// ("uploaded clip only, no TTS") deletes `abandon-clip.ts`'s TTS branch, and the
-// baseline narrows `announcements.type` to `'audio'` and drops the `tts_*` columns.
-// Deleted (they test only the synthesis branch):
-//   - "reports `failed` — not a throw — when synthesis blows up"
-//   - "synthesizes a TTS apology with the announcement’s own voice and language"
-//   - "defaults only the voice, and never the wording (D8)"
-//   - "passes an unrecognised language through RAW rather than defaulting it"
-//   - "interpolates NOTHING — an apology is about us, not the contact"
-// Modified:
-//   - "reports `no_content` for TTS text that is empty or whitespace" → a row that is
-//     not `'audio'` is `no_content` (the arm the port keeps in place of the TTS branch),
-//     and nothing is decoded.
-//   - "resolves a FOREIGN announcement to no clip" — the `generateTtsAudio` assertion
-//     is gone with the module; the `ensurePcmClip` one stays.
-//   - "is NOT memoized" — driven with two audio announcements instead of two TTS texts;
-//     same property (two reads, two answers).
-// The `tts-generator` mock is removed (no such module); mock specifiers follow the path
-// rule (`@magick-agency/observability`, `@magick-agency/db/repositories/*`).
+// Decision #4 ("uploaded clip only, no TTS"): `abandon-clip.ts` has no synthesis
+// branch, `announcements.type` is narrowed to `'audio'` and there are no `tts_*`
+// columns. A row that is not `'audio'` therefore resolves to `no_content`, and
+// nothing is decoded. Mock specifiers: `@magick-agency/observability`,
+// `@magick-agency/db/repositories/*`.
 // ---------------------------------------------------------------------------
 
 const { logSpy } = vi.hoisted(() => ({
@@ -55,7 +40,6 @@ vi.mock('@magick-agency/db/repositories/audio-file.repository', () => ({
   audioFileRepository: audioFiles,
 }));
 
-// PORT NOTE: `generateTtsAudio` / the `tts-generator` mock removed (decision #4).
 const { ensurePcmClip } = vi.hoisted(() => ({
   ensurePcmClip: vi.fn(),
 }));
@@ -66,8 +50,6 @@ import { resolveAbandonClip } from '../../../src/agency/abandon-clip.js';
 /** The campaign's own tenancy — what the announcement is allowed to belong to. */
 const SCOPE = { tenantId: 't1', accountId: 'a1' };
 
-// PORT NOTE: `ttsAnnouncement` removed with the TTS branch; the `tts_*` fields are
-// gone from the announcement row (baseline; decision #4).
 function audioAnnouncement(over: Record<string, unknown> = {}) {
   return {
     id: 'ann-2', tenant_id: 't1', account_id: 'a1', name: 'Recorded apology',
@@ -94,7 +76,7 @@ describe('resolveAbandonClip — the four ways there is no clip', () => {
   });
 
   it('reports `not_found` for a dangling id rather than throwing', async () => {
-    // Migration 080 ships NO foreign key, deliberately, so an operator deleting
+    // The schema has NO foreign key here, deliberately, so an operator deleting
     // an announcement leaves exactly this state. It has to be survivable.
     announcements.findActiveByIdScoped.mockResolvedValue(null);
     expect(await resolveAbandonClip('gone', SCOPE)).toEqual({ hash: null, reason: 'not_found' });
@@ -113,10 +95,8 @@ describe('resolveAbandonClip — the four ways there is no clip', () => {
     expect(ensurePcmClip).not.toHaveBeenCalled();
   });
 
-  // PORT NOTE: was "reports `no_content` for TTS text that is empty or whitespace".
-  // The TTS branch is deleted (decision #4); a row that is not `'audio'` — the shape a
-  // TTS row had, now refused by the baseline's CHECK — takes the `no_content` arm the
-  // port keeps in its place, and nothing is decoded.
+  // A row that is not `'audio'` (the shape a TTS row used to have, now refused by the
+  // baseline's CHECK) takes the `no_content` arm, and nothing is decoded.
   it('reports `no_content` for an announcement that is not an uploaded recording', async () => {
     for (const type of ['tts', '', 'video']) {
       announcements.findActiveByIdScoped.mockResolvedValue(audioAnnouncement({ type }));
@@ -150,7 +130,6 @@ describe('resolveAbandonClip — the four ways there is no clip', () => {
 
     expect(result).toEqual({ hash: null, reason: 'not_found' });
     // Nothing was synthesized or decoded — no work was done on a foreign row.
-    // PORT NOTE: the `generateTtsAudio` half is gone with the TTS branch.
     expect(ensurePcmClip).not.toHaveBeenCalled();
     // And the miss is logged with the scope, so a real cross-tenant reference is
     // findable rather than silently indistinguishable from an unconfigured campaign.
@@ -190,7 +169,7 @@ describe('resolveAbandonClip — the two ways there IS a clip', () => {
   });
 
   it('is NOT memoized — a corrected apology takes effect on the next abandoned call', async () => {
-    // PORT NOTE: two uploaded recordings rather than two TTS texts (decision #4).
+    // Two uploaded recordings (decision #4); same property: two reads, two answers.
     announcements.findActiveByIdScoped
       .mockResolvedValueOnce(audioAnnouncement({ audio_file_id: 'af-wrong' }))
       .mockResolvedValueOnce(audioAnnouncement({ audio_file_id: 'af-corrected' }));

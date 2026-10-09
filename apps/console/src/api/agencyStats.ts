@@ -15,13 +15,13 @@ import type {
 } from '../types/agency-stats';
 
 /**
- * Per-agent numbers, through master's `/proxy/agency`.
+ * Per-agent numbers, through the server's `/proxy/agency`.
  *
  * ── Two floors, and why the routes are paired rather than parameterised ─────
- * Every read here exists twice on master: a `my-` form floored at
+ * Every read here exists twice on the server: a `my-` form floored at
  * `agency.station.connect` so a bare `agent` (hierarchy level 5) can call it,
  * and an `agents/:userId` twin floored at `agency.supervise`. The `my-` form
- * takes **no subject** — master scopes it to the caller server-side.
+ * takes **no subject** — the server scopes it to the caller server-side.
  *
  * That is not duplication to tidy up into one route with an optional
  * `agent_user_id`. An optional subject on the agent-floored route is a route
@@ -30,13 +30,13 @@ import type {
  * for `agent_user_id`: the server must own the answer to "whose data is this".
  * Keeping them apart means an agent literally cannot form the request.
  *
- * **cusui never reaches core.** These are master routes; a core route with no
- * master proxy is unreachable from a browser.
+ * **The console never reaches the dialer runtime.** These are server routes; a dialer-runtime route with no
+ * server proxy is unreachable from a browser.
  *
  * **Every function takes `accountId` and must be given it.** `apiFetch` sends
- * `X-Account-Id` only when the fourth argument is present, and core requires it
+ * `X-Account-Id` only when the fourth argument is present, and the server requires it
  * on every authenticated route — so an omitted one does not degrade, it produces
- * `400 Missing required header: x-mgkvc-account` from core with nothing in the
+ * `400 Missing required header: x-mgkvc-account` from the server with nothing in the
  * message pointing back here. See the longer note in `agencyCampaigns.ts`.
  */
 
@@ -92,7 +92,7 @@ export async function getMyStats(
  * The supervisor twin of {@link getMyStats}, for one named agent.
  *
  * **Callers must gate the affordance on `hasPermission(role,
- * 'agency.supervise')`** — the exact permission master floors this on. Any looser
+ * 'agency.supervise')`** — the exact permission the server floors this on. Any looser
  * check renders a panel whose first read 403s; any tighter one hides it from an
  * `account_admin` who holds it. Same rule `AgentFloor` and
  * `CampaignAgentAssignments` state in their own props.
@@ -115,7 +115,7 @@ export async function getAgentStats(
  * The window and shaping for a ROSTER read.
  *
  * ── Every parameter is whitelisted upstream, so a typo is a 400 ────────────
- * Master answers an unknown query param with a 400 rather than dropping it
+ * The server answers an unknown query param with a 400 rather than dropping it
  * silently (`forwardAllowedQuery` + `unknownQueryParamsError`), which is the
  * behaviour this client wants: a filter that vanishes on the way to the server is
  * a screen showing the wrong rows under the right controls. So the fields here
@@ -138,8 +138,8 @@ export interface AgencyRosterQuery {
   /**
    * Include agents who are no longer members of the tenant.
    *
-   * **Master-only — core never sees it.** Core cannot know who departed (no user
-   * table, design D3), so it returns them all and master drops them, reporting
+   * **Server-only — the dialer runtime never sees it.** The dialer runtime cannot know who departed (no user
+   * table), so it returns them all and the server drops them, reporting
    * how many in `inactive_omitted`. Sent only when true: `include_inactive=false`
    * is the default and an explicit `false` is one more thing for the whitelist to
    * agree about for no gain.
@@ -171,7 +171,7 @@ function rosterQuery(query: AgencyRosterQuery): string {
  * only the server can compute a percentile over agents this client has not
  * fetched.
  *
- * Floored at `agency.supervise`, master's exact floor on both per-agent twins, so
+ * Floored at `agency.supervise`, the server's exact floor on both per-agent twins, so
  * callers gate the affordance on `hasPermission(role, 'agency.supervise')` — a
  * looser check renders a table whose first read 403s, a tighter one hides it from
  * an `account_admin`, the role it floors at.
@@ -197,12 +197,12 @@ export async function getAgencyRoster(
 /**
  * The window, the cut and the shaping for a GROUPED read.
  *
- * Same whitelist discipline as {@link AgencyRosterQuery}: master answers an
+ * Same whitelist discipline as {@link AgencyRosterQuery}: the server answers an
  * unknown query param with a 400 rather than dropping it, so the fields here are
  * exactly the accepted set and nothing is spread in from a caller's object.
  *
- * **There is no `agent_user_id` here either.** Core has no user table, so it
- * cannot validate tenancy on a caller-supplied id and master's `memberships` is
+ * **There is no `agent_user_id` here either.** The server has no user table, so it
+ * cannot validate tenancy on a caller-supplied id and the server's `memberships` is
  * the only place that boundary can exist. Narrowing to one person is
  * {@link getAgentStats}'s job.
  */
@@ -245,9 +245,9 @@ export interface AgencyGroupQuery {
   /**
    * Include agents who are no longer members of the tenant.
    *
-   * **Master-only, and meaningful only when `agent` is one of the dimensions** —
+   * **Server-only, and meaningful only when `agent` is one of the dimensions** —
    * nothing is dropped from a row that belongs to no person. Sent only when true:
-   * master accepts `true|false|1|0` and 400s on anything else, and an explicit
+   * the server accepts `true|false|1|0` and 400s on anything else, and an explicit
    * `false` is one more thing for the whitelist to agree about for no gain.
    */
   include_inactive?: boolean;
@@ -257,7 +257,7 @@ function groupQuery(query: AgencyGroupQuery): string {
   const qs = new URLSearchParams({
     from: query.from,
     to: query.to,
-    // Comma-separated, which is what both services parse. The tuple type above is
+    // Comma-separated, which is what the server parses. The tuple type above is
     // what keeps this to one or two entries.
     group_by: query.group_by.join(','),
   });
@@ -283,8 +283,8 @@ function groupQuery(query: AgencyGroupQuery): string {
  * they can carry: this one has **no benchmark and no occupancy**, so it cannot be
  * asked "is this person unusual" — comparison stays on the roster.
  *
- * Floored at `agency.supervise` with the account as a REQUIRED predicate (master
- * answers `400 account_scope_required` before it even resolves the tenant's core
+ * Floored at `agency.supervise` with the account as a REQUIRED predicate (the server
+ * answers `400 account_scope_required` before it even resolves the tenant's server
  * key), so callers gate the affordance on `hasPermission(role,
  * 'agency.supervise')` and must pass `accountId` — `apiFetch` sends
  * `X-Account-Id` only when it is given one.
@@ -309,18 +309,18 @@ export async function getAgencyGroupedStats(
  *
  * ── Repeats are for readability, NOT for surviving a comma ─────────────────
  * An earlier version of this comment claimed repeats meant a disposition code
- * containing a comma reached core intact. It does not, and nothing this client
- * writes can make it: master's `forwardAllowedQuery` receives the repeats as an
- * array and **joins them with a comma**, and core's `multiParam` then **splits
- * on one**. So a code like `Not interested, will call back` arrives at core as two
+ * containing a comma reached the server intact. It does not, and nothing this client
+ * writes can make it: the server's `forwardAllowedQuery` receives the repeats as an
+ * array and **joins them with a comma**, and the server's `multiParam` then **splits
+ * on one**. So a code like `Not interested, will call back` arrives at the server as two
  * codes, matches no row, and the list comes back empty — a real limitation of the
  * platform's filter encoding rather than something the client is guarding
  * against. It is stated at the one place a reader would otherwise rely on the
  * false version.
  *
- * Repeats are still the right form: they are what both services accept, they are
+ * Repeats are still the right form: they are what the server accepts, they are
  * what `agencySpine.ts` sends, and one convention across the two spines is worth
- * having. Making a comma survive is a core-then-master change (a different
+ * having. Making a comma survive is a dialer-runtime-then-server change (a different
  * separator, or a repeat-preserving forward), not a change here.
  */
 function attemptQuery(
@@ -396,7 +396,7 @@ export async function getAgentAttempts(
  * an agent was taken off would otherwise be an unexplained id.
  *
  * Both wire shapes are accepted for the same reason `listAgencyCampaigns`
- * accepts both: a bare array is what master's contract states, an
+ * accepts both: a bare array is what the server's contract states, an
  * `{ campaigns: [] }` envelope is what its sibling staffing route uses, and
  * `.map` of `undefined` inside a render is a worse failure than tolerating
  * either.

@@ -4,9 +4,8 @@
  * `acquireTelephonyConcurrency` seam forwarding the group, and the capacity
  * classifier the dial loops park on.
  *
- * PORT NOTE (magick-agency): ported from core test/unit/core/telephony-concurrency-group.test.ts@4850d1d9.
- * The per-broadcast group gate is not ported, so every grouped case is deleted;
- * the one assertion about the UNGROUPED funnel (the forward's arity) is kept.
+ * There is no per-broadcast group gate, so the one assertion here is about the
+ * UNGROUPED funnel (the forward's arity).
  */
 import { describe, it, expect, vi } from 'vitest';
 import {

@@ -1,5 +1,3 @@
-// PORT NOTE (magick-agency): ported verbatim from magick-master@a1f0756a test/unit/utils/concurrency.test.ts.
-
 import { describe, it, expect } from 'vitest';
 import { createSemaphore, mapWithConcurrency } from '../../../src/utils/concurrency.js';
 

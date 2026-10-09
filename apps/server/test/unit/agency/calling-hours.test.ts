@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// AD-P3-C-05 — calling hours in the CONTACT's timezone (§4.2, D4).
+// Calling hours in the CONTACT's timezone.
 //
-// Every assertion here is an exact instant, never a range. §16.6: an
+// Every assertion here is an exact instant, never a range. An
 // approximate assertion on a clock-derived value is how a doubled fake clock
 // hid behind `toBeGreaterThan(0)`, and this module's whole output is a clock
 // derivation. `now` is a parameter, so there is nothing to fake.
@@ -119,7 +119,7 @@ describe('nextWindowOpen — the instant an unclaim writes to next_attempt_at', 
   });
 });
 
-describe('the contact timezone decides, not the campaign (D4)', () => {
+describe('the contact timezone decides, not the campaign', () => {
   const CAMPAIGN = {
     calling_window_start: '09:00:00',
     calling_window_end: '20:00:00',
@@ -153,7 +153,7 @@ describe('the contact timezone decides, not the campaign (D4)', () => {
   });
 
   it('falls back to the campaign default for an unusable contact zone, and says so', () => {
-    // D4: absent or unusable ⇒ the campaign default. An unparseable value from a
+    // Absent or unusable ⇒ the campaign default. An unparseable value from a
     // mapped CSV column is not an excuse to infer one from the phone number.
     const window = resolveCallingWindow(CAMPAIGN, { timezone: 'Mars/Olympus_Mons' });
     expect(window.timezone).toBe('Asia/Kolkata');
@@ -181,7 +181,7 @@ describe('the contact timezone decides, not the campaign (D4)', () => {
   it('refuses a bare abbreviation, because ICU resolves EST to America/Panama', () => {
     // Measured on this runtime: `new Intl.DateTimeFormat('en-US',{timeZone:'EST'})`
     // resolves to **America/Panama**, which observes no DST. Accepting it would
-    // place every call an hour off for half the year, on the early side. D4 says
+    // place every call an hour off for half the year, on the early side. The rule is that
     // an honest default beats an inferred zone that puts a call out of hours, so
     // the abbreviation is refused and the campaign default applies.
     expect(new Intl.DateTimeFormat('en-US', { timeZone: 'EST' }).resolvedOptions().timeZone)

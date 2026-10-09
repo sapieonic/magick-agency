@@ -2,12 +2,11 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance, RouteOptions } from 'fastify';
 
 /**
- * Plan §9 invariant, the agency API's half: **`agent` at level 5 reaches only the agent
- * surfaces** (lane A's `platform-agent-reach.test.ts` pins the platform half: session,
+ * The agency API's half of the agent invariant: **`agent` at level 5 reaches only the agent
+ * surfaces** (`platform-agent-reach.test.ts` pins the platform half: session,
  * `/accounts/mine`, preferences, the flag map).
  *
- * NEW (magick-agency, Phase 8). Same method as lane A's suite, over the routes
- * `agencyPlugin` registers:
+ * Same method as that suite, over the routes `agencyPlugin` registers:
  *  1. every agency route is enumerated from Fastify's `onRoute` hook on the REAL app;
  *  2. each is called with a valid Firebase session for a user whose ONLY membership is
  *     `agent` on the tenant/account the headers name — the real session, tenant-context
@@ -17,7 +16,7 @@ import type { FastifyInstance, RouteOptions } from 'fastify';
  *  4. the reached set must equal {@link EXPECTED_AGENT_REACHABLE} exactly.
  *
  * The agent's surfaces are the `my-*` reads now; the session/attempt actions join them when
- * the runtime routes land (after Phase 6), and this list grows by exactly those.
+ * the runtime routes land, and this list grows by exactly those.
  */
 
 const mocks = vi.hoisted(() => {
@@ -83,7 +82,7 @@ vi.mock('@magick-agency/db/repositories/membership.repository', () => ({
   }),
 }));
 // The profile surface checks `agency.analytics` (the account's `analyze_calls`) BEFORE its
-// permission, as master's capability ran before its permission. Granted here so the
+// permission (the capability check runs before the permission check). Granted here so the
 // question this suite asks — does the PERMISSION let an agent through — is the one answered.
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
   accountSettingsRepository: reachedProxy({
@@ -108,8 +107,8 @@ const EXPECTED_AGENT_REACHABLE = [
   'GET /proxy/agency/my-attempts',
   'GET /proxy/agency/my-campaigns',
   'GET /proxy/agency/my-stats',
-  // The agent's own station actions (Phase 8, after Phase 6): `agency.station.connect`,
-  // `agency.attempts.handle|dispose` and `agency.dnc.write` all floor at `agent`. Core then
+  // The agent's own station actions: `agency.station.connect`,
+  // `agency.attempts.handle|dispose` and `agency.dnc.write` all floor at `agent`. The internal handler instance then
   // enforces the reservation (`not_your_attempt`). `force-available` is NOT here: it is
   // `agency.supervise` (account_admin).
   'POST /proxy/agency/attempts/:id/disposition',
@@ -127,7 +126,7 @@ const EXPECTED_AGENT_REACHABLE = [
 /**
  * WebSocket routes are not HTTP surfaces: a browser `WebSocket` cannot send the Firebase
  * bearer, so the station socket is authenticated by the single-use station token minted at
- * the authenticated `POST /sessions` / `/station-token` (core `station-token.ts`; refusals in
+ * the authenticated `POST /sessions` / `/station-token` (`station-token.ts`; refusals in
  * `agency-station-route.test.ts` and the station route suite). It is excluded from the two
  * HTTP sweeps below and pinned here instead.
  */
@@ -203,7 +202,7 @@ function refusedByGuards(res: { statusCode: number; body: string }): boolean {
   }
 }
 
-describe('agency route table — the agent invariant (plan §9)', () => {
+describe('agency route table — the agent invariant', () => {
   it('enumerates the agency routes from onRoute, every one under an agency prefix', () => {
     const rs = agencyRoutes();
     expect(rs.length).toBeGreaterThan(40);

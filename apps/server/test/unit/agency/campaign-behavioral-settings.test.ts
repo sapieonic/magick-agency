@@ -2,32 +2,23 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 /**
- * PORT NOTE (magick-agency): ported from magick-master@a1f0756a
- * `test/unit/agency/proxy-agency-campaign-behavioral-capabilities.routes.test.ts`
- * (14 `it` × 2 surfaces = 28 cases) and `test/unit/agency/retry-inherited-config.test.ts`
- * (6 `it` + 4 `it.each` rows = 10 cases), against
- * `src/agency/campaign-behavioral-settings.ts`.
+ * The behavioural-capability gate in `src/agency/campaign-behavioral-settings.ts`.
  *
- * Changes, all forced by plan §3.2 (governance → the per-account settings row):
- *  - the capability state is the account's `account_settings` row
- *    (`allow_recording` = `agency.recording`, `analyze_calls` = `agency.analytics`),
- *    supplied through a mocked `accountSettingsRepository` instead of governance
- *    override rows. A missing row / NULL column is OFF, as the governance default was;
- *  - the two "surfaces" are a test app's `POST /campaigns` and `PATCH /campaigns/:id`
- *    that call the gate and then a `forward` stub standing where `proxyToCore` stood
- *    (lane B2 ports the real routes; Phase 8 wires them to this module). Every
- *    refusal still asserts the forward never ran;
- *  - DELETED (2 cases × 2 surfaces = 4): "the section preHandler still refuses on
- *    `agency` itself" (the section capability is always on — the app IS agency,
- *    plan §3.2) and "kill switch OFF lets an enabling body straight through"
- *    (no governance, so no GOVERNANCE_ENABLED lever);
- *  - "a repository failure under the CHILD check" becomes a failing settings read;
- *  - interface (lead's security review): the gate takes the PARSED config and the
- *    campaign's own account (`target`), never `request.body` / `X-Account-Id`;
- *  - NEW (4 × 2): no ACCOUNT context fails closed; the campaign's account is judged,
- *    not the header's; no settings row / NULL columns refuse;
- *    the ON→OFF write is allowed to
- *    an account that has LOST the permission with no settings read at all.
+ * The capability state is the account's `account_settings` row
+ * (`allow_recording` = `agency.recording`, `analyze_calls` = `agency.analytics`),
+ * supplied through a mocked `accountSettingsRepository`. A missing row / NULL column
+ * is OFF.
+ *
+ * The two "surfaces" are a test app's `POST /campaigns` and `PATCH /campaigns/:id`
+ * that call the gate and then a `forward` stub standing where the internal handler
+ * call stands. Every refusal asserts the forward never ran.
+ *
+ * The gate takes the PARSED config and the campaign's own account (`target`), never
+ * `request.body` / `X-Account-Id`. Also covered: no ACCOUNT context fails closed; the
+ * campaign's account is judged, not the header's; no settings row / NULL columns
+ * refuse; and the ON→OFF write is allowed to an account that has LOST the permission
+ * with no settings read at all. A failing settings read is the failure case for the
+ * CHILD check on retry.
  */
 
 const TENANT = 'tenant-1';
@@ -111,7 +102,7 @@ const surfaces = [
 ];
 
 describe.each(surfaces)('$name — agency.recording is enforced, not merely declared', (surface) => {
-  it('REFUSES record_calls: true when agency.recording is off, and core is never called', async () => {
+  it('REFUSES record_calls: true when agency.recording is off, and the internal handler is never called', async () => {
     settings({ recording: false });
     const app = await buildApp();
 
@@ -124,7 +115,7 @@ describe.each(surfaces)('$name — agency.recording is enforced, not merely decl
     expect(res.statusCode).toBe(403);
     expect(res.json()).toEqual({ error: 'capability_disabled', capability: 'agency.recording' });
     // The assertion that distinguishes a real gate from a decorative one: the
-    // body must not have reached core, which honours `record_calls` unchecked.
+    // body must not have reached the internal handler, which honours `record_calls` unchecked.
     expect(mocks.forward).not.toHaveBeenCalled();
     await app.close();
   });
@@ -176,7 +167,7 @@ describe.each(surfaces)('$name — agency.recording is enforced, not merely decl
     await app.close();
   });
 
-  it("REFUSES a string 'true' too — core casts unchecked and Postgres coerces it", async () => {
+  it("REFUSES a string 'true' too — the handler casts unchecked and Postgres coerces it", async () => {
     settings({ recording: false });
     const app = await buildApp();
 
@@ -194,7 +185,7 @@ describe.each(surfaces)('$name — agency.recording is enforced, not merely decl
 });
 
 describe.each(surfaces)('$name — agency.analytics is enforced, not merely declared', (surface) => {
-  it('REFUSES a non-null analysis_profile_id when agency.analytics is off, and core is never called', async () => {
+  it('REFUSES a non-null analysis_profile_id when agency.analytics is off, and the internal handler is never called', async () => {
     settings({ analytics: false });
     const app = await buildApp();
 
@@ -386,7 +377,7 @@ describe('behavioralRefusalForConfig (NEW, the pure decision)', () => {
     ['record_calls: true, recording off', { record_calls: true }, { ...ON, allow_recording: false }, 'agency.recording'],
     ['record_calls: 1, recording off', { record_calls: 1 }, OFF, 'agency.recording'],
     ['analysis_profile_id set, analytics off', { analysis_profile_id: PROFILE_ID }, { ...ON, analyze_calls: false }, 'agency.analytics'],
-    ['both requested, both off — recording named first (master order)', { record_calls: true, analysis_profile_id: PROFILE_ID }, OFF, 'agency.recording'],
+    ['both requested, both off — recording named first', { record_calls: true, analysis_profile_id: PROFILE_ID }, OFF, 'agency.recording'],
   ])('refuses: %s', (_label, config, s, capability) => {
     expect(behavioralRefusalForConfig(config, s)).toEqual({ error: 'capability_disabled', capability });
   });
@@ -402,7 +393,7 @@ describe('behavioralRefusalForConfig (NEW, the pure decision)', () => {
   });
 });
 
-// ── master test/unit/agency/retry-inherited-config.test.ts (verbatim cases) ──
+// ── retry: config inherited from the parent campaign ──
 
 const parent = (patch: Record<string, unknown> = {}): Record<string, unknown> => ({
   id: 'camp-1', name: 'Q3 Winback', status: 'completed',
@@ -435,7 +426,7 @@ describe('an override wins in both directions, by KEY PRESENCE', () => {
 describe('membership is OWN-property, never the prototype chain', () => {
   it('ignores a record_calls inherited by the overrides object', () => {
     // `'record_calls' in overrides` is true here. Under `in`, this reads as the
-    // caller turning recording OFF — the gate passes — while core copies the
+    // caller turning recording OFF — the gate passes — while the retry handler copies the
     // parent's `true` and the child records anyway.
     const polluted = Object.create({ record_calls: false }) as Record<string, unknown>;
     polluted['pacing_ratio'] = 1.5;
@@ -465,8 +456,8 @@ describe('an unreadable parent fails CLOSED', () => {
     ['null', null],
   ])('treats %s as enabling both capabilities', (_label, body) => {
     // The old reading was "absent means absent", which PASSED the gate. That
-    // held only for a core serving neither the column nor the route; the
-    // dependency is a core that serves `/retry` and reports a slimmer campaign.
+    // held only for a handler serving neither the column nor the route; the
+    // dependency is a handler that serves `/retry` and reports a slimmer campaign.
     //
     // Reading absent as enabling costs a tenant that does not hold the
     // capability a 403 somebody reports, instead of a consent gate that quietly

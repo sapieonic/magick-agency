@@ -29,7 +29,7 @@ interface Props {
  *
  * When the flag's registry `scopes` don't include the caller's scope the
  * tri-state is replaced by a read-only state + hint, because every write it
- * could produce would 422 at core's scope check. That matters most for
+ * could produce would 422 at the server's scope check. That matters most for
  * `prewarm_enabled`, the one boolean declared `scopes: ['tenant']`: the global
  * registry offered a fleet-wide On/Off for the pre-warm kill switch that could
  * never save, which is the worst possible affordance to hand an operator

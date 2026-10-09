@@ -3,7 +3,7 @@ import { hasPermission } from './permissions';
 import type { Role } from '../types/auth';
 
 /**
- * The campaign workspace's sections (`MAG-166`).
+ * The campaign workspace's sections.
  *
  * ── Why this is a tab bar and not a page ────────────────────────────────────
  * The detail page used to be one scroll carrying eleven counters, four derived
@@ -23,7 +23,7 @@ import type { Role } from '../types/auth';
  * the other four are the standalone screens that already existed at their own
  * routes and are unchanged apart from growing this bar.
  *
- * ── The permission on each tab is the one master enforces ───────────────────
+ * ── The permission on each tab is the one the API enforces ───────────────────
  * Not a looser proxy for it. A tab that renders and then 403s on arrival is a
  * worse answer than no tab, which is the same rule the lifecycle controls
  * follow.
@@ -47,7 +47,7 @@ export interface CampaignTabDefinition {
   /** The question the section answers — surfaced as the link's tooltip. */
   hint: string;
   /**
-   * What master gates the reads behind this tab on, or `null` when the tab is
+   * What the API gates the reads behind this tab on, or `null` when the tab is
    * as readable as the campaign page itself.
    */
   permission: Permission | null;
@@ -81,7 +81,7 @@ export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
     id: 'contacts',
     label: 'Contacts',
     hint: 'Every contact on this campaign and where each one got to',
-    // MAG-159: master floors the roster read on `agency.supervise`.
+    // The API floors the roster read on `agency.supervise`.
     permission: 'agency.supervise',
     path: (id) => `/agency/campaigns/${id}/contacts`,
   },
@@ -98,7 +98,7 @@ export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
     hint: 'Who did what on this campaign, and when',
     /*
       `audit.read`, NOT `agency.supervise`. The two share a floor today
-      (`account_admin`, since MAG-157 lowered `audit.read` precisely so a
+      (`account_admin`, since `audit.read` was lowered precisely so a
       supervisor could read the trail of a campaign they control), so in
       practice the same people see both — but they name different questions and
       each tab has to follow its own gate if either floor ever moves.
@@ -141,7 +141,7 @@ export function visibleCampaignTabs(role: Role | undefined): CampaignTabDefiniti
  * <id>/<panel>` — and nothing else. Matching the tail of the path instead
  * ("does it end in `agents`?") conflates a campaign id with a panel keyword:
  * a campaign whose id is literally `agents` would render the Agents panel on
- * its own overview URL, and highlight the wrong tab while doing it. Core owns
+ * its own overview URL, and highlight the wrong tab while doing it. The server owns
  * the id format and this repo cannot see it, so the id is treated as opaque.
  *
  * Anything unrecognised — a hand-edited URL, a future panel this build does

@@ -1,8 +1,6 @@
 import { transform } from 'esbuild';
 
 /**
- * Ported verbatim from magic-voice-core/vitest.decorator-transform.ts@v1.123.2.
- *
  * Vite 8 (used by vitest >= 4.1) transforms TypeScript with Oxc instead of
  * esbuild. Oxc does not down-level TC39 *standard* decorators, so a test that
  * imports a `@Traced` source module fails at collection with a SyntaxError.

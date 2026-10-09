@@ -68,7 +68,7 @@ function sessionRow(patch: Record<string, unknown> = {}) {
 function script(steps: Array<{ upsert: unknown[]; live?: unknown[] }>) {
   let step = 0;
   query.mockImplementation(async (sql: string) => {
-    // The transition-log append (migration 105). Best-effort, fire-and-continue,
+    // The transition-log append. Best-effort, fire-and-continue,
     // and not part of the decision loop this file is about — but it IS a third
     // statement kind, so it is classified explicitly rather than falling into the
     // `live` branch and advancing the script by a step it does not own.
@@ -184,8 +184,8 @@ describe('joinOrRehydrate — what the upsert returning zero rows means', () => 
 describe('joinOrRehydrate — the statement it issues', () => {
   it('arbitrates on the tenant-scoped index and only updates its own campaign', async () => {
     // Pinned as text because both clauses are load-bearing and neither is visible
-    // in any return value: the arbiter must be 092's index (naming 074's would
-    // fail outright after the migration), and the `DO UPDATE … WHERE` is what
+    // in any return value: the arbiter must be the unique index on the agent's live session (naming a
+    // dropped index would fail outright), and the `DO UPDATE … WHERE` is what
     // stops a different-campaign conflict from stamping this replica over a
     // session that may be mid-conversation.
     script([{ upsert: [sessionRow()] }]);

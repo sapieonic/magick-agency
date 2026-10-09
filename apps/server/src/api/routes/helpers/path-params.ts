@@ -1,72 +1,62 @@
 import type { FastifyReply, FastifyRequest, preHandlerHookHandler } from 'fastify';
 
 /**
- * Guards for route params that get interpolated into a core path.
+ * Guards for route params that get interpolated into an internal handler path
+ * (the path a public route hands to `callCore`).
  *
  * ## Why this is its own module
  *
- * The character class and the refusal below started life inside
- * {@link import('./passthrough.js').passthrough}, where they cover the 99
- * declarative proxy routes. They cover nothing else — and the hand-written proxy
- * routes are precisely the ones that build a core path by string interpolation,
- * so the guard the shared helper enforces was the guard the hand-written routes
- * bypassed. Two definitions of "may this param reach a core path" is how they
- * come to disagree, so there is one, here, and `passthrough.ts` reads it from
- * this file.
+ * The hand-written public routes build their internal handler path by string
+ * interpolation. Two definitions of "may this param reach an internal path" is
+ * how they come to disagree, so there is one, here.
  *
- * ## What the pre-existing chokepoint already covers, and what it does not
+ * ## What `callCore`'s chokepoint already covers, and what it does not
  *
- * `proxyToCore` and `coreInternalRequest` both call `isUnsafeCorePath`
- * (`src/proxy/safe-core-path.ts`) on the assembled path, and that guard is
- * strictly stronger than any character check against the DOT-SEGMENT family: it
- * runs the same WHATWG parse `fetch` will run and refuses anything the parser
- * rewrites. So the textbook traversal —
+ * `callCore` calls `isUnsafeCorePath` (`src/proxy/safe-core-path.ts`) on the
+ * assembled path, and that guard is strictly stronger than any character check
+ * against the DOT-SEGMENT family: it runs a WHATWG parse and refuses anything the
+ * parser rewrites. So the textbook traversal —
  *
  *   GET /proxy/agency/campaigns/x%2F..%2F..%2Fknowledge-bases/attempts/a
  *
- * — was already a 400 from inside the proxy client, along with the `%2e%2e`,
- * `.%2e`, `.<TAB>.`, `#` and `\` variants. **Do not describe that as the hole
- * this module closes; it was closed before this module existed.**
+ * — is a 400 from `callCore`, along with the `%2e%2e`, `.%2e`, `.<TAB>.`, `#` and
+ * `\` variants. **That is not the hole this module closes.**
  *
  * What the parse-based chokepoint deliberately does not refuse is a **bare extra
  * slash**. A path with no dot segments survives the parse byte-for-byte, so
  * `/agency-campaigns/c/attempts/a` is allowed — and it must be, because that is
- * an ordinary core path. It is only dangerous when a caller put those extra
- * segments there through a param, and master's routes do not all share one gate:
+ * an ordinary internal path. It is only dangerous when a caller put those extra
+ * segments there through a param, and the public routes do not all share one
+ * gate:
  *
- *   GET /proxy/agency/campaigns/:id       → `proxy.contact_lists.read`  (viewer, 10)
+ *   GET /proxy/agency/campaigns/:id       → `agency.campaigns.read`  (viewer, 10)
  *   GET .../campaigns/:id/attempts/:aId   → `agency.supervise` (account_admin, 30)
- *                                           + `agency.recording` for the media
+ *                                           + `allow_recording` for the media
  *
- * The first interpolates `:id` as the LAST segment of its core path, so a
- * `viewer` sending `:id = c%2Fattempts%2Fa` built core's agency attempt read
- * through a route floored two levels below it, and
- * `:id = c%2Fattempts%2Fa%2Frecording` reached the recording bytes with no
- * `agency.recording` anywhere in the request — the C2 gap this surface exists to
- * close ("the capability gated *enabling* recording, not *hearing* it"), reopened
- * by a slash. Master's governance is path-based, so that is privilege escalation
- * across features. It is not cross-tenant: core still scopes by the tenant's own
- * API key.
+ * The first interpolates `:id` as the LAST segment of its internal path, so
+ * without a guard a `viewer` sending `:id = c%2Fattempts%2Fa` would build the
+ * agency attempt read through a route floored two levels below it, and
+ * `:id = c%2Fattempts%2Fa%2Frecording` would reach the recording bytes with no
+ * recording gate anywhere in the request — the gate on *hearing* a recording, not
+ * just *enabling* it, reopened by a slash. RBAC is per public route, so that is
+ * privilege escalation across features. It is not cross-tenant: the internal
+ * handler still scopes by the caller's tenant context.
  *
  * Proven, not asserted: `test/unit/agency/agency-proxy-path-traversal.test.ts`
  * drives a real `viewer` through the campaign-detail route with the plugin hook
  * removed and gets a 200 on both.
  *
- * The secondary gain is cheaper and still worth having: the hand-written routes
- * resolve the tenant's core API key BEFORE calling `proxyToCore`, so without a
- * guard they AES-decrypt a credential for a request the proxy client is about to
- * refuse, and the caller gets the client's generic refusal instead of an error
- * naming their own param.
+ * The secondary gain: the caller gets an error naming their own param instead of
+ * `callCore`'s generic refusal.
  *
  * ## Reject, never encode
  *
- * Inherited verbatim from `passthrough.ts`, and it is a decision rather than a
- * shortcut. `encodeURIComponent` would also close the hole, but it changes the
- * bytes on the wire for every route it touches and only stays correct while core
- * percent-decodes its path params — a cross-service assumption this repository
- * cannot verify. A reject-guard changes behaviour for exactly the requests that
- * are currently exploits: no uuid, numeric id, slug, hex digest or E.164 number
- * contains any of these characters.
+ * A decision rather than a shortcut. `encodeURIComponent` would also close the
+ * hole, but it changes the bytes of the path for every route it touches and only
+ * stays correct while the internal handler percent-decodes its path params. A
+ * reject-guard changes behaviour for exactly the requests that are exploits: no
+ * uuid, numeric id, slug, hex digest or E.164 number contains any of these
+ * characters.
  */
 
 /** Characters that let an interpolated param escape its own path segment. */
@@ -81,15 +71,12 @@ export class UnsafePathParamError extends Error {
 }
 
 /**
- * The 400 body for a rejected param. Shared so both the declarative and the
- * hand-written surfaces refuse in the same words.
+ * The 400 body for a rejected param.
  *
- * Deliberately carries **no** `code`. A machine-readable code would have to be
- * allow-listed in `errorMaskHook` and registered in
- * `error-mask.route-emissions.test.ts`, and neither buys anything: the guard
- * fires before any core call, so no core status is recorded and the mask leaves
- * the body alone (see `api/middleware/error-mask.middleware.ts`). The only
- * caller that can produce this response is one probing for a traversal.
+ * Deliberately carries **no** `code`, because one buys nothing: the error mask
+ * passes every 4xx through as it is (see `api/middleware/error-mask.middleware.ts`),
+ * and the only caller that can produce this response is one probing for a
+ * traversal.
  */
 export function pathEscapingParamRejection(param: string): { error: string; message: string } {
   return {
@@ -101,29 +88,27 @@ export function pathEscapingParamRejection(param: string): { error: string; mess
 /**
  * The shape a route param must have to be a uuid.
  *
- * Same class as `AGENCY_UUID_RE` in `src/agency/agency-billing-contract.ts`,
- * which exists for the settlement payloads; kept separate because that one is
- * documented as the shape a value must have before it reaches a `UUID` *column*
- * and this one is about a *path segment*, and collapsing them would tie a route
- * guard's fate to a billing contract.
+ * Same class as `AGENCY_UUID_RE` in `src/notifications/agency-campaign-completion.ts`;
+ * kept separate because that one is a shape check on an account id before an
+ * email is addressed and this one is about a *path segment*, and collapsing them
+ * would tie a route guard's fate to an unrelated module.
  */
 const UUID_PATH_PARAM = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Plugin-level hook: refuse any route param that could escape its path segment.
  *
- * Registered on a plugin rather than written into each handler on purpose. The
- * finding this closes is that a hand-written route *forgot* a guard the shared
- * helper applies, and a per-handler check is a guard a new route can forget
- * again. A plugin hook is inherited by every route the plugin registers, so the
- * next one is covered before anybody reviews it.
+ * Registered on a plugin rather than written into each handler on purpose. A
+ * per-handler check is a guard a new route can forget. A plugin hook is
+ * inherited by every route the plugin registers, so the next one is covered
+ * before anybody reviews it.
  *
  * It runs BEFORE the route's own `requirePermission`, because instance-level
  * `preHandler` hooks precede route-level ones. That ordering is fine: whether a
  * caller's own id contains a slash is a fact they already know, so answering 400
- * ahead of 403 discloses nothing. What matters is that it runs before the handler
- * resolves a core API key or issues a core call — a traversal attempt has to be
- * *our* 4xx, or `errorMaskHook` reads it as core-forwarded and masks it.
+ * ahead of 403 discloses nothing. What matters is that it runs before the
+ * handler calls `callCore`, so a traversal attempt is refused with an error
+ * naming the param.
  */
 export function rejectPathEscapingParams(): preHandlerHookHandler {
   return async (request: FastifyRequest, reply: FastifyReply) => {

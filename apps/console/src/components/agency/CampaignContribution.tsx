@@ -138,14 +138,14 @@ export function CampaignContribution({
   const page = state.status === 'ready' || state.status === 'empty' ? state.page : null;
   const total = state.status === 'ready' || state.status === 'empty' ? state.total : null;
   /*
-    Rows empty but rows HIDDEN — an ordinary master response rather than a shape
+    Rows empty but rows HIDDEN — an ordinary API response rather than a shape
     violation, and a different screen from `empty`: the remedy is the toggle below,
     not a longer window, so it must not render the sentence that says otherwise.
 
     ── And "hidden" has TWO causes here, exactly as it does on the roster ─────
-    This was `rows.length === 0` and said everyone had left the team. Master also
+    This was `rows.length === 0` and said everyone had left the team. The API also
     drops groups it could not attribute to a person at all (`unattributed_omitted`,
-    R4's third state), and those the toggle cannot bring back — `include_inactive`
+    the third state), and those the toggle cannot bring back — `include_inactive`
     widens a membership filter and these rows match no membership of any status. On
     this screen the misreading is sharper than on the roster: the campaign's own
     total is pinned in the footer and still counts their calls, so a reader is told

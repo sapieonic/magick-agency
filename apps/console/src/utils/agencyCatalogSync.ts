@@ -1,16 +1,16 @@
 /**
  * The shared list-and-re-sync concern behind `BreakMenu` and `DispositionPad`
- * (§A.13.4, §A.13.6, §A.13.8).
+ *.
  *
  * ── Why one module for two surfaces ──────────────────────────────────────────
- * Core made `agency_campaigns.break_reasons` mirror `disposition_catalog`
+ * The server made `agency_campaigns.break_reasons` mirror `disposition_catalog`
  * deliberately: both are JSONB arrays of `{code, label, …}`, both are validated
  * the same way, and both answer an unknown code with a `400` carrying
  * **`allowed_codes`**. Two implementations of that would mean fixing the next bug
  * in it twice, and the bugs here are the quiet kind.
  *
  * ── What is NOT shared, and must not become shared ───────────────────────────
- * **Key bindings.** `1`–`9` belong to the disposition pad alone (§A.13.4):
+ * **Key bindings.** `1`–`9` belong to the disposition pad alone:
  * reassigning number keys by context is how muscle memory gets destroyed, so the
  * break menu is arrows + `Enter` + typeahead and binds no digits at all. The
  * remap *warning* below is shared; the *bindings* are not. `BreakMenu` passes
@@ -43,7 +43,7 @@ export function humaniseCode(code: string): string {
  * **Order comes from the server**, exactly as the first-load order does — the
  * catalog is never re-sorted client-side, because a sort silently remaps every
  * agent's muscle memory the moment an admin renames a code and it is invisible in
- * review (§A.13.6).
+ * review.
  *
  * **Labels are preserved for codes already known.** The echo carries codes only,
  * so the naive rebuild renders a familiar option as a raw slug (`technical_issue`)
@@ -58,10 +58,10 @@ export function humaniseCode(code: string): string {
  *
  * ⚠️ **A synthesized entry carries no optional flags.** For a disposition that
  * means no `requires_note` / `requires_datetime`, so the client-side guard will
- * not demand a note for it and core may reject the submit a second time. That is
+ * not demand a note for it and the server may reject the submit a second time. That is
  * deliberate: inventing a requirement we were never told about would block a
- * legitimate submit, and core is the real enforcement for criterion (c). The
- * background bootstrap refresh (§A.13.6) is what makes the *next* call correct.
+ * legitimate submit, and the server is the real enforcement for criterion (c). The
+ * background bootstrap refresh is what makes the *next* call correct.
  *
  * An empty `allowedCodes` yields an empty catalog rather than silently keeping the
  * old one: "the campaign accepts nothing" is a real answer, and the caller's
@@ -143,7 +143,7 @@ export function numberKeysRemapped(
 
 /**
  * First-letter typeahead, **scoped to the open menu** — never a global shortcut
- * (§A.13.4).
+ *.
  *
  * **It wraps**, which is the whole point: with two entries starting "L" the agent
  * presses `L` repeatedly to cycle between them, and a non-wrapping search sticks

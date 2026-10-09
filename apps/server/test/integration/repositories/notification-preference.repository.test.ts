@@ -20,7 +20,7 @@
  *     real `memberships`/`users` rows — including the two shapes the schema
  *     permits and the engine has collapse rules for: one user with a
  *     tenant-level AND an account-scoped membership, and two users sharing one
- *     email (`users.email` carries only a NON-unique index, migration 069).
+ *     email (`users.email` carries only a NON-unique index).
  *   - **The `updated_at` trigger**, which is a schema object, not code.
  */
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
@@ -29,12 +29,11 @@ import { TEST_DB_URL, getTestPool, closeTestPool, truncateAll } from '../../../.
 import { insertTenant, insertAccount, insertUser, insertMembership } from '../../../../../packages/db/test/integration/setup/platform-factories.js';
 import { randomUUID } from 'node:crypto';
 
-// PORT NOTE (magick-agency): master mocks `src/db/connection.js` to the test
-// pool; here the real `@magick-agency/db` pool is initialised against the test
+// The real `@magick-agency/db` pool is initialised against the test
 // database, so the repository (and `membershipRepository`, imported below) run
 // on the production connection module. `event_key` values such as
-// `usage.digest` are opaque TEXT to this repository and are kept as master wrote
-// them — the table has no FK or CHECK on the key.
+// `usage.digest` are opaque TEXT to this repository —
+// the table has no FK or CHECK on the key.
 initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
 
 const { notificationPreferenceRepository: repo } = await import(
@@ -70,7 +69,7 @@ describe('notificationPreferenceRepository (integration)', () => {
   });
 
   afterAll(async () => {
-    await closePool(); // PORT NOTE (magick-agency): the real pool initialised above
+    await closePool(); // the real pool initialised above
     await closeTestPool();
   });
 
@@ -360,9 +359,8 @@ describe('notificationPreferenceRepository (integration)', () => {
       );
 
       const retired = 'campaign.retired_in_2024';
-      // PORT NOTE (magick-agency): master uses `EVENT` (`usage.digest`) as the LIVE
-      // key here; it is not in agency's catalog (plan §3.5), so the one live
-      // agency key stands in for it in this case.
+      // `EVENT` (`usage.digest`) is not in the catalog, so the one live
+      // agency key stands in as the LIVE key in this case.
       const live = 'agency.campaign.completed';
       expect(isLiveEventKey(retired)).toBe(false);
 
@@ -508,7 +506,7 @@ describe('notificationPreferenceRepository (integration)', () => {
       await insertMembership({ user_id: a.id, tenant_id: tenant.id, role: 'account_admin' });
       await insertMembership({ user_id: b.id, tenant_id: tenant.id, role: 'tenant_owner' });
 
-      // Migration 069 says in as many words that no unique index is added on
+      // No unique index is added on
       // `users.email`. A `SELECT DISTINCT u.email` would collapse these two and
       // lose one person's preferences entirely — which is exactly why this
       // engine cannot reuse `findAddressableMembersInAccount`.

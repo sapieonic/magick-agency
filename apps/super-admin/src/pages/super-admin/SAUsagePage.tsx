@@ -25,8 +25,7 @@ import { formatNumber } from '../../utils/format';
 import styles from './SAUsagePage.module.css';
 
 /**
- * NEW (plan §3.3, §3.4 "Usage counts"). Replaces cusui's credits/fleet usage
- * page. Read-only: dials, answered, connected calls, talk time and analysis
+ * Usage counts. Read-only: dials, answered, connected calls, talk time and analysis
  * audio time per tenant and account over one window on the dial time. v1 has no
  * metering, so nothing here is billed and no rounding rule is applied: the
  * server sends exact seconds and this page only reformats them.

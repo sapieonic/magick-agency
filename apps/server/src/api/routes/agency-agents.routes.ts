@@ -24,17 +24,17 @@ import type {
 const log = createChildLogger({ component: 'agency-agent-routes' });
 
 /**
- * `agency_agent_sessions.agent_user_id` is `VARCHAR(100)`. Refused above that
- * length rather than truncated: the column cannot hold it, so a longer value can
- * only ever match nothing, and answering an empty record for it would look like a
- * fact about an agent instead of a malformed request.
+ * `agency_agent_sessions.agent_user_id` is a `UUID`, and the public API layer
+ * validates the id before it calls here. This guard refuses a blank or over-long
+ * value rather than truncating it: a longer value can only ever match nothing,
+ * and answering an empty record for it would look like a fact about an agent
+ * instead of a malformed request.
  *
  * Note the length arm is currently unreachable over HTTP — Fastify's own
  * `maxParamLength` defaults to 100, the same width, and answers 404 for a longer
  * path segment before any handler runs. Kept as defence in depth (and because
- * `maxParamLength` is a server option someone may raise), while the blank arm is
- * the one that actually fires: a whitespace-only id is what a broken link
- * produces.
+ * `maxParamLength` is a server option someone may raise); the blank arm catches
+ * a whitespace-only id, which is what a broken link produces.
  */
 const MAX_AGENT_USER_ID_LENGTH = 100;
 
@@ -68,7 +68,7 @@ const MAX_AGENT_USER_ID_LENGTH = 100;
  * (`requireOwned`) and scoping to it. These cannot: an agent works several
  * campaigns, and their record is the union across them. The attempt row points at
  * a SESSION (`reserved_agent_id`), sessions are per shift per campaign, and
- * `agent_user_id` — master's user id, opaque to core (D3) — lives on the session.
+ * `agent_user_id` — a user id, opaque to these handlers — lives on the session.
  * So the person is two joins away from their own work, and every query here is
  * driven from the far side of those joins. `GET /agency-campaigns/:id/attempts`
  * structurally cannot answer "what did I do this week"; it can only ever answer it
@@ -76,25 +76,22 @@ const MAX_AGENT_USER_ID_LENGTH = 100;
  *
  * ── AUTH AND THE FLAG ARE ON THIS PLUGIN, and that is the whole risk here ────
  *
- * **Core registers auth middleware PER ROUTE PLUGIN, not globally** (see
- * docs/reference/magic-voice-core/CLAUDE.md), and this repository has already shipped that mistake once:
- * `agencyInternalRoutes` was mounted as a sibling of `internalRoutes`, inherited
- * none of its hooks, and left the roster-ingest route reachable unauthenticated
- * (MAG-89). These routes serve every phone number, note and disposition an agent
- * has touched, across campaigns, so getting it wrong here ships strictly more than
- * that route did.
+ * **Auth middleware is registered PER ROUTE PLUGIN, not globally**, so a plugin
+ * mounted as a sibling inherits none of its neighbours' hooks and a route on it
+ * ships unauthenticated. These routes serve every phone number, note and
+ * disposition an agent has touched, across campaigns, so getting it wrong here
+ * ships a great deal.
  *
  * Hence: `addHook('preHandler', authMiddleware)` on the plugin, `gate()` inside
  * every handler, and `test/unit/agency/agent-record-routes.test.ts` asserting both
  * actually run rather than trusting this comment. The test asserts the MIDDLEWARE
  * WAS CALLED, not a status code — a route that does not exist also answers 404,
- * which is the trap that made the previous version of this assertion vacuous
- * (MAG-106).
+ * which would make a status-code assertion vacuous.
  *
  * ── The tenant scope is a PREDICATE, not an ownership check ──────────────────
  *
- * There is no campaign in these paths to own, and `agent_user_id` is opaque: core
- * cannot tell a real user id from a guessed one. So both repository reads scope on
+ * There is no campaign in these paths to own, and `agent_user_id` is opaque: these
+ * handlers cannot tell a real user id from a guessed one. So both repository reads scope on
  * `agency_agent_sessions.tenant_id`/`account_id` — an id from another tenant
  * resolves to no sessions and therefore to an empty record, never to someone
  * else's. An empty record is deliberately indistinguishable from an agent who has
@@ -196,8 +193,8 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
    * `:agentUserId` even if the depths matched. None of that is asserted by the
    * routes existing, which is the point: `agent-record-routes.test.ts` pins BOTH
    * directions (`/stats` reaches the roster, `/<uuid>/stats` still reaches the
-   * per-agent record), because MAG-106 in this repository was an assertion that
-   * passed vacuously against a route that did not exist. A 404 and a
+   * per-agent record), because an assertion can pass vacuously against a route
+   * that does not exist. A 404 and a
    * wrong-handler-answered-200 are both invisible to a status-code assertion on
    * the OTHER route.
    *
@@ -208,8 +205,8 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
    * zone-independent. No `agent_user_id` — the subject is the whole roster, and
    * narrowing to named agents is a later compare surface; accepting it would make
    * `benchmark` mean something different per request under the same name. No
-   * `include_inactive` either: core has no user table (D3) and cannot know an
-   * agent's membership status, so that filter is master's and core never sees it.
+   * `include_inactive` either: these handlers do not read memberships, so that
+   * filter belongs to the public API layer and never reaches here.
    *
    * ── `sort`/`order`/`limit` are applied SERVER-side, and echoed back ────────
    *
@@ -250,20 +247,18 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
    * occupancy on `/grouped-stats`, whose cardinality is a product of dimensions and
    * which therefore does push its `limit` into SQL.
    *
-   * **No `statement_timeout`, and that is filed rather than done.** Core sets one
-   * nowhere — there is no precedent in this repository to follow and no place to put
-   * a per-route budget without introducing the concept, which is a platform-wide
-   * change and outside this route's scope. What exists today is master's own time
-   * budget on the proxy hop (D8), and it is worth being precise about what that does
-   * and does not buy: it bounds what the CONSOLE waits for, not what Postgres does.
-   * A cancelled request leaves the scan running. Anyone tightening this should add
-   * the timeout in core, on both statements, rather than assume the proxy's deadline
-   * reached the database.
+   * **No `statement_timeout`, and that is filed rather than done.** None is set
+   * anywhere in this server — there is no precedent to follow and no place to put
+   * a per-route budget without introducing the concept, which is a server-wide
+   * change and outside this route's scope. Nothing else bounds it either:
+   * `callCore` runs in-process and ignores `timeoutMs`, and a cancelled request
+   * leaves the scan running. Anyone tightening this should add the timeout on both
+   * statements.
    *
    * ── Occupancy degrades ALONE ──────────────────────────────────────────────
    *
    * `shift_seconds`, `break_seconds` and `occupancy_pct` come from the transition
-   * log (migration 105) in a second statement. If that read fails the repository
+   * log in a second statement. If that read fails the repository
    * catches, warns, and serves every row with occupancy at zero and
    * `occupancy_pct` at `null` rather than 500ing the attempt totals — the same
    * precedent as the per-agent record, and the row SET is unaffected because the
@@ -318,10 +313,10 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
    * `/grouped-stats` is a static single segment, as `/stats` is, so Fastify's radix
    * tree separates all three of these from `/:agentUserId/stats` with no ambiguity
    * — a static segment also beats a parametric one at the same position. None of
-   * that is asserted by the route existing, which is the point: MAG-106 in this
-   * repository was an assertion that passed vacuously against a route that did not
-   * exist, and a 404 and a wrong-handler 200 are both invisible to a status-code
-   * assertion on a sibling route. `agent-record-routes.test.ts` pins WHICH
+   * that is asserted by the route existing, which is the point: an assertion can
+   * pass vacuously against a route that does not exist, and a 404 and a
+   * wrong-handler 200 are both invisible to a status-code assertion on a sibling
+   * route. `agent-record-routes.test.ts` pins WHICH
    * repository method ran.
    *
    * ── The two refusals that are not typos, and why they carry a `code` ───────
@@ -353,7 +348,7 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
    * `benchmark` — a cohort of dispositions or of hours is not a peer group, so a
    * median over them would be a number with no meaning that a console would
    * nonetheless render. Both stay on the roster. No `agent_user_id` filter, same
-   * reason as the roster: it is opaque to core, so only master can validate it.
+   * reason as the roster: it is opaque here, so only the public API layer can validate it.
    *
    * ── `limit` IS pushed into SQL here, unlike the roster ─────────────────────
    *
@@ -451,8 +446,8 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
    * them — a product decision, not a redundancy. Every rate is `null` (never `0`)
    * on a zero denominator, and `success_rate_pct`'s denominator is `connected`
    * rather than `attempts`: a call that never bridged had no conversation to
-   * convert. `occupancy` comes from the transition log (migration 105) and is only
-   * meaningful from that migration forward — sessions with no events read as zeros
+   * convert. `occupancy` comes from the transition log and is only
+   * meaningful where events exist — sessions with no events read as zeros
    * rather than as anything inferred. It also DEGRADES to those same zeros if its
    * read fails (the repository catches and warns rather than failing the whole
    * record), so a zeroed occupancy block has two causes and only the log tells

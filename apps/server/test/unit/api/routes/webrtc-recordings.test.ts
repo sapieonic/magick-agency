@@ -1,10 +1,8 @@
 /*
- * PORT NOTE (magick-agency): ported from core test/unit/api/routes/webrtc-recordings.test.ts
- * @4850d1d9 (4 -> 6). Module paths differ; the route takes the VoiceLink host allow-list
- * as an option, so the proxy-call case also asserts it is forwarded and an extra case
- * asserts the default (none) is an empty list. Added: a token check that never reaches
- * the repository, in both directions of the 403 case (already covered) and a 404 for a
- * cross-ACCOUNT token.
+ * The route takes the VoiceLink host allow-list as an option, so the proxy-call case also
+ * asserts it is forwarded and an extra case asserts the default (none) is an empty list.
+ * Also covered: a token check that never reaches the repository, in both directions of the
+ * 403 case, and a 404 for a cross-ACCOUNT token.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 

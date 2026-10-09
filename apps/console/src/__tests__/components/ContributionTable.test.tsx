@@ -123,7 +123,7 @@ describe('ContributionTable — the campaign, then who drove it', () => {
 
   it('hands up the null name as null, rather than the stand-in it renders', () => {
     /**
-     * `agent_name: null` means master could not resolve them, and the drill-down
+     * `agent_name: null` means the server could not resolve them, and the drill-down
      * applies the SAME `agentDisplayName` fallback to it. Passing the rendered
      * `Agent 4f21ab90` up instead would look identical here and be a name this
      * client invented the moment anything downstream treated it as one.
@@ -302,9 +302,9 @@ describe('ContributionTable — a thin row is not rated', () => {
     expect(within(row).getByText('1:36')).toBeTruthy();
   });
 
-  it('withholds nothing when the field is absent — core may predate it', () => {
+  it('withholds nothing when the field is absent — the server may predate it', () => {
     /**
-     * Merge order is core → master → cusui. Meeting a core without the field must
+     * The console can meet a server without the field (it deploys last). That must
      * leave this screen exactly as it was, not turn every rate into "Not enough
      * calls" — which would be a worse screen than the gap the field closed.
      */

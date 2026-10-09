@@ -27,10 +27,9 @@ import styles from './NotificationSettingsPage.module.css';
  * Everything rendered here — the events, their labels, their descriptions,
  * which are digests, what the defaults are — arrives from
  * `GET /notifications/preferences`. There is no local copy of any of it, which
- * is the same rule the audit log's `available_actions` follows: master is not a
- * dependency of this repo, nothing could check a copy, and the copy is what
- * drifts. A master build with a new event lights it up here with no change on
- * this side.
+ * is the same rule the audit log's `available_actions` follows: the server owns
+ * the catalog, a copy here would be a second list, and the copy is what drifts.
+ * A server build with a new event lights it up here with no change on this side.
  *
  * The consequence to keep in mind while editing: `category` is an arbitrary
  * string. `CATEGORY_LABELS` is a presentation nicety with a humanising
@@ -39,14 +38,14 @@ import styles from './NotificationSettingsPage.module.css';
  *
  * ── It is about the signed-in person and nobody else ──────────────────────
  *
- * No user picker, no role gate. Master reads the caller from the session and
+ * No user picker, no role gate. The server reads the caller from the session and
  * the routes take no subject, so this page cannot show or change a colleague's
  * subscriptions. That is also why the sidebar entry floors at `tenant.read`
  * rather than at an admin permission: an unsubscribe link that only admins can
  * follow is not an unsubscribe link.
  */
 
-/** Display names for the groupings master sends. A fallback, never a filter. */
+/** Display names for the groupings the server sends. A fallback, never a filter. */
 const CATEGORY_LABELS: Record<string, string> = {
   digests: 'Summaries',
   campaigns: 'Campaigns',
@@ -65,13 +64,10 @@ function categoryLabel(category: string): string {
 }
 
 /*
- * PORT NOTE (magick-agency): cusui's digest preview — `POST
- * /notifications/digests/preview`, its modal, the Preview button on a digest row
- * and the three formatters it needed (`formatCredits`, `formatChange`,
- * `formatDuration`) — is removed. It rendered master's `usage.digest`, a credits
- * spend summary over AI calls and broadcasts; Magick Agency v1 has no credits and
- * no broadcasts, and lane A deleted the route (plan §3.3, §3.5). The cadence
- * controls for any digest-cadence event stay, verbatim.
+ * There is no digest preview: no `POST /notifications/digests/preview` call, no
+ * modal and no Preview button on a digest row. Such a preview would render a
+ * credits spend summary; Magick Agency v1 has no credits and no such route. The cadence controls for any
+ * digest-cadence event stay.
  */
 
 /**
@@ -206,7 +202,7 @@ export default function NotificationSettingsPage() {
           event_key: event.key,
           channel: event.channel,
           enabled: draft[event.key]!.enabled,
-          // Master refuses a frequency on an immediate event rather than
+          // The server refuses a frequency on an immediate event rather than
           // ignoring it, so it is sent only where it means something.
           ...(event.cadence === 'digest' ? { frequency: draft[event.key]!.frequency } : {}),
         })),
@@ -271,13 +267,13 @@ export default function NotificationSettingsPage() {
           icon={<Mail size={22} />}
           title="Nothing to configure"
           /*
-           * This branch means "master returned no events this role can
+           * This branch means "the server returned no events this role can
            * receive", which today is RARE — and the story that used to be here
            * ("a dialer agent has no subscriptions") was simply wrong.
            * `isEventAddressableToRole` returns true for every `explicit`
            * -audience event for every role, so an `agent` who opens this page
            * sees Campaign started and Campaign finished: those addresses are
-           * typed into a campaign form and may be theirs. Master's own route
+           * typed into a campaign form and may be theirs. The server's own route
            * says so — refusing the page to such a caller "would be wrong, they
            * have real subscriptions to manage".
            *

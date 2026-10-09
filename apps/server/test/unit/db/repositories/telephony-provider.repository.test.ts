@@ -1,23 +1,7 @@
 /*
- * PORT NOTE (magick-agency): ported from master test/unit/db/repositories/telephony-provider.repository.test.ts@a1f0756a
- * (19 cases → 10: 9 verbatim, 10 deleted, 1 new). The repository is READS ONLY here
- * (see its PORT NOTE): `create`, `update` and `findLiveTransferEnabledNames` are
- * deleted with the telephony-provider CRUD routes and core's live-transfer read, so
- * their cases are deleted with them —
- *  - findLiveTransferEnabledNames: 'queries only enabled AND active providers, ordered by SQL',
- *    'returns an empty set as-is (no carrier enabled is a valid answer)',
- *    'never reads or writes Redis — every call is answered from Postgres',
- *    'a read that SELECTed before a disable cannot leave the old set behind after invalidation';
- *  - create: 'should invalidate list caches after create';
- *  - update: 'should invalidate list + specific caches after update',
- *    'writes live_transfer_enabled and returns the new row with the value it replaced',
- *    'never busts tenant metadata caches itself — that side effect belongs to the route',
- *    'returns null when the provider is not found',
- *    'should not invalidate cache when no fields changed (current row doubles as previous)'.
- * The `metadata-cache.js` mock is removed: it existed only for the deleted
- * create/update assertions, and agency has no such module. `getPool` is mocked at
- * `@magick-agency/db` (the path rule). NEW: 'exposes the reads only' pins the
- * deletion.
+ * The repository is READS ONLY: there is no `create`, `update` or
+ * `findLiveTransferEnabledNames`, and no `metadata-cache` module. `getPool` is mocked at
+ * `@magick-agency/db`. 'exposes the reads only' pins the absence of writers.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -35,7 +19,6 @@ vi.mock('../../../../src/cache/redis-cache.js', () => ({
 
 import { TelephonyProviderRepository } from '../../../../src/db/repositories/telephony-provider.repository.js';
 
-// PORT NOTE (magick-agency): fixture drops `live_transfer_enabled` with the model field (type-only).
 const provider = {
   id: 'tp-1', name: 'twilio', display_name: 'Twilio',
   status: 'active' as const, created_at: new Date(), updated_at: new Date(),
@@ -120,9 +103,8 @@ describe('TelephonyProviderRepository', () => {
     });
   });
 
-  // PORT NOTE (magick-agency): NEW. Pins the deletion of every writer and of the
-  // live-transfer read (module note above), so a re-added `update` that writes
-  // migration 074's `live_transfer_enabled` — absent from the baseline — reds here
+  // Pins the absence of every writer and of the live-transfer read, so a re-added `update` that writes
+  // `live_transfer_enabled` — absent from the baseline — reds here
   // rather than failing on real Postgres.
   it('exposes the reads only — create, update and findLiveTransferEnabledNames are deleted', () => {
     const methods = Object.getOwnPropertyNames(TelephonyProviderRepository.prototype)

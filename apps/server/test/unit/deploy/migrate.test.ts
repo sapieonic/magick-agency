@@ -5,7 +5,7 @@ import { dbTlsOptions } from '../../../src/db-tls.js';
 import { runMigrations, type MigrateConfig } from '../../../src/migrate.js';
 
 /**
- * NEW (magick-agency): the pre-boot migration step (`dist/migrate.js`, run by
+ * The pre-boot migration step (`dist/migrate.js`, run by
  * `docker/entrypoint.sh`) and the TLS decision it shares with the server (`db-tls.ts`).
  * The point of the step is that migrations connect with exactly the server's Postgres TLS:
  * on and VERIFIED under production (Q1), with `DB_SSL_CA` as the trust root, and plain

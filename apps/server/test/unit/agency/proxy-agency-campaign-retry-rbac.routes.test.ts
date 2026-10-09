@@ -4,12 +4,11 @@ import type { MembershipRole } from '@magick-agency/contracts/rbac';
 
 /**
  * **The three retry routes' RBAC floors, asserted by execution**
- * (`docs/reference/magickvoice-platform/docs/agency-campaign-retry-wire-contract.md` §6).
  *
  * ── Why by execution, and why a file of its own ───────────────────────────
  * `proxy-agency-campaigns.routes.test.ts` stubs `requirePermission` to a no-op
  * and asserts the permission STRING each route carries by reading the source.
- * MAG-96 measured what that leaves open: deleting a `requirePermission(...)` call
+ * That leaves a gap open: deleting a `requirePermission(...)` call
  * and editing the source-text table to match keeps the whole suite green. So this
  * file mocks neither `src/rbac/rbac.middleware.js` nor `src/config/index.js` —
  * `requirePermission` is the real factory over the real `PERMISSION_MATRIX`, and
@@ -18,38 +17,24 @@ import type { MembershipRole } from '@magick-agency/contracts/rbac';
  * ── The create is the only route on this plugin with TWO permissions ───────
  * `proxy.contact_lists.write` because it creates a campaign, `agency.supervise`
  * because it acts on another campaign's call results. Both floor at
- * `account_admin` today, so **no ROLE can hold one without the other** and a
- * role-based test cannot see the difference at all. The mechanism that CAN is
- * platform-API-key scopes, which narrow a key below its creator's role
- * (`src/auth/api-key-scopes.ts`) — so the two "holds one but not the other"
- * cases below are scoped keys, and they are the only way to prove that deleting
- * either guard is caught.
+ * `account_admin`, so **no ROLE can hold one without the other** and a
+ * role-based test cannot see the difference at all. So the two "holds one but not
+ * the other" cases below narrow the real `hasPermission` for one permission
+ * (`mocks.denied`): the role clears both floors, one permission is withheld, and the
+ * route must 403 naming it before any internal handler call. That is the only way
+ * to prove that deleting either guard is caught.
  *
- * That the create then answers 400 `missing_actor` for a WILDCARD key is not
- * incidental to those cases: it is the control that proves the two 403s came
- * from the missing scope rather than from the key being a key.
+ * The control case ("holds BOTH") ends at the route's 201, which proves the two
+ * 403s came from the withheld permission.
  */
 
 /*
- * PORT NOTE (magick-agency): master @ a1f0756a `test/unit/agency/proxy-agency-campaign-retry-rbac.routes.test.ts`.
- * `requirePermission` is still the REAL factory over the real matrix
- * (`@magick-agency/contracts/rbac`, renames `proxy.contact_lists.*` → `agency.campaigns.*`,
- * floors unchanged).
- *
- * MODIFIED — 'the create needs BOTH permissions…' (3 cases). Master proved each guard with a
- * platform-API-key SCOPE narrower than the creator's role; keys and scopes are deleted
- * (decision #5), and no role holds one of the two permissions without the other. The same
- * property is re-expressed by NARROWING the real `hasPermission` for one permission
- * (`mocks.denied`), which is exactly what a scoped key did: the role clears both floors, one
- * permission is withheld, and the route must 403 naming it before any core call. The
- * control case ("holds BOTH") now ends at the route's 201 instead of master's 400
- * `missing_actor` (which came from the request being key-authenticated, a state that no
- * longer exists).
+ * `requirePermission` is the REAL factory over the real matrix
+ * (`@magick-agency/contracts/rbac`; floors as documented in the header).
  *
  * The behavioural-settings gate is not under test here (its own suites are
  * `campaign-behavioral-settings.test.ts` and the behavioral-capabilities route suite), so the
- * account's settings row is supplied with both columns ON, as master's governance mock was a
- * no-op.
+ * account's settings row is supplied with both columns ON and can never be the 403.
  */
 const mocks = vi.hoisted(() => ({
   proxyToCore: vi.fn(),
@@ -68,11 +53,8 @@ vi.mock('../../../src/auth/session.middleware.js', () => ({ sessionMiddleware: a
 vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
   tenantContextMiddleware: async () => {},
 }));
-// Governance has its own execution-based suite next door; here it is a no-op so
-// a 403 can only ever mean RBAC fired.
-// PORT NOTE (magick-agency): master's `require-capability` mock is gone with governance
-// (the route registers no `requireCapability('agency')`; plan §3.2). The settings row that
-// replaced it is supplied with both behaviours ON, so it can never be the 403.
+// The behavioural-settings gate has its own execution-based suite next door; here its
+// settings row is supplied with both behaviours ON, so a 403 can only ever mean RBAC fired.
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
   accountSettingsRepository: {
     findByTenantAndAccount: vi.fn().mockResolvedValue({ allow_recording: true, analyze_calls: true }),
@@ -118,8 +100,7 @@ async function buildApp(
   role: MembershipRole,
   withheld?: readonly string[],
 ): Promise<FastifyInstance> {
-  // PORT NOTE (magick-agency): `withheld` replaces master's `keyScopes` (see the header):
-  // the permissions the caller's role would clear but which are withheld from it.
+  // `withheld` (see the header): the permissions the caller's role would clear but which are withheld from it.
   mocks.denied.clear();
   for (const permission of withheld ?? []) mocks.denied.add(permission);
   const app = Fastify({ logger: false });
@@ -164,7 +145,7 @@ describe('the create needs BOTH permissions, and a scoped key is what proves it'
     // missing it is missing the permission that is about acting on someone
     // else's call results, which is the harder one to guess at.
     expect(res.json().message).toContain('agency.supervise');
-    // Nothing reached core — not even the parent read.
+    // Nothing reached the internal handler — not even the parent read.
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
     await app.close();
   });
@@ -186,14 +167,9 @@ describe('the create needs BOTH permissions, and a scoped key is what proves it'
 
   it('a key holding BOTH clears RBAC — the control for the two cases above', async () => {
     /**
-     * It then stops at 400 `missing_actor`, which is the retry route's own rule
-     * about attribution and not RBAC. That is exactly what makes this a control:
-     * a different status proves the 403s above came from the missing scope
-     * rather than from the request being key-authenticated at all.
-     *
-     * PORT NOTE (magick-agency): nothing is withheld, and the same request goes all the way
-     * through to core's 201 — the control that proves the two 403s came from the withheld
-     * permission. (No key, so no `missing_actor`.)
+     * Nothing is withheld, and the same request goes all the way through to the
+     * internal handler's 201 — the control that proves the two 403s above came from
+     * the withheld permission.
      */
     mocks.proxyToCore.mockImplementation(async (req: { method: string }) => ({
       status: req.method === 'POST' ? 201 : 200,
@@ -223,7 +199,7 @@ describe('the role floors, by execution', () => {
   ])('a %s gets %d on POST /campaigns/:id/retry', async (role, expected) => {
     // Both permissions floor at `account_admin`, so an `operator` running the
     // floor cannot author a retry campaign off someone else's call results —
-    // the same boundary MAG-136 drew for start/pause/resume/stop.
+    // the same boundary the lifecycle routes (start/pause/resume/stop) draw.
     mocks.proxyToCore.mockImplementation(async (req: { method: string }) => ({
       status: req.method === 'POST' ? 201 : 200,
       body: req.method === 'POST'

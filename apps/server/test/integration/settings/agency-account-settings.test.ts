@@ -12,8 +12,8 @@ import { buildAgencyAccountSettingsMap } from '../../../src/settings/agency-acco
 import { buildSessionPayload } from '../../../src/auth/session-payload.js';
 
 /**
- * NEW (magick-agency, no source): the session settings map on real Postgres
- * (plan §3.2, lead decision Q3a). The unit suite
+ * The session settings map on real Postgres
+ * (decision Q3a). The unit suite
  * (`test/unit/settings/agency-account-settings.test.ts`) mocks the two reads;
  * this proves the SQL behind them: `status != 'deleted'` keeps a deleted account
  * out, `findByIds(…, tenantId)` keeps a sibling and a foreign account out, NULL

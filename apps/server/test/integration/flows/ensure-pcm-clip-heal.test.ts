@@ -1,9 +1,7 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/integration/flows/ensure-pcm-clip-heal.test.ts@4850d1d9.
-// Only changes: mock specifiers / import paths — db/connection -> @magick-agency/db/connection (the one
-// module both ensure-pcm-clip's `@magick-agency/db` getPool and the repository's `../connection.js`
-// resolve to); logger + tracing mocks merged into one @magick-agency/observability mock (same members);
-// repository import -> @magick-agency/db/repositories/audio-file.repository; test-utils from
-// packages/db's integration setup. Tenant/account labels wrapped in `uuidFor` (UUID columns). Every case kept.
+// The mocks target `@magick-agency/db/connection` (the one module both ensure-pcm-clip's
+// `@magick-agency/db` getPool and the repository's `../connection.js` resolve to) and a single
+// `@magick-agency/observability` mock for logger + tracing. Tenant/account labels are wrapped in
+// `uuidFor` (UUID columns).
 import { describe, it, expect, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { getTestPool, closeTestPool, truncateAll } from '../../../../../packages/db/test/integration/setup/test-utils.js';

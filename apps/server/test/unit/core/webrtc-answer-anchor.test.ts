@@ -1,18 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
-// PORT NOTE (magick-agency): ported from core test/unit/core/webrtc-answer-anchor.test.ts@4850d1d9
-// (3 cases → 3); only the logger mock specifier changed. No case deleted or modified.
 
 // ---------------------------------------------------------------------------
 // `markAnswered()`'s RETURN contract — the signal `anchorAnswer` uses to emit the
 // carrier-answer lifecycle observation exactly once.
 //
-// A separate file rather than an addition to webrtc-bridge-session.test.ts, which
-// is one of the existing bridge suites the Phase 2 gate requires to stay
-// byte-identical (G-0 item 4). That file already covers the *anchor* being
+// A separate file rather than an addition to webrtc-bridge-session.test.ts. That
+// file already covers the *anchor* being
 // first-write-wins; what is new here is the boolean it now returns, and the
 // one-shot emission that depends on it.
 //
-// Why this matters: FOUR call sites in the manager anchor an answer (VoBiz answer
+// Why this matters: FOUR call sites in the manager anchor an answer (the carrier answer
 // webhook, VoiceLink stream start, the normalized `answer` event, and the PSTN
 // socket backstop), and on a real call several of them fire. An observer keyed on
 // anything other than this return value emits once per site — which would mean
@@ -50,7 +47,7 @@ describe('WebRtcBridgeSession.markAnswered return contract', () => {
     // Simulates the real shape: four independent sites all anchoring the same call.
     const s = makeSession();
     const anchored = [
-      s.markAnswered(), // VoBiz answer webhook
+      s.markAnswered(), // carrier answer webhook
       s.markAnswered(), // PSTN socket backstop
       s.markAnswered(), // normalized `answer` event
       s.markAnswered(), // VoiceLink stream start

@@ -110,8 +110,8 @@ describe('insertMany — idempotency without losing the audit trail', () => {
     const result = await repo.insertMany({ tenant_id: TENANT, phones: ['+15551230001'], source: 'api' });
 
     expect(result.results[0]!.created).toBe(true);
-    // PORT NOTE (magick-agency, B8): one data statement — the insert. Source had two
-    // (insert + `dnc_sync_state` version bump); no fallback SELECT on the happy path.
+    // Decision B8: one data statement — the insert, with no version bump and no
+    // fallback SELECT on the happy path.
     expect(dataCalls()).toHaveLength(1);
   });
 
@@ -167,7 +167,7 @@ describe('insertMany — idempotency without losing the audit trail', () => {
 });
 
 
-// NEW (magick-agency, decision B8): the `opts.client` path. The agent's mark joins
+// Decision B8: the `opts.client` path. The agent's mark joins
 // the CALLER's transaction, so this method must issue no transaction control and
 // never release a client it does not own; a failure must propagate.
 describe('insertMany — with a caller-supplied client (B8 "same transaction")', () => {
@@ -207,13 +207,8 @@ describe('insertMany — with a caller-supplied client (B8 "same transaction")',
 });
 
 describe('deleteById — the removal side of the delta', () => {
-  // PORT NOTE (magick-agency, decision B8): the four source cases here ("bumps and
-  // returns a version when a tenant-wide row leaves the set", "does NOT bump when a
-  // tenant-wide row for the number survives", "checks for a survivor INSIDE the
-  // transaction, between delete and bump", "does NOT bump or even check when a SCOPED
-  // row was removed") were about the `dnc_sync_state` version core needed to `SREM`
-  // a number. There is no version and no flat set, so they are DELETED; this one
-  // replaces them and pins what is left.
+  // Decision B8: there is no sync version and no flat set to remove a number from,
+  // so a removal is a single statement; this case pins what is left.
   it('is ONE delete statement: no transaction, no survivor query, no version', async () => {
     mockDelete({ id: 'e1', phone_e164: '+15551230001', account_id: null, campaign_id: null });
 
@@ -249,7 +244,7 @@ describe('deleteById — the removal side of the delta', () => {
       const result = await repo.deleteById('e1', TENANT, ACCOUNT);
 
       expect(result).toBeNull();
-      // PORT NOTE: source also asserted a ROLLBACK; there is no transaction now.
+      // There is no transaction, so there is nothing to roll back.
       expect(allSql()).not.toContain('COMMIT');
     });
 
@@ -435,14 +430,14 @@ describe('deleteById / findById — tenant scoping', () => {
 
     await repo.deleteById('e1', TENANT);
 
-    // PORT NOTE: source asserted ROLLBACK-not-COMMIT; the single DELETE has no
-    // transaction to roll back. What remains is that nothing is reported removed.
+    // The single DELETE has no transaction to roll back; what matters is that
+    // nothing is reported removed.
     expect(allSql()).not.toContain('COMMIT');
   });
 });
 
 // ---------------------------------------------------------------------------
-// MAG-104 — the publish-lag aggregate.
+// The publish-lag aggregate.
 //
 // NOTE ON COVERAGE: these tests pin the SQL's SHAPE and the JS-side coercion.
 // They do NOT execute the statement — that needs the integration stack. The

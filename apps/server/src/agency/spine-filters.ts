@@ -1,5 +1,5 @@
 /**
- * Query-string → filter parsing for the supervisor read surface (MAG-159).
+ * Query-string → filter parsing for the supervisor read surface.
  *
  * A LEAF module — pure functions over strings, no I/O, no DB types. It exists
  * apart from the routes so the parsing rules can be tested without a Fastify
@@ -45,7 +45,7 @@ export { RETRY_NO_OUTCOME };
  * Exported so a second read surface gets the SAME inverted check rather than its
  * own copy of the idiom — `agent-record.ts`'s bucket vocabulary uses it. The
  * paragraphs above are the whole argument for why that matters, and they apply
- * verbatim to any vocabulary a route echoes back in a 400.
+ * equally to any vocabulary a route echoes back in a 400.
  */
 export function vocabulary<TUnion extends string>(members: Record<TUnion, true>): readonly TUnion[] {
   return Object.keys(members) as TUnion[];
@@ -60,8 +60,8 @@ export const ATTEMPT_OUTCOMES = vocabulary<AgencyAttemptOutcome>({
   abandoned: true, agent_disconnected: true, orphaned: true,
   // Added in the same change as the union member, which the `Record` above is
   // what forces — and this is the vocabulary whose omission would matter most:
-  // a supervisor auditing the 2026-09-08 pilot's phantom abandoned rows has to
-  // be able to filter for the outcome that replaced them, and an unfilterable
+  // a supervisor separating cancelled rings from abandoned calls has to be able
+  // to filter for this outcome, and an unfilterable
   // outcome excludes rows from nothing while quietly ceasing to describe the
   // data (see `vocabulary`'s header).
   canceled: true,
@@ -72,7 +72,7 @@ export const CONTACT_STATES = vocabulary<AgencyContactState>({
   suppressed: true,
 });
 
-/** `agency_contacts.suppressed_reason`, migration 073. */
+/** `agency_contacts.suppressed_reason`. */
 export const SUPPRESSED_REASONS = ['dnc', 'invalid', 'max_attempts', 'manual'] as const;
 
 /**
@@ -94,7 +94,7 @@ export interface AgencyAttemptFilters {
   states?: AgencyAttemptState[];
   outcomes?: AgencyAttemptOutcome[];
   dispositionCodes?: string[];
-  /** master's user id, matched through `agency_agent_sessions.agent_user_id`. */
+  /** The user id, matched through `agency_agent_sessions.agent_user_id`. */
   agentUserId?: string;
   contactId?: string;
   phone?: PhoneFilter;
@@ -159,7 +159,7 @@ export type FilterParse<T> =
  * Read a param that may repeat (`?outcome=a&outcome=b`) or arrive
  * comma-separated (`?outcome=a,b`).
  *
- * Both forms are in the wild — master's activity filter accepts both for the
+ * Both forms are in the wild — the activity filter accepts both for the
  * same reason — and a client that guesses wrong would otherwise filter on the
  * literal string `"a,b"` and be handed an empty list, which on this surface
  * reads as "we never dialled anyone" rather than as a malformed request.
@@ -179,7 +179,7 @@ export function multiParam(raw: unknown): string[] | undefined {
  * An unknown `outcome` matches no row, and an empty list on this page is
  * indistinguishable from a campaign that dialled nobody — the exact
  * "returns 200 and looks complete" failure this surface exists to avoid. So the
- * valid set is echoed back, the way core's `unknown_break_reason` already does.
+ * valid set is echoed back, the way the break route's `unknown_break_reason` already does.
  *
  * Exported for the same reason {@link vocabulary} and {@link singleParam} are: the
  * roster read (`GET /agency-agents/stats`) validates `?sort=` and `?order=`
@@ -420,15 +420,16 @@ export function parseContactFilters(query: Record<string, unknown>): FilterParse
 /**
  * `suppressed_reason` values a retry selector may name.
  *
- * A strict subset of {@link SUPPRESSED_REASONS} (DR-4): `dnc` and `invalid` are
- * refused with their own message rather than being absent from this list, because
+ * A strict subset of {@link SUPPRESSED_REASONS}: `dnc` and `invalid` are never
+ * retried, and are refused with their own message rather than being absent from
+ * this list, because
  * "unknown suppressed_reason: dnc — expected one of max_attempts, manual" invites
- * the reader to conclude core does not know what DNC is. See
+ * the reader to conclude the server does not know what DNC is. See
  * {@link SELECTOR_SUPPRESSION_REFUSAL}.
  */
 export const RETRY_SELECTABLE_SUPPRESSED_REASONS = ['max_attempts', 'manual'] as const;
 
-/** The two DR-4 excludes, as their own set so the refusal and the message agree. */
+/** The two never-retried excludes, as their own set so the refusal and the message agree. */
 const NEVER_RETRIED_SUPPRESSIONS: readonly string[] = ['dnc', 'invalid'];
 
 const SELECTOR_SUPPRESSION_REFUSAL =
@@ -437,7 +438,7 @@ const SELECTOR_SUPPRESSION_REFUSAL =
 /**
  * States a retry selector may name.
  *
- * `in_flight` is excluded, and refused by name the way DR-4 refuses `dnc`.
+ * `in_flight` is excluded, and refused by name the way the never-retried rule refuses `dnc`.
  *
  * A contact in `in_flight` is ON A CALL RIGHT NOW. `claimDialable` flips the
  * state when the attempt starts; `chargeAttempt` writes `last_outcome` and bumps
@@ -605,7 +606,7 @@ function readAttemptCountBound(
  * The supervisor reaches this from a filtered Contacts tab, and that tab filters
  * on `phone`, `from` and `to` as well. Carrying those through and ignoring them
  * would produce a roster wider than the list the operator was looking at when
- * they pressed the button, while the dialog still showed their chips. cusui
+ * they pressed the button, while the dialog still showed their chips. The console
  * strips them before calling and says so in the dialog; this is the enforcement
  * that makes that promise real for every other caller.
  *
@@ -641,8 +642,8 @@ export function parseRetrySelector(
     }
   }
 
-  // Same shape as the DR-4 refusal below, and for the same reason: "unknown
-  // state: in_flight — expected one of pending, connected, …" would read as core
+  // Same shape as the never-retried refusal below, and for the same reason: "unknown
+  // state: in_flight — expected one of pending, connected, …" would read as the server
   // not knowing its own vocabulary, when the rule is that a contact currently on
   // a call is not retryable YET. See `RETRY_SELECTABLE_STATES`.
   const stateRaw = multiParam(source['state']);
@@ -656,8 +657,8 @@ export function parseRetrySelector(
     'last_outcome', multiParam(source['last_outcome']), RETRY_OUTCOME_SELECTABLES, issues,
   );
 
-  // DR-4, checked BEFORE the vocabulary so `dnc` gets the message that explains
-  // the rule rather than one that reads as core not knowing the value.
+  // The never-retried rule, checked BEFORE the vocabulary so `dnc` gets the message
+  // that explains the rule rather than one that reads as the server not knowing the value.
   const suppressedRaw = multiParam(source['suppressed_reason']);
   const neverRetried = suppressedRaw?.filter((v) => NEVER_RETRIED_SUPPRESSIONS.includes(v)) ?? [];
   let suppressedReason: string[] | undefined;
@@ -720,7 +721,7 @@ export function parseRetrySelector(
   // the right default — the contacts page opens unfiltered. Here it would seed a
   // second copy of an entire campaign from a request that named nothing, which is
   // never what a supervisor pressing "Retry these contacts" meant, and there is no
-  // campaign delete route in either service to undo it with.
+  // campaign delete route to undo it with.
   //
   // The message names the deliberate way to ask for the whole roster, because
   // refusing without one turns a legitimate (if unusual) intent into a dead end.

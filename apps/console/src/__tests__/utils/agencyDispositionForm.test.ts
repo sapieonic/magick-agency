@@ -11,9 +11,9 @@ import {
 import type { AgencyDisposition } from '../../types/agency';
 
 /**
- * `AD-P2-U-01` criterion (c): *a required note blocks submission client-side and
+ * Criterion (c): *a required note blocks submission client-side and
  * is also enforced server-side.* This file owns the client half. The server half
- * is core's, and the two are not redundant — the client guard exists so an agent
+ * is the API's, and the two are not redundant — the client guard exists so an agent
  * is never left pressing a button that will fail.
  */
 
@@ -119,8 +119,8 @@ describe('copy', () => {
     }
   });
 
-  it('never says "I" — CR-1, because a callback may not be this agent', () => {
-    // D11: a callback re-enters the roster as an ordinary pending contact and
+  it('never says "I" — because a callback may not be this agent', () => {
+    // Shared pool: a callback re-enters the roster as an ordinary pending contact and
     // whichever agent is available takes it. Copy promising otherwise is a
     // promise the product breaks.
     for (const copy of Object.values(DISPOSITION_BLOCK_COPY)) {
@@ -192,7 +192,7 @@ describe('buildSubmitPayload', () => {
 });
 
 describe('number-key mapping', () => {
-  it('maps 1-9 to catalog order, verbatim', () => {
+  it('maps 1-9 to catalog order, exactly', () => {
     // The catalog is NEVER re-sorted — not by label, not by success flag. A
     // client-side sort silently remaps every agent's muscle memory the moment an
     // admin renames a code, and both orders look reasonable in review.

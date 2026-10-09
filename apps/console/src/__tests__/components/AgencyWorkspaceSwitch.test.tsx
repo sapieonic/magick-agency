@@ -6,7 +6,7 @@ import type { Role } from '../../types/auth';
 /**
  * The sidebar's way into the Agency Dialer — one control, two destinations.
  *
- * Three things have to agree — master's `agency` capability, core's
+ * Three things have to agree — the server's `agency` capability, its
  * `agency_dialer_enabled` flag, and having any standing in the dialer at all —
  * and each is asserted on its own, because an OR written where an AND was meant
  * passes every test that only ever varies one input at a time.
@@ -89,7 +89,7 @@ describe('agency dialer entry — both entitlements must be on', () => {
     expect(screen.queryByRole('link', { name: EITHER_LABEL })).toBeNull();
   });
 
-  it('is hidden when the core feature flag is off', () => {
+  it('is hidden when the server feature flag is off', () => {
     mocks.flags = new Set();
 
     renderSidebar();

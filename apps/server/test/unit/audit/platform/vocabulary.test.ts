@@ -16,26 +16,12 @@ import {
 } from '../../../../src/audit/platform/catalog.js';
 import { CAMPAIGN_ACTIVITY_ACTIONS } from '../../../../src/agency/agency-activity-actions.js';
 
-/*
- * PORT NOTE (magick-agency): ported from master test/unit/audit/vocabulary.test.ts@a1f0756a
- * to `platform/`, against the trimmed catalog and vocabulary.
- *  - DELETED: "covers the scheduler actions the campaign trail excludes" (no
- *    scheduling actions) and "does not blur an API key into an automatic action"
- *    (no `api_key` actor).
- *  - MODIFIED: `GROUPS` drops `'Scheduling'`; "files the scheduler under the AI
- *    product and the campaign lifecycle under agency" keeps only its agency
- *    half (no `'ai'` product); "labels the campaign-scoped actions
- *    self-standingly" keeps its own-vocabulary assertions and, since lane B2 ported
- *    `src/agency/agency-activity-actions.ts`, the two that read master's
- *    `CAMPAIGN_ACTIVITY_ACTIONS` again (restored verbatim).
- */
-
 /**
- * The vocabulary cusui's Audit Log filters are now built from.
+ * The vocabulary the console's Audit Log filters are built from.
  *
- * It replaced a hand-maintained copy of both catalog arrays in that repository,
+ * It replaced a hand-maintained copy of both catalog arrays in the console,
  * so the guarantee has to live here instead. Unlike the campaign trail's list,
- * every check below is total: `platform_audit_log` is master-native, so
+ * every check below is total: `platform_audit_log` is owned by the platform, so
  * `catalog.ts` is the whole truth and nothing here is a transcription of a
  * store this repo cannot see.
  *
@@ -60,11 +46,11 @@ const servedResourceTypes = PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY.map((type) =
 describe('the platform audit action vocabulary', () => {
   /**
    * Adding an action to `PLATFORM_AUDIT_ACTIONS` and not here ships a filter
-   * that cannot select rows master is already writing.
+   * that cannot select rows the platform is already writing.
    */
-  it('offers every action master writes', () => {
+  it('offers every action the platform writes', () => {
     const missing = (PLATFORM_AUDIT_ACTIONS as readonly string[])
-      .filter((action) => !(servedActions as readonly string[]).includes(action)); // PORT NOTE: type-only cast (master does not type-check tests)
+      .filter((action) => !(servedActions as readonly string[]).includes(action)); // type-only cast (vitest does not type-check)
 
     expect(
       missing,
@@ -76,7 +62,7 @@ describe('the platform audit action vocabulary', () => {
    * The other direction, and the worse failure: an option that always returns
    * an empty log reads to an operator as "this never happened".
    */
-  it('offers nothing master does not write', () => {
+  it('offers nothing the platform does not write', () => {
     const unwritten = servedActions
       .filter((action) => !(PLATFORM_AUDIT_ACTIONS as readonly string[]).includes(action));
 
@@ -96,7 +82,7 @@ describe('the platform audit action vocabulary', () => {
   });
 
   /**
-   * The filter is rendered from this list verbatim, so an entry with no label
+   * The filter is rendered directly from this list, so an entry with no label
    * would render as a nameless option rather than as an obvious bug, and an
    * unknown group would render outside every section.
    */
@@ -128,7 +114,7 @@ describe('the platform audit action vocabulary', () => {
     expect(served.get('agency_session.joined')).toBe('Agent joined session');
 
     /**
-     * Every action master writes is about a campaign, a session, a schedule or a
+     * Every action the platform writes is about a campaign, a session, a schedule or a
      * number, and the label has to say which — a one-word lifecycle label is the
      * shape that only works on a scoped screen.
      */
@@ -139,9 +125,9 @@ describe('the platform audit action vocabulary', () => {
 });
 
 describe('the platform audit resource-type vocabulary', () => {
-  it('offers every resource type master writes', () => {
+  it('offers every resource type the platform writes', () => {
     const missing = (PLATFORM_AUDIT_RESOURCE_TYPES as readonly string[])
-      .filter((type) => !(servedResourceTypes as readonly string[]).includes(type)); // PORT NOTE: type-only cast
+      .filter((type) => !(servedResourceTypes as readonly string[]).includes(type)); // type-only cast
 
     expect(
       missing,
@@ -149,7 +135,7 @@ describe('the platform audit resource-type vocabulary', () => {
     ).toEqual([]);
   });
 
-  it('offers nothing master does not write', () => {
+  it('offers nothing the platform does not write', () => {
     const unwritten = servedResourceTypes
       .filter((type) => !(PLATFORM_AUDIT_RESOURCE_TYPES as readonly string[]).includes(type));
 
@@ -171,7 +157,7 @@ describe('the platform audit resource-type vocabulary', () => {
 });
 
 /**
- * The product axis (E9) — reserved before anyone asked to filter by it, so the
+ * The product axis — reserved before anyone asked to filter by it, so the
  * checks here are what stop it rotting while nothing reads it.
  *
  * The type system already forces every entry to declare a product (`product` is
@@ -216,17 +202,16 @@ describe('the audit product axis', () => {
    * The classification itself, spot-checked where getting it wrong would be
    * invisible.
    *
-   * `dnc_entry.*` is the case that matters: Q2 settled that do-not-call belongs
-   * to the agency offering alone, and the action name carries no `agency_`
-   * prefix — so a prefix-derived axis would file every DNC mark under the AI
-   * product. That is exactly why the mapping is stated per action.
+   * `dnc_entry.*` is the case that matters: do-not-call belongs to agency
+   * dialing alone, and the action name carries no `agency_` prefix — so a
+   * prefix-derived axis would file every DNC mark under `platform`. That is exactly why the mapping is stated per action.
    */
-  it('files DNC under agency (Q2), despite the AI-neutral action name', () => {
+  it('files DNC under agency, despite the product-neutral action name', () => {
     expect(auditProductForAction('dnc_entry.created')).toBe('agency');
     expect(auditProductForAction('dnc_entry.deleted')).toBe('agency');
   });
 
-  it('files the scheduler under the AI product and the campaign lifecycle under agency', () => {
+  it('files the campaign lifecycle and agent sessions under agency', () => {
     expect(auditProductForAction('agency_campaign.stopped')).toBe('agency');
     expect(auditProductForAction('agency_session.joined')).toBe('agency');
   });
@@ -244,7 +229,7 @@ describe('the audit product axis', () => {
 });
 
 /**
- * The actor-type axis (86d45t7rm), checked the same two ways as the others and
+ * The actor-type axis, checked the same two ways as the others and
  * for the same reason: the module's `Exclude` pairs only fail `npm run lint`,
  * and vitest does not type-check.
  */
@@ -268,7 +253,7 @@ describe('the actor-type vocabulary', () => {
   });
 
   /**
-   * Rows written before migration 067 carry a NULL `actor_type` and are not
+   * Rows with no recorded actor carry a NULL `actor_type` and are not
    * offerable as a filter: "not recorded" is an absence, and an option for it
    * would be a date range wearing a different name.
    */

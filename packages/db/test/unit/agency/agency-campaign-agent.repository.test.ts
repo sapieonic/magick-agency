@@ -1,33 +1,31 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 /**
- * `agencyCampaignAgentRepository` — the staffing rule, as migration 064 leaves it.
+ * `agencyCampaignAgentRepository` — the staffing rule: one active assignment per
+ * person per CAMPAIGN.
  *
- * ── What changed, and why most of this file's ancestor is gone ───────────────
- * Migration 060 allowed ONE active assignment per person per tenant, so `assign`
- * was a MOVE: close the old row, insert the new, inside one transaction, with a
+ * ── Why there is no move simulation here ─────────────────────────────────────
+ * A per-tenant index (ONE active assignment per person per tenant) would make `assign`
+ * a MOVE: close the old row, insert the new, inside one transaction, with a
  * bounded retry around the case where a concurrent supervisor moved the same
- * person first. The previous version of this file was mostly a simulation of that
- * — a fake client modelling BEGIN/COMMIT/ROLLBACK undo logs and READ COMMITTED
- * visibility, because the property under test was "the index is never violated,
- * not even transiently, so the close must precede the insert".
+ * person first. Simulating that would need a fake client modelling BEGIN/COMMIT/ROLLBACK
+ * undo logs and READ COMMITTED visibility, because the property under test would be
+ * "the index is never violated, not even transiently, so the close must precede the
+ * insert".
  *
- * Migration 064 widened the index to `(tenant_id, user_id, campaign_id)`. There is
+ * The index is `(tenant_id, user_id, campaign_id)`. There is
  * no other row to close, so there is no move, no transaction, and no race to lose.
- * Those tests are not deleted because they became inconvenient; the behaviour they
- * pinned is behaviour this release deliberately removes, and the headline case
- * below — staffing a second campaign KEEPS the first — is the exact assertion that
- * used to read "MOVES rather than duplicates".
+ * The headline case below — staffing a second campaign KEEPS the first — is the
+ * assertion that a move-based design would read as "MOVES rather than duplicates".
  *
  * ── The fake INTERPRETS the SQL; it does not merely record it ───────────────
- * An earlier version of this fake decided conflicts from a hard-coded
- * `liveRow(tenant, user, campaign)` helper and inspected the statement only for the
- * substring `ON CONFLICT`. Its header claimed that an implementation "whose
- * `ON CONFLICT` named the wrong columns" would be caught. It would not have been:
- * mutation-testing this file found four changes that keep every case green while
- * breaking production —
+ * A naive fake would decide conflicts from a hard-coded
+ * `liveRow(tenant, user, campaign)` helper and inspect the statement only for the
+ * substring `ON CONFLICT`, which would not catch an implementation "whose
+ * `ON CONFLICT` named the wrong columns". Mutation-testing found four changes
+ * that keep every case green while breaking production —
  *
- *   - naming the 060 arbiter `(tenant_id, user_id)` → `42P10`, 500 on every assign;
+ *   - naming a per-tenant arbiter `(tenant_id, user_id)` → `42P10`, 500 on every assign;
  *   - naming the columns without the partial predicate → `42P10`, same;
  *   - `DO NOTHING` → `DO UPDATE SET assigned_at = NOW()` → churns `assigned_at`,
  *     the exact bug this file says it prevents;
@@ -118,14 +116,14 @@ class UniqueViolation extends Error {
   constraint = 'uq_agency_campaign_agent_active_campaign';
 }
 
-/** The columns of the modeled partial index, in order — migration 064's. */
+/** The columns of the modeled partial index, in order. */
 const INDEX_COLUMNS = ['tenant_id', 'user_id', 'campaign_id'] as const;
 /**
- * Which migration's index the modeled database has.
+ * Whether the modeled database has the per-campaign index.
  *
  * `assign()` probes `pg_indexes` for this rather than inferring it from rows, so the
  * fake has to answer that probe — and being able to flip it is what lets the
- * pre-064 branch be tested at all.
+ * branch for a database without the per-campaign index be tested at all.
  */
 let perCampaignIndexApplied = true;
 /** Its predicate, which a named `ON CONFLICT` target must also restate. */
@@ -159,8 +157,8 @@ function assertArbiterInferable(sql: string): void {
 }
 
 /**
- * The partial index, applied. Per CAMPAIGN since migration 064 — this function IS
- * the behaviour change; under 060 it took no campaign.
+ * The partial index, applied. Per CAMPAIGN — a per-tenant index would take no
+ * campaign.
  */
 function liveRow(tenantId: string, userId: string, campaignId: string): Row | undefined {
   return rows.find(
@@ -168,7 +166,7 @@ function liveRow(tenantId: string, userId: string, campaignId: string): Row | un
       r.tenant_id === tenantId &&
       r.user_id === userId &&
       r.unassigned_at === null &&
-      // The 060 index ignores the campaign entirely, which is exactly what makes a
+      // A per-tenant index ignores the campaign entirely, which is exactly what makes a
       // second assignment inexpressible under it.
       (perCampaignIndexApplied ? r.campaign_id === campaignId : true),
   );
@@ -451,7 +449,7 @@ describe('assign — the first assignment', () => {
      *    decide whether to omit `account_id` from the audit row. A non-NULL
      *    accident would file a tenant-level assignment under a made-up account.
      *  - `assigned_by` is who staffed them, which is the other half of the
-     *    "who was staffed here in March" question migration 060 exists to answer.
+     *    "who was staffed here in March" question the closed rows exist to answer.
      *
      * The omitted form is not hypothetical: `proxy-agency-staffing.routes.ts`
      * passes `assigned_by` from `request.user?.id`, and callers that hold no
@@ -471,7 +469,7 @@ describe('assign — the first assignment', () => {
   });
 
   it('needs no transaction — one statement, no BEGIN/COMMIT', async () => {
-    // The point of migration 064: with no row to close there is nothing to make
+    // The point of the per-campaign index: with no row to close there is nothing to make
     // atomic. A reintroduced transaction here would be dead weight around a
     // single statement, and this is the assertion that would notice.
     await agencyCampaignAgentRepository.assign({ ...base, campaign_id: CAMPAIGN_A });
@@ -483,8 +481,8 @@ describe('assign — the first assignment', () => {
 describe('assign — staffing someone onto a SECOND campaign', () => {
   /**
    * ── The headline behaviour change ─────────────────────────────────────────
-   * This assertion used to read "MOVES rather than duplicates: one active row,
-   * the old one closed". Under migration 060 an agency running Renewals in the
+   * A per-tenant index would make this read "MOVES rather than duplicates: one active row,
+   * the old one closed". Under it an agency running Renewals in the
    * morning and Collections after lunch could not staff one person on both: the
    * second Assign silently closed the first, so an ordinary afternoon handover
    * destroyed a supervisor's morning decision and the agent's landing page had no
@@ -519,8 +517,8 @@ describe('assign — staffing someone onto a SECOND campaign', () => {
 
   it('does not reach across tenants', async () => {
     // The same person, staffed under two tenants. Both rows are legitimate and
-    // neither may affect the other — the shared-services case migration 060's
-    // header calls out and 064 preserves.
+    // neither may affect the other — the shared-services case
+    // the closed-row design is meant to keep working.
     await agencyCampaignAgentRepository.assign({ ...base, campaign_id: CAMPAIGN_A });
     await agencyCampaignAgentRepository.assign({
       ...base,
@@ -572,7 +570,7 @@ describe('assign — re-assigning to the campaign they are already on', () => {
 describe('assign — a concurrent unassign closing the row we conflicted with', () => {
   it('retries, and the second pass inserts', async () => {
     /**
-     * The only way to consume an attempt since migration 064: our insert conflicts
+     * The only way to consume an attempt: our insert conflicts
      * with a live row, and by the time we read it back a supervisor has unstaffed
      * it. Nothing is inserted and nothing is found — which must not return
      * `undefined` as a record.
@@ -592,9 +590,9 @@ describe('assign — a concurrent unassign closing the row we conflicted with', 
 
   it('retries for a MULTI-STAFFED agent instead of crying upgrade-pending', async () => {
     /**
-     * ── Cursor Bugbot, PR #218 ────────────────────────────────────────────────
-     * The pre-064 branch used to be entered whenever the read-back came back empty
-     * AND any other live row existed for this person. Under 064 that combination is
+     * ── Multi-staffed agent ──────────────────────────────────────────────────
+     * The no-per-campaign-index branch must not be entered merely whenever the read-back came back empty
+     * AND any other live row existed for this person. With the per-campaign index that combination is
      * ordinary: the insert conflicts only on the TARGET campaign, so an empty
      * read-back means that one row was just unassigned — and the agent's other
      * assignments are irrelevant to it.
@@ -639,12 +637,12 @@ describe('assign — a concurrent unassign closing the row we conflicted with', 
   });
 });
 
-describe('assign — against a database that has NOT had migration 064', () => {
+describe('assign — against a database without the per-campaign index', () => {
   /**
-   * The pre-064 branch, which only became testable once the index shape was a
-   * probe rather than an inference. Reachable in one situation: this code deployed
-   * against a database where 064 has not been applied, or one where it was rolled
-   * back with `migrate down`.
+   * The no-per-campaign-index branch, testable because the index shape is a
+   * probe rather than an inference. Reachable in one situation: this code run
+   * against a database lacking the per-campaign index, for example after a
+   * `migrate down`.
    */
   beforeEach(() => {
     perCampaignIndexApplied = false;
@@ -671,10 +669,10 @@ describe('assign — against a database that has NOT had migration 064', () => {
 
   it('refuses a SECOND campaign with a typed error rather than moving them', async () => {
     /**
-     * The whole point of the branch. Under 060's index a second assignment cannot
+     * The whole point of the branch. Under a per-tenant index a second assignment cannot
      * exist, and the destructive alternative — closing the first row, which is what
      * this code used to do — would make the result of one request depend on which
-     * migration had run. The route turns this into a 409 naming both remedies.
+     * index the database had. The route turns this into a 409 naming both remedies.
      */
     await agencyCampaignAgentRepository.assign({ ...base, campaign_id: CAMPAIGN_A });
 
@@ -724,13 +722,13 @@ describe('assign — the index probe', () => {
   /**
    * ── When the probe itself fails ───────────────────────────────────────────
    * `hasPerCampaignIndex` wraps the catalog read in a `.catch()` that returns
-   * `true` — "assume 064 IS present" — and clears the memo so a bad answer is not
+   * `true` — "assume the per-campaign index IS present" — and clears the memo so a bad answer is not
    * pinned. Neither half was reached by any case: coverage put
    * `agency-campaign-agent.repository.ts:139-140` (the two lines inside that
    * catch) among the file's only unexecuted lines.
    *
    * The DIRECTION is the whole point, and the docstring states it: failing open is
-   * safe because 064 is the settled state of every deployment past that release,
+   * safe because the per-campaign index is the settled state of every deployment,
    * and the cost of being wrong that way is a worse message for a rare case
    * (retry-exhaustion instead of the tailored 409). Failing the other way hands a
    * confident, wrong "finish upgrading" 409 to every racing assign on a perfectly
@@ -739,16 +737,16 @@ describe('assign — the index probe', () => {
    *
    * Only expressible with the probe answering something other than a row, which is
    * why the harness gained {@link indexProbe}. Each case sets up a genuinely
-   * PRE-064 database, because that is the only state where the two directions give
+   * database WITHOUT the per-campaign index, because that is the only state where the two directions give
    * different answers.
    */
-  it('assumes 064 IS applied when the catalog read THROWS', async () => {
+  it('assumes the per-campaign index IS present when the catalog read THROWS', async () => {
     perCampaignIndexApplied = false;
     resetPerCampaignIndexProbe();
     await agencyCampaignAgentRepository.assign({ ...base, campaign_id: CAMPAIGN_A });
     indexProbe = 'throws';
 
-    // Retry-exhaustion — what "assume 064" leads to. Emphatically NOT the typed
+    // Retry-exhaustion — what "assume the index is present" leads to. Emphatically NOT the typed
     // upgrade-pending refusal, which is what a fail-CLOSED probe would produce
     // here and which would be a wrong, confident answer on a healthy database.
     await expect(
@@ -758,7 +756,7 @@ describe('assign — the index probe', () => {
     expect(live().map((r) => r.campaign_id)).toEqual([CAMPAIGN_A]);
   });
 
-  it('assumes 064 IS applied when the catalog read comes back EMPTY', async () => {
+  it('assumes the per-campaign index IS present when the catalog read comes back EMPTY', async () => {
     // `result.rows[0]?.exists ?? true` — the `?? true` arm. Same direction,
     // a different way of learning nothing: the read succeeds and says nothing.
     perCampaignIndexApplied = false;
@@ -779,7 +777,7 @@ describe('assign — the index probe', () => {
      * Without it, ONE flaked catalog read — a statement timeout under load, a
      * failover, a role that briefly lacked the grant — makes every later `assign`
      * on this process take the memoized fail-open answer, for the lifetime of the
-     * pod. On a genuinely pre-064 database that converts the tailored 409 into
+     * pod. On a database genuinely lacking the per-campaign index that converts the tailored 409 into
      * permanent retry-exhaustion 500s recoverable only by a restart, and nothing
      * in the logs connects the two events.
      *
@@ -879,7 +877,7 @@ describe('unassign', () => {
   });
 
   it('closes only the named campaign, leaving their other assignments alone', async () => {
-    // Campaign-scoped, and since 064 that scoping does real work on the ordinary
+    // Campaign-scoped, and that scoping does real work on the ordinary
     // path rather than only guarding a stale console: an agent genuinely holds
     // several assignments, and unstaffing them from one must not touch the rest.
     await agencyCampaignAgentRepository.assign({ ...base, campaign_id: CAMPAIGN_A });
@@ -1008,7 +1006,7 @@ describe('listActiveForCampaign', () => {
 describe('listAllForUser — the HISTORY read, closed rows included', () => {
   /**
    * ── The property, and why it needed a second method ──────────────────────
-   * Migration 060 closes rows rather than deleting them so *"who was staffed on
+   * Unassigning closes rows rather than deleting them so *"who was staffed on
    * this campaign in March"* stays answerable. Until this method existed every
    * reader on the table carried `unassigned_at IS NULL`, so that history was
    * written and unreadable.
@@ -1060,8 +1058,7 @@ describe('listAllForUser — the HISTORY read, closed rows included', () => {
   });
 
   it('never returns another tenant’s rows', async () => {
-    // The tenant predicate is in the same statement as the read, per rule 1 of
-    // docs/reference/magick-master/CLAUDE.md's RBAC section — a user id says nothing about which tenant is asking.
+    // The tenant predicate is in the same statement as the read, (tenant scoping is never left to the caller) — a user id says nothing about which tenant is asking.
     await agencyCampaignAgentRepository.assign({ ...base, campaign_id: CAMPAIGN_A });
     await agencyCampaignAgentRepository.assign({
       ...base,
@@ -1099,8 +1096,8 @@ describe('listAllForUser — the history is BOUNDED', () => {
    * assumption does not survive the table: this read returns CLOSED rows too, so
    * the count only ever grows — every reassignment adds one, `closeAllForUser`
    * manufactures one per campaign in a single statement, and nothing ever removes
-   * one, which is exactly what migration 060 chose. Its only caller is a route an
-   * `agent` hits on their own console, which then spends a core round trip per
+   * one, which is exactly why unassigning closes rows. Its only caller is a route an
+   * `agent` hits on their own console, which then spends an internal-handler round trip per
    * distinct campaign.
    */
   async function staffOver(count: number) {
@@ -1187,7 +1184,7 @@ describe('listAllForUser — the history is BOUNDED', () => {
   });
 
   it('keeps the tenant and user predicates alongside the window', async () => {
-    // Rule 1 of docs/reference/magick-master/CLAUDE.md's RBAC section: adding a window must not displace the
+    // Tenant scoping is never optional: adding a window must not displace the
     // scoping that makes the read safe.
     await agencyCampaignAgentRepository.assign({ ...base, campaign_id: CAMPAIGN_A });
     await agencyCampaignAgentRepository.assign({
@@ -1208,7 +1205,7 @@ describe('listAllForUser — the history is BOUNDED', () => {
 describe('closeAllForUser — the offboarding close', () => {
   /**
    * ── The leak it closes ──────────────────────────────────────────────────
-   * Nothing in master called any bulk unassign — the staffing route was this
+   * Nothing called any bulk unassign — the staffing route was this
    * repository's only caller — so a removed member stayed on every supervisor's
    * staffing list forever.
    *
@@ -1216,7 +1213,7 @@ describe('closeAllForUser — the offboarding close', () => {
    * Reach beyond the (tenant, user) pair. A close that dropped either predicate
    * would unstaff a whole tenant, or the same person across every tenant they work
    * for — a shared-services agent contracted to several tenants is the case
-   * migration 060 explicitly kept working.
+   * the closed-row design is meant to keep working.
    */
   it('closes every open assignment for that person in that tenant', async () => {
     await agencyCampaignAgentRepository.assign({ ...base, campaign_id: CAMPAIGN_A });
@@ -1336,7 +1333,7 @@ describe('closeAllForUser — the offboarding close', () => {
      * `[]` either way it is written — an implementation that re-closed everything
      * would return one row, so it is caught. What it cannot show is the shape a
      * real offboarding actually meets: a person with YEARS of closed rows and two
-     * live ones. `agency_campaign_agents` only ever grows (migration 060 closes
+     * live ones. `agency_campaign_agents` only ever grows (unassigning closes
      * rather than deletes, `closeAllForUser` manufactures one row per assignment,
      * nothing removes any), so by the time somebody leaves, the closed rows
      * outnumber the open ones and the filter is doing real work.

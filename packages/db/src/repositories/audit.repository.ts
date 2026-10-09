@@ -14,7 +14,7 @@ const MS_TRUNC_TIMESTAMP = "date_trunc('milliseconds', timestamp)";
  * limit this method then silently shortened would hand back a page the caller
  * reads as the end of the trail.
  *
- * 1000, raised from 100 for master's CSV export (MAG-158). That export walks the
+ * 1000, raised from 100 for the CSV export. That export walks the
  * whole filtered trail one merged page at a time, and every page costs it a
  * round trip to this service; at 100 a 5000-row trail was ~51 of them, in
  * series. The cap is a guard against an unbounded page, not a tuning knob — the
@@ -86,13 +86,12 @@ export class AuditRepository {
   }
 
   /**
-   * Campaign/time/type-filtered read for MAG-158's S2S route. MAG-157 adds the
-   * query so core's agency rows stop being write-only; the HTTP surface is the
-   * sibling ticket.
+   * Campaign/time/type-filtered read behind the internal audit-logs route, so
+   * the dialer's agency rows are not write-only.
    *
    * `campaignId` is stored in `event_data.campaign_id`, not a column. Filter
-   * via JSONB and the expression index in migration 094 — a sequential scan
-   * of a partitioned table is the MAG-153 shape.
+   * via JSONB and the expression index `idx_audit_logs_campaign_id` — a sequential scan
+   * of a partitioned table is the shape to avoid.
    *
    * ── The order is `(timestamp, id)`, and the second column is load-bearing ──
    * `ORDER BY timestamp DESC` alone does not define an order: it defines a
@@ -103,7 +102,7 @@ export class AuditRepository {
    * how a row is served twice on one page and never on the next.
    *
    * ── `before` is a keyset, and it is what makes paging stable ───────────────
-   * MAG-158 merges this stream with master's in application code, so the two
+   * The activity export merges this stream with the platform audit stream in application code, so the two
    * must page by position rather than by offset: an OFFSET is counted from the
    * top of a result set that keeps growing, so a row written during pagination
    * shifts every later page by one. A keyset asks for "the rows after this exact
@@ -126,8 +125,8 @@ export class AuditRepository {
    * the truncated one, the two would disagree *within* a millisecond and the
    * `limit + 1` prefix SQL returns would not be the prefix the merge expects.
    *
-   * The cost is that the ordering can no longer be served directly by migration
-   * 094's index (which ends `timestamp DESC` and carries no `id` anyway, so the
+   * The cost is that the ordering can no longer be served directly by
+   * that index (which ends `timestamp DESC` and carries no `id` anyway, so the
    * row-wise form could not drive it either). The filtered set is one campaign's
    * rows, so the sort is small; `from`/`to` still bind the raw column, which is
    * what partition pruning needs.
@@ -148,7 +147,7 @@ export class AuditRepository {
      *
      * The count is a second scan of the same filtered set over a partitioned
      * table, and a caller that walks the trail to its end pays it once per page
-     * for a number it discards — master's CSV export is exactly that, and at the
+     * for a number it discards — the CSV export is exactly that, and at the
      * 5000-row ceiling it was ~51 counts nobody read. Default `true`, so a
      * caller that wants the number keeps it by saying nothing.
      */

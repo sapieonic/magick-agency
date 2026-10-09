@@ -9,7 +9,7 @@ import type { FastifyInstance } from 'fastify';
  * Before this fix, `account_id` was caller-supplied and written straight onto
  * the new membership row alongside `tenant_id = request.tenantId` with no
  * check that the two agreed. `memberships.account_id` is `REFERENCES
- * accounts(id)` (migration 001) with no composite FK back to the tenant, so
+ * accounts(id)` with no composite FK back to the tenant, so
  * nothing in the schema caught a mismatch: a tenant_admin of tenant A could
  * invite a user against an `account_id` belonging to tenant B, producing a
  * membership row that crosses a tenant boundary. `GET /accounts/mine` is what
@@ -75,7 +75,7 @@ vi.mock('@magick-agency/db/repositories/account.repository', () => ({
   accountRepository: mocks.accountRepository,
 }));
 vi.mock('../../../../src/cache/redis-cache.js', () => ({
-  // Q5 (Manas, 2026-10-09): revocation deletes go through `delForRevocation` (retried, reports
+  // Q5: revocation deletes go through `delForRevocation` (retried, reports
   // failure); this double forwards to the `del` mock and reports success, so the assertions on
   // `del` still observe the key.
   redisCache: { ...mocks.redisCache, delForRevocation: async (...k: string[]) => { await mocks.redisCache.del(...k); return true; } },

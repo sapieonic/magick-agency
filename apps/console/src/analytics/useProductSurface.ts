@@ -2,13 +2,12 @@ import { useEffect } from 'react';
 import { clearProductSurface, setProductSurface, type ProductSurface } from './posthog';
 
 /**
- * Tag every event fired inside this shell with the product it belongs to (E8).
+ * Tag every event fired inside this shell with the product it belongs to.
  *
  * ── Why the shell and not the call sites ────────────────────────────────────
- * The two products share one PostHog project and a flat event catalog, so
- * `webrtc_call_placed` from the Softphone and an agency station dial landed in
- * the same bucket with nothing to separate them — the product axis simply did
- * not exist. It cannot be added at the call sites either: there are around 200
+ * The event catalog is flat, so without a product axis the same event from the
+ * `/app` zone and from the agency shell lands in one bucket with nothing to
+ * separate them. The axis cannot be added at the call sites: there are around 200
  * of them, and autocapture, pageviews and error events have no call site at
  * all. The shell is the one place that knows the answer for everything mounted
  * under it, which is exactly what a super property is for.

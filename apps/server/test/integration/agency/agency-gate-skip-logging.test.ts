@@ -2,8 +2,6 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 
 /*
- * PORT NOTE (magick-agency, Phase 6): ported from core
- * test/integration/agency/agency-gate-skip-logging.test.ts@4850d1d9 — 2 cases, both
  * kept, every log-field assertion unchanged. Modified: the connection and logger mocks
  * (agency's `@magick-agency/db` / `@magick-agency/observability`); the config stub
  * drops `telephony.vobiz` (VoBiz deleted) and `masterService` (read only by the DNC
@@ -13,7 +11,7 @@ import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js'
  * `synced.applied` check becomes the gate's own `check()` answering `suppressed`.
  */
 
-// PORT NOTE: core mocked `src/db/connection.js`; agency's pool lives in `@magick-agency/db`
+// The DB pool lives in `@magick-agency/db`
 // (the server's repositories import its root, packages/db's repositories `./connection`).
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
 vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
@@ -21,8 +19,7 @@ vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() })
 vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: {}, // PORT NOTE: core stubbed `telephony.vobiz` (VoBiz deleted, plan §5)
-    // PORT NOTE: core also stubbed `masterService` (the DNC resync requester's target, B8).
+    telephony: {}, // no carrier config is needed
   },
 }));
 
@@ -146,8 +143,7 @@ describe('agency pre-dial skip logs at the real pacing/DB seam', () => {
   it('logs a DNC suppression with its reason and without irrelevant window fields', async () => {
     world = await createChaosWorld({ agents: 1, contacts: 1, maxConcurrentCalls: 1 });
     const rowBefore = await contactRow(world.contactIds[0]!);
-    // PORT NOTE (B8): core published `applyReplace({ version: 2, members: [phone] })`
-    // into the Redis set. The list is `dnc_entries` now; `dnc_entries.tenant_id`
+    // Decision B8: the list is `dnc_entries` now; `dnc_entries.tenant_id`
     // references `tenants`, which the chaos world does not insert.
     await getTestPool().query(
       `INSERT INTO tenants (id, name, slug) VALUES ($1, 't', $2) ON CONFLICT (id) DO NOTHING`,

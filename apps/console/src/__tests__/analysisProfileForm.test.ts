@@ -142,7 +142,7 @@ describe('analysisProfileForm — profileToForm round-trip', () => {
     expect(form.custom_dimensions[0]!.options).toBe('a, b');
   });
 
-  // The dimension list is core's shared `analyticsDimensionSchema`, stored as
+  // The dimension list is the server's shared `analyticsDimensionSchema`, stored as
   // JSONB, so it can echo NULLs the send contract would reject. The page trims
   // every row during render (`toValidDimensions` in the preview `useMemo`), so a
   // NULL reaching the form would blank the settings page the moment the edit

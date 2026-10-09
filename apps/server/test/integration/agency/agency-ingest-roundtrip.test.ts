@@ -29,7 +29,7 @@ const { sendRosterChunk, rosterChunkKey } = await import('../../../src/agency/ag
 const { rejectedExportKey } = await import('../../../src/agency/agency-ingest-keys.js');
 
 /**
- * The exit-gate round trip (plan §8 Phase 4): CSV → parse → DNC filter (all three scopes, the
+ * The exit-gate round trip: CSV → parse → DNC filter (all three scopes, the
  * real `dncService.filterSuppressed`) → roster chunks into `agency_contacts` through the
  * in-process hand-off → the rejected-rows CSV, idempotent on a re-sent chunk (`rosterChunkKey`).
  * Postgres is real; S3 is mocked at `storage/s3.js`.
@@ -149,7 +149,7 @@ describe('agency ingest round trip on real Postgres', () => {
     expect(rows.map((r) => r.idempotency_key).sort()).toEqual([rosterChunkKey(job.id, 0), rosterChunkKey(job.id, 1)]);
   });
 
-  it('a second upload of the same file under a new job adds no duplicate people and reports what core refused', async () => {
+  it('a second upload of the same file under a new job adds no duplicate people and reports what the roster refused', async () => {
     await agencyIngestService.run({ job: await newJob(), campaignId });
     const again = await newJob();
     await agencyIngestService.run({ job: again, campaignId });

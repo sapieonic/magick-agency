@@ -1,16 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): ported from core test/unit/agency/campaign-stats-concurrency-guard-route.test.ts@4850d1d9.
- * Mock paths re-pointed only (logger → a partial `@magick-agency/observability` mock;
- * announcement / call / account-settings / profile repositories → `@magick-agency/db/repositories/*`;
- * leaf modules → `@magick-agency/domain/*`; `contracts.js` → `@magick-agency/contracts/agency`).
- * Cases verbatim unless noted here.
- */
 
 // ---------------------------------------------------------------------------
-// MAG-146 — the route's degraded-concurrency fallback, pinned against the REAL
+// The route's degraded-concurrency fallback, pinned against the REAL
 // `campaignHealth`/`saturated()` (not a mock of it).
 //
 // `agency-campaigns.routes.ts`'s `GET /:id/stats` reads
@@ -19,7 +12,7 @@ import Fastify from 'fastify';
 // treats `0` as "no known ceiling" and therefore never diagnoses saturation.
 // That reasoning is correct, and untested: `campaign-health.test.ts` proves the
 // GUARD in isolation, but nothing before this file proved the ROUTE actually
-// feeds it the sentinel it relies on. The ticket's own probe found the gap by
+// feeds it the sentinel it relies on. The gap was found by
 // changing the fallback from `0` to `1` and watching this surface's test suite
 // (`agency-campaign-stats.routes.test.ts`, an INTEGRATION test) stay green.
 //
@@ -135,7 +128,7 @@ beforeEach(() => {
   campaigns.healthInputs.mockResolvedValue(EMPTY_HEALTH_INPUTS);
 });
 
-describe('GET /agency-campaigns/:id/stats · MAG-146 degraded concurrency fallback', () => {
+describe('GET /agency-campaigns/:id/stats · degraded concurrency fallback', () => {
   it('falls back to 0 (never a positive number) when account_settings cannot be read, and the strip reads it as unknown', async () => {
     accountSettings.getMaxConcurrentCalls.mockRejectedValue(new Error('pool exhausted'));
 

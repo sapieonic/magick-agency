@@ -19,7 +19,7 @@ import type { AgencyCampaignSeries } from '../../types/agency-campaign-series';
  *   cleared the publishing threshold are three different answers, each with a
  *   different next action. Collapsing them into one "no data" is how a quiet
  *   week gets filed as a bug.
- * - **A failed read has no Retry.** A master that predates this route answers
+ * - **A failed read has no Retry.** A server that predates this route answers
  *   404 on every attempt, and this console cannot tell that from a transient
  *   failure — so the section says what happened and the rest of the panel,
  *   which does not depend on this read, carries on.
@@ -108,7 +108,7 @@ describe('CampaignSeriesSection', () => {
     await settle();
 
     expect(screen.getByTestId('campaign-series-error').textContent).toContain('Not Found');
-    // A master that predates this route answers 404 every time; a Retry here
+    // A server that predates this route answers 404 every time; a Retry here
     // would be a control that cannot work.
     expect(screen.queryByRole('button', { name: /retry|try again/i })).toBeNull();
     // The heading and the picker survive the failure — the section is still
@@ -196,7 +196,7 @@ describe('CampaignSeriesSection', () => {
   });
 
   describe('the notes that qualify what is on screen', () => {
-    it('names the campaign’s own time zone when master echoed one back', async () => {
+    it('names the campaign’s own time zone when the server echoed one back', async () => {
       mocks.getAgencyCampaignSeries.mockResolvedValue(
         series({ buckets: busyDays(4), timezone: 'Asia/Kolkata' }),
       );
@@ -321,7 +321,7 @@ describe('CampaignSeriesSection', () => {
       render(
         <CampaignSeriesSection
           campaignId="camp-1"
-          // No `ended_at` — the case a master that predates the timestamps sends.
+          // No `ended_at` — the case a server that predates the timestamps sends.
           campaign={campaign({ status: 'stopped', ended_at: null })}
           chart="activity"
         />,

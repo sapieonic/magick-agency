@@ -11,7 +11,7 @@ import {
 const log = createChildLogger({ component: 'dnc-service' });
 
 /**
- * Do-Not-Call list operations (design §2.3, `AD-P3-M-01`).
+ * Do-Not-Call list operations.
  *
  * ── Polarity, stated once, because everything else follows from it ───────────
  * DNC is the one control in this system where **unavailability must halt work**.
@@ -43,7 +43,7 @@ export const DNC_ADD_MAX_NUMBERS = 1_000;
 export type DncAddOutcome = 'added' | 'already_present' | 'invalid_phone';
 
 export interface DncAddResult {
-  /** The input string, verbatim, so the caller can point at the row they sent. */
+  /** The input string, unchanged, so the caller can point at the row they sent. */
   input: string;
   outcome: DncAddOutcome;
   /** Absent for `invalid_phone`. */
@@ -55,13 +55,11 @@ export interface DncAddResult {
    * tenant-wide entry. Absent for `invalid_phone`.
    *
    * ── Read from the ROW, never echoed from the request, and that is the point ──
-   * `POST /internal/agency/dnc` returns this to core as a receipt, and core is
-   * being changed to compare it against what it sent and treat a mismatch as
-   * "not landed". A receipt copied from the request cannot detect the thing it
-   * exists to detect: if `add`/`insertMany` ever stopped honouring `campaignId`,
+   * It is a receipt: a caller can compare it against what it sent and treat a
+   * mismatch as "not landed". A receipt copied from the request cannot detect the
+   * thing it exists to detect: if `add`/`insertMany` ever stopped honouring `campaignId`,
    * a mirrored field would confirm the scope the caller asked for while the row
-   * sat at a different one — which is precisely the silent-strip defect the
-   * campaign-scope work was opened to fix, wearing a confirmation.
+   * sat at a different one — a silently stripped scope, wearing a confirmation.
    *
    * It is also the value that differs on the idempotent path: `already_present`
    * hands back a PRE-EXISTING row, whose scope is whatever it was written at and
@@ -72,7 +70,7 @@ export interface DncAddResult {
 
 export interface DncAddRequest {
   tenantId: string;
-  /** NULL/undefined ⇒ tenant-wide, the scope core's Redis set can express. */
+  /** NULL/undefined ⇒ tenant-wide. */
   accountId?: string | null;
   campaignId?: string | null;
   phoneNumbers: readonly string[];
@@ -133,13 +131,13 @@ export class DncService {
    */
   async add(request: DncAddRequest): Promise<DncAddSummary> {
     /**
-     * Two passes, because the write is one transaction taking one version.
+     * Two passes, because the write is one transaction.
      *
      * Pass one resolves and de-duplicates so the repository receives a clean,
      * distinct list; pass two maps the repository's per-number outcomes back onto
      * the rows the operator actually sent. Interleaving them (parse, insert,
-     * parse, insert) is what the per-row-transaction shape forced, and it is
-     * exactly what made a 1,000-number import take 1,000 versions.
+     * parse, insert) would force a transaction per row, so a 1,000-number import
+     * would take 1,000.
      */
     const parsed: Array<{ input: string; phone: string | null }> = request.phoneNumbers.map(
       (input) => ({ input, phone: toDncE164(input) }),
@@ -203,10 +201,8 @@ export class DncService {
       results,
     };
 
-    // PORT NOTE (magick-agency, decision B8): master published a delta to core's
-    // Redis set here, after the commit. There is no set to publish to — the
-    // dial-time check reads `dnc_entries` itself — so the committed row IS the
-    // propagation.
+    // Nothing to publish after the commit (decision B8): the dial-time check
+    // reads `dnc_entries` itself, so the committed row IS the propagation.
 
     log.info(
       {

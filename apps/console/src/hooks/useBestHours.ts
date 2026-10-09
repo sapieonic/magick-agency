@@ -102,8 +102,8 @@ export function useBestHours(filters: BestHoursFilters): UseBestHours {
     /*
       Both ids, for the reason every agency surface waits for both: `TenantContext`
       resolves the account asynchronously, and a request sent in that window carries
-      no `X-Account-Id` — which master answers with `400 account_scope_required`
-      before it even resolves the tenant's core key. The account is a REQUIRED
+      no `X-Account-Id` — which the API answers with `400 account_scope_required`
+      before it even resolves the tenant's the API key. The account is a REQUIRED
       predicate on this route rather than an optional filter, so there is no
       degraded read to fall back to.
     */
@@ -115,7 +115,7 @@ export function useBestHours(filters: BestHoursFilters): UseBestHours {
       `campaign_id` — correctly, because a cleared selector's empty string would
       otherwise read as a filter matching nothing — and dropping it here would turn
       this into the POOLED read, which upstream answers `400 timezone_ambiguous`
-      because both time dimensions are grouped. E2 says the client must not send that
+      because both time dimensions are grouped. the client must not send that
       request at all, so it does not: the state is unreachable through the caller (the
       entry button only appears with a campaign in scope, and this surface's selector
       has no "all campaigns" option), and this makes it a refusal rather than a
@@ -170,7 +170,7 @@ export function useBestHours(filters: BestHoursFilters): UseBestHours {
         /*
           `empty` is decided here, once, rather than by every consumer looking at
           `rows.length`. Nothing is ever hidden from this read — no dimension is
-          `agent`, so master has nobody to drop — which is why this union has three
+          `agent`, so the API has nobody to drop — which is why this union has three
           arms where the roster's has four.
         */
         setState({ status: page.rows.length === 0 ? 'empty' : 'ready', page });

@@ -2,7 +2,7 @@ import { AGENCY_ROSTER_MIN_RATE_DENOMINATOR } from '../../types/agency-stats';
 import type { AgencyGroupPage, AgencyGroupRow } from '../../types/agency-stats';
 
 /**
- * Best-hours fixtures — the grouped read cut by weekday and hour, as master serves
+ * Best-hours fixtures — the grouped read cut by weekday and hour, as the server serves
  * it.
  *
  * ── COMPLETE, and every DERIVED field is derived ──────────────────────────
@@ -15,7 +15,7 @@ import type { AgencyGroupPage, AgencyGroupRow } from '../../types/agency-stats';
  * rates and the flags are computed from the cell's own counts, with an explicit
  * override still winning. The reason is the shape this surface is about: a cell is
  * three small numbers, and a hand-written fixture reading
- * `attempts: 2, connected: 1, connect_rate_pct: 4` is a payload core cannot emit —
+ * `attempts: 2, connected: 1, connect_rate_pct: 4` is a payload the server cannot emit —
  * on which a test asserting "the thin cell is not the brightest square" would pass
  * for the wrong reason and keep passing after the bug came back. The boundary cases
  * pass the flags by hand precisely so they assert the console's use of the SERVER's
@@ -26,7 +26,7 @@ import type { AgencyGroupPage, AgencyGroupRow } from '../../types/agency-stats';
  * thinness is opted into via {@link thinHourCell}. A fixture that defaulted the flag
  * to `false` — or left it undefined, which is falsy on the wire but PERMISSIVE
  * through the console's guard — would make "a thin cell is never coloured" pass
- * vacuously, which is exactly the MAG-106 pattern the phase-01 contract names.
+ * vacuously, which is exactly the vacuous-pass failure mode.
  *
  * ── The window is a REAL seven days in a REAL zone ────────────────────────
  * `WEEK_FROM`/`WEEK_TO` are the UTC instants of midnight-to-midnight over seven
@@ -97,9 +97,9 @@ export function hourCell(input: HourCellInput): AgencyGroupRow {
   const wrapup = input.wrapup_seconds ?? connected * 15;
 
   /*
-    Both flags DERIVED as core derives them — `attempts >= 20` for the dial-based
+    Both flags DERIVED as the server derives them — `attempts >= 20` for the dial-based
     one, and that AND `connected >= 20` for the connects-based one. A fixture that
-    hardcoded the second could produce a row core cannot emit (`rates_reportable:
+    hardcoded the second could produce a row the server cannot emit (`rates_reportable:
     false` beside a quotable conversion rate) and a test would then pin behaviour on
     a payload that does not exist.
   */
@@ -170,7 +170,7 @@ export function unconnectedHourCell(over: Partial<HourCellInput> = {}): AgencyGr
 }
 
 /**
- * The same cell with `success_rate_reportable` **absent from the object**, as a core
+ * The same cell with `success_rate_reportable` **absent from the object**, as a server
  * that predates the field serves it.
  *
  * ── Why a helper and not `{ success_rate_reportable: undefined }` ──────────
@@ -178,7 +178,7 @@ export function unconnectedHourCell(over: Partial<HourCellInput> = {}): AgencyGr
  * derived value back and the absent-field path is never taken. Every fixture in this
  * file therefore carries both flags, which meant the console's `typeof` guard for
  * the second one had no test over it at all — and that guard is where the fail-closed
- * ruling lives. A path with no fixture is the MAG-106 pattern: the code that reads
+ * ruling lives. A path with no fixture is that same failure mode: the code that reads
  * it looks tested and is not.
  *
  * `delete` on a copy rather than a hand-built row, so the cell is otherwise exactly

@@ -25,10 +25,9 @@ export class AccountSettingsRepository {
    * propagation lag on non-writing replicas; the writing replica is immediate
    * via the write-through above.
    *
-   * PORT NOTE (magick-agency): `default_ai_pipeline` (AI pipeline selection) and
-   * `analyze_dialer_calls` (the softphone-only gate 3, decision Q3b) are not
-   * columns here, so their readers are gone; `webrtc_max_duration_seconds` (plan
-   * §3.2) is read through this cache by {@link getWebrtcMaxDurationSeconds}.
+   * There is no separate dialer-analysis toggle: `analyze_calls` alone governs
+   * analysis (decision Q3b). `webrtc_max_duration_seconds` is read through this
+   * cache by {@link getWebrtcMaxDurationSeconds}.
    */
   private cache = new TtlCache<AccountSettingsRecord | null>({
     ttlMs: CACHE_TTL_MS,
@@ -54,8 +53,8 @@ export class AccountSettingsRepository {
     const pool = getPool();
     // On update a NULL ($4/$5) is treated as "no change" via COALESCE, so a caller
     // updating only max_concurrent_calls never clobbers an existing toggle.
-    // (PORT NOTE: core's `default_ai_pipeline` and `analyze_dialer_calls` are not
-    // carried — AI pipeline selection and decision Q3b.)
+    // (There is no `default_ai_pipeline` or `analyze_dialer_calls` — AI pipeline
+    // selection does not exist, and see decision Q3b.)
     const result = await pool.query<AccountSettingsRecord>(
       `INSERT INTO account_settings (tenant_id, account_id, max_concurrent_calls, analyze_calls, allow_recording)
        VALUES ($1, $2, $3, $4, $5)
@@ -94,11 +93,10 @@ export class AccountSettingsRepository {
    * Set the account's cap on a bridged call's length, in seconds, creating the
    * row (at the column defaults for everything else) when the account has none.
    *
-   * PORT NOTE (magick-agency): added, no core source — the WRITER half of
-   * {@link getWebrtcMaxDurationSeconds} (plan §3.2 moves core's
-   * `webrtc_max_duration_seconds` flag onto this row). Its one caller is the
-   * super-admin per-account settings route, which enforces core's flag bound
-   * (60..14400) before it gets here. Touches ONLY this column (and
+   * The WRITER half of {@link getWebrtcMaxDurationSeconds} (the per-account
+   * `webrtc_max_duration_seconds` setting replaces a global feature flag). Its one
+   * caller is the super-admin per-account settings route, which enforces the
+   * flag's bound (60..14400) before it gets here. Touches ONLY this column (and
    * `updated_at`): concurrency and the two toggles keep their values, so it
    * cannot race {@link upsert}'s `CASE` over the allocation mode. Same
    * write-through as {@link upsert}, so the next read on this replica sees it.
@@ -129,9 +127,8 @@ export class AccountSettingsRepository {
    * column defaults for everything else) when the account has none. A `null` or
    * omitted toggle keeps its stored value (COALESCE, as {@link upsert} does).
    *
-   * PORT NOTE (magick-agency): added, no core source (authorised by the lead).
-   * Core's tenant-facing `PUT /api/v1/account-settings` wrote the toggles through
-   * {@link upsert}, passing back the concurrency it had just read. In legacy_total
+   * Writing the toggles through {@link upsert}, passing back the concurrency just
+   * read, is unsafe. In legacy_total
    * mode that rewrites `max_concurrent_calls` and bumps the allocation version,
    * so a concurrency write committing between the read and the upsert was
    * silently undone, past the version lock. This statement names only the two
@@ -213,9 +210,8 @@ export class AccountSettingsRepository {
    * unset (row absent or column NULL). The caller applies the process default on
    * null. Dumb column read.
    *
-   * PORT NOTE (magick-agency): added, no core source. Plan §3.2 folds core's
-   * `webrtc_max_duration_seconds` feature flag into this per-account row
-   * (baseline column `account_settings.webrtc_max_duration_seconds`).
+   * The per-account row replaces a global `webrtc_max_duration_seconds` feature
+   * flag (baseline column `account_settings.webrtc_max_duration_seconds`).
    */
   async getWebrtcMaxDurationSeconds(tenantId: string, accountId: string): Promise<number | null> {
     const settings = await this.findByTenantAndAccount(tenantId, accountId);

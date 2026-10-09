@@ -10,12 +10,9 @@ vi.mock('../../../src/connection.js', () => ({
 
 const { webrtcCallRepository } = await import('../../../src/repositories/agency-call.repository.js');
 
-// PORT NOTE (magick-agency): ported from core
-// test/integration/db/webrtc-call.repository.test.ts@4850d1d9. Plan-required
-// changes: ids are UUIDs (core: 'test-tenant' / 'test-account' / 'other-*' /
-// 'user-42'); the table is `agency_calls`; the only scope is `'agency'`, so the
-// factory rows carry a campaign_id; the default provider is 'voicelink' (VoBiz
-// deleted). The recording URL fixtures keep core's strings (opaque text).
+// Ids are UUIDs; the table is `agency_calls`; the only scope is `'agency'`, so the
+// factory rows carry a campaign_id; the default provider is 'voicelink'. The
+// recording URL fixtures are opaque text.
 const TENANT = DEFAULTS.tenantId;
 const ACCOUNT = DEFAULTS.accountId;
 

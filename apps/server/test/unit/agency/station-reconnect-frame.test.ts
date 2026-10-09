@@ -2,20 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): ported from core test/unit/agency/station-reconnect-frame.test.ts@4850d1d9
- * (source 4 → ported 4). Harness changes only:
- *   - logger mock re-pointed from `src/utils/logger.js` to a partial `@magick-agency/observability` mock;
- *   - `agencyRoutes` (core `src/api/routes/agency.routes.ts`) → `registerStationSocket`
- *     (`src/agency/station-socket.ts`, where core's `GET /station/:sessionId` and
- *     `handleStationSocket` moved verbatim), registered on the same instance at the same
- *     prefix, so the socket path `/api/v1/agency/station/sess-1` is unchanged;
- *   - `BreakRegistry` imported from `@magick-agency/domain/break-manager`.
- * The `auth.middleware` and `feature-flags` mocks are kept as core had them; with only the
- * station socket mounted nothing reads them (the socket is registered outside the
- * authenticated scope, as in core). No case DELETED, MODIFIED or NEW.
- */
-
 // ---------------------------------------------------------------------------
 // The `ready` frame — what a reconnecting console is told, and what it was not.
 //
@@ -29,9 +15,9 @@ import websocket from '@fastify/websocket';
 // So an agent who queued a break mid-call and then lost their socket reconnected
 // to a `ready` frame carrying their state, their live attempt or their wrap-up
 // countdown, and no mention of the break — and were then pulled out of the pool by
-// a request their console had forgotten making. cusui found the same hole from the
-// client side (a reconnect during wrap-up renders no pending-break badge) and
-// recorded it as core-side; core's reviewer found it here. It is one gap.
+// a request their console had forgotten making. The console side saw the same hole
+// (a reconnect during wrap-up renders no pending-break badge) and the server side
+// found it here. It is one gap.
 //
 // ── Why this file drives the REAL socket ──────────────────────────────────
 //
@@ -55,7 +41,7 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: { vobiz: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/vobiz' } },
+    telephony: { vobiz: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/vobiz' } },
   },
 }));
 
@@ -86,8 +72,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyAgentSessionRepository: repos.session,
 }));
 
-// PORT NOTE: core's station handler lived in `agencyRoutes`; it moved verbatim to
-// `agency/station-socket.ts` (`registerStationSocket`), mounted below at the same prefix.
+// The station handler lives in `agency/station-socket.ts` (`registerStationSocket`), mounted below at the same prefix.
 import { registerStationSocket } from '../../../src/agency/station-socket.js';
 import { BreakRegistry } from '@magick-agency/domain/break-manager';
 
@@ -180,7 +165,6 @@ async function harness(): Promise<Harness> {
 
   const app = Fastify();
   await app.register(websocket);
-  // PORT NOTE: `agencyRoutes(a, runtime)` → `registerStationSocket(a, runtime)`, same prefix.
   await app.register(async (a) => registerStationSocket(a as never, runtime as never), { prefix: '/api/v1/agency' });
   await app.ready();
   return { app, breaks, sent, wrapupState, activeAttempt };

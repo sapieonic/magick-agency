@@ -7,10 +7,10 @@ import styles from './DialerUnavailable.module.css';
  *
  * ── The silence this replaces ───────────────────────────────────────────────
  * `AgentLanding` redirects a dedicated agent to `/dialer`, but only once both
- * entitlement gates resolve on: master's `agency` capability and core's
+ * entitlement gates resolve on: the `agency` capability and the
  * `agency_dialer_enabled` flag. **Both default off**, and neither can be turned on
  * from inside the product — the capability is a super-admin governance override
- * and the flag is core's.
+ * and the flag is the API's.
  *
  * With either off, `AgentLanding` deliberately falls through to `AppLayout`, and
  * its docstring is right about why: the full-viewport capability screen at

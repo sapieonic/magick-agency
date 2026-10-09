@@ -14,7 +14,7 @@ vi.mock('@magick-agency/db', async (orig) => ({
 const repo = await import('../../../src/db/repositories/agency.repository.js');
 
 /**
- * NEW (magick-agency, lane B1; no source suite). Brief: "repository tests that the
+ * Brief: "repository tests that the
  * source ran against a mocked pool: keep the port AND run each method's SQL at least
  * once against the real Postgres". The other integration suites in this directory
  * already execute most repository methods; this file runs the REST — every public
@@ -54,7 +54,7 @@ describe('agency repository — the methods no other real-Postgres suite reaches
     expect(await c.campaignLineage(randomUUID(), DEFAULTS.accountId, campaign.id)).toBeNull();
   });
 
-  it('findByRetryIdempotencyKey and countForCampaign (lead, after review: the two left on a mocked pool)', async () => {
+  it('findByRetryIdempotencyKey and countForCampaign (the two left on a mocked pool)', async () => {
     const { campaign } = await world();
     const key = `retry-${randomUUID()}`;
     await getTestPool().query('UPDATE agency_campaigns SET retry_idempotency_key = $1 WHERE id = $2', [key, campaign.id]);

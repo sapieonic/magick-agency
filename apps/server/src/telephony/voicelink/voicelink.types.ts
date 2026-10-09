@@ -1,18 +1,14 @@
 /**
  * VoiceLink telephony provider type definitions.
  *
- * VoiceLink (Elision/Dialshree-based Indian dialer) is structurally almost
- * identical to z99: a lead-based outbound dialer that bridges call audio to a
- * WebSocket we own and POSTs lifecycle events to a `webhook_url` we own. The
- * material differences from z99: A-law 8 kHz audio (carrier-forced), a real
- * lifecycle webhook (z99's is deferred), `POST /v1/add_lead` dispatch with the
- * destination split into a bare `customer_number` + separate `country_code`
- * field, and NO outbound coalescer (frames are accepted as emitted).
+ * VoiceLink (Elision/Dialshree-based Indian dialer) is a lead-based outbound
+ * dialer that bridges call audio to a WebSocket we own and POSTs lifecycle events
+ * to a `webhook_url` we own. Its specifics: A-law 8 kHz audio (carrier-forced), a
+ * real lifecycle webhook, `POST /v1/add_lead` dispatch with the destination split
+ * into a bare `customer_number` + separate `country_code` field, and NO outbound
+ * coalescer (frames are accepted as emitted).
  *
- * Protocol reverse-engineered live on 2026-07-11 — see
- * `docs/reference/magic-voice-core/docs/voicelink-telephony-implementation-plan.md`.
- * (Core's comment also cited `experiment/FINDINGS.md`, a write-up that was never
- * committed to core, so no copy exists.)
+ * Protocol reverse-engineered live on 2026-07-11.
  */
 
 export interface VoicelinkConfig {
@@ -50,7 +46,7 @@ export interface VoicelinkLoginResponse {
  * Body shape for `POST /v1/add_lead`. The destination is split: `customer_number`
  * is the BARE national number (no country code, no `+`, no leading 0) and
  * `country_code` is a SEPARATE field (no `+`). This split is load-bearing — see
- * the number-format matrix in the implementation plan §1.2.
+ * `VoicelinkAdapter.splitDestination`.
  */
 export interface VoicelinkAddLeadBody {
   /** The FROM DID (bare, no `+`). */
@@ -59,9 +55,9 @@ export interface VoicelinkAddLeadBody {
   customer_number: string;
   /** Callee country code as a separate field, no `+` (e.g. `91`). */
   country_code: string;
-  /** Per-lead WebSocket URL: `wss://<our-host>/api/v1/media-stream/<callId>`. */
+  /** Per-lead WebSocket URL the carrier dials back (the bridge passes `wss://<our-host>/api/v1/webrtc-call/<callId>/pstn-stream?token=…`). */
   websocket_url: string;
-  /** Per-lead lifecycle webhook: `https://<our-host>/api/v1/webhooks/voicelink/status/<callId>`. */
+  /** Per-lead lifecycle webhook (the bridge passes `https://<our-host>/api/v1/webhooks/voicelink/webrtc-status/<callId>?token=…`). */
   webhook_url: string;
 }
 
@@ -88,7 +84,7 @@ export interface VoicelinkAddLeadResponse {
  * `status`/`callStatus`/`hangupCause` to distinguish.
  *
  * TWO shapes exist and both must be accepted (see `normalizeVoicelinkWebhook`):
- *  - NESTED (observed live 2026-07-11, `experiment/captures/*webhook-event*`): the
+ *  - NESTED (observed live 2026-07-11): the
  *    call fields live under `call: {...}` (`call.id`, `call.callStatus`,
  *    `call.durationSec`, `call.recordingUrl`, …).
  *  - FLAT (VoiceLink's published docs, docs.html#ws-webhook-hangup): the same

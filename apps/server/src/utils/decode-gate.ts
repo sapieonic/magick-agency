@@ -109,7 +109,7 @@ export class Semaphore {
  * a Buffer. Nothing upstream bounds how many of those run at once: the upload
  * route decodes synchronously in the request path behind only a *request* rate
  * limit, and `ensurePcmClip`'s SingleFlight dedupes one audio file, never the
- * fleet. This process also runs live AI calls on the same event loop and CPU, so
+ * fleet. This process also bridges live calls on the same event loop and CPU, so
  * an unbounded decode burst degrades calls that have nothing to do with it.
  */
 const DEFAULT_DECODE_CONCURRENCY = 2;

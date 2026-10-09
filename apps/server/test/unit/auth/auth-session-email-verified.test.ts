@@ -1,8 +1,3 @@
-/*
- * PORT NOTE (magick-agency): ported from master test/unit/auth/auth-session-email-verified.test.ts@a1f0756a
- * (6 cases → 6). One case modified: the phone-token case reaches path 4, which
- * now refuses 403 `no_membership` instead of provisioning.
- */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { EMAIL_UNVERIFIED_CODE } from '../../../src/auth/session-email.js';
@@ -60,9 +55,6 @@ vi.mock('@magick-agency/db/repositories/tenant.repository', () => ({
 vi.mock('@magick-agency/db/repositories/membership.repository', () => ({
   membershipRepository: { findAllByUserId: vi.fn() },
 }));
-// PORT NOTE (magick-agency): master's `proxy/core-client`, `utils/crypto`,
-// `config/index` and `signupPhoneAssignmentsTotal` metric mocks are removed —
-// the route imported them only for path 4's provisioning, which now refuses.
 vi.mock('@magick-agency/observability', () => ({ createChildLogger: () => mocks.logger }));
 vi.mock('../../../src/auth/session.middleware.js', () => ({
   sessionMiddleware: vi.fn(),
@@ -223,10 +215,9 @@ describe('POST /auth/session — unverified Firebase email', () => {
 
     // Path 4 is reached. An unverified-email token must never get this far; a
     // phone token must.
-    // PORT NOTE (magick-agency): master's path 4 provisioned (here: `connect`
-    // threw → 500, `connect` called once). Agency's path 4 REFUSES with 403
-    // `no_membership` and writes nothing (plan §3.1), so the assertions are the
-    // refusal and that no transaction was opened. Still not `email_unverified`.
+    // Path 4 REFUSES with 403 `no_membership` and writes nothing, so the
+    // assertions are the refusal and that no transaction was opened. Still not
+    // `email_unverified`.
     expect(res.statusCode).toBe(403);
     expect(res.json().code).toBe('no_membership');
     expect(mocks.findByEmail).not.toHaveBeenCalled();

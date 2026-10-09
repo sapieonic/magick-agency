@@ -347,7 +347,7 @@ describe('useCampaignSeries — settling', () => {
   });
 
   it('shows the server’s own sentence when the read fails', async () => {
-    // A master that predates the route answers 404, and that message is the
+    // A server that predates the route answers 404, and that message is the
     // truthful one to show — this console cannot tell it from a typo'd id.
     mocks.getAgencyCampaignSeries.mockRejectedValue(new Error('Route not found'));
 

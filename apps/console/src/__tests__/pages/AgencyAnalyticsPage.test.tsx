@@ -24,7 +24,7 @@ import { MemoryRouter } from 'react-router-dom';
  * The page grew a second half — the floor, ranked, and one named person behind
  * each row — and two things about it are pinned below rather than in the
  * component's own file, because only the page can decide them: the tab is gated
- * on `agency.supervise` (master's exact floor on the roster read and on both
+ * on `agency.supervise` (the server's exact floor on the roster read and on both
  * per-agent twins, so a looser gate renders a tab whose first click 403s), and it
  * mounts only when chosen, so the campaign half's N `/stats` requests are not
  * joined by a roster read on every page view.
@@ -101,7 +101,7 @@ function stats(over: Record<string, unknown> = {}) {
  *
  * Every field the copy function reads is present, including
  * `on_break_by_reason` — `stallCopy` passes it straight to `Object.entries`, and
- * the mirrored type declares it required, so core is contracted to send it. An
+ * the mirrored type declares it required, so the server is contracted to send it. An
  * earlier version of this fixture omitted it and crashed the render, which is a
  * fixture bug rather than a product one: a partial stall payload would be a
  * contract violation, not an input the page has to survive.

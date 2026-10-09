@@ -32,14 +32,14 @@ import styles from './AgencyRetryDialog.module.css';
  *
  * ── This dialog exists because the commit is not reversible ─────────────────
  * `POST .../retry` creates a campaign AND seeds its roster in one transaction,
- * and **there is no campaign delete route in either service**. So the count has
- * to be seen before the button is pressed (DR-8), and the count has to be
+ * and **there is no campaign delete route**. So the count has
+ * to be seen before the button is pressed, and the count has to be
  * explained — which is the whole reason the preview carries a breakdown and an
  * `excluded` pair rather than just a number.
  *
  * ── Why the exclusion note is not a footnote ────────────────────────────────
  * `dnc` and `invalid` suppressions are removed from the seed unconditionally
- * (DR-4) — a customer's recorded request not to be contacted is not an operator
+ * — a customer's recorded request not to be contacted is not an operator
  * choice, and a bad number does not become good. A supervisor who ticks
  * "everything suppressed" and is shown 40 where they expected 300 will report it
  * as a bug unless the other 260 are accounted for on the same screen. So
@@ -49,16 +49,16 @@ import styles from './AgencyRetryDialog.module.css';
  * ── The one-running-campaign rule is stated UP FRONT ────────────────────────
  * `uq_agency_campaign_running (tenant_id, account_id) WHERE status='running'`
  * means a child cannot dial while its parent does. The child is created in
- * `draft` (DR-9) so creation never fails for that reason — but Start will, with
- * `409 another_campaign_running`, and the design's own note is that this is the
- * most likely support ticket the feature generates. Telling the supervisor while
+ * `draft` so creation never fails for that reason — but Start will, with
+ * `409 another_campaign_running`, and that refusal is likely to be the
+ * most common support ticket the feature generates. Telling the supervisor while
  * they are still authoring costs one sentence; telling them at Start costs a
  * refusal on a campaign they already made.
  *
  * ── What is NOT here ────────────────────────────────────────────────────────
  * The selector is not editable in this dialog. It arrives from the contacts tab
  * the supervisor already narrowed, or as the default "we did not reach them" set
- * when opened from the campaign header (contract §8). A second filter editor
+ * when opened from the campaign header. A second filter editor
  * here would be a second place for the cohort to be decided, and the two would
  * disagree about what the screen behind the dialog is showing.
  */
@@ -112,7 +112,7 @@ export interface AgencyRetryDialogProps {
    */
   droppedFilters?: NonSelectorContactFilter[];
   /**
-   * Contacts-tab filter VALUES that core refuses outright and that were
+   * Contacts-tab filter VALUES that the API refuses outright and that were
    * therefore stripped from the selector — `dnc`, `invalid`, `in_flight`. Named
    * on screen for the same reason as `droppedFilters`, with a different
    * sentence: those are filters that do not translate, these are contacts that
@@ -164,7 +164,7 @@ export function AgencyRetryDialog({
    * At-most-once, minted ONCE PER OPENING and deliberately NOT per request.
    *
    * That distinction is the entire mechanism. There is no campaign delete route
-   * in either service, so a create whose RESPONSE is lost — a proxy timeout, a
+   * in the API, so a create whose RESPONSE is lost — a proxy timeout, a
    * pod eviction — leaves the supervisor looking at a failure over a campaign
    * that exists and is fully dialable. What they do next is press the button
    * again, and a key re-minted at that moment would collide with nothing and
@@ -172,7 +172,7 @@ export function AgencyRetryDialog({
    * twice, by two campaigns, with nothing in the product able to undo it.
    *
    * It is held stable across a REFUSAL for the same reason rather than in spite
-   * of it: core rolls a refusal back before writing the key, so pressing again
+   * of it: the API rolls a refusal back before writing the key, so pressing again
    * after "nothing matched" creates normally — but if that "refusal" was really
    * a lost success, the same key replays it instead of duplicating it.
    *
@@ -212,8 +212,8 @@ export function AgencyRetryDialog({
   useEffect(() => {
     if (!open || !tenantId || !accountId) return;
     if (isSelectorEmpty(selector)) {
-      // Core answers 400 for a selector with no dimension at all. Refusing here
-      // saves a round trip and, more importantly, says the same thing core
+      // The API answers 400 for a selector with no dimension at all. Refusing here
+      // saves a round trip and, more importantly, says the same thing the API
       // would in words a supervisor can act on.
       setPreview(null);
       setPreviewError(
@@ -255,7 +255,7 @@ export function AgencyRetryDialog({
   /**
    * Only what the supervisor CHANGED travels as an override.
    *
-   * The child inherits the parent's whole config server-side (DR-10), so
+   * The child inherits the parent's whole config server-side, so
    * echoing an untouched value back would turn an inheritance into an explicit
    * write — indistinguishable on the row, and wrong the moment the parent's
    * value is what someone meant to carry forward.
@@ -285,7 +285,7 @@ export function AgencyRetryDialog({
    * Every caller ID deselected.
    *
    * Blocked with a reason rather than sent. An empty `caller_ids` is not a
-   * legal campaign — the picker requires one and so does core — and the
+   * legal campaign — the picker requires one and so does the API — and the
    * override build above omits an empty array, so sending anyway would make the
    * child inherit the PARENT's IDs while the picker on screen shows none
    * selected. A supervisor who deliberately cleared the list would then get a
@@ -306,7 +306,7 @@ export function AgencyRetryDialog({
     const trimmed = name.trim();
     if (trimmed) body.name = trimmed;
     if (Object.keys(overrides).length > 0) body.config_overrides = overrides;
-    // Absent on a non-secure origin, which core reads as an unkeyed create —
+    // Absent on a non-secure origin, which the API reads as an unkeyed create —
     // legal, and better than a dialog that cannot open at all.
     if (idempotencyKey.current) body.idempotency_key = idempotencyKey.current;
 

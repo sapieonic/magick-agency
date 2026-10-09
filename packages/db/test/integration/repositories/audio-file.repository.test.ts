@@ -1,6 +1,4 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/integration/repositories/audio-file.repository.test.ts@4850d1d9.
-// Only changes: connection/repository paths (packages/db layout); tenant/account labels wrapped in
-// `uuidFor` (UUID columns); `insertAudioFile` comes from ../setup/clip-factories.js. Every case kept.
+// Tenant/account labels are wrapped in `uuidFor` (UUID columns); `insertAudioFile` comes from ../setup/clip-factories.js.
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { vi } from 'vitest';
 import { randomUUID } from 'node:crypto';

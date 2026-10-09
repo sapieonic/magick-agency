@@ -9,7 +9,7 @@ import type { AgencyCampaign, AgencyColumnAnalysis } from '../../types/agency-ca
  * Two things distinguish this from the builder and are what this file pins:
  * the ingest must target the campaign in the URL rather than creating a draft,
  * and a campaign that can never dial again must not accept an import at all —
- * master would happily accept those rows and they would sit unreachable, which
+ * the server would happily accept those rows and they would sit unreachable, which
  * looks exactly like a successful import.
  */
 
@@ -61,7 +61,7 @@ function campaign(over: Partial<AgencyCampaign> = {}): AgencyCampaign {
 import ContactsPage from '../../pages/agency/AgencyCampaignContactsPage';
 
 /**
- * Mounted at `…/contacts/add`, which is where this page lives as of MAG-159.
+ * Mounted at `…/contacts/add`, which is where this page lives.
  *
  * It previously mounted at `…/contacts` and kept passing after that path was
  * reassigned to the roster — so it asserted the behaviour of a URL this

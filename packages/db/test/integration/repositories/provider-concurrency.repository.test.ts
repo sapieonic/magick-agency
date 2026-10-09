@@ -2,10 +2,8 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { uuidFor } from '../setup/factories.js';
 
-// PORT NOTE (magick-agency): ported from core
-// test/integration/repositories/provider-concurrency.repository.test.ts@4850d1d9.
-// Only change: tenant/account labels are wrapped in `uuidFor` (UUID columns).
-// Provider names ('vobiz', 'twilio') are allocation keys, kept as core wrote them.
+// Tenant/account labels are wrapped in `uuidFor` (UUID columns).
+// Provider names ('vobiz', 'twilio') are opaque allocation keys.
 
 vi.mock('../../../src/connection.js', () => ({
   getPool: () => getTestPool(),

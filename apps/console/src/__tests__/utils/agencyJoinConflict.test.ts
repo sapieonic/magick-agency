@@ -11,10 +11,10 @@ import {
 import { ApiError } from '../../api/client';
 
 /**
- * The `409 session_on_other_campaign` refusal (`MAG-160`).
+ * The `409 session_on_other_campaign` refusal.
  *
  * Asserted against a real `ApiError` rather than a hand-rolled object, because
- * the thing being relied on is that master forwards core's body VERBATIM and
+ * the thing being relied on is that the server forwards the dialer runtime's body unchanged and
  * that `apiFetch` puts it on `details` — a parser written against an imagined
  * shape would pass its own tests and read nothing off the wire.
  */
@@ -25,7 +25,7 @@ const BODY = {
   campaign_id: 'camp-other',
   campaign_name: 'Renewals',
   state: 'available',
-  // Core added this after the first cut of this feature. The console prefers its
+  // The API added this after the first cut of this feature. The console prefers its
   // own composed copy on the structured path and only falls back to this.
   message: 'You are already joined to Renewals.',
 };
@@ -105,7 +105,7 @@ describe('joinConflictCopy', () => {
  * gets there.
  */
 describe('joinConflictFallbackSentence', () => {
-  it('hands back core’s sentence when the structured read failed', () => {
+  it('hands back the API’s sentence when the structured read failed', () => {
     const err = new ApiError(409, { ...BODY, campaign_id: undefined });
 
     // The pair is the point: the parser refuses, and the fallback still beats

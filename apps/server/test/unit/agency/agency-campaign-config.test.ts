@@ -19,15 +19,15 @@ function messageFor(body: unknown, field: string): string | undefined {
 describe('what the validator deliberately does NOT require', () => {
   it('accepts an EMPTY disposition catalog', () => {
     /**
-     * Design §2.4 says `voicemail`, `callback` and `do_not_call` "cannot be
+     * The design says `voicemail`, `callback` and `do_not_call` "cannot be
      * removed from a catalog … because the retry engine, the scheduler and the DNC
      * path each depend on one of them existing". They do not: each mechanism keys
      * on a FLAG — `entry.retry`, `entry.requires_datetime`, `entry.suppress` — and
      * the real DNC path is the dedicated `attempts/:id/dnc` route, which never
-     * reads the catalog. Grepping core's `src/` for those three strings as
+     * reads the catalog. Grepping the dialer runtime's `src/` for those three strings as
      * comparisons returns nothing outside the contract's prose.
      *
-     * And core supports the empty catalog on purpose: `requiresDisposition` reads
+     * And the dialer runtime supports the empty catalog on purpose: `requiresDisposition` reads
      * it as "no codes to pick, so requiring one is a dead end". A required-codes
      * rule here would make a campaign whose agents do not disposition unsaveable.
      */
@@ -42,7 +42,7 @@ describe('what the validator deliberately does NOT require', () => {
 
   it('accepts an EMPTY retry policy — the ordinary case, not an edge case', () => {
     // `agency_campaigns.retry_policy` defaults to `'{}'` and nothing seeds it, so
-    // `{}` is what almost every campaign carries. Core's `DEFAULT_RETRY_POLICY`
+    // `{}` is what almost every campaign carries. The dialer runtime's `DEFAULT_RETRY_POLICY`
     // falls back PER KEY, so it means "the documented defaults", not "retry
     // nothing".
     expect(fields({ retry_policy: {} })).toEqual([]);
@@ -67,7 +67,7 @@ describe('what the validator deliberately does NOT require', () => {
 });
 
 describe('the disposition catalog', () => {
-  it('accepts §2.4\'s own example catalog verbatim', () => {
+  it('accepts the design\'s own example catalog exactly', () => {
     // The design's block is the reference the builder is written against; a
     // validator that rejects it is wrong about something.
     expect(
@@ -98,9 +98,9 @@ describe('the disposition catalog', () => {
   });
 
   it('rejects a code that differs from another only in case', () => {
-    // The code is compared byte-for-byte at three boundaries — core's lookup on
+    // The code is compared byte-for-byte at three boundaries — the dialer runtime's lookup on
     // submit, the console's pad, the retry engine's precedence check — so `Sale`
-    // is a code core answers `unknown_disposition_code` to.
+    // is a code the dialer runtime answers `unknown_disposition_code` to.
     expect(fields({ disposition_catalog: [{ code: 'Sale', label: 'Sale' }] })).toEqual([
       'disposition_catalog[0].code',
     ]);
@@ -142,7 +142,7 @@ describe('the disposition catalog', () => {
 
   it('rejects an unknown field inside a retry rule', () => {
     // `retry: { delay_mins: 240, max_attempts: 2 }` stores fine and delays by
-    // core's default rather than 240 — a typo that changes behaviour quietly.
+    // the dialer runtime's default rather than 240 — a typo that changes behaviour quietly.
     expect(
       fields({
         disposition_catalog: [
@@ -171,22 +171,22 @@ describe('the disposition catalog', () => {
   });
 });
 
-describe('built-in semantic mismatch — a label that promises a behaviour it cannot deliver (`AD-P3-M-06`)', () => {
+describe('built-in semantic mismatch — a label that promises a behaviour it cannot deliver', () => {
   /**
-   * `AD-P3-M-04` settled that built-in codes are available, not force-merged,
+   * Earlier work settled that built-in codes are available, not force-merged,
    * and that is correct — but it creates this hazard rather than removing it.
    * Nothing keys on a disposition's code STRING; every mechanism keys on a
    * FLAG. `{ code: 'do_not_call', label: 'Do not call' }` with no
    * `suppress: true` is a button labelled "Do not call" that suppresses
    * nothing: the customer asks never to be called again, the agent clicks the
-   * obvious control, and the contact is retried on schedule. Mirrors core's
+   * obvious control, and the contact is retried on schedule. Mirrors the dialer runtime's
    * `builtInSemanticMismatches()` (`disposition-policy.ts`), which detects the
    * same hazard but has zero consumers there — the fix belongs at the layer
    * that owns config validation, which is here.
    *
    * Blocking, not a warning — a mis-flagged built-in is pushed into `issues`,
    * which the route surfaces as a 400 on both POST and PATCH. That is a
-   * deliberate departure from core's advisory-only stance: the failure mode is
+   * deliberate departure from the dialer runtime's advisory-only stance: the failure mode is
    * a customer's do-not-call request being silently ignored, a regulated harm,
    * and this file is already the enforced feedback surface, not merely
    * advisory prose.
@@ -287,13 +287,12 @@ describe('the retry policy', () => {
     expect(fields({ retry_policy: policy })).toEqual([]);
   });
 
-  it('accepts §2.4\'s own policy block, less the one key MAG-103 refuses', () => {
+  it('accepts the design\'s own policy block, less the one key that is refused as inert', () => {
     // What this case really guards is that the DOCUMENTED policy stays saveable —
-    // a validator that rejects the design's own example is the bug. MAG-103
-    // removes `invalid` from that example (it is inert: core suppresses an
-    // unreachable number before any policy is read), so it is dropped here rather
-    // than the case being deleted. `connected: {max_attempts: 0}` STAYS — it is a
-    // live key that genuinely overrides core's built-in.
+    // a validator that rejects the design's own example is the bug. `invalid` is not
+    // part of that example (it is inert: the dialer runtime suppresses an
+    // unreachable number before any policy is read), so it is omitted here. `connected: {max_attempts: 0}` STAYS — it is a
+    // live key that genuinely overrides the dialer runtime's built-in.
     expect(
       fields({
         retry_policy: {
@@ -311,7 +310,7 @@ describe('the retry policy', () => {
     const message = messageFor({ retry_policy: { machine: { max_attempts: 2 } } }, 'retry_policy.machine');
 
     /**
-     * The highest-value rule in the file. With AMD off (D1) the system can never
+     * The highest-value rule in the file. With AMD off the system can never
      * classify an outcome as `machine` — a call answered by voicemail is
      * `connected`, because the carrier cannot tell us otherwise. So a `machine`
      * rule is not an ignored typo; it is a retry policy an operator configured,
@@ -324,7 +323,7 @@ describe('the retry policy', () => {
   });
 
   it('rejects `voicemail` as a policy key for the same reason', () => {
-    // The other name an operator reaches for. §2.4 puts voicemail retry on the
+    // The other name an operator reaches for. The design puts voicemail retry on the
     // disposition, and there is no `voicemail` outcome to key a policy by.
     expect(fields({ retry_policy: { voicemail: { max_attempts: 2 } } })).toEqual([
       'retry_policy.voicemail',
@@ -345,11 +344,10 @@ describe('the retry policy', () => {
   });
 
   it('accepts max_attempts: 0 — that is how an operator says "never retry"', () => {
-    // §2.4's own block uses it for `connected`. Treating 0 as missing (a falsy
+    // The design's own block uses it for `connected`. Treating 0 as missing (a falsy
     // check instead of a presence check) would make the documented policy
-    // unsaveable — that is what this case guards, and it is unrelated to MAG-103.
-    // Re-keyed from `invalid` to `connected`, which carries the same
-    // `{max_attempts: 0}` in §2.4 and is still a valid key.
+    // unsaveable — that is what this case guards. `connected` carries
+    // `{max_attempts: 0}` in the design and is a valid key.
     expect(fields({ retry_policy: { connected: { max_attempts: 0 } } })).toEqual([]);
     expect(fields({ retry_policy: { busy: { max_attempts: 0 } } })).toEqual([]);
   });
@@ -379,20 +377,20 @@ describe('the retry policy', () => {
 });
 
 // ===========================================================================
-// MAG-100 — `agent_disconnected` and `orphaned`
+// `agent_disconnected` and `orphaned`
 //
-// Both keys are genuinely produced by core AND carry an entry in core's
-// `DEFAULT_RETRY_POLICY` (MAG-97), so `resolveRetryDecision` really does act on a
-// rule keyed by either. They were absent from master's list alone, so master 400'd
-// a key core both accepts and honours.
+// Both keys are genuinely produced by the dialer runtime AND carry an entry in its
+// `DEFAULT_RETRY_POLICY`, so `resolveRetryDecision` really does act on a
+// rule keyed by either. They must be in the validator's list, or the public API
+// layer would 400 a key the dialer runtime both accepts and honours.
 //
 // ⚠️ These cases are written with LITERAL key names on purpose. The existing
 // "accepts every real outcome key" case iterates `RETRY_POLICY_OUTCOMES` itself,
 // so it is self-referential — it would have passed unchanged both before and after
 // this fix and proves nothing about which keys are in the list.
 // ===========================================================================
-describe('the retry policy: our-fault outcomes (MAG-100)', () => {
-  it("accepts 'agent_disconnected', which core produces and acts on", () => {
+describe('the retry policy: our-fault outcomes', () => {
+  it("accepts 'agent_disconnected', which the dialer runtime produces and acts on", () => {
     expect(fields({ retry_policy: { agent_disconnected: { delay_minutes: 5, max_attempts: 3 } } })).toEqual(
       [],
     );
@@ -443,8 +441,8 @@ describe('the retry policy: our-fault outcomes (MAG-100)', () => {
     ]);
   });
 
-  it('leaves the SILENTLY-INERT guidance exactly as it was (MAG-100 criterion 4)', () => {
-    // Criterion 4's other half. Widening the list must not dilute the one message
+  it('leaves the SILENTLY-INERT guidance exactly as it was', () => {
+    // Widening the list must not dilute the one message
     // that explains WHY a carefully-configured rule would never fire.
     for (const key of ['machine', 'voicemail', 'answering_machine']) {
       const message = messageFor({ retry_policy: { [key]: { max_attempts: 2 } } }, `retry_policy.${key}`);
@@ -456,20 +454,20 @@ describe('the retry policy: our-fault outcomes (MAG-100)', () => {
 });
 
 // ===========================================================================
-// MAG-103 — `invalid` was accepted by both services and read by neither
+// `invalid` is accepted by the schema but never read
 //
-// Core's `resolveRetryDecision` returns `suppressed` for `invalid` BEFORE the
-// line that reads `policy?.[outcome]`, so no rule on the key — not even core's
+// The dialer runtime's `resolveRetryDecision` returns `suppressed` for `invalid` BEFORE the
+// line that reads `policy?.[outcome]`, so no rule on the key — not even the dialer runtime's
 // own `DEFAULT_RETRY_POLICY.invalid` — can ever be observed for that outcome. An
 // operator could configure a retry, see it stored, and never have it fire.
 // ===========================================================================
-describe('the retry policy: `invalid` is refused as inert (MAG-103)', () => {
+describe('the retry policy: `invalid` is refused as inert', () => {
   it('refuses the key', () => {
     expect(fields({ retry_policy: { invalid: { max_attempts: 3 } } })).toEqual([
       'retry_policy.invalid',
     ]);
     // Refused whatever the rule says, including the `{max_attempts: 0}` that
-    // §2.4's block used to carry — the key is inert at any value.
+    // the design's block used to carry — the key is inert at any value.
     expect(fields({ retry_policy: { invalid: { max_attempts: 0 } } })).toEqual([
       'retry_policy.invalid',
     ]);
@@ -504,8 +502,8 @@ describe('the retry policy: `invalid` is refused as inert (MAG-103)', () => {
   it('KEEPS `connected`, which looks identical in the wizard but is live', () => {
     /**
      * The load-bearing non-change. Both `invalid` and `connected` render as
-     * "fixed at 0" in cusui, so the tempting fix is to refuse both. `connected`
-     * has NO short-circuit in core — it falls through to the ordinary policy
+     * "fixed at 0" in the console, so the tempting fix is to refuse both. `connected`
+     * has NO short-circuit in the dialer runtime — it falls through to the ordinary policy
      * lookup, so a rule genuinely overrides the built-in `{max_attempts: 0}`.
      * Refusing it would delete a live lever, and this asserts we did not.
      */
@@ -518,24 +516,24 @@ describe('the retry policy: `invalid` is refused as inert (MAG-103)', () => {
 //
 // Added after the 2026-09-08 pilot, where a ring an agent cancelled was
 // classified `abandoned` and put dials no customer ever heard into the
-// compliance-facing bucket. Core now classifies it as its own outcome (distinct
+// compliance-facing bucket. The dialer runtime classifies it as its own outcome (distinct
 // from `no_answer`, where the customer never picked up, and from `abandoned`,
 // where they picked up and reached nobody) and routes it to
 // `resolveOurFaultRedial`, which reads the CAMPAIGN's `retry_policy.canceled`
 // for a stricter cap and for the delay. So this is a live lever and not a
 // fallback — `DEFAULT_RETRY_POLICY.canceled` is the half nothing reads.
 //
-// ⚠️ Literal key names again, for MAG-100's reason: the "accepts every real
+// ⚠️ Literal key names again, for the same reason as above: the "accepts every real
 // outcome key" case iterates `RETRY_POLICY_OUTCOMES` itself and would pass
 // unchanged either side of this fix.
 // ===========================================================================
 describe('the retry policy: `canceled` (pilot 2026-09-08)', () => {
-  it("accepts 'canceled', which core produces and acts on", () => {
+  it("accepts 'canceled', which the dialer runtime produces and acts on", () => {
     expect(fields({ retry_policy: { canceled: { delay_minutes: 0, max_attempts: 3 } } })).toEqual([]);
   });
 
   it('names the key in the valid list an unknown key is told about', () => {
-    // Same criterion as MAG-100's: the error for a genuinely unknown key must
+    // Same criterion as above: the error for a genuinely unknown key must
     // enumerate a set that includes the thing the operator needs, or it sends
     // them back to a list that omits it.
     const message = messageFor(
@@ -591,9 +589,9 @@ describe('the retry policy: `canceled` (pilot 2026-09-08)', () => {
     // message, despite saying "says so with the message it gets". The first test
     // in this block already covers `toEqual([])` for a valid rule.
     //
-    // This is the load-bearing version, and the MAG-100 `answering_machine`
+    // This is the load-bearing version, and the `answering_machine`
     // analog: almost every other vocabulary in this service is British —
-    // jobs, schedules, automations, `NON_BILLABLE_STATUSES` — while core spells
+    // jobs, schedules, automations, `NON_BILLABLE_STATUSES` — while the dialer runtime spells
     // this outcome with one L, matching `webrtc_calls.status`. So `cancelled` is
     // the word this codebase itself taught the operator, and a generic
     // "not a call outcome" plus a valid-keys list makes them diff by eye to find
@@ -620,7 +618,7 @@ describe('the retry policy: `canceled` (pilot 2026-09-08)', () => {
 describe('the calling window', () => {
   it('accepts HH:MM and HH:MM:SS, because Postgres renders TIME as the latter', () => {
     expect(fields({ calling_window_start: '09:00', calling_window_end: '20:00' })).toEqual([]);
-    // A campaign read back from core and patched straight through carries the
+    // A campaign read back from the dialer runtime and patched straight through carries the
     // seconds form; rejecting it would break edit-then-save.
     expect(fields({ calling_window_start: '09:00:00', calling_window_end: '20:00:00' })).toEqual([]);
   });
@@ -633,7 +631,7 @@ describe('the calling window', () => {
     }
   });
 
-  it('rejects start == end, which core reads as PERMANENTLY CLOSED', () => {
+  it('rejects start == end, which the dialer runtime reads as PERMANENTLY CLOSED', () => {
     const message = messageFor(
       { calling_window_start: '09:00', calling_window_end: '09:00' },
       'calling_window_end',
@@ -655,14 +653,14 @@ describe('the calling window', () => {
     ]);
   });
 
-  it('ACCEPTS a window that wraps midnight — core supports it explicitly', () => {
-    // `start > end` is handled in core's predicate. Rejecting it here would
+  it('ACCEPTS a window that wraps midnight — the dialer runtime supports it explicitly', () => {
+    // `start > end` is handled in the dialer runtime's predicate. Rejecting it here would
     // outlaw evening campaigns in markets that run them.
     expect(fields({ calling_window_start: '22:00', calling_window_end: '06:00' })).toEqual([]);
   });
 
   it('cannot check start against end when only one is patched, and does not pretend to', () => {
-    // Master holds no campaign copy, so a PATCH carrying one side has nothing to
+    // The public API layer holds no campaign copy, so a PATCH carrying one side has nothing to
     // compare against. Inventing the other half is how a second writable campaign
     // starts.
     expect(fields({ calling_window_start: '09:00' })).toEqual([]);
@@ -682,7 +680,7 @@ describe('the calling window', () => {
      * (0=Sun) and `isodow` (1=Mon), so the ambiguity is undetectable by testing
      * the default and would surface as an off-by-one on Sundays months later. A
      * caller sending `0` believes `dow`, so accepting it means we and they
-     * disagree about which days the campaign runs. Core pins the same definition
+     * disagree about which days the campaign runs. The dialer runtime pins the same definition
      * in `calling-hours.ts` and names this validator as its mirror.
      */
     expect(message).toContain('1 = Monday');
@@ -746,7 +744,7 @@ describe('default_timezone — and the abbreviation Intl will not catch', () => 
     const message = messageFor({ default_timezone: 'EST' }, 'default_timezone');
 
     // At dial time an unreadable zone means the campaign's own config is broken,
-    // and core's per-contact gate can only park the contact and log — it cannot
+    // and the dialer runtime's per-contact gate can only park the contact and log — it cannot
     // pause a campaign. So the rejection belongs at this boundary, and the message
     // has to explain the half-the-year part or 'EST' looks reasonable.
     expect(message).toContain('IANA');
@@ -758,9 +756,9 @@ describe('withCampaignConfigDefaults — fixing inert-by-default without deletin
   it('fills in the three built-in codes when no catalog was sent', () => {
     /**
      * `agency_campaigns.disposition_catalog` is `JSONB NOT NULL DEFAULT '[]'` and
-     * nothing ever seeded it: master never sent the field, so EVERY campaign the
+     * nothing ever seeded it: the public API layer never sent the field, so EVERY campaign the
      * platform has made carried an empty catalog, `requiresDisposition` returned
-     * false for all of them, and any submission core did receive answered
+     * false for all of them, and any submission the dialer runtime did receive answered
      * `unknown_disposition_code` with `allowed_codes: []`. Disposition was inert
      * platform-wide.
      */
@@ -777,11 +775,11 @@ describe('withCampaignConfigDefaults — fixing inert-by-default without deletin
   it('LEAVES an explicit empty catalog empty — that is a configuration, not an omission', () => {
     /**
      * The distinction the whole mechanism rests on. An empty catalog means
-     * "outcome-driven retry, no human write-up", which core supports on purpose
-     * and `MAG-88` preserves explicitly. A default is only consulted when the
+     * "outcome-driven retry, no human write-up", which the dialer runtime supports on purpose
+     * and the defaults preserve explicitly. A default is only consulted when the
      * caller expressed no opinion, and `[]` is an opinion.
      *
-     * The alternative that was nearly built — core force-merging built-ins on read
+     * The alternative that was nearly built — the dialer runtime force-merging built-ins on read
      * so the effective catalog is never empty — would have deleted this
      * configuration platform-wide.
      */
@@ -800,8 +798,8 @@ describe('withCampaignConfigDefaults — fixing inert-by-default without deletin
   it('does NOT default retry_policy, so a later change to the defaults reaches old campaigns', () => {
     const out = withCampaignConfigDefaults({ name: 'Q3' }) as Record<string, unknown>;
 
-    // Core's `DEFAULT_RETRY_POLICY` falls back PER KEY at read time. Sending an
-    // explicit copy from master would freeze today's values into every campaign
+    // The dialer runtime's `DEFAULT_RETRY_POLICY` falls back PER KEY at read time. Sending an
+    // explicit copy from the public API layer would freeze today's values into every campaign
     // row and make a later change invisible to every existing campaign.
     expect('retry_policy' in out).toBe(false);
   });
@@ -810,7 +808,7 @@ describe('withCampaignConfigDefaults — fixing inert-by-default without deletin
     const body = { name: 'Q3' };
     const out = withCampaignConfigDefaults(body);
 
-    // The caller forwards this body to core; a surprise mutation of a request
+    // The caller forwards this body to the dialer runtime; a surprise mutation of a request
     // object is how a proxy starts lying about what it sent.
     expect(body).toEqual({ name: 'Q3' });
     expect(out).not.toBe(body);
@@ -843,7 +841,7 @@ describe('withCampaignConfigDefaults — fixing inert-by-default without deletin
   it('gives each built-in the flag that makes it work', () => {
     const byCode = new Map(DEFAULT_DISPOSITION_CATALOG.map((e) => [e.code, e as Record<string, unknown>]));
 
-    // The codes are conventions — nothing in core compares against these strings,
+    // The codes are conventions — nothing in the dialer runtime compares against these strings,
     // which is why their presence is not validated. The FLAGS are what the retry
     // engine, the scheduler and suppression actually read.
     expect(byCode.get('voicemail')!['retry']).toEqual({ delay_minutes: 240, max_attempts: 2 });
@@ -851,18 +849,18 @@ describe('withCampaignConfigDefaults — fixing inert-by-default without deletin
     expect(byCode.get('do_not_call')!['suppress']).toBe(true);
   });
 
-  it("do_not_call matches core's BUILT_IN_DISPOSITIONS exactly — no terminal flag", () => {
+  it("do_not_call matches BUILT_IN_DISPOSITIONS exactly — no terminal flag", () => {
     /**
-     * Cross-repo contract, unchecked by the compiler (`AD-P3-M-06` follow-up):
-     * core's `BUILT_IN_DISPOSITIONS` (`magic-voice-core/src/agency/disposition-policy.ts`)
+     * Contract, unchecked by the compiler:
+     * `BUILT_IN_DISPOSITIONS` (`src/agency/disposition-policy.ts`)
      * declares `do_not_call` as `{ code: 'do_not_call', label: 'Do not call',
-     * suppress: true }` — no `terminal`. Core's header states it is exported
-     * *precisely* so master and cusui copy from that one place; this pins master's
-     * copy against it so the two cannot drift silently, the same discipline
+     * suppress: true }` — no `terminal`. It is exported *precisely* so other layers
+     * copy from that one place; this pins the validator defaults' copy against it
+     * so the two cannot drift silently, the same discipline
      * `agency-billing-contract.test.ts` uses for the wire↔rate-card mapping.
      *
-     * `terminal: true` was dropped deliberately: core's `resolveDispositionDecision`
-     * checks `suppress` FIRST and returns before `terminal` is ever read (§2.4's
+     * `terminal: true` was dropped deliberately: `resolveDispositionDecision`
+     * checks `suppress` FIRST and returns before `terminal` is ever read (the design's
      * precedence order), so the flag could never fire on this code — a flag whose
      * effect is unreachable behind an earlier-checked one is the "inert config"
      * shape this project keeps finding. The default now states only what is true.

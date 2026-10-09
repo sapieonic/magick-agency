@@ -10,8 +10,8 @@ vi.mock('@magick-agency/db/repositories/provider-concurrency.repository', () => 
   },
 }));
 
-// PORT: the guards import `Traced` from the same package as `logger`; core's suite used
-// the real tracing module, so the factory forwards the real decorator.
+// The guards import `Traced` from the same package as `logger`, so the factory
+// forwards the real tracing decorator.
 vi.mock('@magick-agency/observability', async () => ({
   Traced: (await import('@magick-agency/observability/tracing')).Traced,
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },

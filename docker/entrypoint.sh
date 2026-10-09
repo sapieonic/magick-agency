@@ -1,8 +1,8 @@
 #!/bin/sh
-# Ported from core `docker/entrypoint.sh:1-8`@4850d1d9. PORT NOTE (magick-agency): the
-# migration step (core :5) is `dist/migrate.js` (node-pg-migrate's runner with the server's
-# own Postgres TLS settings) instead of the node-pg-migrate CLI, which would take
-# TLS from DATABASE_URL, where Q1 refuses it. See apps/server/src/migrate.ts.
+# Migrate, then start the server in this process (exec, so it receives SIGTERM).
+# Migrations run through `dist/migrate.js` (node-pg-migrate's runner with the
+# server's own Postgres TLS settings), not the node-pg-migrate CLI, which would take
+# TLS from DATABASE_URL, where decision Q1 refuses it. See apps/server/src/migrate.ts.
 set -e
 
 echo "Running database migrations..."

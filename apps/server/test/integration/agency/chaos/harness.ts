@@ -20,29 +20,26 @@ import {
 import { requiresDisposition } from '../../../../src/agency/outcome-classifier.js';
 
 /*
- * PORT NOTE (magick-agency, Phase 6): ported from core
- * test/integration/agency/chaos/harness.ts@4850d1d9. The design is core's, verbatim:
  * the real `AgencyRuntime` (pacing engine, dialer, station registry, agent state
  * machine, reaper) over REAL Postgres and REAL Redis, with `ScriptedBridge` standing
- * in for the carrier and `FakeStationSocket` for the browser. Recorded changes:
+ * in for the carrier and `FakeStationSocket` for the browser. Notes:
  *  - Redis: the worktree's agency test URL (6383, a non-zero db from
- *    `.test-env.local.json`) instead of core's hard-coded 6380; `CHAOS_DB` is read
+ *    `.test-env.local.json`) rather than a hard-coded port; `CHAOS_DB` is read
  *    off that URL rather than fixed at 7 (see the constant).
- *  - Agent user ids are UUIDs (`uuidFor('chaos-agent-<i>')`, the same deterministic
- *    label core used): the baseline types `agent_user_id` UUID.
+ *  - Agent user ids are UUIDs (`uuidFor('chaos-agent-<i>')`, a deterministic
+ *    label): the baseline types `agent_user_id` UUID.
  *  - DNC (decision B8): there is no Redis set to publish, so
  *    `makeTenantDncAuthoritative` no longer calls `applyReplace` — a tenant with no
  *    `dnc_entries` row is authoritative by construction. It still asks the gate's own
  *    `check()` and still throws unless the answer is `clear`, which is the half its
  *    own comment calls load-bearing. `chaos.resyncDnc` therefore only re-proves that.
  *  - `check()` takes the scope the pre-dial gate passes (this campaign and account).
- *  - The metric reader is core's `test/helpers/otel-metric-reader.ts`, ported at the
- *    same path (see its header).
+ *  - The metric reader is `test/helpers/otel-metric-reader.ts` (see its header).
  *  - Config/logger import specifiers per the path rule.
  */
 
 /**
- * ─── AD-P2-X-01 — THE CHAOS HARNESS ────────────────────────────────────────
+ * ─── THE CHAOS HARNESS ────────────────────────────────────────
  *
  * A scenario here is a **scripted, repeatable run**, not a procedure someone
  * follows. That is the acceptance criterion, and it drives every design choice
@@ -80,13 +77,12 @@ import { requiresDisposition } from '../../../../src/agency/outcome-classifier.j
  * itself the hazard the other suites are protecting against.
  */
 
-// PORT NOTE: `TEST_REDIS_URL` is the agency harness's (imported above).
+// `TEST_REDIS_URL` is the agency harness's (imported above).
 
 /**
  * This suite's own database. Touched by nothing else.
  *
- * PORT NOTE: core pinned 7 on a Redis shared with every other suite on db 0. Here the
- * worktree's whole test Redis db is already private to this checkout (its
+ * The worktree's whole test Redis db is already private to this checkout (its
  * `.test-env.local.json`), and the harness may not touch any other db index (the
  * agency guard refuses db 0 and other worktrees own the rest), so the chaos database
  * IS the worktree's — read off its URL.
@@ -114,11 +110,11 @@ export const QUIESCENCE_SETTLE_TICKS = 20;
 
 /**
  * The outcome the real bridge stamps on every agency call's browser-leg close
- * (`webrtc-bridge-manager.ts:360` — `browserHangupOutcome: 'agent_disconnected'`,
+ * (`webrtc-bridge-manager.ts` — `browserHangupOutcome: 'agent_disconnected'`,
  * fixed there for `createBridgedCall` and not a parameter any caller supplies).
  *
  * Exported so a scenario asserts against the same constant the fake emits, and so
- * §15.9's pair has one place to change. A value copied silently into a test double
+ * the pair has one place to change. A value copied silently into a test double
  * becomes a fiction the moment the product renames it — and the scenario goes on
  * passing, because both halves of the comparison moved together.
  */
@@ -128,7 +124,7 @@ export const AGENT_DISCONNECT_OUTCOME = 'agent_disconnected';
  * How far ahead of the bridge this carrier reports the answer, in ms.
  *
  * Named rather than inline because it is the *only* reason `answered_at` and
- * `bridged_at` can differ in any scenario, and §10.1's standing falsifier —
+ * `bridged_at` can differ in any scenario, and the standing falsifier —
  * `answered_at != bridged_at` on at least one genuinely bridged row — is an
  * assertion about this number reaching Postgres intact. Inline, it was a `- 40`
  * repeated in four emit sites with a comment claiming the property; a test
@@ -189,10 +185,10 @@ export interface CallScript {
    * Park the call **answered but never bridged**, and leave it live.
    *
    * The one in-flight shape neither `hold` nor `holdAtRing` can produce, and the
-   * only one on which §10's terminal filter is observable: `answered_at` is set,
+   * only one on which the terminal filter is observable: `answered_at` is set,
    * `bridged_at` is NULL, and the attempt is not `ended`. Without
    * `state = 'ended'` the predicate counts this row as abandoned **while the
-   * bridge is still arriving** — which is the defect ratified away at `8da1bea`,
+   * bridge is still arriving** — which is the defect ratified away,
    * and it is invisible to any assertion taken after the call is over.
    *
    * Requires `answer: true` and `bridge: false`.
@@ -276,9 +272,9 @@ interface PendingCall {
  * The carrier, as a drainable queue.
  *
  * The `answered` phase is emitted **separately from and strictly before**
- * `bridged`, with its own timestamp — which is the whole point of core's
- * `e4ec019`. Collapsing them here would make every abandonment assertion in
- * §10 vacuous again, in the test harness this time instead of in the product,
+ * `bridged`, with its own timestamp — which is the whole point of the
+ * separate `answered` phase. Collapsing them here would make every abandonment assertion in
+ * vacuous again, in the test harness this time instead of in the product,
  * and the suite would have no way to notice.
  */
 export class ScriptedBridge {
@@ -399,7 +395,7 @@ export class ScriptedBridge {
    * A barrier that returns the instant the ATTEMPT reads `bridged` therefore
    * returns *inside* that pair, with the contact's write still in flight — the
    * same class of race this function exists to close, one row further along.
-   * Observed as a 1-in-N red on `AD-P2-X-01`'s precondition: two agents, both
+   * Observed as a 1-in-N red on the precondition: two agents, both
    * attempts `bridged`, and `contactStates()['connected']` reading **1**. The
    * two-call flush is what makes it visible — call A's contact write lands
    * during call B's polling, so the LAST call dialed is the one caught mid-pair,
@@ -410,7 +406,7 @@ export class ScriptedBridge {
    *
    * ── Why the condition, and why it is read per event rather than configured ──
    *
-   * `MAG-88` made that contact write conditional: a campaign whose
+   * The contact write is conditional: a campaign whose
    * `disposition_catalog` is empty owes no write-up, so the contact is left
    * `in_flight` for the duration of the call and the ATTEMPT row is genuinely the
    * last write of the handler. There is then no second half to wait for, and a
@@ -536,7 +532,7 @@ export class ScriptedBridge {
         }
         if (call.script.answer) {
           // A distinct instant, deliberately in the past relative to the bridge.
-          // `answered_at != bridged_at` for at least one row is §10.1's standing
+          // `answered_at != bridged_at` for at least one row is the standing
           // falsifier, and it has to be true of the data this harness produces
           // or every scenario's abandonment check is vacuous. Recorded on the call
           // so a scenario can assert the row carries THIS instant rather than
@@ -628,14 +624,14 @@ export class ScriptedBridge {
     return n;
   }
 
-  // ─── The deferred-hangup window (`AD-P2-C-07`) ────────────────────────────
+  // ─── The deferred-hangup window ────────────────────────────
   //
   // Modelled rather than mocked: these three verbs reproduce the exact branch
   // structure of `registerBrowserLegHandlers`' `close` handler and
   // `reattachBorrowedBrowserLeg`, because the scenario's whole subject is which
   // branch a drop takes. A fake that simply "held the call for 8s" would collapse
   // the two things `T-B7` warns are different — the supersession guard at
-  // `webrtc-bridge-manager.ts:900` (which of two OPEN sockets owns the call) and
+  // `webrtc-bridge-manager.ts` (which of two OPEN sockets owns the call) and
   // the window (a socket that is simply gone) — and a scenario built on it passes
   // while the wifi-blip requirement sits unimplemented.
 
@@ -649,7 +645,7 @@ export class ScriptedBridge {
    * asserted rather than ignored. With `graceMs === 0` the real bridge hangs up
    * immediately, so this does too; the outcome is `agent_disconnected`, which is
    * the string `createBridgedCall` pins for every agency call
-   * (`webrtc-bridge-manager.ts:360`) and NOT one this harness chooses.
+   * (`webrtc-bridge-manager.ts`) and NOT one this harness chooses.
    */
   async dropBrowserLeg(attemptId: string): Promise<boolean> {
     const call = this.byAttempt.get(attemptId);
@@ -673,7 +669,7 @@ export class ScriptedBridge {
    * A scenario that slept 8s would be untestably slow and — worse — would make
    * "inside the window" and "past the window" differ only by wall clock, so a
    * loaded box would flip which branch ran. The two arms are separate calls, which
-   * is what lets §15.9's pair be asserted separately instead of one of them
+   * is what lets the pair be asserted separately instead of one of them
    * silently standing in for both.
    *
    * Returns false when there was no armed window, so a scenario cannot mistake
@@ -694,7 +690,7 @@ export class ScriptedBridge {
 
   /**
    * The window lapses and the call dies, but the `ended` lifecycle event has NOT
-   * been delivered yet — the race `agency-dialer.ts:547` exists for.
+   * been delivered yet — the race `agency-dialer.ts` exists for.
    *
    * This is the only way to reach the bridge's own re-attach refusal, and without
    * it that branch is unreachable from any scenario. `expireGrace` emits the
@@ -768,7 +764,7 @@ export class ScriptedBridge {
    * bridge can still put media on the new socket. Driving the parked ring through
    * to `bridged` afterwards is what separates a re-attach that resumed the call
    * from one that returned a description of a call nobody can hear — the
-   * structural-versus-demonstrated distinction §16.4 records for the focus guard.
+   * structural-versus-demonstrated distinction records for the focus guard.
    */
   async resumeRinging(attemptId: string): Promise<boolean> {
     const call = this.byAttempt.get(attemptId);
@@ -817,10 +813,10 @@ export class ScriptedBridge {
    *    from inside the `answered` handler, and it is the ONLY path to a genuine
    *    `outcome = 'abandoned'` row in this harness — every abandonment assertion in
    *    every other scenario is `toBe(0)`, so nothing here has ever exercised
-   *    `AD-P2-C-05`. Returns **false** when that happened, which is the observable
+   *    this path. Returns **false** when that happened, which is the observable
    *    difference between "the product abandoned it" and "the answer landed on a
    *    healthy call".
-   * 2. **Answered-but-unbridged, live** — §10's terminal filter is only observable
+   * 2. **Answered-but-unbridged, live** — the terminal filter is only observable
    *    on this row. `holdAfterAnswer` reaches it too, but only from the top of a
    *    dial; this reaches it *after* a mid-ring chaos verb has run, which is the
    *    sequence a real lost station takes.
@@ -872,21 +868,21 @@ export class ScriptedBridge {
    * The instant this bridge told the dialer the carrier answered, or undefined
    * when it never did.
    *
-   * Exists so §10.1's falsifier can be asserted as an **exact** equality against
+   * Exists so the falsifier can be asserted as an **exact** equality against
    * the value the bridge emitted, rather than as `bridged_at > answered_at` plus a
    * test-side copy of {@link SCRIPTED_ANSWER_LEAD_MS}. The two are not the same
    * check: an inequality is satisfied by any dialer that writes *some* earlier
    * timestamp, including one that invents its own — and inventing one is precisely
-   * what `AD-P2-C-11` was.
+   * what the earlier defect was.
    */
   answeredAtFor(attemptId: string): Date | undefined {
     return this.byAttempt.get(attemptId)?.answeredAt;
   }
 
-  // ─── The abandoned path's two bridge verbs (`AD-P2-C-05`) ─────────────────
+  // ─── The abandoned path's two bridge verbs ─────────────────
   //
   // `AgencyDialer.abandonAnsweredCall` calls BOTH of these unconditionally, and
-  // neither existed here. That is §16.6's third pattern exactly — a verb the
+  // neither existed here. That is the third pattern exactly — a verb the
   // product calls and the harness does not have — and its consequence is the
   // dangerous one rather than a crash: `onBridgeLifecycle` is subscribed
   // fire-and-forget (`(ev) => { void this.onBridgeLifecycle(ev) }`), so the
@@ -937,7 +933,7 @@ export class ScriptedBridge {
    * ABSENCE is the swallowed-TypeError trap above: the day someone configures
    * `abandon_announcement_id` in a fixture, the abandoned path would break silently
    * without it. `clipPlays` staying empty is asserted, so "the clip arm is
-   * unreached" is a checked fact and not an assumption. §16.7 criterion 4's "the
+   * unreached" is a checked fact and not an assumption. criterion 4's "the
    * apology clip is untested at any tier" therefore still stands, now with a reason.
    */
   async playClipToCarrierThenHangUp(
@@ -966,7 +962,7 @@ export interface ChaosAgent {
 export interface ChaosWorldOptions {
   agents?: number;
   contacts?: number;
-  /** Written to `account_settings`; the tick's D9 ceiling. */
+  /** Written to `account_settings`; the tick's per-account ceiling. */
   maxConcurrentCalls?: number;
   campaign?: Record<string, unknown>;
 }
@@ -1002,7 +998,7 @@ export interface ChaosWorld {
    * the agent's Redis state is deliberately unchanged while a break waits, so a
    * scenario asserting on state alone cannot tell a correctly-queued break from
    * one that was silently dropped. Production holds exactly one instance
-   * (`runtime.ts:45`) and a route-driven scenario must queue into *this* one —
+   * (`runtime.ts`) and a route-driven scenario must queue into *this* one —
    * two registries would show a break that never lands.
    */
   breaks: import('@magick-agency/domain/break-manager').BreakRegistry;
@@ -1014,7 +1010,7 @@ export interface ChaosWorld {
    *
    * Models the split-brain the design says the leader lease cannot prevent — a
    * GC pause, a partition, clock skew — by simply not having a lease at all.
-   * It shares the replica id deliberately: under D2 there is one replica, so
+   * It shares the replica id deliberately: there is one replica, so
    * two leaders means two loops inside one process, and giving the fork a
    * different id would instead exercise the multi-replica ownership refusal,
    * which is a different (and currently unreachable) mechanism.
@@ -1072,8 +1068,8 @@ export interface ChaosWorld {
      */
     reattachStation(sessionId: string): Promise<import('@magick-agency/contracts/agency').AgencyActiveAttempt | null>;
     /**
-     * Master re-publishes the tenant's DNC list — **the other half of recovery
-     * from a wholesale Redis loss** (`AD-P3-C-06`).
+     * The public API layer re-publishes the tenant's DNC list — **the other half of recovery
+     * from a wholesale Redis loss**.
      *
      * `expireRedisWholesale()` deletes the DNC version key along with everything
      * else, and the pre-dial gate then `halt`s on `dnc_unavailable` for the whole
@@ -1085,7 +1081,7 @@ export interface ChaosWorld {
      *
      * Deliberately a separate verb rather than folded into `bringOnline`, because
      * the two recoveries are independent in production — the agents come back when
-     * the humans reconnect, the list comes back when master's sync loop next runs —
+     * the humans reconnect, the list comes back when the DNC list is next synced —
      * and a scenario asserting the fail-closed *interim* needs to restore one
      * without the other.
      *
@@ -1100,7 +1096,7 @@ export interface ChaosWorld {
 }
 
 /**
- * Make a tenant's DNC set authoritative, and PROVE it (`AD-P3-C-06`).
+ * Make a tenant's DNC set authoritative, and PROVE it.
  *
  * One implementation, called from world setup and from `chaos.resyncDnc` both, so
  * the assertion cannot be present in one place and forgotten in the other — the
@@ -1110,7 +1106,7 @@ export interface ChaosWorld {
  * Redis set answers `SISMEMBER 0` — "nobody is on the DNC list" — which is the most
  * dangerous reading available and the one a naive check gets for free.
  *
- * Seeded through the SAME call master uses in production, not by writing the key:
+ * Seeded through the SAME call the public API layer uses in production, not by writing the key:
  * an empty `replace` is a legitimate full sync, so each scenario PROVES its tenant
  * is authoritative rather than assuming it. Asserted immediately, so a wrong seed
  * fails here naming the cause instead of surfacing as zero dials thirty assertions
@@ -1127,14 +1123,14 @@ async function makeTenantDncAuthoritative(
   tenantId: string,
   version = 1,
   context = 'Chaos harness',
-  // PORT NOTE (B8): the scope the pre-dial gate passes; required by the registry.
+  // Decision B8: the scope the pre-dial gate passes; required by the registry.
   scope: { accountId: string | null; campaignId: string | null } = { accountId: null, campaignId: null },
 ): Promise<void> {
-  // PORT NOTE (magick-agency, decision B8): core published an empty `replace` here
+  // Decision B8: an empty `replace` used to be published here
   // (`dnc.applyReplace({ tenantId, version, members: [] })`) and asserted it applied
   // at `version`. There is no set and no version: the gate reads `dnc_entries`, so a
   // tenant with no row is authoritative by construction and there is nothing to
-  // publish. `version` is kept in the signature so the scenarios' calls read as core's.
+  // publish. `version` is kept in the signature so the scenarios' calls keep their shape.
   void version;
   // The gate's own call, on a number that is definitively not a member. `clear`
   // is the only answer that means "this tenant may dial"; `unavailable` is what
@@ -1224,7 +1220,7 @@ export async function createChaosWorld(opts: ChaosWorldOptions = {}): Promise<Ch
 
   const agents: ChaosAgent[] = [];
   for (let i = 0; i < agentCount; i++) {
-    // PORT NOTE: a UUID column now; the same deterministic label core used.
+    // a UUID column now; the same deterministic label.
     const agentUserId = uuidFor(`chaos-agent-${i}`);
     const session = await insertAgentSession(campaignId, { agent_user_id: agentUserId, state: 'available' });
     agents.push({ sessionId: session.id as string, agentUserId, socket: new FakeStationSocket() });
@@ -1268,7 +1264,7 @@ export async function createChaosWorld(opts: ChaosWorldOptions = {}): Promise<Ch
   let rt = newRuntime();
 
   // ── The tenant's DNC set must be AUTHORITATIVE before anything dials
-  //    (`AD-P3-C-06`).
+  //   .
   //
   // The `flushdb()` above drops the version key, so without this every scenario in
   // the chaos suite would dial nothing, and "nothing dialed" is exactly the shape of
@@ -1450,10 +1446,10 @@ export async function createChaosWorld(opts: ChaosWorldOptions = {}): Promise<Ch
         // exactly as strict, which is the whole point of the scenario.
         //
         // **Pre-existing, and measured rather than assumed.** The first suspicion
-        // was that MAG-88 caused it — the old `bridged` barrier waited on a contact
+        // was that the conditional contact write caused it — the old `bridged` barrier waited on a contact
         // write for every bridged call, and losing that incidental pause is exactly
         // the kind of thing that exposes a latent race. That was falsified by
-        // running the suite on `main` at `6e75e92`, which carries none of MAG-88:
+        // running the suite on a tree without that change:
         // the same single surviving `agency:agent:*:state` key, on the same
         // assertion. It reproduces on both trees and is a genuine harness race,
         // fixed here rather than left to red the suite one run in three.
@@ -1527,7 +1523,7 @@ export async function createChaosWorld(opts: ChaosWorldOptions = {}): Promise<Ch
         });
         return rt.dialer.reattachStation(sessionId, agent.socket as never);
       },
-      /** Master re-publishes the DNC list after a wholesale Redis loss. */
+      /** The public API layer re-publishes the DNC list after a wholesale Redis loss. */
       async resyncDnc(version = 1) {
         await makeTenantDncAuthoritative(rt.dnc, tenantId, version, 'chaos.resyncDnc', { accountId, campaignId });
       },
@@ -1591,7 +1587,7 @@ export interface ContactRow {
  * scenario that reads contact state straight after `expireGrace()`/`flush()`
  * reads it *mid-pair*.
  *
- * That is not hypothetical: §15.9 below went red on a real run with
+ * That is not hypothetical: below went red on a real run with
  * `expected 'in_flight' to be 'pending'` — the requeue was correct and the read
  * was simply early. The neighbouring case has the identical shape and survives
  * only because two unrelated queries happen to sit between its flush and its
@@ -1612,7 +1608,7 @@ export interface ContactRow {
  * write of the chain completing, with nothing behind it.
  *
  * **Only sound for a contact that was `in_flight` when the call ended.** Before
- * MAG-88 that meant "one whose call never bridged", because a bridged call's
+ * That used to mean "one whose call never bridged", because a bridged call's
  * contact already read `connected` before the end and this would return
  * immediately having waited for nothing. That is now narrower: a bridged call on
  * a campaign owing no write-up leaves its contact `in_flight` too, so this is
@@ -1721,9 +1717,9 @@ export async function contactsWithConcurrentLiveAttempts(campaignId: string): Pr
  * The companion to {@link contactsWithConcurrentLiveAttempts} and NOT a
  * restatement of it: that query groups by contact and therefore cannot see one
  * agent bridged to two *different* customers, which is exactly the shape of the
- * `AD-P2-C-07` reconnect defect (`cf55996`) — a live `on_call` lease overwritten
+ * reconnect defect — a live `on_call` lease overwritten
  * with `available`, and the agent reserved for a second call while still on the
- * first. Exit criterion 1's "no unreserved answer" clause reads per contact; this
+ * first. The "no unreserved answer" clause reads per contact; this
  * is the same conservation law read per agent, and the two are independent.
  */
 export async function agentsWithConcurrentLiveAttempts(campaignId: string): Promise<Array<{ agent_session_id: string; n: number }>> {
@@ -1737,27 +1733,27 @@ export async function agentsWithConcurrentLiveAttempts(campaignId: string): Prom
 }
 
 /**
- * §10's abandonment predicate, run as written against the campaign.
+ * the abandonment predicate, run as written against the campaign.
  *
- * Kept as an independently written query rather than importing core's constant,
- * because §10.1's whole point is that this is an **audit** of the product's number
+ * Kept as an independently written query rather than importing the product's constant,
+ * because the whole point is that this is an **audit** of the product's number
  * — importing the product's SQL would make the cross-check compare a value with
  * itself. {@link abandonedCountByProductPredicate} is the other half, and
  * {@link assertAbandonmentPredicatesAgree} is what makes "independent" mean
  * "checked" rather than "hoped".
  *
- * ── `state = 'ended'` (ratified in the design doc at `8da1bea`) ─────────────
+ * ── `state = 'ended'` (ratified) ─────────────
  *
- * §10 as originally written had **no terminal filter**, and that was a real defect
+ * as originally written had **no terminal filter**, and that was a real defect
  * rather than an omission: `bridged_at IS NULL` is true of an attempt that is
  * answered and *still being bridged*, and of one mid-apology on the abandoned
  * path. Live traffic therefore inflated the compliance rate in real time, and
- * `AD-P4-C-02`'s auto-pause would have fired on a **healthy** campaign at
+ * the auto-pause would have fired on a **healthy** campaign at
  * concurrency — pausing calls that were seconds from connecting, in the name of a
  * compliance guardrail. Abandonment is a property of a call that is over.
  *
- * Note the shape of how it hid, because it is the §16.6 pattern in a new place: it
- * only misbehaves under the concurrency Phase 2 introduces, and it fails in the
+ * Note the shape of how it hid, because it is the pattern in a new place: it
+ * only misbehaves under the concurrency real dialing introduces, and it fails in the
  * direction that **looks like caution**.
  *
  * `N` is 1000ms, matching `ABANDONMENT_BRIDGE_GRACE_MS`. Written as
@@ -1778,7 +1774,7 @@ export async function abandonedCount(campaignId: string): Promise<number> {
 }
 
 /**
- * The same count, using **core's own exported predicate** verbatim.
+ * The same count, using **the product's own exported predicate** as exported.
  *
  * Imported dynamically so this module stays loadable before a caller's `vi.mock`
  * calls have run, exactly like the runtime imports in `createChaosWorld`.
@@ -1794,10 +1790,10 @@ export async function abandonedCountByProductPredicate(campaignId: string): Prom
 }
 
 /**
- * §10's cross-check, as an assertion: **QA's audit query and the product's
+ * The cross-check, as an assertion: **the independent audit query and the product's
  * predicate must return the same number on the same data.**
  *
- * This is the one thing that makes `AD-P2-C-06`'s acceptance meaningful. The
+ * This is the one thing that makes the acceptance meaningful. The
  * metric is only an independent audit if the two definitions agree, and they are
  * deliberately two separate pieces of SQL — so nothing but a comparison can tell
  * you they still do. A drift here fails the cross-check for a reason that is *not
@@ -1813,9 +1809,9 @@ export async function assertAbandonmentPredicatesAgree(campaignId: string): Prom
   const theirs = await abandonedCountByProductPredicate(campaignId);
   if (mine !== theirs) {
     throw new Error(
-      `Abandonment predicates disagree on campaign ${campaignId}: test-plan §10 says ${mine}, `
-      + `core's ABANDONED_ATTEMPT_PREDICATE_SQL says ${theirs}. These are the two halves of `
-      + `AD-P2-C-06's cross-check; one of them has drifted and §10 is what changes first.`,
+      `Abandonment predicates disagree on campaign ${campaignId}: the harness's independent audit query says ${mine}, `
+      + `the product's ABANDONED_ATTEMPT_PREDICATE_SQL says ${theirs}. These are the two halves of `
+      + `the abandonment cross-check; one of them has drifted.`,
     );
   }
   return mine;
@@ -1825,10 +1821,10 @@ export async function assertAbandonmentPredicatesAgree(campaignId: string): Prom
  * The live value of one metric series, or **undefined when the series is
  * absent** — which is a different answer from 0 and must stay distinguishable.
  *
- * §12.3.1: nothing anywhere read a real metric value back — unit suites stub the
+ *: nothing anywhere read a real metric value back — unit suites stub the
  * instruments, so they can pin names and label sets and can never see a number.
- * This is the capability §12.3.1 asks for, and it is what makes §10's "the metric
- * agrees with the table" cross-check possible at all — the `AD-P4-C-02` auto-pause
+ * This is the capability needed, and it is what makes the "the metric
+ * agrees with the table" cross-check possible at all — the auto-pause guardrail
  * reads the metric, not the table.
  *
  * Read from the REAL meter provider through the reader the calling suite installed

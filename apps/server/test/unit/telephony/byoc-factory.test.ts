@@ -1,12 +1,7 @@
-// PORT NOTE (magick-agency): ported from core test/unit/telephony/byoc-factory.test.ts@4850d1d9.
-// BYOC is not carried, so only the registry's platform path and the fail-closed
-// pinned-credential branch remain. Deleted: the credential-repository mock, the
-// credential-source / credential-store imports, every `credentialCacheKey`, BYOC
-// mapper, tenant-scoped, account-scoped and LRU/invalidation case. Kept cases run
-// on `voicelink` (the only provider) instead of `vobiz`. `buildProviderConfig`
-// lost its credential-source argument. The `config` fixture is VoiceLink-only
-// (agency's `AppConfig.telephony` has no other block). Deleted and modified
-// cases are listed in PORTING.md (Lane C).
+// BYOC is not supported, so only the registry's platform path and the fail-closed
+// pinned-credential branch are covered. The cases run on `voicelink` (the only
+// provider), and the `config` fixture is VoiceLink-only (`AppConfig.telephony` has
+// no other block).
 import { describe, it, expect, vi } from 'vitest';
 import type { AppConfig } from '../../../src/config/index.js';
 

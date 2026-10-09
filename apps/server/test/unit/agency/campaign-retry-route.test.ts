@@ -1,23 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): ported from core test/unit/agency/campaign-retry-route.test.ts@4850d1d9.
- * Mock paths re-pointed only (logger → a partial `@magick-agency/observability` mock;
- * announcement / call / account-settings / profile repositories → `@magick-agency/db/repositories/*`;
- * leaf modules → `@magick-agency/domain/*`; `contracts.js` → `@magick-agency/contracts/agency`).
- * Cases verbatim unless noted here.
- */
 
 // ---------------------------------------------------------------------------
-// The three retry routes — wire contract §2.
+// The three retry routes.
 //
-// What is pinned here is the REFUSAL SURFACE, because that is the half three
-// repos implement against independently: master allow-lists the three `409`
-// codes in its error mask, and a code core emits that master has not mirrored is
-// rewritten into "contact support and quote this request id" — status intact,
-// explanation destroyed, nothing red anywhere (`docs/reference/magickvoice-platform/agency.md` §6.2). So the codes
-// themselves are asserted as strings, not merely the statuses.
+// What is pinned here is the REFUSAL SURFACE, because the public API layer's
+// error mask allow-lists the three `409` codes, and a code the internal handlers
+// emit that the mask has not listed is rewritten into "contact support and quote
+// this request id" — status intact, explanation destroyed, nothing red anywhere.
+// So the codes themselves are asserted as strings, not merely the statuses.
 //
 // The second thing pinned is that a retry create refuses every body `POST /`
 // would refuse. Config is INHERITED, so the create route has no body to validate
@@ -34,7 +26,7 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: { vobiz: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/vobiz' } },
+    telephony: { vobiz: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/vobiz' } },
   },
 }));
 
@@ -170,10 +162,10 @@ describe('auth, the feature gate and tenant scoping', () => {
   });
 });
 
-// ── §1's refusals, reaching the wire as field-level `details` ──────────────
+// ── The selector refusals, reaching the wire as field-level `details` ──────────────
 
 describe('selector refusals arrive as 400 with field-level details', () => {
-  // Field-level `details` is what makes master's error mask pass these through
+  // Field-level `details` is what makes the public API layer's error mask pass these through
   // untouched — the mask rewrites a 4xx carrying neither `details` nor an
   // allow-listed `code`, so a selector refusal without them would reach the
   // supervisor as "contact support and quote this request id".
@@ -229,9 +221,9 @@ describe('selector refusals arrive as 400 with field-level details', () => {
   });
 });
 
-// ── The three `409` codes master must allow-list ───────────────────────────
+// ── The three `409` codes the error mask must allow-list ───────────────────────────
 
-describe('the 409 refusals carry a code, because that is all master forwards', () => {
+describe('the 409 refusals carry a code, because that is all the public API layer forwards', () => {
   it('retry_generation_exceeded, checked before the body is read at all', async () => {
     campaigns.findById.mockResolvedValue({ ...PARENT, retry_generation: RETRY_MAX_GENERATION });
     const res = await postRetry({ selector: { state: ['pending'] } });
@@ -286,7 +278,7 @@ describe('the 409 refusals carry a code, because that is all master forwards', (
   });
 });
 
-// ── Config inheritance and the overrides (DR-10) ───────────────────────────
+// ── Config inheritance and the overrides ───────────────────────────────────
 
 describe('config is inherited from the parent, then patched', () => {
   it('passes every inherited column through when no override is sent', async () => {
@@ -371,7 +363,7 @@ describe('config is inherited from the parent, then patched', () => {
     // …and a request that does not MENTION the announcement is unaffected, even
     // though the parent names one. Re-validating an inherited value would make a
     // retry refusable for a reason that has nothing to do with the retry, with no
-    // affordance in the dialog to clear it; master's capability assertion over the
+    // affordance in the dialog to clear it; the public API layer's capability assertion over the
     // merged config is the layer that owns that question.
     campaigns.findById.mockResolvedValue({ ...PARENT, abandon_announcement_id: 'ann-gone' });
     const allowed = await postRetry({ selector: { state: ['pending'] } });
@@ -458,7 +450,7 @@ describe('naming, attribution and the trail', () => {
   });
 
   it('creates the campaign anyway when no actor was supplied', async () => {
-    // Core's API answers a tenant API key directly, and `POST /` records no actor
+    // The internal handlers answer a tenant API key directly, and `POST /` records no actor
     // at all — refusing here would make the feature unreachable for every caller
     // that has not been upgraded. Same argument as `readTransitionActor`'s.
     const res = await postRetry({ selector: { state: ['pending'] } });
@@ -480,7 +472,7 @@ describe('the 201 and the lineage strip', () => {
     expect(res.statusCode).toBe(201);
     const body = res.json();
     expect(body.campaign.id).toBe('camp-child');
-    // DR-9: creation and starting stay separate verbs, and it side-steps
+    // A retry is created in draft: creation and starting stay separate verbs, and it side-steps
     // `uq_agency_campaign_running` at creation time.
     expect(body.campaign.status).toBe('draft');
     expect(body.campaign.retry_generation).toBe(1);
@@ -495,7 +487,7 @@ describe('the 201 and the lineage strip', () => {
     expect(body.campaign).toHaveProperty('last_transition_by');
   });
 
-  it('serves the preview verbatim, including the cap the console must not hardcode', async () => {
+  it('serves the preview as-is, including the cap the console must not hardcode', async () => {
     const app = await makeApp();
     const res = await app.inject({
       method: 'GET',
@@ -538,8 +530,7 @@ describe('the 201 and the lineage strip', () => {
 
 describe('route precedence against the campaign routes that already existed', () => {
   it('/:id/retry/preview and /:id/retry reach different handlers', async () => {
-    // MAG-106 in this repository was an assertion that passed vacuously against a
-    // route that did not exist; a 404 and a wrong-handler 200 are both invisible to
+    // An assertion can pass vacuously against a route that does not exist; a 404 and a wrong-handler 200 are both invisible to
     // a status assertion on the sibling. Both directions are pinned.
     const app = await makeApp();
     const preview = await app.inject({

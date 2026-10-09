@@ -9,8 +9,8 @@ import { markDnc } from '../../../src/agency/dnc-mark.js';
 import { dncRepository } from '../../../src/dnc/dnc.repository.js';
 
 /**
- * NEW (magick-agency, decision B8, no source suite): the dial-time DNC check and
- * the agent's mark against the REAL `dnc_entries` table. Covers plan §9 "DNC
+ * the dial-time DNC check and
+ * the agent's mark against the REAL `dnc_entries` table. Covers "DNC
  * fails closed" (a real DB error is `unavailable`, never `clear`) and the three
  * scopes: tenant-wide, account-scoped and campaign-scoped entries each block.
  */

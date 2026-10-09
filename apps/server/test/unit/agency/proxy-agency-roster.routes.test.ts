@@ -5,13 +5,13 @@ import { PERMISSION_MATRIX, hasPermission } from '@magick-agency/contracts/rbac'
 import { filterRosterRowsByMembership } from '../../../src/agency/agency-agent-identity.js';
 
 /**
- * **The supervisory ROSTER read** — `GET /proxy/agency/agents/stats`, phase 01 of
+ * **The supervisory ROSTER read** — `GET /proxy/agency/agents/stats`, the first part of
  * the supervisor console.
  *
  * Its sibling file (`proxy-agency-my-surfaces.routes.test.ts`) covers the four
  * per-agent routes in the same plugin and owns the plugin-level hook assertions.
  * This one covers the fifth, because what can go wrong with it is different in
- * kind: the other four forward core's body verbatim, while this one FILTERS the
+ * kind: the other four forward the internal handler's body unchanged, while this one FILTERS the
  * rows and then reports what it filtered.
  *
  * ── The four failures this file exists to catch ─────────────────────────────
@@ -23,52 +23,43 @@ import { filterRosterRowsByMembership } from '../../../src/agency/agency-agent-i
  *     twin, not less. Pinned against `PERMISSION_MATRIX` as well as
  *     behaviourally, because a behavioural case alone still passes if the floor
  *     moves to a DIFFERENT permission the same role happens to hold.
- *  2. **An unscoped read answered with core's header complaint instead of a
+ *  2. **An unscoped read answered with the internal handler's header complaint instead of a
  *     named refusal.** `X-Account-Id` is optional to `tenantContextMiddleware`,
  *     so `request.accountId` can be `undefined`, and `proxyToCore` omits the
  *     account header when it is.
  *
- *     This entry used to say the read would then "silently widen to every
- *     account in the tenant". **It would not, and the corrected reasoning is
- *     ruling R5.** Core's `authMiddleware` requires `x-mgkvc-account` on every
+ *     The read would not silently widen to every account in the tenant: the
+ *     internal handler's `authMiddleware` requires `x-mgkvc-account` on every
  *     authenticated route and answers 400 `Missing required header:
- *     x-mgkvc-account` before any core handler runs, so the widened read was
- *     never reachable. Master's own 400 stays on its real merits, which is what
- *     these cases assert: a named `account_scope_required` the console can act on
- *     rather than core's header complaint — which `errorMaskHook` rewrites into
- *     "contact support", since a core-forwarded 4xx with neither `details` nor an
- *     allow-listed `code` is masked — and no per-tenant core-API-key decryption
- *     and no S2S round trip spent on a request that cannot succeed. Hence the
- *     assertions are `resolveCoreApiKey` and `proxyToCore` untouched, not "core
- *     would have answered wrongly".
- *  3. **A filter that lies about itself.** Master drops rows for two different
+ *     x-mgkvc-account` before any handler runs, so the widened read is
+ *     never reachable. The public API layer's own 400 earns its place on what
+ *     is left, which is what these cases assert: a named `account_scope_required`
+ *     the console can act on rather than internal handler's header complaint
+ *     — which `errorMaskHook` rewrites into "contact support", since a forwarded 4xx
+ *     with neither `details` nor an allow-listed `code` is masked — and no
+ *     handler call spent on a request that cannot succeed. Hence the
+ *     assertion is `proxyToCore` untouched.
+ *  3. **A filter that lies about itself.** The public API layer drops rows for two different
  *     reasons, so `inactive_omitted` and `unattributed_omitted` are the only
  *     things on the payload that say a list is short — separately, because a
- *     departure and an id master cannot account for are different facts (R4) and
+ *     departure and an id the public API layer cannot account for are different facts and
  *     one number for both reports a stranger as a departed colleague. Neither may
  *     be withheld either: a row that vanishes with no counter behind it makes the
  *     console's arithmetic wrong with nothing on the wire to say so.
- *     And `include_inactive` is master's alone — forwarded to core it
- *     would be an unknown param on a route core does not know it, which is a 400
+ *     And `include_inactive` is the public API layer's alone — forwarded to the internal handler it
+ *     would be an unknown param on a route the internal handler does not know it, which is a 400
  *     the console cannot fix.
  *  4. **A benchmark that moves when a row filter is toggled.** The cohort is "the
  *     floor as it actually was", revoked members included. If dropping rows also
  *     changed the percentiles, one number would mean two things under one name —
  *     so it is asserted byte-identical across both flag values.
  *
- *  5. **A credential that names nobody reading the whole floor's scorecard.**
- *     `rbac.middleware.ts` returns early — ALLOWING — when
- *     `request.apiKeyTenantId && !request.user`, so `agency.supervise` is never
- *     evaluated for a userless platform key and the floor that makes this route
- *     safe is simply not consulted. The route refuses that shape itself, and the
- *     cases below assert the refusal AND its narrowness: a key carrying its
- *     creator is a real role decision and must still be admitted.
- *
+
  * ── And the one that is not a behaviour at all ──────────────────────────────
  * Route PRECEDENCE. `GET /agents/stats` and `GET /agents/:userId/stats` are
- * siblings under one prefix, and MAG-106 in this repo was an assertion that
- * passed vacuously because the route it named did not exist. So both are asserted
- * by the path they build for CORE, which is the only evidence that separates "the
+ * siblings under one prefix, and an assertion can pass vacuously when the route it
+ * names does not exist. So both are asserted by the path they build for the
+ * internal handler, which is the only evidence that separates "the
  * right handler ran" from "something answered 200".
  */
 
@@ -83,11 +74,10 @@ const OTHER_ACCOUNT = '88888888-8888-4888-8888-888888888888';
 /**
  * A uuid and an account id that contain hex LETTERS.
  *
- * ⚠️ Every other id in this file is digits-and-hyphens, so `.toUpperCase()` is a
+ * Every other id in this file is digits-and-hyphens, so `.toUpperCase()` is a
  * NO-OP on them — a case-folding assertion built on `ACTIVE_AGENT` passes whether
- * or not the code folds anything, which is MAG-106's shape exactly. It was
- * written that way first and caught by mutating the fold away and watching the
- * case tests stay green. These two are what make that assertion able to fail.
+ * or not the code folds anything. These two are what make that assertion able to
+ * fail.
  */
 const CASED_AGENT = 'aabbccdd-eeff-4aab-8bcd-eeffaabbccdd';
 const CASED_ACCOUNT = 'ddccbbaa-ffee-4ddc-8cba-ffeeddccbbaa';
@@ -106,16 +96,12 @@ const mocks = vi.hoisted(() => ({
   findAnyByUsersAndTenant: vi.fn(),
   findDisplayNamesInTenant: vi.fn(),
   hooksRan: [] as string[],
-  /**
-   * PORT NOTE (magick-agency): replaces master's `requireCapability` double (governance is
-   * gone, plan §3.2). The plugin-level refusal case drives `tenantContextMiddleware` instead.
-   */
+  /** The plugin-level refusal case drives `tenantContextMiddleware`. */
   refuseTenantContext: false,
 }));
 
-// PORT NOTE (magick-agency): master mocked `proxyToCore` (`src/proxy/core-client.js`) and
-// `resolveCoreApiKey`; the hop is `callCore` (`src/api/core-dispatch.ts`) now and there is no
-// key to resolve. The mock keeps master's variable name so every assertion on it is master's.
+// The hop is `callCore` (`src/api/core-dispatch.ts`), mocked as `mocks.proxyToCore`; there is
+// no key to resolve.
 vi.mock('../../../src/api/core-dispatch.js', () => ({ callCore: mocks.proxyToCore }));
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/observability')>()),
@@ -136,8 +122,6 @@ vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
     return undefined;
   },
 }));
-// PORT NOTE (magick-agency): master's `governance/require-capability.js` double is gone with the
-// gate (the route registers no capability hook).
 vi.mock('@magick-agency/db/repositories/membership.repository', () => ({
   membershipRepository: {
     findAnyByUserAndTenant: mocks.findAnyByUserAndTenant,
@@ -163,9 +147,6 @@ interface Caller {
   role?: MembershipRole;
   /** `undefined` models a request with NO `X-Account-Id` — see failure 2 above. */
   accountId?: string | undefined;
-  // PORT NOTE (magick-agency): master's `apiKeyOnly` / `apiKeyWithCreator` shapes are deleted
-  // with platform API keys (decision #5), and `maskErrors` with master's `errorMaskHook`, which
-  // is not ported (plan §1, one error union): the cases that mounted it are listed in PORTING.md.
 }
 
 async function buildApp(caller: Caller = {}): Promise<FastifyInstance> {
@@ -190,19 +171,19 @@ async function buildApp(caller: Caller = {}): Promise<FastifyInstance> {
 }
 
 /**
- * Core's minimum rate denominator, mirrored HERE and nowhere in `src/`.
+ * The internal handler's minimum rate denominator, mirrored HERE and nowhere in `src/`.
  *
- * Master owns no arithmetic on this payload and must not start — the flags are
- * core's answers and they ride the row spread. This exists only so the fixtures
+ * The public API layer owns no arithmetic on this payload and must not start — the flags are
+ * the internal handler's answers and they ride the row spread. This exists only so the fixtures
  * below can be internally consistent.
  */
 const CORE_MIN_RATE_DENOMINATOR = 20;
 
 /**
- * One roster row in core's shape, per the frozen phase-01 contract.
+ * One roster row in the internal handler's shape, per the frozen phase-01 contract.
  *
  * Full rather than trimmed, and the nullable metrics are exercised as nulls
- * somewhere in the page, because master SPREADS these rows: a fixture that
+ * somewhere in the page, because the public API layer SPREADS these rows: a fixture that
  * carried only the two fields the assertions read could not catch an enrichment
  * that rebuilt the row instead of spreading it. `connect_rate_pct` and friends are
  * `null` — never 0 — on a zero denominator.
@@ -213,8 +194,8 @@ const CORE_MIN_RATE_DENOMINATOR = 20;
  * cleared the CONNECT minimum, which is the floor the conversion-rate and
  * handling-time percentiles pool over. They are computed from this row's own
  * numbers rather than defaulted beside them, so `row(X, { attempts: 3 })` stays a
- * shape core could emit — a fixture is a claim about core's output, and a flag
- * that contradicted its own denominator would be a claim core cannot honour.
+ * shape the internal handler could emit — a fixture is a claim about the internal handler's output, and a flag
+ * that contradicted its own denominator would be a claim the internal handler cannot honour.
  * An explicit override still wins.
  */
 function row(agentUserId: string, overrides: Record<string, unknown> = {}) {
@@ -250,7 +231,7 @@ function row(agentUserId: string, overrides: Record<string, unknown> = {}) {
 }
 
 /**
- * The cohort block, and the ONE thing on this payload master must never touch.
+ * The cohort block, and the ONE thing on this payload the public API layer must never touch.
  *
  * It includes the departed agent's numbers by design: the benchmark is the floor
  * as it actually was, and `include_inactive` controls which ROWS come back, not
@@ -274,7 +255,7 @@ function benchmark() {
   };
 }
 
-/** Core's whole roster page: one active agent, one departed, one stranger. */
+/** The internal handler's whole roster page: one active agent, one departed, one stranger. */
 function rosterBody(rows = [row(ACTIVE_AGENT), row(DEPARTED_AGENT)]) {
   return {
     from: '2026-08-01T00:00:00.000Z',
@@ -332,8 +313,7 @@ describe('the floor, pinned against PERMISSION_MATRIX', () => {
      * every viewer in the tenant every agent's success rate and talk time while
      * reading as entirely reasonable in review.
      */
-    // PORT NOTE (magick-agency): master looped over `proxy.analytics.read`, `proxy.stats.read` and
-    // `proxy.contact_lists.read`. The last is `agency.campaigns.read` here; the first two have no
+    // `agency.campaigns.read` is checked; `proxy.analytics.read` and `proxy.stats.read` have no
     // agency twin, so they are asserted ABSENT (neither can be picked by mistake).
     for (const permission of ['agency.campaigns.read'] as const) {
       expect(PERMISSION_MATRIX[permission]).toBe('viewer');
@@ -373,29 +353,23 @@ describe('the floor, pinned against PERMISSION_MATRIX', () => {
 });
 
 describe('the account scope is a predicate, not a filter', () => {
-  it('refuses a request with no account, before decrypting the core key', async () => {
+  it('refuses a request with no account, before calling the internal handler', async () => {
     /**
-     * The locked decision, asserted where it can actually fail — and asserted for
-     * the RIGHT reason, which is ruling R5 as corrected.
+     * The decision, asserted where it can actually fail — and for the right reason.
      *
-     * This docstring used to claim that without master's check the request would
-     * reach core with a tenant and nothing else, core would scope on `tenant_id`
-     * alone, and a supervisor of one account would be handed every account's
-     * agents plus a benchmark computed over them. **That is false.** It is true
-     * that `X-Account-Id` is optional to `tenantContextMiddleware` and that
-     * `proxyToCore` omits `x-mgkvc-account` when master has none — but core's own
-     * `authMiddleware` requires the header on every authenticated route and
-     * answers **400 `Missing required header: x-mgkvc-account`** before any core
-     * handler runs, so no core scoping decision is ever reached and the silent
-     * widening was never available.
+     * It is true that `X-Account-Id` is optional to `tenantContextMiddleware` and that
+     * `proxyToCore` omits `x-mgkvc-account` when the public API layer has none — but the
+     * internal handler's own `authMiddleware` requires the header on every authenticated
+     * route and answers **400 `Missing required header: x-mgkvc-account`** before any
+     * handler runs, so no scoping decision is ever reached and a silent widening to
+     * every account in the tenant is not available.
      *
-     * Master's 400 earns its place on what is left, and both halves are asserted
-     * below: a named `account_scope_required` the console can act on instead of
-     * core's header complaint — which `errorMaskHook` rewrites into "contact
-     * support and quote this request id", because a core-forwarded 4xx carrying
+     * The public API layer's 400 earns its place on what is left, and both halves are
+     * asserted below: a named `account_scope_required` the console can act on instead of
+     * the internal handler's header complaint — which `errorMaskHook` rewrites into "contact
+     * support and quote this request id", because a forwarded 4xx carrying
      * neither `details` nor an allow-listed `code` is masked — and the fact that
-     * no per-tenant core API key is decrypted and no S2S round trip is spent on a
-     * request that cannot succeed.
+     * no handler call is spent on a request that cannot succeed.
      */
     const app = await buildApp({ accountId: undefined });
 
@@ -403,15 +377,13 @@ describe('the account scope is a predicate, not a filter', () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ code: 'account_scope_required' });
-    // The half that matters: the unscoped read was never issued, and the tenant's
-    // core credential was not even decrypted for it.
+    // The half that matters: the unscoped read was never issued, and no handler call was
+    // made for it.
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
-    // PORT NOTE (magick-agency): master also asserted `resolveCoreApiKey` untouched; there is no
-    // per-tenant core key in-process.
     await app.close();
   });
 
-  it('forwards the account it was given to core', async () => {
+  it('forwards the account it was given to the internal handler', async () => {
     const app = await buildApp();
 
     await app.inject({ method: 'GET', url: ROSTER });
@@ -444,9 +416,9 @@ describe('the query whitelist', () => {
     await app.close();
   });
 
-  it('refuses an unknown param with a 400, and makes NO core call', async () => {
+  it('refuses an unknown param with a 400, and makes NO the internal handler call', async () => {
     /**
-     * A silent drop is the failure this mechanism exists to stop: a param master
+     * A silent drop is the failure this mechanism exists to stop: a param the public API layer
      * does not know about used to vanish and the request still succeeded, so a
      * filter that did nothing was indistinguishable from one that matched
      * everything. `bucket` is the realistic mistake here — it is a legitimate
@@ -460,7 +432,6 @@ describe('the query whitelist', () => {
     expect(res.json()).toMatchObject({ code: 'unknown_query_params' });
     expect(res.json().details.unknown).toEqual(['bucket', 'utm_source']);
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
-    // PORT NOTE (magick-agency): `resolveCoreApiKey` assertion dropped (no core key in-process).
     await app.close();
   });
 
@@ -468,8 +439,8 @@ describe('the query whitelist', () => {
     /**
      * Its absence from the allowlist means something different here than on the
      * `my-*` routes. There it stopped a caller naming a colleague; here the
-     * subject IS everyone in scope, so the param is a filter core does not
-     * implement (the compare surface is phase 02). Refused rather than dropped,
+     * subject IS everyone in scope, so the param is a filter the internal handler does not
+     * implement (the compare surface is a later addition). Refused rather than dropped,
      * because a dropped `agent_user_id` answers 200 with the FULL roster to a
      * console that asked about two people — and presents it as the two.
      */
@@ -487,8 +458,8 @@ describe('the query whitelist', () => {
   });
 
   it('consumes include_inactive and does NOT forward it', async () => {
-    // Core has no user table and no idea what a membership status is; the param
-    // would be an unknown one on core's own strict whitelist. It is declared
+    // The internal handler has no user table and no idea what a membership status is; the param
+    // would be an unknown one on the internal handler's own strict whitelist. It is declared
     // `consumedByRoute` so strictness accepts it here and the forward list leaves
     // it behind.
     const app = await buildApp();
@@ -501,7 +472,7 @@ describe('the query whitelist', () => {
   });
 
   /**
-   * R2's wire encoding, pinned VALUE BY VALUE rather than by inspecting the
+   * The wire encoding of the flag, pinned VALUE BY VALUE rather than by inspecting the
    * parser.
    *
    * ── Why an accepted value is asserted by what it MEANT ─────────────────────
@@ -519,7 +490,7 @@ describe('the query whitelist', () => {
    * reasonably send (`on`, `yes`) is NOT in it. `2` and `-1` are here because a
    * numeric-looking value is the one a coercing parser would let through, and
    * `'null'` because it is what a client serialising an absent value by accident
-   * sends. Refusal, never coercion: R2.
+   * sends. Refusal, never coercion.
    */
   const INCLUDE_INACTIVE_MEANING: ReadonlyArray<readonly [string, boolean]> = [
     ['true', true],
@@ -545,7 +516,7 @@ describe('the query whitelist', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().rows).toHaveLength(expected ? 2 : 1);
     expect(res.json().inactive_omitted).toBe(expected ? 0 : 1);
-    // Master's alone under every spelling — core never learns the param exists.
+    // The public API layer's alone under every spelling — the internal handler never learns the param exists.
     expect(mocks.proxyToCore.mock.calls[0]![0].query).not.toHaveProperty('include_inactive');
     await app.close();
   });
@@ -563,7 +534,7 @@ describe('the query whitelist', () => {
       expect(res.statusCode).toBe(400);
       expect(res.json()).toMatchObject({ code: 'invalid_include_inactive' });
       // Field-level feedback for the client. What keeps the refusal READABLE is
-      // that it is raised before any core call records a status — see the handler
+      // that it is raised before any internal handler call records a status — see the handler
       // comment — but a client still needs to be told which param it was.
       expect(res.json().details).toHaveProperty('include_inactive');
       expect(mocks.proxyToCore).not.toHaveBeenCalled();
@@ -607,7 +578,7 @@ describe('the query whitelist', () => {
   });
 });
 
-describe('departed agents: master decides which rows survive', () => {
+describe('departed agents: the public API layer decides which rows survive', () => {
   it('drops revoked members by default and counts them', async () => {
     const app = await buildApp();
 
@@ -663,7 +634,7 @@ describe('departed agents: master decides which rows survive', () => {
 
   it('reports a departure and an unaccountable id as SEPARATE numbers', async () => {
     /**
-     * R4's third state, on the wire at last. It is dropped under either flag and
+     * The third state: an id with no membership at all. It is dropped under either flag and
      * must never be folded into `inactive_omitted` — reporting a stranger as a
      * departed colleague is a different lie from hiding one — but it cannot be
      * logged and withheld either, which is what it was at first: the row vanished
@@ -671,12 +642,12 @@ describe('departed agents: master decides which rows survive', () => {
      * total and the visible rows IS the departed agents' work was false with
      * nothing on the wire to say so.
      *
-     * ⚠️ Not the unreachable case the handler's first comment claimed. Core
+     * This is reachable, not a hypothetical. The internal handler
      * scoping every statement on `tenant_id` AND `account_id` rules out a FOREIGN
-     * agent, not a FORMER one — core keeps attempt history forever while a
+     * agent, not a FORMER one — the internal handler keeps attempt history forever while a
      * `memberships` row goes away with the user.
      *
-     * Three facts, three numbers: one row served, one departure, one id master
+     * Three facts, three numbers: one row served, one departure, one id the public API layer
      * cannot account for. A merge of the two counters answers 2 and 0 — the same
      * total, and a different and false statement about what happened.
      */
@@ -775,7 +746,7 @@ describe('departed agents: master decides which rows survive', () => {
      * comparison in the console reads against it.
      *
      * Asserted as an equality between two RESPONSES rather than against a copy of
-     * the fixture, so a master-side recomputation that happened to agree with the
+     * the fixture, so a public-API-layer recomputation that happened to agree with the
      * fixture on one path still reds.
      */
     const app = await buildApp();
@@ -787,17 +758,17 @@ describe('departed agents: master decides which rows survive', () => {
     expect(kept.json().rows).toHaveLength(2);
     expect(dropped.json().benchmark).toEqual(kept.json().benchmark);
     expect(dropped.json().benchmark).toEqual(benchmark());
-    // `total_agents` is core's pre-`limit`, post-scope count of who dialled —
+    // `total_agents` is the internal handler's pre-`limit`, post-scope count of who dialled —
     // the population the benchmark is computed over — so it does not move either.
     expect(dropped.json().total_agents).toBe(3);
     expect(kept.json().total_agents).toBe(3);
     await app.close();
   });
 
-  it('leaves every other field core sent untouched, and rebuilds no row', async () => {
+  it('leaves every other field the internal handler sent untouched, and rebuilds no row', async () => {
     // A SPREAD, not a reconstruction: `from`/`to`, `sort`, `order`, `limit` and
-    // every metric on the surviving row have to arrive exactly as core wrote
-    // them, including fields core adds after this was written.
+    // every metric on the surviving row have to arrive exactly as the internal handler wrote
+    // them, including fields the internal handler adds after this was written.
     const app = await buildApp();
 
     const res = await app.inject({ method: 'GET', url: `${ROSTER}?include_inactive=true` });
@@ -862,7 +833,7 @@ describe('the row filter itself, without a router', () => {
   });
 
   it('counts a TENANT-LEVEL active membership, which reaches every account', () => {
-    // `account_id IS NULL` is a tenant-level row (migration 060) and reaches every
+    // `account_id IS NULL` is a tenant-level row and reaches every
     // account by design. Read as "some other account" it would hide every
     // tenant-level agent from every roster.
     const tenantWide = [{ user_id: ACTIVE_AGENT, status: 'active', account_id: null }];
@@ -905,16 +876,16 @@ describe('the row filter itself, without a router', () => {
 
   it('matches ids case-insensitively, on the row AND on the membership', () => {
     /**
-     * ⚠️ The other half of the same review finding, and it hid a real person too.
+     * The other half of the same hazard, and it hid a real person too.
      *
      * `memberships.user_id` is a Postgres `uuid`, which comes back in canonical
-     * LOWER case. `agent_user_id` comes from core, where it is an opaque string
-     * with no `uuid` column behind it (D3) — so an upper-case id is reachable.
+     * LOWER case. `agent_user_id` comes from the internal handler, where it is an opaque string
+     * with no `uuid` column behind it — so an upper-case id is reachable.
      * `findAnyByUsersAndTenant` casts to `::uuid[]`, so that id MATCHES in SQL and
      * returns a lower-case row: the membership exists, was read, and was paid
      * for — and then missed by a case-sensitive `Set.has`, so the row was dropped
      * and counted under `unattributed_omitted`. A working colleague vanishes and
-     * the payload says master could not account for them.
+     * the payload says the public API layer could not account for them.
      *
      * Both directions, because the fix has to normalise on insert as well as on
      * lookup and one of the two alone still fails half the time.
@@ -955,7 +926,7 @@ describe('the row filter itself, without a router', () => {
   });
 
   it('drops an unusable agent_user_id as unaccountable, not as a departure', () => {
-    // Core cannot validate `agent_user_id` (it is opaque, D3), so a blank or
+    // The internal handler cannot validate `agent_user_id` (it is opaque), so a blank or
     // non-string one is reachable and resolves to no membership row.
     const junk = [{ agent_user_id: '' }, { agent_user_id: null as unknown as string }];
 
@@ -970,8 +941,8 @@ describe('the membership decision, end to end through the route', () => {
    * the facts it needs. Both were live defects, and both hid a real person's row
    * behind a counter that named the wrong reason.
    */
-  it('keeps an agent whose id core spelled in UPPER case', async () => {
-    // The realistic pairing: core's `agent_user_id` is an opaque string (D3), the
+  it('keeps an agent whose id the internal handler spelled in UPPER case', async () => {
+    // The realistic pairing: the internal handler's `agent_user_id` is an opaque string, the
     // repository's `user_id` is a Postgres `uuid` and comes back lower case, and
     // `= ANY($1::uuid[])` matched them to each other in SQL. Everything worked
     // except the `Set` lookup, so the row was dropped as unattributed.
@@ -993,8 +964,8 @@ describe('the membership decision, end to end through the route', () => {
     expect(res.json().rows).toHaveLength(1);
     expect(res.json().unattributed_omitted).toBe(0);
     expect(res.json().inactive_omitted).toBe(0);
-    // The id core sent is served back UNCHANGED — the fold is a comparison, not a
-    // rewrite, and core owns the string.
+    // The id the internal handler sent is served back UNCHANGED — the fold is a comparison, not a
+    // rewrite, and the internal handler owns the string.
     expect(res.json().rows[0].agent_user_id).toBe(CASED_AGENT.toUpperCase());
     // The NAME still misses, and that is the asymmetry stated rather than fixed:
     // `findDisplayNamesInTenant` is keyed the same way and would answer for the
@@ -1026,7 +997,7 @@ describe('the membership decision, end to end through the route', () => {
   });
 });
 
-describe('names are master\'s, and never a reason to fail the read', () => {
+describe('names are the public API layer\'s, and never a reason to fail the read', () => {
   it('adds agent_name to every row in ONE query for the page', async () => {
     const app = await buildApp();
 
@@ -1100,8 +1071,8 @@ describe('names are master\'s, and never a reason to fail the read', () => {
   });
 });
 
-describe('non-2xx bodies reach the error mask exactly as core wrote them', () => {
-  it('forwards a core refusal untouched, and spends no database read on it', async () => {
+describe('non-2xx bodies reach the error mask exactly as the internal handler wrote them', () => {
+  it('forwards an internal handler refusal untouched, and spends no database read on it', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 400,
       body: { error: 'Validation failed', code: 'invalid_sort', details: { sort: ['unknown metric'] } },
@@ -1150,7 +1121,7 @@ describe('non-2xx bodies reach the error mask exactly as core wrote them', () =>
 
   it('serves a 2xx body with NO row array unfiltered, rather than 500ing', async () => {
     // A body with nothing to walk. The answer to one is to hand it over
-    // untouched, not to invent a filter over rows master cannot see.
+    // untouched, not to invent a filter over rows the public API layer cannot see.
     mocks.proxyToCore.mockResolvedValue({ status: 200, body: { unexpected: true } });
     const app = await buildApp();
 
@@ -1166,9 +1137,9 @@ describe('non-2xx bodies reach the error mask exactly as core wrote them', () =>
 
   it('but still carries BOTH counters on that degrade path', async () => {
     /**
-     * ⚠️ This branch used to send core's body with the key ABSENT, and the review
-     * found it by probe. `inactive_omitted` is master's own invention — it exists
-     * nowhere in core's payload — so a roster body served without it is a body no
+     * ⚠️ This branch used to send the internal handler's body with the key ABSENT, and the review
+     * found it by probe. `inactive_omitted` is the public API layer's own invention — it exists
+     * nowhere in the internal handler's payload — so a roster body served without it is a body no
      * client can read, and the client declares it REQUIRED and computes with it:
      * `total_agents <= rows.length + inactive_omitted` decides whether the
      * "showing the top N" truncation note renders, and with the key absent that
@@ -1176,13 +1147,13 @@ describe('non-2xx bodies reach the error mask exactly as core wrote them', () =>
      * never been truncated — a 200 outside the contract is not a degrade, it is a
      * second bug wearing one.
      *
-     * `0` is truthful rather than filler: master dropped nothing on this path.
+     * `0` is truthful rather than filler: the public API layer dropped nothing on this path.
      *
      * ⚠️ **This case's FIXTURE was itself the bug, and it is rewritten here.** It
      * used to be `{ ...rosterBody(), next_cursor: 12 }` — a full roster page with
      * one unreadable paging field — described as "the realistic refusal". It was
      * realistic, and that is precisely why it must not take this branch: the
-     * degrade path is where master serves rows it did NOT filter, and a page whose
+     * degrade path is where the public API layer serves rows it did NOT filter, and a page whose
      * rows are perfectly walkable has no business on it. See
      * `the membership filter is gated on the ROWS, not on the paging fields`
      * below, which now pins that shape being filtered.
@@ -1204,7 +1175,7 @@ describe('non-2xx bodies reach the error mask exactly as core wrote them', () =>
     // each route separately remembering. Asserted here as well as where it is
     // non-zero, because this is the path the original defect was found on.
     expect(res.json().unattributed_omitted).toBe(0);
-    // Everything core sent is still there, unfiltered and unnamed — the two
+    // Everything the internal handler sent is still there, unfiltered and unnamed — the two
     // counters are the ONLY additions, and no row was dropped or enriched behind
     // them.
     expect(res.json()).toEqual({ ...body, inactive_omitted: 0, unattributed_omitted: 0 });
@@ -1229,18 +1200,18 @@ describe('non-2xx bodies reach the error mask exactly as core wrote them', () =>
 
 describe('the membership filter is gated on the ROWS, not on the paging fields', () => {
   /**
-   * ⚠️ **The most serious defect the bot review on this PR found, pinned here.**
+   * **The filter is gated on the rows, not on the paging fields.**
    *
-   * The filter used to run only if `asSpinePage(result.body)` returned a page.
+   * The filter must not depend on `asSpinePage(result.body)` returning a page.
    * That function is the CURSOR-page narrowing used by the CSV export drain, and
    * it refuses a body whose `next_cursor` is not a string **or whose `limit` is
    * not a number**. `limit` is a query parameter. `'50'` is the shape a query
-   * parameter has. So a core that echoed the caller's own `?limit=50` back as a
+   * parameter has. So an internal handler that echoed the caller's own `?limit=50` back as a
    * string — or that answered `next_cursor` at all on a route with no cursor —
-   * produced a page this route served **unfiltered, with `inactive_omitted: 0`**:
-   * a departed agent's row on the page, under master's own assertion that
-   * nothing was hidden. Filtering is the one master-side decision on this payload
-   * that the contract says must never degrade (R3), and the gate degraded it on
+   * would produce a page this route served **unfiltered, with `inactive_omitted: 0`**:
+   * a departed agent's row on the page, under the public API layer's own assertion that
+   * nothing was hidden. Filtering is the one public-API-layer decision on this payload
+   * that must never degrade, and a gate on the paging fields would degrade it on
    * the most ordinary body shape available.
    *
    * These cases are therefore about the GATE, not about the paging fields. The
@@ -1250,15 +1221,15 @@ describe('the membership filter is gated on the ROWS, not on the paging fields',
    * case in the block above.
    */
   const FILTERABLE: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
-    // The realistic trigger, and the one the reviewer named: core echoing back
+    // The realistic trigger, and the one the reviewer named: the internal handler echoing back
     // the caller's `limit` as the string it arrived as.
     ['a STRING limit, the shape a query param has', { limit: '100' }],
     // A cursor on a route that has none. Unreadable to the drain, irrelevant here.
     ['an unreadable next_cursor', { next_cursor: 12 }],
     // Both at once, so neither case is passing for the other's reason.
     ['both at once', { limit: '100', next_cursor: 12 }],
-    // A field this build of master has never heard of. The rows are still rows.
-    ['a field master does not know', { some_future_key: { nested: true } }],
+    // A field this build of the public API layer has never heard of. The rows are still rows.
+    ['a field the public API layer does not know', { some_future_key: { nested: true } }],
   ];
 
   it.each(FILTERABLE)('filters a page with %s', async (_label, overrides) => {
@@ -1282,7 +1253,7 @@ describe('the membership filter is gated on the ROWS, not on the paging fields',
     // helper, so under the old gate this page came back with no `agent_name` key
     // at all on the branch whose contract is that the key is always present.
     expect(res.json().rows[0]).toHaveProperty('agent_name', 'Sam Okoro');
-    // Untouched: master added its three fields and reshaped nothing else,
+    // Untouched: the public API layer added its three fields and reshaped nothing else,
     // including the paging field that used to disqualify the whole body.
     for (const [key, value] of Object.entries(overrides)) {
       expect(res.json()[key]).toEqual(value);
@@ -1313,12 +1284,12 @@ describe('the membership filter is gated on the ROWS, not on the paging fields',
   });
 });
 
-describe('the core call carries a wall clock', () => {
+describe('the internal handler call carries a wall clock', () => {
   /**
    * Nothing else in this path has one. `proxyToCore` with no `timeoutMs` runs
-   * under undici's default 300s header timeout, and core has **no
-   * `statement_timeout`** — so a core answering SLOWLY rather than failing holds
-   * master's worker, its Fastify connection and a socket for as long as it likes.
+   * under undici's default 300s header timeout, and the internal handler has **no
+   * `statement_timeout`** — so an internal handler answering SLOWLY rather than failing holds
+   * the public API layer's worker, its Fastify connection and a socket for as long as it likes.
    * The roster is the most expensive read on this surface (an attempt aggregate
    * plus an occupancy read that walks every agent state transition in the window,
    * two long statements in series), and the neighbouring activity export already
@@ -1346,17 +1317,13 @@ describe('the core call carries a wall clock', () => {
     expect(ROSTER_CORE_TIME_BUDGET_MS).toBeGreaterThan(ACTIVITY_OWNERSHIP_PROBE_TIMEOUT_MS);
   });
 
-  // PORT NOTE (magick-agency): master's "surfaces an expired budget as a MASKED 500, leaking
-  // nothing" is deleted. It pinned what `errorMaskHook` (not ported, plan §1) did to a
-  // `TimeoutError` from the HTTP hop; in-process `callCore` has no transport to time out
-  // (`timeoutMs` is accepted and ignored), so neither the budget expiring nor the mask exists.
 });
 
 describe('route precedence: /agents/stats and /agents/:userId/stats', () => {
   /**
-   * ⚠️ MAG-106 was an assertion that passed vacuously because the route it named
-   * did not exist. So neither of these cases asserts a status code: each asserts
-   * the path the handler built for CORE, which is the only evidence that
+   * An assertion can pass vacuously when the route it names does not exist. So
+   * neither of these cases asserts a status code: each asserts
+   * the path the handler built for the internal handler, which is the only evidence that
    * distinguishes the roster handler from the per-agent one.
    */
   it('GET /agents/stats hits the ROSTER handler', async () => {
@@ -1409,19 +1376,7 @@ describe('route precedence: /agents/stats and /agents/:userId/stats', () => {
   });
 });
 
-// PORT NOTE (magick-agency): master's block "a platform API key, and why the roster refuses every one of them"
-// (5 cases) is deleted with platform API keys (decision #5) and the route's
-// `isPlatformApiKeyCaller` guard (deleted with them). No request here can carry a key; the RBAC
-// floor these cases also touched is pinned by "refuses agent, viewer and operator" above.
-//  - refuses a USERLESS key — now at RBAC, one layer earlier
-//  - refuses it BEFORE the account predicate, so a key cannot probe scoping
-//  - ALSO refuses a key that names its creator, whose role would have passed
-//  - and the RBAC floor still answers first when the creator is below it
-//  - refuses a creator-backed key BEFORE the account predicate too
-
 describe('the plugin-level hooks reach the roster route too', () => {
-  // PORT NOTE (magick-agency): master's title ended `→ capability` and the list held
-  // `'capability:agency'`; the governance gate is deleted (plan §3.2).
   it('runs session → tenant-context', async () => {
     // Registered on the PLUGIN, so a route added to this file inherits all three
     // or none. Asserted on the record each double leaves, because a hook that
@@ -1434,9 +1389,8 @@ describe('the plugin-level hooks reach the roster route too', () => {
     await app.close();
   });
 
-  // PORT NOTE (magick-agency): master's "is refused when the capability hook refuses",
-  // re-expressed on `tenantContextMiddleware` (the plugin-level hook that remains): a plugin
-  // hook that replies stops the route and core is never called.
+  // A plugin-level hook (`tenantContextMiddleware`) that replies stops the route, and the
+  // internal handler is never called.
   it('is refused when a plugin-level hook refuses', async () => {
     mocks.refuseTenantContext = true;
     const app = await buildApp();

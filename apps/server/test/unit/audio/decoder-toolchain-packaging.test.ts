@@ -8,9 +8,8 @@ import { fileURLToPath } from 'node:url';
 // build or a test — it turns EVERY audio-file upload into a 400 in production.
 // These assertions are the only thing standing between a dependency-trimming PR
 // and that outage.
-// PORT NOTE (magick-agency): core `test/unit/audio/decoder-toolchain-packaging.test.ts:10`@4850d1d9
-// read `path.join(process.cwd(), 'docker/Dockerfile')`; this suite runs from apps/server, and
-// the Dockerfile is at the monorepo root, so the path is resolved from this file instead.
+// Resolved from this file, not the cwd: the suite runs from apps/server and the Dockerfile
+// is at the repository root.
 const DOCKERFILE = fs.readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../../../docker/Dockerfile'),
   'utf8',
@@ -26,7 +25,7 @@ const APT_LINES = DOCKERFILE.split('\n')
   .join('\n')
   .match(/apt-get install[\s\S]*?(?=\n(?:[A-Z]{2,}|\s*$))/)?.[0] ?? '';
 
-describe('docker/Dockerfile — decoder toolchain is installed (§4)', () => {
+describe('docker/Dockerfile — decoder toolchain is installed', () => {
   it('installs mpg123', () => {
     expect(APT_LINES).toMatch(/\bmpg123\b/);
   });

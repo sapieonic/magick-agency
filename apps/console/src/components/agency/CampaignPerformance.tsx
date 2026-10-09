@@ -14,11 +14,11 @@ import type { AgencyCampaignStats } from '../../types/agency-campaign';
 import styles from './CampaignPerformance.module.css';
 
 /**
- * §C.3's derived figures — connect rate, conversion rate, handle time, wrap-up,
- * where the connected calls went, and what one handled call costs (MAG-151).
+ * The derived figures — connect rate, conversion rate, handle time, wrap-up,
+ * where the connected calls went, and what one handled call costs.
  *
  * ── Why these are not tiles ─────────────────────────────────────────────────
- * The eleven counters on the Overview section are observations: core counted
+ * The eleven counters on the Overview section are observations: the API counted
  * rows and the console prints them, and an absent one can only mean the read
  * failed. Every figure here is a *derivation* with a denominator, a set of
  * exclusions, and at least one way to be absent that is a fact about the
@@ -49,7 +49,7 @@ import styles from './CampaignPerformance.module.css';
  * computes a share, substitutes a zero, or decides what an absent field means.
  *
  * ── Placement ───────────────────────────────────────────────────────────────
- * Its own section of the campaign workspace (`MAG-166`), between Overview and
+ * Its own section of the campaign workspace, between Overview and
  * Agents in the tab order. It used to sit inline beneath the counters and
  * above the floor, on the argument that handle time is what the floor's "on a
  * call too long" warning is measured against, so the `2:14` should be readable
@@ -270,7 +270,7 @@ export function CampaignPerformance({ stats, wrapupSeconds }: CampaignPerformanc
       {(breakdown.total !== null || cost) && (
         <div className={styles.row2}>
           {/*
-            D1's split, directly beneath the rate it qualifies. The rate counts only
+            The outcome split sits directly beneath the rate it qualifies. The rate counts only
             the first bucket, so a supervisor who reads "18%" and then sees a large
             "Not written up" column has the explanation in the same glance rather
             than concluding the list is dead.

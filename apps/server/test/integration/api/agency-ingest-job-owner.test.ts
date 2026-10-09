@@ -2,14 +2,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { FastifyInstance } from 'fastify';
 
 /**
- * NEW (magick-agency, Phase 8; lane B2 carry-forward): `POST /proxy/agency/ingest/jobs` stamps
+ * `POST /proxy/agency/ingest/jobs` stamps
  * `agency_ingest_jobs.account_id` from the PROVEN owner — the campaign row's account, read
- * in-process after core's `requireOwned` — whenever a campaign is named, because B2's
+ * in-process after the internal handler's `requireOwned` — whenever a campaign is named, because the
  * in-process roster hand-off compares the job's account to the campaign's and fails a
  * mismatched or NULL one. And no job row is written for a campaign the caller does not own.
  *
- * Through the real app (`buildApp`) on real Postgres (5436): lane A's session (Firebase's token
- * check stubbed), tenant-context and RBAC, master's route, `callCore` → core's
+ * Through the real app (`buildApp`) on real Postgres (5436): the session (Firebase's token
+ * check stubbed), tenant-context and RBAC, the public route, `callCore` → the internal
  * `GET /agency-campaigns/:id`. The detached ingest run is stubbed (it reads the CSV from S3,
  * which this suite is not about) so the job row stays as the route wrote it.
  */
@@ -131,7 +131,7 @@ describe('POST /proxy/agency/ingest/jobs — the job is stamped with the proven 
     expect(mocks.run).not.toHaveBeenCalled();
   });
 
-  it("a dry run with no campaign keeps master's rule: the caller's own account", async () => {
+  it("a dry run with no campaign keeps the existing rule: the caller's own account", async () => {
     const res = await start({ dry_run: true });
     expect(res.statusCode).toBe(202);
     expect(await jobs()).toEqual([{ account_id: account, campaign_id: null }]);

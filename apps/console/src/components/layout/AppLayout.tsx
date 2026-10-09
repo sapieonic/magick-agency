@@ -17,7 +17,7 @@ const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:
 export function AppLayout() {
   const { user, loading } = useAuth();
   usePostHogIdentify();
-  // Everything mounted under this shell is the primary AI application; the
+  // Everything mounted under this shell (the `/app` zone) is tagged `'ai'`; the
   // agency shell tags its own events `'agency'`.
   useProductSurface('ai');
   const [sidebarOpen, setSidebarOpen] = useState(false);

@@ -167,7 +167,7 @@ class NotificationPreferenceRepository {
    * no `account_id` (so a digest cannot be scoped to the recipient's own
    * account). Its `DISTINCT` on email also collapses two people who share an
    * address, which `users.email` permits because it carries only a NON-unique
-   * index (migration 069 says so in as many words).
+   * index.
    *
    * So this returns the membership ROWS, one per membership, and every decision
    * about collapsing them is made above the database:

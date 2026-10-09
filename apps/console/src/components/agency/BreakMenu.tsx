@@ -13,10 +13,10 @@ import type { AgencyBreakReason } from '../../types/agency';
 import styles from './BreakMenu.module.css';
 
 /**
- * `Break ▾` and its popover (§A.13.4, `AD-P2-C-10`'s console half).
+ * `Break ▾` and its popover.
  *
  * ── Number keys are NOT bound here, and that is a decision, not an omission ───
- * `1`–`9` belong to the disposition pad (§A.13.4). Reassigning them by context is
+ * `1`–`9` belong to the disposition pad. Reassigning them by context is
  * how muscle memory gets destroyed — an agent who has learned "3 = voicemail"
  * must not find that `3` means "Meeting" whenever a popover happens to be open.
  * The menu is arrows + `Enter` + first-letter typeahead, and the typeahead
@@ -24,26 +24,25 @@ import styles from './BreakMenu.module.css';
  * door.
  *
  * The list-and-re-sync concern is shared with `DispositionPad` through
- * `agencyCatalogSync` — core made `break_reasons` mirror `disposition_catalog`
+ * `agencyCatalogSync` — the API made `break_reasons` mirror `disposition_catalog`
  * exactly, down to the `allowed_codes` echo, so two implementations would mean
  * fixing the next bug in it twice.
  *
  * ── What bootstrap advertises is what we render ──────────────────────────────
  * `break_reasons: '[]'` means **"the operator has no opinion"**, not "breaks are
- * off": core (`resolveBreakReasons`, migration 078) serves six neutral built-ins
- * in that case, so bootstrap never in practice advertises an empty list. §A.13.4
- * still describes the empty catalog as "today's actual behaviour" and says every
- * break request is rejected — **that paragraph is stale and this component is not
- * built to it.** The disabled state below is kept as a defensive path for a list
+ * off": the API (`resolveBreakReasons`) serves six neutral built-ins
+ * in that case, so bootstrap never in practice advertises an empty list. An older
+ * description of the empty catalog said every break request is rejected —
+ * **that is stale and this component is not built to it.** The disabled state below is kept as a defensive path for a list
  * that arrives empty anyway, because rendering an empty menu or guessing a code
  * are both worse.
  */
 
-/** §A.13.8, verbatim. Turns a silent `400` into a sentence a human can act on. */
+/** Turns a silent `400` into a sentence a human can act on. */
 export const BREAK_UNCONFIGURED_COPY =
   "Your workspace hasn't set up break reasons yet. Ask your supervisor.";
 
-/** §A.13.8, verbatim, for `unknown_break_reason`. */
+/** For `unknown_break_reason`. */
 export const BREAK_REJECTED_COPY = 'That break reason is no longer available. Pick another.';
 
 export interface BreakMenuProps {
@@ -62,7 +61,7 @@ export interface BreakMenuProps {
   blockedReason?: string | null;
   onSelect: (code: string) => void;
   /**
-   * Lets the page's global `B` shortcut open this menu (§A.13.9).
+   * Lets the page's global `B` shortcut open this menu.
    *
    * A handle rather than an `open` prop, deliberately: the trigger already refuses
    * to open while `busy` or while the reason catalog is empty, and an `open` prop
@@ -106,7 +105,7 @@ export function BreakMenu({
   const close = useCallback(
     (returnFocus: boolean) => {
       setOpen(false);
-      // §A.13.9: every transient surface returns focus to the control that opened
+      // every transient surface returns focus to the control that opened
       // it. A popover that closes and drops focus to `<body>` strands a keyboard
       // agent at the top of the document — on this screen, past the whole contact
       // panel to get back to work.
@@ -135,7 +134,7 @@ export function BreakMenu({
   /**
    * A rejection re-opens the menu on the codes the campaign will actually accept.
    * Not an apology and not a re-bootstrap: one round trip, and the agent picks
-   * again (§A.13.8).
+   * again.
    */
   useEffect(() => {
     if (rejection === null) return;
@@ -143,7 +142,7 @@ export function BreakMenu({
     setActiveIndex(0);
   }, [rejection]);
 
-  // Viewport clamping, copied from `HelpTooltip` per §A.13.10 rather than
+  // Viewport clamping, copied from `HelpTooltip` rather than
   // reinvented: pure-CSS placement clips at the edge of the action bar, which is
   // exactly where this popover lives.
   useEffect(() => {
@@ -207,7 +206,7 @@ export function BreakMenu({
       onSelect(code);
       // Focus returns to Break, whose accessible name then carries the
       // confirmation ("Break queued — Lunch"). A screen reader announces the
-      // focused control's new name, so no third live region is needed (§A.11).
+      // focused control's new name, so no third live region is needed.
       close(true);
     },
     [busy, onSelect, close],
@@ -240,7 +239,7 @@ export function BreakMenu({
           close(true);
           return;
         case 'Tab':
-          // Focus is trapped while open (§A.13.4). Tab moves within the menu
+          // Focus is trapped while open. Tab moves within the menu
           // rather than escaping it and leaving an open popover behind.
           event.preventDefault();
           setActiveIndex((i) => (event.shiftKey ? (i - 1 + count) % count : (i + 1) % count));
@@ -291,10 +290,10 @@ export function BreakMenu({
         className={styles.trigger}
         /**
          * Two different unavailabilities, two different mechanisms — and the
-         * distinction is the one §A.13.9 draws:
+         * distinction is the keyboard-order rule:
          *
          *  - **Genuinely unavailable** (no catalog, campaign stopped) uses real
-         *    `disabled`, because §A.13.9's tab order requires inactive controls to
+         *    `disabled`, because the tab order requires inactive controls to
          *    be skipped rather than reordered, and this state does not begin while
          *    the control holds focus.
          *  - **Busy** — a request in flight — uses `aria-disabled` and a handler

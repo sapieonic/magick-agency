@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// `MAG-65` / `AD-P4-C-01` — the eleven supervisor fields on the stats payload.
+// The eleven supervisor fields on the stats payload.
 //
 // Two holes, and they need different assertions — the same split
 // `campaign-stats-contract.test.ts` documents, applied to a payload where the
@@ -151,7 +151,7 @@ const stats = () => new AgencyCampaignRepository().stats('camp-1');
 
 // ─── how the query is shaped ────────────────────────────────────────────────
 
-describe('MAG-65: the connect split is gated on the bridge, not on the outcome', () => {
+describe('the connect split is gated on the bridge, not on the outcome', () => {
   it('counts both connect halves on bridged_at, never on outcome', async () => {
     await stats();
     const sql = aggregateSql();
@@ -173,7 +173,7 @@ describe('MAG-65: the connect split is gated on the bridge, not on the outcome',
   it('splits the two halves on the voicemail disposition, bound as a parameter', async () => {
     await stats();
 
-    // AMD is out of scope (D1), so an agent's own write-up is the ONLY signal that
+    // AMD is out of scope, so an agent's own write-up is the ONLY signal that
     // a machine answered. The code is bound rather than inlined so the count, its
     // complement, both AHT variants and the previous-hour twins cannot come to
     // spell it differently.
@@ -195,14 +195,14 @@ describe('MAG-65: the connect split is gated on the bridge, not on the outcome',
   });
 });
 
-describe('MAG-65: AHT measures the agent leg, not the persisted talk time', () => {
+describe('AHT measures the agent leg, not the persisted talk time', () => {
   it('averages ended_at - bridged_at and never reads talk_seconds', async () => {
     await stats();
     const sql = aggregateSql();
 
     // `talk_seconds` is anchored on `answered_at` — the CARRIER's answer — and is
     // nonzero even when no agent ever bridged, because an abandoned attempt settles
-    // carrying the apology clip's talk time (MAG-119). Averaging it would fold
+    // carrying the apology clip's talk time. Averaging it would fold
     // ring-to-bridge latency and abandoned calls into the one number whose whole
     // purpose is to describe agent work, and it would do so plausibly.
     expect(sql).toContain('AVG(EXTRACT(EPOCH FROM (ended_at - bridged_at)))');
@@ -222,7 +222,7 @@ describe('MAG-65: AHT measures the agent leg, not the persisted talk time', () =
       sql.indexOf('AS aht_seconds_including_machine'),
     ));
 
-    // The whole point of the split (§C.3, D1): a voicemail an agent sat through
+    // The whole point of the split: a voicemail an agent sat through
     // inflates AHT, so the headline excludes it and the hover figure does not.
     expect(excluding).toContain('disposition_code IS DISTINCT FROM $3');
     expect(including).not.toContain('disposition_code');
@@ -232,13 +232,13 @@ describe('MAG-65: AHT measures the agent leg, not the persisted talk time', () =
   });
 });
 
-describe('MAG-65: average wrap-up is measured, and only from resolutions that mean it', () => {
+describe('average wrap-up is measured, and only from resolutions that mean it', () => {
   it('averages the stamped window, not the configured allotment', async () => {
     await stats();
     const sql = aggregateSql();
 
-    // `wrapup_seconds` is what was OWED — copied from the campaign at wrap-up entry
-    // (migration 088). Averaging it hands the operator their own setting back as
+    // `wrapup_seconds` is what was OWED — copied from the campaign at wrap-up entry.
+    // Averaging it hands the operator their own setting back as
     // though it were measurement, which is worse than an absent tile because it
     // always agrees with them.
     expect(sql).toContain('AVG(EXTRACT(EPOCH FROM (wrapup_ended_at - wrapup_started_at)))');
@@ -267,7 +267,7 @@ describe('MAG-65: average wrap-up is measured, and only from resolutions that me
 });
 
 
-describe('MAG-65: the aggregates stay in one statement, the roster is the second', () => {
+describe('the aggregates stay in one statement, the roster is the second', () => {
   it('reads every scalar aggregate in a single statement', async () => {
     await stats();
     const sql = aggregateSql();
@@ -310,7 +310,7 @@ describe('MAG-65: the aggregates stay in one statement, the roster is the second
 
 // ─── how the row is mapped ──────────────────────────────────────────────────
 
-describe('MAG-65: every field is read off its OWN column', () => {
+describe('every field is read off its OWN column', () => {
   it('maps the flow metrics from their own keys', async () => {
     const s = await stats();
 
@@ -333,7 +333,7 @@ describe('MAG-65: every field is read off its OWN column', () => {
   it('serves the campaign ceiling from the shared constant', async () => {
     const s = await stats();
 
-    // One definition, because `AD-P4-C-02`'s auto-pause fires on the same number.
+    // One definition, because the auto-pause fires on the same number.
     // A dashboard drawing its gauge against one threshold while the guardrail
     // enforces another is invisible until an audit.
     expect(s.abandonment_ceiling_pct).toBe(DEFAULT_ABANDONMENT_CEILING_PCT);
@@ -354,7 +354,7 @@ describe('MAG-65: every field is read off its OWN column', () => {
   });
 });
 
-describe('MAG-65: the floor, and the breakdown drawn from it', () => {
+describe('the floor, and the breakdown drawn from it', () => {
   it('maps each agent, with the state instant as an ISO string', async () => {
     const s = await stats();
 
@@ -363,7 +363,7 @@ describe('MAG-65: the floor, and the breakdown drawn from it', () => {
     expect(s.agents).toHaveLength(4);
     expect(s.agents[0]).toEqual({
       // Strict `toEqual` on purpose: a field silently added to the roster row is a
-      // wire-contract change that master proxies verbatim, so it should be a
+      // wire-contract change that the public API layer proxies unchanged, so it should be a
       // decision here rather than a surprise in the console.
       session_id: 'sess-1',
       agent_user_id: 'agent-on-call',
@@ -382,7 +382,7 @@ describe('MAG-65: the floor, and the breakdown drawn from it', () => {
 
     // A missing key is indistinguishable from zero to a consumer, and the console
     // renders all six. This is the assertion that stops a `GROUP BY`-shaped result
-    // being passed through verbatim.
+    // being passed through unchanged.
     expect(s.agents_by_state).toEqual({
       offline: 0,
       available: 0,
@@ -415,7 +415,7 @@ describe('MAG-65: the floor, and the breakdown drawn from it', () => {
 
 // ─── null, never zero ───────────────────────────────────────────────────────
 
-describe('MAG-65: no evidence reports null, not a reassuring zero', () => {
+describe('no evidence reports null, not a reassuring zero', () => {
   it('reports null averages when no attempt qualifies', async () => {
     // `AVG` over an empty set is SQL NULL, which pg delivers as `null`.
     serve({
@@ -485,17 +485,17 @@ describe('MAG-65: no evidence reports null, not a reassuring zero', () => {
 
 // ─── the roster must be addressable, not just renderable ────────────────────
 
-describe('AD-P4-C-01: every roster row carries the id its controls are keyed on', () => {
+describe('every roster row carries the id its controls are keyed on', () => {
   it('projects the SESSION id, distinct from the agent user id', async () => {
     const stats = await new AgencyCampaignRepository().stats('camp-1');
 
-    // §C.4's drawer offers "Force-return to available" for the stuck-in-wrap-up
-    // case §5.1 explicitly anticipates, and core's route for it is
+    // The drawer offers "Force-return to available" for the stuck-in-wrap-up
+    // case, and the route for it is
     // `POST /agency/sessions/:id/force-available` — keyed on the SESSION, not the
     // person. The query already `GROUP BY s.id`, so this was one projection short
     // of the wire, and nothing here would have failed: the floor would have
     // rendered perfectly and every control on it would have been unwireable, which
-    // only shows up in cusui.
+    // only shows up in the console.
     expect(stats.agents.map((a) => a.session_id)).toEqual(['sess-1', 'sess-2', 'sess-3', 'sess-4']);
 
     // Distinct values per row, and distinct from `agent_user_id` — a session is one
@@ -517,7 +517,7 @@ describe('AD-P4-C-01: every roster row carries the id its controls are keyed on'
 
 // ─── what the adversarial review found ──────────────────────────────────────
 
-describe('MAG-65: a call nobody wrote up is not a human connect', () => {
+describe('a call nobody wrote up is not a human connect', () => {
   it('splits bridged calls three ways, not two', async () => {
     serve({ ...ROW, human_connects: '31', machine_connects: '32', unclassified_connects: '9' });
     const s = await stats();
@@ -545,7 +545,7 @@ describe('MAG-65: a call nobody wrote up is not a human connect', () => {
   });
 });
 
-describe('MAG-65: a crash-orphaned attempt does not enter AHT', () => {
+describe('a crash-orphaned attempt does not enter AHT', () => {
   it('excludes outcome = orphaned from both AHT variants', async () => {
     await stats();
     const sql = executable(aggregateSql());

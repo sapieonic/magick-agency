@@ -1,7 +1,6 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/unit/utils/metrics-tts-clip-cache.test.ts@4850d1d9.
-// Changed: trackTtsClipCacheSweep now lives in @magick-agency/observability/metrics/voice (import adapted).
-// Removed the resetSafeEmitLatches import and its beforeEach call: safeEmit is private to voice.ts and
-// exports no reset; the latch only de-duplicates the error LOG, which no case asserts.
+// trackTtsClipCacheSweep lives in @magick-agency/observability/metrics/voice.
+// There is no latch reset: safeEmit is private to voice.ts and exports none; the
+// latch only de-duplicates the error LOG, which no case asserts.
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 /**

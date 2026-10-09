@@ -23,13 +23,13 @@ import type { AgencySupervisorAgent } from '../../types/agency-campaign';
 import styles from './AgentFloorDrawer.module.css';
 
 /**
- * The tile's drawer (§C.4) and MAG-142's force-return control.
+ * The tile's drawer and its force-return control.
  *
  * ── What this drawer deliberately does NOT show ─────────────────────────────
- * §C.4 also asks for a shift timeline, the dispositions this agent has given,
- * and the contact they are on. **No endpoint serves any of the three.** Core's
+ * A shift timeline, the dispositions this agent has given, and the contact they
+ * are on would also belong here. **No endpoint serves any of the three.** The API's
  * supervisor payload carries the eight roster fields below and nothing else,
- * there is no `GET /agency/sessions/:id`, and no master proxy for one. Rather
+ * there is no `GET /agency/sessions/:id`, and no proxy route for one. Rather
  * than invent an endpoint or fabricate a timeline out of `state_since` — which
  * would be one transition presented as a history — the drawer is scoped to what
  * the roster provides plus the control that acts on it. The three gaps are
@@ -47,7 +47,7 @@ export interface AgentFloorDrawerProps {
   agent: AgencySupervisorAgent;
   /** The floor's shared ticking clock, so the drawer's duration matches the tile. */
   now: number;
-  /** `hasPermission(role, 'agency.supervise')` — master's gate, mirrored. */
+  /** `hasPermission(role, 'agency.supervise')` — the API's gate, mirrored. */
   canSupervise: boolean;
   /** The floor's sort mode when this drawer was opened, for `trackAgencyFloorIntervention`. */
   sort: AgencyFloorSort;
@@ -61,7 +61,7 @@ function connectionCopy(connected: boolean | null): { label: string; tone: strin
   if (connected === true) return { label: 'Station connected', tone: 'ok' };
   if (connected === false) return { label: 'Station disconnected — no heartbeat', tone: 'bad' };
   /*
-    `null` is core's Redis read having failed, and it gets its own sentence.
+    `null` is the API's Redis read having failed, and it gets its own sentence.
     Collapsing it into "Disconnected" would be the console reporting a fault of
     its own as a fact about a person, on the screen where a supervisor decides
     whether to go and find them.
@@ -93,7 +93,7 @@ export function AgentFloorDrawer({
     Both halves, and both are required. `canForceAvailable` is the SESSION's
     state — the route is the only thing that can end a held wrap-up and is for
     nothing else. `canSupervise` is the VIEWER's permission and must be the same
-    `agency.supervise` master gates the route on, or the button 403s on click.
+    `agency.supervise` the API gates the route on, or the button 403s on click.
   */
   const showForce = canSupervise && canForceAvailable(agent);
 
@@ -120,7 +120,7 @@ export function AgentFloorDrawer({
       /*
         A 403 here is an answer, not a transport failure — and it means the UI
         gate and the API gate have drifted, which is worth saying plainly rather
-        than showing master's masked body. Handled rather than swallowed: a
+        than showing the API's masked body. Handled rather than swallowed: a
         control that silently does nothing is worse than one that refuses, because
         the supervisor's next move is to click it again.
       */

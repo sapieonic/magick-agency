@@ -22,7 +22,7 @@
  *
  * What it owns is the ASSEMBLY — and the assembly is NOT single-definition, which
  * is worth stating plainly because the parser below reads like a shared helper and
- * is not one. `parseCampaignSeriesQuery`'s body is a near-verbatim second copy of
+ * is not one. `parseCampaignSeriesQuery`'s body is a near-identical second copy of
  * `parseAgentStatsQuery`'s (`agent-record.ts`): the two required-parameter pushes,
  * the `from >= to` refusal, the `else if` cap comparison against `MS_PER_DAY`
  * (declared here as well as there) and the bucket-enum check are the same code in
@@ -129,7 +129,8 @@ export interface CampaignSeriesParams {
  * The path fixes the campaign, so a query parameter for it can only agree with
  * `:id` or be wrong — the same reason `AgencyAttemptFilters` has no `campaignId`
  * on the campaign-scoped spine while the agent-scoped one does. It is not
- * silently ignored either: master applies an unknown-query-parameter check, so it
+ * silently ignored either: the public API layer's route applies an
+ * unknown-query-parameter check, so it
  * arrives as a 400 naming the parameter rather than as a URL that reads as one
  * question and is answered as another.
  *

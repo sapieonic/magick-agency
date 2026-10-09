@@ -9,14 +9,14 @@ import { trackAgencyMicState } from '../analytics/events';
  *
  * ── Why this composes the AI-call hooks rather than replacing them ──────────
  * `useAudioCapture` and `useAudioPlayback` already produce and consume exactly
- * the format core wants on this socket — base64 PCM16 mono 16 kHz, in 20 ms
+ * the format the API wants on this socket — base64 PCM16 mono 16 kHz, in 20 ms
  * frames — because the AI-call bridge and the agency bridge are the *same*
  * `WebRtcBridgeManager` browser leg. Writing a second encoder would be two
  * implementations of one wire format, and the second one would be the one
  * nobody exercised until a live shift.
  *
- * What genuinely differs is not the audio, it is the **lifetime**. The AI call
- * is one socket, one call, mic open from `start()` to hangup. The agency station
+ * What genuinely differs is not the audio, it is the **lifetime**. A single
+ * browser call is one socket, one call, mic open from `start()` to hangup. The agency station
  * is one socket for an eight-hour shift carrying a couple of hundred calls, and
  * across it the microphone must open and close per attempt. So the two hooks
  * were extended where they were short (mute, classified permission errors,
@@ -37,7 +37,7 @@ import { trackAgencyMicState } from '../analytics/events';
  * different product than the one we said we were shipping.
  *
  * ── Playback is deliberately NOT gated ──────────────────────────────────────
- * Inbound frames play whenever they arrive. Core only relays media while the
+ * Inbound frames play whenever they arrive. The API only relays media while the
  * PSTN leg is live, so the gate already exists on the side that has the
  * authority — and a second gate here would be one that can disagree: `bridged`
  * and the first media frame race each other on a fast carrier, and losing that

@@ -19,7 +19,7 @@ import type { AgencyAgentStats } from '../types/agency-stats';
  * optional subject is a subject a caller can supply by accident, and the whole
  * point of the paired routes is that an agent cannot form a request for somebody
  * else's shift. Callers of the `agent` form **must** gate on
- * `hasPermission(role, 'agency.supervise')` — master's exact floor.
+ * `hasPermission(role, 'agency.supervise')` — the API's exact floor.
  *
  * ── One request per window, not one summed locally ─────────────────────────
  * Day buckets are cut in each campaign's own timezone, so a client that summed a
@@ -98,9 +98,9 @@ export interface UseAgentPerformance {
  *
  * `by_campaign[]` and `buckets[]` are two foldings of one row set, so the payload
  * answers "which campaigns" and "which days" but never "which days ON this
- * campaign" — the cross-tab is a third folding and no response carries it. Core's
+ * campaign" — the cross-tab is a third folding and no response carries it. The API's
  * stats query has always accepted `campaign_id` (`parseAgentStatsQuery`) and
- * master forwards it (`AGENT_STATS_QUERY_PARAMS`); scoping the request is
+ * the API forwards it (`AGENT_STATS_QUERY_PARAMS`); scoping the request is
  * therefore how that combination is asked for, and re-folding it in the client
  * is not — a client that summed a campaign's days out of a cross-campaign bucket
  * could not, because a bucket carries no campaign.
@@ -171,7 +171,7 @@ export function useAgentPerformance(
     /**
      * Both ids, for the reason every agency surface waits for both: `TenantContext`
      * resolves the account asynchronously, and a request sent in that window
-     * carries no `X-Account-Id`, which core answers with a 400 about a header this
+     * carries no `X-Account-Id`, which the API answers with a 400 about a header this
      * client never sent — an error with nothing to do with the data being asked
      * for. The caller renders `AccountUnavailable` when resolution settles without
      * an account, so this early return can never become a permanent spinner.
@@ -197,8 +197,8 @@ export function useAgentPerformance(
       const query: AgencyStatsQuery = {
         ...windowRange(period, now),
         bucket: 'day',
-        // Omitted rather than sent as null: master forwards only the params it
-        // finds, and an empty `campaign_id` reaching core is a validation issue
+        // Omitted rather than sent as null: the API forwards only the params it
+        // finds, and an empty `campaign_id` reaching the API is a validation issue
         // about a filter nobody asked for.
         ...(campaignId ? { campaign_id: campaignId } : {}),
       };

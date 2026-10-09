@@ -1,24 +1,19 @@
 /*
- * PORT NOTE (magick-agency): ported from core test/integration/flows/feature-flag-rollout.test.ts@4850d1d9
- * (4 cases → 4). Core's "Lane A" (S2S `/internal/feature-flags*` write routes) is now the
- * super-admin route that holds those handler bodies in-process
- * (`src/api/routes/super-admin-feature-flags.routes.ts`, HOP COLLAPSE), and "Lane B" (core's
- * tenant `GET /api/v1/feature-flags`) is `src/api/routes/feature-flags.routes.ts` at
- * `/feature-flags`. Changes forced by the port:
+ * The flag write routes are the super-admin routes in
+ * `src/api/routes/super-admin-feature-flags.routes.ts`, and the tenant read route is
+ * `src/api/routes/feature-flags.routes.ts` at `/feature-flags`. Harness notes:
  *  - writes authenticate as a REAL super admin (a `super_admins` row + a JWT signed with
- *    `SUPER_ADMIN_JWT_SECRET`, through the real `superAdminMiddleware`) instead of the S2S
- *    bearer; the actor persisted as `updated_by` is that super admin's id, not a body field;
- *  - the read lane's `sessionMiddleware` → `tenantContextMiddleware` → `requirePermission`
- *    chain is stubbed to read the tenant/account from plain headers — the same shortcut core
- *    took by stubbing its API-key `authMiddleware` — so the REAL `resolveClientExposed` runs;
+ *    `SUPER_ADMIN_JWT_SECRET`, through the real `superAdminMiddleware`); the actor persisted as `updated_by` is that super admin's id, not a body field;
+ *  - the read route's `sessionMiddleware` → `tenantContextMiddleware` → `requirePermission`
+ *    chain is stubbed to read the tenant/account from plain headers, so the REAL `resolveClientExposed` runs;
  *  - the flag service runs over the REAL test Redis (6383, non-zero db, flushed per test)
- *    instead of a null Redis, so write-path invalidation is exercised on the shared cache;
- *  - ids are UUIDs (`tenant-1` … → `randomUUID()`): the override id columns are UUID;
- *  - `whatsapp_personal` → `agency_dialer_enabled` (client-exposed, default off, env
+ *    (not a null Redis), so write-path invalidation is exercised on the shared cache;
+ *  - ids are UUIDs (`randomUUID()`): the override id columns are UUID;
+ *  - the flag under test is `agency_dialer_enabled` (client-exposed, default off, env
  *    `FF_AGENCY_DIALER`); the never-leaks case checks `agency_late_binding` (the one agency
- *    flag that is not client-exposed) in place of `prewarm_enabled` / `prewarm_ring_delay_ms`;
- *  - the PostHog mock is removed (no analytics module); the DB/config mocks are replaced by
- *    the agency harness (`initDbPool` on the test database, env from `integration-env.ts`).
+ *    flag that is not client-exposed);
+ *  - the DB/config come from the test harness (`initDbPool` on the test database, env from
+ *    `integration-env.ts`).
  */
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
@@ -28,11 +23,10 @@ import jwt from 'jsonwebtoken';
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 // Real DB via the test pool; the feature-flag service singleton runs over the test Redis,
 // and route writes invalidate it.
-// This is the real toggle-through-all-three-services pass: Lane A (S2S internal
-// write routes) → DB → service cache/invalidate/resolve → Lane B (tenant read
-// route), over live Postgres. The fast logic through-line lives in
+// This is the real toggle pass: write routes → DB → service cache/invalidate/resolve →
+// tenant read route, over live Postgres. The fast logic through-line lives in
 // test/unit/scenarios/feature-flag-rollout-scenarios.test.ts; this one closes the
-// "real DB + both HTTP lanes" gap.
+// "real DB + both HTTP routes" gap.
 
 const SA_JWT_SECRET = vi.hoisted(() => {
   const secret = 'rollout-super-admin-secret-0123456789';
@@ -45,7 +39,7 @@ vi.mock('../../../src/audit/audit-logger.js', () => ({
   auditLogger: { log: vi.fn() },
 }));
 
-// Lane B client surface: replace the session/tenant/RBAC chain with a pass-through
+// Client surface: replace the session/tenant/RBAC chain with a pass-through
 // that reads the tenant/account from plain headers, so we exercise the REAL
 // resolveClientExposed resolution a tenant hits — without standing up Firebase sessions.
 vi.mock('../../../src/auth/session.middleware.js', () => ({
@@ -79,14 +73,14 @@ const PREFIX = 'ma-rollout-test:';
 
 function buildApp() {
   const app = Fastify({ logger: false });
-  app.register(superAdminFeatureFlagsRoutes, { prefix: '/super-admin' }); // Lane A (super-admin writes)
-  app.register(featureFlagsRoutes, { prefix: '/feature-flags' });         // Lane B (tenant read)
+  app.register(superAdminFeatureFlagsRoutes, { prefix: '/super-admin' }); // super-admin writes
+  app.register(featureFlagsRoutes, { prefix: '/feature-flags' });         // tenant read
   return app;
 }
 
 const ACCOUNT = randomUUID();
 
-/** Lane B: the client-exposed flag map a tenant/account resolves. */
+/** The client-exposed flag map a tenant/account resolves. */
 async function tenantSees(app: ReturnType<typeof buildApp>, tenantId: string, accountId = ACCOUNT) {
   const res = await app.inject({
     method: 'GET',
@@ -100,7 +94,7 @@ async function tenantSees(app: ReturnType<typeof buildApp>, tenantId: string, ac
 let superAdminId: string;
 let saHeaders: Record<string, string>;
 
-describe('agency_dialer_enabled rollout — Lane A write → Lane B read through-line (integration)', () => {
+describe('agency_dialer_enabled rollout — write → read through-line (integration)', () => {
   const tenant = Array.from({ length: 11 }, () => randomUUID()); // tenant[1] … tenant[10]
 
   beforeAll(() => {
@@ -123,7 +117,7 @@ describe('agency_dialer_enabled rollout — Lane A write → Lane B read through
     saHeaders = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
   });
 
-  // PORT NOTE (magick-agency): drain the routes' fire-and-forget super-admin
+  // Drain the routes' fire-and-forget super-admin
   // audit writes before the next `truncateAll()`; an in-flight INSERT deadlocks
   // with the TRUNCATE (see test/helpers/drain-super-admin-audit.ts).
   const auditWrites = trackSuperAdminAuditWrites();
@@ -145,7 +139,7 @@ describe('agency_dialer_enabled rollout — Lane A write → Lane B read through
     expect((await tenantSees(app, tenant[1]!))[FLAG]).toBe(false);
     expect((await tenantSees(app, tenant[2]!))[FLAG]).toBe(false);
 
-    // ── 2. Enable for tenant-1 only (Lane A PUT tenant override).
+    // ── 2. Enable for tenant-1 only (PUT tenant override).
     const put = await app.inject({
       method: 'PUT',
       url: `/super-admin/feature-flags/${FLAG}/overrides`,
@@ -154,7 +148,7 @@ describe('agency_dialer_enabled rollout — Lane A write → Lane B read through
     });
     expect(put.statusCode).toBe(200);
 
-    // Lane B reflects it immediately (write-path invalidation, not the TTL).
+    // The read route reflects it immediately (write-path invalidation, not the TTL).
     expect((await tenantSees(app, tenant[1]!))[FLAG]).toBe(true);
     // tenant-2 still off — the override is tenant-scoped.
     expect((await tenantSees(app, tenant[2]!))[FLAG]).toBe(false);
@@ -198,7 +192,7 @@ describe('agency_dialer_enabled rollout — Lane A write → Lane B read through
     await app.close();
   });
 
-  it('precedence: an explicit tenant OFF survives a global ON (most-specific wins, D1)', async () => {
+  it('precedence: an explicit tenant OFF survives a global ON (most-specific wins)', async () => {
     const app = buildApp();
     await app.ready();
 
@@ -246,7 +240,7 @@ describe('agency_dialer_enabled rollout — Lane A write → Lane B read through
     await app.close();
   });
 
-  it('Lane B never leaks internal (non-clientExposed) flags', async () => {
+  it('the read route never leaks internal (non-clientExposed) flags', async () => {
     const app = buildApp();
     await app.ready();
 

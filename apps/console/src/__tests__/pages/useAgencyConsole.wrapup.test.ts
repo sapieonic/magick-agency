@@ -17,7 +17,7 @@ import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/
 /**
  * **The disposition pad's unlock, and the frame it must stop depending on.**
  *
- * Wrap-up used to be derived from one thing: `agent_state{state:'wrapup'}`. Core
+ * Wrap-up used to be derived from one thing: `agent_state{state:'wrapup'}`. The API
  * did not emit that frame at all until this week, and while it was missing the pad
  * greyed out the instant a call ended and stayed grey — `/available` then 409s
  * `attempt_not_dispositionable`, so the agent was stuck until the `no_disposition`
@@ -165,7 +165,7 @@ describe('the disposition pad unlocks through three independent routes', () => {
     /**
      * The belt-and-braces route, and the one that matters most.
      *
-     * Core's ordering on a connected call is `released` → `agent_state{wrapup}` →
+     * The API's ordering on a connected call is `released` → `agent_state{wrapup}` →
      * `wrapup`, so this route opens the pad a tick earlier than (a) — and, more
      * importantly, it still opens it when `agent_state` never comes at all, which
      * is precisely the world this console shipped into.
@@ -194,9 +194,9 @@ describe('the disposition pad unlocks through three independent routes', () => {
   it('(c) a reconnected wrap-up opens it with NO released and NO retained attempt', async () => {
     /**
      * The route a reconnecting socket has, and the only one it has. `ready` carries
-     * `active_wrapup` and no attempt payload — core has nothing to hand back for a
+     * `active_wrapup` and no attempt payload — the API has nothing to hand back for a
      * call that already ended — so both `live` and `retainedAttempt` are null while
-     * the agent still owes a disposition core will refuse `/available` over.
+     * the agent still owes a disposition the API will refuse `/available` over.
      */
     const view = await opened();
     act(() =>
@@ -248,7 +248,7 @@ describe('the disposition pad unlocks through three independent routes', () => {
      * **The two OFF switches are asserted directly rather than through `release`.**
      * This used to assert `release` was still standing "for its copy", which was a
      * proxy for "route (b) was closed by `retainedAttempt`, not by the frame behind
-     * it". `release` is now cleared here too (core `#290`: it survives wrap-up only
+     * it". `release` is now cleared here too (it survives wrap-up only
      * when there was no wrap-up, so the idle panel can tell the truncated path from
      * a finished one), and a `padEnabled: false` that could be explained by a null
      * `release` would no longer catch a handler that stopped clearing the retained
@@ -280,13 +280,13 @@ describe('the disposition pad unlocks through three independent routes', () => {
     expect(view.result.current.padEnabled).toBe(false);
   });
 
-  describe('a reconnect must not leave the pad open over a window core has closed', () => {
+  describe('a reconnect must not leave the pad open over a window the API has closed', () => {
     /**
      * **A regression this file's own route (b) introduced.**
      *
      * `release` and `retainedAttempt` were cleared only by `agent_state` and by
      * `reserved`; `ready` cleared neither. So: `released{requires_disposition:true}`
-     * → the socket drops → the wrap-up lapses server-side → core emits
+     * → the socket drops → the wrap-up lapses server-side → the API emits
      * `agent_state{available}` **into the dead socket** → the console reconnects and
      * `ready{state:'available'}` restored `agentState` and nothing else. Route (a)
      * went off, route (b) stayed **on**: pad enabled, `currentAttemptId` still the
@@ -367,7 +367,7 @@ describe('the disposition pad unlocks through three independent routes', () => {
     });
     expect(view.result.current.padEnabled).toBe(true);
 
-    // A new reservation always wins (§A.8.4) and the next call has not bridged
+    // A new reservation always wins and the next call has not bridged
     // yet, so the pad must be shut even though the previous one earned it.
     act(() =>
       latest().emit({
@@ -425,12 +425,12 @@ describe('a queued break survives the console that did not request it', () => {
     expect(view.result.current.pendingBreakLabel).toBeNull();
   });
 
-  it('reads `break_reason` off the HTTP response, which is what core actually sends', async () => {
+  it('reads `break_reason` off the HTTP response, which is what the API actually sends', async () => {
     /**
-     * The mirror said `pending_break_reason` on this body and core has never sent
+     * The mirror said `pending_break_reason` on this body and the API has never sent
      * that name — it builds `AgencySessionStateResponse` with `break_reason`, and
-     * master proxies it unchanged. The read was `undefined` every time; only the
-     * `?? code` fallback kept the pill alive. This mock is core's real shape, so
+     * the API proxies it unchanged. The read was `undefined` every time; only the
+     * `?? code` fallback kept the pill alive. This mock is the API's real shape, so
      * the fallback cannot be what passes it.
      */
     mocks.setAgentBreak.mockResolvedValue({
@@ -450,13 +450,13 @@ describe('a queued break survives the console that did not request it', () => {
   });
 
   /**
-   * **The reconnect half, which core only started answering this week (`4f59d8b`).**
+   * **The reconnect half, which the API only started answering this week (`4f59d8b`).**
    *
    * The two sources above both require *this* console to have witnessed something:
    * the HTTP response it issued, or a transition frame delivered to a socket it
    * still owned. A drop takes both away, and the next `agent_state` the agent gets
    * is the one `releaseAgent` sends when the break has **already been applied** —
-   * so the whole wrap-up window was a blind spot, and core `peek`s the queue rather
+   * so the whole wrap-up window was a blind spot, and the API `peek`s the queue rather
    * than taking it, which means the break lands regardless of what the console shows.
    */
   const WRAPUP_ANCHOR = {

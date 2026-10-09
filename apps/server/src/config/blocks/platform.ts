@@ -2,24 +2,18 @@ import { z } from 'zod';
 import { envBoolean, type Env } from '../env.js';
 
 /**
- * Owned by lane A (platform: identity, tenancy, invites, super-admin,
- * notifications). Key names are master's (`magick-master/src/config/schema.ts`
- * @a1f0756a) so the ported code reads the same paths.
+ * Platform config: identity, tenancy, invites, super-admin, notifications.
  *
- * PORT NOTE (magick-agency):
- *  - `firebase` is OPTIONAL here (master: required). The lead's config contract is
- *    that a minimal env (DATABASE_URL + REDIS_URL) parses, so a missing block must
- *    not fail the schema; instead `startPlatform` refuses to boot in production
- *    without it, and outside production every Firebase verify fails closed (401).
- *    `serviceAccountPath` is new (brief: "service account JSON or path").
- *  - `consoleBaseUrl` (`CONSOLE_BASE_URL`) replaces master's `cusuiBaseUrl`
- *    (`CUSUI_BASE_URL`): the invite link points at agency's own console.
- *  - Not carried: core-service, encryption, s2sAuth, webhooks, llm, platformEmail,
- *    scheduler, SQS, credits and the rest of master's blocks (no peer service,
- *    no API keys, no credits). `rateLimit` belongs to lane C's block.
+ *  - `firebase` is OPTIONAL: a minimal env (DATABASE_URL + REDIS_URL) must parse, so a
+ *    missing block must not fail the schema; instead `startPlatform` refuses to boot in
+ *    production without it, and outside production every Firebase verify fails closed
+ *    (401). The service account is given as JSON or as a path.
+ *  - `consoleBaseUrl` (`CONSOLE_BASE_URL`): the console origin invite links point at.
+ *  - There are no peer-service, encryption, service-token, webhook, LLM, scheduler, SQS or
+ *    credit blocks (no peer service, no API keys, no credits). `rateLimit` lives in the
+ *    voice block.
  */
 
-// master `schema.ts:116-120` (+ serviceAccountPath).
 const firebaseSchema = z.object({
   projectId: z.string(),
   serviceAccountKey: z.string().optional(),
@@ -27,12 +21,10 @@ const firebaseSchema = z.object({
   authEmulatorHost: z.string().optional(),
 });
 
-// master `schema.ts:183-185`.
 const superAdminSchema = z.object({
   jwtSecret: z.string().min(16, 'SUPER_ADMIN_JWT_SECRET must be at least 16 characters'),
 }).optional();
 
-// master `schema.ts:365-370`.
 const mailjetSchema = z.object({
   apiKey: z.string(),
   apiSecret: z.string(),
@@ -41,14 +33,13 @@ const mailjetSchema = z.object({
 });
 
 /**
- * master `schema.ts:450-479` — see master's docstring: `.default({})`, not
- * `.optional()`, so the template renderer reads defaults without a second copy.
+ * `.default({})`, not `.optional()`, so the template renderer reads defaults without a
+ * second copy.
  */
 const brandSchema = z.object({
   /**
    * `PLATFORM_BRAND_NAME`. Composed into the product noun by `agencyProductName`
-   * ("Magick Agency Dialer" for the default). PORT NOTE (magick-agency, decision
-   * B17): the default is `Magick Agency` (master: `MagickVoice`).
+   * ("Magick Agency Dialer" for the default). Default `Magick Agency` (decision B17).
    */
   name: z.string().min(1).default('Magick Agency'),
   /**
@@ -63,12 +54,12 @@ const brandSchema = z.object({
   logoUrl: z.string().url().optional(),
 });
 
-/** master `schema.ts:488-510` — the ONLY place the seven days is written. */
+/** The ONLY place the seven days is written. */
 const invitesSchema = z.object({
   tokenTtlDays: z.coerce.number().int().min(1).max(90).default(7),
 });
 
-/** master `schema.ts:721-727` — defaults OFF (a rollout requirement, see master). */
+/** Defaults OFF: enabling the in-process cache is a deliberate rollout step. */
 const localCacheSchema = z.object({
   enabled: envBoolean.default(false),
   ttlMs: z.coerce.number().int().positive().max(60_000).default(5_000),
@@ -76,11 +67,10 @@ const localCacheSchema = z.object({
 });
 
 /**
- * NEW (magick-agency, plan §3.5): runtime maintenance of the two monthly-partitioned
- * audit tables (`audit/audit-partition-maintenance.ts`). The baseline creates
- * partitions 2026-01..2027-12 only. `retentionDays` is the window core's and
- * master's retention Lambda held as `RETENTION_DAYS` (production policy 85 days);
- * the floor of 30 is their `RETENTION_MIN_DAYS` default.
+ * Runtime maintenance of the two monthly-partitioned audit tables
+ * (`audit/audit-partition-maintenance.ts`). The baseline creates partitions
+ * 2026-01..2027-12 only. `retentionDays` defaults to the production retention policy
+ * (85 days), with a floor of 30.
  */
 const auditPartitionsSchema = z.object({
   enabled: envBoolean.default(true),
@@ -110,7 +100,7 @@ function compact(obj: Record<string, string | undefined>): Record<string, string
 
 export function readPlatformEnv(env: Env): Record<string, unknown> {
   return {
-    // master `config/index.ts:22-26`; here the block exists iff the project id is set.
+    // The block exists iff the project id is set.
     firebase: env['FIREBASE_PROJECT_ID']
       ? {
           projectId: env['FIREBASE_PROJECT_ID'],
@@ -119,11 +109,9 @@ export function readPlatformEnv(env: Env): Record<string, unknown> {
           authEmulatorHost: env['FIREBASE_AUTH_EMULATOR_HOST'],
         }
       : undefined,
-    // master `config/index.ts:52-54`.
     superAdmin: env['SUPER_ADMIN_JWT_SECRET']
       ? { jwtSecret: env['SUPER_ADMIN_JWT_SECRET'] }
       : undefined,
-    // master `config/index.ts:119-126`.
     mailjet: env['MAILJET_API_KEY']
       ? {
           apiKey: env['MAILJET_API_KEY'],

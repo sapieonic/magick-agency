@@ -173,7 +173,7 @@ describe('useAgentPerformance under StrictMode', () => {
    * The `windows` argument, which had no caller and no test.
    *
    * It is the mechanism that lets the panel offer a window the roster cannot
-   * survive (core caps the per-agent read at 366 days and the roster reads at 92),
+   * survive (the server caps the per-agent read at 366 days and the roster reads at 92),
    * so it will get a caller the first time anyone adds a wider tile. Two things
    * have to hold before that is safe, and neither is visible from the default
    * path every other test in this file exercises.

@@ -31,25 +31,20 @@ import { initDbPool, closePool } from '@magick-agency/db';
  * end, and the dedupe that `SELECT *` over a re-staffed campaign makes possible.
  *
  * All four bounds exist for one reason, stated in the repository: this table only
- * ever GROWS. Migration 060 closes rows rather than deleting them, every
+ * ever GROWS. Staffing closes rows rather than deleting them, every
  * reassignment adds one, `closeAllForUser` manufactures one per campaign on every
  * offboarding, and nothing removes any. The route is reachable by an `agent` —
- * the lowest-privileged role there is — on their own console, and it spends a core
+ * the lowest-privileged role there is — on their own console, and it spends an internal
  * round trip per distinct campaign. So the bounds are the difference between a
  * page and an unbounded fan-out, and each is asserted against a history large
  * enough to trip it.
  *
- * ── EXECUTED, GREEN ────────────────────────────────────────────────────────
- * Written without a Docker daemon (`/var/run/docker.sock` does not exist there,
- * so `npm run test:integration` cannot bring the test stack up), and this header
- * used to say it had never run. It has since been run against a real Postgres 16
- * and Redis 7 on the ports `docker/test-docker-compose.yml` publishes, and
- * passes in full. What backs it when the stack is unavailable: it type-checks
- * under `npm run lint:test`, the non-gating report; the constants are IMPORTED from the source
+ * ── GUARANTEES ─────────────────────────────────────────────────────────────
+ * It runs against a real Postgres and Redis. The constants are IMPORTED from the source
  * (`HISTORY_LIMIT_MAX`) rather than transcribed, so the fixture sizes cannot
  * drift from the ceiling they are testing; and `SUMMARY_LOOKUP_MAX`, which the
  * route keeps private, is asserted through the only things a caller can observe
- * — how many core calls happened and which rows came back named — rather than by
+ * — how many internal calls happened and which rows came back named — rather than by
  * reaching into the module for its value. That is the right way round: a test
  * that imported the constant would still pass against a route which had stopped
  * applying it.
@@ -64,22 +59,19 @@ import { initDbPool, closePool } from '@magick-agency/db';
  * messages. Identifying the layer took a source-reading pass that the body would
  * have answered outright. Keep new assertions in this shape.
  *
- * PORT NOTE (magick-agency): ported from master `test/integration/api/agency-my-campaigns.routes.test.ts`
- * @a1f0756a, on agency's test database (Postgres 5436). It drives `GET /my-campaigns` in
+ * Runs on the test database (Postgres 5436). It drives `GET /my-campaigns` in
  * `proxy-agency-staffing.routes.ts` (the staffing family).
- *  - **The core hop stays STUBBED** (`callCore`, decision B16, mocked under master's name
+ *  - **The internal hop is STUBBED** (`callCore`, decision B16, mocked as
  *    `mocks.proxyToCore`). Every assertion here is about the route's fan-out — how many
  *    lookups, which ids, in what order, with what name — over campaign ids that exist only
- *    as staffing rows; the count of in-process calls is the observable, exactly as the count
- *    of HTTP calls was. The real handler (and real ownership) is driven by the sibling
+ *    as staffing rows; the count of in-process calls is the observable. The real handler (and real ownership) is driven by the sibling
  *    `agency-staffing.routes.test.ts`, including a foreign campaign's name never reaching an
  *    agent's `/my-assignments`.
- *  - Harness: `src/db/connection.js` mock → `initDbPool`; `config`/governance mocks gone;
- *    partial logger mock; the session stub loses `x-platform-key` (decision #5); master's
- *    `seen` helper copied below (agency's shared test-utils does not carry it).
- *  - DELETED (5): the three API-key-resolution cases (no core API key in one process), "a
- *    platform API key is refused" (decision #5), "refused when the `agency` capability is
- *    off" (no governance, plan §3.2). See PORTING "Phase 8 — staffing".
+ *  - Harness: `initDbPool` on the test database; partial logger mock; the session stub has
+ *    no `x-platform-key` (there are no platform API keys); a local `seen` helper (the shared
+ *    test-utils does not carry it).
+ *  - Not covered: API-key resolution (there is no API key in one process), "a platform API
+ *    key is refused", and "refused when the `agency` capability is off" (no governance).
  */
 
 initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
@@ -90,7 +82,7 @@ interface SeenResponse {
   body: unknown;
 }
 
-/** master `test/integration/setup/test-utils.ts` `seen`, verbatim. */
+/** A response's status and parsed body, so assertions carry the body. */
 function seen(res: { statusCode: number; body: string }): SeenResponse {
   return { status: res.statusCode, body: parseBody(res.body) };
 }
@@ -124,8 +116,7 @@ vi.mock('../../../src/auth/session.middleware.js', () => ({
     headers: Record<string, string | undefined>;
     user?: { id: string };
   }) => {
-    // PORT NOTE (magick-agency): master's `x-platform-key` branch (system and
-    // creator-backed platform API keys) is deleted with the keys (decision #5).
+    // There are no platform API keys, so no `x-platform-key` branch.
     const userId = request.headers['x-user-id'];
     if (userId) request.user = { id: userId };
   },
@@ -195,7 +186,7 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
       user_id: colleague.id, tenant_id: tenant.id, account_id: account.id, role: 'agent',
     });
 
-    // A campaign core can always name, unless a case says otherwise.
+    // A campaign the internal handler can always name, unless a case says otherwise.
     mocks.proxyToCore.mockResolvedValue({
       status: 200, body: { id: 'any', name: 'Q3 Renewals', status: 'running' },
     });
@@ -246,7 +237,7 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
    * second live one.
    *
    * Rows are inserted CLOSED by default for the same reason: a history is mostly
-   * closed rows (that is why it is a history), and migration 064's index only
+   * closed rows (that is why it is a history), and the per-tenant staffing index only
    * constrains rows with `unassigned_at IS NULL`, so an arbitrary number of closed
    * rows per campaign is both legal and exactly what accumulates.
    */
@@ -295,7 +286,7 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
     const ids = Array.from({ length: n }, () => randomUUID());
     // 2026-01-01 + i days, so index 0 is the OLDEST. Every row is CLOSED a day
     // after it opened — a history is mostly closed rows, and only open rows are
-    // constrained by migration 064's partial index.
+    // constrained by the per-tenant staffing partial index.
     const assignedAt = ids.map((_, i) => new Date(Date.UTC(2026, 0, 1) + i * 86_400_000));
     await getTestPool().query(
       `INSERT INTO agency_campaign_agents
@@ -318,7 +309,7 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
     return res.json().assignments.map((a) => a.campaign_id);
   }
 
-  /** How many DISTINCT campaigns the route asked core to name. */
+  /** How many DISTINCT campaigns the route asked the internal handler to name. */
   function coreLookupCount() {
     return mocks.proxyToCore.mock.calls.length;
   }
@@ -366,8 +357,8 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
       expect(row.unassigned_at).toBeNull();
     });
 
-    it('carries all six keys on every row, present even when core cannot name it', async () => {
-      // A live contract with cusui: the customer UI reads `assignments`, and a
+    it('carries all six keys on every row, present even when the internal handler cannot name it', async () => {
+      // A live contract with the console: it reads `assignments`, and a
       // previous defect here rendered every agent's history empty.
       await seedRow({ campaignId: randomUUID(), assignedAt: new Date('2026-02-01T00:00:00.000Z') });
       mocks.proxyToCore.mockResolvedValue({ status: 404, body: { error: 'Not Found' } });
@@ -387,7 +378,7 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
       const res = await get('/my-campaigns');
       expect(seen(res)).toMatchObject({ status: 200 });
       expect(res.json()).toEqual({ assignments: [] });
-      // And spends no core round trip at all — there is nothing to name.
+      // And spends no internal round trip at all — there is nothing to name.
       expect(coreLookupCount()).toBe(0);
     });
   });
@@ -452,8 +443,8 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
 
     it('never returns another tenant’s or another person’s rows, even under the ceiling', async () => {
       /**
-       * The tenant and user predicates sit in the same statement as the read (rule
-       * 1 of docs/reference/magick-master/CLAUDE.md's RBAC section). Worth asserting alongside the ceiling
+       * The tenant and user predicates sit in the same statement as the read (the
+       * first RBAC rule). Worth asserting alongside the ceiling
        * specifically: a `LIMIT` applied to an under-scoped query returns 200 rows
        * of somebody else's history and looks exactly as healthy as this does.
        */
@@ -614,15 +605,15 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
   describe('SUMMARY_LOOKUP_MAX — the cap on how many campaigns get NAMED', () => {
     /**
      * The row ceiling alone does not bound the fan-out usefully: 200 rows can be
-     * 200 distinct campaigns, and each name is a core round trip with the agent's
+     * 200 distinct campaigns, and each name is an internal round trip with the agent's
      * console blocked on it. Rows arrive newest-first, so the first
      * `SUMMARY_LOOKUP_MAX` distinct ids are the recent ones and the rest report
      * `campaign_name: null` — which this route already documents as its NORMAL
-     * path, since a history is the surface most likely to name campaigns core has
-     * since deleted.
+     * path, since a history is the surface most likely to name campaigns that have
+     * since been deleted.
      *
      * The constant is module-private, so it is asserted through the only two
-     * things a caller can see: how many core calls happened, and which rows came
+     * things a caller can see: how many internal calls happened, and which rows came
      * back named. That is the right way round — a test reaching into the module
      * would pass against a route that had stopped applying it.
      */
@@ -648,7 +639,7 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
       // Bounded well below the page — the property, without hard-coding the cap.
       expect(named.length).toBeLessThan(rows.length);
       expect(unnamed.length).toBeGreaterThan(0);
-      // One core call per NAMED campaign and not one more.
+      // One internal call per NAMED campaign and not one more.
       expect(coreLookupCount()).toBe(named.length);
 
       // The named ones are a PREFIX of the newest-first order — not an arbitrary
@@ -680,15 +671,9 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
       expect(new Set(ids)).toEqual(new Set(rows.map((r) => r.campaign_id)));
     });
 
-    // PORT NOTE (magick-agency): DELETED — master's 'resolves the API key ONCE for the whole
-    // fan-out, not once per campaign'. No core API key in one process (the hop is `callCore`).
-
-    // PORT NOTE (magick-agency): DELETED — master's 'skips the key resolution entirely when there
-    // is nothing to name'. No key. Its other half (no core call for an empty history) is pinned by
+    // There is no API key to resolve (the hop is `callCore`), so no key-resolution cases. The
+    // "no internal call for an empty history" half is pinned by
     // 'answers 200 with an empty array for someone never staffed'.
-
-    // PORT NOTE (magick-agency): DELETED — master's 'degrades to nulls — never a 500 — when the key
-    // cannot be resolved at all'. `resolveCoreApiKeyOrNull` is gone with the key.
   });
 
   // ═══ 4. X-Staffing-Truncated ══════════════════════════════════════════════
@@ -775,7 +760,7 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
      * what a history is — and the route must not collapse them.
      *
      * What IS deduplicated is the LOOKUP: `[...new Set(assignments.map(a =>
-     * a.campaign_id))]` before the fan-out, so one campaign costs one core round
+     * a.campaign_id))]` before the fan-out, so one campaign costs one internal round
      * trip however many rows name it. `Set` preserves insertion order, which is
      * what keeps `slice(0, SUMMARY_LOOKUP_MAX)` taking the RECENT campaigns and
      * what lets `summaries.get(...)` pair each row with its own answer. A dedupe
@@ -808,7 +793,7 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
       expect(new Date(rows[1]!.unassigned_at!).toISOString()).toBe('2026-02-10T00:00:00.000Z');
     });
 
-    it('spends ONE core round trip for a campaign named by several rows', async () => {
+    it('spends ONE internal round trip for a campaign named by several rows', async () => {
       const campaign = randomUUID();
       for (let i = 0; i < 6; i += 1) {
         await seedRow({
@@ -896,11 +881,8 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
       expect(new Set(campaignIdsOf(res))).toEqual(new Set(ids));
     });
 
-    // PORT NOTE (magick-agency): DELETED — master's 'a platform API key is refused — there is no
-    // "my" for a key'. Decision #5: no platform API keys; `resolveMyAgentId`'s remaining branch
-    // (no user id → 400 `missing_actor`) is pinned in the unit suite.
-
-    // PORT NOTE (magick-agency): DELETED — master's 'refused when the `agency` capability is off,
-    // before anything is read'. No governance and no `requireCapability('agency')` (plan §3.2).
+    // There are no platform API keys; `resolveMyAgentId`'s remaining branch
+    // (no user id → 400 `missing_actor`) is pinned in the unit suite. There is no governance
+    // and no `requireCapability('agency')`.
   });
 });

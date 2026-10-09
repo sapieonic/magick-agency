@@ -1,5 +1,4 @@
 import { createChildLogger } from '@magick-agency/observability';
-// PORT NOTE (magick-agency): ported from core src/core/paced-audio-streamer.ts@4850d1d9; only the logger import specifier changed.
 import { PaceSchedule } from './pace-schedule.js';
 
 const log = createChildLogger({ component: 'paced-audio-streamer' });
@@ -20,15 +19,14 @@ export interface PacedStreamSink {
    * sink provides one.
    *
    * It exists for sinks that do not write to a socket directly but hand the frame
-   * to something that needs the BYTES — `CallManager.sendAudioToTelephony`, which
-   * per-provider may A-law-encode the frame (VoiceLink) or push it into the Z99
-   * coalescer, both of which operate on a Buffer and base64 it themselves. Going
-   * through `send` there would mean base64-encoding every 20 ms frame only for the
-   * callee to immediately decode it again, ~50 times a second per call.
+   * to something that needs the BYTES — an encoder or coalescer that operates on
+   * a Buffer and base64s it itself. Going through `send` there would mean
+   * base64-encoding every 20 ms frame only for the callee to immediately decode
+   * it again, ~50 times a second per call.
    *
-   * Optional, and the fallback is exact: a sink without it keeps the original
-   * base64 contract untouched. Existing sinks (`WsStaticCallSession`,
-   * `WebRtcBridgeManager.makeClipSink`) do not implement it and are unaffected.
+   * Optional, and the fallback is exact: a sink without it keeps the base64
+   * contract. The bridge's clip sink (`WebRtcBridgeManager.makeClipSink`) does
+   * not implement it.
    */
   sendRaw?(frame: Buffer): void;
   isOpen(): boolean;
@@ -62,7 +60,7 @@ export interface PacedAudioStreamerOptions {
    * `'aborted'` at the next frame boundary regardless of backpressure — a
    * belt-and-suspenders guard so a carrier holding the socket open with a
    * perpetually-full send buffer can't loop forever and strand the call. Omit for
-   * no deadline (legacy behavior).
+   * no deadline.
    */
   maxDurationMs?: number;
   /** Correlation id for logs only. */
@@ -75,7 +73,7 @@ const defaultSleep = (ms: number): Promise<void> =>
 /**
  * Streams a fully-materialized audio buffer to a telephony WebSocket in paced,
  * fixed-size real-time frames against a **monotonic clock** — the provider-neutral
- * core of WebSocket static (announcement) playback.
+ * part of clip playback over a carrier media socket.
  *
  * Why paced (not blasted): telephony media sockets expect ~20 ms frames arriving
  * at ~real time. Dumping the whole clip at once overruns the carrier's jitter
@@ -86,12 +84,9 @@ const defaultSleep = (ms: number): Promise<void> =>
  * (drift never accumulates) instead of compounding a per-frame `sleep(frameMs)`.
  * `abort()` stops promptly (checked every frame); a closed sink also aborts.
  *
- * That schedule now lives in {@link PaceSchedule}, shared verbatim with the
- * push-based `PacedFrameQueue`. Nothing about this class's behaviour changed in
- * the move: the anchor-relative targets and the post-backpressure re-anchor are
- * the same arithmetic, expressed as a running slot instead of an anchor plus a
- * frame count. `test/unit/core/paced-audio-streamer.test.ts` is the proof, and
- * is deliberately unchanged.
+ * That schedule lives in {@link PaceSchedule}: the anchor-relative targets and
+ * the post-backpressure re-anchor, expressed as a running slot instead of an
+ * anchor plus a frame count.
  */
 export class PacedAudioStreamer {
   private aborted = false;

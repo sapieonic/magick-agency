@@ -86,7 +86,7 @@ export function useCampaignSeries(
   const endedAt = campaign?.ended_at ?? null;
   /*
     The STATUS travels too, and it is the field that decides whether the campaign
-    has finished — `ended_at` is optional on the row and a master that predates
+    has finished — `ended_at` is optional on the row and an API that predates
     the lifecycle timestamps does not send it.
 
     Carried as a boolean so the object handed to the pure function stays exactly
@@ -127,7 +127,7 @@ export function useCampaignSeries(
   const load = useCallback(() => {
     /*
       Both ids, for the reason every agency surface waits for both: a request
-      sent before `TenantContext` resolves carries no `X-Account-Id`, which core
+      sent before `TenantContext` resolves carries no `X-Account-Id`, which the API
       answers with a 400 about a header this client never sent. The caller
       renders `AccountUnavailable` when resolution settles with no account, so
       this can never become a permanent spinner.
@@ -171,7 +171,7 @@ export function useCampaignSeries(
         setState({
           status: 'error',
           // The server's own sentence: a failure here is permission- or
-          // connectivity-shaped, and ours would be a guess. A master that
+          // connectivity-shaped, and ours would be a guess. An API that
           // predates the route answers 404, and that message is the truthful
           // one to show — this console cannot tell it from a typo'd id.
           message: err instanceof Error ? err.message : 'Could not load the day-by-day figures.',

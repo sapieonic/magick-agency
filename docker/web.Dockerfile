@@ -3,8 +3,7 @@
 #
 #   docker build -f docker/web.Dockerfile -t magick-agency-web .
 #
-# NEW (magick-agency): core had no UI image; cusui and master's UI were deployed
-# separately. Both Vite builds call the API on their own origin (`API_BASE` is ''
+# Both Vite builds call the API on their own origin (`API_BASE` is ''
 # unless VITE_API_BASE_URL is set), and both own the root path, so each gets its
 # own nginx server block (docker/nginx.conf): the console on :8080, the
 # super-admin on :8081. nginx 1.27.3+ is required for `server ... resolve` in

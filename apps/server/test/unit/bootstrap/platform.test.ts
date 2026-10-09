@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-/** NEW (magick-agency, no source): the lane-A background work wiring. */
+/** The platform background work wiring. */
 
 const mocks = vi.hoisted(() => ({
   run: vi.fn(),

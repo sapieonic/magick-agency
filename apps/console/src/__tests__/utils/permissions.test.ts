@@ -4,15 +4,11 @@ import type { Permission } from '../../utils/permissions';
 import type { Role } from '../../types/auth';
 
 /*
- * PORT NOTE (magick-agency): cusui pinned its hand mirror of master's matrix. The
- * console's `hasPermission` is now the contract's (`@magick-agency/contracts/rbac`,
- * the matrix the server enforces). The structure and every assertion are kept;
- * the permission LISTS are cut to the permissions agency keeps, under agency
- * names (`proxy.prompts.*` → `agency.analysis_profiles.*`). DELETED with their
- * permissions: every per-permission row for credits, API keys, tenant/account
- * administration and the AI product's `proxy.*` keys, and the eleven boundary
- * cases about them (calls, static calls, IVR, announcements, audio files,
- * account update/create/delete, credits, API keys, tenant update). The
+ * The console's `hasPermission` is the contract's (`@magick-agency/contracts/rbac`,
+ * the matrix the server enforces). The permission LISTS here cover the
+ * permissions agency has, under agency names (`agency.analysis_profiles.*`).
+ * There are no rows for credits, API keys or tenant/account administration,
+ * because those permissions do not exist. The
  * agency-specific floors are pinned in `agencyPermissionMirror.test.ts` and
  * `agentPermissions.test.ts`.
  */
@@ -220,7 +216,7 @@ describe('permission boundaries — exact thresholds', () => {
     expect(hasPermission('operator', 'audit.read')).toBe(false);
     expect(hasPermission('account_admin', 'audit.read')).toBe(true);
   });
-  it('pins audit.read at account_admin — the same floor as magick-master', () => {
+  it('pins audit.read at account_admin — the same floor as the server', () => {
     expect(PERMISSION_MIN_ROLE['audit.read']).toBe('account_admin');
   });
 

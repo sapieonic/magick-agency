@@ -41,7 +41,7 @@ class FakeSocket {
   }
 
   /**
-   * Opt-in: answer every `ping` with its `pong`, as core does.
+   * Opt-in: answer every `ping` with its `pong`, as the server does.
    *
    * Off by default because most tests assert on `sent`. It exists so that "the
    * line recovered" can be modelled as *the server answering again* rather than
@@ -228,7 +228,7 @@ describe('useAgencyStation', () => {
     });
 
     it('routes an unknown future frame to diagnostics without throwing', async () => {
-      // Core ships independently; an unrecognised frame is expected traffic.
+      // The server ships independently; an unrecognised frame is expected traffic.
       const view = await mounted();
       expect(() =>
         act(() => latest().emit({ event: 'something_added_next_quarter', payload: 1 })),
@@ -267,8 +267,8 @@ describe('useAgencyStation', () => {
     it('treats `countdown` as a frame nobody sends — diagnostics only, panel untouched', async () => {
       /**
        * This used to assert that `countdown` drove `live.secondsRemaining` and
-       * `live.ringing`, and it passed — for a frame **core emits from nowhere**,
-       * into two fields **nothing read**. `grep "'countdown'" magic-voice-core/src`
+       * `live.ringing`, and it passed — for a frame **the server emits from nowhere**,
+       * into two fields **nothing read**. a search of the server source for `'countdown'`
        * finds the contract type, `intervals.countdown_ms` and prose, and no `send`;
        * `StateRail` has always derived "Ringing — get ready" from
        * `bridgedAt === null`. So the green test proved a handler, not a countdown.
@@ -323,7 +323,7 @@ describe('useAgencyStation', () => {
     });
 
     /**
-     * The three fields core sends on the wire that this mirror used to drop. Each
+     * The three fields the server sends on the wire that this mirror used to drop. Each
      * one has a consequence for an agent whose socket blipped, and each was
      * invisible: the frames arrived, parsed, and fell into the `ready` /
      * `agent_state` handlers where nothing read them.
@@ -339,8 +339,8 @@ describe('useAgencyStation', () => {
 
       it('resumes the wrap-up window from `ready.active_wrapup`', async () => {
         /**
-         * Core's wrap-up countdown is an in-process timer, so it survives the
-         * socket drop — but the `wrapup` frame that opened it does not, and core
+         * The server's wrap-up countdown is an in-process timer, so it survives the
+         * socket drop — but the `wrapup` frame that opened it does not, and the server
          * deliberately does not re-emit one. Dropped, a reconnecting agent gets no
          * deadline, no held-reason, and (see `currentAttemptId` below) nothing to
          * submit a disposition against.
@@ -362,7 +362,7 @@ describe('useAgencyStation', () => {
       });
 
       it('holds the attempt id through a reconnected wrap-up, so a disposition can still be sent', async () => {
-        // `live` and `retainedAttempt` are both null here — core has no attempt
+        // `live` and `retainedAttempt` are both null here — the server has no attempt
         // payload for a call that already ended. Without the wrap-up anchor as a
         // third source, `submit()` returns early on a null attempt id and the agent
         // owes a disposition they cannot send.
@@ -381,9 +381,9 @@ describe('useAgencyStation', () => {
         expect(view.result.current.currentAttemptId).toBe('att-1');
       });
 
-      it('keeps `missed_release` — core consumes it on read, so this frame is the only offer', async () => {
+      it('keeps `missed_release` — the server consumes it on read, so this frame is the only offer', async () => {
         /**
-         * `takeMissedRelease` clears as it reads on core's side. Dropping this does
+         * `takeMissedRelease` clears as it reads on the server's side. Dropping this does
          * not delay the information, it destroys it: the agent comes back to an
          * empty station with no account of the call they were on.
          */
@@ -413,7 +413,7 @@ describe('useAgencyStation', () => {
          *
          * It emitted `ready{state:'on_call', missed_release}` with no
          * `active_attempt` and checked that `live` *survived* — using a frame
-         * combination core cannot produce. Core sends `missed_release` **exactly**
+         * combination the server cannot produce. The server sends `missed_release` **exactly**
          * when it holds no attempt (`agency.routes.ts:880`:
          * `activeAttempt ? null : takeMissedRelease(...)`) and only when the
          * `released` frame could not be delivered (`agency-dialer.ts:646`:
@@ -424,7 +424,7 @@ describe('useAgencyStation', () => {
          * `live` held a dead call open in every visible respect — microphone armed
          * with the recording indicator lit, talk timer running, pad unlocked — and
          * `panelAttempt` stayed truthy, which suppressed the only component that
-         * renders the missed-release notice. Core had already consumed the record, so
+         * renders the missed-release notice. The server had already consumed the record, so
          * it was destroyed rather than delayed.
          */
         const view = await mounted();
@@ -472,7 +472,7 @@ describe('useAgencyStation', () => {
        * The handler used to apply each field only when present, which made a
        * reconnect purely additive: everything the console believed from the previous
        * socket's frames survived a `ready` that contradicted it. That is not a
-       * cosmetic asymmetry — core cannot contradict this console any other way,
+       * cosmetic asymmetry — the server cannot contradict this console any other way,
        * because the frames that would have (`released`, `agent_state`) went into the
        * socket that had already gone.
        */
@@ -480,11 +480,11 @@ describe('useAgencyStation', () => {
         it('clears a wrap-up that lapsed while the socket was away', async () => {
           /**
            * The regression this exists to catch, step by step: a `released` needing a
-           * disposition, then a drop, then the wrap-up lapses server-side, then core
+           * disposition, then a drop, then the wrap-up lapses server-side, then the server
            * emits `agent_state{available}` into the dead socket, then we reconnect.
            * `ready{state:'available'}` used to set `agentState` and nothing else, so
            * the retained attempt, the release frame and the wrap-up anchor all
-           * survived — and the pad stayed unlocked over a window core had closed.
+           * survived — and the pad stayed unlocked over a window the server had closed.
            */
           const view = await mounted();
           act(() => latest().emit({ event: 'reserved', attempt: ATTEMPT }));
@@ -513,7 +513,7 @@ describe('useAgencyStation', () => {
           expect(view.result.current.retainedAttempt?.attempt_id).toBe('att-1');
           expect(view.result.current.wrapup).not.toBeNull();
 
-          // The reconnect. Core says the agent is back in the pool.
+          // The reconnect. The server says the agent is back in the pool.
           act(() =>
             latest().emit({ event: 'ready', session_id: 'sess-1', state: 'available' }),
           );
@@ -526,7 +526,7 @@ describe('useAgencyStation', () => {
           expect(view.result.current.currentAttemptId).toBeNull();
         });
 
-        it('keeps the wrap-up when core still says `wrapup`, even with no anchor', async () => {
+        it('keeps the wrap-up when the server still says `wrapup`, even with no anchor', async () => {
           /**
            * The other direction, and the reason absence of `active_wrapup` must not be
            * read as "the window closed". `frame.state` comes from Redis
@@ -572,7 +572,7 @@ describe('useAgencyStation', () => {
         });
 
         it('drops a retained attempt the anchor contradicts', async () => {
-          // A consistency check with a rare but real subject: core naming a different
+          // A consistency check with a rare but real subject: the server naming a different
           // attempt's wrap-up means ours finished while the socket was away, and the
           // contact details beside the pad belong to the wrong customer.
           const view = await mounted();
@@ -610,7 +610,7 @@ describe('useAgencyStation', () => {
 
         it('clears a stale missed release when the reconnect carries none', async () => {
           // Same rule as every other field: a reconnect that says nothing about a
-          // missed call is core saying there is none.
+          // missed call is the server saying there is none.
           const view = await mounted();
           act(() =>
             latest().emit({
@@ -641,12 +641,12 @@ describe('useAgencyStation', () => {
          * was `release`'s only consumer: the rail is being cleared anyway, and after a
          * reconnect "what happened while you were away" belongs to `missed_release`.
          *
-         * `IdlePanel` is a second consumer with a longer lifetime. On core's truncated
+         * `IdlePanel` is a second consumer with a longer lifetime. On the server's truncated
          * path (`#290`) the agent dispositioned mid-call, `WrapupManager.enter` returns
          * early, and `agent_state{wrapup}`/`wrapup` are never sent — so the release
          * frame is the console's whole account of the call, and it sits in the idle
          * panel until the next `reserved`. This console **witnessed** that release while
-         * connected, which is exactly the condition under which core hands back **no**
+         * connected, which is exactly the condition under which the server hands back **no**
          * `missed_release` (`if (!delivered)`). A three-second blip in the idle window
          * therefore deleted the only explanation the agent was ever going to get.
          *
@@ -669,7 +669,7 @@ describe('useAgencyStation', () => {
               since: '2026-08-11T10:00:04.000Z',
             }),
           );
-          // Core's early return, verbatim in frames: a `released`, then straight back
+          // The server's early return, as frames: a `released`, then straight back
           // into the pool. No wrap-up was ever announced, so nothing has explained
           // this call to the agent yet.
           act(() => {
@@ -697,7 +697,7 @@ describe('useAgencyStation', () => {
           act(() => latest().emit({ event: 'ready', session_id: 'sess-1', state: 'available' }));
 
           expect(view.result.current.release?.attempt_id).toBe('att-1');
-          // Core has nothing to offer here, and that is the point: the frame WAS
+          // The server has nothing to offer here, and that is the point: the frame WAS
           // delivered, so there is no `missed_release` standing in for it.
           expect(view.result.current.missedRelease).toBeNull();
 
@@ -708,9 +708,9 @@ describe('useAgencyStation', () => {
           expect(view.result.current.release).toBeNull();
         });
 
-        it('lets core’s `missed_release` supersede the release it holds', async () => {
+        it('lets the server’s `missed_release` supersede the release it holds', async () => {
           // The other half of the rule. Two accounts of two different calls render in
-          // the same slot, so the newer one — core's, which this session did not see —
+          // the same slot, so the newer one — the server's, which this session did not see —
           // must not have to compete with a frame we are merely still holding.
           const view = await mounted();
           act(() => latest().emit({ event: 'reserved', attempt: ATTEMPT }));
@@ -798,7 +798,7 @@ describe('useAgencyStation', () => {
       });
 
       it('clears the queue when a transition omits the pending fields', async () => {
-        // Absence is a statement: core's `/break/cancel` emits an `agent_state`
+        // Absence is a statement: the server's `/break/cancel` emits an `agent_state`
         // with these fields omitted for precisely this purpose. Reading absence as
         // "no change" leaves a pill up for a break already taken back.
         const view = await mounted();
@@ -848,14 +848,14 @@ describe('useAgencyStation', () => {
        * socket reconnecting *during* wrap-up still got `ready` with no pending
        * fields, so a break queued before the drop stayed invisible until the next
        * transition frame — which is the one `releaseAgent` sends **after** applying
-       * it. Core closed that (`4f59d8b`) and reads the queue with `peek`, not
+       * it. The server closed that gap and reads the queue with `peek`, not
        * `take`: the break still lands when wrap-up ends. The badge is not a
        * reminder of a request, it is notice that the agent is about to be pulled out
        * of the pool.
        *
        * Every case here drives a real drop and reconnect through `reconnected()`.
        */
-      describe('the queued break on `ready` (core `4f59d8b`)', () => {
+      describe('the queued break on `ready`', () => {
         it('restores a break this socket was never told about', async () => {
           const view = await mounted();
           act(() =>
@@ -884,12 +884,12 @@ describe('useAgencyStation', () => {
 
           expect(view.result.current.pendingBreakCode).toBe('lunch');
           // And the statement is countable, which is what lets a consumer holding its
-          // own copy tell "core says the queue is empty" from "no frame has spoken".
+          // own copy tell "the server says the queue is empty" from "no frame has spoken".
           expect(view.result.current.pendingBreakStatements).toBeGreaterThan(0);
         });
 
         it('clears a queue that emptied while the socket was away', async () => {
-          // The direction absence has to reach: core omits the fields to say nothing
+          // The direction absence has to reach: the server omits the fields to say nothing
           // is queued, so a reconnect must be able to take the badge back down. The
           // break may have been cancelled from another window, or already applied.
           const view = await mounted();
@@ -922,7 +922,7 @@ describe('useAgencyStation', () => {
 
         it('rides on a reconnect that carries an attempt, not only a wrap-up', async () => {
           /**
-           * Core emits these fields unconditionally rather than beside
+           * The server emits these fields unconditionally rather than beside
            * `active_wrapup`, because `breakMustWait` defers from `reserved` and
            * `on_call` too (`break-manager.ts`, `DEFERRING_STATES`) — and those
            * reconnects arrive carrying `active_attempt` instead. A console that only
@@ -957,7 +957,7 @@ describe('useAgencyStation', () => {
            * `ready` now installs a pending break *and* clears the wrap-up fields, and
            * neither reconciliation may lend the other authority.
            *
-           * The frame combination is one core can produce, which is what makes it
+           * The frame combination is one the server can produce, which is what makes it
            * worth pinning rather than inventing: `/available` "operates on the current
            * state and leaves `pending_state` untouched" (`contracts.ts`), so an agent
            * whose wrap-up ended through that route is `available` with the break still
@@ -997,7 +997,7 @@ describe('useAgencyStation', () => {
             }),
           );
 
-          // The badge goes up, because core says a break is still queued …
+          // The badge goes up, because the server says a break is still queued …
           expect(view.result.current.pendingBreakCode).toBe('lunch');
           // … and it buys the wrap-up nothing. Every anchor the pad unlocks from is
           // gone, so there is nothing left to submit a disposition against.
@@ -1147,8 +1147,7 @@ describe('useAgencyStation', () => {
    * Every test before this block drives ONE socket, and
    * `close codes drive different recoveries` even asserts
    * `FakeSocket.instances` stays at 1. That is why a five-defect reconnect loop
-   * shipped and ran in production for half an hour across three agents
-   * (`86d44papk`): the hook kept its heartbeat timer, its socket pointer and its
+   * shipped and ran in production for half an hour across three agents: the hook kept its heartbeat timer, its socket pointer and its
    * retry counter in refs shared by every socket it ever opened, and nothing
    * checked which socket a callback belonged to.
    *
@@ -1228,9 +1227,9 @@ describe('useAgencyStation', () => {
 
     it('never replays the single-use bootstrap token', async () => {
       /**
-       * D5. The re-mint was gated on `retryCount > 0`, so any path that reached
+       * The re-mint was gated on `retryCount > 0`, so any path that reached
        * `connect()` with the counter at zero replayed the token bootstrap had
-       * already spent, and core refused it `4401`.
+       * already spent, and the server refused it `4401`.
        *
        * `reconnect()` is that path — it zeroes the counter by design — and it is
        * how the `pageshow` restore comes back, which is why the burst in
@@ -1388,7 +1387,7 @@ describe('useAgencyStation', () => {
 
   describe('giving up, and the way back', () => {
     it('three missed pings is `disconnected`, and closes the socket', async () => {
-      // §A.8.2's third row. Before this, `missedPings` only advanced when a ping
+      //'s third row. Before this, `missedPings` only advanced when a ping
       // was actually SENT, so a socket the browser had moved to CLOSING stopped
       // counting and the specified state was unreachable.
       vi.useFakeTimers();
@@ -1404,7 +1403,7 @@ describe('useAgencyStation', () => {
         });
 
         await vi.waitFor(() => expect(view.result.current.connection).toBe('disconnected'));
-        // Closed, so core's registry stops claiming a station this console
+        // Closed, so the server's registry stops claiming a station this console
         // cannot use — otherwise `/available` keeps succeeding against it.
         expect(socket.closedWith).not.toBeNull();
       } finally {
@@ -1473,10 +1472,10 @@ describe('useAgencyStation', () => {
      * ── THE GUARD THAT KEEPS A LIVE CALL OUT OF THIS ───────────────────────
      *
      * The socket carries the agent's voice, and media frames produce no `pong`.
-     * Core answers a ping only after a database read, so a slow-but-successful
+     * The server answers a ping only after a database read, so a slow-but-successful
      * read stops the pongs on a socket whose audio is flowing perfectly — and
-     * core's own silent-station sweep refuses to close such a socket for exactly
-     * that reason. Without a matching guard here, a core database slowdown became
+     * the server's own silent-station sweep refuses to close such a socket for exactly
+     * that reason. Without a matching guard here, a server database slowdown became
      * a floor-wide simultaneous call drop.
      */
     it('does not tear down a live call on three missed pings', async () => {
@@ -1584,7 +1583,7 @@ describe('useAgencyStation', () => {
         await act(async () => { await vi.advanceTimersByTimeAsync(40_000); });
         expect(view.result.current.missedPings).toBeGreaterThanOrEqual(3);
 
-        // Core starts answering again — a slow database read that finished.
+        // The server starts answering again — a slow database read that finished.
         socket.autoPong = true;
         await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
         expect(view.result.current.missedPings).toBe(0);
@@ -1606,7 +1605,7 @@ describe('useAgencyStation', () => {
 
     it('gives up on a throttled tab by elapsed silence, not by a third tick', async () => {
       /**
-       * §A.8.2's threshold is 30 SECONDS of silence. Gating the decision on three
+       *'s threshold is 30 SECONDS of silence. Gating the decision on three
        * ticks as well made it mean "three intervals fired", and a background tab is
        * throttled to about one timer a minute — so a dead line took roughly three
        * minutes to report, three times the stated grace.
@@ -1739,8 +1738,8 @@ describe('useAgencyStation', () => {
       }
     });
 
-    it('treats core’s 4408 as a retry, not a terminal state', async () => {
-      // Core's heartbeat-grace sweep closes a silent socket with 4408. The
+    it('treats the server’s 4408 as a retry, not a terminal state', async () => {
+      // The server's heartbeat-grace sweep closes a silent socket with 4408. The
       // contract's stated safety property — a client that does not recognise the
       // code falls through to its ordinary retry, which is what makes it safe to
       // deploy ahead of any console change — was asserted nowhere.
@@ -1776,7 +1775,7 @@ describe('useAgencyStation', () => {
     });
   });
 
-  describe('hangup is not a socket frame (`MAG-112`)', () => {
+  describe('hangup is not a socket frame', () => {
     // Needed to drive the heartbeat: the assertion is about what the socket
     // carries, so it has to carry something first.
     beforeEach(() => {
@@ -1785,7 +1784,7 @@ describe('useAgencyStation', () => {
 
     /**
      * These two cases used to assert that `hangup()` sent
-     * `{event:'hangup', attempt_id}` — and they passed, for a frame **core reads
+     * `{event:'hangup', attempt_id}` — and they passed, for a frame **the server reads
      * nowhere**. Its station socket registers exactly two `message` listeners
      * while an attempt is live: one acting only on `ping`, one only on `media`.
      * The frame fell off the end of both, so a green test proved the send, not
@@ -1832,7 +1831,7 @@ describe('useAgencyStation', () => {
   });
 
   /**
-   * Leaving the page (`MAG-160`).
+   * Leaving the page.
    *
    * ── The case this file did not have, and the defect it let through ─────────
    * The first cut asserted `defaultPrevented` and the close reason, and never
@@ -1926,10 +1925,10 @@ describe('useAgencyStation', () => {
     });
 
     it.each(['on_call', 'available'])(
-      'closes the socket on pagehide while %s, so core hears immediately',
+      'closes the socket on pagehide while %s, so the server hears immediately',
       async (state) => {
-        // `MAG-112`'s reasoning, moved to the event that actually means the page
-        // is going away: an unloading tab that told core nothing leaves a
+        // The hangup reasoning, moved to the event that actually means the page
+        // is going away: an unloading tab that told the server nothing leaves a
         // customer on dead air until the heartbeat grace expires.
         await mounted();
         const socket = latest();
@@ -1949,7 +1948,7 @@ describe('useAgencyStation', () => {
       // The mint mock is required HERE and was not before, which is the point:
       // this path used to replay bootstrap's single-use token and eat a `4401`
       // plus a retry lap for it (the lone 4401 at the head of the production
-      // burst, `86d44papk`). It now mints, so a restore costs nothing.
+      // burst). It now mints, so a restore costs nothing.
       mocks.mintStationToken.mockResolvedValue({
         session_id: 'sess-1',
         station_ws_url: '/proxy/agency/station/sess-1?token=RESTORED',

@@ -96,7 +96,7 @@ describe('redactUrl', () => {
      *
      * `patch` is in the verb list although this file registers none: a verb the
      * pattern omits is a route this audit stops deriving, which is silence, not
-     * a failure — the same blind spot the L2 gating audits close by deriving
+     * a failure — the same blind spot the gating audits close by deriving
      * their verbs from `PASSTHROUGH_METHODS`.
      */
     const source = SRC('api/routes/invites.routes.ts');
@@ -172,12 +172,8 @@ describe('every sink actually redacts', () => {
    * are exactly where a future edit would reintroduce the raw URL.
    */
 
-  // PORT NOTE (magick-agency): deleted "src/index.ts logs a REDACTED url on both request hooks"
-  // — master's per-request log hooks in `main()` are not part of agency's lead-owned
-  // `index.ts`/`app.ts` (agency logs no per-request URL line).
   it('the error middlewares redact too — a 500 on a claim is one line of SQL away', () => {
-    // PORT NOTE (magick-agency): the error mask is not ported (plan §1); the one error
-    // middleware here is master's `errorHandler`, registered in `agencyPlugin`.
+    // The one error middleware is `errorHandler`, registered in `agencyPlugin`.
     for (const file of ['api/middleware/error-handler.middleware.ts']) {
       const source = SRC(file);
       expect(source).toContain('redactUrl');
@@ -185,9 +181,6 @@ describe('every sink actually redacts', () => {
     }
   });
 
-  // PORT NOTE (magick-agency): deleted "the trace instrumentation set hands the redactor to the
-  // HTTP instrumentation" — master's `utils/otel-instrumentations.ts` / `instrumentation.ts`
-  // are not ported (agency's tracing is `@magick-agency/observability`, Phase 1).
   it('redact-url.ts imports NOTHING, so instrumentation.ts can reach it', () => {
     /**
      * `src/instrumentation.ts` runs before the application and registers the

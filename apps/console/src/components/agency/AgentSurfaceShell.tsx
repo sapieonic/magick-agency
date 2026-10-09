@@ -14,8 +14,8 @@ import styles from './AgentSurfaceShell.module.css';
  * ── Why these pages have no shell, and therefore need this one ─────────────
  * An `agent` is hierarchy level 5 and inherits no navigation. `AppLayout`'s nav
  * floors at `viewer` (10) and every entry in `AgencyLayout` floors at `viewer` or
- * above, so either shell would render its chrome around nothing — §A.1's *"that is
- * not navigation, it is noise"*. `/station` and `/dialer` sit outside both for the
+ * above, so either shell would render its chrome around nothing, which is just noise.
+ * `/station` and `/dialer` sit outside both for the
  * same reason, and these two sit beside them.
  *
  * That leaves a page with no chrome at all, which is the trap `DialerUnavailable`
@@ -33,7 +33,7 @@ import styles from './AgentSurfaceShell.module.css';
  *
  * ── The way out is a link, and on THESE pages that is safe ────────────────
  * The station deliberately has no escape route: navigating away drops the station
- * socket, and for up to 45 seconds afterwards core still believes the agent is in
+ * socket, and for up to 45 seconds afterwards the API still believes the agent is in
  * the dialable pool, so a reservation landing in that window bridges a customer to
  * nobody (`agencyStationExit.ts`). **Neither page that uses this shell holds a
  * socket or a session.** So the nav is ordinary navigation here. Nothing that
@@ -43,7 +43,7 @@ import styles from './AgentSurfaceShell.module.css';
  * ── The account-resolution trap, guarded once instead of twice ────────────
  * An `agent` is below `account.read`'s `viewer` floor, so `GET /accounts` 403s for
  * them; and a request sent before `TenantContext` resolves carries no
- * `X-Account-Id`, which core answers with a 400 that has nothing to do with the
+ * `X-Account-Id`, which the API answers with a 400 that has nothing to do with the
  * data. So every read on these pages waits for BOTH ids — and "resolution settled
  * but there is no account" must be an ERROR STATE rather than a spinner, because
  * with no account nothing is in flight and nothing will fire again.

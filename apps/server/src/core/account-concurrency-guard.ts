@@ -1,13 +1,6 @@
 import type Redis from 'ioredis';
 import { logger, Traced } from '@magick-agency/observability';
 import { accountSettingsRepository } from '@magick-agency/db/repositories/account-settings.repository';
-// PORT NOTE (magick-agency): ported from core src/core/account-concurrency-guard.ts@4850d1d9.
-// Changed: import specifiers; the per-broadcast group-concurrency gate is stripped
-// (agency has no per-broadcast bulk concurrency): the `GroupLeaseHooks` import,
-// `setGroupLeaseHooks`, the `groupLeaseHooks` field, `releaseGroupLease`, and the
-// group-release calls inside `release`. `release` is therefore restored to its
-// pre-gate shape (core d1179938^), which behaves identically to the 4850d1d9 body with
-// no hooks wired. Lua, keys, TTLs, degraded mode and everything else are verbatim.
 
 const DEFAULT_MAX_CONCURRENT_CALLS = 5;
 const LIMIT_CACHE_TTL_SECONDS = 60;
@@ -129,9 +122,8 @@ export class AccountConcurrencyGuard {
    * Extend an already-held slot lock.
    *
    * A call's lock TTL is sized at acquire time from the ordinary call timeout,
-   * on the assumption the call ends within it. A call transferred to a human
-   * breaks that assumption: it can legitimately run for hours, and when its lock
-   * expires the self-heal reconcile sees counter > locks and decrements the
+   * on the assumption the call ends within it. A call that legitimately runs
+   * longer breaks that assumption: when its lock expires the self-heal reconcile sees counter > locks and decrements the
    * counter while the conversation is still live — silently freeing capacity the
    * call is still using, and leaving the eventual release with nothing to
    * decrement.

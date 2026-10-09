@@ -46,7 +46,7 @@ import type {
   AgencyStationTokenResponse,
 } from '@magick-agency/contracts/agency';
 
-// The banner copy is built core-side from the frozen selector, so the sentence the
+// The banner copy is built server-side from the frozen selector, so the sentence the
 // agent reads and the query that produced their roster cannot disagree. A leaf
 // module — see its header.
 import { renderSelectionSummary } from '@magick-agency/domain/retry-summary';
@@ -66,7 +66,7 @@ const log = createChildLogger({ component: 'agency-routes' });
  *
  * ── A retry whose parent is GONE still gets a banner ─────────────────────────
  *
- * `parent_campaign_id` is `ON DELETE SET NULL` (migration 111), so
+ * `parent_campaign_id` is `ON DELETE SET NULL`, so
  * `retry_generation > 0` with no resolvable parent is a real state rather than a
  * corrupt row. "These contacts were called before, for these reasons" stays true
  * and useful without the parent's name, so the name degrades to a neutral
@@ -79,8 +79,8 @@ const log = createChildLogger({ component: 'agency-routes' });
  * right scope is the one the lineage itself spans: a retry is created inside one
  * account by `requireOwned`, so an ancestor in another account of the same tenant
  * cannot arise today — but a name from another TENANT could only be a corrupt row
- * or a repurposed id, and naming it would leak across the boundary core scopes
- * everything on.
+ * or a repurposed id, and naming it would leak across the tenant boundary the
+ * dialer scopes everything on.
  *
  * The selector is read from the CHILD's own row and the labels from the PARENT's
  * catalog: the selector was authored against the parent's roster, so a code the
@@ -134,7 +134,7 @@ async function resolveRetryContext(
 }
 
 /**
- * Advertised to the client so nothing hardcodes a heartbeat (§ contract).
+ * Advertised to the client so nothing hardcodes a heartbeat.
  *
  * Typed against the contract rather than inferred, so a field added to
  * `AgencyStationIntervals` is a compile error here instead of a silently absent
@@ -145,7 +145,7 @@ const STATION_INTERVALS: AgencyStationIntervals = {
   // Read from `timers.js` rather than restated, because it is now ENFORCED by the
   // silent-station sweep as well as advertised here. Two copies of a number one of
   // which closes sockets is a number that drifts, and the drift would be silent in
-  // the worse direction: a console told it has 30s while core hangs up at 20.
+  // the worse direction: a console told it has 30s while the server hangs up at 20.
   heartbeat_grace_ms: STATION_HEARTBEAT_GRACE_MS,
   reservation_lease_ms: AGENT_LEASE_MS.reserved_predial,
   countdown_ms: 3_000,
@@ -153,15 +153,13 @@ const STATION_INTERVALS: AgencyStationIntervals = {
 };
 
 export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime): Promise<void> {
-  // PORT NOTE (magick-agency, Phase 8): core registered the station WebSocket here
-  // (`GET /station/:sessionId`, `websocket: true`) and defined `handleStationSocket` below
-  // this function (`:1358-1783`). Phase 6 moved both, verbatim, to `agency/station-socket.ts`
-  // (`registerStationSocket`), and `agencyPlugin` mounts it at the console's path
-  // `/proxy/agency/station/:sessionId` through `proxy-agency-station.routes.ts` (master's,
-  // collapsed in-process). So this module is the session and attempt handlers only,
-  // registered on the private in-process instance (`core-handlers.ts`, decision B16).
-  // Core's internal roster route (`agencyInternalRoutes`, `:1807-1963`) is lane B2's
-  // in-process hand-off (`agency/agency-roster.client.ts`).
+  // This module is the session and attempt handlers only, registered on the
+  // internal handler instance (`core-handlers.ts`, reached in-process via `callCore`;
+  // decision B16). The station WebSocket is not served here: it lives in
+  // `agency/station-socket.ts` (`handleStationSocket`) and is mounted only at
+  // `/proxy/agency/station/:sessionId` by `proxy-agency-station.routes.ts`, which also
+  // rewrites the `station_ws_url` minted below (`/api/v1/agency/station/<id>?token=…`)
+  // onto that path. The roster hand-off is `agency/agency-roster.client.ts`.
 
   await app.register(async (sub) => {
     sub.addHook('preHandler', authMiddleware);
@@ -170,11 +168,11 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
     sub.post('/sessions', async (request: FastifyRequest, reply: FastifyReply) => {
       const tenantId = getTenantId(request);
       const accountId = getAccountId(request);
-      // Typed against the contract, not restated inline. The inline shape is how
-      // `agent_user_id` came to be required here while `AgencyCreateSessionRequest`
-      // never mentioned it — master built to the contract, Zod dropped the field,
-      // and every join 400'd (`MAG-118`). A field added to the interface is now a
-      // compile error here rather than a silent divergence.
+      // Typed against the contract, not restated inline. An inline shape can
+      // require a field (`agent_user_id`) the contract never mentions; the caller
+      // builds to the contract, Zod drops the field, and every join 400s. A field
+      // added to the interface is a compile error here rather than a silent
+      // divergence.
       const body = request.body as Partial<AgencyCreateSessionRequest> | undefined;
 
       if (!(await getFeatureFlagService().isEnabled(FLAGS.agency_dialer_enabled, { tenantId, accountId }))) {
@@ -196,10 +194,10 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
         replicaId: runtime.replicaId,
       });
 
-      // One live session per agent per TENANT since migration 092. The agent is
+      // One live session per agent per TENANT. The agent is
       // still joined somewhere else and must leave that station first — nothing
       // here yanks them off it, because that station may be a live conversation
-      // (see the migration and `AgencySessionCampaignConflict` for the full
+      // (see `AgencySessionCampaignConflict` for the full
       // reasoning). Refused with the old campaign NAMED: an agent who is told
       // only "conflict" has no way to find the station they left open.
       if (!join.ok) {
@@ -214,7 +212,7 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
           });
         // Redis, not the row — the row is a durable mirror and this field is what
         // the console uses to decide whether leaving that station is safe right
-        // now (§5.1). Falling back to the row rather than failing when there is no
+        // now. Falling back to the row rather than failing when there is no
         // key: no key means no lease, so nothing is in flight and the mirror is
         // then the closest truthful reading. A 500 here would hide a conflict the
         // agent can actually resolve behind one they cannot.
@@ -228,7 +226,8 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
         // account-scoped. Filtering on the request's account would blank the name
         // in precisely the case the agent most needs it named. A campaign from
         // another TENANT, though, could only be a corrupt row or a repurposed id,
-        // and naming it would leak across the boundary core scopes everything on.
+        // and naming it would leak across the tenant boundary the dialer scopes
+        // everything on.
         //
         // The `?? ` fallback is otherwise unreachable — `campaign_id` is
         // `ON DELETE CASCADE`, so a live session outlives its campaign never — and
@@ -242,12 +241,10 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
           code: 'session_on_other_campaign',
           // Written to stand ON ITS OWN, naming the campaign and the remedy,
           // because it is the FLOOR of what the agent sees rather than the copy
-          // anyone hopes they get. Master's error mask is keyed on
-          // `AGENCY_ACTION_ERROR_CODES`, and until this code is mirrored there the
-          // mask replaces unknown codes with "contact support and quote this
-          // request id" — so a body whose only explanation lived in the structured
-          // fields would reach the agent as no explanation at all. cusui composes
-          // richer copy from `campaign_name`/`state`; nothing depends on it doing so.
+          // anyone hopes they get: a body whose only explanation lived in the
+          // structured fields would reach a client that ignores them as no
+          // explanation at all. The console composes richer copy from
+          // `campaign_name`/`state`; nothing depends on it doing so.
           message:
             `You are still joined to "${otherName}". ` +
             `Leave that station before joining another campaign — an agent can hold only one live station at a time.`,
@@ -284,11 +281,11 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
       }
 
       // Redis, or `break` — the same rule as the station socket, and for the same
-      // reason (`AD-P2-C-07` (d)). This used to seed Redis from `session.state`,
-      // which `joinOrRehydrate` preserves whenever it is not `offline`: an agent
-      // re-bootstrapping after a page reload, mid-call, had `available` written
-      // over their live `on_call` lease and the next tick reserved them for a
-      // second call. Nothing may derive availability from the durable mirror.
+      // reason. Seeding Redis from `session.state` would be wrong: `joinOrRehydrate`
+      // preserves it whenever it is not `offline`, so an agent re-bootstrapping
+      // after a page reload, mid-call, would have `available` written over their
+      // live `on_call` lease and the next tick would reserve them for a second
+      // call. Nothing may derive availability from the durable mirror.
       const state = await runtime.rehydrateAgent(session.id);
 
       const minted = await runtime.tokens.mint(session.id);
@@ -331,10 +328,9 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
     // Deliberately NOT the fat bootstrap: a wifi blip needs a new upgrade
     // credential, not the campaign's whole configuration again.
     sub.post('/sessions/:id/station-token', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-      // The `left_at` → `409 session_ended` check that used to live here is now in
-      // `requireOwnedSession`, which is where it should always have been: this was
-      // the only session route that had it, and every other one was happy to
-      // operate on a session that had already left.
+      // The `left_at` → `409 session_ended` check lives in `requireOwnedSession`,
+      // so every session route refuses a session that has already left, not just
+      // this one.
       const session = await requireOwnedSession(request, reply);
       if (!session) return reply;
       const minted = await runtime.tokens.mint(session.id);
@@ -351,7 +347,8 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
       const session = await requireOwnedSession(request, reply);
       if (!session) return reply;
       // Only an agent whose socket is actually attached may go available — the
-      // whole point of D2's break-on-return rule.
+      // whole point of the break-on-return rule (an agent with no live lease comes
+      // back on `break`, never `available`; see `rehydrateAgent`).
       //
       // ── KNOWN LIMIT: this is replica-local, and stays that way for now ──────
       //
@@ -361,7 +358,7 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
       // upgrade while this POST is routed independently, so an agent whose console
       // is connected and pinging normally would be told to open the station they
       // already have. That is a large part of the "run one replica" deploy
-      // constraint on the agency dialer (ticket 86d44path).
+      // constraint on the agency dialer.
       //
       // `StationRegistry.stationPresence` is the cross-replica answer and is
       // implemented and tested — but it is deliberately NOT wired in here, and
@@ -417,20 +414,20 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
       // and stops itself), it let the next pacing tick reserve the same agent for
       // a SECOND contact, and it left the first customer to answer into an agent
       // who is now on another call — or into `abandonAnsweredCall`, against the 3%
-      // ceiling. `/leave` was given this guard because the agent can see no call;
-      // this route needed it for exactly the same reason and did not get it.
+      // ceiling. `/leave` has this guard because the agent can see no call; this
+      // route needs it for exactly the same reason.
       //
       // Scoped to UNANNOUNCED attempts. An agent who can see their call is making
       // an informed choice, and the wrap-up gate above already covers the case
       // that matters there. (A live *announced* attempt is arguably also worth
       // refusing — `on_call` has the same unconditional-write problem — but that
-      // is pre-existing behaviour on a path late binding does not change, so it is
-      // recorded in `docs/reference/magickvoice-platform/agency.md` §11 rather than altered here.)
+      // is a known open gap on a path late binding does not change, so it is left
+      // as it is here.)
       //
       // Same `agent_on_live_call` code as `/leave`, and for the same reason: a new
-      // `AgencyActionErrorCode` is a four-place change and master's error mask
-      // rewrites an unmirrored code into "contact support", destroying the
-      // explanation while leaving the status intact.
+      // `AgencyActionErrorCode` has to be added to the contract union, its
+      // `AGENCY_ACTION_ERROR_CODES` lists and the console's copy, and a wording
+      // variant does not earn that.
       if (runtime.dialer.hasUnannouncedAttempt(session.id)) {
         const err: AgencyActionErrorResponse = {
           error: 'Conflict', code: 'agent_on_live_call',
@@ -445,7 +442,7 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
       // `agent_returned`, not `disposition_submitted`: submitting a disposition
       // resolves the wrap-up on its own path, so reaching here means none was
       // submitted and none was required — the agent simply finished early. The
-      // distinction is load-bearing for `AD-P4-C-01`'s average wrap-up, which these
+      // distinction is load-bearing for the average wrap-up statistic, which these
       // fastest wrap-ups would otherwise be missing from entirely.
       runtime.wrapup.cancel(session.id, 'agent_returned');
 
@@ -456,13 +453,14 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
     });
 
     // ── POST /sessions/:id/force-available — supervisor override ────────────
-    // Deliberately NOT the agent's own control. master gates this at
-    // `agency.supervise` (account_admin floor), which D6 puts out of an `agent`'s
-    // reach entirely — so the route that can skip a disposition is one the person
-    // who would benefit from skipping it cannot call.
+    // Deliberately NOT the agent's own control. The public API layer gates this at
+    // `agency.supervise` (account_admin floor), which the `agent` role, the lowest
+    // in the hierarchy, never reaches — so the route that can skip a disposition is
+    // one the person who would benefit from skipping it cannot call.
     sub.post('/sessions/:id/force-available', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
       // Q8 (Manas, 2026-10-09): the one session route a supervisor may drive for another
-      // agent (`on_behalf`, which master sets only for `agency.supervise`, this route's floor).
+      // agent (`on_behalf`, which the public API layer sets only for `agency.supervise`,
+      // this route's floor).
       const session = await requireOwnedSession(request, reply, { supervisorMayAct: true });
       if (!session) return reply;
       const forced = await runtime.wrapup.force(session.id);
@@ -476,7 +474,7 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
     });
 
     // ── POST /sessions/:id/break ───────────────────────────────────────────
-    // §5.1: `* → break`, with a reason code, QUEUED when the agent is mid-call and
+    // `* → break`, with a reason code, QUEUED when the agent is mid-call and
     // applied at the end of wrap-up. Never mid-conversation.
     sub.post('/sessions/:id/break', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
       const session = await requireOwnedSession(request, reply);
@@ -528,11 +526,12 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
         // {@link AgencyStationAgentStateFrame}), so a state we know to be false is
         // worse than no frame. Nothing is lost by staying quiet — the pending
         // break still reaches the agent by both of its other paths: this HTTP
-        // response carries `pending_state`/`break_reason` (the only fields cusui's
-        // `requestBreak` reads), and a socket that reconnects mid-ring learns it
-        // from `ready.pending_state`. When the dial resolves, `releaseAgent` sends
-        // the authoritative `agent_state` that applies the queued break — the one
-        // frame §5 documents as deliberately unsuppressed, for exactly this case.
+        // response carries `pending_state`/`break_reason` (the only fields the
+        // console's `requestBreak` reads), and a socket that reconnects mid-ring
+        // learns it from `ready.pending_state`. When the dial resolves,
+        // `releaseAgent` sends the authoritative `agent_state` that applies the
+        // queued break — the one frame deliberately left unsuppressed, for exactly
+        // this case.
         if (!runtime.dialer.hasUnannouncedAttempt(session.id)) {
           runtime.stations.send(session.id, {
             event: 'agent_state',
@@ -593,8 +592,8 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
         // through a control the agent pressed themselves.
         //
         // ⚠️ This frame does more work than the queue route's, so the suppression
-        // costs something and the cost is stated rather than glossed. cusui applies
-        // `stateBreakQueue(frame.pending_state, …)` UNCONDITIONALLY, and this
+        // costs something and the cost is stated rather than glossed. The console
+        // applies `stateBreakQueue(frame.pending_state, …)` UNCONDITIONALLY, and this
         // frame's *omission* of the pending fields is what takes the queued-break
         // pill down — an `if (frame.pending_state)` on the client would strand it
         // forever, which its own comment says at length. Withholding the frame is
@@ -612,7 +611,7 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
         // smaller harm than handing the agent who just cancelled a break the
         // "Ringing — get ready" banner for a call they were never shown. It would
         // stop being the right trade if `state` ever became optional on this frame,
-        // which is the contract answer §11 still records as open.
+        // which is still an open contract question.
         if (!runtime.dialer.hasUnannouncedAttempt(session.id)) {
           runtime.stations.send(session.id, {
             event: 'agent_state', state: live?.state ?? session.state, since,
@@ -634,7 +633,7 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
     // With no guard, an `on_call` agent could leave and immediately join campaign
     // B — the row is left, so the upsert INSERTS rather than conflicting — and be
     // reserved and bridged while campaign A's attempt is still live on the wire.
-    // That is the exact double-bridge migration 092 exists to make unreachable,
+    // That is the exact double-bridge `uq_agency_agent_live_tenant` exists to make unreachable,
     // one click away instead of free, and the DB constraint cannot see it: both
     // rows satisfy the index because the first one left.
     //
@@ -697,11 +696,9 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
         // a knob exists.
         //
         // The code stays `agent_on_live_call` deliberately. A new
-        // `AgencyActionErrorCode` member is a four-place change — core's union,
-        // master's mirror, master's `error-mask.middleware.ts` allow-list and
-        // cusui's copy — and an unmirrored code is rewritten by the mask into
-        // "contact support and quote this request id", destroying the explanation
-        // while leaving the status intact. A wording variant does not earn that.
+        // `AgencyActionErrorCode` member has to be added to the contract union, its
+        // `AGENCY_ACTION_ERROR_CODES` lists and the console's copy, and a wording
+        // variant does not earn that.
         const err: AgencyActionErrorResponse = {
           error: 'Conflict', code: 'agent_on_live_call',
           message: runtime.dialer.hasUnannouncedAttempt(session.id)
@@ -718,28 +715,20 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
     });
 
     // ── POST /attempts/:id/disposition ─────────────────────────────────────
-    // `AD-P2-C-04`. Proxied at `/proxy/agency/attempts/:id/disposition`, gated
-    // there at `agency.attempts.dispose`. The ownership rule is core's, because
-    // "is the reserved agent for this attempt" is a core-side fact master cannot
-    // check — and `agency.attempts.dispose` floors at `agent` over a LINEAR
-    // hierarchy, so every role above holds it by design and master's matrix will
-    // never produce a 403 for it. There is no second place this can live.
+    // Served at `/proxy/agency/attempts/:id/disposition`, gated there at
+    // `agency.attempts.dispose`. The ownership rule lives here, because "is the
+    // reserved agent for this attempt" is a dialer-runtime fact the RBAC gate
+    // cannot check — and `agency.attempts.dispose` floors at `agent` over a LINEAR
+    // hierarchy, so every role above holds it by design and the permission matrix
+    // will never produce a 403 for it. There is no second place this can live.
     /**
-     * ── POST /attempts/:id/hangup — the agent ends the call (`MAG-112`) ────
+     * ── POST /attempts/:id/hangup — the agent ends the call ────
      *
-     * This route did not exist. Master proxied to it
-     * (`proxy-agency-agent.routes.ts:309`) and got a 404; cusui called it and
-     * swallowed the rejection (`AgentConsolePage.tsx:131-132`); and the station
-     * socket's `hangup` control frame — the documented alternative — was read by
-     * neither of the two listeners on that socket. **An agent could not hang up
-     * at all**, by either advertised route, while three comments described both
-     * as working.
-     *
-     * Implemented here rather than as the socket frame, on the frame's own terms:
-     * `agency.routes.ts` already called HTTP "the supported surface", master
-     * already floors this at `agency.attempts.handle`, cusui already calls it, and
-     * a control frame gives the console no status to act on. The frame is
-     * withdrawn from the contract rather than left as a second, quieter promise.
+     * An HTTP route rather than a station-socket control frame: HTTP is the
+     * supported surface for agent actions, the public API layer floors this at
+     * `agency.attempts.handle`, the console calls it, and a control frame gives the
+     * console no status to act on. The contract's `AgencyStationHangupFrame` is
+     * withdrawn and nothing reads it, so this is the only way to hang up.
      */
     sub.post('/attempts/:id/hangup', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
       const found = await requireOwnedAttempt(request, reply);
@@ -748,9 +737,8 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
 
       // Ownership, exactly as on disposition. Without it any tenant member holding
       // `agency.attempts.handle` — which every agent holds — could hang up any
-      // other agent's live conversation. That check is what the contract's
-      // "core can verify the caller is the reserved agent" paragraph promised and
-      // could not deliver while master proxied this with no body at all.
+      // other agent's live conversation. This is the check the contract promises:
+      // the server verifies the caller is the reserved agent.
       const reservedUserId = await resolveReservedAgentUserId(attempt.reserved_agent_id);
       const actor = checkActor(reservedUserId, (request.body ?? {}) as AgencyHangupRequest);
       if (!actor.ok) {
@@ -827,23 +815,21 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
         return sendActionError(reply, 409, 'already_dispositioned');
       }
 
-      // ── 5. The contact. P2: `completed`, or `pending` for a callback ──────
-      // A callback is honoured rather than merely captured: `requires_datetime`
-      // is already reachable in P2, so storing the datetime and doing nothing
-      // would have an agent promise a customer a call that never comes. Per D11
-      // it re-enters the roster as an ordinary contact — whichever agent is
+      // ── 5. The contact: `completed`, or `pending` for a callback or retry ──
+      // A callback is honoured rather than merely captured: storing the datetime
+      // and doing nothing would have an agent promise a customer a call that never
+      // comes. It re-enters the roster as an ordinary contact — whichever agent is
       // available takes it, which is why nothing binds it to this session.
       //
       // No `bump_attempt`: the attempt was already counted when it ended. Bumping
       // here would charge a contact twice for one dial and, at `max_attempts: 3`,
       // exhaust someone after two real conversations.
       //
-      // ── The precedence, applied (`AD-P3-C-02`, §2.4) ─────────────────────
-      // Phase 2 read `callbackAt ? 'pending' : 'completed'`, which is the callback
-      // arm and nothing else — a `voicemail` code's `retry` and a `do_not_call`
-      // code's `suppress` were captured in the catalog and then ignored. §2.4's rule
-      // is that a disposition's `retry`/`terminal`/`suppress` OVERRIDES the outcome
-      // policy, so this is the site that has to honour them.
+      // ── The precedence, applied ──────────────────────────────────────────
+      // A disposition's `retry`/`terminal`/`suppress` OVERRIDES the outcome
+      // policy, so this is the site that has to honour them — a `voicemail`
+      // code's `retry` and a `do_not_call` code's `suppress` are not just
+      // captured in the catalog, they decide the contact's next state.
       //
       // `attemptsUsed` is the STORED count, with no bump: the attempt was already
       // charged when it ended. Bumping here would charge a contact twice for one
@@ -872,13 +858,13 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
         callbackAt: fields.callbackAt,
       });
       const contactState = decision.contactState;
-      // ── The callback is scheduled for when we can actually dial (`AD-P3-C-03`)
+      // ── The callback is scheduled for when we can actually dial ──────────
       //
       // A `callback_at` outside the contact's calling window is honoured by
       // DEFERRING it to the next window open, not by refusing it. Refusing would
       // block a legitimate "call me Saturday" on a Mon–Fri campaign, and the
-      // operator's window is the compliance boundary; the pre-dial gate would
-      // refuse that dial anyway (`AD-P3-C-05`), so writing the raw time would only
+      // operator's window is the compliance boundary; the pre-dial calling-hours
+      // gate would refuse that dial anyway, so writing the raw time would only
       // make the contact wake up, get deferred, and wake again.
       //
       // The response then reports THIS instant rather than the raw request, because
@@ -893,19 +879,20 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
       // the deferred one is what we will actually dial. A DISPOSITION RETRY's delay
       // (`voicemail`, 240 minutes) is deliberately written raw and NOT deferred —
       // matching the dial path's outcome-retry write, and leaving the calling-hours
-      // question to the pre-dial gate. `AD-P3-C-03` defers only the callback because
-      // only the callback was said out loud to a customer.
+      // question to the pre-dial gate. Only the callback is deferred, because only
+      // the callback was said out loud to a customer.
       //
       // ⚠️ Gated on the DECISION having scheduled something, not merely on a
       // `callback_at` having been submitted. `scheduledAt` is derived from the
-      // callback arm, and that arm can LOSE: §2.4 puts `suppress` and `terminal`
-      // above it, and `callback_at` is only ever *required* by `requires_datetime` —
-      // never *refused* without it — so a sticky console field or a supervisor
-      // correcting a code without clearing the time submits `do_not_call` or
-      // `not_interested` WITH a datetime. Ungated, the losing arm's instant then
-      // overrode the winning decision's `null`: the contact was written
-      // `suppressed`/`completed` while carrying a future `next_attempt_at`, and the
-      // response told the console a DNC'd customer would be dialed on Wednesday.
+      // callback arm, and that arm can LOSE: the precedence puts `suppress` and
+      // `terminal` above it, and `callback_at` is only ever *required* by
+      // `requires_datetime` — never *refused* without it — so a sticky console field
+      // or a supervisor correcting a code without clearing the time submits
+      // `do_not_call` or `not_interested` WITH a datetime. Ungated, the losing arm's
+      // instant would override the winning decision's `null`: the contact would be
+      // written `suppressed`/`completed` while carrying a future `next_attempt_at`,
+      // and the response would tell the console a DNC'd customer is to be dialed on
+      // Wednesday.
       // Inert for dialing — `claimDialable` gates on `state = 'pending'` — but it is
       // the precedence contradicting itself in the field a console and a compliance
       // export both read.
@@ -921,7 +908,7 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
       // KEEPS its previous one. Harmless today — `claimDialable` gates on
       // `state = 'pending'`, so nothing reads it — but it means a test asserting "no
       // retry was scheduled" here would be observing a stale value rather than an
-      // absence. Assert the STATE. Clearing it belongs with `AD-P3-C-04`.
+      // absence. Assert the STATE. Nothing clears the column yet.
       log.info(
         {
           contactId: attempt.contact_id, attemptId: attempt.id,
@@ -949,7 +936,7 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
         // When we will dial, not what was asked for. The echo is a separate field
         // precisely so a console cannot mistake one for the other.
         //
-        // Now also carries a DISPOSITION RETRY's instant (`voicemail`'s 240 minutes),
+        // Also carries a DISPOSITION RETRY's instant (`voicemail`'s 240 minutes),
         // not just a callback's: the console shows the agent when this contact comes
         // back, and reporting `null` for a retry that is genuinely scheduled would be
         // a worse lie than reporting a raw time. `callback_requested_at` stays null on
@@ -966,47 +953,34 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
 
     // ── POST /attempts/:id/dnc ─────────────────────────────────────────────
     //
-    // The agent's "do not call" button (`AD-P3-M-03`, MAG-106). Registered inside
-    // THIS scope, which is the one carrying `authMiddleware` — core registers auth
-    // per route-plugin rather than globally, and MAG-89 already shipped an
-    // unauthenticated endpoint on this very feature by landing a route outside it.
+    // The agent's "do not call" button. Registered inside THIS scope, which is the
+    // one carrying `authMiddleware` — auth is registered per route-plugin rather
+    // than globally, so a route landed outside it ships unauthenticated.
     //
-    // Two writes, and they are not the same guarantee:
+    // Two writes, committed together in one transaction (decision B8):
     //
     //   1. **Every roster row in THIS campaign carrying this number** is
-    //      suppressed in Postgres, immediately and unconditionally.
-    //      `claimDialable` claims only `state = 'pending'`, so those contacts
-    //      leave the roster — which is what makes "marked DNC at T, not dialed by
-    //      the retry at T+5" true. Being a Postgres write it is independent of
-    //      Redis, so an unavailable DNC set cannot lose it.
-    //   2. **The compliance record** is master's: it owns `dnc_entries`, and its
-    //      reach is the request's `scope` — this campaign by default, the whole
-    //      tenant when the console escalates. `dnc_recorded` reports whether it
-    //      landed.
+    //      suppressed. `claimDialable` claims only `state = 'pending'`, so those
+    //      contacts leave the roster at once — which is what makes "marked DNC at
+    //      T, not dialed by the retry at T+5" true.
+    //   2. **The compliance record**: a `dnc_entries` row written by `markDnc`
+    //      (`agency/dnc-mark.ts`), whose reach is the request's `scope` — this
+    //      campaign by default, the whole tenant when the console escalates. The
+    //      dial-time check (`DncRegistry.check`) reads that table, widened by
+    //      scope. `dnc_recorded` reports whether the row landed.
     //
-    // ⚠️ The two scopes differ ONLY in what master is told. Write (1) is
+    // ⚠️ The two scopes differ ONLY in the `dnc_entries` row. Write (1) is
     // unconditional: the contact in front of the agent leaves the roster the same
-    // way either way, immediately, and independently of Redis. Making the local
-    // suppression conditional on scope would mean a `tenant` mark relies on
-    // master's row reaching the flat set and the next dial-time `SISMEMBER` —
-    // an eventual, Redis-shaped guarantee standing in for one that is currently a
-    // committed Postgres row.
+    // way either way. Making it conditional on scope would leave a `tenant` mark
+    // relying on the dial-time check alone to keep this campaign's rows from
+    // being claimed.
     //
-    // ⚠️ Why (1) is by PHONE and not by contact id, which it used to be. The
-    // mark is campaign-scoped now, so master's row no longer reaches the flat
-    // `dnc:{tenantId}` set and the dial-time `SISMEMBER` no longer backstops this
-    // press at all. That backstop was the only thing suppressing a SECOND roster
-    // row with the same number — migration 073 refuses a phone-unique index on
-    // purpose, so a campaign holding one number twice is normal, supported data.
-    // A by-contact-id write would therefore leave the duplicate `pending`, and the
-    // customer who just said "stop calling me" gets rung again from this same
-    // campaign with every dashboard green. Do not narrow this back.
-    //
-    // ⚠️ Core deliberately does NOT `SADD` the Redis set here. The set is
-    // authoritative only because it is versioned, and an unversioned local write
-    // would be dropped by the next `replace` while the version still read as
-    // current — a fail-open produced by code meant to make things safer. The full
-    // reasoning is on `markDncOnMaster`; read it before "fixing" the absence.
+    // ⚠️ Why (1) is by PHONE and not by contact id. The schema has no
+    // phone-unique index on purpose, so a campaign holding one number twice is
+    // normal, supported data. A by-contact-id write would leave the duplicate
+    // `pending`, so the number the customer just asked us to stop calling would
+    // still be claimed from this campaign and rest on the dial-time check alone.
+    // Do not narrow this to the contact id.
     sub.post('/attempts/:id/dnc', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
       const found = await requireOwnedAttempt(request, reply);
       if (!found) return reply;
@@ -1016,15 +990,14 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
       // ── 1. Validate everything BEFORE writing anything ───────────────────
       // Same ordering discipline as the disposition route: a 400 must not leave a
       // half-applied request behind. The optional `disposition_code` is validated
-      // here rather than ignored — silently dropping a field master accepts and
-      // forwards is the exact failure class this ticket exists to close.
+      // here rather than ignored — silently dropping a field the public API layer
+      // accepts and forwards is the exact failure class to avoid.
       //
       // ── The SCOPE, which is the field with the customer-facing promise on it ─
       //
       // ABSENT ⇒ `campaign`, the NARROWER of the two. A caller that knows nothing
-      // about scope — an older console, a script, master before its passthrough
-      // shipped — thereby fails safe instead of suppressing a number across
-      // campaigns the customer never mentioned.
+      // about scope — an older console, a script — thereby fails safe instead of
+      // suppressing a number across campaigns the customer never mentioned.
       //
       // An unrecognised value is REFUSED, not defaulted. The console's escalation
       // is labelled to the agent as "any campaign, forever" and an agent may read
@@ -1032,11 +1005,8 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
       // misspelled `tenant` would make a compliance statement to a customer false,
       // behind a 200 and a green dashboard. Loud is the only safe direction here.
       //
-      // ⚠️ DEPLOY ORDER, the standing additive rule and this route's own history:
-      // master must proxy `scope` before the console offers the escalation, or the
-      // field is stripped in the middle and the escalation silently becomes a
-      // campaign mark — the defect this restores the fix for, one hop further out.
-      // Core accepting the field before anyone sends it is the safe direction.
+      // ⚠️ The public API layer's `dncSchema` must keep declaring `scope`: if Zod
+      // strips it there, the escalation silently becomes a campaign mark here.
       if (body.scope !== undefined && body.scope !== 'campaign' && body.scope !== 'tenant') {
         return sendActionError(reply, 400, 'invalid_dnc_scope', ['campaign', 'tenant']);
       }
@@ -1049,11 +1019,11 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
           return sendActionError(reply, 400, 'unknown_disposition_code', resolved.allowed);
         }
         // A disposition is the record of who said what about a customer, so it is
-        // never written unattributed. master's proxy does not currently send an
-        // actor on this route (MAG-107), which makes this arm unreachable from the
-        // browser for now — deliberately a loud 400 rather than a silent drop, and
-        // deliberately NOT defaulted to the attempt's reserved agent: a supervisor
-        // marking someone else's attempt would be recorded as that agent.
+        // never written unattributed. The public API layer sends the authenticated
+        // actor (`resolveAgencyActor`); a request without one is a loud 400 rather
+        // than a silent drop, and deliberately NOT defaulted to the attempt's
+        // reserved agent: a supervisor marking someone else's attempt would be
+        // recorded as that agent.
         const reservedUserId = await resolveReservedAgentUserId(attempt.reserved_agent_id);
         const actor = checkActor(reservedUserId, body);
         if (!actor.ok) {
@@ -1067,49 +1037,44 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
         return reply.code(404).send({ error: 'Not Found', message: 'Contact not found' });
       }
 
-      // PORT NOTE (magick-agency, Phase 8; decision B8, lead ruling "one transaction"): steps
-      // 2–4 run in ONE transaction on one client — the roster suppression, the optional
-      // disposition and the `dnc_entries` row commit or roll back together. Core ran them as
-      // separate writes and told master last (`markDncOnMaster`, whose failure was reported as
-      // `dnc_recorded: false` with the suppression standing); with the DNC table in this
-      // database the mark is part of the agent's bookkeeping, so a failed insert rolls the
-      // suppression back and the route answers a 5xx with nothing claimed (B1's caller-client
-      // path: `markDnc` rethrows under `deps.client`). A number that is not usable E.164 is not
-      // a failure: `markDnc` writes nothing and says so (`dnc_recorded: false`), and the marked
-      // contact still leaves the roster, as in core. The wrap-up release waits for the COMMIT.
+      // Decision B8: steps 2–4 run in ONE transaction on one client — the roster
+      // suppression, the optional disposition and the `dnc_entries` row commit or roll
+      // back together. The mark is part of the agent's bookkeeping, so a failed insert
+      // rolls the suppression back and the route answers a 5xx with nothing claimed
+      // (`markDnc` rethrows when given `deps.client`). A number that is not usable E.164
+      // is not a failure: `markDnc` writes nothing and says so (`dnc_recorded: false`),
+      // and the marked contact still leaves the roster. The wrap-up release waits for
+      // the COMMIT.
       let suppressedContactIds: string[] = [];
       let forwarded!: Awaited<ReturnType<typeof markDnc>>;
       let noteDispositionFor: string | null = null;
       const client = await getPool().connect();
       try {
         await client.query('BEGIN');
-        // ── 2. Suppress, before master is told ───────────────────────────────
-        // Ordered first on purpose. If master were told first and this write then
-        // failed, the response would confirm a suppression that never happened —
-        // and a DNC confirmation an agent reads out to a customer must not be a
-        // guess. A throw here is a 5xx with nothing claimed.
+        // ── 2. Suppress the roster rows ──────────────────────────────────────
+        // All three steps share this transaction, so a throw at any of them rolls
+        // the others back: the response never confirms a suppression that did not
+        // happen, and a DNC confirmation an agent reads out to a customer must not
+        // be a guess. A throw is a 5xx with nothing claimed.
         //
         // ⚠️ Unconditional in BOTH scopes, and not an oversight. A `tenant`
-        // escalation does eventually block this number at dial time everywhere, via
-        // master's tenant-wide row and the versioned flat set — but "eventually, once
-        // master has written and republished it" is a weaker guarantee than the
-        // committed Postgres row below, and it is Redis-shaped, which is the exact
-        // dependency this write exists to be independent of. The contact on the line
-        // leaves the roster the same way whatever scope was asked for.
+        // escalation's `dnc_entries` row also blocks this number at dial time
+        // everywhere, but taking the rows off the roster here is what keeps them
+        // from being claimed at all. The contact on the line leaves the roster the
+        // same way whatever scope was asked for.
         //
         // ⚠️ `suppressByPhone` preserves `markState`'s `next_attempt_at` behaviour
         // exactly: a contact that already had a retry instant KEEPS it (the column
         // is left out of the UPDATE, which is what `COALESCE(NULL, next_attempt_at)`
         // did). Inert — `claimDialable` gates on `pending` — but it means the STATE
         // is the thing that took these contacts off the roster, and the thing any
-        // test here must assert. Clearing the column belongs to `AD-P3-C-04`, not to
-        // a compliance route.
+        // test here must assert. Clearing the column does not belong in a
+        // compliance route.
         //
         // `attempt.contact_id` is passed as the row that is suppressed WHATEVER
         // happens: a roster number that is not usable E.164 matches nothing by
         // phone, and the contact in front of the agent must still leave the roster —
-        // the guarantee this route has always made, and the one a naive by-phone
-        // rewrite silently drops. The disposition rides that row alone; stamping it
+        // the guarantee a naive by-phone write silently drops. The disposition rides that row alone; stamping it
         // on a housemate's row because they share a landline would invent a record
         // of a conversation that never happened.
         suppressedContactIds = await agencyContactRepository.suppressByPhone(
@@ -1145,52 +1110,49 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
             );
           } else if (attempt.reserved_agent_id) {
             // No-op unless the session is in wrap-up FOR THIS attempt, exactly as on
-            // the disposition route.
-            // PORT NOTE (magick-agency, Phase 8): run after COMMIT (below), so a rolled-back
+            // the disposition route. Run after COMMIT (below), so a rolled-back
             // disposition never releases wrap-up.
             noteDispositionFor = attempt.reserved_agent_id;
           }
         }
 
-        // ── 4. Tell master, which owns the durable compliance record ─────────
+        // ── 4. The durable compliance record, `dnc_entries` ──────────────────
         forwarded = await markDnc({
           tenantId: attempt.tenant_id,
-          // ── The SCOPE of the record master writes, and the ONE place it is set ──
+          // ── The SCOPE of the `dnc_entries` row, and the ONE place it is set ──
           //
-          // Present ⇒ master writes a CAMPAIGN-scoped row: this campaign stops
-          // calling the number, others are untouched, and the row does not enter the
-          // flat `dnc:{tenantId}` set (§2.3), which is why the Postgres suppression
-          // above is the whole of the in-campaign enforcement.
+          // Present ⇒ a CAMPAIGN-scoped row: the dial-time check stops this
+          // campaign calling the number, and other campaigns are untouched.
           //
-          // Absent ⇒ master writes a TENANT-WIDE row, which does enter the flat set
-          // and blocks the number at dial time in every campaign the tenant runs,
-          // now and in future. That is not a fallback or a leftover — it is the
-          // escalation the console offers under a permission and describes to the
-          // agent as "any campaign, forever", and this omission is the only thing in
-          // core that produces it. Deleting the conditional here (either arm of it)
-          // makes that label a false statement to a customer on an irreversible
-          // compliance action, with a 200 and `dnc_recorded: true` behind it.
+          // Absent ⇒ a TENANT-WIDE row, which blocks the number at dial time in
+          // every campaign the tenant runs, now and in future. That is not a
+          // fallback or a leftover — it is the escalation the console offers under a
+          // permission and describes to the agent as "any campaign, forever", and
+          // this omission is the only thing in the dialer runtime that produces it.
+          // Deleting the conditional here (either arm of it) makes that label a
+          // false statement to a customer on an irreversible compliance action,
+          // with a 200 and `dnc_recorded: true` behind it.
           //
-          // The campaign id is core's own — `requireOwnedAttempt` resolved it from
-          // the attempt. The client asserts only which of the two scopes it wants,
-          // never an id (`AgencyDncRequest.scope`).
+          // The campaign id is the server's own — `requireOwnedAttempt` resolved it
+          // from the attempt. The client asserts only which of the two scopes it
+          // wants, never an id (`AgencyDncRequest.scope`).
           ...(scope === 'campaign' ? { campaignId: campaign.id } : {}),
           phoneE164: contact.phone_e164,
           ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
-          // Who suppressed this number, for the compliance record master owns
-          // (`MAG-107`). Two sources, in order of how much they have been checked:
+          // Who suppressed this number, for the compliance record. Two sources, in
+          // order of how much they have been checked:
           //
           //   - the disposition arm's actor, which `checkActor` has already
           //     validated against the attempt's reservation;
-          //   - otherwise master's authenticated caller, unchecked, because a plain
-          //     mark-DNC deliberately has no ownership rule — a supervisor
-          //     suppressing a number mid-shift is a real action.
+          //   - otherwise the authenticated caller the public API layer sends,
+          //     unchecked, because a plain mark-DNC deliberately has no ownership
+          //     rule — a supervisor suppressing a number mid-shift is a real action.
           //
           // Still **never derived locally**. `resolveReservedAgentUserId` is right
           // here and is not consulted: filling the field from the attempt's reserved
           // agent would record whoever happened to hold the call rather than whoever
           // asked, and on a compliance record a confidently-wrong actor is worse
-          // than a NULL one (§1.2, decided on this same route).
+          // than a NULL one.
           ...(disposition
             ? { addedBy: disposition.actorUserId }
             : (typeof body.agent_user_id === 'string' && body.agent_user_id
@@ -1219,8 +1181,7 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
           dncScope: scope,
           // How many roster rows this press actually took off the campaign.
           // Logged rather than merely counted: >1 means this campaign held the
-          // number more than once, which is precisely the case that used to be
-          // covered by the tenant-wide Redis entry and is now covered here.
+          // number more than once, the case the by-phone suppression exists for.
           suppressedContacts: suppressedContactIds.length,
           dncRecorded: forwarded.recorded, alreadyPresent: forwarded.alreadyPresent,
           dispositionCode: disposition?.entry.code ?? null,
@@ -1232,10 +1193,10 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
         attempt_id: attempt.id,
         contact_id: attempt.contact_id,
         campaign_id: attempt.campaign_id,
-        // What was actually suppressed, in the form the DNC set compares against —
-        // not what the roster row happened to hold.
+        // What was actually suppressed, in the normalized form the dial-time DNC
+        // check compares against — not what the roster row happened to hold.
         phone_e164: forwarded.phoneE164 ?? contact.phone_e164,
-        // Always `suppressed` on success (§ contract), and it outranks §2.4's
+        // Always `suppressed` on success, by contract, and it outranks the
         // disposition precedence: a `sale` code would resolve to `completed`, but
         // the customer asked not to be called again and that wins.
         contact_state: 'suppressed',
@@ -1280,7 +1241,7 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
     });
   });
 
-  /** A 4xx in the closed `AgencyActionErrorResponse` shape master passes through. */
+  /** A 4xx in the closed `AgencyActionErrorResponse` shape the public API layer passes through. */
   function sendActionError(
     reply: FastifyReply,
     status: number,
@@ -1334,9 +1295,9 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
   }
 
   /**
-   * The master user id behind an attempt's reserved *session* id.
+   * The user id behind an attempt's reserved *session* id.
    *
-   * `reserved_agent_id` is a session id and `agent_user_id` is master's user id —
+   * `reserved_agent_id` is a session id and `agent_user_id` is a user id —
    * different kinds of id, and comparing them to each other would make the
    * ownership check reject everyone while looking correct.
    */
@@ -1352,13 +1313,13 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
    *
    * ── Why `left_at` is checked HERE and not per route ────────────────────────
    *
-   * It used to be checked in exactly one place — `/station-token` — and every
-   * other session route operated on a left session happily. That produced a
-   * silently dead agent: `POST /sessions/:id/available` set the Redis lease and
-   * mirrored `available` onto a row with `left_at` set, so the console rendered a
-   * ready agent and got no error, while `findLiveForCampaign` (which the pacing
-   * tick reads) excludes left rows and never dialled them. Nothing anywhere was
-   * red. Migration 092 makes that state routine rather than exotic — the dedupe
+   * Checked per route, it is easy to miss one, and a session route that operates
+   * on a left session produces a silently dead agent: `POST /sessions/:id/available`
+   * would set the Redis lease and mirror `available` onto a row with `left_at` set,
+   * so the console renders a ready agent and gets no error, while
+   * `findLiveForCampaign` (which the pacing tick reads) excludes left rows and
+   * never dials them. Nothing anywhere is red. `uq_agency_agent_live_tenant` makes that state
+   * routine rather than exotic — the dedupe
    * closes sessions out from under whoever is holding them — so the guard belongs
    * on the shared path where a new route inherits it instead of having to
    * remember it.
@@ -1373,25 +1334,25 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
     opts: { supervisorMayAct?: boolean } = {},
   ) {
     // Q8 (Manas, 2026-10-09): the session must be the CALLER's, not merely in the
-    // caller's account. Core checked tenant + account + `left_at` only and master sent
-    // no actor on these routes, so an agent holding a colleague's session id could mint
-    // that session's station token (opening and superseding their station socket and
-    // receiving their next customer's audio), set it available or on break, or make it
-    // leave. Master's handlers now send the authenticated actor exactly as they do for
-    // attempt actions (`resolveAgencyActor`: `agent_user_id` is the session user, and
-    // `on_behalf` is set only for `agency.supervise`; zod strips any client copy), and
-    // this guard enforces it:
+    // caller's account. Checking tenant + account + `left_at` alone would let an agent
+    // holding a colleague's session id mint that session's station token (opening and
+    // superseding their station socket and receiving their next customer's audio), set
+    // it available or on break, or make it leave. The public API layer sends the
+    // authenticated actor exactly as it does for attempt actions (`resolveAgencyActor`:
+    // `agent_user_id` is the session user, and `on_behalf` is set only for
+    // `agency.supervise`; zod strips any client copy), and this guard enforces it:
     //  - no actor ⇒ 400 `missing_actor`, checked BEFORE the lookup so it says nothing
-    //    about whether the id exists (unreachable through master, which always sends one);
+    //    about whether the id exists (unreachable through the public API layer, which
+    //    always sends one);
     //  - not the session's agent ⇒ the SAME 404 as an id that does not exist in this
     //    account, so a non-owner learns nothing (and is checked before `left_at`, whose
     //    409 would otherwise confirm the session is real);
     //  - a supervisor (`on_behalf`) passes only where the route opts in. Of the session
-    //    routes only `force-available` does: it is the one supervisory session action in
-    //    core/master/cusui (cusui's AgentFloor). station-token, available, break,
-    //    break/cancel and leave are the agent's own presence; no source flow ever let a
-    //    supervisor drive them for someone else, and a supervisor minting another
-    //    agent's station token would be the same hijack this closes.
+    //    routes only `force-available` does: it is the one supervisory session action
+    //    (the console's AgentFloor). station-token, available, break, break/cancel and
+    //    leave are the agent's own presence; no flow lets a supervisor drive them for
+    //    someone else, and a supervisor minting another agent's station token would be
+    //    the same hijack this closes.
     const actor = (request.body ?? {}) as { agent_user_id?: unknown; on_behalf?: unknown };
     const actorUserId = typeof actor.agent_user_id === 'string' ? actor.agent_user_id.trim() : '';
     if (!actorUserId) {
@@ -1421,11 +1382,11 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
 }
 
 /**
- * The instant a requested callback will actually be dialed (`AD-P3-C-03`).
+ * The instant a requested callback will actually be dialed.
  *
  * Falls back to the requested time in two cases, both deliberate. If the contact
- * row cannot be read, the campaign default zone applies — the same D4 fallback the
- * gate uses. If the window has no next opening at all (an empty `calling_days`, a
+ * row cannot be read, the campaign default zone applies — the same timezone
+ * fallback the calling-hours gate uses. If the window has no next opening at all (an empty `calling_days`, a
  * `start == end` window, an unusable timezone) we return the request unchanged
  * rather than inventing a time: the pre-dial gate parks such a contact and is the
  * authority, and a fabricated instant here would be a second, quieter lie.

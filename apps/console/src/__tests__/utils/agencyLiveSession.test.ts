@@ -15,7 +15,7 @@ import type { AgencySessionBootstrap, AgencySessionConflict } from '../../types/
 
 /**
  * This browser's memory of the agent's live station — the join path's
- * equivalent of MAG-134, so a second `POST /sessions` is not how we learn
+ * equivalent of the station reload guard, so a second `POST /sessions` is not how we learn
  * the agent is already live elsewhere.
  */
 

@@ -14,20 +14,17 @@ import {
  *
  * Deliberately dependency-light: it reads `process.env` directly for boot-time
  * `envVar` defaults rather than importing `config/index.js`, so it stays free of
- * the config graph (the service, routes, and CallManager all import the registry).
+ * the config graph (the service, routes and the dialer runtime all import the registry).
  *
- * PORT NOTE (magick-agency): ported from core `src/feature-flags/registry.ts`
- * (v1.123.2). The catalog keeps ONLY the three agency flags, and their
- * definitions are not restated here: each is `defineFlag`'d from
- * `AGENCY_FLAGS` in `@magick-agency/contracts/flags`, which carries core's
- * keys, defaults, scopes, env vars, owners, descriptions and comments verbatim.
- * `FlagScope` / `FlagType` are the contracts' (identical to core's), and
- * `FlagDefinition` is the contracts' interface plus core's `validate`
- * predicate (a function, so it cannot live in a package the browser apps import).
- * `test/unit/feature-flags/registry-contracts.test.ts` pins that the two agree.
- * Removed: every AI/softphone/messaging/KB/SIP flag and all the value
- * validators (none of the agency flags declares one); `webrtc_max_duration_seconds`
- * moved to `account_settings` (plan §3.2). Each is listed in PORTING.md.
+ * The catalog holds the three agency flags, and their definitions are not
+ * restated here: each is `defineFlag`'d from `AGENCY_FLAGS` in
+ * `@magick-agency/contracts/flags`, which carries the keys, defaults, scopes,
+ * env vars, owners, descriptions and comments. `FlagScope` / `FlagType` are the
+ * contracts', and `FlagDefinition` is the contracts' interface plus a `validate`
+ * predicate (a function, so it cannot live in a package the browser apps import;
+ * none of the agency flags declares one).
+ * `test/unit/feature-flags/registry-contracts.test.ts` checks that the two agree.
+ * `webrtc_max_duration_seconds` is an `account_settings` column, not a flag.
  */
 
 export type { FlagScope, FlagType };
@@ -98,9 +95,7 @@ export function resolveEnvDefault(def: FlagDefinition): unknown {
  * Declared flags. Add new flags here; the override table never needs a schema
  * change. Defaults are prod-safe (gated capabilities default off).
  *
- * PORT NOTE (magick-agency): core's order of the three agency entries is kept
- * (`agency_call_analysis`, `agency_dialer_enabled`, `agency_late_binding`);
- * their rationale comments live beside the definitions in
+ * The rationale comments for each entry live beside the definitions in
  * `packages/contracts/src/flags.ts`.
  */
 export const FLAGS = {

@@ -8,7 +8,7 @@ import type { AgencyAccountSettings } from '@magick-agency/contracts/api/platfor
  *
  * `GovernanceGating.test.tsx` drives the guard with a mocked `useGovernance`;
  * this one mounts the real `GovernanceProvider`, so what is under test is the
- * whole chain plan §3.2 replaced governance with: the session's per-account
+ * whole chain plan replaced governance with: the session's per-account
  * settings row → the derived capability → the guard. Recording or analysis
  * switched off on the ACTIVE account refuses the gated surface; the same switch
  * on a sibling account does not; `agency` itself is never refused.

@@ -42,18 +42,18 @@ import {
 /**
  * The best-hours map's derivations.
  *
- * ── The four rulings every case below is about ────────────────────────────
- *  - **E3** — the hour axis names the zone the buckets were CUT in, or nothing. Never
+ * ── The four rules every case below is about ────────────────────────────
+ *  - **Axis zone** — the hour axis names the zone the buckets were CUT in, or nothing. Never
  *    the reader's, and never a guess.
- *  - **E4** — an out-of-window weekday is not a zero, and the distinction is derived
+ *  - **Coverage** — an out-of-window weekday is not a zero, and the distinction is derived
  *    in the resolved zone rather than the reader's.
- *  - **E5** — a thin cell is never on the rate ramp and never in the scale's domain,
+ *  - **Thin cells** — a thin cell is never on the rate ramp and never in the scale's domain,
  *    it still shows its dial count, and the count of withheld cells is stated.
- *  - **E6** — three views over ONE payload, so switching is a re-render.
+ *  - **Views** — three views over ONE payload, so switching is a re-render.
  *
  * Every fixture cell's rates and flags are derived from its own counts (see
  * `helpers/bestHours.ts`), so no case here can assert a state the server cannot
- * emit — which is the MAG-106 failure the phase-01 contract names.
+ * emit — which is the impossible-payload failure.
  */
 
 /** A convenience: pull one cell out of a matrix without indexing through two arrays. */
@@ -105,14 +105,14 @@ describe('agencyBestHours — what the surface asks for', () => {
   });
 });
 
-describe('agencyBestHours — E3, the zone the buckets were cut in', () => {
+describe('agencyBestHours — the zone the buckets were cut in', () => {
   it('reads `resolved_timezone` off the page', () => {
     expect(bestHoursZone(bestHoursPage())).toBe('Asia/Kolkata');
   });
 
   it('says NOTHING when the field did not arrive, rather than guessing', () => {
     /**
-     * A core that predates the field. The honest answer is silence: "the 18:00
+     * A an API that predates the field. The honest answer is silence: "the 18:00
      * column" is not a fact until a zone is named, and a wrong name is a rostering
      * decision. `undefined` is what makes the `typeof` guard load-bearing.
      */
@@ -132,10 +132,10 @@ describe('agencyBestHours — E3, the zone the buckets were cut in', () => {
      * ⚠️ It accepted any non-blank string, and the surface then contradicted itself
      * on exactly the campaign whose zone is broken.
      *
-     * Core resolves the zone through `LEFT JOIN pg_timezone_names` and COALESCEs to
+     * The API resolves the zone through `LEFT JOIN pg_timezone_names` and COALESCEs to
      * `'UTC'`, so a garbage `default_timezone` does not raise — which is deliberate,
      * and which means a name that resolves to nothing can reach this client through
-     * two services and a hand-mirrored type. `weekdayCoverage` already refused such a
+     * the API and a hand-mirrored type. `weekdayCoverage` already refused such a
      * name (its `Intl.DateTimeFormat` throws a `RangeError`) and answered `known:
      * false`; the axis printed it anyway. So the column head asserted
      * "Hour of day · Asia/Calcutta_typo" above a matrix that had just given up on
@@ -176,7 +176,7 @@ describe('agencyBestHours — E3, the zone the buckets were cut in', () => {
      * ⚠️ The reader's zone is the WRONG zone here, and there is already a function
      * returning it: `windowRangeReadout` prints
      * `Intl.DateTimeFormat().resolvedOptions().timeZone`, correctly, for its own
-     * caption. Two zones on one screen is the defect E3 exists to prevent.
+     * caption. Two zones on one screen is the defect the axis rule exists to prevent.
      *
      * The label is therefore a pure function of its ARGUMENT — it takes no page and
      * reaches for no default — so the only zone it can print is the one it was
@@ -235,7 +235,7 @@ describe('agencyBestHours — E3, the zone the buckets were cut in', () => {
   });
 });
 
-describe('agencyBestHours — E4, coverage in the resolved zone', () => {
+describe('agencyBestHours — coverage in the resolved zone', () => {
   it('covers all seven weekdays over a full week', () => {
     const coverage = weekCoverage();
     expect(coverage.known).toBe(true);
@@ -285,8 +285,8 @@ describe('agencyBestHours — E4, coverage in the resolved zone', () => {
 
   it('refuses to answer at all with no zone — it does not fall back', () => {
     /**
-     * The interaction between E3 and E4 that neither ruling states: E4 says derive
-     * coverage in the resolved zone and never the reader's, so with no resolved zone
+     * The interaction between the axis-zone and coverage rules that neither states: coverage is derived
+     * in the resolved zone and never the reader's, so with no resolved zone
      * there is no honest derivation available. `known: false` is what the surface then
      * says out loud, instead of marking the wrong rows as never-asked.
      */
@@ -297,7 +297,7 @@ describe('agencyBestHours — E4, coverage in the resolved zone', () => {
 
   it('refuses on an unusable zone name, an unparseable bound or an empty window', () => {
     // `Intl.DateTimeFormat` throws a RangeError on an unknown `timeZone`, and this is
-    // the one input that can be one — core's `COALESCE(z.name, 'UTC')` crossed two
+    // the one input that can be one — the API's `COALESCE(z.name, 'UTC')` crossed two
     // services and a hand-mirrored type to get here.
     expect(weekdayCoverage(WEEK_FROM, WEEK_TO, 'Not/AZone').known).toBe(false);
     expect(weekdayCoverage('not a date', WEEK_TO, FIXTURE_ZONE).known).toBe(false);
@@ -319,7 +319,7 @@ describe('agencyBestHours — E4, coverage in the resolved zone', () => {
      * Howe is **01:30**, on the offset that applied BEFORE the step. Hour 1 was
      * therefore marked covered, and hour 1 was never in the window.
      *
-     * The visible consequence is the one E4 exists to prevent: a cell nobody was
+     * The visible consequence is the one the coverage rule exists to prevent: a cell nobody was
      * asked about renders `no_dials`, a printed ZERO, in the row a supervisor reads
      * as "stop staffing this slot". So the assertion is the matrix cell as well as
      * the set.
@@ -398,7 +398,7 @@ describe('agencyBestHours — E4, coverage in the resolved zone', () => {
   });
 });
 
-describe('agencyBestHours — E4 in the matrix: absent is two different facts', () => {
+describe('agencyBestHours — in the matrix: absent is two different facts', () => {
   it('marks an out-of-window weekday as never asked, not as a zero', () => {
     const page = bestHoursPage({
       from: SHORT_FROM,
@@ -480,7 +480,7 @@ describe('agencyBestHours — E4 in the matrix: absent is two different facts', 
   });
 });
 
-describe('agencyBestHours — E5, a thin cell is never on the ramp', () => {
+describe('agencyBestHours — a thin cell is never on the ramp', () => {
   it('withholds the colour and keeps the DIAL COUNT', () => {
     /**
      * 2 dials, 1 connect. The served connect rate is `50%`, which on a ramp topping
@@ -589,7 +589,7 @@ describe('agencyBestHours — E5, a thin cell is never on the ramp', () => {
   });
 });
 
-describe('agencyBestHours — E6, three views over one payload', () => {
+describe('agencyBestHours — three views over one payload', () => {
   it('colours a THIN cell on the volume view, because a count needs no threshold', () => {
     /**
      * Volume is the one always-reportable view, and it is here because it answers the
@@ -640,7 +640,7 @@ describe('agencyBestHours — E6, three views over one payload', () => {
      * the fallback CLEARS it — and `success_rate_pct` is a served `100`. On a ramp
      * whose honest cells top out near a 30% floor median that is the darkest square
      * on the map AND the domain's upper end, compressing every trustworthy cell into
-     * the bottom third. That is E5's exact failure at 168× scale, produced by a
+     * the bottom third. That is the thin-cell failure at 168× scale, produced by a
      * degrade path rather than by a missing check.
      *
      * The connect rate on the SAME cell stays measured, which is what makes this a
@@ -677,7 +677,7 @@ describe('agencyBestHours — E6, three views over one payload', () => {
     /**
      * The other half of failing closed, and the half that stops it becoming a
      * client-side threshold. A cell the SERVER cleared is quotable even on counts
-     * this console would not have cleared itself: the threshold is core's to tune,
+     * this console would not have cleared itself: the threshold is the API's to tune,
      * and `AGENCY_ROSTER_MIN_RATE_DENOMINATOR` is mirrored so the console can say
      * the number rather than apply it.
      */

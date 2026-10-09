@@ -15,12 +15,9 @@ interface PageEntry {
   capability?: string;
 }
 
-// PORT NOTE (magick-agency): cusui's page directory listed every AI, broadcast,
-// messaging, knowledge, credits and API-key page. Only the entries for surfaces
-// the console ports are kept — the agency workspace, Team and Notifications —
-// each verbatim with its comment; `Call Summaries` is added for the analysis
-// profiles page, now the agency's own (gated on agency's `agency_call_analysis`
-// flag and `agency.analytics` capability, as its route is).
+// The page directory: the agency workspace, Team and Notifications, plus
+// `Call Summaries` for the analysis profiles page (gated on the
+// `agency_call_analysis` flag and `agency.analytics` capability, as its route is).
 const PAGES: PageEntry[] = [
   // Agency Dialer. These live OUTSIDE `/app` in their own workspace shell, so
   // selecting one leaves the main app — which is exactly what the sidebar's
@@ -28,18 +25,17 @@ const PAGES: PageEntry[] = [
   // than being unreachable by search. Gated identically to that control.
   { label: 'Agency Campaigns', path: '/agency/campaigns', section: 'Agency', keywords: ['agency', 'dialer', 'campaign', 'power dial', 'outbound', 'agent'], flag: 'agency_dialer_enabled', capability: 'agency' },
   { label: 'New Agency Campaign', path: '/agency/campaigns/new', section: 'Agency', keywords: ['agency', 'dialer', 'campaign', 'new', 'create', 'roster', 'upload'], flag: 'agency_dialer_enabled', capability: 'agency' },
-  // Q2: DNC is agency-only — it suppresses agency dialing and nothing else. The
-  // label carries that scope because this result is reached from inside the
-  // primary app, where no shell supplies it; and `compliance` / `opt out` are
-  // gone, because someone typing those is asking a platform-wide question this
-  // page does not answer. Offering it as the answer is the misreading.
+  // DNC suppresses agency dialing and nothing else. The label carries that scope
+  // because this result is reached from inside the `/app` zone, where no shell
+  // supplies it; and `compliance` / `opt out` are gone, because someone typing
+  // those is asking a wider question than this page answers. Offering it as the
+  // answer is the misreading.
   //
   // So this reads "Agency Do Not Call" while the page's own `<h1>` and the
   // agency sidebar entry both say "Do Not Call". The divergence is a decision,
   // not drift: inside `/agency` the shell IS the scope and repeating it in the
   // heading is noise, whereas the command palette opens over any page in the
-  // primary app, where a bare "Do Not Call" is the tenant-wide reading Q2 exists
-  // to remove.
+  // `/app` zone, where a bare "Do Not Call" reads as tenant-wide.
   { label: 'Agency Do Not Call', path: '/agency/dnc', section: 'Agency', keywords: ['dnc', 'do not call', 'suppress', 'blocklist', 'blacklist', 'agency', 'dialing'], flag: 'agency_dialer_enabled', capability: 'agency' },
   { label: 'Team', path: '/app/team', section: 'Admin', keywords: ['team', 'member', 'invite'] },
   // No `capability` and no permission: the page manages the signed-in person's

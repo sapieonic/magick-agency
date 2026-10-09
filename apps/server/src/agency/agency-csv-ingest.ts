@@ -3,11 +3,11 @@ import { Transform, type Readable } from 'node:stream';
 import { normalizePhoneToE164 } from '../utils/phone-normalizer.js';
 
 /**
- * Streaming CSV ingest for Agency Dialer campaign rosters (design §2.2.1).
+ * Streaming CSV ingest for Agency Dialer campaign rosters.
  *
  * This is a NEW module deliberately placed beside `contact-lists/csv-parser.ts`,
- * NOT a rewrite of it. The existing parser serves bulk dispatch correctly and
- * must absorb none of this module's risk — it stays synchronous, stays capped at
+ * NOT a rewrite of it. The existing parser must absorb none of this module's
+ * risk — it stays synchronous, stays capped at
  * 10k rows, and keeps its hardcoded `phone`/`email` header detection. **Nothing
  * here imports it and nothing here changes it**, and that isolation is asserted
  * by a test (`agency-csv-ingest.isolation.test.ts`), because the isolation is
@@ -17,14 +17,14 @@ import { normalizePhoneToE164 } from '../utils/phone-normalizer.js';
  *
  *  1. **It streams.** `parseCsv(buffer)` buffers the whole file and then builds
  *     a second full copy as row objects. At the 1M-contact target that is
- *     gigabytes resident on master. Here the source is a `Readable` consumed as
+ *     gigabytes resident on the server. Here the source is a `Readable` consumed as
  *     a stream, and accepted rows are handed to `onBatch` in fixed-size batches,
  *     so peak memory is O(batchSize + distinct phone numbers), not O(file).
  *  2. **The phone column is mapped, not named.** The operator picks any header
  *     in the column-mapping step; nothing requires it to be called `phone`.
- *  3. **Every other column is retained verbatim** — original header text as the
+ *  3. **Every other column is retained unchanged** — original header text as the
  *     key — because the agent screen renders `agency_contacts.context` as-is
- *     (§9) and the roster is deliberately schemaless (§2.1).
+ *     and the roster is deliberately schemaless.
  *  4. **Duplicates are counted and suppressed**, not reduced to one warning
  *     string. Accepted/rejected/duplicate is a required summary that must
  *     visibly reconcile to rows-read, not a nicety.
@@ -35,9 +35,8 @@ import { normalizePhoneToE164 } from '../utils/phone-normalizer.js';
  * ── Why it takes a `Readable` and not an S3 key ────────────────────────────
  * The S3 fetch is a thin caller (`agency-ingest.service.ts`). Keeping this
  * module transport-free means the whole fixture matrix runs in the unit tier
- * against an in-memory stream with zero infrastructure — master's test compose
- * has no object store, and adding one to exercise a parser would be the tail
- * wagging the dog.
+ * against an in-memory stream with zero infrastructure — adding an object store
+ * to the test stack to exercise a parser would be the tail wagging the dog.
  *
  * ── The one structure that grows with the file ─────────────────────────────
  * `seen` holds every distinct normalised E.164 in the file, because exact
@@ -51,7 +50,7 @@ import { normalizePhoneToE164 } from '../utils/phone-normalizer.js';
  * ── INVARIANT: the column-mapping UI must be populated from `dedupeHeaders()` ─
  * Header text is trimmed here (`"First Name "` → `"First Name"`) and repeats
  * are suffixed `(2)`/`(3)`. Those resolved strings become the keys of
- * `agency_contacts.context`, and core's `AgencyContextDisplay`
+ * `agency_contacts.context`, and the campaign's `AgencyContextDisplay`
  * (`hero`/`order`/`hidden`) is matched against those keys **byte-for-byte**.
  *
  * So whatever populates the operator's mapping UI MUST be this module's
@@ -60,8 +59,8 @@ import { normalizePhoneToE164 } from '../utils/phone-normalizer.js';
  * with different options, a cached header list, a customer-supplied template),
  * an operator's `hero: ["First Name"]` silently matches nothing: no error, no
  * log, just an agent screen that quietly falls back to unordered columns, months
- * after the change that caused it. Agreed explicitly with core, which carries
- * the matching note on `AgencyContextDisplay`.
+ * after the change that caused it. `AgencyContextDisplay` carries the matching
+ * note.
  *
  * Rejections are NOT accumulated. `errors` is capped for the API response and
  * every rejection is additionally streamed to `onRejected`, so the caller can
@@ -72,13 +71,13 @@ import { normalizePhoneToE164 } from '../utils/phone-normalizer.js';
 // ─── Limits ─────────────────────────────────────────────────────────────────
 // These are published through the ingest-limits metadata route rather than
 // hardcoded in the UI, because the wizard must tell the admin the real number
-// (UX §B.2) and a copy of a constant is not the constant.
+// and a copy of a constant is not the constant.
 
-/** Roster chunk size (design §2.2): 500 rows per S2S call to core. */
+/** Roster chunk size: 500 rows per `sendRosterChunk` call. */
 export const AGENCY_INGEST_BATCH_SIZE = 500;
 
 /**
- * 1M contacts per campaign is the stated scale target (Q-D). This is a
+ * 1M contacts per campaign is the stated scale target. This is a
  * guard-rail against a runaway file, not a product limit — it is 100× the
  * existing parser's cap precisely because that cap is what this module exists
  * to escape.
@@ -91,14 +90,14 @@ export const AGENCY_MAX_ROWS = 1_000_000;
  * the ask to be a safe ceiling. 100 is double it, comfortably clear of any
  * realistic CRM export, and still bounds the per-row object.
  *
- * This number is load-bearing for QA (test-plan §13.5): the "too many columns"
+ * This number is load-bearing for QA: the "too many columns"
  * fixture must be built above it.
  */
 export const AGENCY_MAX_COLUMNS = 100;
 
 /**
  * Per-cell ceiling. A `context` value is pushed down the station socket on
- * every reservation (§9) and rendered on the agent's screen, so an unbounded
+ * every reservation and rendered on the agent's screen, so an unbounded
  * cell is both a memory problem and a UI one. 8KB is ~2 pages of prose — far
  * beyond any real "Notes" column, far below the 256KB cell that motivated it.
  */
@@ -135,8 +134,8 @@ export type AgencyIngestErrorCode =
 /**
  * Why the whole file was unusable. Nothing is ingested.
  *
- * **The wizard's vocabulary**, mirrored member-for-member by cusui's
- * `AgencyIngestFailureCode` (`src/types/agency-campaign.ts`) — these are the
+ * **The wizard's vocabulary**, mirrored member-for-member by the console's
+ * `AgencyIngestFailureCode` (`apps/console/src/types/agency-campaign.ts`) — these are the
  * codes the failure screen renders specific copy for.
  *
  * `dnc_unavailable` is the one code this module never raises itself, for the
@@ -148,7 +147,7 @@ export type AgencyIngestErrorCode =
  * copy for, are NOT here — see `AgencyIngestJobFailureCode` in
  * `agency-ingest-job.repository.ts`. Keeping them out is what lets
  * `AgencyIngestError` below stay honest: it is thrown by this module, and this
- * module cannot know that core rejected a chunk.
+ * module cannot know that the roster hand-off rejected a chunk.
  */
 export type AgencyIngestFailureCode =
   | 'malformed_csv'
@@ -171,7 +170,7 @@ export type AgencyIngestFailureCode =
  *
  * Two live consequences, one of them silent:
  *
- *  - `AD-P3-M-02`'s fail-closed DNC halt threw `DncUnavailableError` from
+ *  - the ingest's fail-closed DNC halt threw `DncUnavailableError` from
  *    `onBatch` and arrived at the service as `malformed_csv` — a compliance halt
  *    indistinguishable in logs and dashboards from a bad upload.
  *  - `agency-ingest.service.ts`'s cancel path throws `IngestCancelled` from
@@ -210,7 +209,7 @@ export class AgencyIngestError extends Error {
   }
 }
 
-/** Human copy for a rejection code. Matches the UX spec's summary groupings. */
+/** Human copy for a rejection code. Matches the upload summary's groupings. */
 const REJECTION_LABEL: Record<AgencyIngestErrorCode, string> = {
   missing_phone_value: 'Empty phone number',
   invalid_phone: 'Not a valid phone number',
@@ -227,20 +226,20 @@ export function rejectionLabel(code: AgencyIngestErrorCode): string {
 
 // ─── Result shapes ──────────────────────────────────────────────────────────
 
-/** One accepted contact, in the shape core's roster ingest expects. */
+/** One accepted contact, in the shape the roster hand-off (`sendRosterChunk`) expects. */
 export interface AgencyIngestContact {
   phone_e164: string;
   /** Every retained non-phone column, original (de-duplicated) header as key. */
   context: Record<string, string>;
-  /** 1-based line in the source file on which this record starts. */
+  /** 1-based line in the uploaded file on which this record starts. */
   source_row_number: number;
-  /** From the mapped timezone column; undefined ⇒ campaign default (D4). */
+  /** From the mapped timezone column; undefined ⇒ campaign default. */
   timezone?: string;
 }
 
 /**
  * One rejected row. Shaped to serve both the API `errors[]` contract
- * (`{ row_number, column, raw_value, reason_code, reason }`, UX §E.9) and the
+ * (`{ row_number, column, raw_value, reason_code, reason }`) and the
  * rejected-rows CSV export, which needs the original columns back.
  */
 export interface AgencyIngestRejection {
@@ -263,7 +262,7 @@ export interface AgencyIngestProgress {
 
 export interface AgencyIngestSummary {
   /**
-   * Header row, verbatim and in file order, with duplicates suffixed. These are
+   * Header row, as written and in file order, with duplicates suffixed. These are
    * the exact keys `context` uses, so the column mapper must map against these
    * and not against the raw file text.
    */
@@ -296,7 +295,7 @@ export interface AgencyIngestOptions {
   source: Readable;
   /** Header of the column holding the phone number. Matched case-insensitively. */
   phoneColumn: string;
-  /** Optional header of an IANA timezone column (D4). Never inferred. */
+  /** Optional header of an IANA timezone column. Never inferred. */
   timezoneColumn?: string;
   /**
    * Headers the operator marked `Ignore`. Excluded from `context` **entirely**,
@@ -322,7 +321,7 @@ export interface AgencyIngestOptions {
    * two people behind one company switchboard, a shared family mobile — in
    * exactly the market this targets. With dedupe on, the second person is
    * dropped and it looks like dedupe working correctly, which is a data-loss
-   * bug wearing a correctness costume. Core deliberately does NOT enforce
+   * bug wearing a correctness costume. The contact table deliberately does NOT enforce
    * `UNIQUE (campaign_id, phone_e164)` for that reason; its idempotency
    * constraint is on `(campaign_id, source_row_number)` instead. So this flag
    * controls a *product* behaviour and never an idempotency guarantee — the two
@@ -727,7 +726,7 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
     // than paying for the rest of the transfer.
     source.destroy();
     if (err instanceof AgencyIngestError) throw err;
-    // The caller's own error, verbatim. Only failures originating in THIS
+    // The caller's own error, unchanged. Only failures originating in THIS
     // module's parsing get classified below.
     if (isCallerError(err)) throw err;
     throw new AgencyIngestError(

@@ -7,18 +7,18 @@ import {
 import type { AgencyCampaignRecord } from '../db/models/agency.model.js';
 
 /**
- * ─── §C.2's HEALTH STRIP — THE ASSEMBLER ────────────────────────────────────
+ * ─── THE CAMPAIGN HEALTH STRIP — THE ASSEMBLER ──────────────────────────────
  *
- * **This is the feature.** §C.2 calls the strip "the actual feature" of the
- * supervisor dashboard, and the reason is §7-7: without a reason field the
+ * **This is the feature.** The strip is what the supervisor dashboard is for:
+ * without a reason field the
  * dashboard degrades to "0 in flight" with no explanation, and a campaign stopped
  * for a *compliance* reason looks identical to one that is broken. A supervisor
  * cannot tell those apart from numbers alone, and they require opposite actions.
  *
  * ── Why this is not in the repository ────────────────────────────────────────
  *
- * Four of the seven diagnoses core can make need a signal no SQL query can see:
- * DNC/Redis health, the account concurrency guard's live Redis counter, the
+ * Four of the diagnoses the dialer runtime makes need a signal no SQL query can see:
+ * DNC availability, the account concurrency guard's live Redis counter, the
  * calling-hours evaluation (a pure function over campaign config + contact
  * timezone), and the frozen pause evidence on the campaign row. `stats()` stays a
  * repository method returning repository facts; this composes.
@@ -33,16 +33,11 @@ import type { AgencyCampaignRecord } from '../db/models/agency.model.js';
  *   * `dnc_unavailable` sits above `no_agents_available` because it is
  *     tenant-wide and no amount of staffing fixes it.
  *   * `concurrency_saturated` sits below staffing because it has **no action**
- *     (D10/CR-2: no setter, contact support) — a strip whose top line offers
+ *     (concurrency is super-admin only, so there is no setter and the remedy is
+ *     contacting support) — a strip whose top line offers
  *     nothing to do reads as broken.
  *
- * ── The one core cannot answer ───────────────────────────────────────────────
- *
- * `credits_low` (priority 7) is **never emitted here**. Core does no millicredit
- * arithmetic and holds no balance; it learns about exhaustion only as a 5xx on the
- * hourly attempt-batch post, long after dialing was affected. Master owns the
- * balance and inserts that arm when proxying. `AGENCY_CORE_STALL_CODES` states
- * that split in a way a test can check, so this paragraph cannot rot into a lie.
+ * There is no `credits_low` diagnosis: the app has no credits (decision S6).
  */
 
 /** Everything the assembler needs that it cannot compute itself. */
@@ -53,7 +48,7 @@ export interface CampaignHealthInputs {
    *
    * `agents` is excluded as well as the route fields: the assembler diagnoses
    * staffing from `agents_by_state`/`agents_live`, never from the roster itself.
-   * Saying so in the type keeps this independent of §C.4's per-agent columns —
+   * Saying so in the type keeps this independent of the floor's per-agent columns —
    * `connected` is composed at the route, and requiring the full row here would
    * couple the health strip to a Redis read it has no use for.
    */
@@ -62,8 +57,8 @@ export interface CampaignHealthInputs {
     (typeof import('@magick-agency/contracts/agency').AGENCY_STATS_ROUTE_FIELDS)[number] | 'agents'
   >;
   /**
-   * `null` when the DNC registry could not answer — Redis down, or the tenant has
-   * never synced. Dialing fails CLOSED on this (design §2.3), so it is a stall,
+   * `null` when the DNC registry could not answer — the `dnc_entries` read failed
+   * (`dnc-availability.ts`). Dialing fails CLOSED on this, so it is a stall,
    * not a warning.
    */
   dncAppliedVersion: number | null;
@@ -96,7 +91,7 @@ export interface CampaignHealthInputs {
  * 30%: high enough that ordinary no-answer traffic does not trip it (a cold list
  * legitimately fails most dials — `no_answer` is NOT counted as a failure here,
  * only outcomes that indicate OUR side or the carrier), low enough to catch a
- * carrier fault before a whole shift is wasted. §C.2's example message says 38%.
+ * carrier fault before a whole shift is wasted.
  */
 export const ELEVATED_FAILURE_RATE_PCT = 30;
 
@@ -110,7 +105,7 @@ export const ELEVATED_FAILURE_RATE_PCT = 30;
 export const ELEVATED_FAILURE_MIN_ATTEMPTS = 10;
 
 /**
- * The window §C.2's failure-rate message names ("in the last 10 minutes").
+ * The window the failure-rate message names ("in the last 10 minutes").
  *
  * Exported and imported by the repository rather than restated in the SQL, so the
  * number the query measures over and the number the console prints cannot drift —
@@ -119,7 +114,7 @@ export const ELEVATED_FAILURE_MIN_ATTEMPTS = 10;
  */
 export const RECENT_FAILURE_WINDOW_MINUTES = 10;
 
-/** Utilisation at which the concurrency diagnosis fires (§C.2 item 4). */
+/** Utilisation at which the concurrency diagnosis fires. */
 function saturated(inUse: number | null, limit: number): boolean {
   // `null` in-use is NOT saturation. Redis being unreadable tells us nothing
   // about headroom, and inventing saturation would tell a supervisor to contact
@@ -138,7 +133,7 @@ export function diagnoseAll(input: CampaignHealthInputs): AgencyStall[] {
   const { campaign, stats } = input;
   const found = new Map<AgencyStallCode, AgencyStall>();
 
-  // 1 — the compliance stop. Reads the FROZEN evidence from migration 089, not a
+  // 1 — the compliance stop. Reads the FROZEN evidence on the campaign row, not a
   // live rate: the 24h window keeps sliding while the campaign sits paused, so a
   // live read would eventually render "2.1% is over your 3% limit".
   if (campaign.pause_reason === 'abandonment_ceiling') {
@@ -170,7 +165,7 @@ export function diagnoseAll(input: CampaignHealthInputs): AgencyStall[] {
     });
   }
 
-  // 4 — capacity. Account-wide, shared with AI calls (D10).
+  // 4 — capacity. Account-wide, shared with every campaign on the account.
   if (saturated(input.concurrencyInUse, input.concurrencyLimit)) {
     found.set('concurrency_saturated', {
       code: 'concurrency_saturated',
@@ -202,7 +197,7 @@ export function diagnoseAll(input: CampaignHealthInputs): AgencyStall[] {
     });
   }
 
-  // 6 — §5.3's distinction, which the dashboard must not conflate: "list
+  // 6 — the contact state machine's distinction, which the dashboard must not conflate: "list
   // exhausted with retries scheduled" and "complete" are genuinely different, and
   // only the second means the work is done.
   if (stats.contacts_pending === 0 && stats.retries_pending > 0) {
@@ -213,7 +208,7 @@ export function diagnoseAll(input: CampaignHealthInputs): AgencyStall[] {
     });
   }
 
-  // 7 — `credits_low` is master's. Deliberately no branch here; asserted by test.
+  // 7 — none: there is no `credits_low` (decision S6).
 
   // 8 — the carrier-fault hint, last because it is a guess and the least
   // actionable of the eight.
@@ -241,7 +236,7 @@ export function diagnoseAll(input: CampaignHealthInputs): AgencyStall[] {
   return ranked;
 }
 
-/** The two payload fields §C.2 renders, from one diagnosis pass. */
+/** The two payload fields the strip renders, from one diagnosis pass. */
 export function campaignHealth(input: CampaignHealthInputs): {
   stall: AgencyStall | null;
   other_stalls: AgencyStallCode[];

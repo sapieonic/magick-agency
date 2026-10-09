@@ -88,7 +88,7 @@ export interface AgentPerformancePanelProps {
    * A prop rather than a fetch, because the two surfaces have different lists to
    * resolve from and neither of them belongs to this component: the agent's page
    * has their staffing history, the supervisor's page already holds the account's
-   * campaign list. `by_campaign[]` carries ids and no names — master's contract —
+   * campaign list. `by_campaign[]` carries ids and no names — the API's contract —
    * and an unmatched id renders as a shortened id rather than as a blank row.
    */
   campaignNames: ReadonlyMap<string, string | null>;
@@ -453,14 +453,14 @@ function Readout({
 /**
  * Where the shift went — or, when there is no record, the sentence saying so.
  *
- * **A zeroed breakdown is never drawn.** Core computes occupancy from an event
+ * **A zeroed breakdown is never drawn.** The API computes occupancy from an event
  * log that shipped after the dialer, so a session predating it returns zeros
  * rather than nulls — and a bar built from those zeros claims an agent spent a
  * shift doing nothing. Same defect as printing a null rate as `0.0%`, aimed at
  * the same person. `occupancyBreakdown` makes the call; this component only obeys
  * it.
  *
- * **Signed-out time is not part of the shift and is not drawn.** Core's
+ * **Signed-out time is not part of the shift and is not drawn.** The API's
  * `shift_seconds` excludes `offline` for the reason its own comment gives — an
  * agent who logged out at 17:00 was not on shift at 18:00 — so a bar that
  * included it would report a third of a worked hour on calls as a twentieth of a

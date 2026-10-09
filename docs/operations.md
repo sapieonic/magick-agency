@@ -35,10 +35,11 @@ The project name differs from the dev stack's (`magick-agency`) on purpose. If t
 `pnpm infra:up` or `infra:reset` on the same host would recreate or remove the production Redis
 with the dev settings.
 
-**No ffmpeg.** The plan said "ffmpeg in the image". Core's image left it out on purpose: it adds
-395 MB and is needed only for AAC/M4A, which upload rejects. The decoder spawns only `mpg123`
-(mp3) and `sndfile-convert` (wav/ogg) (`apps/server/src/audio/decode.ts`), so the port keeps core's
-choice, and `apps/server/test/unit/audio/decoder-toolchain-packaging.test.ts` asserts it.
+**No ffmpeg.** The decoder spawns only `mpg123` (mp3) and `sndfile-convert` (wav/ogg)
+(`apps/server/src/audio/decode.ts`), and upload rejects AAC/M4A, the one format that would need
+ffmpeg. ffmpeg would add about 395 MB to the image for a format the server does not accept, so the
+image leaves it out. `apps/server/test/unit/audio/decoder-toolchain-packaging.test.ts` asserts the
+decoder packages and the absence of ffmpeg.
 
 ### What nginx serves
 
@@ -171,7 +172,7 @@ Redis settings.
    cuts a live call's carrier leg and status webhooks; each refusal logs
    `WebRTC WS token missing while Redis answered`. If Redis is down altogether, tokens are accepted
    (a live call is never hard-failed for a Redis outage).
-2. **One replica** (plan D2). The bridge remembers tokens whose Redis `SET` failed in-process; the
+2. **One replica.** The bridge remembers tokens whose Redis `SET` failed in-process; the
    runtime, reaper, retention and partition jobs assume one process. Scaling out needs that memo
    shared or dropped, and a review of every sweep.
 3. **Reachable only through exactly `TRUST_PROXY_HOPS` proxies.** `request.ip` trusts that many
@@ -179,8 +180,8 @@ Redis settings.
    reachable directly, a client can set its own IP and evade the limits; if the real chain has a
    different number of proxies, set the count to match. Bind to loopback or a private interface,
    or firewall port 3021. The production compose file publishes no server port. Its chain is the
-   TLS terminator plus nginx, so `TRUST_PROXY_HOPS=2` (see "What nginx serves"). (Agency is on Fastify 5.12, where a numeric `trustProxy` fails closed, so
-   the count is passed as a function; master pins Fastify 5.8.4, where the number still works.)
+   TLS terminator plus nginx, so `TRUST_PROXY_HOPS=2` (see "What nginx serves"). (Fastify 5.12
+   fails a numeric `trustProxy` closed, so the count is passed as a hop-count function.)
 4. **TLS on only in production.** See "Postgres TLS" below.
 5. **Migrations before start.** The image does this on every start; see below.
 6. **Stop grace at least 45 s.** See "Shutdown and grace period".
@@ -206,8 +207,8 @@ Database pool closed
 
 Measured on the image with no calls in flight: `docker compose stop` took 0.7 s, the server exited
 0, and the sequence above took 7 ms. A drain that has mail to send can take up to 30 s. Open
-question: a pacing tick already parked past its `stopped` check can still finish after the drain
-(core has the same shape); awaiting in-flight ticks in `stop()` would close it.
+question: a pacing tick already parked past its `stopped` check can still finish after the drain;
+awaiting in-flight ticks in `stop()` would close it.
 
 Agents are not returned to the pool on shutdown; after a restart they come back in `break` and must
 choose to go available.

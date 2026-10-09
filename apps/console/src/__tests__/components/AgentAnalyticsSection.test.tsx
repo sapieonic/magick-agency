@@ -18,7 +18,7 @@ import { periodRange } from '../../utils/agencyAgentPerformance';
  * the roster instead. **Three properties survived the change unaltered** and are
  * still here, because they were never about the picker:
  *
- *  1. **The gate is `agency.supervise`, and it sits OUTSIDE the panel.** Master
+ *  1. **The gate is `agency.supervise`, and it sits OUTSIDE the panel.** The server
  *     floors the roster read and both per-agent twins on exactly that permission —
  *     a looser check renders a surface whose first read 403s, a tighter one hides
  *     it from an `account_admin`, who is the role it floors at. It has to be a
@@ -54,7 +54,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 /*
   Mocked at the API boundary, the same seam every other agency test mocks at —
-  master's roster route is being written in parallel and does not exist to call.
+  the server's roster route is being written in parallel and does not exist to call.
   All five reads are listed even though a given case only ever exercises some,
   precisely so "the `my-` form is NOT called" is an assertion rather than a mock
   that happens to be missing.
@@ -167,7 +167,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.useTenant.mockReturnValue(tenant());
   /*
-    The default mock ECHOES the query back, the way master does: `sort` and `order`
+    The default mock ECHOES the query back, the way the server does: `sort` and `order`
     are always sent explicitly, so the server never has a default to substitute. A
     fixed payload here would let the table's header disagree with the request in
     every case, which is a fixture artefact rather than a behaviour worth pinning.
@@ -441,7 +441,7 @@ describe('AgentAnalyticsSection — the filters refetch', () => {
 
   it('omits campaign_id entirely rather than sending a blank one', async () => {
     /**
-     * Master whitelists this route's params and answers a malformed one with a 400,
+     * The server whitelists this route's params and answers a malformed one with a 400,
      * so an empty `campaign_id` would be a validation error about a filter nobody
      * asked for. Reached by CHOOSING "All campaigns" now, because the roster no
      * longer opens there — see the default-scope cases below.
@@ -507,9 +507,9 @@ describe('AgentAnalyticsSection — the filters refetch', () => {
 });
 
 describe('AgentAnalyticsSection — honesty about what is not on screen', () => {
-  it('names the former members master dropped, and offers to show them', async () => {
+  it('names the former members the server dropped, and offers to show them', async () => {
     /**
-     * Core returns departed agents because it cannot know they departed; master
+     * The dialer runtime returns departed agents because it cannot know they departed; the server
      * drops them. Without this sentence that is a silent edit, and a supervisor
      * scanning for somebody who is not there concludes they did not dial.
      */
@@ -552,12 +552,12 @@ describe('AgentAnalyticsSection — honesty about what is not on screen', () => 
 
   it('says the roster was cut, and by which order — never as a fraction', async () => {
     /**
-     * There is deliberately no "showing N of M" here. Core cuts to `limit` and
-     * master then filters the page it was handed, so `rows.length`, `total_agents`
+     * There is deliberately no "showing N of M" here. The server cuts to `limit` and
+     * the server then filters the page it was handed, so `rows.length`, `total_agents`
      * and `inactive_omitted` are three related-but-independent facts and no
      * fraction over them is true. A read can legitimately return 1 row with
      * `total_agents: 3` and `inactive_omitted: 1`: "1 of 3" is wrong and "1 of 2"
-     * is not derivable, because master never saw the rows core cut.
+     * is not derivable, because the server never saw the rows the dialer runtime cut.
      */
     mocks.getAgencyRoster.mockResolvedValue(
       rosterPage({ rows: [rosterRow()], total_agents: 137, limit: 100 }),
@@ -617,7 +617,7 @@ describe('AgentAnalyticsSection — honesty about what is not on screen', () => 
 
   it('leaves the team row untouched when former members are revealed', async () => {
     /**
-     * Master never recomputes `benchmark` or `total_agents`, so both are
+     * The server never recomputes `benchmark` or `total_agents`, so both are
      * byte-identical whether or not rows were dropped — and the console must render
      * the pinned row from `benchmark` alone. A team row that MOVED when the reader
      * toggled a row filter would be a different number under the same name, which
@@ -628,7 +628,7 @@ describe('AgentAnalyticsSection — honesty about what is not on screen', () => 
      * derivation agreed trivially and a row-derived team figure would have passed
      * it. Now the revealed page carries a second, very different agent — twice the
      * handled time on a third of the shift — under an IDENTICAL benchmark, which is
-     * exactly what master sends. So the assertion has teeth for the figure that
+     * exactly what the server sends. So the assertion has teeth for the figure that
      * made it necessary: the pooled utilisation the team row shows since the
      * benchmark gained `shift_seconds`, which must come off the benchmark and never
      * off the rows.
@@ -717,7 +717,7 @@ describe('AgentAnalyticsSection — drilling into one person', () => {
     renderSection(true);
     fireEvent.click(await screen.findByTestId('roster-open-user-1'));
 
-    // The name master resolved on the roster payload — no second lookup, and no
+    // The name the server resolved on the roster payload — no second lookup, and no
     // name this client invented. The caption matters as much as the heading: a
     // screen-reader user arriving at the call table needs to know WHOSE calls these
     // are without going back up for the roster.
@@ -725,7 +725,7 @@ describe('AgentAnalyticsSection — drilling into one person', () => {
     expect(await screen.findByText('Calls taken by Ravi Kumar, newest first')).toBeTruthy();
   });
 
-  it('falls back to a marked-as-an-id name when master could not resolve one', async () => {
+  it('falls back to a marked-as-an-id name when the server could not resolve one', async () => {
     /**
      * `agent_name: null` means unresolvable, not "no name", and the drill-down uses
      * the same `agentDisplayName` fallback the live floor does. A blank caption
@@ -936,8 +936,8 @@ describe('AgentAnalyticsSection — its controls have accessible names', () => {
 describe('AgentAnalyticsSection — ONE campaign by default', () => {
   /**
    * The most consequential fix in this pass. The roster opened with
-   * `campaignId: null`; core applies no campaign predicate when the parameter is
-   * absent and master forwards without defaulting, so the DEFAULT screen pooled
+   * `campaignId: null`; the server applies no campaign predicate when the parameter is
+   * absent and the server forwards without defaulting, so the DEFAULT screen pooled
    * every campaign in the account into one cohort — and the median, the middle-half
    * band and the per-row chips were all computed against that pool. A telecaller
    * agency runs several dealerships at once, each with its own lead list, so
@@ -1142,7 +1142,7 @@ describe('AgentAnalyticsSection — a window the weekly review can actually be r
     await waitFor(() => expect(mocks.getAgencyRoster).toHaveBeenCalledTimes(1));
     const { from, to } = mocks.getAgencyRoster.mock.calls[0]![0] as { from: string; to: string };
     // Ends in the past — a settled window, not a to-date one — and stays well inside
-    // core's 92-day cap.
+    // the server's 92-day cap.
     expect(new Date(to).getTime()).toBeLessThan(Date.now());
     expect(new Date(to).getTime()).toBeGreaterThan(new Date(from).getTime());
     const days = (new Date(to).getTime() - new Date(from).getTime()) / 86_400_000;
@@ -1216,7 +1216,7 @@ describe('AgentAnalyticsSection — a window the weekly review can actually be r
 });
 
 describe('AgentAnalyticsSection — the page it asks for, and the rows it can reach', () => {
-  it('asks for the contract’s maximum limit rather than letting core default to 100', async () => {
+  it('asks for the contract’s maximum limit rather than letting the server default to 100', async () => {
     // A 180-agent agency silently lost its 80 LOWEST converters under
     // `conversions desc` — the population a supervisor is triaging.
     renderSection(true);
@@ -1342,12 +1342,12 @@ describe('AgentAnalyticsSection — the page it asks for, and the rows it can re
 
 describe('AgentAnalyticsSection — an all-departed page says ONE thing', () => {
   /**
-   * A QA reviewer proved this end to end: core returns 2 rows both `revoked`, master
+   * Proven end to end: the dialer runtime returns 2 rows both `revoked`, the server
    * answers `200 { rows: [], inactive_omitted: 2, total_agents: 2 }`, and the console
    * rendered "Nobody was handed a call in this window" AND "2 former members hidden
    * — they dialled in this window" AND "2 agents dialled", simultaneously. `page` is
    * bound for both `ready` and `empty`, so the former-members note rendered
-   * underneath the empty message. It is an ordinary master response, not a shape
+   * underneath the empty message. It is an ordinary the server response, not a shape
    * violation.
    */
   it('drops the "nobody dialled" sentence when rows were HIDDEN rather than absent', async () => {
@@ -1391,8 +1391,8 @@ describe('AgentAnalyticsSection — an all-departed page says ONE thing', () => 
   it('does NOT say "nobody dialled" when the rows were UNATTRIBUTED', async () => {
     /**
      * ⚠️ `empty` keyed on `inactive_omitted` alone, so `{ rows: [],
-     * unattributed_omitted: 3 }` — master dropped three ids with no membership record
-     * of any status, R4's third state — took the empty arm and rendered "Nobody was
+     * unattributed_omitted: 3 }` — the server dropped three ids with no membership record
+     * of any status (the third state) — took the empty arm and rendered "Nobody was
      * handed a call in this window, so there is nothing to rank" directly above a
      * readout saying THREE AGENTS DIALLED. Two sentences from one payload,
      * contradicting each other, and the remedy the empty copy names (a longer window)
@@ -1444,7 +1444,7 @@ describe('AgentAnalyticsSection — a benchmark-less page degrades instead of wh
      * no error boundary here, so the whole roster section disappeared. Every other
      * absence on this payload degrades gracefully; that one was a blank screen.
      *
-     * Realistic rather than hypothetical: master forwards core's body through a
+     * Realistic rather than hypothetical: the server relays the dialer runtime's body through a
      * spread, and phase 02 swaps the data source underneath a console already built
      * against this payload.
      */
@@ -1571,7 +1571,7 @@ describe('AgentAnalyticsSection — the way into the campaign’s contribution',
      * wording, in rounding and in what counts as absent.
      *
      * And it needs nothing fabricated to get there. A grouped row carries the id (on
-     * its `key`) and the name master resolved, which is the entire shape those panels
+     * its `key`) and the name the server resolved, which is the entire shape those panels
      * are built against.
      */
     renderSection(true);
@@ -1765,7 +1765,7 @@ describe('AgentAnalyticsSection — the compare tray', () => {
 
   it('issues no further request when it is opened and used', async () => {
     /**
-     * E7's whole point, asserted where the reader actually meets the tray: it compares
+     * The tray's whole point, asserted where the reader actually meets the tray: it compares
      * people already on the page against the page's own benchmark. The roster read
      * count must not move.
      */

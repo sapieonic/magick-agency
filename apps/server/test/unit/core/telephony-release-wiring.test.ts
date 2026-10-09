@@ -9,23 +9,15 @@
  * instance rather than running `main()`. Delete that line and every suite stays
  * green while the alert silently never fires again.
  *
- * This repo has been bitten by exactly that shape before — docs/reference/magic-voice-core/CLAUDE.md records
- * `gemini_backend_breaker_open` shipping prom-client-only, so the flagship alert
- * "could never have fired".
+ * A metric registered on one exporter only is the same shape of failure: the
+ * flagship alert could never have fired.
  *
- * PORT NOTE (magick-agency): ported from core test/unit/core/telephony-release-wiring.test.ts@4850d1d9.
- * - Case 1 audited core's `src/index.ts`. Here lane C's boot wiring lives in
- *   `src/bootstrap/voice.ts` (`startVoice`), so the same assertions are made
- *   against that file, with the import specifier it would use.
- * - Case 2 read the counter back through core's OTel SDK reader helper
- *   (`test/helpers/otel-metric-reader.ts`) and `renderPrometheusScrape`. Neither
- *   exists here (no OTel SDK dependency), so the same meaning — the observer
- *   signature accepts the real counter and forwarding emits the labelled
- *   `telephony_lease_release_total` series — is asserted through a global meter
- *   provider installed before the metric module creates its instruments.
- * - The three `telephony lease-release alerting is defined as code` cases audited
- *   core's `grafana/terraform/main.tf`. This repo has no Grafana/terraform
- *   alerting assets, so they are deleted.
+ * - Case 1 audits the boot wiring in `src/bootstrap/voice.ts` (`startVoice`),
+ *   with the import specifier it uses.
+ * - Case 2 asserts the observer signature accepts the real counter and that
+ *   forwarding emits the labelled `telephony_lease_release_total` series, through
+ *   a global meter provider installed before the metric module creates its
+ *   instruments (there is no OTel SDK dependency to read it back with).
  */
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';

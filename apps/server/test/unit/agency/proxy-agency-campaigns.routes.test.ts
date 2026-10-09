@@ -4,15 +4,12 @@ import { Readable } from 'node:stream';
 import { readFileSync } from 'node:fs';
 
 /*
- * PORT NOTE (magick-agency): master @ a1f0756a `test/unit/agency/proxy-agency-campaigns.routes.test.ts`.
- * Mechanical changes: `proxyToCore` → `callCore` (`src/api/core-dispatch.js`, mocked under
- * master's `proxyToCore` variable name so assertions stay master's; no `coreApiKey`, no
- * `resolveCoreApiKey` mock); `auditLogger` → `platformAuditLogger`; logger mock partial over
- * `@magick-agency/observability`; the `require-capability` mock is gone with governance;
- * `getFileBuffer` is core's `getFile` (B14); RBAC renames `proxy.contact_lists.read|write` →
- * `agency.campaigns.read|write` in the source table. Ids stay master's short opaque ones (the
- * UUID guard is `agencyPlugin`'s, outside this route plugin). Modified and new cases carry a
- * PORT NOTE; the list is in PORTING `p8-campaigns`.
+ * `callCore` (`src/api/core-dispatch.js`) is mocked as `mocks.proxyToCore` (there is no API key
+ * to resolve); the audit logger is `platformAuditLogger`; the logger mock is a partial over
+ * `@magick-agency/observability`; the route registers no capability gate;
+ * `getFileBuffer` is the internal handler's `getFile` (B14); RBAC permissions are
+ * `agency.campaigns.read|write` in the source table. Ids are short opaque ones (the
+ * UUID guard is `agencyPlugin`'s, outside this route plugin).
  */
 const TENANT = 'tenant-1';
 const OTHER_TENANT = 'tenant-2';
@@ -63,8 +60,6 @@ vi.mock('../../../src/auth/session.middleware.js', () => ({
 vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
   tenantContextMiddleware: async () => {},
 }));
-// PORT NOTE (magick-agency): master's `require-capability` mock is gone with governance
-// (the route registers no `requireCapability('agency')`; plan §3.2).
 vi.mock('../../../src/rbac/rbac.middleware.js', () => ({
   requirePermission: () => async () => {},
 }));
@@ -161,9 +156,9 @@ describe('agency campaign proxy routes', () => {
   });
 
   it('proxies campaign edit as PATCH with the body intact', async () => {
-    // PATCH per design §8. The method union AND the body-serialisation gate in
+    // PATCH. The method union AND the body-serialisation gate in
     // the proxy client both had to be widened — a method missing from the gate
-    // sends no body and core answers 200 to a write that did nothing.
+    // sends no body and the internal handler answers 200 to a write that did nothing.
     const app = await buildApp();
     const res = await app.inject({
       method: 'PATCH',
@@ -184,7 +179,7 @@ describe('agency campaign proxy routes', () => {
     ['pause', '/agency-campaigns/c1/pause'],
     ['resume', '/agency-campaigns/c1/resume'],
     ['stop', '/agency-campaigns/c1/stop'],
-  ])('proxies %s to its own core path', async (action, corePath) => {
+  ])('proxies %s to its own the internal handler path', async (action, corePath) => {
     const app = await buildApp();
     const res = await app.inject({ method: 'POST', url: `${PREFIX}/campaigns/c1/${action}` });
     expect(res.statusCode).toBe(200);
@@ -192,7 +187,7 @@ describe('agency campaign proxy routes', () => {
     await app.close();
   });
 
-  it('relays core\'s status for stop rather than asserting a terminal state', async () => {
+  it('relays the internal handler\'s status for stop rather than asserting a terminal state', async () => {
     // A 200 from stop means "accepted and draining": the pacing leader writes
     // `stopping → stopped` on its next idle tick, because that transition has
     // exactly one writer. The proxy must not invent a terminal state.
@@ -208,12 +203,12 @@ describe('agency campaign proxy routes', () => {
   });
 
   /**
-   * `break_reasons` (core migration 078, `AD-P2-C-03`/`AD-P2-C-10`).
+   * `break_reasons`.
    *
-   * Campaign config is the **sole authority** on which break codes core will
-   * accept, and it reaches core through this pass-through. Master deliberately
-   * holds no schema for it and no copy of the built-in default list: core owns
-   * the column, core serves it through bootstrap, and core validates
+   * Campaign config is the **sole authority** on which break codes the internal handler will
+   * accept, and it reaches the internal handler through this pass-through. The public API layer deliberately
+   * holds no schema for it and no copy of the built-in default list: the internal handler owns
+   * the column, the internal handler serves it through bootstrap, and the internal handler validates
    * `POST /sessions/:id/break` against it, answering `unknown_break_reason` with
    * `allowed_codes`. A mirror here would be a second copy of a rule that can go
    * stale — the same reason the IVR smart-TTS fields round-trip unvalidated.
@@ -240,7 +235,7 @@ describe('agency campaign proxy routes', () => {
     expect(res.statusCode).toBe(200);
     const call = mocks.proxyToCore.mock.calls[0]![0];
     expect(call.path).toBe('/agency-campaigns');
-    // Field-wise, not whole-body: `AD-P3-M-04` defaults `disposition_catalog` on
+    // Field-wise, not whole-body: the create path defaults `disposition_catalog` on
     // create, so a whole-body equality would now fail for a reason that has nothing
     // to do with break reasons. Naming the field is also the stronger guard — it
     // survives the next legitimate default too.
@@ -252,7 +247,7 @@ describe('agency campaign proxy routes', () => {
   it('round-trips break_reasons through edit untouched, including an empty list', async () => {
     // An empty list is meaningful and must not be confused with "absent": it is
     // how an operator says "this campaign configures none", which is what makes
-    // core fall back to its built-in defaults.
+    // the internal handler fall back to its built-in defaults.
     const app = await buildApp();
     await app.inject({
       method: 'PATCH',
@@ -266,23 +261,23 @@ describe('agency campaign proxy routes', () => {
 
   it('does not invent a default break list of its own', async () => {
     /**
-     * Master must never populate `break_reasons`. If it did, a campaign that
-     * configures none would arrive at core carrying master's idea of the defaults,
+     * The public API layer must never populate `break_reasons`. If it did, a campaign that
+     * configures none would arrive at the internal handler carrying the public API layer's idea of the defaults,
      * and the authority would silently move to the service that does not own the
      * column.
      *
      * ── Why this now asserts one FIELD and not the whole body ──────────────────
-     * `AD-P3-M-04` does default `disposition_catalog` on create, which reads like a
+     * The create path does default `disposition_catalog`, which reads like a
      * breach of this exact rule. It is not, and the difference is verifiable in
-     * core rather than only in prose:
+     * the internal handler rather than only in prose:
      *
-     *  - `break_reasons` HAS a core-side default. `break-manager.ts:52,59`
+     *  - `break_reasons` HAS an internal-handler-side default. `break-manager.ts:52,59`
      *    substitutes `DEFAULT_BREAK_REASONS` whenever the configured list is empty
-     *    or invalid, so an empty list means "use core's built-ins". Master
+     *    or invalid, so an empty list means "use the internal handler's built-ins". The public API layer
      *    populating it would override a real default — the harm named above.
      *  - `disposition_catalog` has NO such substitution. `requiresDisposition`
      *    reads empty as "no disposition required", a distinct configuration. There
-     *    is nothing for master's default to override, and without it the column's
+     *    is nothing for the public API layer's default to override, and without it the column's
      *    `'[]'` was never seeded by anything, so disposition was inert on every
      *    campaign the platform had made.
      *
@@ -302,7 +297,7 @@ describe('agency campaign proxy routes', () => {
     await app.close();
   });
 
-  it('exposes NO concurrency setter anywhere on the campaign surface (D10)', async () => {
+  it('exposes NO concurrency setter anywhere on the campaign surface (super-admin only)', async () => {
     // Concurrency is super-admin only: an account that can raise its own limit
     // can raise its own carrier spend. There is no /proxy/account-settings and
     // none is being added.
@@ -320,11 +315,11 @@ describe('agency campaign proxy routes', () => {
 });
 
 /**
- * `MAG-70` — campaign lifecycle actions routed through the platform audit
+ * Campaign lifecycle actions routed through the platform audit
  * trail. These are proxy routes, so the whole point is that a row is written
- * only for what core actually accepted — never for what the browser asked for.
+ * only for what the internal handler actually accepted — never for what the browser asked for.
  */
-describe('campaign lifecycle audit trail (`MAG-70`)', () => {
+describe('campaign lifecycle audit trail', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.config.agency.rosterReplaceEnabled = false;
@@ -335,7 +330,7 @@ describe('campaign lifecycle audit trail (`MAG-70`)', () => {
     ['pause', 'agency_campaign.paused'],
     ['resume', 'agency_campaign.resumed'],
     ['stop', 'agency_campaign.stopped'],
-  ])('audits %s as %s on a 2xx from core, with the resulting status', async (route, action) => {
+  ])('audits %s as %s on a 2xx from the internal handler, with the resulting status', async (route, action) => {
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
       body: { id: 'c1', status: 'paused' },
@@ -362,7 +357,7 @@ describe('campaign lifecycle audit trail (`MAG-70`)', () => {
   });
 
   it.each(['start', 'pause', 'resume', 'stop'])(
-    'does NOT audit %s when core answers a 4xx',
+    'does NOT audit %s when the internal handler answers a 4xx',
     async (route) => {
       mocks.proxyToCore.mockResolvedValue({
         status: 409,
@@ -380,7 +375,7 @@ describe('campaign lifecycle audit trail (`MAG-70`)', () => {
   );
 
   it.each(['start', 'pause', 'resume', 'stop'])(
-    'does NOT audit %s when core answers a 5xx',
+    'does NOT audit %s when the internal handler answers a 5xx',
     async (route) => {
       mocks.proxyToCore.mockResolvedValue({
         status: 502,
@@ -397,7 +392,7 @@ describe('campaign lifecycle audit trail (`MAG-70`)', () => {
     },
   );
 
-  it('omits `details` rather than fabricating a status when core\'s body carries none', async () => {
+  it('omits `details` rather than fabricating a status when the internal handler\'s body carries none', async () => {
     // `stop` answers 200 with `{ status: 'stopping' }` normally, but the audit
     // call must not assume the shape — a body with no `status` field (or a
     // non-string one) must not throw and must not invent a value.
@@ -496,7 +491,7 @@ describe('agency ingest routes', () => {
     await app.close();
   });
 
-  it('starts a dry run WITHOUT a campaign and sends nothing to core', async () => {
+  it('starts a dry run WITHOUT a campaign and sends nothing to the internal handler', async () => {
     // The "95% of your rows are valid" answer, before the operator commits.
     mocks.repo.create.mockResolvedValue(job({ dry_run: true, campaign_id: null, status: 'pending' }));
     const app = await buildApp();
@@ -513,7 +508,7 @@ describe('agency ingest routes', () => {
 
     expect(res.statusCode).toBe(202);
     expect(mocks.repo.create.mock.calls[0]![0]).toMatchObject({ dry_run: true, campaign_id: null });
-    // A dry run reaches core through no path at all.
+    // A dry run reaches the internal handler through no path at all.
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
     await app.close();
   });
@@ -579,9 +574,9 @@ describe('agency ingest routes', () => {
   /**
    * ── The ingest MODE, and the destructive branch's guards ──────────────────
    *
-   * Core's 083 made a corrected re-upload merge instead of being refused, and
-   * core cannot tell a correction from a top-up because the two are the same
-   * request. Master is the only service that holds the operator's intent, so it
+   * A corrected re-upload merges instead of being refused, and
+   * the internal handler cannot tell a correction from a top-up because the two are the same
+   * request. The public API layer is the only service that holds the operator's intent, so it
    * is the only one that can carry a mode.
    */
   describe('ingest mode', () => {
@@ -615,7 +610,7 @@ describe('agency ingest routes', () => {
 
       expect(res.json().mode).toBe('append');
       // Not passed through to the repository at all, so the column's own default
-      // applies and a pre-057 database still accepts the INSERT.
+      // applies and an INSERT that omits it still succeeds.
       expect(mocks.repo.create.mock.calls[0]![0].mode).toBeUndefined();
       await app.close();
     });
@@ -714,9 +709,9 @@ describe('agency ingest routes', () => {
       /**
        * The third state, which a nullable count alone could not express and which
        * was being reported as the second. `supersedeRoster` makes up to four
-       * attempts, so one can commit and a later one be refused by core's
+       * attempts, so one can commit and a later one be refused by the internal handler's
        * compare-and-swap — leaving the roster gone, the count unknown, and every
-       * other signal saying "core refused".
+       * other signal saying "the internal handler refused".
        *
        *   (N, false)    exactly N retired
        *   (NULL, false) nothing retired
@@ -739,8 +734,8 @@ describe('agency ingest routes', () => {
       await app.close();
     });
 
-    it('reports append and null on a row written before migration 057', async () => {
-      // `SELECT *` against a pre-057 database returns a row with neither key.
+    it('reports append and null on a row that lacks the columns', async () => {
+      // `SELECT *` can return a row with neither key.
       // Append is both the historical truth and the fail-safe reading — a client
       // must never infer "this was a replace" from an absence.
       const preMigration = job();
@@ -754,7 +749,7 @@ describe('agency ingest routes', () => {
       expect(body.mode).toBe('append');
       expect(body.replace_superseded_contacts).toBeNull();
       // `false`, unlike the undercount flag above — and the asymmetry is
-      // deliberate. That flag qualifies a number master tried and failed to write;
+      // deliberate. That flag qualifies a number the public API layer tried and failed to write;
       // this one asserts a destructive act happened, and an absent column is no
       // evidence at all that it did. Inventing `true` here would warn every
       // operator on every append that their roster might be gone.
@@ -766,14 +761,14 @@ describe('agency ingest routes', () => {
   /**
    * ── Clearing a roster ─────────────────────────────────────────────────────
    *
-   * There has never been a way to do this — no route in master, no endpoint in
-   * core — while cusui's own summary copy tells operators in two places that
+   * There has never been a way to do this — no route in the public API layer, no endpoint in
+   * the internal handler — while the console's own summary copy tells operators in two places that
    * they can "clear and re-upload". The product's advice was impossible to
    * follow.
    */
   describe('roster clear', () => {
     it('is not registered at all when the deployment has not enabled it', async () => {
-      // Master's own idiom (an entire subsystem registers only if its config
+      // The public API layer's own idiom (an entire subsystem registers only if its config
       // says so). A destructive surface that is visible but always fails is
       // worse than one that is not there.
       const app = await buildApp();
@@ -790,7 +785,7 @@ describe('agency ingest routes', () => {
 
     it('retires every live contact, exempting nothing', async () => {
       // No `ingestJobId`: nothing is being loaded, so nothing is protected.
-      // Sending one would make the request read as a replace in core's audit row.
+      // Sending one would make the request read as a replace in the internal handler's audit row.
       mocks.config.agency.rosterReplaceEnabled = true;
       mocks.supersedeRoster.mockResolvedValue({
         superseded: 4210, retained: 0, contacts_total: 0, already_applied: false,
@@ -837,7 +832,7 @@ describe('agency ingest routes', () => {
       await app.close();
     });
 
-    it('forwards core\'s refusal as a 409 carrying its machine code', async () => {
+    it('forwards the internal handler\'s refusal as a 409 carrying its machine code', async () => {
       // `campaign_dialing`, `attempts_live` and `contacts_total_mismatch` are
       // three different operator actions. Collapsing them makes the refusal
       // unactionable, and each one is a thing they CAN fix.
@@ -894,7 +889,7 @@ describe('agency ingest routes', () => {
       expect(res.json()).toEqual({
         campaign_id: 'c1',
         roster_state: 'unconfirmed',
-        // Null, never 0 — master has no count, and a zero reads as "we cleared
+        // Null, never 0 — the public API layer has no count, and a zero reads as "we cleared
         // nothing" on the one response that cannot make that claim.
         cleared: null,
         contacts_total: null,
@@ -904,7 +899,7 @@ describe('agency ingest routes', () => {
         message: expect.stringContaining('may already have been removed'),
       });
       // The recovery is re-fetch-and-re-confirm, which is what the
-      // `contacts_total_mismatch` guidance already tells cusui. A bare retry
+      // `contacts_total_mismatch` guidance already tells the console. A bare retry
       // re-asserts a count that is by now certainly wrong.
       expect(res.json().message).toContain('do not simply retry');
       await app.close();
@@ -917,7 +912,7 @@ describe('agency ingest routes', () => {
       mocks.config.agency.rosterReplaceEnabled = true;
       mocks.supersedeRoster.mockRejectedValue(
         new RosterSupersedeError(
-          'Could not reach the core service to change this roster (4 attempts): core returned 503',
+          'Could not reach the dialer runtime to change this roster (4 attempts): the handler returned 503',
           0,
           'failed',
           undefined,
@@ -933,13 +928,13 @@ describe('agency ingest routes', () => {
 
       expect(res.statusCode).toBe(202);
       expect(res.json().roster_state).toBe('unconfirmed');
-      // Core never gave a refusal reason, so none is invented.
+      // The internal handler never gave a refusal reason, so none is invented.
       expect(res.json()).not.toHaveProperty('core_code');
       await app.close();
     });
 
-    it('still answers 404 after a retry when core says the campaign does not exist', async () => {
-      // The one code the attempt count does not override: a campaign core cannot
+    it('still answers 404 after a retry when the internal handler says the campaign does not exist', async () => {
+      // The one code the attempt count does not override: a campaign the internal handler cannot
       // find has no roster for the operator to go and check, so "we could not
       // confirm your contacts" would be an alarm about nothing.
       mocks.config.agency.rosterReplaceEnabled = true;
@@ -972,7 +967,7 @@ describe('agency ingest routes', () => {
       expect(res.statusCode).toBe(404);
       // `campaign_not_found` was already allow-listed in `errorMaskHook`, but the
       // allow-list reads the BODY — and this body was `{ error, message }`, so
-      // core's recorded 404 masked the whole response into "contact support and
+      // the internal handler's recorded 404 masked the whole response into "contact support and
       // quote this request id" for a campaign that simply does not exist.
       // `error-mask.als.test.ts` proves the forwarding over the real seam; this
       // asserts the route actually sends the field that forwarding depends on.
@@ -980,14 +975,14 @@ describe('agency ingest routes', () => {
       await app.close();
     });
 
-    it('does NOT dress a core that cannot serve the hop as an operator error', async () => {
-      // Reachable only when the flag is on against a core without the endpoint —
+    it('does NOT dress an internal handler that cannot serve the hop as an operator error', async () => {
+      // Reachable only when the flag is on against an internal handler without the endpoint —
       // i.e. this deployment is wired wrong. That is a server fault, and the
       // error mask's job is to turn it into a request id plus a full log line
       // rather than an explanation of our deployment aimed at an operator.
       mocks.config.agency.rosterReplaceEnabled = true;
       mocks.supersedeRoster.mockRejectedValue(
-        new RosterSupersedeError('core has no such route', 404, 'unsupported'),
+        new RosterSupersedeError('the handler has no such route', 404, 'unsupported'),
       );
       const app = await buildApp();
       const res = await app.inject({
@@ -1063,7 +1058,7 @@ describe('agency ingest routes', () => {
         job({
           status: 'failed',
           error_code: 'roster_incomplete',
-          error_message: 'Core is missing chunks 7, 11. The import did not complete; upload the file again.',
+          error_message: 'The roster is missing chunks 7, 11. The import did not complete; upload the file again.',
         }),
       );
       const app = await buildApp();
@@ -1073,10 +1068,10 @@ describe('agency ingest routes', () => {
       await app.close();
     });
 
-    it('surfaces core-side duplicate rejections independent of accepted/rejected', async () => {
+    it('surfaces internal-handler-side duplicate rejections independent of accepted/rejected', async () => {
       // The bug this pins: a re-upload into an already-populated campaign can
-      // sail through master's own accepted/rejected counters (rows_read =
-      // accepted + rejected, both about what master decided to SEND) while core
+      // sail through the public API layer's own accepted/rejected counters (rows_read =
+      // accepted + rejected, both about what the public API layer decided to SEND) while the internal handler
       // writes zero rows because every row collided with the existing roster.
       // Without this field the wizard's "5,000 accepted" summary is a lie.
       mocks.repo.findById.mockResolvedValue(
@@ -1097,15 +1092,15 @@ describe('agency ingest routes', () => {
       await app.close();
     });
 
-    it('defaults core-side duplicate fields to zero/empty on an ordinary import', async () => {
+    it('defaults internal-handler-side duplicate fields to zero/empty on an ordinary import', async () => {
       mocks.repo.findById.mockResolvedValue(job());
       const app = await buildApp();
       const body = (await app.inject({ method: 'GET', url: `${PREFIX}/ingest/jobs/00000000-0000-4000-8000-000000000001` })).json();
 
       expect(body.core_rejected_duplicate_rows).toBe(0);
       expect(body.core_duplicate_source_rows).toEqual([]);
-      // An exact zero, and the payload says so — this is the shape cusui reads
-      // as "core refused nothing", so it must be distinguishable from the shape
+      // An exact zero, and the payload says so — this is the shape the console reads
+      // as "the internal handler refused nothing", so it must be distinguishable from the shape
       // below.
       expect(body.core_rejected_duplicate_rows_may_undercount).toBe(false);
       await app.close();
@@ -1113,9 +1108,9 @@ describe('agency ingest routes', () => {
 
     it('tells the client when that zero means "unknown" rather than "none"', async () => {
       // Same zero on the wire, opposite meanings. Without this field a summary
-      // built from a chunk core could not account for renders identically to a
+      // built from a chunk the internal handler could not account for renders identically to a
       // clean import, and the operator has no way to learn otherwise — which is
-      // the failure core's migration 084 and master's 056 exist to end.
+      // the failure the persisted chunk counts and the exact/lower-bound flag exist to end.
       mocks.repo.findById.mockResolvedValue(
         job({
           accepted: '5000',
@@ -1132,9 +1127,9 @@ describe('agency ingest routes', () => {
       await app.close();
     });
 
-    it('degrades cleanly when the columns are entirely absent (pre-migration-055 row)', async () => {
-      // Simulates a `SELECT *` against a database that hasn't run migration
-      // 055 yet (or a row from that ordering window) — the keys aren't
+    it('degrades cleanly when the columns are entirely absent (row without the columns)', async () => {
+      // Simulates a `SELECT *` returning a row that lacks the columns —
+      // the keys aren't
       // merely null, they don't exist on the object at all, which is what
       // Number(undefined) → NaN → JSON `null` actually requires to reproduce.
       const preMigrationJob = job();
@@ -1151,25 +1146,24 @@ describe('agency ingest routes', () => {
       expect(body.core_rejected_duplicate_rows).toBe(0);
       expect(body.core_duplicate_source_rows).toEqual([]);
       /**
-       * **`true`, not `false`, and this is the finding-6 fix.**
+       * **`true`, not `false`.**
        *
        * The key is missing from `SELECT *` only while the column does not exist —
-       * i.e. while migration 056 has not been applied — and in that window the
+       * i.e. while the migration that adds it has not been applied — and in that window the
        * repository's `42703` ladder has also been unable to write the trust bit. So
-       * `?? false` reported `{ core_rejected_duplicate_rows: 0, may_undercount:
-       * false }`: "core refused nothing, exactly", said confidently about a number
-       * master never recorded. That is a confident wrong zero, which is precisely
-       * what 056 exists to end.
+       * `?? false` would report `{ core_rejected_duplicate_rows: 0, may_undercount:
+       * false }`: "the internal handler refused nothing, exactly", said confidently about a number
+       * the public API layer never recorded. That is a confident wrong zero.
        *
-       * Absence of the COLUMN is not absence of a core flag: it means master could
-       * not vouch for the count, so it says so. Once 056 lands, historical rows read
+       * Absence of the COLUMN is not absence of an internal handler flag: it means the public API layer could
+       * not vouch for the count, so it says so. Once the migration lands, historical rows read
        * the column default `false`, which is correct for them.
        */
       expect(body.core_rejected_duplicate_rows_may_undercount).toBe(true);
       await app.close();
     });
 
-    it('reports an exact zero as exact once migration 056 has landed', async () => {
+    it('reports an exact zero as exact once the flag column exists', async () => {
       // The counterpart, and the one that keeps the flag meaningful: with the
       // column present and false, the summary must read as a clean import rather
       // than warning on every ordinary job.
@@ -1204,7 +1198,7 @@ describe('agency ingest routes', () => {
       ['POST', '/ingest/jobs/not-a-uuid/cancel'],
       ['GET', '/ingest/jobs/not-a-uuid/rejected.csv'],
     ] as const)('%s %s is a 404 before any database call, not a 22P02 500', async (method, path) => {
-      // Master's own UUID primary key: a malformed id used to reach Postgres as
+      // The public API layer's own UUID primary key: a malformed id used to reach Postgres as
       // `22P02 invalid_text_representation` and come back as a masked 500.
       const app = await buildApp();
       const res = await app.inject({ method, url: `${PREFIX}${path}` });
@@ -1218,7 +1212,7 @@ describe('agency ingest routes', () => {
   });
 
   /**
-   * ClickUp `14ygtkj8rvv`: an account-scoped caller must not poll, export or
+   * An account-scoped caller must not poll, export or
    * cancel a SIBLING account's ingest job in the same tenant. The repository
    * does the filtering (an equality predicate on `account_id`); these tests pin
    * that every job-id route hands it the caller's MEMBERSHIP account — never
@@ -1337,10 +1331,6 @@ describe('agency ingest routes', () => {
       await app.close();
     });
 
-    // PORT NOTE (magick-agency): MODIFIED. Master's second half (a creator-backed platform
-    // API key stamps `created_by: null`) is deleted with API keys (decision #5): the route's
-    // `isPlatformApiKeyCaller` arm is gone and lane A's session middleware has no key branch.
-    // The session half is verbatim.
     it('create records the person, never a platform key\'s creator, as created_by', async () => {
       mocks.repo.create.mockResolvedValue(job({ dry_run: true, campaign_id: null, status: 'pending' }));
       const payload = {
@@ -1375,7 +1365,7 @@ describe('agency ingest routes', () => {
   });
 
   /**
-   * ClickUp `14ygtkj8rvv`, second door: a rejected-rows export lives under the
+   * A second door: a rejected-rows export lives under the
    * same `agency-ingest/{tenant}/` prefix as an upload and is keyed by nothing
    * but the job id, so naming it as an `s3_key` read a sibling account's
    * rejected rows back through the analyzer or a dry-run re-ingest.
@@ -1453,9 +1443,9 @@ describe('agency ingest routes', () => {
   });
 
   /**
-   * The roster writes reach core over S2S, past core's `requireOwned`, and
-   * core's internal contacts handler resolves the campaign by id alone — so
-   * master has to prove ownership of a body-supplied `campaign_id` itself.
+   * The roster writes reach the internal handler in-process, past the internal handler's `requireOwned`, and
+   * the internal handler's internal contacts handler resolves the campaign by id alone — so
+   * the public API layer has to prove ownership of a body-supplied `campaign_id` itself.
    */
   describe('campaign ownership before a roster write', () => {
     const CAMPAIGN = '11111111-2222-3333-4444-555555555555';
@@ -1466,11 +1456,11 @@ describe('agency ingest routes', () => {
       campaign_id: CAMPAIGN,
     };
 
-    // PORT NOTE (magick-agency): MODIFIED fixture only — the probe answers with the
-    // campaign's `account_id: 'account-b'`. Core's `requireOwned` only ever answers 200 for a
-    // campaign whose account equals the probed one, and the route now stamps the job from the
-    // PROVEN owner (the row's account, B2 carry-forward), so master's leftover
-    // `account-1` fixture from the describe's beforeEach described an impossible probe.
+    // The probe answers with the campaign's `account_id: 'account-b'`. The internal
+    // handler's `requireOwned` only ever answers 200 for a campaign whose account equals
+    // the probed one, and the route stamps the job from the PROVEN owner (the row's
+    // account), so an `account-1` fixture from the describe's beforeEach would describe an
+    // impossible probe.
     it('probes the campaign with the account the job is stamped with', async () => {
       mocks.repo.create.mockResolvedValue(job());
       mocks.proxyToCore.mockResolvedValue({
@@ -1491,9 +1481,9 @@ describe('agency ingest routes', () => {
       await app.close();
     });
 
-    it('a campaign core does not show this caller is a 404, and nothing is loaded', async () => {
+    it('a campaign the internal handler does not show this caller is a 404, and nothing is loaded', async () => {
       // A sibling account's campaign, another tenant's and a nonexistent one
-      // are all core's 404 — forwarded verbatim so they stay indistinguishable.
+      // are all the internal handler's 404 — forwarded unchanged so they stay indistinguishable.
       mocks.proxyToCore.mockResolvedValue({
         status: 404,
         body: { error: 'Not Found', code: 'campaign_not_found', message: 'Campaign not found' },
@@ -1507,7 +1497,7 @@ describe('agency ingest routes', () => {
       await app.close();
     });
 
-    it('fails CLOSED when core cannot be reached', async () => {
+    it('fails CLOSED when the internal handler cannot be reached', async () => {
       mocks.proxyToCore.mockRejectedValue(new Error('ECONNREFUSED'));
       const app = await buildApp();
       const res = await app.inject({ method: 'POST', url: `${PREFIX}/ingest/jobs`, payload: realImport });
@@ -1517,7 +1507,7 @@ describe('agency ingest routes', () => {
     });
 
     it('refuses a real import with no account to prove ownership against', async () => {
-      // Tenant-wide membership, no X-Account-Id: core's `requireOwned` has
+      // Tenant-wide membership, no X-Account-Id: the internal handler's `requireOwned` has
       // nothing to compare the campaign's account to.
       const app = await buildApp(TENANT, { membershipAccountId: null, accountId: null });
       const res = await app.inject({ method: 'POST', url: `${PREFIX}/ingest/jobs`, payload: realImport });
@@ -1528,7 +1518,7 @@ describe('agency ingest routes', () => {
       await app.close();
     });
 
-    it('a dry run WITHOUT a campaign is not probed — it stays reachable with core down', async () => {
+    it('a dry run WITHOUT a campaign is not probed — it stays reachable with the internal handler down', async () => {
       mocks.repo.create.mockResolvedValue(job({ dry_run: true, campaign_id: null }));
       const app = await buildApp();
       const { campaign_id: _omit, ...noCampaign } = realImport;
@@ -1585,7 +1575,7 @@ describe('agency ingest routes', () => {
       await app.close();
     });
 
-    // PORT NOTE (magick-agency): MODIFIED fixture only, as in "probes the campaign…": the
+    // As in "probes the campaign…": the
     // probe answers with the probed account, and the supersede is addressed to the proven owner.
     it('roster clear sends the membership account, not a missing header', async () => {
       mocks.config.agency.rosterReplaceEnabled = true;
@@ -1611,10 +1601,10 @@ describe('agency ingest routes', () => {
     });
 
     /*
-     * NEW (magick-agency, lane B2 carry-forward): `agency_ingest_jobs.account_id` is set from
+     * `agency_ingest_jobs.account_id` is set from
      * the PROVEN owner of the campaign — the account on the campaign row the probe returned —
      * because the in-process roster hand-off compares the two and fails a mismatch
-     * `core_rejected_chunk`. Core's `requireOwned` makes the row's account equal the probed
+     * `core_rejected_chunk`. The internal handler's `requireOwned` makes the row's account equal the probed
      * one, so the two can only differ in a stub; this one makes them differ to pin WHICH
      * value is written. Mutation-checked: stamping `jobAccountId` instead reds it.
      */
@@ -1632,7 +1622,7 @@ describe('agency ingest routes', () => {
       await app.close();
     });
 
-    // NEW (magick-agency): a probe that answers 200 without the campaign's account cannot
+    // A probe that answers 200 without the campaign's account cannot
     // name an owner, so nothing is stamped or loaded (the route refuses rather than guesses).
     it('refuses to stamp a job when the proven campaign carries no account', async () => {
       mocks.proxyToCore.mockResolvedValue({ status: 200, body: { id: CAMPAIGN }, headers: new Headers() });
@@ -1718,7 +1708,7 @@ describe('agency ingest routes', () => {
   });
 });
 
-describe('campaign config at the proxy boundary (`AD-P3-M-04`)', () => {
+describe('campaign config at the proxy boundary', () => {
   beforeEach(() => {
     // This describe has its own beforeEach, so it must clear too — the sibling
     // block's clear does not reach here, and `mock.calls[0]` silently became the
@@ -1728,7 +1718,7 @@ describe('campaign config at the proxy boundary (`AD-P3-M-04`)', () => {
     mocks.proxyToCore.mockResolvedValue({ status: 201, body: { id: 'campaign-1' } });
   });
 
-  it('400s a bad config on CREATE and never reaches core', async () => {
+  it('400s a bad config on CREATE and never reaches the internal handler', async () => {
     const app = await buildApp();
 
     const res = await app.inject({
@@ -1743,8 +1733,8 @@ describe('campaign config at the proxy boundary (`AD-P3-M-04`)', () => {
     });
 
     expect(res.statusCode).toBe(400);
-    // Not "core would have rejected it anyway": core validates NONE of this, so
-    // reaching core means the value is stored and behaves wrongly later.
+    // Not "the internal handler would have rejected it anyway": the internal handler validates NONE of this, so
+    // reaching the internal handler means the value is stored and behaves wrongly later.
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
     expect(Object.keys(res.json().details)).toEqual(['calling_days[0]', 'default_timezone']);
     await app.close();
@@ -1766,7 +1756,7 @@ describe('campaign config at the proxy boundary (`AD-P3-M-04`)', () => {
     await app.close();
   });
 
-  it('forwards a valid body to core unchanged apart from the catalog default', async () => {
+  it('forwards a valid body to the internal handler unchanged apart from the catalog default', async () => {
     const app = await buildApp();
 
     await app.inject({
@@ -1785,8 +1775,8 @@ describe('campaign config at the proxy boundary (`AD-P3-M-04`)', () => {
     const sent = mocks.proxyToCore.mock.calls[0]![0].body as Record<string, unknown>;
     expect(sent['name']).toBe('Q3');
     expect(sent['default_timezone']).toBe('America/New_York');
-    // Master still keeps no campaign copy — the body goes through, it is not
-    // rebuilt from a master-side schema.
+    // The public API layer still keeps no campaign copy — the body goes through, it is not
+    // rebuilt from a public-API-layer schema.
     expect(sent['calling_days']).toEqual([1, 2, 3, 4, 5]);
     await app.close();
   });
@@ -1838,30 +1828,30 @@ describe('campaign config at the proxy boundary (`AD-P3-M-04`)', () => {
     });
 
     const sent = mocks.proxyToCore.mock.calls[0]![0].body as Record<string, unknown>;
-    // "Outcome-driven retry, no human write-up" is a coherent configuration core
-    // supports and `MAG-88` preserves. A default that overrode `[]` would delete it.
+    // "Outcome-driven retry, no human write-up" is a coherent configuration the internal handler
+    // supports and preserves. A default that overrode `[]` would delete it.
     expect(sent['disposition_catalog']).toEqual([]);
     await app.close();
   });
 });
 
-describe('editing config on a RUNNING campaign (`AD-P3-M-04` (d))', () => {
+describe('editing config on a RUNNING campaign', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.proxyToCore.mockResolvedValue({ status: 200, body: {} });
   });
 
-  it('adds no campaign-status gate — one core call, and it is the PATCH', async () => {
+  it('adds no campaign-status gate — one the internal handler call, and it is the PATCH', async () => {
     /**
      * The documented rule is **allowed**, and this is the mechanically-verifiable
      * form of it rather than a comment asserting it.
      *
-     * A status gate cannot be added to master without becoming visible here: master
+     * A status gate cannot be added to the public API layer without becoming visible here: the public API layer
      * holds no campaign copy, so any such gate has to GET the campaign first and
-     * decide on the status it reads. That makes it a SECOND core call, before the
+     * decide on the status it reads. That makes it a SECOND the internal handler call, before the
      * PATCH — so asserting the call count and the method is what actually observes
      * the rule. (It would also be a gate on a status that can change between the two
-     * calls, which is the other reason it belongs in core and not here.)
+     * calls, which is the other reason it belongs in the internal handler and not here.)
      */
     const app = await buildApp();
 
@@ -1897,13 +1887,13 @@ describe('editing config on a RUNNING campaign (`AD-P3-M-04` (d))', () => {
     await app.close();
   });
 
-  it('forwards `status` rather than ruling on it, because core owns lifecycle', async () => {
+  it('forwards `status` rather than ruling on it, because the internal handler owns lifecycle', async () => {
     /**
-     * Core answers 400 to a `status` in a PATCH body — lifecycle goes through
+     * The internal handler answers 400 to a `status` in a PATCH body — lifecycle goes through
      * /start, /pause, /resume, /stop so a config edit can never race the pacing
-     * leader's own `running → completed` write. Master must forward it and let core
-     * say so: a master-side rejection would be a second, drifting copy of a rule
-     * core already enforces, and the two would disagree the first time core's moved.
+     * leader's own `running → completed` write. The public API layer must forward it and let the internal handler
+     * say so: a public-API-layer rejection would be a second, drifting copy of a rule
+     * the internal handler already enforces, and the two would disagree the first time the internal handler's moved.
      */
     const app = await buildApp();
 
@@ -1919,19 +1909,19 @@ describe('editing config on a RUNNING campaign (`AD-P3-M-04` (d))', () => {
   });
 });
 
-describe('the campaign row\'s lifecycle provenance reaches the browser (`86d45k0bk`)', () => {
+describe('the campaign row\'s lifecycle provenance reaches the browser', () => {
   /**
-   * Core adds three members to the campaign row it serves — `started_at`,
-   * `ended_at` and `last_transition_by` — and master's job is that they arrive.
+   * The internal handler adds three members to the campaign row it serves — `started_at`,
+   * `ended_at` and `last_transition_by` — and the public API layer's job is that they arrive.
    *
    * ── Why this needs a test when the code needed no change ──────────────────
    * Because "needed no change" is a property, not an accident, and it is the one
    * a well-meaning refactor deletes. Both campaign reads are
    * `reply.code(result.status).send(result.body)`: no Fastify `response` schema
    * (so no ajv `removeAdditional`), no Zod response parse, no field whitelist.
-   * The moment somebody adds one "to document the shape", every field core ships
+   * The moment somebody adds one "to document the shape", every field the internal handler ships
    * next is dropped on the floor with a green suite — which is exactly how this
-   * ticket half-ships. So the assertion is `JSON.stringify` on the whole body
+   * feature half-ships. So the assertion is `JSON.stringify` on the whole body
    * rather than a field-by-field walk: a walk cannot see a field it does not
    * name, and the fields it does not name are the ones at risk.
    *
@@ -1940,12 +1930,11 @@ describe('the campaign row\'s lifecycle provenance reaches the browser (`86d45k0
    *  2. `null` stays `null` — never `0`, never `''`, never `{}`. `null` is an
    *     ANSWER on all three ("never started", "still live", "the platform did
    *     it"), and coercing it states something the data does not;
-   *  3. ABSENT is tolerated. An older core does not serve them and neither a
-   *     rollback of core nor the core → master deploy order may 500 this read.
+   *  3. ABSENT is tolerated. A row that lacks them must not 500 this read.
    */
   const CAMPAIGN_ID = 'campaign-1';
 
-  /** Core's row with the three new members populated. */
+  /** The internal handler's row with the three new members populated. */
   const RUNNING_CAMPAIGN: AgencyCampaignWire & Record<string, unknown> = {
     id: CAMPAIGN_ID,
     account_id: 'account-1',
@@ -1954,7 +1943,7 @@ describe('the campaign row\'s lifecycle provenance reaches the browser (`86d45k0
     started_at: '2026-08-11T04:30:00.000Z',
     ended_at: null,
     last_transition_by: { user_id: ACTING_USER, name: 'Asha Menon' },
-    // A field this repo has never heard of, standing in for whatever core adds
+    // A field this repo has never heard of, standing in for whatever the internal handler adds
     // next. It must survive on the same mechanism the three above do.
     some_field_added_next_quarter: { nested: [1, 2, 3] },
   };
@@ -2046,13 +2035,13 @@ describe('the campaign row\'s lifecycle provenance reaches the browser (`86d45k0
       url: `${PREFIX}/campaigns/${CAMPAIGN_ID}`,
     })).json() as Record<string, unknown>;
 
-    // The exact string core sent — not re-serialised through a `Date`, which
+    // The exact string the internal handler sent — not re-serialised through a `Date`, which
     // would be lossless here and is not the habit to establish.
     expect(body['ended_at']).toBe('2026-08-19T11:02:03.000Z');
     await app.close();
   });
 
-  it('tolerates all three being ABSENT — an older core, or a rollback of core', async () => {
+  it('tolerates all three being ABSENT — a row that lacks them', async () => {
     const oldCore = { id: CAMPAIGN_ID, account_id: 'account-1', name: 'Q3 outbound', status: 'running' };
     mocks.proxyToCore.mockResolvedValue({ status: 200, body: oldCore, headers: new Headers() });
     const app = await buildApp();
@@ -2060,8 +2049,8 @@ describe('the campaign row\'s lifecycle provenance reaches the browser (`86d45k0
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/campaigns/${CAMPAIGN_ID}` });
 
     expect(res.statusCode).toBe(200);
-    // Absent, not invented: master must not manufacture `started_at: null` for a
-    // core that has no opinion, because "never started" is a claim.
+    // Absent, not invented: the public API layer must not manufacture `started_at: null` for a
+    // the internal handler that has no opinion, because "never started" is a claim.
     expect(Object.keys(res.json())).not.toContain('started_at');
     expect(JSON.stringify(res.json())).toBe(JSON.stringify(oldCore));
     await app.close();
@@ -2074,15 +2063,11 @@ describe('every campaign route carries its RBAC permission', () => {
    * `requirePermission` is mocked to a no-op at the top of this file — it has to
    * be, or every case here would be re-testing the RBAC middleware. The cost is
    * that **no behavioural test in this file can observe a missing guard**:
-   * measured, deleting `preHandler: requirePermission('agency.campaigns.write')`
-   * from `POST /campaigns` — the route that creates a campaign — left all 4,524
-   * tests in the master suite green.
-   *
-   * The file's own header comment claimed this was "asserted separately, from the
-   * source, at the bottom of this file". It was not; nothing anywhere asserted it.
-   * That is `§16.6`'s third pattern exactly — a claim convincing enough that a
-   * reviewer reads it and stops looking — and it is the same shape as `MAG-89`, the
-   * roster-ingest route that shipped unauthenticated.
+   * deleting `preHandler: requirePermission('agency.campaigns.write')`
+   * from `POST /campaigns` — the route that creates a campaign — would leave every
+   * other test green. A claim in a header comment that the permission is "asserted
+   * separately" is convincing enough that a reviewer stops looking, which is how a
+   * route can ship unauthenticated.
    *
    * Reading the source is the only mechanism available once the middleware is
    * stubbed, and it is a real one: it fails loudly the moment a guard is dropped or
@@ -2094,8 +2079,8 @@ describe('every campaign route carries its RBAC permission', () => {
   );
 
   // Route → the permission it must carry. Reads are `.read`; writes are `.write`;
-  // the four lifecycle transitions are `agency.supervise` (floor `account_admin`,
-  // MAG-136) because starting/pausing/resuming/stopping a campaign is a
+  // the four lifecycle transitions are `agency.supervise` (floor `account_admin`)
+  // because starting/pausing/resuming/stopping a campaign is a
   // supervisory control action, not a `.schedules.write`-floored (`operator`)
   // dispatch operation — an `operator` stopping a live campaign is exactly what
   // `agency.supervise` was created to prevent. `stats` deliberately stays on
@@ -2107,7 +2092,7 @@ describe('every campaign route carries its RBAC permission', () => {
     ['get', '/campaigns/:id', 'agency.campaigns.read'],
     ['patch', '/campaigns/:id', 'agency.campaigns.write'],
     ['get', '/campaigns/:id/stats', 'agency.campaigns.read'],
-    // The campaign's bucketed series (`86d45k0bk`). `agency.supervise`, NOT the
+    // The campaign's bucketed series. `agency.supervise`, NOT the
     // `proxy.contact_lists.read` its `/stats` neighbour one line up carries — the
     // live strip is a dashboard an `operator` running the floor must be able to
     // read, while the series is a per-day record of throughput over up to a
@@ -2117,14 +2102,14 @@ describe('every campaign route carries its RBAC permission', () => {
     // `proxy-agency-campaign-series.routes.test.ts`, because this table cannot see
     // a guard deleted together with its own row here.
     ['get', '/campaigns/:id/stats/series', 'agency.supervise'],
-    // The merged audit trail (MAG-158). `audit.read`, not a campaign-read
-    // permission: MAG-157 settled it by dropping `audit.read`'s floor to
+    // The merged audit trail. `audit.read`, not a campaign-read
+    // permission: `audit.read` floors at
     // `account_admin` — the same floor as `agency.supervise`, so the supervisor
     // who controls a campaign can read its trail — rather than minting a second
     // permission that would have to be kept aligned with the first.
     ['get', '/campaigns/:id/activity', 'audit.read'],
     ['get', '/campaigns/:id/activity.csv', 'audit.read'],
-    // The attempt spine's read surface (MAG-159). `agency.supervise`, NOT
+    // The attempt spine's read surface. `agency.supervise`, NOT
     // `audit.read`: the two share a role floor (`account_admin`), so this is not
     // about who gets in — it is about which question the permission names.
     // `audit.read` covers the control plane (who pressed what); these are the
@@ -2145,7 +2130,7 @@ describe('every campaign route carries its RBAC permission', () => {
     ['post', '/campaigns/:id/pause', 'agency.supervise'],
     ['post', '/campaigns/:id/resume', 'agency.supervise'],
     ['post', '/campaigns/:id/stop', 'agency.supervise'],
-    // Retry campaigns (`docs/reference/magickvoice-platform/docs/agency-campaign-retry-wire-contract.md` §6). Three
+    // Retry campaigns. Three
     // routes on three different floors, which is the whole reason they are worth
     // a comment here rather than three quiet rows:
     //
@@ -2158,7 +2143,7 @@ describe('every campaign route carries its RBAC permission', () => {
     //  - the CREATE is the only route on this plugin carrying TWO permissions,
     //    and they share a floor today: `proxy.contact_lists.write` because it
     //    creates a campaign, `agency.supervise` because it acts on another
-    //    campaign's call results (`docs/reference/magickvoice-platform/agency.md` §7.1 — different in kind, not just
+    //    campaign's call results (different in kind, not just
     //    in floor). Naming both is what keeps the route correct if either moves.
     //  - LINEAGE is `proxy.contact_lists.read`, back at `viewer`, because it is
     //    navigation — names, statuses, generations — every field of which a
@@ -2208,8 +2193,8 @@ describe('every campaign route carries its RBAC permission', () => {
   it('knows about every route in the file, so a NEW unguarded one reds', () => {
     /**
      * The list above can only catch a guard removed from a route it names. A route
-     * ADDED without a guard would pass every case and be invisible — which is the
-     * `MAG-89` failure mode, not the hypothetical one. So count the registrations
+     * ADDED without a guard would pass every case and be invisible — which is a real
+     * failure mode, not a hypothetical one. So count the registrations
      * and require the table to cover them all.
      */
     const registrations = source.match(/\b(?:app|sub)\.(?:get|post|patch|put|delete)(?:<[^>]*>)?\(/g) ?? [];

@@ -7,41 +7,21 @@ import {
   type PlatformAuditResourceType,
 } from './catalog.js';
 
-/*
- * PORT NOTE (magick-agency): ported from master `src/audit/vocabulary.ts`
- * (v3.24.0), trimmed with the catalog. Removed, each in PORTING.md:
- *  - the eleven `schedule.*` / `recurring_schedule.*` action entries and the two
- *    resource-type entries (AI scheduling);
- *  - the `'Scheduling'` group, which no remaining action belongs to;
- *  - the `'ai'` product (from `AuditProduct`, `AUDIT_PRODUCTS` and the product
- *    vocabulary): every action that carried it was a scheduling action, and an
- *    option that always returns nothing is exactly what this module's own rule
- *    forbids ("reads as 'this never happened'");
- *  - the `api_key` actor-type entry (decision #5, no API keys).
- * The compile-time exhaustiveness checks at the bottom are master's, unchanged,
- * and still bind the vocabulary to the trimmed catalog in both directions.
- * Comments above entries are master's and describe master's two-product world.
- */
-
 /**
  * The vocabulary of the tenant-wide audit log — served, not mirrored.
  *
- * ── Why this is master's to publish ─────────────────────────────────────────
+ * ── Why the server publishes it ─────────────────────────────────────────────
  * `platform_audit_log` is written by this service and read by this service;
- * `catalog.ts` is the complete, frozen truth about what can appear in it. CusUI
- * nonetheless kept a hand-written copy of both arrays to draw the Audit Log
- * page's two dropdowns, and that copy could not be checked against anything:
- * master is not a dependency of cusui, and cusui's "lockstep" test compared its
- * copy against a second transcription inside its own test file — so it could
- * only catch someone editing one cusui file and not the other, never master
- * actually changing. Publishing the vocabulary on the response it filters
- * removes the second copy entirely.
+ * `catalog.ts` is the complete, frozen truth about what can appear in it. A
+ * hand-written copy in the console, to draw the Audit Log page's dropdowns,
+ * could not be checked against the catalog by anything. Publishing the
+ * vocabulary on the response it filters means there is no second copy.
  *
  * This case is strictly easier than the campaign trail's
  * (`src/agency/agency-activity-actions.ts`), and the difference is worth
- * naming: that trail merges master's store with core's, so its list contains an
- * irreducible transcription of action names master cannot import. Nothing here
- * is transcribed. Every value below is `Exclude`-checked against the catalog it
+ * naming: that trail merges `platform_audit_log` with `audit_logs`, whose event
+ * types have no typed catalog to import, so its list contains an irreducible
+ * transcription of action names. Nothing here is transcribed. Every value below is `Exclude`-checked against the catalog it
  * comes from, in both directions, at compile time.
  *
  * ── What a client may assume ────────────────────────────────────────────────
@@ -55,7 +35,7 @@ import {
  * `agency_session.joined` as "Agent joined". It can: that filter only ever
  * renders inside one campaign, so the subject is on the screen already. This
  * view is tenant-wide and the reader is inside nothing — "Paused" beside
- * "Schedule cancelled" does not say what was paused. So the labels here are
+ * "Invitation sent" does not say what was paused. So the labels here are
  * self-standing ("Campaign paused", "Agent joined session"), and the two lists
  * are deliberately NOT deduplicated into one. Anyone tempted to fold them
  * together will have to pick one register, and either choice is wrong on the
@@ -75,46 +55,36 @@ import {
 export type AuditActionGroup = 'Campaign' | 'Calls' | 'Staffing' | 'Team';
 
 /**
- * WHICH PRODUCT an audited action belongs to (E9).
+ * WHICH ZONE an audited action belongs to: the agency dialer, or the shared
+ * workspace.
  *
- * The company sells two products off one platform and the audit taxonomy leaned
- * entirely AI-ward: `group` says what KIND of thing happened ("Calls",
- * "Scheduling"), and nothing anywhere said which product's surface it happened
- * on. So a tenant running both cannot ask the one question a two-product audit
- * log invites — *what did the agency side do today* — and the axis telemetry is
- * due to get as a super-property (E8) had no counterpart here.
+ * `group` says what KIND of thing happened ("Calls", "Team"); this axis says
+ * which surface it happened on, so a reader can ask *what did the dialer side do
+ * today* separately from workspace administration.
  *
- * ── Reserved now, deliberately, before anyone asks to filter by it ──────────
- * Because the alternative is worse later. `platform_audit_log` rows are
- * historical record: the action keys in `catalog.ts` are already persisted and
+ * ── A derived property, not a column ────────────────────────────────────────
+ * `platform_audit_log` rows are historical record: the action keys in `catalog.ts` are already persisted and
  * cannot be renamed or renumbered to carry a product prefix. Adding the axis as
  * a DERIVED property of the action key costs nothing today and stays correct for
  * every row already written; adding it as a persisted column later would need a
  * migration plus a backfill that could only ever re-derive what this function
  * already computes.
  *
- * ── Three values, and the third arrived exactly as this note predicted ──────
- * `'ai'` and `'agency'` are the two PRODUCTS, spelled the same way E8's
- * telemetry super-property will spell them so the two axes can be read together
- * across repos. The three-zone model (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b) also
- * names a **platform** zone — team, credits, API keys, settings — that is shared
- * by design; the previous revision of this paragraph said master wrote no audit
- * action for it *yet*, and that this union would gain `'platform'` when it did.
- *
- * It has. `user.invite_sent` and `user.invite_claimed` (migration 069) are
- * platform-zone actions and cannot honestly be filed under either product: a
- * membership is what a person holds in the WORKSPACE, and the same invite
- * mechanism serves an `agent` and an `account_admin`. Filing them under
- * `'agency'` because the only role currently receiving mail is an agent would
- * bake today's scope into a historical record that outlives it — and would show
- * agency rows to a tenant that has no dialer at all.
+ * ── Two values ──────────────────────────────────────────────────────────────
+ * `'agency'` is the dialer. `'platform'` is the shared workspace zone — team and
+ * settings. `user.invite_sent` and `user.invite_claimed` are platform-zone
+ * actions and cannot honestly be filed under the dialer: a membership is what a
+ * person holds in the WORKSPACE, and the same invite mechanism serves an `agent`
+ * and an `account_admin`. Filing them under `'agency'` because the only role
+ * currently receiving mail is an agent would bake today's scope into a
+ * historical record that outlives it.
  *
  * The mechanism that forced the choice rather than letting it default is worth
  * keeping in view for whatever lands next: `product` is a REQUIRED field on
  * every entry of {@link PLATFORM_AUDIT_ACTION_VOCABULARY}, and the catalog
  * exhaustiveness checks below mean a new action cannot be written without one.
  * The same "no default, so the compiler enumerates the call sites" discipline
- * the repository `scope` parameter uses in core.
+ * a required repository `scope` parameter gives.
  */
 export type AuditProduct = 'agency' | 'platform';
 
@@ -125,7 +95,7 @@ export type AuditProduct = 'agency' | 'platform';
 export const AUDIT_PRODUCTS = ['agency', 'platform'] as const satisfies readonly AuditProduct[];
 
 export interface AuditActionOption {
-  /** The wire value, passed back verbatim as `?action=`. */
+  /** The wire value, passed back unchanged as `?action=`. */
   value: string;
   /** Operator-facing copy. Rendered as the control's label. */
   label: string;
@@ -143,7 +113,7 @@ export interface AuditActionOption {
 }
 
 export interface AuditResourceTypeOption {
-  /** The wire value, passed back verbatim as `?resource_type=`. */
+  /** The wire value, passed back unchanged as `?resource_type=`. */
   value: string;
   /** Operator-facing copy. Rendered as the control's label. */
   label: string;
@@ -152,42 +122,30 @@ export interface AuditResourceTypeOption {
 /**
  * The served action vocabulary, in the order a filter should render it.
  *
- * Declaration order IS the presentation order — within each group the campaign,
- * schedule or session's lifecycle runs top to bottom, which is how someone
- * scanning for "where did it stop" reads it. Do not sort this client-side:
- * alphabetically, `schedule.cancelled` leads and `schedule.created` follows it,
- * which reads as noise.
- *
- * `schedule.*` and `recurring_schedule.*` are the Scheduling group, and they are
- * exactly the actions `agency-activity-actions.ts` deliberately EXCLUDES. That
- * is the whole reason these are two lists rather than one filtered list: those
- * actions carry no campaign scope, so on a campaign-scoped screen every one of
- * them is a control that returns nothing — while here, where the query is the
- * whole tenant, they are half of what the log contains.
+ * Declaration order IS the presentation order — within each group the campaign
+ * or session's lifecycle runs top to bottom, which is how someone scanning for
+ * "where did it stop" reads it. Do not sort this client-side: alphabetical order
+ * scatters a lifecycle and reads as noise.
  *
  * ── `product` is the second axis, and it is orthogonal to `group` ────────────
- * `group` says what kind of thing happened; `product` says which product it
- * happened on (E9, {@link AuditProduct}). They do not nest: "Calls" holds four
- * agency actions and both DNC actions, and the Scheduling group is entirely the
- * AI product — master's scheduler dispatches broadcasts, static calls, IVR and
- * messaging, and an agency campaign's pacing and calling windows live in core's
- * engine, never here. DNC is agency by Q2 despite the AI-neutral action name,
- * which is exactly why the axis is stated per action rather than derived from
- * the name.
+ * `group` says what kind of thing happened; `product` says which zone it
+ * happened in ({@link AuditProduct}). DNC is agency despite the product-neutral
+ * action name, which is exactly why the axis is stated per action rather than
+ * derived from the name.
  */
 export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
-  // The campaign lifecycle, as master records it. Note master writes only the
-  // four operator-pressed transitions; the ones core observes (`created`,
-  // `running`, `auto_paused`, `stopping`, `completed`) are core's audit store
-  // and are not in this catalog, so they are not offered here.
+  // The campaign lifecycle, as `platform_audit_log` records it: only the four
+  // operator-pressed transitions. The ones the dialer runtime observes
+  // (`created`, `running`, `auto_paused`, `stopping`, `completed`) go to
+  // `audit_logs`, are not in this catalog, and so are not offered here.
   { value: 'agency_campaign.started', label: 'Campaign start pressed', group: 'Campaign', product: 'agency' },
   { value: 'agency_campaign.paused', label: 'Campaign paused', group: 'Campaign', product: 'agency' },
   { value: 'agency_campaign.resumed', label: 'Campaign resumed', group: 'Campaign', product: 'agency' },
   { value: 'agency_campaign.stopped', label: 'Campaign stopped', group: 'Campaign', product: 'agency' },
   // The label says "retry campaign", never "retry", because `attempts_retried`
-  // on the campaign stats already means a WITHIN-campaign redial of one contact
-  // (`docs/reference/magickvoice-platform/agency.md` §7.4). Two unrelated things called "retry" on adjacent surfaces
-  // is how an operator reads a roster of 812 new contacts as 812 redials.
+  // on the campaign stats already means a WITHIN-campaign redial of one contact.
+  // Two unrelated things called "retry" on adjacent surfaces is how an operator
+  // reads a roster of 812 new contacts as 812 redials.
   { value: 'agency_campaign.retry_created', label: 'Retry campaign created', group: 'Campaign', product: 'agency' },
 
   { value: 'agency_disposition.created', label: 'Call disposition filed', group: 'Calls', product: 'agency' },
@@ -217,8 +175,7 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
 ] as const satisfies readonly AuditActionOption[];
 
 /**
- * The served resource-type vocabulary, in the same order as the actions above:
- * what a campaign is made of first, then what schedules it.
+ * The served resource-type vocabulary, in the same order as the actions above.
  *
  * The labels answer "what kind of thing is this row about" for someone who has
  * never seen the schema — `agency_campaign_agent` is an assignment, not an
@@ -241,49 +198,35 @@ export const PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY = [
 /**
  * The product axis as a filter, in the same shape as the two above.
  *
- * ── The labels avoid the word "dialer", and that is Q1, not fussiness ────────
- * Q1 handed both "dialer" and "campaign" to the agency offering, so "Dialer"
- * beside "Agency" in one control would name the same product twice. The AI
- * product's label is the product, not its surfaces: an operator filtering here
- * is asking "which half of my subscription did this", not "which page".
+ * A label names the zone, not its pages: an operator filtering here is asking
+ * "which part of my workspace did this", not "which page".
  *
- * `'platform'` is now offered, having previously been absent because master wrote
- * no platform-zone action — see {@link AuditProduct} for what changed. The rule
- * that kept it out still holds and is the reason it is in now: an option that
- * always returns nothing reads to an operator as "this never happened", which is
- * the failure the two-direction checks below exist to prevent.
+ * `'platform'` is offered because actions are written under it (see
+ * {@link AuditProduct}): an option that always returns nothing reads to an
+ * operator as "this never happened", which is the failure the two-direction
+ * checks below exist to prevent.
  */
 export const PLATFORM_AUDIT_PRODUCT_VOCABULARY = [
   { value: 'agency', label: 'Agency dialer' },
-  // The shared zone (docs/reference/magickvoice-platform/docs/agency-dialer-design.md §7b): team, credits, API keys,
-  // settings. "Workspace" rather than "Platform" because an operator reading
-  // this control is picking which half of their SUBSCRIPTION an action belongs
-  // to, and "platform" is our word for the service, not theirs for the thing
-  // they administer. It is offered because master now writes actions under it —
-  // an option that always returns nothing reads as "this never happened", which
-  // is exactly what the two-direction checks below exist to prevent.
+  // The shared zone: team and settings. "Workspace" rather than "Platform"
+  // because "platform" is our word for the service, not the operator's for the
+  // thing they administer.
   { value: 'platform', label: 'Workspace' },
 ] as const satisfies readonly { value: AuditProduct; label: string }[];
 
 /**
- * The actor-type axis, served the same way and for the same reason (86d45t7rm).
+ * The actor-type axis, served the same way and for the same reason.
  *
  * ── The labels are the reader's question, not the schema's word ─────────────
- * "API key" rather than "api_key", and "Automatic" rather than "system", because
+ * "Person" rather than "human", and "Automatic" rather than "system", because
  * the distinction this axis draws only pays off if a non-engineer reading the log
- * can act on it. The one it must never blur is `api_key` against `system`: both
- * render today as a row with no person's name on it, and they mean opposite
- * things for an incident — "someone used a credential" versus "nothing human was
- * involved". The descriptions carry that, since two labels alone cannot.
+ * can act on it. The descriptions carry what two labels alone cannot.
  *
  * ── There is no option for a NULL `actor_type` ──────────────────────────────
- * Rows written before migration 067 have one, and they are not offerable as a
- * filter: "unknown" is an absence rather than a value, and an operator selecting
- * it would be selecting "everything before the upgrade", which is a date range
- * and is already expressible as one. The module header's rule applies to those
- * rows as it does to an unrecognised action — they must still RENDER, and
- * `normalizeMasterRow` keeps rendering them exactly as it did before the column
- * existed.
+ * A row may have none (the column is nullable), and that is not offerable as a
+ * filter: "unknown" is an absence rather than a value. The module header's rule
+ * applies to those rows as it does to an unrecognised action — they must still
+ * RENDER, and `normalizeMasterRow` renders them.
  */
 export const PLATFORM_AUDIT_ACTOR_TYPE_VOCABULARY = [
   {
@@ -305,16 +248,14 @@ export const PLATFORM_AUDIT_ACTOR_TYPE_VOCABULARY = [
  * ── `null`, not a guess, and not a prefix rule ───────────────────────────────
  * The obvious shortcut is `action.startsWith('agency_')`. It is **already wrong
  * today**: `dnc_entry.created` and `dnc_entry.deleted` carry no such prefix and
- * are agency-only by Q2 (the primary application has no bearing on do-not-call),
- * so a prefix rule would file every DNC mark under the AI product — silently,
+ * are agency actions, so a prefix rule would misfile every DNC mark — silently,
  * and on the one surface whose whole job is to be believable. The mapping is
  * therefore stated per action, where a reader can disagree with it.
  *
  * `null` for an unrecognised action is the same rule the module header states
  * for the vocabulary as a whole: a row whose action is absent here must still
  * render. An unrecognised audit row is exactly the one nobody anticipated, and
- * labelling it with a product master is guessing at is worse than saying
- * nothing.
+ * labelling it with a guessed product is worse than saying nothing.
  */
 export function auditProductForAction(action: string): AuditProduct | null {
   return PRODUCT_BY_ACTION.get(action) ?? null;
@@ -347,7 +288,7 @@ type ServedResourceType = (typeof PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY)[numbe
  * anything missing, and nothing about an entry the catalog does not contain.
  *
  * Missing: a new action or resource type added to `catalog.ts` and forgotten
- * here is a filter that cannot select rows master is already writing.
+ * here is a filter that cannot select rows this service is already writing.
  *
  * Extra: an entry the catalog does not contain is worse than a crash — it is a
  * dropdown option an operator can pick that always returns nothing, which reads

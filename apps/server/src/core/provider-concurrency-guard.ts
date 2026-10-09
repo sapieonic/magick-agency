@@ -5,15 +5,6 @@ import {
   trackProviderConcurrencyAdmission,
   trackProviderConcurrencyReconciliation,
 } from '@magick-agency/observability/metrics/voice';
-// PORT NOTE (magick-agency): ported from core src/core/provider-concurrency-guard.ts@4850d1d9.
-// Changed: import specifiers; the per-broadcast group-concurrency gate is stripped
-// (agency has no per-broadcast bulk concurrency): the `GroupLeaseHooks` import,
-// `setGroupLeaseHooks`, the `groupLeaseHooks` field, `releaseGroupLease`,
-// `extendGroupLease`, and their call sites in `releaseAll`/`extendAll` — whose
-// bodies are the former private `releaseAllScopes`/`extendAllScopes`, inlined back
-// (the pre-gate shape, core d1179938^). The `group_full` member of
-// `TelephonyAdmissionResult` is removed: its only producer was the gate. Lua, keys,
-// TTLs, fail-closed behaviour and everything else are verbatim.
 
 const ACQUIRE_SCRIPT = `
 if redis.call('EXISTS', KEYS[2]) == 1 then
@@ -360,9 +351,8 @@ export class ProviderConcurrencyGuard {
         'Failed to release provider concurrency slot',
       );
       // Teardown is best-effort and idempotent. A provider Redis failure must
-      // never prevent account/global release, terminal persistence, settlement,
-      // queue progress, or webhook acknowledgement. Reconciliation heals drift
-      // after Redis recovers.
+      // never prevent account/global release, terminal persistence, or webhook
+      // acknowledgement. Reconciliation heals drift after Redis recovers.
     }
   }
 

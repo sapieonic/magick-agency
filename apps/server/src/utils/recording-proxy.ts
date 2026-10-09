@@ -2,19 +2,15 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 
 /*
- * PORT NOTE (magick-agency): ported from core `src/utils/recording-proxy.ts`
- * (v1.123.2), REWORKED (plan §4). Carrier credential resolution is gone
- * (`buildUpstreamHeaders`, `resolveRecordingAuthSource`, `mismatch`, the Twilio /
- * VoBiz / Plivo / Telnyx host lists, BYOC): VoiceLink recordings are public
- * carrier-hosted MP3s, so nothing is attached to the upstream request. What
- * replaces them is a host allow-list: `recordingHostMatches` (verbatim, with its
- * argument) now decides whether a URL may be fetched AT ALL, rather than which
- * credential to attach. `proxyCallRecording` keeps core's streaming/Range body.
+ * VoiceLink recordings are public carrier-hosted MP3s, so nothing is attached to
+ * the upstream request. What protects the fetch is a host allow-list:
+ * `recordingHostMatches` decides whether a URL may be fetched AT ALL.
+ * `proxyCallRecording` streams the body and forwards Range.
  */
 
 const log = createChildLogger({ component: 'recording-proxy' });
 
-// Re-exported for backward compatibility with core's importers.
+// Re-exported so callers of this module can reach it here too.
 export { isDirectRecordingProvider } from './recording-url-resolver.js';
 
 /**
@@ -40,7 +36,7 @@ export function recordingHostname(rawUrl: string): string | null {
  *
  * A substring test (`recordingUrl.includes('media.plivo.com')`) is NOT a host
  * check and must never be used here, because the value being tested is
- * ATTACKER-REACHABLE: `recording_url` is persisted verbatim from the carrier's
+ * ATTACKER-REACHABLE: `recording_url` is persisted as received from the carrier's
  * unauthenticated recording webhook, so anyone who can guess a call id can
  * choose the string this function inspects. `includes()` matches the host in
  * the userinfo position (`https://media.plivo.com@evil.example/x`) and anywhere
@@ -86,8 +82,7 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 /**
  * `fetch` that checks the allow-list on EVERY hop. `redirect: 'follow'` would
  * check only the first URL, so an allow-listed host answering 302 to an internal
- * address (169.254.169.254, localhost) would be fetched: SSRF. Security
- * modification, not in core (core had no allow-list, so no redirect check either).
+ * address (169.254.169.254, localhost) would be fetched: SSRF.
  * Each `Location` is resolved against the current URL and must be https and on the
  * list; at most {@link MAX_RECORDING_REDIRECTS} hops are followed.
  * Throws {@link RecordingHostRefusedError}; other fetch errors propagate.
@@ -125,8 +120,8 @@ export async function fetchWithAllowedRedirects(
  * requests and surfaces upstream 206 Partial Content responses so HTML5
  * audio seeking works on long recordings.
  *
- * Refuses (502) a URL, or a redirect hop, whose host is off `allowedHosts` — core had
- * no such check and fetched whatever `recording_url` said, following redirects.
+ * Refuses (502) a URL, or a redirect hop, whose host is off `allowedHosts`, rather
+ * than fetching whatever `recording_url` says.
  */
 export async function proxyCallRecording(
   callRecord: { id: string; recording_url: string | null },

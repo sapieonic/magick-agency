@@ -3,17 +3,17 @@ import Fastify, { type FastifyInstance, type RouteOptions } from 'fastify';
 import { randomUUID } from 'node:crypto';
 
 /**
- * NEW (magick-agency, no source). The lane-A security audit of the invite and
- * team-management surface, plus the plan §8 Phase 3 exit-gate items for invites,
+ * The security audit of the invite and
+ * team-management surface, plus the invite exit-gate items,
  * as NAMED cases on real Postgres 5436 and real Redis 6383.
  *
  * Everything is real except Firebase: `verifyIdToken` is the only double (a
- * token string maps to a decoded identity), as every master suite does. The
+ * token string maps to a decoded identity), as every suite here does. The
  * session, tenant-context and RBAC middlewares, the repositories, the issuer,
  * the claim transaction and the session payload all run as in production, so
  * each verdict below is the decision the running app makes.
  *
- * Plan §9 invariants carried here: "no lookup by address binds an unverified
+ * Invariants carried here: "no lookup by address binds an unverified
  * email" (d) and "an invite token is single use and expires" (f).
  *
  *   (a) issuing at or above the caller's role, and widening scope
@@ -25,9 +25,8 @@ import { randomUUID } from 'node:crypto';
  *   (g) the auth chain on every authenticated route, by execution
  *   (h) what the two PUBLIC routes disclose, by exact body equality
  *
- * Master (a1f0756a) runs the same code for every case here. The only behaviour
- * difference is the fail-closed hardening on a missing `request.membership`
- * (PORT NOTEs in `user.routes.ts` / `invites.routes.ts`), which no case here can
+ * The one behaviour worth noting is the fail-closed hardening on a missing
+ * `request.membership` (see `user.routes.ts` / `invites.routes.ts`), which no case here can
  * reach through the real chain: (g) shows `requirePermission` refuses first.
  */
 
@@ -736,7 +735,7 @@ describe('(h) the public routes disclose nothing beyond status, except for a pen
     expect(res.json()).toStrictEqual(body);
   });
 
-  it('GET /invites/:token for a PENDING invite returns exactly master\'s invite object', async () => {
+  it('GET /invites/:token for a PENDING invite returns exactly the expected invite object', async () => {
     const ws = await workspace('h-pending');
     const { token, invite, email } = await stubInvite(ws);
 

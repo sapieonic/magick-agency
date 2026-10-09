@@ -19,16 +19,16 @@
  */
 export const RETURN_PATH_PARAM = 'next';
 
-/** The primary application's sign-in page. */
+/** The generic sign-in path (see `App.tsx` for what it renders). */
 export const LOGIN_PATH = '/login';
 
 /**
  * The Agency Dialer's own sign-in page.
  *
  * ── Why a second door rather than a second auth tree ───────────────────────
- * Agency staff are ordinary master users: an `agent` or a supervisor is a
+ * Agency staff are ordinary the API users: an `agent` or a supervisor is a
  * membership row with an RBAC role, and every agency route authorizes on that
- * membership through master's `tenantContextMiddleware`. So this is one identity
+ * membership through the API's `tenantContextMiddleware`. So this is one identity
  * system with two entrances, NOT the parallel tree super-admin has (its own JWT
  * in `sessionStorage`, its own `saFetch`, its own middleware). A second credential
  * store would have to duplicate the memberships and would break the inheritance
@@ -39,15 +39,14 @@ export const LOGIN_PATH = '/login';
  *
  *  1. **The Sign Up tab, which is a live hazard rather than a wrong tone.**
  *     `POST /auth/session` provisions a brand-new tenant for an email it does not
- *     recognise (`master/src/api/routes/auth.routes.ts`, path 4). An invited
+ *     recognise (session path 4). An invited
  *     agent's membership is activated by matching the address they sign in with
- *     against the stub row master wrote for them, so an agent who reaches for
+ *     against the stub row the API wrote for them, so an agent who reaches for
  *     "Sign Up" instead of "Sign In" — or who signs up with a slightly different
  *     address — silently lands in a private empty tenant of their own while the
  *     membership their supervisor created sits unclaimed. The agency door has no
  *     signup on it at all.
- *  2. **The pitch.** `/login` sells the AI voice product: a free-credits banner
- *     and four feature cards about outbound AI calling and IVR building. An agent
+ *  2. **The pitch.** A generic sign-in page is written for prospects. An agent
  *     being onboarded onto a dialer is staff, not a prospect.
  */
 export const AGENCY_LOGIN_PATH = '/agency/login';
@@ -60,14 +59,14 @@ export const AGENCY_LOGIN_PATH = '/agency/login';
  * leaves an invited agent who has no Google account with no way in at all. This
  * path is that missing way in, and it is deliberately not a sign-in page: the
  * visitor has no credential yet, and what authorizes them is the single-use token
- * in the URL rather than anything they type. Master's claim endpoint reads the
+ * in the URL rather than anything they type. The API's claim endpoint reads the
  * TOKEN, so the address they end up signing in with no longer has to match the
  * address the invite was sent to — which is exactly the match that was failing
  * silently and stranding people in tenants of their own.
  *
  * Exported as the PREFIX, without the `:token` segment, because that is what the
  * loop guard below needs and because nothing in this app ever constructs one of
- * these URLs: only master's invite mailer mints a token, and a link built here
+ * these URLs: only the API's invite mailer mints a token, and a link built here
  * would be a link with no invite behind it.
  *
  * `/agency/join/...` is already an agency surface through the `/agency` entry in
@@ -100,7 +99,7 @@ const AGENCY_SURFACE_PREFIXES = ['/agency', '/dialer', '/station'] as const;
  * IS the destination, since a bare `/station` lands on "No campaign selected." —
  * survives the round trip. A boundary of `(?:/|$)` alone therefore failed to match
  * the one URL the agency door most needs to catch, and sent an agent bounced off a
- * live station to the primary app's page.
+ * live station to the generic `/login` door.
  *
  * Matched on a boundary rather than with `startsWith` so `/agencyfoo` — an
  * ordinary path that merely shares a prefix — is not swept in. Case-insensitive
@@ -385,7 +384,7 @@ export function sessionExpiredLoginUrl(): string {
    * The door is chosen from the CURRENT pathname rather than from `next`, because
    * `next` is absent in exactly the cases above — already on a login page, guard
    * refused, or the bare root — and an agent whose station URL failed the guard
-   * would then be handed the primary app's page. The pathname is available either
+   * would then be handed the generic `/login` door. The pathname is available either
    * way.
    */
   return `${loginPathFor(window.location.pathname)}?${params.toString()}`;

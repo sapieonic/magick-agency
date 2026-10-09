@@ -11,12 +11,10 @@ const { userRepository } = await import('@magick-agency/db/repositories/user.rep
 /**
  * `enrichAgencyCampaignStats` on REAL Postgres.
  *
- * Master tested this through `proxy-agency-campaign-stats-enrichment.routes.test.ts` (37 cases,
- * Phase 8: the route) with a hand-written fake pool. The module is B2's, so its cases are
- * re-run here directly against the real `users`/`memberships` tables. Mapping in PORTING.md:
- * the 8 `agent_name` cases, the 5 byte-identity cases and the pass-through cases for core's
- * success / retry fields are ported; the 12 `credits_low` cases and the credit halves of two
- * pass-through cases are deleted with the credit overlay (plan §2).
+ * The route-level suite drives this module with a hand-written fake pool, so its cases are
+ * run here directly against the real `users`/`memberships` tables: the `agent_name` cases,
+ * the byte-identity cases and the pass-through cases for the success / retry fields. There
+ * is no credit overlay, so there are no `credits_low` cases.
  */
 
 let tenantId: string;
@@ -49,7 +47,7 @@ function coreStatsBody(overrides: Record<string, unknown> = {}): Record<string, 
       {
         session_id: 'sess-1', agent_user_id: ravi, state: 'on_call',
         state_since: '2026-08-15T09:00:00.000Z',
-        // A field this repo does not know about, standing in for what core adds next.
+        // A field this repo does not know about, standing in for what the handler adds next.
         last_heartbeat: '2026-08-15T09:04:55.000Z', break_reason: null, calls_handled: 12,
       },
       { session_id: 'sess-2', agent_user_id: sunita, state: 'available', calls_handled: 9 },
@@ -83,7 +81,7 @@ afterAll(async () => {
   await closeTestPool();
 });
 
-describe('agent_name — the field only master can fill (MAG-148)', () => {
+describe('agent_name — the field only the public API layer can fill', () => {
   it('is present on every agent row and carries the display name', async () => {
     const body = await enrich(coreStatsBody());
     expect(agents(body).map((a) => a['agent_name'])).toEqual(['Ravi', 'Sunita']);
@@ -137,12 +135,12 @@ describe('everything else passes through byte-identically', () => {
     agents: agents(b).map(({ agent_name: _dropped, ...rest }) => rest),
   });
 
-  it('is core’s exact body once the agent_name keys are removed', async () => {
+  it('is the exact handler body once the agent_name keys are removed', async () => {
     const core = coreStatsBody();
     expect(JSON.stringify(strip(await enrich(core)))).toBe(JSON.stringify(core));
   });
 
-  it('appends agent_name AFTER the keys core sent, leaving their order intact', async () => {
+  it('appends agent_name AFTER the keys the handler sent, leaving their order intact', async () => {
     const body = await enrich(coreStatsBody());
     expect(Object.keys(agents(body)[0]!)).toEqual([
       'session_id', 'agent_user_id', 'state', 'state_since', 'last_heartbeat', 'break_reason',
@@ -162,11 +160,11 @@ describe('everything else passes through byte-identically', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it('does not invent an agents array core did not send', async () => {
+  it('does not invent an agents array the handler did not send', async () => {
     expect(await enrich({ campaign_id: CAMPAIGN, status: 'draft' })).not.toHaveProperty('agents');
   });
 
-  it('leaves stall and other_stalls exactly as core sent them (no credits_low overlay, plan §2)', async () => {
+  it('leaves stall and other_stalls exactly as the handler sent them (no credits_low overlay)', async () => {
     const stall = { code: 'elevated_failure_rate', failed_pct: 40, attempts: 100, window_minutes: 15 };
     const body = await enrich(coreStatsBody({ stall, other_stalls: ['outside_calling_hours'] }));
     expect(body['stall']).toEqual(stall);
@@ -174,7 +172,7 @@ describe('everything else passes through byte-identically', () => {
   });
 });
 
-describe('core’s success and retry fields reach the client untouched', () => {
+describe('the handler success and retry fields reach the client untouched', () => {
   it('carries attempts_success and success_rate_pct through, keeping a NULL rate NULL', async () => {
     const withRate = await enrich(coreStatsBody({ attempts_success: 120, success_rate_pct: 50 }));
     expect(withRate).toMatchObject({ attempts_success: 120, success_rate_pct: 50 });

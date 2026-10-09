@@ -1,20 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// NEW (magick-agency, Phase 6): equivalence tests for the changes `runtime.ts` and
-// `pacing-engine.ts` carry against core @4850d1d9 (PORTING.md §6.2).
+// Equivalence tests for the changes `runtime.ts` and `pacing-engine.ts` carry now that the
+// dialer runtime lives in the same process as the public API layer.
 //
-//  1. No attempt batcher (billing, plan §8 Phase 6) and no DNC outbox sweeper / resync
+//  1. No attempt batcher (billing) and no DNC outbox sweeper / resync
 //     requester (decision B8) is constructed, started or stopped — and the lifecycle is
-//     otherwise core's: `start()` runs dialer → startup reaper → periodic reaper → pacing
-//     (core `runtime.ts` "the reaper runs before the pacing supervisor"), `stop()` stops
+//     otherwise unchanged: `start()` runs dialer → startup reaper → periodic reaper → pacing
+//     (the reaper runs before the pacing supervisor), `stop()` stops
 //     pacing first.
 //  2. The DNC gate the pacing engine is handed is the DB-backed `DncRegistry` (B8):
 //     a `check` is one `dncRepository.findSuppressed` read with the scope, and nothing
-//     else (core: `new DncRegistry(redis, keyPrefix, createDncResyncRequester())`).
+//     else.
 //  3. The engine's "something may want to know a campaign finished" seam carries the
 //     completion notice (`notifyAgencyCampaignFinished`), not the batcher.
-//  4. Nothing on start or stop reaches the network: every core→master hop the runtime
-//     made (batch post, DNC forward, DNC resync) is gone or in-process.
+//  4. Nothing on start or stop reaches the network: every hop the runtime once made
+//     (batch post, DNC forward, DNC resync) is gone or in-process.
 
 vi.mock('@magick-agency/observability', () => ({
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -59,7 +59,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('AgencyRuntime — the hop collapses (equivalence with core)', () => {
+describe('AgencyRuntime — the hop collapses (in-process equivalence)', () => {
   it('constructs no attempt batcher and no DNC outbox sweeper', () => {
     const runtime = new AgencyRuntime(fakeBridge(), null, '');
     expect('attemptBatcher' in runtime).toBe(false);

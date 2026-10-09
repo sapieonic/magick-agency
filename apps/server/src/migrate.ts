@@ -7,12 +7,11 @@ import { dbTlsOptions, type DbTlsConfig } from './db-tls.js';
 /**
  * Applies pending migrations, then exits. `docker/entrypoint.sh` runs it before the server.
  *
- * PORT NOTE (magick-agency): core's `docker/entrypoint.sh:4-6`@4850d1d9 ran the
- * node-pg-migrate CLI (`npx node-pg-migrate up --migrations-dir src/db/migrations`). The CLI
- * takes its TLS from `DATABASE_URL`, and Q1 refuses TLS parameters there (they would override
- * the verified settings, `config/blocks/base.ts`), so under `NODE_ENV=production` the CLI could
- * not reach a TLS-only database with a verified certificate or a private CA. This runs the
- * same runner with the server's own Postgres TLS decision (`dbTlsOptions`, shared with
+ * Why not the node-pg-migrate CLI: it takes its TLS from `DATABASE_URL`, and decision Q1
+ * refuses TLS parameters there (they would override the verified settings,
+ * `config/blocks/base.ts`), so under `NODE_ENV=production` the CLI could not reach a TLS-only
+ * database with a verified certificate or a private CA. This runs node-pg-migrate's runner
+ * with the server's own Postgres TLS decision (`dbTlsOptions`, shared with
  * `index.ts`), so migrations and the server connect identically. The entry point loads the
  * full config first, so an invalid environment fails before any DDL runs.
  *

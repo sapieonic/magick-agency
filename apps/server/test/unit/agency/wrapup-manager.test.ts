@@ -1,10 +1,7 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core test/unit/agency/wrapup-manager.test.ts@4850d1d9 (34 → 34).
-// Verbatim cases. Import paths only; the metric reader is core's `test/helpers/otel-metric-reader.ts`, ported verbatim at the same path over a real `@opentelemetry/sdk-metrics` provider (devDependency; `ScrapeMetricReader` inlined because `src/utils/otel-sdk-config.ts` is not ported).
-// No case deleted or modified.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// Wrap-up (AD-P2-C-02).
+// Wrap-up.
 //
 // The acceptance criteria are (a) `wrapup_seconds = 0` returns the agent
 // immediately, (b) auto-return fires EXACTLY once at expiry, (c) an outstanding
@@ -53,7 +50,7 @@ function fakeStations() {
   };
 }
 
-/** Records every lease TTL written, so the §6.1 invariant is checkable. */
+/** Records every lease TTL written, so the lease invariant is checkable. */
 function fakeAgents() {
   const leases: number[] = [];
   return {
@@ -90,7 +87,7 @@ async function wrapupSeries(resolution: string): Promise<{ count: number; sum: n
 beforeEach(() => { vi.clearAllMocks(); vi.useFakeTimers(); });
 afterEach(() => vi.useRealTimers());
 
-describe('WrapupManager — the §6.1 invariant', () => {
+describe('WrapupManager — the lease invariant', () => {
   it('leases wrap-up at the FLAT heartbeat TTL, never the configured window', async () => {
     // The whole reason wrap-up is an in-process timer: a Redis TTL cannot tell
     // "took too long" from "the process died". If `wrapup_seconds` leaked into the
@@ -116,10 +113,10 @@ describe('WrapupManager — the §6.1 invariant', () => {
     await w.enter(enterParams({ wrapupSeconds: 45 }));
     expect(repos.attempt.setState).toHaveBeenCalledWith('att-1', 'ended', {
       wrapup_seconds: 45,
-      // `AD-P4-C-01`. The wrap-up path stamps its OWN start anchor rather than
+      // The wrap-up path stamps its OWN start anchor rather than
       // letting the average infer one from `ended_at` — which is written by whoever
-      // settles the attempt, through a patch this call does not send. `AD-P2-C-11`
-      // is what that inference costs when the two writers drift apart.
+      // settles the attempt, through a patch this call does not send. Inferring it
+      // costs accuracy when the two writers drift apart.
       wrapup_started_at: expect.any(Date),
     });
   });
@@ -143,7 +140,7 @@ describe('WrapupManager acceptance', () => {
     // honouring 0 literally is not a race a fast agent loses — it is structural
     // data loss: the attempt ends, the agent is `available`, the tick reserves them
     // within 250ms, and the record of what was said to a customer is never captured
-    // on ANY call of such a campaign. `AD-P2-C-08`'s sweep would then stamp
+    // on ANY call of such a campaign. The `no_disposition` sweep would then stamp
     // `no_disposition` on every attempt and feed the retry policy a stream of them.
     //
     // So `wrapup_seconds = 0` means "no TIMER", not "no wrap-up".
@@ -407,7 +404,7 @@ describe('WrapupManager acceptance', () => {
   it('announces `agent_state: wrapup` on entry, not just the wrapup frame', async () => {
     // THE disposition-loss bug. The console unlocks its disposition pad on
     // `agent_state === 'wrapup'` and must not infer state from anything else — but
-    // core set the state in Redis and the DB and never said so on the wire. So the
+    // the server set the state in Redis and the DB and never said so on the wire. So the
     // pad greyed out the instant the call ended, `/sessions/:id/available` then 409s
     // `attempt_not_dispositionable`, and the agent sat stuck until the
     // `no_disposition` sweep closed the attempt. Every disposition on a
@@ -528,7 +525,7 @@ describe('WrapupManager acceptance', () => {
 
   it('stop() clears timers without returning anyone to the pool', async () => {
     // Shutdown must not mark agents `available`: their sockets die with the
-    // process and D2 lands them in `break` on reconnect. Returning them here would
+    // process and a reconnect lands them in `break`. Returning them here would
     // be a lie the next boot inherits.
     const onReturn = vi.fn(async () => {});
     const w = new WrapupManager(fakeStations() as any, fakeAgents() as any, onReturn);
@@ -541,7 +538,7 @@ describe('WrapupManager acceptance', () => {
   });
 });
 
-// ─── AD-P4-C-01: wrap-up becomes measurable ─────────────────────────────────
+// ─── wrap-up becomes measurable ─────────────────────────────────────────
 //
 // `avg_wrapup_seconds` is the supervisor's tuning input for `wrapup_seconds`, so it
 // is the one tile whose entire value is telling the operator their configured
@@ -553,7 +550,7 @@ describe('WrapupManager acceptance', () => {
 // These assert the two durable halves that make it a real measurement: the pair of
 // anchors, and the resolution that says whether the interval is evidence at all.
 
-describe('AD-P4-C-01: wrap-up end is recorded, and how it ended', () => {
+describe('wrap-up end is recorded, and how it ended', () => {
   it('an agent returning early is recorded as `agent_returned`, not lost', async () => {
     const w = new WrapupManager(fakeStations() as any, fakeAgents() as any, vi.fn());
     await w.enter(enterParams());
@@ -668,8 +665,8 @@ describe('the wrap-up duration series', () => {
 
   it('records an interruption under a resolution the average must NOT count', async () => {
     // `agent_left` measures an interruption rather than how long write-up work
-    // takes, which is exactly why the label is load-bearing: `AD-P4-C-01`
-    // averages only `disposition_submitted`, `auto_return` and `agent_returned`.
+    // takes, which is exactly why the label is load-bearing: the average
+    // covers only `disposition_submitted`, `auto_return` and `agent_returned`.
     // An observation landing here under one of those three would quietly bias the
     // number a supervisor tunes the window from.
     const before = await wrapupSeries('agent_left');

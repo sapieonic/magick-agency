@@ -1,8 +1,7 @@
 /*
- * PORT NOTE (magick-agency): the `isSuperAdmin` branch of cusui's
- * `pages/auth/LoginPage.module.css` (.page, .bgGlow, .layoutCentered, .card,
- * .logo, .tagline, .form, .field, .error), verbatim. The customer sign-in,
- * sign-up, forgot-password and promo-banner rules are not carried.
+ * Rules for the admin sign-in page only (.page, .bgGlow, .layoutCentered, .card,
+ * .logo, .tagline, .form, .field, .error). There are no customer sign-in,
+ * sign-up, forgot-password or promo-banner rules.
  */
 .page {
   min-height: 100vh;

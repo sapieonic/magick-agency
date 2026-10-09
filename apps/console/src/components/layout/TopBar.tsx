@@ -80,7 +80,6 @@ export function TopBar({ onMenuClick, menuExpanded, menuControls }: TopBarProps)
       <div className={styles.actions}>
         <TenantSwitcher />
         <AccountSwitcher />
-        {/* PORT NOTE (magick-agency): cusui's `<CreditBadge />` is removed — no credits in v1 (plan §3.3). */}
 
         <button
           className={styles.themeToggle}
@@ -154,9 +153,8 @@ export function TopBar({ onMenuClick, menuExpanded, menuControls }: TopBarProps)
               )}
 
               {/*
-                PORT NOTE (magick-agency): cusui's Settings (`/app/settings`, the
-                AI tenant settings), "Credits & Billing" and "API Keys" items are
-                removed with their pages (plan §3.3; decision #5).
+                The menu holds no Settings, "Credits & Billing" or "API Keys" items
+                (decision #5).
               */}
               <div className={styles.dropdownDivider} />
               <button

@@ -7,8 +7,8 @@
  * rather than of the screen: the agency analytics page fans out one `/stats`
  * request per campaign, and `listAgencyCampaigns` is unpaginated, so an account
  * that has run three hundred campaigns over a year opened three hundred
- * simultaneous requests through master and three hundred onward to core. The
- * browser queues them, master does not.
+ * simultaneous requests through the server and three hundred onward to the dialer runtime. The
+ * browser queues them, the API does not.
  *
  * ── It behaves like `allSettled`, deliberately ─────────────────────────────
  * Every result is returned as `{ status }` rather than the first rejection
@@ -32,7 +32,7 @@ export type SettledResult<T> =
  * Six, matching the per-host connection limit browsers have used for HTTP/1.1 —
  * so on a connection-limited transport we are not queueing requests the browser
  * would queue anyway, and on HTTP/2 we are bounding work that would otherwise
- * arrive at master all at once. Not tuned against a benchmark; chosen to be
+ * arrive at the API all at once. Not tuned against a benchmark; chosen to be
  * obviously-enough rather than a magic number, and overridable per call site.
  */
 export const DEFAULT_CONCURRENCY = 6;

@@ -1,25 +1,8 @@
-// PORT NOTE (magick-agency): NEW FILE, extracted from
-// magic-voice-core/src/core/call-manager.ts@4850d1d9 (8,919 lines). In core the WebRTC
-// bridge took the whole `CallManager` and used exactly four things from it: the three
-// telephony guards (through `acquireTelephonyConcurrency` / `releaseTelephonyLease`),
-// `wakeSelfHeal()` and `triggerDequeue()`. This class is those parts and nothing else
-// (docs/seams.md §3.1), so the bridge's constructor takes it in place of `CallManager`.
-//
-// Carried, bodies verbatim except where a `PORT NOTE` says otherwise (core line numbers):
-//   - guard construction                                   :636-652
-//   - `tryAcquireTelephonyConcurrency` / `acquireTelephonyScopes`  :725-772
-//   - the self-heal dormancy derivation + log              :694-711
-//   - `runSelfHealSweep`, `wakeSelfHeal`, `armSelfHealTimer`, `runSelfHealPoll`  :7918-8036
-//   - `reconcileConcurrency`                               :8092-8115
-//   - `registerWebrtcActiveIdsProvider`                    :8135
-//   - `sweepStaleActiveCalls` (WebRTC source only) + `sweepStaleWebrtcCalls`  :8193-8335, :8597-8670
-//   - the self-heal half of `gracefulShutdown`             :8774-8826
-// Removed (each a PORTING.md row): the per-broadcast group gate and refiller
-// (`group-concurrency-gate.ts` is bulk-broadcast concurrency, not ported),
-// `triggerDequeue` (core's AI-call SQS queue), every settlement dispatch (plan §4/§S6:
-// no billing), the AI/static/IVR/transfer sweeps, the orphaned-queued sweep, the
-// live-call gauge reconcile, `reconcileAccountSlots` + `wakeAndReconcileOnAccountFull`
-// (SQS coordinator / AI inbound reject path only).
+// The part of the voice engine the WebRTC bridge needs for capacity: the three
+// telephony concurrency guards (used through `acquireTelephonyConcurrency` /
+// `releaseTelephonyLease`), the demand-driven self-heal sweep (`wakeSelfHeal`) and the
+// stale-call sweep over bridge calls. The bridge's constructor takes it
+// (docs/seams.md); nothing else is in here.
 import type Redis from 'ioredis';
 import { createChildLogger } from '@magick-agency/observability';
 import { agencyCallRepository } from '@magick-agency/db/repositories/agency-call.repository';
@@ -34,8 +17,7 @@ const log = createChildLogger({ component: 'telephony-guard-host' });
 
 /**
  * Consecutive fully-idle self-heal sweeps (no active calls *and* no drift found)
- * before the loop goes dormant — like the SQS poller and MessagingRecovery, it
- * must not tick while the replica is idle. With the default 5-min cadence this
+ * before the loop goes dormant — it must not tick while the replica is idle. With the default 5-min cadence this
  * keeps watching ~10 min past the last activity, comfortably beyond the Redis
  * lock TTL (`callTimeoutSeconds + 30` ≈ 5.5 min) after which post-crash counter
  * drift first becomes *visible* (locks expire, the counter stays inflated). The
@@ -133,11 +115,8 @@ export class TelephonyGuardHost {
 
   /** Single entry point for telephony capacity. Provider-mode accounts acquire
    * global, account and provider leases atomically; legacy accounts retain the
-   * established two-scope behavior until explicitly migrated.
-   *
-   * PORT NOTE: core's optional 6th `group` parameter (the per-broadcast gate,
-   * `admitThroughGroupGate`) is removed; with no group core called
-   * `acquireScopes()` directly, which is this body. `callId` is the lease key. */
+   * established two-scope behavior until explicitly migrated. `callId` is the
+   * lease key. */
   async tryAcquireTelephonyConcurrency(
     callId: string,
     tenantId: string,
@@ -181,14 +160,9 @@ export class TelephonyGuardHost {
   /**
    * Calls in flight on this replica, for the poll's idle decision.
    *
-   * PORT NOTE: core read `CallManager.getActiveCallCount()` (`activeSessions.size`,
-   * its AI-call sessions) together with the static/IVR live-call gauge ids. Neither
-   * population exists here; the only calls this process carries are the bridge's,
-   * so "in flight" is the bridge's active call count — keeping the poll armed while
-   * a live agency call holds slots, which is what core's AI-call term did for its
-   * own calls. This is a behaviour change, not a removal: in core a live WebRTC
-   * call alone never kept the poll armed. Kept by lead decision B13
-   * (docs/decisions.md): agency's only call type is the bridged call.
+   * The only calls this process carries are the bridge's, so "in flight" is the
+   * bridge's active call count — keeping the poll armed while a live agency call
+   * holds slots (decision B13, docs/decisions.md).
    */
   getActiveCallCount(): number {
     return this.getActiveWebrtcCallIds().length;
@@ -212,9 +186,6 @@ export class TelephonyGuardHost {
    * Returns true if anything was actually healed/swept (used to keep the poll
    * armed while there is still drift to clear). Reentrancy-guarded so the
    * startup pass and a poll tick can't overlap.
-   *
-   * PORT NOTE: core also ran `sweepOrphanedQueuedCalls` (SQS backlog) and
-   * `reconcileLiveCallGauges` (static/IVR gauges) here; neither exists.
    */
   async runSelfHealSweep(reason: 'startup' | 'periodic'): Promise<boolean> {
     if (this.shuttingDown || this.selfHealing) return false;
@@ -288,7 +259,6 @@ export class TelephonyGuardHost {
 
       // "Idle" = nothing to heal AND no calls in flight on this replica. Anything
       // else resets the cooldown and keeps the loop armed.
-      // PORT NOTE: core also OR'd `liveCallGaugeIdCount() > 0` (static/IVR gauges).
       if (didWork || this.getActiveCallCount() > 0) {
         this.selfHealEmptySweeps = 0;
       } else {
@@ -308,9 +278,6 @@ export class TelephonyGuardHost {
    * Reconcile global + all per-account concurrency counters against the live
    * Redis lock keys, healing drift left by crashes. Returns true if drift was
    * healed. No-op (returns false) in Redis-degraded/local mode.
-   *
-   * PORT NOTE: core kicked `this.triggerDequeue()` on heal (its AI SQS queue);
-   * there is no queue here.
    */
   async reconcileConcurrency(reason: 'startup' | 'periodic'): Promise<boolean> {
     try {
@@ -350,35 +317,27 @@ export class TelephonyGuardHost {
    * window — floored at the longest supported WebRTC call plus callback grace —
    * are touched, and live in-memory calls are excluded. Returns true if anything
    * was recovered.
-   *
-   * PORT NOTE: core swept five sources in one `Promise.all` (AI voice, static,
-   * IVR, WebRTC, transferred calls); only the WebRTC source exists here, so its
-   * cutoff arithmetic is the only one carried.
    */
   async sweepStaleActiveCalls(reason: 'startup' | 'periodic'): Promise<boolean> {
     const now = Date.now();
     const configuredWindowMs = config.concurrency.staleCallSweepMinutes * 60_000;
-    // IVR workflows allow 60 minutes and WebRTC feature flags allow 4 hours.
+    // A WebRTC call may legitimately run up to `WEBRTC_MAX_DURATION_SECONDS`.
     // Never let a shorter generic stale window become an accidental hard cap.
     const webrtcCutoff = new Date(now - Math.max(
       configuredWindowMs,
       WEBRTC_MAX_DURATION_SECONDS * 1000 + TERMINAL_CALLBACK_GRACE_MS,
     ));
-    // WebRTC human-bridge calls — no batch concept, so a dedicated sweep (the
-    // generic sweepStaleRows is batch-oriented). Excludes calls this replica is
-    // actively bridging in memory; the age threshold guards live calls elsewhere.
+    // WebRTC human-bridge calls. Excludes calls this replica is actively bridging
+    // in memory; the age threshold guards live calls elsewhere.
     return this.sweepStaleWebrtcCalls(reason, webrtcCutoff, this.getActiveWebrtcCallIds());
   }
 
   /**
-   * Fail stuck WebRTC bridge calls. Separate from core's `sweepStaleRows` because
-   * WebRTC calls have no batch_id / batch-completion path. Best-effort: a failing
-   * query is logged and treated as "nothing recovered".
+   * Fail stuck WebRTC bridge calls. Best-effort: a failing query is logged and
+   * treated as "nothing recovered".
    *
-   * PORT NOTE: core then settled each swept row (`dispatchSettlementsBounded`,
-   * call_type `webrtc_call`, with the agency discriminator) so master released its
-   * credit. Agency has no billing (plan §4, decision S6); the row itself carries the
-   * usage facts for metering later.
+   * There is no settlement step: no billing in v1 (decision S6); the row itself
+   * carries the usage facts for metering later.
    */
   private async sweepStaleWebrtcCalls(
     reason: 'startup' | 'periodic',
@@ -414,13 +373,8 @@ export class TelephonyGuardHost {
   }
 
   /**
-   * Stop the self-heal poll and wait (bounded) for a sweep already in flight.
-   *
-   * PORT NOTE: the self-heal half of core's `CallManager.gracefulShutdown`. Core
-   * also stopped the SQS coordinator and the group refiller, drained AI calls, and
-   * on a timed-out sweep called `noteUnfinishedFanoutProducer` so the settlement
-   * fan-out drain would not report all-clear — there is no fan-out here, so the
-   * expiry is logged only.
+   * Stop the self-heal poll and wait (bounded) for a sweep already in flight. A
+   * sweep that outlives the wait is logged and left behind.
    */
   async gracefulShutdown(): Promise<void> {
     this.shuttingDown = true;

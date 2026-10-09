@@ -1,18 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// NEW (magick-agency, lane C): the two modified behaviours of the ported bridge that have no
-// core test of their own, each pinned against core's behaviour.
+// The two seam behaviours of the bridge:
 //
-//  1. docs/seams.md §3.2 — the bridge calls `getBridgeAnalysisHooks().onCallFinalized(facts)`
-//     where core called `maybeEnqueueAnalysis(session, callId)` (endCall, fire-and-forget,
-//     after the terminal write) and `.onRecordingReady(callId)` where core called
-//     `notifyDialerAnalysisRecordingReady(callId)` (late VoiceLink terminal with a NEW
-//     recording URL, awaited). Lane D tests the hook bodies; this file tests the call sites.
-//  2. plan §3.2 — max duration is `account_settings.webrtc_max_duration_seconds`, falling
-//     back to core's flag default (1800) on NULL or on a throw, exactly where core fell back
-//     to `FLAGS.webrtc_max_duration_seconds.default`. The equivalence: the resolved value
-//     drives the same three things it drove in core (slot TTL = value + 60, the carrier's
-//     `maxDuration`, the session's max-duration timer).
+//  1. docs/seams.md — the bridge calls `getBridgeAnalysisHooks().onCallFinalized(facts)`
+//     (endCall, fire-and-forget, after the terminal write) and `.onRecordingReady(callId)`
+//     (late VoiceLink terminal with a NEW recording URL, awaited). The hook bodies are tested
+//     elsewhere; this file tests the call sites.
+//  2. Max duration is `account_settings.webrtc_max_duration_seconds`, falling back to the
+//     default (1800) on NULL or on a throw. The resolved value drives three things (slot TTL =
+//     value + 60, the carrier's `maxDuration`, the session's max-duration timer).
 // Harness copied from webrtc-bridge-manager.test.ts (project convention: no shared test utils).
 
 vi.mock('@magick-agency/observability', () => ({
@@ -24,9 +20,9 @@ vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
     telephony: {
-      vobiz: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/vobiz' },
-      voicelink: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/voicelink' },
-      plivo: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/plivo' },
+      vobiz: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/vobiz' },
+      voicelink: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/voicelink' },
+      plivo: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/plivo' },
     },
   },
 }));
@@ -85,7 +81,7 @@ vi.mock('../../../src/analytics/posthog.js', () => mockAnalytics);
 import { WebRtcBridgeManager, WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
 
 // ── Fake WebSocket ───────────────────────────────────────────────────────
-// PORT NOTE: `off` added — a borrowed socket's listeners are removed at detach.
+// Includes `off`: a borrowed socket's listeners are removed at detach.
 function fakeWs() {
   const handlers: Record<string, ((...a: any[]) => void)[]> = {};
   return {
@@ -129,7 +125,7 @@ const PARAMS = {
 const VL_PARAMS = { ...PARAMS, provider: 'voicelink' as const };
 const ATTEMPT = 'att-1';
 
-/** PORT NOTE: the agency entry point in place of core's `createCall` + `attachBrowserLeg`. */
+/** The dialer's entry point: dial with the browser socket borrowed. */
 async function dial(
   mgr: WebRtcBridgeManager,
   params: Record<string, unknown> = VL_PARAMS,
@@ -143,7 +139,7 @@ async function dial(
   });
   return { record, browser };
 }
-/** PORT NOTE: core's `forceEndByUser(callId)`. */
+/** ends the call as the user (`ended_by_user`). */
 const endByUser = (mgr: WebRtcBridgeManager) => mgr.forceEndWithOutcome(ATTEMPT, 'ended_by_user');
 
 function negotiateVoicelink(pstn: ReturnType<typeof fakeWs>): void {
@@ -193,7 +189,7 @@ afterEach(() => {
   resetBridgeAnalysisHooks();
 });
 
-describe('bridge → analysis seam (docs/seams.md §3.2)', () => {
+describe('bridge → analysis seam (docs/seams.md)', () => {
   it('onCallFinalized gets the call\'s facts once, at teardown, for an unanswered call', async () => {
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
     await dial(mgr);
@@ -232,7 +228,7 @@ describe('bridge → analysis seam (docs/seams.md §3.2)', () => {
     expect(typeof facts.talkTimeSeconds).toBe('number');
   });
 
-  it('is called after the terminal row is written (core: after the persist, beside settlement)', async () => {
+  it('is called after the terminal row is written (after the persist)', async () => {
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
     await dial(mgr);
     await endByUser(mgr);
@@ -275,7 +271,7 @@ describe('bridge → analysis seam (docs/seams.md §3.2)', () => {
     }).then(() => { settled = true; });
 
     await vi.waitFor(() => expect(hooks.onRecordingReady).toHaveBeenCalledWith('call-1'));
-    // Awaited, as core awaited `notifyDialerAnalysisRecordingReady`.
+    // The hook is awaited.
     await new Promise((r) => setImmediate(r));
     expect(settled).toBe(false);
     resolveHook();
@@ -294,7 +290,7 @@ describe('bridge → analysis seam (docs/seams.md §3.2)', () => {
     expect(hooks.onRecordingReady).not.toHaveBeenCalled();
   });
 
-  it('a rejecting onRecordingReady is swallowed (core\'s method swallowed its own errors)', async () => {
+  it('a rejecting onRecordingReady is swallowed', async () => {
     hooks.onRecordingReady.mockRejectedValue(new Error('boom'));
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
     mockRepo.findById.mockResolvedValueOnce({ id: 'call-1', recording_url: null, provider_call_id: null });
@@ -305,7 +301,7 @@ describe('bridge → analysis seam (docs/seams.md §3.2)', () => {
   });
 });
 
-describe('max duration from account settings (plan §3.2) — equivalent to core\'s flag read', () => {
+describe('max duration from account settings', () => {
   async function dialAndRead(): Promise<{ cm: ReturnType<typeof makeCallManager>; mgr: WebRtcBridgeManager }> {
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
@@ -324,7 +320,7 @@ describe('max duration from account settings (plan §3.2) — equivalent to core
     await endByUser(mgr);
   });
 
-  it('NULL (no per-account value) falls back to 1800, core\'s flag default', async () => {
+  it('NULL (no per-account value) falls back to the 1800 default', async () => {
     mockAccountSettings.getWebrtcMaxDurationSeconds.mockResolvedValue(null);
     const { cm, mgr } = await dialAndRead();
     expect(cm.concurrencyGuard.tryAcquire).toHaveBeenCalledWith(expect.any(String), 1860);
@@ -333,7 +329,7 @@ describe('max duration from account settings (plan §3.2) — equivalent to core
     await endByUser(mgr);
   });
 
-  it('a failed read falls back to 1800 (core: `catch { return FLAGS…default }`) and still dials', async () => {
+  it('a failed read falls back to 1800 and still dials', async () => {
     mockAccountSettings.getWebrtcMaxDurationSeconds.mockRejectedValue(new Error('db down'));
     const { cm, mgr } = await dialAndRead();
     expect(cm.accountConcurrencyGuard.tryAcquire).toHaveBeenCalledWith(expect.any(String), 't1', 'a1', 1860);
@@ -343,11 +339,11 @@ describe('max duration from account settings (plan §3.2) — equivalent to core
   });
 });
 
-// Open question Q6 (docs/decisions.md): `verifyWsToken` is core's verbatim fail-OPEN check,
+// Open question Q6 (docs/decisions.md): `verifyWsToken` is a fail-OPEN check,
 // used by the VoiceLink webhook route and the PSTN leg. Its accept/reject outcomes are
 // pinned in webrtc-bridge-manager.test.ts ('…fail-open under Redis degradation': no Redis,
 // stored key missing, Redis error → accept; wrong value, no token presented → reject).
-// This adds the one outcome core did not pin, so a move to fail-closed is a deliberate,
+// This adds the length-mismatch outcome, so a move to fail-closed is a deliberate,
 // visible test change.
 describe('verifyWsToken — the length-mismatch outcome (Q6)', () => {
   it('rejects a presented token of a different length without throwing (timingSafeEqual is length-guarded)', async () => {

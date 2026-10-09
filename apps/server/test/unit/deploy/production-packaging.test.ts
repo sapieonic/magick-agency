@@ -11,8 +11,7 @@ vi.hoisted(() => {
 import { buildApp } from '../../../src/app.js';
 
 /**
- * NEW (magick-agency): the production packaging in `docker/` (no source; core had one
- * Dockerfile and no proxy). Two kinds of drift here are silent until production:
+ * The production packaging in `docker/`. Two kinds of drift here are silent until production:
  *
  * 1. **A route nginx does not forward.** nginx answers every path it does not proxy with the
  *    console's `index.html` (the SPA fallback), so a new top-level route prefix 200s with HTML

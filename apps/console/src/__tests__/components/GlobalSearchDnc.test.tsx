@@ -3,12 +3,12 @@ import { render, screen, cleanup, fireEvent, within } from '@testing-library/rea
 import { MemoryRouter } from 'react-router-dom';
 
 /**
- * How the Do Not Call list presents itself in the command palette (Q2).
+ * How the Do Not Call list presents itself in the command palette.
  *
- * The palette is reached from inside the primary app, where no shell tells the
- * reader which product a result belongs to — so the entry's own words are the
+ * The palette is reached from inside the `/app` zone, where no shell tells the
+ * reader which surface a result belongs to — so the entry's own words are the
  * only scope it has. `compliance` and `opt out` were keywords on it, which made
- * the palette answer a platform-wide question with an agency-only page.
+ * the palette answer a wider question with an agency-only page.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -72,8 +72,8 @@ describe('the Do Not Call entry', () => {
 
   it('is not offered as the answer to "compliance"', () => {
     // The misreading: this list binds agency dialing only, so presenting it to
-    // someone asking a platform-wide compliance question tells them AI calls
-    // honour it. They do not.
+    // someone asking a wider compliance question tells them every kind of call
+    // honours it. Only agency dialing does.
     const dialog = openPalette();
     search(dialog, 'compliance');
     expect(within(dialog).queryByText('Agency Do Not Call')).toBeNull();

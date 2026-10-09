@@ -65,9 +65,9 @@ export class PhoneNumberRepository {
     return result.rows[0] || null;
   }
 
-  // PORT NOTE (magick-agency): master's `findPlatformOwned` is deleted. Its one
-  // caller refused registering a platform DID as a tenant's BYOC number, and
-  // bring-your-own-carrier is out of scope (plan Decided #3: VoiceLink only).
+  // There is no `findPlatformOwned`: its one use was refusing to register a
+  // platform DID as a tenant's BYOC number, and bring-your-own-carrier is out of
+  // scope (VoiceLink only).
 
   async create(input: CreatePhoneNumberInput): Promise<PhoneNumberRecord> {
     const pool = getPool();
@@ -164,9 +164,8 @@ export class PhoneNumberRepository {
   }
 
   /**
-   * PORT NOTE (magick-agency): verbatim, but it has NO caller in agency — master
-   * called it from self-serve signup (session path 4, which refuses here) and
-   * super-admin tenant create (which assigns no number, plan §3.4). Kept, with
+   * It has NO caller today: self-serve signup refuses and super-admin tenant
+   * create assigns no number. Kept, with
    * the `pool_eligible` column and its real-Postgres tests, because the column is
    * in the schema; a candidate deletion with that column.
    *

@@ -107,10 +107,7 @@ export const updateNotificationPreferencesSchema = z.object({
 
 export type UpdateNotificationPreferencesInput = z.infer<typeof updateNotificationPreferencesSchema>;
 
-// PORT NOTE (magick-agency): master's `previewDigestSchema`
-// (`POST /notifications/digests/preview`) and `runDigestsSchema`
-// (`POST /internal/notifications/digests/run`, master
-// `notification.validator.ts:110-131`) are deleted with the credits usage digest
-// they validated (plan §3.3, §3.5). `DIGEST_FREQUENCIES` stays: the preference
-// write still takes a `frequency` field (a non-null one is refused on every
-// agency event, since none is a digest).
+// No digest preview or digest-run schemas: there is no usage digest in v1.
+// `DIGEST_FREQUENCIES` stays: the preference write still takes a `frequency`
+// field (a non-null one is refused on every agency event, since none is a
+// digest).

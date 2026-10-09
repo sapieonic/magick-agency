@@ -76,7 +76,7 @@ describe('VoicelinkAdapter', () => {
   });
 
   // ─── The country-code split — the load-bearing, VoiceLink-unique transform ──
-  // Matrix from FINDINGS §2b: every input format must normalize to a BARE
+  // Matrix: every input format must normalize to a BARE
   // national customer_number + a SEPARATE country_code (no `+`, no leading 0).
   describe('splitDestination (country-code split matrix)', () => {
     const adapter = new VoicelinkAdapter(VOICELINK_CONFIG);
@@ -287,7 +287,7 @@ describe('VoicelinkAdapter', () => {
     });
   });
 
-  // ─── parseWebhookEvent — maps every VoiceLink lifecycle event (§1.3) ────────
+  // ─── parseWebhookEvent — maps every VoiceLink lifecycle event ────────
   describe('parseWebhookEvent', () => {
     const adapter = new VoicelinkAdapter(VOICELINK_CONFIG);
 

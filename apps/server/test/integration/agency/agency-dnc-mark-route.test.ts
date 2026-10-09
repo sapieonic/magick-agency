@@ -10,28 +10,20 @@ import {
 } from './agency-factories.js';
 
 /*
- * PORT NOTE (magick-agency, Phase 8): ported from core
- * test/integration/agency/agency-dnc-mark-route.test.ts@4850d1d9 (4 cases → 4). Core's route
- * wrote a durable `agency_dnc_outbox` row and then told master over HTTP (`markDncOnMaster`), so
- * every case asserted the outbox and the master wire body. Decision B8 collapses that: the route
- * writes the roster suppression, the optional disposition and the `dnc_entries` row in ONE
- * transaction (lead ruling), and there is no master, no wire and no outbox write. So:
- *  - MODIFIED (2): "defaults to campaign scope across HTTP, roster SQL, the outbox, and the master
- *    wire" and "stores and forwards tenant scope…" assert the `dnc_entries` row (scope, phone,
- *    reason, added_by, source `agent`) where they asserted the wire body and the outbox row, and
- *    that the outbox stays empty; the HTTP and roster-SQL assertions are core's;
- *  - MODIFIED (1): "keeps a failed master hop durable and later lands the byte-identical scoped
- *    payload" → "a failed DNC write rolls back the local suppression": the failure is a genuine one
- *    (a trigger raising inside the `dnc_entries` insert); under B8 nothing commits, where core kept
- *    the suppression and an outbox row for a later sweep (`AgencyDncOutboxSweeper` is not ported);
- *  - MODIFIED (1, assertions only): "writes nothing for an invalid scope or for another account's
- *    attempt" asserts `dnc_entries` empty instead of "fetch not called / outbox empty";
- *  - harness: the private route module is mounted as core mounted it (`agencyRoutes` under
- *    `/api/v1/agency`); auth is `authMiddleware`'s header half (no API keys, decision #5); ids are
- *    UUIDs; the pool is mocked through `@magick-agency/db`; the config stub drops `auth`,
- *    `telephony.vobiz`, `masterService`; the logger targets `@magick-agency/observability`; core's
- *    `metrics.js` / PostHog mocks and `globalThis.fetch` swaps are gone; the runtime stub loses
- *    `dnc.applyDelta|applyReplace` (no Redis set).
+ * Under decision B8 the DNC mark route writes the roster suppression, the optional disposition
+ * and the `dnc_entries` row in ONE transaction: there is no outbox write and no wire hop. So:
+ *  - the campaign-scope and tenant-scope cases assert the `dnc_entries` row (scope, phone,
+ *    reason, added_by, source `agent`) and that the outbox stays empty, alongside the HTTP and
+ *    roster-SQL assertions;
+ *  - "a failed DNC write rolls back the local suppression": the failure is a genuine one
+ *    (a trigger raising inside the `dnc_entries` insert); nothing commits;
+ *  - "writes nothing for an invalid scope or for another account's attempt" asserts
+ *    `dnc_entries` empty;
+ *  - harness: the private route module is mounted as `agencyRoutes` under
+ *    `/api/v1/agency`; auth is `authMiddleware`'s header half (no API keys); ids are
+ *    UUIDs; the pool is mocked through `@magick-agency/db`; the config stub carries no `auth`,
+ *    carrier or upstream-service config; the logger targets `@magick-agency/observability`; the
+ *    runtime stub has no `dnc.applyDelta|applyReplace` (no Redis set).
  */
 
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
@@ -174,9 +166,9 @@ async function readContacts(ids: string[]) {
   return new Map(rows.map((row) => [row.id, row]));
 }
 
-// PORT NOTE (magick-agency, Phase 8 delta review): `agency_dnc_outbox` is dead under B8 (kept in
-// the schema for the Phase 10 rollback-window mirror; nothing writes it). Read here as a TRIPWIRE:
-// a mark that started queueing an outbox row again — core's two-step write coming back — reds
+// `agency_dnc_outbox` is dead under B8 (kept in
+// the schema for the rollback-window mirror; nothing writes it). Read here as a TRIPWIRE:
+// a mark that started queueing an outbox row again — the old two-step write coming back — reds
 // the `toEqual([])` assertions below.
 async function readOutbox() {
   const { rows } = await getTestPool().query('SELECT id FROM agency_dnc_outbox');
@@ -194,7 +186,7 @@ async function readDncEntries() {
 describe('POST /api/v1/agency/attempts/:id/dnc (integration)', () => {
   beforeEach(async () => {
     await truncateAll();
-    // `dnc_entries.tenant_id` references `tenants` (core's master-side table had no such FK here).
+    // `dnc_entries.tenant_id` references `tenants` (an FK that must be satisfied by seeding the tenant).
     await insertTenant({ id: TENANT });
     flags.isEnabled.mockResolvedValue(true);
     app = Fastify({ logger: false });
@@ -284,7 +276,7 @@ describe('POST /api/v1/agency/attempts/:id/dnc (integration)', () => {
     await getTestPool().query('CREATE TRIGGER p8_fail_dnc BEFORE INSERT ON dnc_entries FOR EACH ROW EXECUTE FUNCTION p8_fail_dnc()');
 
     const response = await markDnc(seeded.attempt.id, {
-      reason: 'verbatim reason',
+      reason: 'customer asked not to be called',
       agent_user_id: AGENT_9,
     });
 

@@ -14,12 +14,9 @@ import { WebRtcCallRepository } from '../../../../src/repositories/agency-call.r
 
 const repo = new WebRtcCallRepository();
 
-// PORT NOTE (magick-agency): ported from core
-// test/unit/db/repositories/webrtc-call-repository-analysis.test.ts@4850d1d9.
-// MODIFIED: the INSERT no longer binds `telephony_credential_id` or
-// `sip_connection_id` (baseline dropped both), so the analysis fields sit at
-// $9..$12 (indexes 8..11) instead of $11..$14; `listByTenant` passes the only
-// remaining scope, `'agency'`.
+// The INSERT does not bind `telephony_credential_id` or `sip_connection_id`
+// (the baseline has neither), so the analysis fields sit at $9..$12
+// (indexes 8..11); `listByTenant` passes the only scope, `'agency'`.
 
 function firstQueryText(): string {
   return mocks.poolQuery.mock.calls[0]![0] as string;

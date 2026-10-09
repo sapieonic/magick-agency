@@ -37,8 +37,8 @@ return 1
 /**
  * Renew a lease **without resurrecting it**.
  *
- * The invariant this protects is the whole point of §6.1: a key TTL expires only
- * when the thing renewing it is gone. If renew re-created an expired key, an agent
+ * The invariant this protects is the whole point of the lease design: a key TTL
+ * expires only when the thing renewing it is gone. If renew re-created an expired key, an agent
  * whose replica died would silently come back to life in whatever state they were
  * last in — and the engine would dial into them. `EXISTS` first, and the state
  * must still match what the renewer believes.
@@ -51,7 +51,7 @@ return 1
 `;
 
 /**
- * Lease TTLs, in milliseconds (§6.1).
+ * Lease TTLs, in milliseconds.
  *
  * These are **liveness detectors, never business timers.** A Redis TTL cannot
  * distinguish "took too long" from "the process died", so ring timeout, wrap-up
@@ -98,7 +98,7 @@ export interface AgentLiveState {
  * Redis is the authority on agent liveness, not the database: `agency_agent_sessions`
  * is a durable mirror written alongside, and is what a reconnecting agent is
  * rehydrated from, but the pacing tick must never count an agent as available
- * because a DB row says so (§5.1 — presence is the heartbeat, not a state).
+ * because a DB row says so (presence is the heartbeat, not a state).
  */
 export class AgentStateMachine {
   constructor(
@@ -113,8 +113,8 @@ export class AgentStateMachine {
   /**
    * Reserve an agent for an attempt. **Strictly before the dial** — the agent is
    * committed before the carrier is ever contacted, which is what makes
-   * "answered call with no agent" unreachable under D1 except through the agent
-   * physically disappearing.
+   * "answered call with no agent" unreachable under strict power dialing except
+   * through the agent physically disappearing.
    */
   async reserve(sessionId: string, attemptId: string): Promise<ReservationResult> {
     if (!this.redis) return 'unavailable';

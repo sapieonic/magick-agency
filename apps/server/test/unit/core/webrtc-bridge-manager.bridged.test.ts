@@ -1,44 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// PORT NOTE (magick-agency): ported from core test/unit/core/webrtc-bridge-manager.bridged.test.ts@4850d1d9
-// (11 cases → 8). Mock specifiers follow the new paths (logger → @magick-agency/observability,
-// webrtc-call repository → @magick-agency/db agency-call repository, account settings → the
-// @magick-agency/db repository with `getWebrtcMaxDurationSeconds` → null = the 1800 default the
-// flag mock returned); the settlement-dispatcher and feature-flag mocks are gone (the bridge no
-// longer imports them).
-// The default provider is now VoiceLink (core: VoBiz), so every case below runs on VoiceLink.
-//
-// DELETED (3):
-//  - 'refuses a /browser-stream connect for a bridged call' — `attachBrowserLeg` (the owned,
-//    token-gated softphone leg) is deleted with `createCall`; there is no route to refuse.
-//  - 'still mints a token and CLOSES its browser socket at teardown' — softphone `createCall` +
-//    owned `attachBrowserLeg`, both deleted.
-//  - 'writes NULL agency back-references' — softphone `createCall` (the only path that dialled
-//    with no campaign/attempt), deleted.
-//
-// UNCHANGED (2): 'refuses to dial when the station socket is not open (409, no slot, no carrier)',
-// 'hangs up the carrier as agent_disconnected when the station socket drops mid-call'.
-//
-// MODIFIED (6): `forceEndByUser(callId)` (deleted) → the same `localHangup` under the same
-// outcome via `forceEndWithOutcome(attemptId, 'ended_by_user')` in 'dials over the shared path
-// and persists the agency back-references', 'mints no browser WS token for a borrowed socket',
-// 'leaves the station socket OPEN and listener-clean after an attempt completes', 'survives three
-// sequential calls over one station socket with one live listener set', 'does not let a finished
-// attempt handle a later close of the shared socket', 'relays media both ways over the borrowed
-// socket'. Beyond that:
-//  - 'mints no browser WS token for a borrowed socket' — on VoiceLink the bridge still stores the
-//    carrier's provider + webhook tokens (core's own comment says so), so the assertion is that no
-//    `browser`-purpose token is stored, rather than that `redis.set` is never called.
-//  - 'relays media both ways over the borrowed socket' — VoiceLink holds the relay until a valid
-//    `start` frame (VoBiz was media-ready on connect), so the frame is sent first; the relay
-//    transcodes (PCM16 16k ⇄ A-law 8k, plain `media` frames) instead of VoBiz's verbatim L16
-//    `playAudio`: a real 20ms tone goes each way and exactly one frame must come out, of the
-//    transcoded length (A-law 120-160 B, PCM16 480-640 B) and not silent. The answered VoiceLink
-//    hangup waits for the carrier's `call.ended`, which is driven (and the session asserted gone)
-//    before the "station never closed" check, so that check still runs after finalization.
+// The default provider is VoiceLink, so every case below runs on VoiceLink. Each call ends via
+// `forceEndWithOutcome(attemptId, 'ended_by_user')` (a `localHangup` under that outcome).
+//  - 'mints no browser WS token for a borrowed socket': the bridge still stores the carrier's
+//    provider + webhook tokens, so the assertion is that no `browser`-purpose token is stored,
+//    rather than that `redis.set` is never called.
+//  - 'relays media both ways over the borrowed socket': VoiceLink holds the relay until a valid
+//    `start` frame, so the frame is sent first; the relay transcodes (PCM16 16k <-> A-law 8k,
+//    plain `media` frames): a real 20ms tone goes each way and exactly one frame must come out,
+//    of the transcoded length (A-law 120-160 B, PCM16 480-640 B) and not silent. The answered
+//    VoiceLink hangup waits for the carrier's `call.ended`, which is driven (and the session
+//    asserted gone) before the "station never closed" check, so that check still runs after
+//    finalization.
 
 // ---------------------------------------------------------------------------
-// The borrowed-socket contract (docs/reference/magickvoice-platform/docs/agency-dialer-design.md §7).
+// The borrowed-socket contract.
 //
 // The agency dialer inverts the bridge's socket lifetime: the agent's station
 // socket is opened once at shift start and reused across hundreds of attempts.
@@ -59,8 +35,8 @@ vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
     telephony: {
-      vobiz: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/vobiz' },
-      voicelink: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/voicelink' },
+      vobiz: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/vobiz' },
+      voicelink: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/voicelink' },
     },
   },
 }));
@@ -166,14 +142,13 @@ const BRIDGED = {
   agencyAttemptId: 'att-1',
 };
 
-/** PORT NOTE: core's `forceEndByUser(callId)` — the same `localHangup`, keyed on the attempt. */
+/** ends the call by attempt id via `localHangup` with the `ended_by_user` outcome. */
 const endByUser = (mgr: WebRtcBridgeManager, attemptId = 'att-1') =>
   mgr.forceEndWithOutcome(attemptId, 'ended_by_user');
 
-/** PORT NOTE: VoiceLink's A-law 8kHz `start` frame — opens the relay (VoBiz needed none). */
+/** VoiceLink's A-law 8kHz `start` frame — opens the relay. */
 /**
- * PORT NOTE: real 20ms tone frames for the relay check. Core relayed VoBiz's L16 verbatim, so a
- * 4-byte payload proved the relay; VoiceLink transcodes (PCM16 16k ⇄ A-law 8k), so only real
+ * Real 20ms tone frames for the relay check. VoiceLink transcodes (PCM16 16k ⇄ A-law 8k), so only real
  * audio makes the output's length and level meaningful.
  */
 function pcm16kToneFrame(): string {
@@ -231,7 +206,7 @@ describe('WebRtcBridgeManager.createBridgedCall', () => {
     const record = await mgr.createBridgedCall({ ...BRIDGED, browserSocket: ws as any });
 
     expect(record.id).toBe('call-1');
-    // Same dial path as createCall — concurrency, persistence, provider dial.
+    // Shared dial path — concurrency, persistence, provider dial.
     const created = mockRepo.create.mock.calls[0]![0];
     expect(created.campaign_id).toBe('camp-1');
     expect(created.agency_attempt_id).toBe('att-1');
@@ -269,9 +244,8 @@ describe('WebRtcBridgeManager.createBridgedCall', () => {
 
     await mgr.createBridgedCall({ ...BRIDGED, browserSocket: ws as any });
 
-    // A VoBiz bridged call stores no token at all (VoiceLink would still store its
-    // provider/webhook tokens — those gate the carrier's own legs, not the agent's).
-    // PORT NOTE: this is a VoiceLink call, so exactly those two are stored and no
+    // A VoiceLink call stores its provider/webhook tokens (they gate the carrier's own
+    // legs, not the agent's), so exactly those two are stored and no
     // `browser`-purpose token (key `webrtc:ws-token:<purpose>:<callId>`).
     const purposes = redis.set.mock.calls.map((c: any[]) => String(c[0]).split(':')[2]);
     expect(purposes).not.toContain('browser');
@@ -371,12 +345,11 @@ describe('WebRtcBridgeManager.createBridgedCall', () => {
 
     await mgr.createBridgedCall({ ...BRIDGED, browserSocket: station as any });
     mgr.attachPstnLeg('call-1', pstn as any);
-    // PORT NOTE: VoiceLink opens the relay on its `start` frame.
+    // VoiceLink opens the relay on its `start` frame.
     negotiateVoicelink(pstn);
     station.sent.length = 0;
 
-    // PORT NOTE: core sent a 4-byte payload and asserted VoBiz's verbatim `playAudio` L16
-    // frame; VoiceLink gets the transcoded A-law in a plain `media` frame, so a real 20ms tone
+    // VoiceLink gets the transcoded A-law in a plain `media` frame, so a real 20ms tone
     // goes in and exactly one transcoded, non-silent frame must come out.
     const toPstn = pstn.sent.filter((f) => f.event === 'media').length;
     station.emit('message', JSON.stringify({ event: 'media', media: { payload: pcm16kToneFrame() } }));
@@ -387,7 +360,7 @@ describe('WebRtcBridgeManager.createBridgedCall', () => {
     expect(alaw.length).toBeLessThanOrEqual(160);
     expect(peak(decodeAlaw(alaw))).toBeGreaterThan(6400);
 
-    // PORT NOTE: core asserted the verbatim payload; VoiceLink's is transcoded to PCM16 16k.
+    // VoiceLink's payload is transcoded to PCM16 16k.
     pstn.emit('message', JSON.stringify({ event: 'media', media: { payload: alaw8kToneFrame() } }));
     const p2s = station.sent.filter((f) => f.event === 'media');
     expect(p2s).toHaveLength(1); // `station.sent` was cleared after negotiation
@@ -397,8 +370,8 @@ describe('WebRtcBridgeManager.createBridgedCall', () => {
     expect(peak(new Int16Array(pcm.buffer, pcm.byteOffset, pcm.byteLength / 2))).toBeGreaterThan(6400);
 
     await endByUser(mgr);
-    // PORT NOTE: an answered VoiceLink hangup waits in `ending` for the carrier's `call.ended`
-    // (VoBiz finalized at once), so the confirmation is driven and the call asserted finalized
+    // an answered VoiceLink hangup waits in `ending` for the carrier's `call.ended`,
+    // so the confirmation is driven and the call asserted finalized
     // before the socket check — otherwise "never closed at finalization" would go untested.
     await mgr.handleVoicelinkStatus('call-1', {
       providerCallId: 'carrier-1', callId: 'call-1', eventType: 'hangup', timestamp: new Date(),

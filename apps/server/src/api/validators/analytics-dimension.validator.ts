@@ -1,10 +1,9 @@
 import { z } from 'zod';
 
 /**
- * A single operator-defined analysis dimension — the shared shape behind both
- * prompt-template `analytics_config.custom_dimensions` (AI calls) and
- * `call_analysis_profiles.custom_dimensions` (dialer calls). Extracted here so
- * both validators enforce identical bounds (snake_case key ≤50, description ≤500,
+ * A single operator-defined analysis dimension — the shape behind
+ * `call_analysis_profiles.custom_dimensions`. Extracted here so every validator
+ * that accepts one enforces identical bounds (snake_case key ≤50, description ≤500,
  * enum needs ≥2 options) rather than drifting a copy-paste.
  */
 export const analyticsDimensionSchema = z.object({

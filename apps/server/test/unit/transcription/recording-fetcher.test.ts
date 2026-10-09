@@ -1,11 +1,7 @@
 /*
- * PORT NOTE (magick-agency): ported from core test/unit/transcription/recording-fetcher.test.ts
- * @4850d1d9 (10 cases) and REWORKED with the fetcher (plan §4). Deleted: "selects
- * VoBiz auth headers", "selects Twilio Basic auth headers" (carrier credentials are
- * gone). Added: no auth headers on an allow-listed host; off-list host, lookalike
+ * Covers: no auth headers on an allow-listed host; off-list host, lookalike
  * hosts (suffix, userinfo, path, query), http scheme, empty list and unparseable URL
- * are permanent failures that never reach `fetch`; the mimeType assertion the Twilio
- * case carried. Every other case runs unchanged against an allow-listed host.
+ * are permanent failures that never reach `fetch`; the mimeType assertion. Every other case runs against an allow-listed host.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 

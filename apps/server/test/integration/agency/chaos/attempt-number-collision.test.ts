@@ -10,14 +10,12 @@ import {
 import { DEFAULTS } from '../../setup/factories.js';
 
 /*
- * PORT NOTE (magick-agency, Phase 6): ported from core
- * test/integration/agency/chaos/attempt-number-collision.test.ts@4850d1d9 — 6 cases,
  * all kept. Modified: the connection mock (agency's `@magick-agency/db`), and the
  * literal `'test-tenant'` / `'test-account'` ids passed to `create` are the shared
  * UUID defaults the factories stamp on the rows (the baseline types both UUID).
  */
 
-// PORT NOTE: core mocked `src/db/connection.js`; agency's pool lives in `@magick-agency/db`
+// The DB pool lives in `@magick-agency/db`
 // (the server's repositories import its root, packages/db's repositories `./connection`).
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
 vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
@@ -28,7 +26,7 @@ const { agencyAttemptRepository, agencyContactRepository } = await import(
 const { AgencyReaper } = await import('../../../../src/agency/reaper.js');
 
 /**
- * ─── AD-P2-C-12 — REGRESSION SUITE ──────────────────────────────────────────
+ * ─── REGRESSION SUITE ──────────────────────────────────────────
  *
  * The defect: a reaper-recovered contact could never be dialed again, for the
  * life of the campaign. `attempt_count` was doing two unrelated jobs — retry
@@ -57,7 +55,7 @@ const { AgencyReaper } = await import('../../../../src/agency/reaper.js');
  * contact's own attempt rows, inside the INSERT.
  */
 
-describe('AD-P2-C-12 · requeued-contact attempt numbering (regression)', () => {
+describe('requeued-contact attempt numbering (regression)', () => {
   beforeEach(truncateAll);
   afterAll(closeTestPool);
 
@@ -65,8 +63,8 @@ describe('AD-P2-C-12 · requeued-contact attempt numbering (regression)', () => 
     return agencyAttemptRepository.create({
       campaignId,
       contactId,
-      tenantId: DEFAULTS.tenantId, // PORT NOTE: UUID column
-      accountId: DEFAULTS.accountId, // PORT NOTE: UUID column
+      tenantId: DEFAULTS.tenantId, // UUID column
+      accountId: DEFAULTS.accountId, // UUID column
       callerId: '+919000000001',
       reservedAgentId: sessionId,
     });
@@ -92,7 +90,7 @@ describe('AD-P2-C-12 · requeued-contact attempt numbering (regression)', () => 
     const session = await insertAgentSession(campaign.id);
 
     const first = await agencyAttemptRepository.create({
-      // PORT NOTE: `tenantId`/`accountId` are the UUID defaults (core: 'test-tenant'/'test-account').
+      // `tenantId`/`accountId` are the UUID defaults.
       campaignId: campaign.id, contactId: contact.id, tenantId: DEFAULTS.tenantId,
       accountId: DEFAULTS.accountId, callerId: '+919000000001', reservedAgentId: session.id,
       // Not in the signature. Passed anyway, cast, to prove it cannot influence
@@ -118,7 +116,7 @@ describe('AD-P2-C-12 · requeued-contact attempt numbering (regression)', () => 
     const requeued = await agencyContactRepository.findById(contact.id);
     expect(requeued!.state).toBe('pending');
     // Still NOT bumped, and that stays deliberate: our crash must not consume the
-    // customer's retry allowance. With `max_attempts: 3`, three core restarts
+    // customer's retry allowance. With `max_attempts: 3`, three server restarts
     // would otherwise exhaust a contact who was never spoken to. The fix works
     // *because* it stopped depending on this number, not by changing it.
     expect(requeued!.attempt_count).toBe(0);
@@ -153,7 +151,7 @@ describe('AD-P2-C-12 · requeued-contact attempt numbering (regression)', () => 
     expect(retry!.attempt_number).toBe(2);
   });
 
-  it('numbers stay unique and gapless across repeated crash cycles — what AD-P3-C-02 will read', async () => {
+  it('numbers stay unique and gapless across repeated crash cycles — what the retry policy reads', async () => {
     // The fix's other half. Deriving from `MAX` keeps the sequence unique per
     // contact across all history, which the retry policy depends on; the rejected
     // alternative (making the index partial) would have made numbers reusable and

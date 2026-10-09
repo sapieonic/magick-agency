@@ -11,7 +11,7 @@ import {
 } from '../src/rbac';
 
 describe('role hierarchy', () => {
-  it('is master’s, exactly (magick-master src/rbac/roles.ts:26-33 @ a1f0756a)', () => {
+  it('has the six levels, exactly', () => {
     expect(ROLE_HIERARCHY).toEqual({
       agent: 5,
       viewer: 10,
@@ -34,9 +34,7 @@ describe('role hierarchy', () => {
 });
 
 /**
- * Every permission's floor, against master's matrix at master v3.24.0
- * (a1f0756a58a63bf8a19baf74298a702f9fe7b430), `src/rbac/roles.ts`.
- * `masterName` is the permission's name in master where it was renamed.
+ * Every permission's expected floor.
  */
 const FLOORS: ReadonlyArray<{ permission: Permission; floor: Role; masterName: string; masterLine: number }> = [
   { permission: 'tenant.read', floor: 'viewer', masterName: 'tenant.read', masterLine: 80 },
@@ -61,7 +59,7 @@ const FLOORS: ReadonlyArray<{ permission: Permission; floor: Role; masterName: s
 ];
 
 describe('permission floors', () => {
-  it.each(FLOORS)('$permission floors at $floor (master $masterName, roles.ts:$masterLine)', ({ permission, floor }) => {
+  it.each(FLOORS)('$permission floors at $floor', ({ permission, floor }) => {
     expect(PERMISSION_MATRIX[permission]).toBe(floor);
   });
 
@@ -69,7 +67,7 @@ describe('permission floors', () => {
     expect(FLOORS.map((f) => f.permission).sort()).toEqual([...PERMISSIONS].sort());
   });
 
-  it('has the seven agency.* keys master defines', () => {
+  it('has the seven agency.* keys', () => {
     const masterAgency = FLOORS.filter((f) => f.masterName.startsWith('agency.')).map((f) => f.permission);
     expect(masterAgency).toHaveLength(7);
   });

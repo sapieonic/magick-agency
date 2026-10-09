@@ -1,20 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
- * The agency campaign-completion notice (E10).
+ * The agency campaign-completion notice.
  *
  * ── What is actually worth pinning here ─────────────────────────────────────
  * Not "an email is composed" — that is the easy half and it is the same shape as
  * the bulk-dispatch mailer this file was modelled on. Three things:
  *
- *  1. **The destination.** The one requirement the handoff states outright is
+ *  1. **The destination.** The one requirement stated outright is
  *     that this must NOT reuse the bulk-dispatch mailer's primary-app deep link.
  *     A link into `/app/…` in an email is the scope leak this whole scope
  *     isolation exists to remove, and worse than a leak in the SPA: an inbox
  *     outlives every redirect we would later add to cover for it. So the link is
  *     asserted positively (`/agency/campaigns/:id`) and negatively (no `/app/`,
  *     no `/admin/`).
- *  2. **The audience.** Master holds no agency campaign row and core's campaign
+ *  2. **The audience.** The server holds no agency campaign row and the campaign
  *     carries no notification list, so the recipients are DERIVED from
  *     membership at the `agency.supervise` floor. The case that matters is the
  *     exclusion: an `agent` is level 5 and must not be mailed, because the
@@ -28,7 +28,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *     apart from `no_recipients`.
  *  4. **The audience is derived, so it must not be disclosed.** One envelope per
  *     recipient. A single `To:` would show every supervisor the account's admin
- *     roster, which is master publishing membership rather than echoing a list the
+ *     roster, which is the server publishing membership rather than echoing a list the
  *     tenant typed itself.
  *
  * `src/config/index.js` is mocked per case, as `invite-mailer.test.ts` does and
@@ -54,8 +54,8 @@ const mocks = vi.hoisted(() => ({
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
   /**
    * The delivery ledger. Mocked because this mailer now CLAIMS before it sends:
-   * core redelivers webhooks as a matter of routine and `dispatchWebhook` retries
-   * a 5s timeout three times, so without a claim the day core's emitter lands is
+   * webhooks are redelivered as a matter of routine and `dispatchWebhook` retries
+   * a 5s timeout three times, so without a claim the day the emitter lands is
    * the day supervisors get the same notice several times.
    *
    * Default in `beforeEach` is claim-everything, which is the ordinary
@@ -109,7 +109,6 @@ const completion: AgencyCampaignCompletion = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // PORT NOTE (magick-agency): `consoleBaseUrl` is master's `cusuiBaseUrl`.
   setConfig({ mailjet: MAILJET, consoleBaseUrl: 'https://app.example.com' });
   mocks.sendEmail.mockResolvedValue(true);
   mocks.findAddressableMembersInAccount.mockResolvedValue([
@@ -134,12 +133,11 @@ describe('the deep link', () => {
   });
 
   /**
-   * The handoff's one explicit instruction for this item. `/app/…` is the AI
-   * application's shell and `/admin/…` is where the bulk-dispatch mailer points
-   * (a path cusui does not even route today) — neither may appear in an agency
-   * campaign notice, in either body.
+   * The one explicit requirement for this notice. `/app/…` is the platform zone
+   * and `/admin/…` is a path the console does not route — neither may appear in
+   * an agency campaign notice, in either body.
    */
-  it('never points into the primary application from either body', () => {
+  it('never points into the platform zone from either body', () => {
     const mail = renderAgencyCampaignCompletionEmail(completion, 'https://app.example.com');
     for (const body of [mail.textBody, mail.htmlBody]) {
       expect(body).toContain(`/agency/campaigns/${CAMPAIGN}`);
@@ -181,7 +179,7 @@ describe('the rendered notice', () => {
   });
 
   /**
-   * Master cannot count a core campaign's roster, so a caller may legitimately
+   * The server cannot count a campaign's roster, so a caller may legitimately
    * have no numbers. An omitted count must not render as 0 — that is a claim
    * about the campaign, and a false one.
    */
@@ -249,7 +247,7 @@ describe('who gets told', () => {
     expect(await resolveCampaignNotificationRecipients(TENANT, ACCOUNT)).toEqual(['both@example.com']);
   });
 
-  it('ignores a role master does not recognise rather than assuming it qualifies', async () => {
+  it('ignores a role the server does not recognise rather than assuming it qualifies', async () => {
     mocks.findAddressableMembersInAccount.mockResolvedValue([
       { email: 'mystery@example.com', role: 'future_role' },
     ]);
@@ -287,7 +285,7 @@ describe('sending', () => {
    * there — `notification_emails` was typed in by the tenant, so every address is
    * already known to whoever reads the mail. This audience is DERIVED from
    * `memberships`: a single `To:` would show every supervisor the account's whole
-   * admin roster, addresses included, which master has no business disclosing on
+   * admin roster, addresses included, which the server has no business disclosing on
    * the strength of a campaign finishing.
    */
   it('never puts a second supervisor in the same envelope', async () => {
@@ -313,7 +311,7 @@ describe('sending', () => {
    * `findAddressableMembersInAccount` has no `LIMIT` on purpose — a cap there
    * would silently not tell somebody entitled to be told — so an account with a
    * large admin roster used to put that many simultaneous Mailjet requests on one
-   * webhook handler, sharing a process with the billing webhooks core cannot
+   * webhook handler, sharing a process with the billing webhooks, which cannot
    * afford to have queue behind an email.
    *
    * Asserted as a PEAK rather than as a call count, because the call count is
@@ -379,7 +377,7 @@ describe('sending', () => {
    * a no-op subsystem that still queries is a no-op with a cost.
    */
   it('is a silent no-op with no mailjet block, and reads nothing', async () => {
-    setConfig({ consoleBaseUrl: 'https://app.example.com' }); // PORT NOTE (magick-agency): master `cusuiBaseUrl`
+    setConfig({ consoleBaseUrl: 'https://app.example.com' });
 
     expect(await sendAgencyCampaignCompletionEmail(completion))
       .toEqual({ sent: false, reason: 'not_configured' });
@@ -398,10 +396,10 @@ describe('sending', () => {
   });
 
   /**
-   * `account_not_addressable`, and it is the outcome the LIKELY core payload
-   * produces rather than a corner case. Core's `agency_campaigns.account_id` is
-   * `VARCHAR(100) NOT NULL DEFAULT 'default'` (migration 072), so a campaign made
-   * through core's own API carries `'default'` — the audience query narrows to its
+   * `account_not_addressable`, and it is the outcome the LIKELY payload
+   * produces rather than a corner case. The sender's `agency_campaigns.account_id` is
+   * `VARCHAR(100) NOT NULL DEFAULT 'default'`, so a campaign made
+   * through its own API carries `'default'` — the audience query narrows to its
    * tenant-level arm, and a tenant whose supervisors are all account-scoped
    * `account_admin`s (the ordinary multi-account shape) is told nothing at all.
    * Folded into `no_recipients` that reads as "this account has no supervisors",
@@ -445,7 +443,7 @@ describe('sending', () => {
    * regex, so `accountUnresolvable` was false — and
    * `findAddressableMembersInAccount` then matched its `account_id IS NULL` arm
    * and handed back the TENANT-WIDE supervisors. The run reported `sent`: a
-   * notice about a campaign in an account master cannot see, delivered to an
+   * notice about a campaign in an account the server cannot see, delivered to an
    * audience nobody selected, filed as a clean delivery.
    *
    * `'default'` was the only unaddressable value the old check could name, and it
@@ -549,7 +547,7 @@ describe('sending', () => {
       .resolves.toEqual({ sent: false, reason: 'failed' });
   });
 
-  /** With no `CUSUI_BASE_URL` the notice still goes out — without the link. */
+  /** With no `CONSOLE_BASE_URL` the notice still goes out — without the link. */
   it('sends without a link when no console origin is configured', async () => {
     setConfig({ mailjet: MAILJET });
     const result = await sendAgencyCampaignCompletionEmail(completion);
@@ -563,9 +561,9 @@ describe('sending', () => {
    *
    * This was the one catalog event honouring its settings-page toggle while
    * having no identity at all: the toggle was real and the idempotency the
-   * engine exists for was not. Core redelivers webhooks as a matter of routine
+   * engine exists for was not. Webhooks are redelivered as a matter of routine
    * and `dispatchWebhook` retries a 5s timeout three times, so the duplicate is
-   * near-certain the day core's campaign-completion emitter lands — and the
+   * near-certain the day the campaign-completion emitter lands — and the
    * cheapest moment to close it is before there is any traffic to duplicate.
    *
    * This is the claim ONLY. The per-recipient send stays (a shared `To:` would
@@ -605,7 +603,7 @@ describe('sending', () => {
     });
 
     it('sends NOTHING when every recipient was already claimed', async () => {
-      // Core redelivering a webhook it already delivered. Not an error.
+      // A webhook redelivered after it was already delivered. Not an error.
       mocks.claim.mockResolvedValue([]);
 
       await expect(sendAgencyCampaignCompletionEmail(completion))

@@ -1,9 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /*
- * PORT NOTE (magick-agency): ported from core test/unit/db/repositories/call-analysis-profile.repository.test.ts
- * @4850d1d9. Paths only, plus the `findActiveSuccessor` case now binds the caller's
- * tenant/account (security deviation, see PORTING.md); one new case pins that.
+ * The `findActiveSuccessor` case binds the caller's tenant/account (it never
+ * resolves by id alone); one case pins that.
  */
 
 const mocks = vi.hoisted(() => ({

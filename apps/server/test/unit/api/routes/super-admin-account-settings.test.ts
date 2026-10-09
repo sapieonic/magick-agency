@@ -1,11 +1,9 @@
 /*
- * NEW (magick-agency): no master/core source test. Covers
- * `apps/server/src/api/routes/super-admin-account-settings.routes.ts`
+ * Covers `apps/server/src/api/routes/super-admin-account-settings.routes.ts`
  * (GET/PUT `/super-admin/tenants/:tenantId/accounts/:accountId/settings`, contract
  * `AgencyAccountSettingsResponse` / `UpdateAgencyAccountSettingsBody`), which
- * replaces core's tenant-facing `PUT /api/v1/account-settings` toggles and core's
- * `webrtc_max_duration_seconds` flag. Runs through the REAL super-admin JWT
- * middleware and the real `loadAgencyAccountSettings`; the repositories and the
+ * sets the account toggles and the `webrtc_max_duration_seconds` limit. Runs through the REAL
+ * super-admin JWT middleware and the real `loadAgencyAccountSettings`; the repositories and the
  * concurrency-control seam are doubled.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -262,8 +260,8 @@ describe('PUT /super-admin/tenants/:tenantId/accounts/:accountId/settings', () =
   });
 
   it('writes toggles through the toggles-only writer and never reads or writes concurrency', async () => {
-    // Core read the concurrency and passed it back through `upsert`; a concurrency
-    // write landing between the two was undone. The toggles-only writer has no
+    // A writer that read the concurrency and passed it back through `upsert` would undo a
+    // concurrency write landing between the two. The toggles-only writer has no
     // concurrency to pass back.
     const res = await put({ allow_recording: false, analyze_calls: true });
 

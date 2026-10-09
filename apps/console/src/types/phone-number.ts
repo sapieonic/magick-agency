@@ -1,9 +1,7 @@
 /**
- * PORT NOTE (magick-agency): of cusui's `src/types/phone-number.ts` @ ee5beb44
- * only `TenantPhoneAssignment` is ported — the row `GET /phone-numbers` returns
+ * Only `TenantPhoneAssignment` lives here — the row `GET /phone-numbers` returns
  * and the campaign builder's caller-ID picker reads. The provider and inventory
- * shapes (`TelephonyProvider`, `PhoneNumber`) belong to super-admin, and the
- * inbound-configuration shapes to the AI product.
+ * shapes (`TelephonyProvider`, `PhoneNumber`) belong to super-admin.
  */
 
 export interface TenantPhoneAssignment {
@@ -22,7 +20,6 @@ export interface TenantPhoneAssignment {
     account_name: string;
     is_default: boolean;
   }>;
-  // PORT NOTE (magick-agency): cusui's optional `is_byoc` (a number on the
-  // tenant's own carrier account) is removed — BYOC is not ported, agency dials
-  // only on its own VoiceLink account (extraction plan §1, §9).
+  // There is no `is_byoc` flag: agency dials only on its own VoiceLink account,
+  // never a tenant's own carrier account.
 }

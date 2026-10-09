@@ -8,7 +8,7 @@ import {
 } from '../../utils/agencyStatsConsumers';
 
 /**
- * The supervisor payload has no unread fields (MAG-151 acceptance (3)).
+ * The supervisor payload has no unread fields.
  *
  * The exhaustive `Record<keyof AgencyCampaignStats, …>` in the module under test
  * is the compile-time half: a new field with no entry does not build. This is
@@ -16,12 +16,11 @@ import {
  * against a file that does not read the field, or an `unconsumed` claim about a
  * field something is quietly rendering, both go red here.
  *
- * Note what a green run does and does not prove. It proves every field cusui
+ * Note what a green run does and does not prove. It proves every field the console
  * DECLARES has a reader — syntactically. It does not prove the value reaches the
  * DOM (a file could read the field and render a constant); the component tests
- * cover that. And it cannot prove cusui declares every field core SENDS; that
- * direction needs core, and the sibling-checkout pattern for it is broken in a
- * documented way (MAG-143). See the module doc.
+ * cover that. And it cannot prove the console declares every field the API SENDS; that
+ * direction needs the API itself. See the module doc.
  */
 
 const REPO_ROOT = resolve(__dirname, '../../..');
@@ -42,8 +41,8 @@ function codeOf(source: SupervisorSource): string {
  * funnel's `CONTACT_FUNNEL_STATES` table drives its five states through
  * `stats?.[cell.key]`, so the only literal occurrence is `key: 'contacts_total'`.
  *
- * (This used to name a `TILES` table on the page. That table is gone: MAG-167
- * moved every counter off the page and into `agencyCampaignOverview`'s
+ * (This used to name a `TILES` table on the page. That table is gone: every counter
+ * moved off the page and into `agencyCampaignOverview`'s
  * derivations, which is exactly the reader-moved staleness this map exists to
  * catch — so the comment describing the mechanism had to move with it.)
  *

@@ -6,12 +6,11 @@ import type { AppConfig } from '../config/schema.js';
  * exactly once — in the email.
  *
  * ── Why the token exists at all ────────────────────────────────────────────
- * Before it, the only thing binding an invited person to the membership
- * somebody created for them was an EMAIL MATCH in `POST /auth/session` path 2.
- * An invitee who signed up with a different address than the one typed fell
- * through to path 4 instead — a brand-new private tenant, a signup bonus, a core
- * API key — while their real membership sat unclaimed and nothing told anybody.
- * The token replaces that match: possession of a link delivered to the invited
+ * Without it, the only thing binding an invited person to the membership
+ * somebody created for them would be an EMAIL MATCH in `POST /auth/session`
+ * path 2. An invitee who signed in with a different address than the one typed
+ * would fall through to path 4 instead — a `403 no_membership` — while their real
+ * membership sat unclaimed and nothing told anybody. The token replaces that match: possession of a link delivered to the invited
  * inbox is the authority, and the address the person signs in with becomes a
  * fact to record rather than a key to resolve by.
  */

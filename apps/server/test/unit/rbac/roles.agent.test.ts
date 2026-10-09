@@ -1,11 +1,3 @@
-/*
- * PORT NOTE (magick-agency): ported from master test/unit/rbac/roles.agent.test.ts@a1f0756a
- * (19 cases → 18) against `@magick-agency/contracts/rbac`. Renamed:
- * `proxy.feature_flags.read` → `agency.flags.read`, `proxy.contact_lists.read` →
- * `agency.campaigns.read` (same floors). One case deleted (`proxy.stats.read` is
- * not in the contract) and one trimmed to its surviving permission; both marked.
- * Master comments that name the old permissions are kept as written.
- */
 import { describe, it, expect } from 'vitest';
 import {
   ROLE_HIERARCHY,
@@ -17,7 +9,7 @@ import {
 import type { MembershipRole } from '@magick-agency/db/models/membership.model';
 
 /**
- * The `agent` role (Agency Dialer, design D6) is only safe because it sits
+ * The `agent` role (Agency Dialer) is only safe because it sits
  * BELOW `viewer` in a linear hierarchy whose permissions are all expressed as
  * minimum roles. That is a whole-matrix property, not a property of any one
  * permission — so these tests iterate the matrix rather than spot-checking, and
@@ -38,13 +30,13 @@ const AGENCY_PERMISSIONS: Permission[] = [
  * assertion rather than a list somebody appends to whenever a test goes red.
  *
  * Exactly one member, and adding a second should be argued for on its own terms.
- * `GET /proxy/feature-flags` is the gate map cusui resolves before it renders any
+ * `GET /proxy/feature-flags` is the gate map the console resolves before it renders any
  * flag-gated route, so it is infrastructure for the four permissions above rather
  * than a capability alongside them. While it floored at `viewer` (via the
- * borrowed `proxy.stats.read`) every dedicated agent 403'd, cusui's fail-safe
+ * borrowed viewer-floored stats permission) every dedicated agent 403'd, the console's fail-safe
  * closed `FeatureFlagsContext` resolved every flag to `false`, and all four agent
  * routes refused with billing-flavoured copy — the Agency Dialer was unreachable
- * by the only role it exists for. See `src/rbac/roles.ts` (MAG-181).
+ * by the only role it exists for. See `src/rbac/roles.ts`.
  */
 const AGENT_INFRASTRUCTURE_PERMISSIONS: Permission[] = ['agency.flags.read'];
 
@@ -101,13 +93,10 @@ describe('agent role — grants nothing that predates the Agency Dialer', () => 
     expect(granted).toEqual([]);
   });
 
-  it('notably cannot reach proxy.calls.create — the existing hang-up route', () => {
-    // `POST /proxy/webrtc-call/:id/end` is gated at proxy.calls.create
-    // (operator). An agent hanging up therefore needs an agency-native route,
-    // which is also what lets core verify the caller is the reserved agent.
-    // PORT NOTE (magick-agency): the `proxy.calls.create`, `proxy.calls.read` and
-    // `credit.read` lines are deleted — none is in the contract (no AI calls, no
-    // credits). `tenant.read` is the one surviving permission of the four.
+  it('notably cannot reach the call-creation permission — the existing hang-up route', () => {
+    // `POST /proxy/webrtc-call/:id/end` is gated at the
+    // operator-floored call-creation permission. An agent hanging up therefore needs an agency-native route,
+    // which is also what lets the server verify the caller is the reserved agent.
     expect(hasPermission('agent', 'tenant.read')).toBe(false);
   });
 
@@ -118,16 +107,16 @@ describe('agent role — grants nothing that predates the Agency Dialer', () => 
 });
 
 /**
- * The regression guard for MAG-181.
+ * The regression guard for the agent flag-map floor.
  *
  * The bug was not that somebody chose a wrong floor — it was that the flag map
- * borrowed `proxy.stats.read`, and nothing anywhere asserted that the route an
+ * borrowed a viewer-floored stats permission, and nothing anywhere asserted that the route an
  * agent needs to boot the SPA is reachable by an agent. Every check that existed
  * was about what an agent must NOT reach, so a total lockout looked like
  * compliance. These assert the positive direction.
  */
 describe('agent role — can resolve the feature-flag map', () => {
-  it('holds proxy.feature_flags.read', () => {
+  it('holds agency.flags.read', () => {
     expect(hasPermission('agent', 'agency.flags.read')).toBe(true);
   });
 
@@ -150,9 +139,6 @@ describe('agent role — can resolve the feature-flag map', () => {
     }
   });
 
-  // PORT NOTE (magick-agency): master's 'does NOT come with the stats lane it
-  // used to borrow' is deleted — `proxy.stats.read` is not in the contract, so
-  // there is no stats lane to collapse onto.
 });
 
 describe('agency permissions — floors and inheritance', () => {
@@ -221,18 +207,17 @@ describe('agent → campaign staffing — the floors the assignment routes depen
      * appears that an assignment is meant to confer, this is the assertion that
      * should be argued with rather than edited.
      *
-     * ── The argument, made once, for MAG-181 ──────────────────────────────────
+     * ── The argument, made once, for the flag-map floor ──────────────────────────────────
      * This asserted `AGENCY_PERMISSIONS` — the four — and `agent` now holds five.
-     * The extra one is `proxy.feature_flags.read`, and it is not a counter-example
+     * The extra one is `agency.flags.read`, and it is not a counter-example
      * to the rule above: it comes from the ROLE, is held identically by a staffed
      * and an unstaffed agent, and confers no ability to act on a campaign. What it
      * buys is the ability to boot the SPA at all, which an agent needs before any
      * assignment can matter. So the rule stands and the expectation widens.
      *
      * It is `AGENT_PERMISSIONS` rather than a second literal ON PURPOSE. This file
-     * states the agent's whole permission set in two places, and the change that
-     * added the fifth updated the other one and could not see this one — it was
-     * written on a checkout 56 commits behind, where this block did not exist yet.
+     * states the agent's whole permission set in two places, and a change that
+     * updates one copy leaves a stale literal in the other.
      * Both now read the same constant, so a third copy cannot silently disagree.
      */
     const granted = ALL_PERMISSIONS.filter((p) => hasPermission('agent', p)).sort();

@@ -1,34 +1,28 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 /*
- * PORT NOTE (magick-agency, Phase 8; tests review item 2): the MARK half of master
- * `test/unit/dnc/internal-agency.routes.test.ts`@a1f0756a (32 cases: route table 1, S2S auth 3,
- * the write 12, the response 7, `/dnc-resync` 9). Master's
- * `POST /internal/agency/dnc` was the S2S endpoint core forwarded an agent's mark to; decision B8
- * collapses it into B1's `markDnc` (`src/agency/dnc-mark.ts`), which the station DNC route calls
- * in its one transaction. So the write and response cases are re-run against `markDnc` with
- * `dncRepository.insertMany` mocked (master mocked `dncService.add` the same way), mapping master's
- * request body to `DncMarkRequest` and master's response body to `DncMarkResult`:
- *  - KEPT, mapped (14): records source `agent` / tenant-wide / passes `added_by` through; no
- *    `addedBy` when none; tenant-wide when no campaign; threads a campaign; the nil-UUID sentinel
- *    refused (`refused: 'invalid_dnc_scope'`, nothing written — master's 400 "reserved"); a
- *    non-sentinel campaign accepted; account_id + campaign refused; a supplied account_id refused;
- *    an explicit `account_id: null` tolerated; recorded:true on a new write; the campaign the row
- *    was written at echoed; the ROW's scope reported, not the request's (both directions);
- *    recorded:true on a redelivery with `alreadyPresent`.
- *  - MODIFIED (2): "400s an unparseable number…" → `markDnc` writes nothing and answers
- *    `recorded: false, phoneE164: null` (the route turns that into `dnc_recorded: false`; there is
- *    no 400 in the route, which owns the contact); "does not swallow a write failure into a false
- *    success" → without a caller client the failure is REPORTED (`recorded: false`), with one it
- *    PROPAGATES so the route's transaction rolls back (B8; the route's real-Postgres twin is
- *    `integration/api/agency-runtime-routes.test.ts`).
- *  - DELETED (16): the route-table case (no such route), the 3 S2S-auth cases (no S2S token,
- *    in-process), "treats an explicit campaign_id: null…" (`campaignId` is `string | undefined`
- *    in-process; nothing serialises a null), "400s a non-uuid campaign_id…" and "400s a non-uuid
- *    tenant_id" (the route resolves the campaign from the attempt and the tenant from lane A's
- *    context — no client-supplied id reaches `markDnc`), and the 9 `/dnc-resync` cases (the
- *    resync and its cooldown are deleted with the Redis set, B8). `entry_id` assertions are
- *    dropped from the kept response cases (`DncMarkResult` carries the row's scope, not its id).
+ * `markDnc` (`src/agency/dnc-mark.ts`): the write behind an agent's mark-DNC, which the station DNC
+ * route calls inside its one transaction (decision B8). `dncRepository.insertMany` is mocked.
+ * The request is a `DncMarkRequest` and the response a `DncMarkResult`.
+ *
+ * Covered: records source `agent` / tenant-wide / passes `added_by` through; no `addedBy` when
+ * none; tenant-wide when no campaign; threads a campaign; the nil-UUID sentinel refused
+ * (`refused: 'invalid_dnc_scope'`, nothing written); a non-sentinel campaign accepted;
+ * account_id + campaign refused; a supplied account_id refused; an explicit `account_id: null`
+ * tolerated; recorded:true on a new write; the campaign the row was written at echoed; the ROW's
+ * scope reported, not the request's (both directions); recorded:true on a redelivery with
+ * `alreadyPresent`.
+ *
+ * An unparseable number: `markDnc` writes nothing and answers `recorded: false, phoneE164: null`
+ * (the route turns that into `dnc_recorded: false`; the route owns the contact, so it never 400s).
+ * A write failure: without a caller client it is REPORTED (`recorded: false`); with one it
+ * PROPAGATES so the route's transaction rolls back (the route's real-Postgres twin is
+ * `integration/api/agency-runtime-routes.test.ts`).
+ *
+ * Not covered here: there is no resync or cooldown (the Redis set does not exist, B8), and no
+ * client-supplied tenant or campaign id reaches `markDnc` — the route resolves the campaign from
+ * the attempt and the tenant from the request context. `DncMarkResult` carries the row's scope,
+ * not its id, so no `entry_id` is asserted.
  */
 
 const mocks = vi.hoisted(() => ({ insertMany: vi.fn() }));
@@ -59,7 +53,7 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 /**
  * One number's `insertMany` result. `writtenCampaignId` is the scope of the ROW — deliberately
  * separate from anything the request says, because the result field under test is a receipt
- * for the row and the two are allowed to differ (master's `addResult`, mapped).
+ * for the row and the two are allowed to differ.
  */
 function insertResult(created: boolean, writtenCampaignId: string | null = null) {
   return {
@@ -97,7 +91,7 @@ describe('the write', () => {
     expect(lastInput()['added_by']).toBeNull();
   });
 
-  it('writes TENANT-WIDE when core names no campaign', async () => {
+  it('writes TENANT-WIDE when no campaign is named', async () => {
     await markDnc({ tenantId: TENANT, phoneE164: '+15551230001' });
     expect(lastInput()['account_id']).toBeNull();
     expect(lastInput()['campaign_id']).toBeNull();

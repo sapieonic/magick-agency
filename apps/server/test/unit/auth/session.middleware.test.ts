@@ -1,7 +1,3 @@
-/*
- * PORT NOTE (magick-agency): ported from master test/unit/auth/session.middleware.test.ts@a1f0756a
- * (12 cases → 8). The 4 platform-API-key cases are deleted (decision #5).
- */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -22,9 +18,6 @@ vi.mock('@magick-agency/db/repositories/user.repository', () => ({
     findById: mocks.findById,
   },
 }));
-// PORT NOTE (magick-agency): master's `platform-api-key.repository` and
-// `utils/crypto` (`hashApiKey`) mocks are removed — the middleware no longer
-// imports either (decision #5).
 vi.mock('../../../src/cache/redis-cache.js', () => ({
   redisCache: { get: mocks.cacheGet, set: mocks.cacheSet, del: mocks.cacheDel },
 }));
@@ -133,9 +126,7 @@ describe('sessionMiddleware', () => {
     });
   });
 
-  // PORT NOTE (magick-agency): master's 'API key auth path' block (4 cases: load
-  // and cache a key, cached key, 401 unknown key, 401 expired key) is deleted with
-  // the `X-Platform-Key` branch (decision #5, no platform API keys).
+  // There is no `X-Platform-Key` branch: no platform API keys (decision #5).
 
   // ─── No credentials ─────────────────────────────────────────
   describe('no credentials', () => {

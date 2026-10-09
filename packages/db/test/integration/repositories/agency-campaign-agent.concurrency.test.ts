@@ -6,20 +6,12 @@ import { insertAccount, insertTenant, insertUser } from '../setup/factories.js';
 /**
  * ─── TWO SUPERVISORS, ONE AGENT, REAL POSTGRES ──────────────────────────────
  *
- * ── What migration 064 did to this file's subject ──────────────────────────
- * Until 064, `assign()` was a MOVE: a transaction that closed the agent's
- * existing row and inserted the new one, with a bounded retry for the case where
- * a concurrent supervisor moved the same person first. Most of this file existed
- * to prove that retry converged against real Postgres — the deterministic
- * interleavings drove a second connection to commit between our CLOSE and our
- * INSERT, and the genuine races asserted "exactly one active row, however they
- * interleave".
- *
- * The index is now `(tenant_id, user_id, campaign_id)`, so an agent may hold
- * several assignments and there is no move: no other row to close, no transaction,
- * and no lost update to lose. Those tests are gone because the behaviour they
- * proved is behaviour this release deliberately removes — a second active row is
- * now the CORRECT outcome, and a test demanding one would be demanding the bug.
+ * ── Why there is no move to test ───────────────────────────────────────────
+ * The index is `(tenant_id, user_id, campaign_id)`, so an agent may hold
+ * several assignments and `assign()` is not a MOVE: no other row to close, no
+ * transaction, and no lost update to lose. A second active row is the CORRECT
+ * outcome, and a test demanding exactly one active row per agent would be
+ * demanding the bug.
  *
  * ── What is still genuinely concurrent, and therefore still here ────────────
  * Three things, and each needs real Postgres for a reason a fake cannot supply:
@@ -30,8 +22,8 @@ import { insertAccount, insertTenant, insertUser } from '../setup/factories.js';
  *     by `ON CONFLICT … DO NOTHING` — and on the loser's read-back finding the
  *     winner's committed row.
  *  2. **Independence.** Two supervisors assigning the same person to DIFFERENT
- *     campaigns must both succeed. Under 060 that was a race with a winner; it is
- *     now two non-conflicting inserts, and asserting so is what would catch a
+ *     campaigns must both succeed. That is
+ *     two non-conflicting inserts, and asserting so is what would catch a
  *     re-added close.
  *  3. **The one remaining retry path.** Our insert conflicts with a live row, and a
  *     concurrent UNASSIGN closes that row before our read-back sees it — so
@@ -51,8 +43,7 @@ import { insertAccount, insertTenant, insertUser } from '../setup/factories.js';
  * to script.
  */
 
-// PORT NOTE (magick-agency): master hard-coded its own test DB (5434). The
-// agency harness's guarded URL is used instead — never another stack's port.
+// The agency harness's guarded URL is used, never another stack's port.
 import { TEST_DB_URL } from '../../helpers/test-db.js';
 
 interface Interleave {
@@ -215,10 +206,10 @@ describe('agency staffing under real concurrency (integration)', () => {
 
     it('does not conflict at all when they asked for a DIFFERENT campaign', async () => {
       /**
-       * Under migration 060 this was the lost-update case: their row blocked our
-       * insert, we retried, and the second pass closed theirs. Now both rows are
-       * legitimate and the insert simply succeeds — which is the single clearest
-       * statement of what 064 changed.
+       * A per-tenant index would make this the lost-update case: their row would
+       * block our insert, we would retry, and the second pass would close theirs.
+       * Here both rows are legitimate and the insert simply succeeds — which is the
+       * single clearest statement of the per-campaign index.
        */
       hoisted.interleave = {
         beforeInsert: async (attempt) => {
@@ -264,12 +255,12 @@ describe('agency staffing under real concurrency (integration)', () => {
 
     it('retries for a MULTI-STAFFED agent, against the real catalog', async () => {
       /**
-       * ── Cursor Bugbot, PR #218 — end to end ────────────────────────────────
+       * ── Multi-staffed agent — end to end ───────────────────────────────────
        * The ambiguous case: our insert conflicts, the same-campaign read-back comes
-       * back empty, and the agent holds OTHER live assignments. Under migration 064
-       * that is an ordinary concurrent unassign of the target row, and the other
-       * campaigns are irrelevant to it — but an earlier revision read that state as
-       * "migration 064 is missing" and answered a misleading 409.
+       * back empty, and the agent holds OTHER live assignments. With the per-campaign
+       * index that is an ordinary concurrent unassign of the target row, and the other
+       * campaigns are irrelevant to it — reading that state as "the per-campaign
+       * index is missing" would answer a misleading 409.
        *
        * It is separated from the single-assignment case above because only this one
        * exercises the index probe on a real `pg_indexes`: with the wide index in
@@ -355,7 +346,7 @@ describe('agency staffing under real concurrency (integration)', () => {
       /**
        * Five concurrent assigns across three campaigns, with repeats. The
        * invariant is per-campaign uniqueness — the property the index still owes —
-       * rather than "one active row", which is exactly the rule 064 removed.
+       * rather than "one active row", which is exactly the rule the per-campaign index removed.
        */
       const campaigns = [CAMPAIGN_A, CAMPAIGN_B, CAMPAIGN_A, CAMPAIGN_C, CAMPAIGN_B];
 

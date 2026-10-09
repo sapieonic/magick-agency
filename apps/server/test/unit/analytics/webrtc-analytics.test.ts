@@ -1,12 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-// PORT NOTE (magick-agency): ported from core test/unit/analytics/webrtc-analytics.test.ts@4850d1d9.
-// Deleted (SIP egress, plan §5): "reports egress=sip + connection id when the bridge used a
-// customer SIP trunk", "reports egress=sip + connection id when the bridge egressed over a SIP
-// trunk". Modified: "defaults provider to vobiz when omitted" → voicelink. Mock specifiers and
-// the record fixture's type (a partial record cast, as core did not typecheck tests).
 import type { WebRtcCallRecord } from '@magick-agency/db/models/agency-call.model';
 
-// Mirrors test/unit/analytics/posthog.test.ts: mock the posthog-node client and
+// Mirrors analytics/posthog.test.ts: mock the posthog-node client and
 // drive the real posthog.ts emitters through the shared client.ts transport.
 const mocks = vi.hoisted(() => ({
   capture: vi.fn(),
@@ -174,7 +169,6 @@ describe('analytics / webrtc — trackWebrtcCallRejected', () => {
     expect(ev.properties).not.toHaveProperty('call_id');
   });
 
-  // PORT NOTE: core 'defaults provider to vobiz when omitted' — VoBiz is deleted.
   it('defaults provider to voicelink when omitted', () => {
     trackWebrtcCallRejected({
       tenantId: 'tenant-1',
@@ -184,7 +178,7 @@ describe('analytics / webrtc — trackWebrtcCallRejected', () => {
     expect(lastCapture().properties['telephony_provider']).toBe('voicelink');
   });
 
-  it('carries each rejection reason verbatim', () => {
+  it('carries each rejection reason unchanged', () => {
     const reasons = [
       'feature_disabled',
       'invalid_caller_id',

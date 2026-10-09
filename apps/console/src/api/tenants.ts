@@ -2,10 +2,9 @@ import { ENDPOINTS } from '../config';
 import type { TenantMember } from '../types/team';
 import { apiFetch } from './client';
 
-// PORT NOTE (magick-agency): cusui's `listTenants` (`GET /tenants`) and
-// `updateTenant` (`PUT /tenants/:id`) are not ported — the session already
-// carries the tenants, and tenant settings are the AI product's (lane A serves
-// neither, PORTING.md A.1).
+// There is no `listTenants` (`GET /tenants`) or `updateTenant`
+// (`PUT /tenants/:id`) — the session already carries the tenants, and the
+// server serves neither route.
 
 /** Backend returns flat membership objects with nested user. Reshape to { membership, user }. */
 export async function listTenantMembers(tenantId: string): Promise<TenantMember[]> {
@@ -20,14 +19,14 @@ export async function listTenantMembers(tenantId: string): Promise<TenantMember[
     created_at: string;
     updated_at: string;
     /**
-     * Additive (ticket `14ygtkj7tbx`): has this PERSON completed Firebase
-     * sign-in, or is their stored identity still the placeholder stub master
+     * Additive: has this PERSON completed Firebase
+     * sign-in, or is their stored identity still the placeholder stub the server
      * writes when it invites an address it has never seen. One rule for every
      * role, and a fact about the user rather than about this workspace's
      * invitation — see the docstring on `TenantMember` in `types/team.ts`,
      * which is where the consequences of that are written down.
      *
-     * Absent against an older master. `listTenantMembers` below carries that
+     * Absent against an older server. `listTenantMembers` below carries that
      * absence through unchanged rather than defaulting it, and that is load
      * bearing rather than tidiness: the two consumers resolve absence in
      * OPPOSITE directions (the badge claims neither state, while
@@ -36,7 +35,7 @@ export async function listTenantMembers(tenantId: string): Promise<TenantMember[
      *
      * Deliberately NOT `firebase_uid`: that is the field the stub check reads,
      * and the ticket forbids surfacing it (or the `pending_<uuid>` value
-     * itself) in the browser. `invite_state` is master answering the question
+     * itself) in the browser. `invite_state` is the server answering the question
      * server-side instead of handing this client the raw identity to inspect.
      */
     invite_state?: 'active' | 'pending';

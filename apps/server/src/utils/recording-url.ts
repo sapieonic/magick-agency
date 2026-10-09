@@ -1,9 +1,6 @@
 /*
- * PORT NOTE (magick-agency): ported from core `src/utils/recording-url.ts` (v1.123.2).
  * The signing secret is `config.recordingUrlSigningSecret` (env
- * RECORDING_URL_SIGNING_SECRET) — core also fell back to `config.webhooks.secret`
- * (`WEBHOOK_SECRET`), which has no counterpart here. HMAC construction, canonical
- * string, TTL and verification are core's, verbatim.
+ * RECORDING_URL_SIGNING_SECRET), with an ephemeral fallback below.
  */
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { config } from '../config/index.js';
@@ -50,16 +47,11 @@ export function signRecordingUrl(input: {
   accountId: string;
   ttlSeconds?: number;
   /**
-   * Playback route prefix the signed path points at (no trailing slash). Defaults
-   * to AI calls' `/api/v1/recordings`; agency calls pass `/api/v1/webrtc-recordings`
-   * so the token resolves against the right table. The signature itself is
-   * basePath-independent (callId+tenant+account+exp), so `verifyRecordingToken`
-   * is shared across both.
-   *
-   * PORT NOTE (magick-agency, Phase 8; lane D review carry-forward): the default is
-   * `/api/v1/webrtc-recordings`, the only playback route agency serves. Core's default,
-   * AI calls' `/api/v1/recordings`, is not ported (AI calling is out of scope), so a minter
-   * that omitted `basePath` minted a link to a route that does not exist.
+   * Playback route prefix the signed path points at (no trailing slash).
+   * Defaults to `/api/v1/webrtc-recordings`, the only playback route this server
+   * serves, so a minter that omits `basePath` still gets a working link. The
+   * signature itself is basePath-independent (callId+tenant+account+exp), so
+   * `verifyRecordingToken` does not depend on it.
    */
   basePath?: string;
 }): SignedRecordingUrl {
