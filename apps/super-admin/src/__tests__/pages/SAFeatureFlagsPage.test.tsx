@@ -19,12 +19,12 @@ vi.mock('../../api/super-admin', () => ({
 import SAFeatureFlagsPage from '../../pages/super-admin/SAFeatureFlagsPage';
 
 /**
- * A catalog entry shaped the way core actually emits one.
+ * A catalog entry shaped the way the server actually emits one.
  *
  * `env_default` is `resolveEnvDefault(f)` server-side, which falls back to the
  * registry `default` when the flag's env var is unset — and no flag has a null
  * default. So `env_default` is NEVER null on the wire, and a fixture that sets
- * it to null tests a response core cannot produce. Keep it populated (mirror
+ * it to null tests a response the server cannot produce. Keep it populated (mirror
  * `default` for the env-unset case).
  */
 function flag(overrides: Partial<FeatureFlagCatalogEntry> = {}): FeatureFlagCatalogEntry {
@@ -418,7 +418,7 @@ describe('SAFeatureFlagsPage — non-boolean & attribution', () => {
 
   // ── Defect 2: the page must not claim an env var is configured ───────────
   //
-  // Core collapses "env var set" and "env var unset" into a single
+  // The server collapses "env var set" and "env var unset" into a single
   // `env_default` field (`resolveEnvDefault` returns the registry default when
   // the var is unset), so the catalog carries no provenance at all. The old
   // `hasEnvDefault` helper tested `env_default !== null` — dead-true for every
@@ -439,7 +439,7 @@ describe('SAFeatureFlagsPage — non-boolean & attribution', () => {
   });
 
   it('never names a layer in the Inherit sub-line', async () => {
-    // env_default mirroring `default` is exactly what core emits with the env
+    // env_default mirroring `default` is exactly what the server emits with the env
     // var unset — and also what it emits with the var set to the same value.
     mocks.getCatalog.mockResolvedValue(catalog(flag({ default: false, env_default: false })));
     render(<SAFeatureFlagsPage />);
@@ -466,9 +466,9 @@ describe('SAFeatureFlagsPage — non-boolean & attribution', () => {
 });
 
 // ── Defect 1: the boolean tri-state needs the same scope gate as the numeric
-// cell. `prewarm_enabled` is the ONLY boolean in core's registry declared
+// cell. `prewarm_enabled` is the ONLY boolean in the server's registry declared
 // `scopes: ['tenant']`, so the global tri-state offered a fleet-wide On/Off for
-// the pre-warm kill switch whose every write 422s at core's scope check.
+// the pre-warm kill switch whose every write 422s at the server's scope check.
 describe('SAFeatureFlagsPage — boolean scope gating', () => {
   const prewarm = (overrides: Partial<FeatureFlagCatalogEntry> = {}) => flag({
     key: 'prewarm_enabled', type: 'boolean', default: true, env_default: true,
@@ -519,7 +519,7 @@ describe('SAFeatureFlagsPage — reset global default', () => {
   });
 });
 
-// ClickUp 14ygtkjaf5a — master's `policy` on a tenant/account-only flag.
+// The server's `policy` on a tenant/account-only flag.
 describe('SAFeatureFlagsPage — policy flag (ai_turn_transcript_logging)', () => {
   const transcript = flag({
     key: 'ai_turn_transcript_logging', scopes: ['tenant', 'account'], client_exposed: false, owner: 'voice',

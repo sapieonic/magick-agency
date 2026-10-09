@@ -5,11 +5,9 @@ import { brand } from '../../brand';
 import styles from './SuperAdminLoginPage.module.css';
 
 /**
- * PORT NOTE (magick-agency): the super-admin branch of cusui's
- * `pages/auth/LoginPage.tsx` (`isSuperAdmin`, lines 131-139 and 306-409), lifted
- * into its own page. This app has no Firebase sign-in, so the customer tabs,
- * Google button, forgot-password view, promo banner and festive decor are not
- * carried. Behaviour is the branch's: email + password → `login()` → the app root.
+ * The admin sign-in page. This app has no Firebase sign-in, so there are no
+ * customer tabs, Google button, forgot-password view, promo banner or festive
+ * decor. Behaviour: email + password → `login()` → the app root.
  */
 export default function SuperAdminLoginPage() {
   const navigate = useNavigate();

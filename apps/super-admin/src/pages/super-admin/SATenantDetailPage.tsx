@@ -31,13 +31,12 @@ import { telephonyProviderAlias } from '../../config/telephonyProviders';
 import styles from './SATenantDetailPage.module.css';
 
 /**
- * PORT NOTE (magick-agency): cusui's list stops at `operator`/`viewer`; plan §3.4
- * lets a super-admin grant any of the six roles, and the console's agents are
- * `agent` members.
+ * Plan lets a super-admin grant any of the six roles, including `agent`
+ * (the Agency Dialer's agent members).
  */
 const ROLES: readonly Role[] = ['tenant_owner', 'tenant_admin', 'account_admin', 'operator', 'viewer', 'agent'];
 
-/** Plan §3.2 / contract `AgencyAccountSettings.webrtc_max_duration_seconds`. */
+/** Plan / contract `AgencyAccountSettings.webrtc_max_duration_seconds`. */
 const WEBRTC_MAX_DURATION_MIN = 60;
 const WEBRTC_MAX_DURATION_MAX = 14_400;
 
@@ -53,7 +52,7 @@ const TABS: Array<{ id: TenantTab; label: string }> = [
 ];
 
 /**
- * NEW (plan §3.2): the per-account settings row that replaces governance.
+ * NEW: the per-account settings row that replaces governance.
  * One account at a time; a PATCH carries only the fields that changed.
  */
 function AccountSettingsPanel({ tenantId, accounts }: {
@@ -231,7 +230,7 @@ export default function SATenantDetailPage() {
   const [addingUser, setAddingUser] = useState(false);
   const [addUserError, setAddUserError] = useState<string | null>(null);
 
-  // Change role / revoke (NEW, plan §3.4)
+  // Change role / revoke (NEW, plan)
   const [roleTarget, setRoleTarget] = useState<SuperAdminTenantMember | null>(null);
   const [roleForm, setRoleForm] = useState({ role: 'operator' as string, reason: '' });
   const [changingRole, setChangingRole] = useState(false);
@@ -320,9 +319,8 @@ export default function SATenantDetailPage() {
       ]);
       if (requestSequence !== concurrencyRequestSequence.current) return;
       setConcurrencyDetail(detail);
-      // PORT NOTE (magick-agency): cusui seeded from the catalog embedded in the
-      // concurrency detail; agency reads it from `GET /telephony-providers`
-      // (the detail has no `providers`). Same seeding: every active provider at 0,
+      // The catalog comes from `GET /telephony-providers` (the concurrency
+      // detail has no `providers`). Seeding: every active provider at 0,
       // then the allocation's own rows on top (an inactive provider with an
       // allocation, e.g. the snapshot `switchToLegacy` keeps, still shows).
       const edits: Record<string, number> = {};

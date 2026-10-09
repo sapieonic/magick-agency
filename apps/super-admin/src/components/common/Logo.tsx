@@ -8,8 +8,7 @@ interface LogoProps {
 }
 
 /**
- * PORT NOTE (magick-agency): cusui renders `/logo.png` from the active brand
- * pack. Agency has no brand pack and no logo asset yet, so the mark is a
+ * Agency has no brand pack and no logo asset yet, so the mark is a
  * wordmark tile in the accent colour.
  */
 export function Logo({ size = 28, className, title = brand.name }: LogoProps) {

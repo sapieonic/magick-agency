@@ -1,5 +1,4 @@
-// PORT NOTE (magick-agency): cusui's barrel exports ~30 components; only the
-// ones this app carries are re-exported.
+// Barrel for the shared components this app uses.
 export { StatusBadge } from './StatusBadge';
 export { EmptyState } from './EmptyState';
 export { LoadingSpinner } from './LoadingSpinner';
