@@ -1,0 +1,199 @@
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import Redis from 'ioredis';
+import { closeTestRedis, flushTestRedis, getTestRedis } from '../setup/test-utils.js';
+import { TEST_REDIS_URL } from '../../helpers/test-redis.js';
+
+/*
+ * Modified (harness only, no assertion changed):
+ *  - `TEST_REDIS_URL` is the agency harness's (6383, the worktree's non-zero db)
+ *    instead of core's hard-coded `redis://localhost:6380`;
+ *  - `makeClients` opens its connections WITHOUT core's `keyPrefix: 'test:'`. Core's
+ *    shared `getTestRedis()` carried that prefix, so the contenders and the `base`
+ *    machine addressed the same keys; agency's shared client has no prefix, and the
+ *    contenders must match it or the race is run against an empty keyspace.
+ */
+
+const { AgentStateMachine, AGENT_LEASE_MS } = await import('../../../src/agency/agent-state-machine.js');
+
+/**
+ * T-A — agent double-reservation, against REAL Redis running REAL Lua.
+ *
+ * This suite cannot be replaced by the unit tier and the reason is structural:
+ * core's unit-tier Redis is a hand-rolled object whose `eval` is
+ * `vi.fn().mockResolvedValue(1)` (see `test/unit/core/concurrency-guard.test.ts`),
+ * so a unit test of a Lua compare-and-swap asserts the shape of the call and
+ * nothing about its atomicity. `test/unit/agency/agent-state-machine.test.ts`
+ * simulates the script's semantics in JS, which is worth having and is still a
+ * simulation. What follows executes the actual script on the actual server.
+ *
+ * The claim under test: "There is no window in which two attempts hold the same
+ * agent, because there is no read-then-write."
+ */
+
+// `TEST_REDIS_URL` is imported from the agency harness (see header).
+
+/**
+ * Independent connections, so the concurrency is real at the wire.
+ *
+ * A single ioredis client pipelines commands on one socket, which makes
+ * "concurrent" evals arrive in a defined order and understates the race. Redis
+ * is single-threaded so the outcome is the same either way — but a test that
+ * cannot even present a race to the server proves nothing about one.
+ */
+function makeClients(n: number): Redis[] {
+  // no `keyPrefix` — matches agency's shared `getTestRedis()` (see header).
+  return Array.from({ length: n }, () => new Redis(TEST_REDIS_URL));
+}
+
+describe('agency agent reservation CAS (integration, real Lua)', () => {
+  beforeEach(flushTestRedis);
+  afterAll(closeTestRedis);
+
+  it('T-A1: 64 concurrent reservations of one agent — exactly one wins', async () => {
+    const clients = makeClients(64);
+    try {
+      for (let round = 0; round < 50; round++) {
+        const sessionId = randomUUID();
+        const base = new AgentStateMachine(getTestRedis(), '');
+        await base.set(sessionId, 'available', { leaseMs: AGENT_LEASE_MS.available });
+
+        const attemptIds = clients.map((_, i) => `attempt-${round}-${i}`);
+        const results = await Promise.all(
+          clients.map((c, i) => new AgentStateMachine(c, '').reserve(sessionId, attemptIds[i]!)),
+        );
+
+        const winners = results.filter((r) => r === 'reserved');
+        const losers = results.filter((r) => r === 'lost');
+        expect(winners, `round ${round}: more than one reservation won`).toHaveLength(1);
+        expect(losers).toHaveLength(63);
+        // Nothing may report `unavailable` — that would be a Redis error being
+        // laundered into a normal outcome.
+        expect(results.filter((r) => r === 'unavailable')).toHaveLength(0);
+
+        // The agent is bound to exactly one attempt, and it is a real one.
+        const state = await base.get(sessionId);
+        expect(state?.state).toBe('reserved');
+        expect(attemptIds).toContain(state?.attemptId);
+      }
+    } finally {
+      for (const c of clients) c.disconnect();
+    }
+  }, 90_000);
+
+  it('T-A2: 10 agents / 40 contenders — every winner gets a DISTINCT agent', async () => {
+    // The distinctness assertion is the actual claim. A count-only assertion
+    // ("at most 10 succeeded") passes while two attempts share an agent.
+    const clients = makeClients(40);
+    try {
+      for (let round = 0; round < 25; round++) {
+        const sessionIds = Array.from({ length: 10 }, () => randomUUID());
+        const base = new AgentStateMachine(getTestRedis(), '');
+        for (const s of sessionIds) {
+          await base.set(s, 'available', { leaseMs: AGENT_LEASE_MS.available });
+        }
+
+        // Every contender walks the same candidate list in the same order —
+        // the worst case for the CAS, and what the tick actually does.
+        const outcomes = await Promise.all(
+          clients.map(async (c, i) => {
+            const sm = new AgentStateMachine(c, '');
+            for (const sessionId of sessionIds) {
+              if ((await sm.reserve(sessionId, `att-${round}-${i}`)) === 'reserved') {
+                return { sessionId, attemptId: `att-${round}-${i}` };
+              }
+            }
+            return null;
+          }),
+        );
+
+        const won = outcomes.filter((o): o is NonNullable<typeof o> => o !== null);
+        expect(won).toHaveLength(10);
+        expect(new Set(won.map((w) => w.sessionId)).size, 'two attempts shared one agent').toBe(10);
+
+        // Redis agrees with what the callers were told.
+        for (const w of won) {
+          const state = await base.get(w.sessionId);
+          expect(state?.state).toBe('reserved');
+          expect(state?.attemptId).toBe(w.attemptId);
+        }
+      }
+    } finally {
+      for (const c of clients) c.disconnect();
+    }
+  }, 90_000);
+
+  it('T-A3: it is a compare-and-swap — no non-available state can be reserved', async () => {
+    const clients = makeClients(32);
+    try {
+      for (const from of ['reserved', 'on_call', 'wrapup', 'break', 'offline'] as const) {
+        const sessionId = randomUUID();
+        const base = new AgentStateMachine(getTestRedis(), '');
+        await base.set(sessionId, from, { attemptId: 'incumbent', leaseMs: 30_000 });
+
+        const results = await Promise.all(
+          clients.map((c, i) => new AgentStateMachine(c, '').reserve(sessionId, `intruder-${i}`)),
+        );
+        expect(results.every((r) => r === 'lost'), `an agent in '${from}' was reserved`).toBe(true);
+
+        // The incumbent binding is untouched.
+        const state = await base.get(sessionId);
+        expect(state?.state).toBe(from);
+        expect(state?.attemptId).toBe('incumbent');
+      }
+    } finally {
+      for (const c of clients) c.disconnect();
+    }
+  }, 60_000);
+
+  it('T-A3b: a lapsed agent cannot be reserved — the CAS respects key absence', async () => {
+    // An agent whose lease expired is gone, not available. Reserving one would
+    // dial a customer into a socket that no longer exists.
+    const sm = new AgentStateMachine(getTestRedis(), '');
+    const sessionId = randomUUID();
+    await sm.set(sessionId, 'available', { leaseMs: 300 });
+    await new Promise((r) => setTimeout(r, 600));
+
+    expect(await sm.get(sessionId)).toBeNull();
+    expect(await sm.reserve(sessionId, 'att-1')).toBe('lost');
+    // And the failed reservation did not resurrect the key.
+    expect(await sm.get(sessionId)).toBeNull();
+  });
+
+  it('T-A4: reserving stamps the SHORT pre-dial lease, never the dialing one', async () => {
+    // A reservation that opens at the dialing lease would give a dial that never
+    // happens 15s of held agent instead of 10s — and, more importantly, would
+    // mean the pre-dial and dialing windows had been collapsed back into one.
+    const redis = getTestRedis();
+    const sm = new AgentStateMachine(redis, '');
+    const sessionId = randomUUID();
+    await sm.set(sessionId, 'available', { leaseMs: AGENT_LEASE_MS.available });
+
+    expect(await sm.reserve(sessionId, 'att-1')).toBe('reserved');
+    const pttl = await redis.pttl(`agency:agent:${sessionId}:state`);
+    expect(pttl).toBeGreaterThan(AGENT_LEASE_MS.reserved_predial - 1_000);
+    expect(pttl).toBeLessThanOrEqual(AGENT_LEASE_MS.reserved_predial);
+  });
+
+  it('T-A5: renew never resurrects a lapsed lease, under concurrency', async () => {
+    // the invariant in its sharpest form. If renew could re-create an expired
+    // key, an agent whose replica died would silently come back to life in
+    // whatever state they were last in — and the engine would dial into them.
+    const clients = makeClients(16);
+    try {
+      const sessionId = randomUUID();
+      const base = new AgentStateMachine(getTestRedis(), '');
+      await base.set(sessionId, 'on_call', { attemptId: 'att-1', leaseMs: 300 });
+      await new Promise((r) => setTimeout(r, 600));
+      expect(await base.get(sessionId)).toBeNull();
+
+      const results = await Promise.all(
+        clients.map((c) => new AgentStateMachine(c, '').renew(sessionId, 'on_call', 15_000)),
+      );
+      expect(results.every((r) => r === false)).toBe(true);
+      expect(await base.get(sessionId)).toBeNull();
+    } finally {
+      for (const c of clients) c.disconnect();
+    }
+  });
+});

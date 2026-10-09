@@ -5,24 +5,22 @@ import { closeTestRedis, flushTestRedis, getTestRedis } from '../setup/test-util
 import { TEST_REDIS_URL } from '../../helpers/test-redis.js';
 
 /*
- * PORT NOTE (magick-agency, Phase 6): ported from core
- * test/integration/agency/agency-agent-cas.test.ts@4850d1d9 — 6 cases, all kept.
- * Modified (harness only, no assertion changed):
+ * Harness notes:
  *  - `TEST_REDIS_URL` is the agency harness's (6383, the worktree's non-zero db)
- *    instead of core's hard-coded `redis://localhost:6380`;
- *  - `makeClients` opens its connections WITHOUT core's `keyPrefix: 'test:'`. Core's
- *    shared `getTestRedis()` carried that prefix, so the contenders and the `base`
- *    machine addressed the same keys; agency's shared client has no prefix, and the
+ *    rather than a hard-coded Redis URL;
+ *  - `makeClients` opens its connections WITHOUT a `keyPrefix`. The
+ *    shared `getTestRedis()` has no prefix, so the contenders and the `base`
+ *    machine address the same keys, and the
  *    contenders must match it or the race is run against an empty keyspace.
  */
 
 const { AgentStateMachine, AGENT_LEASE_MS } = await import('../../../src/agency/agent-state-machine.js');
 
 /**
- * T-A — agent double-reservation (§6), against REAL Redis running REAL Lua.
+ * T-A — agent double-reservation, against REAL Redis running REAL Lua.
  *
  * This suite cannot be replaced by the unit tier and the reason is structural:
- * core's unit-tier Redis is a hand-rolled object whose `eval` is
+ * the unit-tier Redis is a hand-rolled object whose `eval` is
  * `vi.fn().mockResolvedValue(1)` (see `test/unit/core/concurrency-guard.test.ts`),
  * so a unit test of a Lua compare-and-swap asserts the shape of the call and
  * nothing about its atomicity. `test/unit/agency/agent-state-machine.test.ts`
@@ -33,7 +31,7 @@ const { AgentStateMachine, AGENT_LEASE_MS } = await import('../../../src/agency/
  * agent, because there is no read-then-write."
  */
 
-// PORT NOTE: `TEST_REDIS_URL` is imported from the agency harness (see header).
+// `TEST_REDIS_URL` is imported from the agency harness (see header).
 
 /**
  * Independent connections, so the concurrency is real at the wire.
@@ -44,7 +42,7 @@ const { AgentStateMachine, AGENT_LEASE_MS } = await import('../../../src/agency/
  * cannot even present a race to the server proves nothing about one.
  */
 function makeClients(n: number): Redis[] {
-  // PORT NOTE: no `keyPrefix` — matches agency's shared `getTestRedis()` (see header).
+  // no `keyPrefix` — matches agency's shared `getTestRedis()` (see header).
   return Array.from({ length: n }, () => new Redis(TEST_REDIS_URL));
 }
 
@@ -178,7 +176,7 @@ describe('agency agent reservation CAS (integration, real Lua)', () => {
   });
 
   it('T-A5: renew never resurrects a lapsed lease, under concurrency', async () => {
-    // §6.1's invariant in its sharpest form. If renew could re-create an expired
+    // the invariant in its sharpest form. If renew could re-create an expired
     // key, an agent whose replica died would silently come back to life in
     // whatever state they were last in — and the engine would dial into them.
     const clients = makeClients(16);

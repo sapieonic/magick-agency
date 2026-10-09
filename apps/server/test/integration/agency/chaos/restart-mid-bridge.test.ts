@@ -1,22 +1,20 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 /*
- * PORT NOTE (magick-agency, Phase 6): ported from core
- * test/integration/agency/chaos/restart-mid-bridge.test.ts@4850d1d9 — 2 cases, all kept. Modified only in
- * harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
+ * Harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
  * `/connection` entry, which packages/db's repositories import); the config stub
- * drops `telephony.vobiz` (VoBiz deleted, plan §5); import specifiers per the path
+ * carries no carrier config; import specifiers per the path
  * rule (domain leaves, `@magick-agency/contracts/agency`).
  */
 import { closeTestPool, getTestPool, truncateAll } from '../../setup/test-utils.js';
 
-// PORT NOTE: core mocked `src/db/connection.js`; agency's pool lives in `@magick-agency/db`
+// The DB pool lives in `@magick-agency/db`
 // (the server's repositories import its root, packages/db's repositories `./connection`).
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
 vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
 vi.mock('../../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: {}, // PORT NOTE: core stubbed `telephony.vobiz` (VoBiz deleted, plan §5)
+    telephony: {}, // no carrier config is needed
   },
 }));
 
@@ -29,9 +27,9 @@ const {
 type World = Awaited<ReturnType<typeof createChaosWorld>>;
 
 /**
- * ─── AD-P2-X-01 · SCENARIO 5 — THE REPLICA RESTARTS MID-BRIDGE ──────────────
+ * ─── SCENARIO 5 — THE REPLICA RESTARTS MID-BRIDGE ──────────────
  *
- * Held on `AD-P2-C-07` (§15.9) and now unblocked. A deploy lands while agents are
+ * Previously blocked on the deferred-hangup work; now enabled. A deploy lands while agents are
  * in live conversations. The process dies with N bridged calls in flight, so no
  * terminal event is ever emitted for any of them: Postgres keeps N non-terminal
  * attempt rows, Redis keeps leases and station-ownership keys under a replica id
@@ -78,7 +76,7 @@ type World = Awaited<ReturnType<typeof createChaosWorld>>;
  * assertions vacuous rather than red.
  */
 
-describe('AD-P2-X-01 · replica restart mid-bridge (chaos)', () => {
+describe('replica restart mid-bridge (chaos)', () => {
   let world: World;
 
   beforeEach(truncateAll);
@@ -110,7 +108,7 @@ describe('AD-P2-X-01 · replica restart mid-bridge (chaos)', () => {
     // reason.
     expect(live.every((a) => a.outcome === null)).toBe(true);
     // `in_flight`, and which of the two it is is a property of the FIXTURE rather
-    // than of the phase. Since MAG-88 the dialer marks a bridged contact
+    // than of the phase. The dialer marks a bridged contact
     // `connected` only when the campaign owes a write-up
     // (`requiresDisposition('connected', campaign.disposition_catalog)`); this world
     // takes migration 072's column default of `'[]'`, so nothing is owed and the
@@ -169,7 +167,7 @@ describe('AD-P2-X-01 · replica restart mid-bridge (chaos)', () => {
     for (const a of reaped) {
       expect(a.state).toBe('ended');
       // `orphaned`, NOT `failed`: "failed" implies we tried and it did not work.
-      // The distinction is what lets `AD-P3-C-02` tell a call that reached the
+      // The distinction is what lets the retry policy tell a call that reached the
       // customer from one interrupted by a deploy.
       expect(a.outcome).toBe('orphaned');
       expect(a.ended_at).not.toBeNull();
@@ -190,13 +188,13 @@ describe('AD-P2-X-01 · replica restart mid-bridge (chaos)', () => {
       expect(c.state).toBe('pending');
       expect(c.last_outcome).toBe('orphaned');
       // **Our crash must not consume the customer's retry allowance** — the
-      // `AD-P2-C-12` decision, asserted rather than trusted to a comment. With
+      // design decision, asserted rather than trusted to a comment. With
       // `max_attempts: 3`, three deploys would otherwise exhaust a contact who was
       // never spoken to, behind a plausible-looking audit trail.
       expect(c.attempt_count, 'a restart spent one of the customer’s attempts').toBe(0);
     }
 
-    // ── The agent half (D2) ─────────────────────────────────────────────────
+    // ── The agent half ─────────────────────────────────────────────────
     // Every station socket died with the process, so no agent is really available.
     // Asserted as a CONTRAST, because `available` is the one value that would put a
     // real customer through to nobody.
@@ -224,7 +222,7 @@ describe('AD-P2-X-01 · replica restart mid-bridge (chaos)', () => {
     expect(finalStates['in_flight'] ?? 0).toBe(0);
     expect(await contactsWithConcurrentLiveAttempts(w.campaignId)).toEqual([]);
     expect(await agentsWithConcurrentLiveAttempts(w.campaignId)).toEqual([]);
-    // §10's cross-check on the hardest data this suite produces: attempts that were
+    // the cross-check on the hardest data this suite produces: attempts that were
     // ANSWERED and BRIDGED and then reaped to `orphaned`. Without the ratified
     // `state = 'ended'` filter these rows were counted while still live; with it
     // they are correctly zero, because a bridged call that a deploy interrupted is
@@ -233,7 +231,7 @@ describe('AD-P2-X-01 · replica restart mid-bridge (chaos)', () => {
     expect(await abandonedCount(w.campaignId)).toBe(0);
 
     // The redialed contacts carry attempt 2 — derived inside the INSERT, never
-    // supplied by a caller (`AD-P2-C-12`), and gapless.
+    // supplied by a caller, and gapless.
     const all = await attempts(w.campaignId);
     for (const contactId of live.map((a) => a.contact_id)) {
       const numbers = all.filter((a) => a.contact_id === contactId).map((a) => a.attempt_number).sort();

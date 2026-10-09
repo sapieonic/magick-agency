@@ -1,11 +1,9 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 /*
- * PORT NOTE (magick-agency, Phase 6): ported from core
- * test/integration/agency/chaos/abandonment-counter-vs-table.test.ts@4850d1d9 — 9 cases, all kept. Modified only in
- * harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
+ * Harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
  * `/connection` entry, which packages/db's repositories import); the config stub
- * drops `telephony.vobiz` (VoBiz deleted, plan §5); import specifiers per the path
- * rule (domain leaves, `@magick-agency/contracts/agency`). The metric reader is core's `test/helpers/otel-metric-reader.ts`, ported at the same path.
+ * carries no carrier config; import specifiers per the path
+ * rule (domain leaves, `@magick-agency/contracts/agency`). The metric reader is `test/helpers/otel-metric-reader.ts`.
  */
 import { closeTestPool, getTestPool, truncateAll } from '../../setup/test-utils.js';
 
@@ -17,14 +15,14 @@ await vi.hoisted(async () => {
   installMetricReader();
 });
 
-// PORT NOTE: core mocked `src/db/connection.js`; agency's pool lives in `@magick-agency/db`
+// The DB pool lives in `@magick-agency/db`
 // (the server's repositories import its root, packages/db's repositories `./connection`).
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
 vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
 vi.mock('../../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: {}, // PORT NOTE: core stubbed `telephony.vobiz` (VoBiz deleted, plan §5)
+    telephony: {}, // no carrier config is needed
   },
 }));
 
@@ -43,20 +41,20 @@ const WINDOW_ABANDONED = 'agency_abandonment_window_abandoned_24h';
 const WINDOW_ANSWERED = 'agency_abandonment_window_answered_24h';
 
 /**
- * ─── THE COUNTER-VS-TABLE CROSS-CHECK (`AD-P2-C-06` acceptance (a)) ─────────
+ * ─── THE COUNTER-VS-TABLE CROSS-CHECK ─────────
  *
- * §10 states the criterion in one sentence: *"a cross-check that the Prometheus
+ * The criterion in one sentence: *"a cross-check that the Prometheus
  * counters agree: `agency_abandoned_total` equals that count"*. Nothing had ever
- * checked it, because until this file **nothing in the platform read a metric
- * VALUE back** — §12.3.1: unit suites stub the instruments, so they can only
+ * checked it, because until this file **nothing read a metric
+ * VALUE back**: unit suites stub the instruments, so they can only
  * ever pin names and label sets. So the reader is greenfield (`metricValue` in
  * the harness, reading the real OTel meter provider through the reader installed
- * above) and it is worth building because `AD-P4-C-02`'s auto-pause reads the
+ * above) and it is worth building because the auto-pause guardrail reads the
  * metric, not the table.
  *
  * ── Why this file is separate from `abandonment-predicate-agreement.test.ts` ─
  *
- * That file compares two pieces of **SQL** — §10's audit query and core's
+ * That file compares two pieces of **SQL** — the audit query and
  * `ABANDONED_ATTEMPT_PREDICATE_SQL`. This one compares SQL against an **in-process
  * counter**, which is a different question with a different failure mode: two
  * queries drift when someone edits one of them, whereas a counter and a table
@@ -64,7 +62,7 @@ const WINDOW_ANSWERED = 'agency_abandonment_window_answered_24h';
  * filters on. The first is a maintenance hazard; the second is a live compliance
  * defect, and this file found one (see the last describe block).
  *
- * ── The §16.6 fourth-pattern discipline, applied again ─────────────────────
+ * ── The fourth-pattern discipline, applied again ─────────────────────
  *
  * An agreement check proves nothing on data where the two sides cannot disagree.
  * For a counter-versus-table pair that means: on the happy path both are zero, and
@@ -82,7 +80,7 @@ const WINDOW_ANSWERED = 'agency_abandonment_window_answered_24h';
  * exactly what THAT case produced — the same number a scrape after a restart
  * would see.
  */
-describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () => {
+describe('the Prometheus counter and the SQL table agree', () => {
   let world: World;
 
   beforeEach(async () => {
@@ -95,14 +93,14 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
   afterAll(closeTestPool);
 
   // ═════════════════════════════════════════════════════════════════════════
-  // §10.1's own falsifier. Owed twice and never paid.
+  // the own falsifier. Owed twice and never paid.
   // ═════════════════════════════════════════════════════════════════════════
 
   describe('the two timestamps are genuinely distinct on a bridged row', () => {
     /**
-     * §10.1 names this the falsifier for its entire finding, and says why it is
+     * names this the falsifier for its entire finding, and says why it is
      * cheap: *"without it, a fix that keeps collapsing the two timestamps passes
-     * every other test in §10."*
+     * every other test in."*
      *
      * The unit tier cannot supply it. `abandoned-call-path.test.ts` proves the
      * abandoned SHAPE — answered, never bridged — and a call that never bridged
@@ -112,7 +110,7 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
      * **Asserted as an exact equality against the instant the bridge emitted, not
      * as `bridged_at > answered_at`.** The inequality is satisfied by any dialer
      * that writes *some* earlier timestamp — including one that invents its own,
-     * which is exactly what `AD-P2-C-11` was: `answered_at` written from
+     * which is exactly the earlier defect: `answered_at` written from
      * `bridgedAt`, and `T-P2d` returning 0 for months. An exact comparison against
      * the carrier's reported instant is the only form that can tell "persisted what
      * the bridge said" from "persisted something plausible".
@@ -139,14 +137,14 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
       // dressed as a property, and the exact-value rule exists for precisely that.
       expect(SCRIPTED_ANSWER_LEAD_MS).toBeGreaterThan(0);
 
-      // ── The assertion §10.1 asked for, in its strongest form ──────────────
+      // ── The assertion asked for, in its strongest form ──────────────
       // Exact to the millisecond, against the value the bridge emitted. A dialer
       // that back-filled from `bridgedAt` reds here with a diff of ~40ms; one that
       // called `new Date()` in the handler reds with a diff of whatever the DB
       // round trip cost, which an inequality would have accepted.
       expect(row!.answered_at!.getTime()).toBe(emitted!.getTime());
 
-      // And the pair is distinct, stated separately because it is the claim §10.1
+      // And the pair is distinct, stated separately because it is the claim.1
       // makes and a reader should not have to derive it from the line above.
       expect(row!.bridged_at!.getTime()).not.toBe(row!.answered_at!.getTime());
       const deltaMs = row!.bridged_at!.getTime() - row!.answered_at!.getTime();
@@ -165,7 +163,7 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
 
     /**
      * The denominator is counted on the ANSWER, not on the bridge — asserted where
-     * it is consumed (§16.6 q2) rather than at the increment site.
+     * it is consumed rather than at the increment site.
      *
      * Two attempts, one bridged and one answered-but-never-bridged. A denominator
      * counted on `bridged` reads 1 and looks entirely reasonable; the abandonment
@@ -201,7 +199,7 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
 
   describe('a genuinely abandoned call', () => {
     /**
-     * Carrier answers into a station that is gone: design §6.2, `AD-P2-C-05`.
+     * Carrier answers into a station that is gone.
      *
      * **No scenario in this suite has ever reached this path.** Every abandonment
      * assertion in the chaos suite is `toBe(0)`, and `roster-exactly-once`'s
@@ -211,7 +209,7 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
      * `playClipToCarrierThenHangUp` nor `forceEndWithOutcome`, both of which
      * `abandonAnsweredCall` calls unconditionally — so the path threw a `TypeError`
      * into a fire-and-forget subscription and any scenario built on it would have
-     * gone green. §16.6's third pattern, found by grepping the product for what it
+     * gone green. the third pattern, found by grepping the product for what it
      * calls on the object the harness hands it.
      *
      * The sequence is the real one: dial, park the call ringing, the agent's socket
@@ -261,28 +259,28 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
       expect(row!.outcome).toBe('abandoned');
       // The customer was on the line and no media ever reached an agent. Both
       // facts, because the outcome label alone is the classifier's opinion and the
-      // two columns are the data §10 measures.
+      // two columns are the data measures.
       expect(row!.answered_at).not.toBeNull();
       expect(row!.bridged_at).toBeNull();
 
       // ── The `answered`-phase write, where it is the ONLY writer ────────────
       // This assertion is here and not only on the bridged row because the two
       // rows exercise different code. Found by falsification: emitting the
-      // `answered` phase with NO instant (so `agency-dialer.ts:290` falls back to
+      // `answered` phase with NO instant (so `agency-dialer.ts` falls back to
       // `?? new Date()`) reddened nothing on the bridged row — the `bridged`
       // handler passes `ev.answeredAt` and `answered_at = COALESCE($6, answered_at)`
       // lets a non-null incoming value WIN, so the later write silently repaired
       // the earlier one.
       //
       // ⚠️ That is also a live rule-3 defect in the product's own prose:
-      // `agency-dialer.ts:348` calls the column "first-write-wins … so the
+      // `agency-dialer.ts` calls the column "first-write-wins … so the
       // `answered` phase's value stands". It is not — COALESCE($6, existing) takes
       // $6 whenever $6 is non-null, i.e. the LAST non-null write wins. The
       // protection is real but comes entirely from that handler passing
       // `ev.answeredAt` rather than `bridgedAt`; the mechanism the comment credits
       // does not exist, and a reader who trusts it would conclude that passing
       // `bridgedAt` there is harmless. It would collapse the two timestamps exactly
-      // as `AD-P2-C-11` did.
+      // as the earlier defect did.
       //
       // An abandoned call never reaches the `bridged` handler, so here the
       // `answered` phase is the only writer and this comparison is the only thing
@@ -292,7 +290,7 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
       expect(row!.answered_at!.getTime()).toBe(emitted!.getTime());
 
       // ── The cross-check, on data where a disagreement is reachable ────────
-      // The table says one. So must the counter, and so must §10's own query.
+      // The table says one. So must the counter, and so must the own query.
       expect(await abandonedCount(w.campaignId)).toBe(1);
       expect(await assertAbandonmentPredicatesAgree(w.campaignId)).toBe(1);
       expect(
@@ -304,7 +302,7 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
     });
 
     /**
-     * The gauge the auto-pause guardrail will actually read (`AD-P4-C-02`),
+     * The gauge the auto-pause guardrail will actually read,
      * compared to the table it is derived from.
      *
      * A third leg rather than a restatement: `agency_abandoned_total` is an
@@ -344,7 +342,7 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
      * With no `abandon_announcement_id` the dialer must take the bare-hangup arm:
      * `resolveAbandonClip` returns `not_configured` and nothing is played. The
      * assertion is on `clipPlays` being EMPTY, which is the honest record that
-     * §16.7 criterion 4's "the apology clip is untested at any tier" still stands —
+     * criterion 4's "the apology clip is untested at any tier" still stands —
      * and now with a reason: `resolveAbandonClip` only yields a hash for an
      * announcement backed by real TTS output or an S3 audio file, and the
      * integration stack has neither. A future fixture that configures one is what
@@ -381,7 +379,7 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
     expect(row!.bridged_at).toBeNull();
     expect(row!.state).not.toBe('ended');
 
-    // The table declines to count it — `AD-P4-C-02` must not pause a campaign for
+    // The table declines to count it — the auto-pause guardrail must not pause a campaign for
     // a call that is still connecting.
     expect(await assertAbandonmentPredicatesAgree(w.campaignId)).toBe(0);
     // And so does the numerator counter, which fires only at the settle site. The
@@ -393,7 +391,7 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
   });
 
   // ═════════════════════════════════════════════════════════════════════════
-  // What the cross-check found. This is the whole reason the ticket wanted it.
+  // What the cross-check found. This is the whole reason the check exists.
   // ═════════════════════════════════════════════════════════════════════════
 
   describe('an answered call whose bridge simply failed', () => {
@@ -403,7 +401,7 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
      * classifier labels the attempt `failed` rather than `abandoned`.
      *
      * This row is `roster-exactly-once`'s non-vacuity case, and that test already
-     * asserts the two facts that matter: §10's predicate counts it, and
+     * asserts the two facts that matter: the predicate counts it, and
      * `outcome = 'abandoned'` does not.
      */
     async function answeredThenBridgeFailed() {
@@ -422,7 +420,7 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
       // The regulator's question is "did a customer pick up and reach nobody", and
       // the answer here is yes. WHY the bridge failed is not part of the
       // definition — which is exactly what makes the `bridged_at IS NULL` arm the
-      // independent one, and why `8da1bea` ratified it.
+      // independent one, and why it was ratified.
       expect(row!.state).toBe('ended');
       expect(row!.answered_at).not.toBeNull();
       expect(row!.bridged_at).toBeNull();
@@ -438,15 +436,15 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
     });
 
     /**
-     * ─── §10's EQUALITY, NOW TRUE — AND WHAT IT COST TO GET HERE ─────────────
+     * ─── the EQUALITY, NOW TRUE — AND WHAT IT COST TO GET HERE ─────────────
      *
      * **This was a standing `it.fails` for one commit, and it is the reason
-     * `8641e81` exists.** §10 states the criterion as an equality: *"the Prometheus
+     * the counter's re-keying exists.** The criterion is an equality: *"the Prometheus
      * counters agree: `agency_abandoned_total` equals that count"*. It did not. The
      * two sides were keyed on different things:
      *
      * - the **table** counted a row that is terminal, answered and never bridged —
-     *   the definition ratified at `8da1bea`, keyed on DATA;
+     *   the definition ratified, keyed on DATA;
      * - the **counter** incremented only on `outcome === 'abandoned'`, stamped only
      *   by `abandonAnsweredCall`, which runs only when no live station owns the
      *   agent at answer time — keyed on the CLASSIFIER'S LABEL.
@@ -455,20 +453,20 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
      * bridge failed, the carrier hung up between answer and bridge, a socket died in
      * that window) was abandoned in the table and invisible to the counter —
      * under-reporting, in the direction that looks compliant, reachable only at the
-     * concurrency Phase 2 introduces. Core's framing is the sharper one and is worth
+     * concurrency real dialing introduces. The framing is worth
      * keeping: abandonment and outcome are **different axes**, and the counter had
      * collapsed them.
      *
-     * `8641e81` re-keyed the counter on predicate-satisfaction at the settle site, so
+     * The counter is keyed on predicate-satisfaction at the settle site, so
      * this is now a plain assertion. **Do not re-wrap it in `it.fails` to make a
-     * future red go away** — that is the trap §16.8 names, and it would pin the
+     * future red go away** — that is the trap, and it would pin the
      * defect back as the contract while still passing.
      *
      * Two things this case cannot see, both asserted elsewhere rather than assumed:
      * the reaper's orphan path (next case), and anything the window gauge covers —
      * see `satisfies the ratified abandonment definition in the table` above.
      */
-    it('§10s equality holds: the counter and the table agree on this row', async () => {
+    it('the equality holds: the counter and the table agree on this row', async () => {
       const w = await answeredThenBridgeFailed();
 
       const table = await abandonedCount(w.campaignId);
@@ -485,7 +483,7 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
     /**
      * ─── THE IRREDUCIBLE RESIDUE, ASSERTED SO NOBODY TRIPS OVER IT ───────────
      *
-     * Raised by core alongside the fix and worth a test rather than a note: the
+     * Raised alongside the fix and worth a test rather than a note: the
      * counter is **process-local and incremented at the settle site**, so an attempt
      * settled by a path with **no in-process record** is counted by the table and
      * invisible to the counter. The reaper's post-crash orphan sweep is exactly that
@@ -495,7 +493,7 @@ describe('AD-P2-C-06 (a) · the Prometheus counter and the SQL table agree', () 
      * This is **not** a bug and must not be "fixed" by making the reaper increment:
      * a counter that counted rows this process never handled would be lying about
      * its own scope, and the number that must survive a restart is the SQL window
-     * gauge — which does, and which is what `AD-P4-C-02` reads.
+     * gauge — which does, and which is what the auto-pause guardrail reads.
      *
      * It is asserted because the consequence is a **trap for the next person**: any
      * future scenario that kills a replica mid-attempt and then compares counter to

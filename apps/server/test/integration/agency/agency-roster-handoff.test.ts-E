@@ -1,0 +1,292 @@
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
+import { insertAgencyCampaign } from './agency-factories.js';
+import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT } from '../setup/factories.js';
+import type { AgencyIngestContact } from '../../../src/agency/agency-csv-ingest.js';
+
+vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
+const {
+  sendRosterChunk,
+  supersedeRoster,
+  rosterChunkKey,
+  RosterChunkError,
+  RosterSupersedeError,
+} = await import('../../../src/agency/agency-roster.client.js');
+
+/**
+ * Equivalence suite for the roster hand-off collapse.
+ *
+ * Master's `agency-roster.client.test.ts@a1f0756a` (22 cases) ran the client against a mocked
+ * `coreInternalRequest`. The hop is now an in-process call into core's handler body
+ * (core `agency.routes.ts:1892-1962`), so each of those cases is re-run here against REAL
+ * Postgres and the real `agencyContactRepository`, asserting the same outward behaviour.
+ * The mapping below is recorded case by case in PORTING.md ("Lane B2 — roster hand-off").
+ *
+ * Cases that existed only to test the transport (retry on 5xx, attempt counting around a lost
+ * response, mapping an ingress 404) have no in-process equivalent and are listed as deleted.
+ */
+
+const JOB = '11111111-2222-3333-4444-555555555555';
+const TENANT = DEFAULTS.tenantId;
+const ACCOUNT = DEFAULTS.accountId;
+
+function contacts(n: number, from = 0): AgencyIngestContact[] {
+  return Array.from({ length: n }, (_, i) => ({
+    phone_e164: `+91987654${String(3000 + from + i)}`,
+    context: { Name: `C${from + i}` },
+    source_row_number: from + i + 2,
+  }));
+}
+
+let campaignId: string;
+
+async function rosterCount(id = campaignId): Promise<number> {
+  const { rows } = await getTestPool().query<{ n: string }>(
+    'SELECT COUNT(*)::text AS n FROM agency_contacts WHERE campaign_id = $1',
+    [id],
+  );
+  return Number(rows[0]!.n);
+}
+
+beforeEach(async () => {
+  await truncateAll();
+  campaignId = (await insertAgencyCampaign()).id as string;
+});
+
+afterAll(async () => {
+  await closeTestPool();
+});
+
+describe('rosterChunkKey', () => {
+  it('is identical for a retry and distinct per chunk', () => {
+    expect(rosterChunkKey(JOB, 7)).toBe(rosterChunkKey(JOB, 7));
+    expect(rosterChunkKey(JOB, 7)).not.toBe(rosterChunkKey(JOB, 8));
+    expect(rosterChunkKey(JOB, 0)).not.toBe(rosterChunkKey('other-job', 0));
+  });
+
+  it("fits core's VARCHAR(128) idempotency column", () => {
+    expect(rosterChunkKey(JOB, 999_999).length).toBeLessThanOrEqual(128);
+  });
+});
+
+describe('sendRosterChunk (in-process)', () => {
+  it('applies the chunk under the agreed stable idempotency key', async () => {
+    const result = await sendRosterChunk({
+      campaignId, tenantId: TENANT, accountId: ACCOUNT, ingestJobId: JOB, chunkIndex: 0,
+      isFinal: false, contacts: contacts(2),
+    });
+
+    expect(result).toMatchObject({ accepted: 2, duplicate_chunk: false, total_contacts: 2 });
+    const { rows } = await getTestPool().query(
+      'SELECT ingest_job_id, chunk_index, idempotency_key, row_count FROM agency_ingest_chunks WHERE campaign_id = $1',
+      [campaignId],
+    );
+    expect(rows).toEqual([
+      { ingest_job_id: JOB, chunk_index: 0, idempotency_key: `${JOB}-0`, row_count: 2 },
+    ]);
+    expect(await rosterCount()).toBe(2);
+  });
+
+  it('reports a replayed chunk as a no-op rather than an error', async () => {
+    const request = {
+      campaignId, tenantId: TENANT, accountId: ACCOUNT, ingestJobId: JOB, chunkIndex: 3,
+      isFinal: false, contacts: contacts(3),
+    };
+    await sendRosterChunk(request);
+    const replay = await sendRosterChunk(request);
+
+    expect(replay.duplicate_chunk).toBe(true);
+    expect(replay.accepted).toBe(0);
+    expect(replay.total_contacts).toBe(3);
+    expect(await rosterCount()).toBe(3);
+  });
+
+  it('a re-send of the same chunk carries the same key — the property that makes retrying safe', async () => {
+    const request = {
+      campaignId, tenantId: TENANT, accountId: ACCOUNT, ingestJobId: JOB, chunkIndex: 4,
+      isFinal: false, contacts: contacts(1),
+    };
+    await sendRosterChunk(request);
+    await sendRosterChunk(request);
+    await sendRosterChunk(request);
+
+    const { rows } = await getTestPool().query<{ idempotency_key: string }>(
+      'SELECT idempotency_key FROM agency_ingest_chunks WHERE campaign_id = $1',
+      [campaignId],
+    );
+    expect(rows.map((r) => r.idempotency_key)).toEqual([`${JOB}-4`]);
+    expect(await rosterCount()).toBe(1);
+  });
+
+  it('does NOT apply a refused chunk — a 400 is a RosterChunkError and writes nothing', async () => {
+    const err = await sendRosterChunk({
+      campaignId, tenantId: TENANT, accountId: '', ingestJobId: JOB, chunkIndex: 1,
+      isFinal: false, contacts: contacts(1),
+    }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(RosterChunkError);
+    expect(err).toMatchObject({ status: 400, chunkIndex: 1, message: 'tenant_id and account_id are required' });
+    expect(await rosterCount()).toBe(0);
+    const { rows } = await getTestPool().query('SELECT 1 FROM agency_ingest_chunks');
+    expect(rows).toHaveLength(0);
+  });
+
+  it('surfaces completeness on the final chunk', async () => {
+    const base = { campaignId, tenantId: TENANT, accountId: ACCOUNT, ingestJobId: JOB, chunkCount: 3 };
+    await sendRosterChunk({ ...base, chunkIndex: 0, isFinal: false, contacts: contacts(2, 0) });
+
+    const gap = await sendRosterChunk({ ...base, chunkIndex: 2, isFinal: true, contacts: contacts(2, 4) });
+    expect(gap.roster_complete).toBe(false);
+    expect(gap.missing_chunks).toEqual([1]);
+
+    await sendRosterChunk({ ...base, chunkIndex: 1, isFinal: false, contacts: contacts(2, 2) });
+    const whole = await sendRosterChunk({ ...base, chunkIndex: 2, isFinal: true, contacts: contacts(2, 4) });
+    expect(whole.roster_complete).toBe(true);
+    expect(whole.missing_chunks).toEqual([]);
+    expect(whole.duplicate_chunk).toBe(true);
+  });
+
+  it("threads core's duplicate-rejection fields through to the caller", async () => {
+    await sendRosterChunk({
+      campaignId, tenantId: TENANT, accountId: ACCOUNT, ingestJobId: JOB, chunkIndex: 0,
+      isFinal: false, contacts: contacts(3),
+    });
+    // A second job re-sends the same people verbatim: refused by the row-fingerprint index.
+    const result = await sendRosterChunk({
+      campaignId, tenantId: TENANT, accountId: ACCOUNT, ingestJobId: randomUUID(), chunkIndex: 0,
+      isFinal: false, contacts: contacts(3),
+    });
+
+    expect(result.accepted).toBe(0);
+    expect(result.rejected_duplicate_rows).toBe(3);
+    expect(result.duplicate_source_rows).toEqual([2, 3, 4]);
+    expect(await rosterCount()).toBe(3);
+  });
+
+  it('reports zero duplicates (not undefined) on a fresh chunk', async () => {
+    const result = await sendRosterChunk({
+      campaignId, tenantId: TENANT, accountId: ACCOUNT, ingestJobId: JOB, chunkIndex: 0,
+      isFinal: false, contacts: contacts(2),
+    });
+
+    expect(result.rejected_duplicate_rows).toBe(0);
+    expect(result.duplicate_source_rows).toEqual([]);
+  });
+
+  it('carries the "these counts are unknown" flag through untouched', async () => {
+    // A chunk applied before core's migration 084: a marker with no recorded rejection counts.
+    await getTestPool().query(
+      `INSERT INTO agency_ingest_chunks
+         (campaign_id, ingest_job_id, chunk_index, idempotency_key, chunk_count, row_count)
+       VALUES ($1, $2, 0, $3, NULL, 2)`,
+      [campaignId, JOB, `${JOB}-0`],
+    );
+
+    const result = await sendRosterChunk({
+      campaignId, tenantId: TENANT, accountId: ACCOUNT, ingestJobId: JOB, chunkIndex: 0,
+      isFinal: false, contacts: contacts(2),
+    });
+
+    expect(result.duplicate_chunk).toBe(true);
+    expect(result.rejected_duplicate_rows).toBe(0);
+    expect(result.rejection_counts_unavailable).toBe(true);
+  });
+
+  it('leaves the flag ABSENT rather than defaulting it to false', async () => {
+    const result = await sendRosterChunk({
+      campaignId, tenantId: TENANT, accountId: ACCOUNT, ingestJobId: JOB, chunkIndex: 0,
+      isFinal: false, contacts: contacts(2),
+    });
+
+    expect('rejection_counts_unavailable' in result).toBe(false);
+  });
+
+  /**
+   * MODIFIED (recorded): the HTTP client omitted `account_id` cleanly and core's handler then
+   * answered 400, because ownership is compared on tenant AND account and a missing account is
+   * malformed (core `agency.routes.ts:1894-1900`, :1841-1846). The in-process call keeps that
+   * answer: no account context is a refusal, never a wildcard.
+   */
+  it('refuses a request with no account context instead of treating it as a wildcard', async () => {
+    const err = await sendRosterChunk({
+      campaignId, tenantId: TENANT, ingestJobId: JOB, chunkIndex: 0,
+      isFinal: false, contacts: contacts(1),
+    }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(RosterChunkError);
+    expect(err).toMatchObject({ status: 400 });
+    expect(await rosterCount()).toBe(0);
+  });
+
+  describe('ownership (core `requireOwned`, applied to the request tenant/account)', () => {
+    async function expectNotFound(over: { campaignId?: string; tenantId?: string; accountId?: string }) {
+      const err = await sendRosterChunk({
+        campaignId: over.campaignId ?? campaignId, tenantId: over.tenantId ?? TENANT,
+        accountId: over.accountId ?? ACCOUNT, ingestJobId: JOB, chunkIndex: 0, isFinal: false,
+        contacts: contacts(2),
+      }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(RosterChunkError);
+      // One answer for "does not exist" and "not yours", so ids cannot be probed.
+      expect(err).toMatchObject({ status: 404, message: 'Campaign not found' });
+      const { rows } = await getTestPool().query('SELECT 1 FROM agency_contacts');
+      expect(rows).toHaveLength(0);
+      const chunks = await getTestPool().query('SELECT 1 FROM agency_ingest_chunks');
+      expect(chunks.rows).toHaveLength(0);
+    }
+
+    it("refuses another tenant's caller", () => expectNotFound({ tenantId: OTHER_TENANT }));
+    it("refuses a sibling account's caller in the same tenant", () => expectNotFound({ accountId: OTHER_ACCOUNT }));
+    it('answers an unknown campaign id with the same 404', () => expectNotFound({ campaignId: randomUUID() }));
+    it('answers a malformed campaign id with the same 404, not a 22P02', () => expectNotFound({ campaignId: 'not-a-uuid' }));
+  });
+});
+
+describe('supersedeRoster (in-process)', () => {
+  /**
+   * KNOWN GAP, ported as it behaved in production: core @4850d1d9 has no
+   * `POST /internal/agency-campaigns/:id/roster/supersede` (core `agency.routes.ts:1827` calls it
+   * "future"), so master's call always met Fastify's 404 and was mapped to `unsupported` after ONE
+   * attempt, with nothing touched. These cases pin that, including that no roster row moves.
+   */
+  async function seededRoster(): Promise<void> {
+    await sendRosterChunk({
+      campaignId, tenantId: TENANT, accountId: ACCOUNT, ingestJobId: JOB, chunkIndex: 0,
+      isFinal: false, contacts: contacts(5),
+    });
+  }
+
+  it('refuses a replace as `unsupported` and leaves the roster untouched, scoped to the job', async () => {
+    await seededRoster();
+
+    const err = await supersedeRoster({
+      campaignId, tenantId: TENANT, accountId: ACCOUNT, ingestJobId: randomUUID(),
+      expectedContactsTotal: 5, reason: 'replace',
+    }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(RosterSupersedeError);
+    expect(err).toMatchObject({ code: 'unsupported', coreStatus: 404, attempts: 1 });
+    expect(await rosterCount()).toBe(5);
+  });
+
+  it('refuses a clear (no job scope) the same way, so nothing is exempt', async () => {
+    await seededRoster();
+
+    await expect(
+      supersedeRoster({ campaignId, tenantId: TENANT, expectedContactsTotal: 5, reason: 'clear' }),
+    ).rejects.toMatchObject({ code: 'unsupported' });
+    expect(await rosterCount()).toBe(5);
+  });
+
+  it('says the deployment cannot do it, not that the campaign is busy or missing', async () => {
+    const err = await supersedeRoster({
+      campaignId: randomUUID(), tenantId: TENANT, expectedContactsTotal: 0, reason: 'clear',
+    }).catch((e: unknown) => e);
+
+    expect(err).toMatchObject({ code: 'unsupported' });
+    expect((err as Error).message).toBe(
+      'This deployment cannot replace or clear a roster yet — the core service does not support it.',
+    );
+  });
+});

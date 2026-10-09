@@ -1,0 +1,572 @@
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+/*
+ * Harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
+ * `/connection` entry, which packages/db's repositories import); the config stub
+ * carries no carrier config; import specifiers per the path
+ * rule (domain leaves, `@magick-agency/contracts/agency`).
+ */
+import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
+import {
+  closeTestPool,
+  closeTestRedis,
+  flushTestRedis,
+  getTestPool,
+  getTestRedis,
+  truncateAll,
+} from '../setup/test-utils.js';
+import {
+  insertAgencyAttempt,
+  insertAgencyCampaign,
+  insertAgencyContact,
+  insertAgentSession,
+} from './agency-factories.js';
+
+// The DB pool lives in `@magick-agency/db`
+// (the server's repositories import its root, packages/db's repositories `./connection`).
+vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
+vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
+
+// AgencyDialer imports WebRtcCallError from the bridge — a value import, so the
+// whole config graph loads and `loadConfig` would `process.exit(1)` on the repo's
+// incomplete `.env`. We never construct a real bridge here.
+vi.mock('../../../src/config/index.js', () => ({
+  config: {
+    redis: { keyPrefix: '' },
+    telephony: {}, // no carrier config is needed
+  },
+}));
+
+const { AgentStateMachine, AGENT_LEASE_MS } = await import('../../../src/agency/agent-state-machine.js');
+const { AgencyDialer } = await import('../../../src/agency/agency-dialer.js');
+const { WrapupManager } = await import('../../../src/agency/wrapup-manager.js');
+const { BreakRegistry } = await import('@magick-agency/domain/break-manager');
+const { agencyAttemptRepository } = await import('../../../src/db/repositories/agency.repository.js');
+
+/**
+ * Construct the dialer with the SAME collaborator set `AgencyRuntime` gives it.
+ *
+ * Not a convenience wrapper — a single point of failure for arity drift. This
+ * file used to call `new AgencyDialer(bridge, stations, agents)` in two places
+ * against a five-parameter constructor, so `this.wrapup` and `this.breaks` were
+ * both `undefined` and `releaseAgent` threw `TypeError: Cannot read properties
+ * of undefined (reading 'take')` — which is what T-P5 was actually failing on.
+ * `tsc` reports it (`TS2554`) but `tsconfig.json` excludes `test/`; see
+ * `npm run lint:test`.
+ *
+ * Both collaborators are REAL. A stub `BreakRegistry` in particular would be
+ * worse than none: `take()` is consuming rather than peeking — that is what makes
+ * a queued break apply exactly once — and a stub whose `take` did not delete
+ * would satisfy every assertion here while hiding it.
+ */
+function dialerWith(bridge: unknown, stations: never, agents: InstanceType<typeof AgentStateMachine>) {
+  // The `: Promise<void>` breaks the wrapup↔dialer inference cycle; without it
+  // `tsc` types BOTH as `any` (TS7022) and stops seeing arity at all.
+  const wrapup = new WrapupManager(
+    stations, agents,
+    (sessionId: string): Promise<void> => dialer.releaseAgent(sessionId),
+  );
+  const dialer = new AgencyDialer(bridge as never, stations, agents, wrapup, new BreakRegistry());
+  return dialer;
+}
+
+/**
+ * T-P — the context-panel ordering guarantee, at the integration tier.
+ *
+ * The customer requirement is that the contact's full CSV row is on the agent's
+ * screen BEFORE or SIMULTANEOUSLY WITH audio connect, never after. That reads
+ * like a race, and testing it as one (eyeball it, or measure two wall clocks)
+ * would be both flaky and unfalsifiable. It is actually an ORDERING property on
+ * a single WebSocket: one connection preserves frame order end to end, so if the
+ * server writes `reserved` before `bridged`, the client cannot observe them
+ * inverted. So this suite asserts ORDER, and then separately proves nothing on
+ * the path can reintroduce a time dependency.
+ *
+ * The decisive arm is T-P2. A carrier that answers SYNCHRONOUSLY inside the dial
+ * is what a three-second ring hides — and it is not hypothetical: this exact
+ * shape found a real defect at the unit tier, where the dialer correlated bridge
+ * lifecycle events on `webrtc_call_id`, an id that does not exist until
+ * `createBridgedCall` resolves. A carrier answering during the dial therefore had
+ * its `bridged` event dropped on the floor, leaving the agent live on a call with
+ * a panel still reading "connecting". The fix was to correlate on a
+ * caller-supplied `correlationId` registered BEFORE the dial. What follows proves
+ * that fix holds against real Postgres and real Redis, not just against mocks.
+ */
+
+class FakeStationSocket extends EventEmitter {
+  readyState = 1;
+  /** Every frame written to the wire, in order. This IS the assertion surface. */
+  readonly frames: { event: string; [k: string]: unknown }[] = [];
+  send(raw: string): void {
+    this.frames.push(JSON.parse(raw));
+  }
+  close(): void {
+    this.readyState = 3;
+  }
+  events(): string[] {
+    return this.frames.map((f) => f.event);
+  }
+}
+
+function fakeStations(sessionId: string, socket: FakeStationSocket) {
+  return {
+    socketFor: (id: string) => (id === sessionId ? socket : undefined),
+    isLocallyOwned: (id: string) => id === sessionId,
+    send: (id: string, frame: unknown) => {
+      if (id !== sessionId || socket.readyState !== 1) return false;
+      socket.send(JSON.stringify(frame));
+      return true;
+    },
+  } as never;
+}
+
+type AnswerMode = 'synchronous' | 'delayed' | 'never';
+
+/**
+ * A bridge whose answer timing is scriptable.
+ *
+ * `synchronous` fires the `bridged` lifecycle event from INSIDE
+ * `createBridgedCall`, before it resolves — i.e. before the caller can possibly
+ * have learned the call id. That is the case a real carrier can produce and the
+ * one a 3s ring can never expose.
+ */
+function scriptedBridge(mode: AnswerMode, delayMs = 0) {
+  const listeners: ((ev: unknown) => void)[] = [];
+  const timers: NodeJS.Timeout[] = [];
+  /** Order in which the bridge observed things, for cross-checking. */
+  const trace: string[] = [];
+
+  /**
+   * The carrier's answer and the media bridge are TWO events with two instants,
+   * and this fake has to reproduce that or the suite lies about the product.
+   *
+   * It originally emitted `bridged` alone with `answered: true`, which predates
+   * core's `e4ec019` widening `WebRtcLifecycleEvent.phase` to include
+   * `'answered'`. The consequence was T-P2c asserting `answered_at IS NOT NULL`
+   * against a bridge that never supplied an answer instant — so the case failed
+   * on its setup rather than on its subject, and the defect it exists to catch
+   * became unobservable behind a red that looked like the defect.
+   *
+   * `answeredAt` is deliberately EARLIER than the bridge instant. the whole
+   * finding was that collapsing the two makes the abandonment predicate vacuous;
+   * a fake that collapses them re-creates that vacuity inside the test suite,
+   * where nothing would notice.
+   */
+  const emitAnsweredThenBridged = (callId: string, correlationId: string): void => {
+    trace.push('bridge:emit-answered');
+    const answeredAt = new Date(Date.now() - 40);
+    for (const l of listeners) {
+      l({ callId, correlationId, phase: 'answered', answeredAt });
+    }
+    trace.push('bridge:emit-bridged');
+    for (const l of listeners) {
+      l({ callId, correlationId, phase: 'bridged', status: 'in_progress', answered: true, answeredAt });
+    }
+  };
+  const emitBridged = emitAnsweredThenBridged;
+
+  return {
+    trace,
+    timers,
+    onLifecycle(l: (ev: unknown) => void) {
+      listeners.push(l);
+      return () => { /* no-op */ };
+    },
+    async createBridgedCall(params: { agencyAttemptId: string }) {
+      trace.push('bridge:dial-start');
+      const callId = randomUUID();
+      if (mode === 'synchronous') {
+        // The carrier answers while the dial is still in flight.
+        emitBridged(callId, params.agencyAttemptId);
+      } else if (mode === 'delayed') {
+        timers.push(setTimeout(() => emitBridged(callId, params.agencyAttemptId), delayMs));
+      }
+      trace.push('bridge:dial-resolve');
+      return { id: callId };
+    },
+  };
+  // NOT `as never`. `dialerWith` already takes `unknown` and casts at the
+  // constructor, so the cast here bought nothing and cost the caller its own
+  // fake: `never` erased `trace` and `timers`, and `for (const t of bridge.timers)`
+  // in the cleanup below stopped type-checking (AD-PLATFORM-01's `lint:test` found
+  // it). A widening cast on a test double is worth suspecting on sight — it hides
+  // exactly the harness surface the scenarios read.
+}
+
+/** The 43-column context row the panel has to render verbatim. */
+function wideContext(): Record<string, string> {
+  const ctx: Record<string, string> = {
+    'First Name': 'Priya',
+    'Policy #': 'PX-4471',
+    'Renewal Dt': '2026-09-01',
+    'Notes, with comma': 'called twice; "asked to call back"',
+    'Unicode ключ': 'हिंदी value',
+    'empty': '',
+    'big': 'x'.repeat(4096),
+    // Keys that collide with reserved field names on the frame. If the
+    // implementation spreads context into the attempt object rather than nesting
+    // it, these silently overwrite real fields — so they must survive intact.
+    'id': 'context-id-not-attempt-id',
+    'state': 'context-state',
+    'campaign_id': 'context-campaign-id',
+    'attempt_id': 'context-attempt-id',
+  };
+  for (let i = ctx ? Object.keys(ctx).length : 0; i < 43; i++) {
+    ctx[`col_${i}`] = `v${i}`;
+  }
+  return ctx;
+}
+
+async function setup(mode: AnswerMode, delayMs = 0, context?: Record<string, unknown>) {
+  const redis = getTestRedis();
+  const agents = new AgentStateMachine(redis, '');
+  const campaign = await insertAgencyCampaign({ status: 'running', name: 'Renewals Q3' });
+  const contact = await insertAgencyContact(campaign.id, {
+    context: JSON.stringify(context ?? { name: 'Test Person' }),
+  });
+  const session = await insertAgentSession(campaign.id, { state: 'available' });
+
+  const socket = new FakeStationSocket();
+  const bridge = scriptedBridge(mode, delayMs);
+  const dialer = dialerWith(bridge, fakeStations(session.id, socket), agents);
+  dialer.start();
+
+  await agents.set(session.id, 'available', { leaseMs: AGENT_LEASE_MS.available });
+  await agents.reserve(session.id, `${campaign.id}:${contact.id}`);
+
+  const attempt = await agencyAttemptRepository.create({
+    campaignId: campaign.id,
+    contactId: contact.id,
+    tenantId: campaign.tenant_id,
+    accountId: campaign.account_id,
+    callerId: '+919000000001',
+    reservedAgentId: session.id,
+  });
+
+  const cmd = {
+    attemptId: attempt!.id,
+    campaignId: campaign.id,
+    contactId: contact.id,
+    sessionId: session.id,
+    ownerReplica: 'replica-test',
+    tenantId: campaign.tenant_id,
+    accountId: campaign.account_id,
+    callerId: '+919000000001',
+    attemptNumber: 1,
+    campaign,
+    contact,
+  };
+
+  return { agents, campaign, contact, session, socket, bridge, dialer, attempt: attempt!, cmd };
+}
+
+describe('agency context-panel ordering (integration)', () => {
+  beforeEach(async () => {
+    await truncateAll();
+    await flushTestRedis();
+  });
+  afterAll(async () => {
+    await closeTestRedis();
+    await closeTestPool();
+  });
+
+  it('T-P1: `reserved` precedes `bridged` on a normal ring', async () => {
+    const { socket, bridge, dialer, cmd, attempt } = await setup('delayed', 300);
+    await dialer.executeDial(cmd as never);
+    await new Promise((r) => setTimeout(r, 800));
+
+    const events = socket.events();
+    const reservedAt = events.indexOf('reserved');
+    const bridgedAt = events.indexOf('bridged');
+
+    expect(reservedAt).toBeGreaterThanOrEqual(0);
+    expect(bridgedAt).toBeGreaterThanOrEqual(0);
+    expect(reservedAt).toBeLessThan(bridgedAt);
+
+    // No other frame carries contact context — the panel has exactly one source.
+    const carriers = socket.frames.filter((f) => 'attempt' in f && (f.attempt as { context?: unknown })?.context);
+    expect(carriers).toHaveLength(1);
+    expect(carriers[0]!.event).toBe('reserved');
+
+    expect((await agencyAttemptRepository.findById(attempt.id))!.state).toBe('bridged');
+    dialer.stop();
+    for (const t of bridge.timers as NodeJS.Timeout[]) clearTimeout(t);
+  });
+
+  it('T-P2: ordering holds when the carrier answers INSIDE the dial (the falsifier)', async () => {
+    // The regression guard for the correlationId defect. Under the old
+    // call-id-keyed correlation the `bridged` event fires while the map is still
+    // empty, so no `bridged` frame is ever emitted and the panel sticks on
+    // "connecting" for the whole live call.
+    const { socket, dialer, cmd, attempt, bridge } = await setup('synchronous');
+    await dialer.executeDial(cmd as never);
+    await new Promise((r) => setTimeout(r, 300));
+
+    const events = socket.events();
+
+    // 1. The panel went out first, even though the answer happened first.
+    expect(events.indexOf('reserved')).toBe(0);
+
+    // 2. The bridged frame was NOT dropped. This is the whole test — an
+    //    assertion on ordering alone would pass vacuously if `bridged` never
+    //    arrived at all, which is exactly what the bug did.
+    expect(events, 'the bridged frame was dropped — correlation regressed to the call id')
+      .toContain('bridged');
+    expect(events.indexOf('reserved')).toBeLessThan(events.indexOf('bridged'));
+
+    // 3. The bridge really did answer during the dial, not after it. Without
+    //    this the test could silently degrade into T-P1.
+    const trace = (bridge as unknown as { trace: string[] }).trace;
+    // Both carrier events land INSIDE `createBridgedCall`, before it resolves —
+    // which is the whole point of this case: the answer can arrive while the dial
+    // is still in flight, so nothing may depend on the dial having returned.
+    // `bridge:emit-answered` joined this trace when the fake stopped collapsing
+    // the answer and the bridge into one event (see `emitAnsweredThenBridged`).
+    expect(trace).toEqual([
+      'bridge:dial-start', 'bridge:emit-answered', 'bridge:emit-bridged', 'bridge:dial-resolve',
+    ]);
+
+    dialer.stop();
+  });
+
+  it('T-P2c: the attempt ROW agrees with the frame after a synchronous answer', async () => {
+    // ── KNOWN DEFECT (agency-dialer.ts:162) ──────────────────────────────
+    // `executeDial` writes the panel, dials, and then unconditionally runs
+    //
+    //     await agencyAttemptRepository.setState(attemptId, 'dialing',
+    //                                            { webrtc_call_id: record.id });
+    //
+    // after `createBridgedCall` resolves. When the carrier answers during the
+    // dial, `onBridgeLifecycle` has ALREADY written `state='bridged'` plus
+    // `answered_at`/`bridged_at` — and this post-dial write stomps it back to
+    // `dialing`, discarding `bridged_at`.
+    //
+    // This is the SAME class of bug as the correlationId defect and is found by
+    // the same technique: the correlation fix delivered the frame, but the row
+    // update was left racing. The frame and the database now disagree.
+    //
+    // SCOPE, stated precisely rather than dramatically. `setState` COALESCEs
+    // every timestamp, so `answered_at` and `bridged_at` SURVIVE the clobber —
+    // only `state` is overwritten unconditionally. Therefore:
+    //   - The abandonment predicate is NOT affected. T-P2d asserts that
+    //     directly, and it passes. This is not a compliance defect.
+    //   - The attempt is NOT stranded: the `ended` lifecycle branch still
+    //     terminates it normally.
+    //   - What IS wrong is that the row reads `dialing` for the entire duration
+    //     of a live conversation. The agent console shows a bridged call while
+    //     the database disagrees, the supervisor's in-flight/by-state views
+    //     misreport it, and any future logic branching on `state === 'bridged'`
+    //     (dashboards, wrap-up) silently takes the wrong branch.
+    //
+    // The window is not exclusive to a synchronous answer: any answer landing
+    // between `createBridgedCall` resolving and line 162 executing is clobbered,
+    // which is a real if narrow window on a fast carrier.
+    //
+    // The fix is a guarded write (only set `dialing` if the attempt has not
+    // already advanced), or writing `webrtc_call_id` without touching `state`.
+    const { dialer, cmd, attempt } = await setup('synchronous');
+    await dialer.executeDial(cmd as never);
+    await new Promise((r) => setTimeout(r, 300));
+
+    const row = await agencyAttemptRepository.findById(attempt.id);
+    // The timestamps are fine (COALESCE); it is `state` that is lost.
+    expect(row!.answered_at).not.toBeNull();
+    expect(row!.bridged_at).not.toBeNull();
+    expect(row!.webrtc_call_id).not.toBeNull();
+    expect(
+      row!.state,
+      'post-dial setState clobbered the bridged transition — the row reads `dialing` for a live call',
+    ).toBe('bridged');
+
+    dialer.stop();
+  });
+
+  it('T-P2d: a bridged attempt is never counted as abandoned by the predicate', async () => {
+    // The compliance-facing check, asserted against the exact query the
+    // abandonment metric and auto-pause guardrail use. It PASSES today, and it
+    // is here to bound T-P2c's blast radius: the state clobber does not reach
+    // this number, because `setState` COALESCEs the timestamps. If a future
+    // "fix" for T-P2c starts nulling timestamps, this is what catches it.
+    const { dialer, cmd } = await setup('synchronous');
+    await dialer.executeDial(cmd as never);
+    await new Promise((r) => setTimeout(r, 300));
+
+    const { rows } = await getTestPool().query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM agency_call_attempts
+        WHERE campaign_id = $1
+          AND answered_at IS NOT NULL
+          AND (outcome = 'abandoned' OR bridged_at IS NULL
+               OR bridged_at - answered_at > interval '1 second')`,
+      [cmd.campaignId],
+    );
+    expect(
+      Number(rows[0]!.n),
+      'a connected call is being counted as abandoned — the auto-pause guardrail reads this',
+    ).toBe(0);
+
+    dialer.stop();
+  });
+
+  it('T-P2b: the agent lands `on_call` after a synchronous answer', async () => {
+    const { socket, dialer, cmd, session, agents } = await setup('synchronous');
+    await dialer.executeDial(cmd as never);
+    await new Promise((r) => setTimeout(r, 300));
+
+    const state = await agents.get(session.id);
+    expect(state?.state).toBe('on_call');
+    expect(socket.events()).toContain('bridged');
+    dialer.stop();
+  });
+
+  it('T-P3: the reserved frame carries the FULL context row, verbatim', async () => {
+    // A frame carrying a SUBSET satisfies the ordering claim and still violates
+    // the customer requirement, so completeness is asserted independently.
+    const ctx = wideContext();
+    const { socket, dialer, cmd, contact, campaign, attempt, bridge } = await setup('delayed', 200, ctx);
+    await dialer.executeDial(cmd as never);
+
+    const reserved = socket.frames.find((f) => f.event === 'reserved');
+    expect(reserved).toBeTruthy();
+    const payload = reserved!.attempt as Record<string, unknown>;
+
+    // Deep-equals the stored JSONB, key for key. Not a subset, not re-cased,
+    // not stripped of the awkward keys.
+    expect(payload.context).toEqual(ctx);
+    expect(Object.keys(payload.context as object)).toHaveLength(Object.keys(ctx).length);
+
+    // The reserved-name collisions did not overwrite real frame fields.
+    expect(payload.attempt_id).toBe(attempt.id);
+    expect(payload.campaign_id).toBe(campaign.id);
+    expect(payload.contact_id).toBe(contact.id);
+    expect(payload.phone_e164).toBe(contact.phone_e164);
+    expect(payload.campaign_name).toBe('Renewals Q3');
+    expect(payload.attempt_number).toBe(1);
+    expect(payload.caller_id).toBe('+919000000001');
+    expect(Array.isArray(payload.prior_attempts)).toBe(true);
+
+    dialer.stop();
+    for (const t of bridge.timers as NodeJS.Timeout[]) clearTimeout(t);
+  });
+
+  it('T-P3b: prior attempts ride on the SAME frame — no second round trip', async () => {
+    // History on a later frame would mean the panel renders, then changes under
+    // the agent while they are already talking.
+    const redis = getTestRedis();
+    const agents = new AgentStateMachine(redis, '');
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const contact = await insertAgencyContact(campaign.id);
+    const session = await insertAgentSession(campaign.id, { state: 'available' });
+
+    const prior = await insertAgencyAttempt(campaign.id, contact.id, {
+      attempt_number: 1, state: 'ended', outcome: 'no_answer', notes: 'rang out',
+    });
+    await getTestPool().query(`UPDATE agency_call_attempts SET ended_at = now() WHERE id = $1`, [prior.id]);
+
+    const socket = new FakeStationSocket();
+    const bridge = scriptedBridge('never');
+    const dialer = dialerWith(bridge, fakeStations(session.id, socket), agents);
+    dialer.start();
+    await agents.set(session.id, 'available', { leaseMs: AGENT_LEASE_MS.available });
+    await agents.reserve(session.id, 'x');
+
+    const attempt = await agencyAttemptRepository.create({
+      campaignId: campaign.id, contactId: contact.id,
+      tenantId: campaign.tenant_id, accountId: campaign.account_id,
+      // No `attemptNumber`: `a868a16` made the repository derive it from the
+      // attempts table — a caller-supplied number WAS the defect —
+      // and removed the parameter. The `DialCommand` below still carries one, and
+      // correctly so: that field is the dialer's, not the repository's.
+      callerId: '+919000000001', reservedAgentId: session.id,
+    });
+
+    await dialer.executeDial({
+      attemptId: attempt!.id, campaignId: campaign.id, contactId: contact.id,
+      sessionId: session.id, ownerReplica: 'replica-test',
+      tenantId: campaign.tenant_id, accountId: campaign.account_id,
+      callerId: '+919000000001', attemptNumber: 2, campaign, contact,
+    } as never);
+
+    const reserved = socket.frames.find((f) => f.event === 'reserved');
+    const priors = (reserved!.attempt as { prior_attempts: unknown[] }).prior_attempts;
+    expect(priors).toHaveLength(1);
+    expect(priors[0]).toMatchObject({ attempt_number: 1, outcome: 'no_answer', notes: 'rang out' });
+    dialer.stop();
+  });
+
+  it('T-P4: nothing is fetched over HTTP between reserved and bridged', async () => {
+    // claims "context is never fetched over HTTP at bridge time". This keeps
+    // that true after someone adds a "just re-read the latest notes" feature —
+    // which would reintroduce exactly the race the ordering design removes.
+    const originalFetch = globalThis.fetch;
+    const calls: string[] = [];
+    globalThis.fetch = ((input: unknown, ...rest: unknown[]) => {
+      calls.push(String(input));
+      return (originalFetch as never as (...a: unknown[]) => Promise<Response>)(input, ...rest);
+    }) as typeof fetch;
+
+    try {
+      const { socket, dialer, cmd, bridge } = await setup('delayed', 200);
+      await dialer.executeDial(cmd as never);
+      await new Promise((r) => setTimeout(r, 600));
+
+      expect(socket.events()).toContain('bridged');
+      expect(calls, `unexpected HTTP on the dial path: ${calls.join(', ')}`).toEqual([]);
+      dialer.stop();
+      for (const t of bridge.timers as NodeJS.Timeout[]) clearTimeout(t);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('T-P5: a dead socket blocks the dial rather than producing an abandoned call', async () => {
+    // The other side of the ordering guarantee: if the panel cannot be
+    // delivered, the customer must not be dialed at all. A `reserved` frame that
+    // fails to send and a dial that proceeds anyway is a manufactured
+    // abandonment — the exact thing reserve-before-dial exists to prevent.
+    const { socket, dialer, cmd, bridge, attempt, contact } = await setup('delayed', 200);
+    socket.readyState = 3; // agent's browser died between reservation and dial
+
+    await dialer.executeDial(cmd as never);
+
+    expect((bridge as unknown as { trace: string[] }).trace).not.toContain('bridge:dial-start');
+
+    const row = await agencyAttemptRepository.findById(attempt.id);
+    expect(row!.state).toBe('ended');
+    expect(row!.outcome).toBe('orphaned');
+
+    const { rows } = await getTestPool().query<{ state: string }>(
+      'SELECT state FROM agency_contacts WHERE id = $1', [contact.id],
+    );
+    expect(rows[0]!.state).toBe('pending');
+
+    // ── Zero abandonment, by the predicate. ───────────────────────────
+    //
+    // This assertion was VACUOUS as written. It destructured `{ rows: ab }` and
+    // then tested `ab.rows === undefined` — `ab` is the array, so `ab.rows` is
+    // always `undefined`, the ternary always took the `0` branch, and the whole
+    // line reduced to `expect(0).toBe(0)`. It could not have observed an
+    // abandonment however many the query returned. question 1, in the file
+    // that exists to prove abandonment is not manufactured.
+    //
+    // Only `npm run lint:test` saw it (`TS2339: Property 'rows' does not exist
+    // on type '{ n: string; }[]'`), which is the second thing that check found
+    // here after the constructor arity.
+    const { rows: ab } = await getTestPool().query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM agency_call_attempts
+        WHERE campaign_id = $1 AND answered_at IS NOT NULL
+          AND (outcome = 'abandoned' OR bridged_at IS NULL)`,
+      [cmd.campaignId],
+    );
+    expect(Number(ab[0]!.n)).toBe(0);
+
+    // And the reason it is zero, stated separately — otherwise the count above is
+    // satisfied just as well by a predicate that matches nothing because the
+    // campaign has no answered attempts *for the wrong reason*. Here the count is
+    // zero because the customer was never dialed at all, which is the property
+    // T-P5 is named for. `orphaned` above says the attempt ended; this says no
+    // carrier ever answered into a dead socket.
+    expect(row!.answered_at).toBeNull();
+    expect(row!.bridged_at).toBeNull();
+    dialer.stop();
+  });
+});

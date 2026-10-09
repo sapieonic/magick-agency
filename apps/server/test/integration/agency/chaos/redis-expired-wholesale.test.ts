@@ -1,11 +1,9 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 /*
- * PORT NOTE (magick-agency, Phase 6): ported from core
- * test/integration/agency/chaos/redis-expired-wholesale.test.ts@4850d1d9 — 8 cases, all kept. Modified only in
- * harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
+ * Harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
  * `/connection` entry, which packages/db's repositories import); the config stub
- * drops `telephony.vobiz` (VoBiz deleted, plan §5); import specifiers per the path
- * rule (domain leaves, `@magick-agency/contracts/agency`). The metric reader is core's helper at the same path. MODIFIED (decision B8): "an agent who re-attaches after the flush is dialable again, and exactly one contact per dial" — core asserted a fail-closed interim after the flush (pool back, zero dials, a `dnc_unavailable` halt) until `resyncDnc()` re-published the list. The list is `dnc_entries` in Postgres and survives a Redis loss, so the case now asserts the B8 equivalent: with the pool back the next tick dials, no `dnc_unavailable` halt is counted, and the dials were `cleared` by the gate (see the note in the case). `resyncDnc` is a no-op re-proof (harness).
+ * carries no carrier config; import specifiers per the path
+ * rule (domain leaves, `@magick-agency/contracts/agency`). Decision B8: in "an agent who re-attaches after the flush is dialable again, and exactly one contact per dial" the list is `dnc_entries` in Postgres and survives a Redis loss, so there is no fail-closed interim after the flush; the case asserts that with the pool back the next tick dials, no `dnc_unavailable` halt is counted, and the dials were `cleared` by the gate (see the note in the case). `resyncDnc` is a no-op re-proof (harness).
  */
 import { closeTestPool, getTestPool, truncateAll } from '../../setup/test-utils.js';
 
@@ -17,7 +15,7 @@ await vi.hoisted(async () => {
   installMetricReader();
 });
 
-// PORT NOTE: core mocked `src/db/connection.js`; agency's pool lives in `@magick-agency/db`
+// The DB pool lives in `@magick-agency/db`
 // (the server's repositories import its root, packages/db's repositories `./connection`).
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
 vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
@@ -28,7 +26,7 @@ vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() })
 vi.mock('../../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: {}, // PORT NOTE: core stubbed `telephony.vobiz` (VoBiz deleted, plan §5)
+    telephony: {}, // no carrier config is needed
   },
 }));
 
@@ -43,7 +41,7 @@ const { noLiveAttempts } = await import('../agency-factories.js');
 type World = Awaited<ReturnType<typeof createChaosWorld>>;
 
 /**
- * ─── AD-P2-X-01 · SCENARIO 1 — REDIS EXPIRED WHOLESALE ──────────────────────
+ * ─── SCENARIO 1 — REDIS EXPIRED WHOLESALE ──────────────────────
  *
  * **Uncovered anywhere before this file.** Every existing lease test removes one
  * key, or lets one lease lapse. Nothing asked what happens when the entire
@@ -58,13 +56,13 @@ type World = Awaited<ReturnType<typeof createChaosWorld>>;
  * holds *truth*. Losing Redis must therefore lose availability and nothing else
  * — it must not lose a contact, must not mutate a durable row, and above all
  * must not let the pacing loop fall back to the database's opinion of who is
- * available. §5.1 puts it as "presence is the heartbeat, not a state", and total
+ * available. puts it as "presence is the heartbeat, not a state", and total
  * Redis loss is the one failure that separates the two cleanly: every agent's DB
  * row still says `available` while not one of them has a lease.
  *
  * **Why this suite can assert that non-vacuously.** The trap is a scenario where
  * no agent was available anyway, in which case "dialed nothing" proves nothing.
- * So §1's arm asserts the DB mirror explicitly — `available` for every agent,
+ * So the arm asserts the DB mirror explicitly — `available` for every agent,
  * read back from Postgres — and *then* asserts zero dials. Those two facts
  * together are satisfiable only by a Redis-authoritative reader. A tick that
  * consulted `agency_agent_sessions.state` would dial, and would put real
@@ -73,12 +71,12 @@ type World = Awaited<ReturnType<typeof createChaosWorld>>;
  * Assertions read Postgres and Redis. No log, no metric, no counter.
  */
 
-describe('AD-P2-X-01 · Redis expired wholesale (chaos)', () => {
+describe('Redis expired wholesale (chaos)', () => {
   let world: World;
 
   beforeEach(truncateAll);
-  // Cleanup in `afterEach`, never at the end of a test body: T-L2 went red in
-  // Phase 1 purely because a failing case leaked a live dialer and pending
+  // Cleanup in `afterEach`, never at the end of a test body: T-L2 once went red
+  // purely because a failing case leaked a live dialer and pending
   // timers into the next one, which then flushed the database underneath it.
   afterEach(async () => {
     await world?.teardown();
@@ -201,7 +199,7 @@ describe('AD-P2-X-01 · Redis expired wholesale (chaos)', () => {
     await w.chaos.expireRedisWholesale();
 
     // After: the CAS finds no key, so `HGET state` is nil, so it refuses. This
-    // is the `EXISTS`-first discipline §6.1 requires — a CAS that recreated the
+    // is the `EXISTS`-first discipline requires — a CAS that recreated the
     // key would resurrect an agent whose replica is gone.
     expect(await w.agentState.reserve(sessionId, 'attempt-post')).toBe('lost');
     expect(await w.agentState.get(sessionId)).toBeNull();
@@ -250,12 +248,10 @@ describe('AD-P2-X-01 · Redis expired wholesale (chaos)', () => {
 
     // ── RECOVERY IS TWO INDEPENDENT HALVES, AND THIS ARM ONLY MODELLED ONE ────
     //
-    // PORT NOTE (magick-agency, decision B8 — MODIFIED). In core, `flushdb()` took the
-    // tenant's DNC version key with everything else, so after the flush the pre-dial
-    // gate `halt`ed on `dnc_unavailable` until master re-published the list, and this
-    // arm asserted that fail-closed interim (zero dials with the pool back, and a
-    // `dnc_unavailable` halt counted) before `resyncDnc()` let it dial. That second
-    // half of recovery does not exist any more: the DNC list is `dnc_entries` in
+    // Decision B8: a flush used to take the tenant's DNC version key with everything
+    // else, leaving a fail-closed interim (zero dials with the pool back, and a
+    // `dnc_unavailable` halt counted) until the list was re-published. That second
+    // half of recovery does not exist: the DNC list is `dnc_entries` in
     // Postgres, which a total Redis loss does not touch, so there is no interim to
     // assert and nothing to re-publish. The B8 equivalent is asserted instead — the
     // list SURVIVES the flush: with the pool back the very next tick dials, the gate
@@ -312,7 +308,7 @@ describe('AD-P2-X-01 · Redis expired wholesale (chaos)', () => {
     // `dnc:*` keyspace the flush also emptied — see the recovery below.
     expect(await agencyKeys(w.redis)).toEqual([]);
 
-    // Both halves of recovery: the humans reconnect, and master re-publishes the
+    // Both halves of recovery: the humans reconnect, and the public API layer re-publishes the
     // DNC list. Restoring only the agents leaves the pre-dial gate halting on
     // `dnc_unavailable` and this case counting 10 attempts instead of 30 — the
     // shape it failed in when the gate landed. The fail-closed interim is asserted
@@ -334,7 +330,7 @@ describe('AD-P2-X-01 · Redis expired wholesale (chaos)', () => {
   });
 
   it('recovery lands every agent in `break`, never `available` — and the reaper is what makes that true', async () => {
-    // Phase 2 exit criterion 3, for the Redis-loss route into it. The chain is
+    // The Redis-loss route into `break`. The chain is
     // reap → `offline` → rejoin → `break`, and the ORDER is the mechanism:
     // `joinOrRehydrate`'s CASE only promotes `offline` to `break`, so an agent
     // who rejoins before the reaper has run keeps whatever state they had.
@@ -348,7 +344,7 @@ describe('AD-P2-X-01 · Redis expired wholesale (chaos)', () => {
     // precondition, because a non-`offline` row is what a rejoin preserves and
     // therefore what makes the reaper's ordering load-bearing.
     //
-    // This asserted `=== 'available'` until `AD-P4-C-01` made the durable mirror
+    // This asserted `=== 'available'` until the durable mirror was changed to
     // record `on_call`. That was never the property under test: these agents are
     // mid-call by construction (`withCallsInFlight`), so `available` was only
     // ever true because the mirror had no `on_call` write — i.e. the assertion
@@ -407,7 +403,7 @@ describe('AD-P2-X-01 · Redis expired wholesale (chaos)', () => {
   });
 
   it('the flush cannot produce an abandoned call, because it cannot reach a live bridge', async () => {
-    // Worth pinning explicitly rather than inferring. Under D1 the only route to
+    // Worth pinning explicitly rather than inferring. The only route to
     // abandonment is reserved-agent loss, and Redis holds the reservation — so
     // "the reservations all vanished" is exactly the shape that *looks* like it
     // should abandon a call. It does not, because the bridge already owns the
@@ -424,7 +420,7 @@ describe('AD-P2-X-01 · Redis expired wholesale (chaos)', () => {
     expect(all.every((a) => a.state === 'ended' && a.outcome === 'connected')).toBe(true);
     expect(await abandonedCount(w.campaignId)).toBe(0);
 
-    // §10.1's standing falsifier, asserted on this suite's own data: if the
+    // the standing falsifier, asserted on this suite's own data: if the
     // harness or the product ever collapses the two timestamps again, every
     // abandonment assertion in every scenario silently becomes vacuous and
     // nothing else in the suite would notice.

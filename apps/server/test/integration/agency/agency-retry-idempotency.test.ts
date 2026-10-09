@@ -202,8 +202,8 @@ describe('what the key does NOT suppress', () => {
 
   it('an UNKEYED create has no replay protection, and that is deliberate', async () => {
     // NULLs are distinct in a unique index, so two unkeyed creates are two
-    // campaigns. Core's API answers a tenant API key directly, without
-    // traversing master, and such a caller must still be able to create a retry
+    // campaigns. A caller that reaches the internal handler directly, without
+    // traversing the public API layer,  must still be able to create a retry
     // — this pins that the partial index is not read as "an unkeyed create is
     // refused", which would be a serious behaviour change.
     const first = await retry({ idempotencyKey: null });

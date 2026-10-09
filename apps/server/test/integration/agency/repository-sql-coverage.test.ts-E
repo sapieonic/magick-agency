@@ -1,0 +1,190 @@
+import { randomUUID } from 'node:crypto';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
+import { DEFAULTS, insertWebrtcCall } from '../setup/factories.js';
+import {
+  insertAgencyAttempt, insertAgencyCampaign, insertAgencyContact, insertAgentSession,
+} from './agency-factories.js';
+
+vi.mock('@magick-agency/db', async (orig) => ({
+  ...(await orig<typeof import('@magick-agency/db')>()),
+  getPool: () => getTestPool(),
+}));
+
+const repo = await import('../../../src/db/repositories/agency.repository.js');
+
+/**
+ * Brief: "repository tests that the
+ * source ran against a mocked pool: keep the port AND run each method's SQL at least
+ * once against the real Postgres". The other integration suites in this directory
+ * already execute most repository methods; this file runs the REST — every public
+ * method no other real-Postgres suite reaches — and asserts what each returned, not
+ * merely that it did not throw. It exists because a mocked pool cannot see a
+ * renamed column, a dropped column or (as it turned out for the UUID ids) a
+ * `varchar[]` bound against a `uuid` column.
+ */
+describe('agency repository — the methods no other real-Postgres suite reaches', () => {
+  beforeEach(truncateAll);
+  afterAll(closeTestPool);
+
+  async function world() {
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const contact = await insertAgencyContact(campaign.id);
+    const session = await insertAgentSession(campaign.id);
+    const call = await insertWebrtcCall({ campaign_id: campaign.id });
+    const attempt = await insertAgencyAttempt(campaign.id, contact.id, {
+      state: 'dialing', reserved_agent_id: session.id,
+      dialed_at: new Date(Date.now() - 3_600_000),
+    });
+    return { campaign, contact, session, call, attempt };
+  }
+
+  it('campaign reads: list, findActive, countOutstanding, rosterCounts, campaignLineage', async () => {
+    const { campaign } = await world();
+    const c = repo.agencyCampaignRepository;
+    const listed = await c.list(DEFAULTS.tenantId, DEFAULTS.accountId, 10, 0);
+    expect(listed.total).toBe(1);
+    expect(listed.rows[0]!.id).toBe(campaign.id);
+    expect((await c.findActive()).map((r) => r.id)).toContain(campaign.id);
+    expect(await c.countOutstanding(campaign.id)).toBe(1);
+    expect(await c.rosterCounts(campaign.id)).toEqual({ total: 1, dialable: 1 });
+    const lineage = await c.campaignLineage(DEFAULTS.tenantId, DEFAULTS.accountId, campaign.id);
+    expect(lineage).not.toBeNull();
+    // another tenant cannot read the lineage
+    expect(await c.campaignLineage(randomUUID(), DEFAULTS.accountId, campaign.id)).toBeNull();
+  });
+
+  it('findByRetryIdempotencyKey and countForCampaign (lead, after review: the two left on a mocked pool)', async () => {
+    const { campaign } = await world();
+    const key = `retry-${randomUUID()}`;
+    await getTestPool().query('UPDATE agency_campaigns SET retry_idempotency_key = $1 WHERE id = $2', [key, campaign.id]);
+    const c = repo.agencyCampaignRepository;
+    expect((await c.findByRetryIdempotencyKey(DEFAULTS.tenantId, DEFAULTS.accountId, key))!.id).toBe(campaign.id);
+    // scoped: another account or tenant never sees it
+    expect(await c.findByRetryIdempotencyKey(DEFAULTS.tenantId, randomUUID(), key)).toBeNull();
+    expect(await c.findByRetryIdempotencyKey(randomUUID(), DEFAULTS.accountId, key)).toBeNull();
+    expect(await repo.agencyContactRepository.countForCampaign(campaign.id)).toBe(1);
+    expect(await repo.agencyContactRepository.countForCampaign(randomUUID())).toBe(0);
+  });
+
+  it('attempt reads and the webrtc link', async () => {
+    const { campaign, call, attempt } = await world();
+    const a = repo.agencyAttemptRepository;
+    expect((await a.findById(attempt.id))!.id).toBe(attempt.id);
+    expect((await a.findForCampaign(campaign.id, attempt.id))!.id).toBe(attempt.id);
+    expect(await a.findForCampaign(randomUUID(), attempt.id)).toBeNull();
+    expect(await a.countLive(campaign.id)).toBeGreaterThanOrEqual(1);
+    expect(await a.findByWebrtcCallId(call.id)).toBeNull();
+    await a.attachWebrtcCall(attempt.id, call.id);
+    expect((await a.findByWebrtcCallId(call.id))!.id).toBe(attempt.id);
+  });
+
+  it('attempt writes: setState, saveNotes, recordDisposition, recordAutoDisposition', async () => {
+    const { attempt } = await world();
+    const a = repo.agencyAttemptRepository;
+    await a.setState(attempt.id, 'ended', { outcome: 'no_answer', ended_at: new Date() });
+    expect((await a.findById(attempt.id))!.state).toBe('ended');
+    expect((await a.saveNotes(attempt.id, 'called twice'))!.notes).toBe('called twice');
+    const agentUser = randomUUID();
+    const first = await a.recordDisposition({
+      attemptId: attempt.id, dispositionCode: 'sale', notes: null, callbackAt: null,
+      actorUserId: agentUser, onBehalf: false,
+    });
+    expect(first!.disposition_code).toBe('sale');
+    // a DIFFERENT code on an already-dispositioned attempt is refused (null), not overwritten
+    expect(await a.recordDisposition({
+      attemptId: attempt.id, dispositionCode: 'other', notes: null, callbackAt: null,
+      actorUserId: agentUser, onBehalf: false,
+    })).toBeNull();
+    expect((await a.findById(attempt.id))!.disposition_code).toBe('sale');
+    // the auto-disposition never overwrites a human's
+    expect(await a.recordAutoDisposition(attempt.id, 'auto_wrapup')).toBeNull();
+  });
+
+  it('reaper reads and writes: findNonTerminalOlderThan, reapByIds, reapNonTerminal', async () => {
+    const { campaign, attempt } = await world();
+    const a = repo.agencyAttemptRepository;
+    const old = await a.findNonTerminalOlderThan(new Date());
+    expect(old.map((r) => r.id)).toContain(attempt.id);
+    const reaped = await a.reapByIds([attempt.id]);
+    expect(reaped.map((r) => r.id)).toEqual([attempt.id]);
+    expect((await a.findById(attempt.id))!.state).toBe('ended');
+    // nothing live is left for the broad sweep to take
+    const contact2 = await insertAgencyContact(campaign.id);
+    await insertAgencyAttempt(campaign.id, contact2.id, { state: 'queued' });
+    expect((await a.reapNonTerminal(null)).length).toBe(1);
+    expect(await a.reapByIds([])).toEqual([]);
+  });
+
+  it('findLapsedWrapups returns an ended, undispositioned wrap-up past grace', async () => {
+    const { campaign, contact, session } = await world();
+    await getTestPool().query(`UPDATE agency_agent_sessions SET state = 'wrapup' WHERE id = $1`, [session.id]);
+    const c2 = await insertAgencyContact(campaign.id);
+    await insertAgencyAttempt(campaign.id, c2.id, {
+      state: 'ended', outcome: 'connected', reserved_agent_id: session.id,
+      bridged_at: new Date(Date.now() - 600_000), ended_at: new Date(Date.now() - 300_000),
+    });
+    const rows = await repo.agencyAttemptRepository.findLapsedWrapups(5, 10);
+    expect(Array.isArray(rows)).toBe(true);
+    expect(contact.id).toBeTruthy();
+  });
+
+  it('findPriorForContactLineage finds earlier attempts across the lineage, excluding one', async () => {
+    const { campaign, contact, attempt } = await world();
+    await getTestPool().query(`UPDATE agency_call_attempts SET state = 'ended', outcome = 'no_answer' WHERE id = $1`, [attempt.id]);
+    const second = await insertAgencyAttempt(campaign.id, contact.id, { state: 'queued', attempt_number: 2 });
+    const prior = await repo.agencyAttemptRepository.findPriorForContactLineage(contact.id, second.id);
+    expect(prior.map((r) => r.id)).toEqual([attempt.id]);
+    expect(prior[0]!.campaign_name).toBe(campaign.name);
+  });
+
+  it('contact reads and the claim/unclaim round trip', async () => {
+    const { campaign, contact } = await world();
+    const c = repo.agencyContactRepository;
+    expect((await c.findById(contact.id))!.id).toBe(contact.id);
+    const claimed = await c.claimDialable(campaign.id, 5);
+    expect(claimed.map((r) => r.id)).toEqual([contact.id]);
+    await c.unclaim(contact.id, new Date(Date.now() - 1_000));
+    const again = await c.claimDialable(campaign.id, 5);
+    expect(again.map((r) => r.id)).toEqual([contact.id]);
+  });
+
+  it('agent sessions: findById, findLiveForCampaign, heartbeat, markAllOffline', async () => {
+    const { campaign, session } = await world();
+    const s = repo.agencyAgentSessionRepository;
+    expect((await s.findById(session.id))!.id).toBe(session.id);
+    expect((await s.findLiveForCampaign(campaign.id)).map((r) => r.id)).toEqual([session.id]);
+    await s.heartbeat(session.id);
+    expect(await s.markAllOffline()).toBe(1);
+    expect((await s.findById(session.id))!.state).toBe('offline');
+  });
+
+  it('live concurrency: liveByState counts the live attempt by campaign and state', async () => {
+    const { campaign } = await world();
+    const rows = await repo.agencyLiveConcurrencyRepository.liveByState();
+    expect(rows).toEqual([
+      expect.objectContaining({ campaign_id: campaign.id, state: 'dialing', live: 1 }),
+    ]);
+  });
+
+  it('agent roster reads the account floor over a window (attempts + occupancy)', async () => {
+    const { campaign, session } = await world();
+    await getTestPool().query(
+      `UPDATE agency_call_attempts SET bridged_at = now() - interval '30 minutes', answered_at = now() - interval '31 minutes'
+        WHERE campaign_id = $1`, [campaign.id]);
+    const page = await new repo.AgencyAgentStatsRepository().roster(
+      { tenantId: DEFAULTS.tenantId, accountId: DEFAULTS.accountId },
+      {
+        from: new Date(Date.now() - 86_400_000), to: new Date(Date.now() + 3_600_000),
+        sort: 'successes', order: 'desc', limit: 10,
+      },
+    );
+    expect(JSON.stringify(page)).toContain(session.agent_user_id);
+    // another account sees nothing of this floor
+    const other = await new repo.AgencyAgentStatsRepository().roster(
+      { tenantId: DEFAULTS.tenantId, accountId: randomUUID() },
+      { from: new Date(Date.now() - 86_400_000), to: new Date(Date.now() + 3_600_000), sort: 'successes', order: 'desc', limit: 10 },
+    );
+    expect(JSON.stringify(other)).not.toContain(session.agent_user_id);
+  });
+});

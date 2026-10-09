@@ -9,7 +9,7 @@ await vi.hoisted(async () => {
   installMetricReader();
 });
 
-// PORT NOTE: core mocked `src/db/connection.js`; agency's pool lives in `@magick-agency/db`
+// The DB pool lives in `@magick-agency/db`
 // (the server's repositories import its root, packages/db's repositories `./connection`).
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
 vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
@@ -17,7 +17,7 @@ vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() })
 vi.mock('../../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: {}, // PORT NOTE: core stubbed `telephony.vobiz` (VoBiz deleted, plan §5)
+    telephony: {}, // no carrier config is needed
   },
 }));
 
@@ -29,43 +29,28 @@ const { DncRegistry } = await import('../../../../src/agency/dnc-registry.js');
 type World = Awaited<ReturnType<typeof createChaosWorld>>;
 
 /*
- * PORT NOTE (magick-agency, Phase 6, decision B8 — REWRITTEN). Core's
- * test/integration/agency/chaos/dnc-self-heal-loop.test.ts@4850d1d9 (MAG-108, 3 cases)
- * proved the self-heal loop of a machine that no longer exists: `FLUSHDB` drops the
- * tenant's DNC set, the pre-dial gate halts, `DncRegistry.check` fires `onUnsynced`,
- * `createDncResyncRequester` asks master over loopback (`POST /internal/agency/
- * dnc-resync`), master publishes a `replace` into core's `POST /internal/agency/
- * dnc-sync`, and the campaign dials again. Under B8 there is no Redis set, no
- * version, no resync request and no sync route: the gate is one indexed read of
- * `dnc_entries` and every failed read is `unavailable` (→ `halt`).
+ * Decision B8: there is no Redis DNC set, no version, no resync request and no sync
+ * route. The pre-dial gate is one indexed read of `dnc_entries` and every failed read
+ * is `unavailable` (→ `halt`).
  *
- * What the file proved that STILL has a subject is the compliance half of the loop,
- * and that is what is asserted here, against the real table and the real runtime:
+ * What is asserted here is the compliance half of the loop, against the real table and
+ * the real runtime:
  * when the gate cannot answer, the campaign halts — the WHOLE claimed batch goes
  * back undialed — and it does not recover on its own; when the table answers again,
  * dialing resumes with no human step, and a number on the list is suppressed while
  * its neighbours dial. The "read fault" is genuine: `dnc_entries` is renamed for the
  * duration, so every check is a real Postgres `42P01` (restored in `finally`).
  *
- * Case by case:
- *  - "guards the guard — the fixture carries the two hops this file is shaped by"
- *    → DELETED: it pins `agency-s2s-contract.fixture.json`'s `dncResync` / `dncSync`
- *    sections; the S2S fixture retires (plan §1) and neither hop exists (B8).
- *  - "flush → refuse → ask → master publishes → dial, with no step performed by the
- *    test in between" → REWRITTEN as "read fault → refuse the whole batch → table
- *    answers → dial ...": the refusal assertions (nothing dialed, a `dnc_unavailable`
- *    halt counted for THIS campaign) are core's; the request/ingest-route assertions
- *    are gone with the hops; the member-crossed-the-wire assertions become "the row
- *    in `dnc_entries` is what the gate reads" (`check()` → `suppressed` for the
- *    target, `clear` for the neighbour; the target ends `suppressed`/`dnc` and is
+ * Cases:
+ *  - "read fault → refuse the whole batch → table answers → dial ...": the refusal
+ *    assertions are nothing dialed and a `dnc_unavailable` halt counted for THIS
+ *    campaign; the row in `dnc_entries` is what the gate reads (`check()` → `suppressed`
+ *    for the target, `clear` for the neighbour; the target ends `suppressed`/`dnc` and is
  *    never dialed, the neighbour is).
- *  - "the resumed dial is caused by the replace, not by ticks elapsing — a refusing
- *    master leaves it halted" → REWRITTEN as "... a fault that persists leaves it
- *    halted": ten ticks inside the fault dial nothing, consume no contact and write
+ *  - "... a fault that persists leaves it halted": ten ticks inside the fault dial nothing, consume no contact and write
  *    no attempt — so recovery in the case above is caused by the table answering,
  *    not by ticks elapsing (the fail-open this subsystem exists to prevent).
- *  - New assertion in the rewritten case 2 (plan §9 "a halt aborts the whole claimed
- *    batch"): during the fault every reserved agent is returned and every claimed
+ *  - During the fault every reserved agent is returned and every claimed
  *    contact is back to `pending`, not just the first one the gate saw.
  */
 
@@ -88,7 +73,7 @@ async function withDncTableUnreadable<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** A contact the campaign has NOT dialed yet (see core's note: never `contactIds[0]`). */
+/** A contact the campaign has NOT dialed yet (never `contactIds[0]`). */
 async function somePendingContact(
   campaignId: string,
   order: 'ASC' | 'DESC',
@@ -104,7 +89,7 @@ async function somePendingContact(
   return { id: row.id, phone: row.phone_e164 };
 }
 
-describe('MAG-108 (B8) · a DNC gate that cannot read halts the batch, and recovers when the table answers (chaos)', () => {
+describe('a DNC gate that cannot read halts the batch, and recovers when the table answers (chaos)', () => {
   let world: World;
 
   beforeEach(truncateAll);
@@ -118,7 +103,7 @@ describe('MAG-108 (B8) · a DNC gate that cannot read halts the batch, and recov
 
   /**
    * A world that has dialed a round and finished it — pool idle, roster deep.
-   * Core's precondition, kept: a later "it dialed nothing" cannot be explained by
+   * Precondition: a later "it dialed nothing" cannot be explained by
    * an exhausted roster or by occupancy.
    */
   async function warmedUp(opts: { agents: number; contacts: number }) {
@@ -148,8 +133,8 @@ describe('MAG-108 (B8) · a DNC gate that cannot read halts the batch, and recov
       `INSERT INTO tenants (id, name, slug) VALUES ($1, 'chaos', $2) ON CONFLICT (id) DO NOTHING`,
       [w.tenantId, `chaos-${w.tenantId}`],
     );
-    // Campaign-scoped, as an agent's mark writes it — the scope core's flat set
-    // could not carry and the B8 gate now reads.
+    // Campaign-scoped, as an agent's mark writes it — the scope a flat tenant set
+    // could not carry and the B8 gate reads.
     await getTestPool().query(
       `INSERT INTO dnc_entries (tenant_id, account_id, campaign_id, phone_e164, source)
        VALUES ($1, NULL, $2, $3, 'agent')`,
@@ -179,8 +164,7 @@ describe('MAG-108 (B8) · a DNC gate that cannot read halts the batch, and recov
         + 'something else and everything below it proves nothing',
       ).toBeGreaterThan(0);
 
-      // (ii) The WHOLE claimed batch went back (§9: "a halt aborts the whole claimed
-      //      batch"): three agents were reserved and three contacts claimed, the gate
+      // (ii) The WHOLE claimed batch went back: three agents were reserved and three contacts claimed, the gate
       //      halted on the first, and none of the three became an attempt or stayed
       //      claimed. No agent is left on the `reserving` marker.
       expect((await attempts(w.campaignId)).length).toBe(attemptsBefore);

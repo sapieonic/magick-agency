@@ -379,7 +379,7 @@ describe('agent occupancy is bounded by the window (integration)', () => {
 
   it('another tenant\'s session with the same agent id contributes nothing', async () => {
     // The scope on `sess` is `s.tenant_id`/`s.account_id`, and `agent_user_id` is
-    // master's opaque id — two tenants can legitimately hold the same string. An
+    // the public API layer's opaque id — two tenants can legitimately hold the same string. An
     // unscoped `sess` would fold a stranger's shift into this agent's occupancy,
     // and the symptom would be a plausible number rather than an error.
     const mine = await insertAgencyCampaign({ default_timezone: 'UTC', status: 'stopped' });

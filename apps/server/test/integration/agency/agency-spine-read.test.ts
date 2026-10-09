@@ -13,7 +13,7 @@ const { decodeKeysetCursor } = await import('@magick-agency/domain/keyset-cursor
 const { parseAttemptFilters } = await import('../../../src/agency/spine-filters.js');
 
 /**
- * ─── MAG-159: THE SUPERVISOR READ SURFACE, AGAINST REAL SQL ──────────────────
+ * ─── THE SUPERVISOR READ SURFACE, AGAINST REAL SQL ──────────────────
  *
  * The unit tier mocks the repository wholesale, which is right for what it tests
  * (auth, filter parsing, cursor refusal) and means the queries themselves have
@@ -23,7 +23,7 @@ const { parseAttemptFilters } = await import('../../../src/agency/spine-filters.
  *    attempt that failed before an agent was on it; an inner join to
  *    `agency_agent_sessions` silently removes exactly the never-bridged
  *    attempts the view exists to show. Against a mock, "returns rows" passes
- *    either way — this is the trap the ticket names by hand.
+ *    either way — this is the trap named by hand.
  * 2. **The keyset is stable under concurrent insert.** The whole reason this is
  *    not an OFFSET. A mock cannot exhibit it; the failure looks like rows
  *    randomly missing.
@@ -96,7 +96,7 @@ describe('attempts: the rows a naive join drops', () => {
 
     const ids = page.rows.map((r) => r.id);
     expect(ids).toContain(s.bridged.id);
-    // The assertion the ticket asks for by name. A LEFT JOIN is the only reason
+    // The key assertion. A LEFT JOIN is the only reason
     // this row survives.
     expect(ids).toContain(s.abandoned.id);
 

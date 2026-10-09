@@ -1,0 +1,239 @@
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { closeTestPool, getTestPool, truncateAll } from '../../setup/test-utils.js';
+import {
+  insertAgencyAttempt,
+  insertAgencyCampaign,
+  insertAgencyContact,
+  insertAgentSession,
+  noLiveAttempts,
+} from '../agency-factories.js';
+import { DEFAULTS } from '../../setup/factories.js';
+
+/*
+ * all kept. Modified: the connection mock (agency's `@magick-agency/db`), and the
+ * literal `'test-tenant'` / `'test-account'` ids passed to `create` are the shared
+ * UUID defaults the factories stamp on the rows (the baseline types both UUID).
+ */
+
+// The DB pool lives in `@magick-agency/db`
+// (the server's repositories import its root, packages/db's repositories `./connection`).
+vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
+vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
+
+const { agencyAttemptRepository, agencyContactRepository } = await import(
+  '../../../../src/db/repositories/agency.repository.js'
+);
+const { AgencyReaper } = await import('../../../../src/agency/reaper.js');
+
+/**
+ * ─── REGRESSION SUITE ──────────────────────────────────────────
+ *
+ * The defect: a reaper-recovered contact could never be dialed again, for the
+ * life of the campaign. `attempt_count` was doing two unrelated jobs — retry
+ * budget accounting *and* unique-number generation — and they diverge the moment
+ * an attempt row exists that was never counted. The reaper requeues without
+ * bumping the count (correctly), so the orphaned row already held the number
+ * `attempt_count + 1` produced, `uq_agency_attempt_number` is total rather than
+ * partial and does not care the prior attempt ended, and the insert failed
+ * `23505` on every tick forever.
+ *
+ * **What made it invisible, and why this file asserts it explicitly.** The
+ * contact went back to `pending`, so nothing was stranded, no error surfaced,
+ * and the campaign was not wedged — it simply never finished. The only signal
+ * was `create`'s own `log.warn` about the duplicate-dial backstop, which is
+ * exactly what a correctly working backstop logs.
+ *
+ * Found at scenario level by `lease-renewer-killed.test.ts`; this file was the
+ * minimal reproduction and is now the regression suite. **`T-C6` is titled for
+ * this exact scenario and could not see it**, because it called
+ * `create({ … attemptNumber: 2 })` with the number **hard-coded by the test**
+ * while the bug was in the derivation. Every case below therefore takes care
+ * never to supply, reconstruct, or predict the number — which the fix now makes
+ * structurally impossible anyway, and that is the first thing asserted.
+ *
+ * Fixed by deriving `attempt_number` from `MAX(attempt_number)` over the
+ * contact's own attempt rows, inside the INSERT.
+ */
+
+describe('requeued-contact attempt numbering (regression)', () => {
+  beforeEach(truncateAll);
+  afterAll(closeTestPool);
+
+  async function newAttempt(campaignId: string, contactId: string, sessionId: string) {
+    return agencyAttemptRepository.create({
+      campaignId,
+      contactId,
+      tenantId: DEFAULTS.tenantId, // UUID column
+      accountId: DEFAULTS.accountId, // UUID column
+      callerId: '+919000000001',
+      reservedAgentId: sessionId,
+    });
+  }
+
+  async function numbersFor(contactId: string): Promise<number[]> {
+    const { rows } = await getTestPool().query<{ attempt_number: number }>(
+      `SELECT attempt_number FROM agency_call_attempts WHERE contact_id = $1 ORDER BY attempt_number`,
+      [contactId],
+    );
+    return rows.map((r) => r.attempt_number);
+  }
+
+  it('the caller cannot supply an attempt number — the one property that makes the whole class of bug unreachable', async () => {
+    // Asserted first and asserted at runtime, not only by the type signature.
+    // `attempt_count + 1` was a *caller-side* derivation, and any caller-side
+    // derivation can drift from the table it must agree with. Moving it inside
+    // the INSERT removes the possibility rather than the instance — and a future
+    // refactor that "helpfully" re-adds an override would reintroduce exactly
+    // that divergence, so an ignored extra field is worth pinning.
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const contact = await insertAgencyContact(campaign.id);
+    const session = await insertAgentSession(campaign.id);
+
+    const first = await agencyAttemptRepository.create({
+      // `tenantId`/`accountId` are the UUID defaults (core: 'test-tenant'/'test-account').
+      campaignId: campaign.id, contactId: contact.id, tenantId: DEFAULTS.tenantId,
+      accountId: DEFAULTS.accountId, callerId: '+919000000001', reservedAgentId: session.id,
+      // Not in the signature. Passed anyway, cast, to prove it cannot influence
+      // the row — the assertion T-C6's shape could never make.
+      ...({ attemptNumber: 99 } as unknown as Record<string, never>),
+    });
+    expect(first).not.toBeNull();
+    expect(first!.attempt_number).toBe(1);
+  });
+
+  it('a reaper-recovered contact accepts its next attempt, and gets the next number', async () => {
+    // THE defect, gone. The reaper's visible job was always done correctly — the
+    // attempt terminal, the contact back on the roster — which is why those
+    // preconditions are asserted separately from the fix: they held before, and a
+    // test that bundled them could not tell you which part changed.
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const contact = await insertAgencyContact(campaign.id, { state: 'in_flight' });
+    const session = await insertAgentSession(campaign.id);
+    await insertAgencyAttempt(campaign.id, contact.id, { state: 'ringing', attempt_number: 1 });
+
+    await new AgencyReaper(noLiveAttempts()).reapOnStartup();
+
+    const requeued = await agencyContactRepository.findById(contact.id);
+    expect(requeued!.state).toBe('pending');
+    // Still NOT bumped, and that stays deliberate: our crash must not consume the
+    // customer's retry allowance. With `max_attempts: 3`, three core restarts
+    // would otherwise exhaust a contact who was never spoken to. The fix works
+    // *because* it stopped depending on this number, not by changing it.
+    expect(requeued!.attempt_count).toBe(0);
+
+    const retry = await newAttempt(campaign.id, contact.id, session.id);
+    expect(retry).not.toBeNull();
+    expect(retry!.attempt_number).toBe(2);
+    expect(await numbersFor(contact.id)).toEqual([1, 2]);
+  });
+
+  it('the periodic sweep recovers identically, so this was never only a boot-time problem', async () => {
+    // `sweepOnce` requeues with the same call. Its own case because a fix applied
+    // only to `reapOnStartup` would leave in-process leaks — the failure mode
+    // that needs no crash — broken, and every chaos scenario exercises the boot
+    // path.
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const contact = await insertAgencyContact(campaign.id, { state: 'in_flight' });
+    const session = await insertAgentSession(campaign.id);
+    const attempt = await insertAgencyAttempt(campaign.id, contact.id, { state: 'ringing', attempt_number: 1 });
+    // Past the 2h leak threshold, so the periodic sweep rather than the startup
+    // reaper is what reclaims it.
+    await getTestPool().query(
+      `UPDATE agency_call_attempts SET created_at = now() - interval '3 hours' WHERE id = $1`,
+      [attempt.id],
+    );
+
+    expect(await new AgencyReaper(noLiveAttempts()).sweepOnce()).toBe(1);
+    expect((await agencyContactRepository.findById(contact.id))!.attempt_count).toBe(0);
+
+    const retry = await newAttempt(campaign.id, contact.id, session.id);
+    expect(retry).not.toBeNull();
+    expect(retry!.attempt_number).toBe(2);
+  });
+
+  it('numbers stay unique and gapless across repeated crash cycles — what the retry policy reads', async () => {
+    // The fix's other half. Deriving from `MAX` keeps the sequence unique per
+    // contact across all history, which the retry policy depends on; the rejected
+    // alternative (making the index partial) would have made numbers reusable and
+    // silently changed what a retry-count query means. Five cycles rather than
+    // one, because an off-by-one in the derivation only shows up on repetition.
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const contact = await insertAgencyContact(campaign.id, { state: 'in_flight' });
+    const session = await insertAgentSession(campaign.id);
+    await insertAgencyAttempt(campaign.id, contact.id, { state: 'ringing', attempt_number: 1 });
+
+    for (let cycle = 0; cycle < 5; cycle++) {
+      await new AgencyReaper(noLiveAttempts()).reapOnStartup();
+      const retry = await newAttempt(campaign.id, contact.id, session.id);
+      expect(retry, `cycle ${cycle}`).not.toBeNull();
+      // Leave it non-terminal so the next reap has something to reap.
+      await getTestPool().query(
+        `UPDATE agency_call_attempts SET state = 'ringing' WHERE id = $1`, [retry!.id],
+      );
+    }
+
+    const numbers = await numbersFor(contact.id);
+    expect(numbers).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(new Set(numbers).size).toBe(numbers.length);
+    // And the retry BUDGET is untouched by six crashes, which is the product
+    // decision the reaper's no-`bump_attempt` comment defends.
+    expect((await agencyContactRepository.findById(contact.id))!.attempt_count).toBe(0);
+  });
+
+  it('the two 23505 refusals are genuinely different constraints, which is what lets them be told apart', async () => {
+    // Conflating them in one log line is what hid this defect, and `create` now
+    // logs them distinctly. A log assertion would be the wrong instrument — logs
+    // are not state — so what is pinned here is the fact the logging rests on:
+    // the two refusals come from two named constraints with different meanings,
+    // and an operator can alert on one without the other.
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+
+    // Refusal A — the correctness backstop: a live attempt already exists.
+    const contactA = await insertAgencyContact(campaign.id);
+    await insertAgencyAttempt(campaign.id, contactA.id, { state: 'dialing', attempt_number: 1 });
+    await expect(
+      insertAgencyAttempt(campaign.id, contactA.id, { state: 'queued', attempt_number: 2 }),
+    ).rejects.toMatchObject({ code: '23505', constraint: 'uq_agency_attempt_live' });
+
+    // Refusal B — a lost numbering race: no live attempt, number already taken.
+    const contactB = await insertAgencyContact(campaign.id);
+    const ended = await insertAgencyAttempt(campaign.id, contactB.id, { state: 'ended', attempt_number: 1 });
+    expect(ended.state).toBe('ended');
+    await expect(
+      insertAgencyAttempt(campaign.id, contactB.id, { state: 'queued', attempt_number: 1 }),
+    ).rejects.toMatchObject({ code: '23505', constraint: 'uq_agency_attempt_number' });
+  });
+
+  it('a lost numbering race is self-correcting rather than a wedge — the next call succeeds', async () => {
+    // The residual the fix knowingly accepts: two concurrent inserts can read the
+    // same `MAX`, so one loses on `uq_agency_attempt_number`. That is acceptable
+    // ONLY if it is transient, and "transient" is a testable claim rather than a
+    // comment. Before the fix the identical refusal recurred every tick forever;
+    // the whole improvement is the difference between those two, so it is
+    // asserted directly.
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const contact = await insertAgencyContact(campaign.id);
+    const session = await insertAgentSession(campaign.id);
+
+    const results = await Promise.all([
+      newAttempt(campaign.id, contact.id, session.id),
+      newAttempt(campaign.id, contact.id, session.id),
+      newAttempt(campaign.id, contact.id, session.id),
+    ]);
+    const winners = results.filter((r) => r !== null);
+    // At most one can survive — `uq_agency_attempt_live` allows one live attempt —
+    // and at least one must, or a burst would drop the contact entirely.
+    expect(winners).toHaveLength(1);
+
+    // End it, as a real attempt eventually does, and the NEXT call succeeds. This
+    // is what separates a self-correcting race from the permanent wedge the
+    // defect was.
+    await getTestPool().query(
+      `UPDATE agency_call_attempts SET state = 'ended', outcome = 'no_answer' WHERE id = $1`,
+      [winners[0]!.id],
+    );
+    const next = await newAttempt(campaign.id, contact.id, session.id);
+    expect(next).not.toBeNull();
+    expect(next!.attempt_number).toBe(winners[0]!.attempt_number + 1);
+  });
+});

@@ -1,0 +1,213 @@
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
+import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
+import { DEFAULTS, insertAccount, insertTenant } from '../setup/factories.js';
+import { insertAgencyCampaign } from './agency-factories.js';
+
+const s3 = vi.hoisted(() => ({
+  files: new Map<string, string>(),
+  uploads: new Map<string, string>(),
+}));
+
+vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
+vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
+// S3 is mocked at the module boundary, as the brief requires; everything else is real.
+vi.mock('../../../src/storage/s3.js', () => ({
+  headFile: async (key: string) => ({ contentLength: Buffer.byteLength(s3.files.get(key) ?? '') }),
+  getFileStream: async (key: string) => {
+    const text = s3.files.get(key);
+    if (text === undefined) throw new Error('NoSuchKey');
+    return { body: Readable.from([Buffer.from(text, 'utf8')]), contentLength: Buffer.byteLength(text) };
+  },
+  uploadFile: async (key: string, body: Buffer) => { s3.uploads.set(key, body.toString('utf8')); },
+}));
+
+const { agencyIngestService } = await import('../../../src/agency/agency-ingest.service.js');
+const { agencyIngestJobRepository } = await import('../../../src/agency/agency-ingest-job.repository.js');
+const { sendRosterChunk, rosterChunkKey } = await import('../../../src/agency/agency-roster.client.js');
+const { rejectedExportKey } = await import('../../../src/agency/agency-ingest-keys.js');
+
+/**
+ * The exit-gate round trip: CSV → parse → DNC filter (all three scopes, the
+ * real `dncService.filterSuppressed`) → roster chunks into `agency_contacts` through the
+ * in-process hand-off → the rejected-rows CSV, idempotent on a re-sent chunk (`rosterChunkKey`).
+ * Postgres is real; S3 is mocked at `storage/s3.js`.
+ */
+
+const TENANT = DEFAULTS.tenantId;
+const ACCOUNT = DEFAULTS.accountId;
+const KEY = `agency-ingest/${TENANT}/u1/roster.csv`;
+
+const CSV = [
+  'Name,Mobile',
+  'Asha,9876543001',          // 2  accepted
+  'Bhim,+919876543002',       // 3  tenant-wide DNC
+  'Chitra,9876543003',        // 4  account-scoped DNC
+  'Dev,9876543004',           // 5  campaign-scoped DNC
+  'Esha,9876543005',          // 6  accepted: DNC exists for a DIFFERENT account
+  'Farid,9876543006',         // 7  accepted: DNC exists for a DIFFERENT campaign
+  'Gita,9876543007',          // 8  accepted: DNC exists for a DIFFERENT tenant
+  'Hari,not-a-number',        // 9  invalid phone
+  'Asha again,9876543001',    // 10 in-file duplicate
+  '',
+].join('\n');
+
+let campaignId: string;
+
+async function dnc(over: { tenant?: string; account?: string | null; campaign?: string | null; phone: string }) {
+  await getTestPool().query(
+    `INSERT INTO dnc_entries (tenant_id, account_id, campaign_id, phone_e164, source)
+     VALUES ($1, $2, $3, $4, 'import')`,
+    [over.tenant ?? TENANT, over.account ?? null, over.campaign ?? null, over.phone],
+  );
+}
+
+async function newJob(over: Record<string, unknown> = {}) {
+  return agencyIngestJobRepository.create({
+    tenant_id: TENANT, account_id: ACCOUNT, campaign_id: campaignId, s3_key: KEY, file_name: 'roster.csv',
+    phone_column: 'Mobile', default_country_code: '91', ...over,
+  });
+}
+
+const contactPhones = async () =>
+  (await getTestPool().query<{ phone_e164: string }>(
+    'SELECT phone_e164 FROM agency_contacts WHERE campaign_id = $1 ORDER BY phone_e164', [campaignId],
+  )).rows.map((r) => r.phone_e164);
+
+beforeEach(async () => {
+  await truncateAll();
+  s3.files.clear();
+  s3.uploads.clear();
+  s3.files.set(KEY, CSV);
+  await insertTenant({ id: TENANT });
+  await insertAccount({ id: ACCOUNT, tenant_id: TENANT });
+  campaignId = (await insertAgencyCampaign()).id as string;
+
+  const otherAccount = (await insertAccount({ tenant_id: TENANT })).id;
+  const otherTenant = (await insertTenant()).id;
+  await dnc({ phone: '+919876543002' });                                       // tenant-wide
+  await dnc({ phone: '+919876543003', account: ACCOUNT });                     // this account
+  await dnc({ phone: '+919876543004', campaign: campaignId });                 // this campaign
+  await dnc({ phone: '+919876543005', account: otherAccount });                // another account
+  await dnc({ phone: '+919876543006', campaign: randomUUID() });               // another campaign
+  await dnc({ phone: '+919876543007', tenant: otherTenant });                  // another tenant
+});
+
+afterAll(async () => {
+  await closeTestPool();
+});
+
+describe('agency ingest round trip on real Postgres', () => {
+  it('filters all three DNC scopes, lands the rest in agency_contacts and writes the rejected-rows CSV', async () => {
+    const job = await newJob();
+    await agencyIngestService.run({ job, campaignId });
+
+    const done = (await agencyIngestJobRepository.findById(job.id, TENANT))!;
+    expect(done).toMatchObject({ status: 'completed', error_code: null });
+    expect(Number(done.rows_read)).toBe(9);
+    expect(Number(done.accepted)).toBe(4);
+    expect(Number(done.rejected)).toBe(5);
+    expect(Number(done.duplicates)).toBe(1);
+    expect(done.rejected_by_reason).toMatchObject({ dnc_suppressed: 3, invalid_phone: 1 });
+    expect(Number(done.core_rejected_duplicate_rows)).toBe(0);
+    expect(done.chunks_sent).toBe(1);
+
+    // Only the four dialable numbers reached the roster; suppressed numbers never did.
+    expect(await contactPhones()).toEqual(['+919876543001', '+919876543005', '+919876543006', '+919876543007']);
+
+    // The rejected-rows CSV exists under the shared key shape and names every refusal.
+    const rejectedKey = rejectedExportKey(TENANT, job.id);
+    expect(done.rejected_s3_key).toBe(rejectedKey);
+    const csv = s3.uploads.get(rejectedKey)!;
+    expect(csv.split('\n')[0]).toBe('_row,Mobile,Name,_reason');
+    expect(csv.match(/On the Do Not Call list/g)).toHaveLength(3);
+    expect(csv).toContain("'not-a-number' is not a valid phone number.");
+    expect(csv).toContain('already appears earlier in this file');
+    for (const phone of ['+919876543002', '+919876543003', '+919876543004', 'not-a-number']) {
+      expect(csv).toContain(phone);
+    }
+    expect(csv).not.toContain('+919876543005');
+  });
+
+  it('is idempotent on a re-sent chunk: the same job and chunk key adds nothing', async () => {
+    const job = await newJob();
+    await agencyIngestService.run({ job, campaignId });
+    const before = await contactPhones();
+
+    const replay = await sendRosterChunk({
+      campaignId, tenantId: TENANT, accountId: ACCOUNT, ingestJobId: job.id, chunkIndex: 0, isFinal: false,
+      contacts: [{ phone_e164: '+919990000001', context: { Name: 'Late' }, source_row_number: 99 }],
+    });
+
+    expect(replay).toMatchObject({ duplicate_chunk: true, accepted: 0 });
+    expect(await contactPhones()).toEqual(before);
+    const { rows } = await getTestPool().query<{ idempotency_key: string }>(
+      'SELECT idempotency_key FROM agency_ingest_chunks WHERE campaign_id = $1', [campaignId],
+    );
+    // Chunk 0 carries the rows; chunk 1 is the empty final chunk that reports completeness.
+    expect(rows.map((r) => r.idempotency_key).sort()).toEqual([rosterChunkKey(job.id, 0), rosterChunkKey(job.id, 1)]);
+  });
+
+  it('a second upload of the same file under a new job adds no duplicate people and reports what core refused', async () => {
+    await agencyIngestService.run({ job: await newJob(), campaignId });
+    const again = await newJob();
+    await agencyIngestService.run({ job: again, campaignId });
+
+    expect(await contactPhones()).toHaveLength(4);
+    const done = (await agencyIngestJobRepository.findById(again.id, TENANT))!;
+    expect(done.status).toBe('completed');
+    expect(Number(done.accepted)).toBe(4); // the operator's file still had four dialable rows
+    expect(Number(done.core_rejected_duplicate_rows)).toBe(4); // and the roster refused all four verbatim repeats
+  });
+
+  it('a dry run parses and filters but writes no contacts and no chunk markers', async () => {
+    const job = await newJob({ dry_run: true });
+    await agencyIngestService.run({ job, campaignId });
+
+    expect(await contactPhones()).toEqual([]);
+    const done = (await agencyIngestJobRepository.findById(job.id, TENANT))!;
+    expect(done.status).toBe('completed');
+    expect(Number(done.accepted)).toBe(4);
+    const chunks = await getTestPool().query('SELECT 1 FROM agency_ingest_chunks');
+    expect(chunks.rows).toHaveLength(0);
+  });
+
+  it('fails closed when the DNC list cannot be read: nothing is sent', async () => {
+    const job = await newJob();
+    // Break only the DNC table's read: the roster insert path never touches it.
+    await getTestPool().query('ALTER TABLE dnc_entries RENAME TO dnc_entries_broken');
+    try {
+      await agencyIngestService.run({ job, campaignId });
+    } finally {
+      await getTestPool().query('ALTER TABLE dnc_entries_broken RENAME TO dnc_entries');
+    }
+
+    const done = (await agencyIngestJobRepository.findById(job.id, TENANT))!;
+    expect(done.status).toBe('failed');
+    expect(await contactPhones()).toEqual([]);
+  });
+
+  it('replace mode keeps failing `replace_unsupported` and touches nothing (decision B15)', async () => {
+    await agencyIngestService.run({ job: await newJob(), campaignId });
+    const before = await contactPhones();
+
+    const job = await newJob({ mode: 'replace' });
+    await agencyIngestService.run({ job, campaignId, expectedContactsTotal: before.length });
+
+    const done = (await agencyIngestJobRepository.findById(job.id, TENANT))!;
+    expect(done).toMatchObject({ status: 'failed', error_code: 'replace_unsupported' });
+    expect(done.error_message).toContain('your existing contacts were not touched');
+    expect(await contactPhones()).toEqual(before);
+  });
+
+  it('refuses a campaign that belongs to another account: the hand-off 404s and the job fails core_rejected_chunk', async () => {
+    const otherAccount = (await insertAccount({ tenant_id: TENANT })).id;
+    const job = await newJob({ account_id: otherAccount });
+    await agencyIngestService.run({ job, campaignId });
+
+    const done = (await agencyIngestJobRepository.findById(job.id, TENANT))!;
+    expect(done).toMatchObject({ status: 'failed', error_code: 'core_rejected_chunk' });
+    expect(await contactPhones()).toEqual([]);
+  });
+});
