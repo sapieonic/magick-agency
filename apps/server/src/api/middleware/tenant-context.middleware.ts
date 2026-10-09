@@ -11,9 +11,9 @@ declare module 'fastify' {
   interface FastifyRequest {
     tenantId?: string;
     accountId?: string;
-    /** Display name of the resolved tenant — forwarded to core as a header. */
+    /** Display name of the resolved tenant (log context). */
     tenantName?: string;
-    /** Display name of the resolved account — forwarded to core as a header. */
+    /** Display name of the resolved account (log context). */
     accountName?: string;
     membership?: MembershipRecord;
   }
@@ -96,17 +96,15 @@ export function selectMembership(
  * foreign id as fact:
  *
  *  - **writes** store it — `agencyIngestJobRepository.create` stamps it on the
- *    ingest job, and from there onto core's roster rows;
- *  - **reads** leak with it — `resolveTenantAccountNames` resolved B's display
- *    name and `proxyToCore` forwarded it to core as `x-mgkvc-account-name`;
- *  - **analytics** mis-attribute — the same resolver registers PostHog group
- *    properties, filing A's events under B's account group.
+ *    ingest job, and from there onto the campaign's roster rows;
+ *  - **reads** leak with it — `resolveTenantAccountNames` would resolve B's
+ *    display name, and `callCore` would send B's id as `x-mgkvc-account`.
  *
  * The invite fix closed the other door (a membership row written cross-tenant);
  * this is the door that needed no membership row at all.
  *
  * ── Why here ────────────────────────────────────────────────────────────────
- * Every `/proxy/*`, contact-list, agency and automation route inherits this
+ * Every `/proxy/*`, agency and platform route that takes a tenant inherits this
  * middleware, and none of them re-derives the account. Checking per-route means
  * checking in ~100 places and missing the next one; the header is parsed exactly
  * once, so it should be constrained exactly once.
@@ -140,10 +138,8 @@ export async function tenantContextMiddleware(request: FastifyRequest, reply: Fa
   }
 
   /*
-   * PORT NOTE (magick-agency): master's platform-API-key branch (key tenant must
-   * equal `X-Tenant-Id`, account ownership check, creator's membership loaded for
-   * RBAC) is deleted with platform API keys (decision #5). Every request reaching
-   * here is a Firebase-authenticated user, and the checks below are master's.
+   * There are no API keys: every request reaching here is a Firebase-authenticated
+   * user, checked below.
    */
 
   // Firebase-authenticated user: validate membership
@@ -193,9 +189,8 @@ export async function tenantContextMiddleware(request: FastifyRequest, reply: Fa
 }
 
 /**
- * Resolve and attach tenant/account display names to the request. Because the
- * request is the live log-context source, these names are then forwarded to
- * core on every proxied call. Best-effort: failures leave the names unset.
+ * Resolve and attach tenant/account display names to the request, which is the
+ * live log-context source. Best-effort: failures leave the names unset.
  */
 async function attachTenantAccountNames(
   request: FastifyRequest,

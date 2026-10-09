@@ -3,32 +3,21 @@ import { createChildLogger } from '@magick-agency/observability';
 import { redactUrl } from '../../utils/redact-url.js';
 
 /*
- * PORT NOTE (magick-agency, Phase 8): master `src/api/middleware/error-mask.middleware.ts`
- * @a1f0756a, registered app-wide in `app.ts` as master registered it (`src/index.ts:487`).
- * Lead ruling: the 5xx branch is kept; the **core-forwarded 4xx branch is dropped**.
+ * The app-wide error mask, registered in `app.ts`.
  *
- * That branch masked a 4xx whose status a `proxyToCore` call had recorded this request
- * (`sawCoreErrorStatus`), unless the body was "structured" (`details`, or an allow-listed
- * `code` / `error` label). It existed because core's 4xx bodies could carry provider text
- * (Google AI, telephony carriers) that master had not reviewed. In one process there is no
- * forwarded body: every 4xx is authored by this codebase — master's handlers, and core's
- * handler bodies run in-process behind `callCore`, whose refusals master forwarded and the
- * console reads by `code` (the allow-list was a list of exactly those). So the policy is
- * master's "4xx we generated ourselves" arm for every 4xx. Deleted with the branch:
- * `FORWARDABLE_ERROR_CODES`, `FORWARDABLE_ERROR_LABELS`, `isStructuredClientError`,
- * `parseJsonPayload` (their only reader), and the imports of `sawCoreErrorStatus`,
- * `AGENCY_ACTION_ERROR_CODES`, `AGENCY_ROSTER_REFUSAL_CODES`.
+ * 5xx bodies are masked; every 4xx passes through, because every 4xx is authored by this
+ * codebase — the public API layer's handlers and the internal handler instance behind
+ * `callCore`, whose refusals the console reads by `code`. There is no forwarded body from
+ * another service that could carry unreviewed provider text.
  *
- * Kept verbatim: the 5xx mask and its log line, the 429 pass-through, the
- * `preserveReviewedUpstreamError` opt-out (the reviewed way to let a fixed-shape 5xx through;
- * its one setter is `sendRevocationCacheUnavailable`, `cache/revocation-unavailable.ts` — Q5,
- * Manas 2026-10-09 — so a role change's 503 keeps its "retry" instruction), the masked body, the content-length / x-request-id
- * headers. `MASK_EXEMPT_PATHS` names agency's probes, `/healthz` and `/readyz` (master's
- * `/health`, `/ready`, `/metrics`; agency serves no `/metrics` route).
+ * Also: the 429 pass-through, the `preserveReviewedUpstreamError` opt-out (the reviewed way
+ * to let a fixed-shape 5xx through; its one setter is `sendRevocationCacheUnavailable`,
+ * `cache/revocation-unavailable.ts` — decision Q5 — so a role change's 503 keeps its "retry"
+ * instruction), the content-length / x-request-id headers, and `MASK_EXEMPT_PATHS` for the
+ * probes `/healthz` and `/readyz`.
  *
- * PORT NOTE (magick-agency, decision B17): master's `SUPPORT_EMAIL`
- * (`support@magickvoice.com`) is deleted. The masked message says "contact support"
- * without an address, and is exported as `MASKED_ERROR_MESSAGE`.
+ * The masked message says "contact support" without an address (decision B17) and is
+ * exported as `MASKED_ERROR_MESSAGE`.
  */
 
 const log = createChildLogger({ component: 'error-mask' });
@@ -100,7 +89,7 @@ function payloadForLog(payload: unknown): unknown {
  *    `retryAfter` / `retry_after_seconds` — masking them into a support-ticket
  *    message is misleading. Do not start returning upstream provider 429 text
  *    as HTTP 429 without revisiting this exception.
- *  - **4xx** (Zod validation, RBAC/business errors, core's in-process refusals) —
+ *  - **4xx** (Zod validation, RBAC/business errors, the internal handlers' refusals) —
  *    passed through unchanged.
  *
  * The full original error is logged (error for 5xx) with the request id so it
@@ -118,7 +107,7 @@ export async function errorMaskHook(
   // Client-facing 429s are authored pacing signals (see policy above).
   if (statusCode === 429) return payload;
 
-  // 4xx we generated ourselves (validation, RBAC, business rules) — see the PORT NOTE.
+  // 4xx we generated ourselves (validation, RBAC, business rules) — see the header.
   const mask = statusCode >= 500;
 
   if (!mask) return payload;
