@@ -7,7 +7,7 @@ import { assignmentEntry, canEnterStation } from '../../utils/agencyAssignmentEn
  * ── The regression these cases exist to prevent ────────────────────────────
  * The first version of this helper blocked `draft`, `paused`, `stopping`,
  * `stopped` and `completed`, justified as sparing the agent "a refusal they could
- * have been told about". Core has no such refusal: its `POST /sessions` checks
+ * have been told about". The API has no such refusal: its `POST /sessions` checks
  * campaign ownership and nothing else, and `campaign_not_running` is declared in
  * its contracts but raised nowhere. Joining a paused campaign has always worked.
  *
@@ -66,8 +66,8 @@ describe('assignmentEntry — what must NOT block', () => {
   });
 
   /**
-   * `campaign_status` is null whenever master's best-effort lookup failed — a core
-   * blip, a shape core changed. Blocking would let a thirty-second outage lock
+   * `campaign_status` is null whenever the API's best-effort lookup failed — the API
+   * blip, a shape the API changed. Blocking would let a thirty-second outage lock
    * every agent out of a running campaign: strictly worse than the pointless
    * station this helper avoids.
    */
@@ -76,10 +76,10 @@ describe('assignmentEntry — what must NOT block', () => {
   });
 
   /**
-   * The block list is an ALLOW-LIST OF BLOCKS, deliberately. Core owns the campaign
-   * lifecycle and master forwards its value verbatim, so a status core adds arrives
+   * The block list is an ALLOW-LIST OF BLOCKS, deliberately. The API owns the campaign
+   * lifecycle and the API forwards its value unchanged, so a status the API adds arrives
    * here before this file knows the word. Treating unknown-to-us as terminal would
-   * lock agents out of a state core considers dialable, and it would look like a
+   * lock agents out of a state the API considers dialable, and it would look like a
    * permissions bug.
    */
   it('lets a status this client has never heard of through', () => {
@@ -88,14 +88,14 @@ describe('assignmentEntry — what must NOT block', () => {
   });
 
   it('is case-sensitive, matching the wire rather than guessing', () => {
-    // Core sends lower-case statuses. Anything else is an unrecognised value and
+    // The API sends lower-case statuses. Anything else is an unrecognised value and
     // takes the permissive branch, not a normalised guess at what was meant.
     expect(canEnterStation('STOPPED')).toBe(true);
   });
 
   /**
    * ── Prototype keys ────────────────────────────────────────────────────────
-   * `campaign_status` is forwarded verbatim and unvalidated, so the lookup table
+   * `campaign_status` is forwarded unchanged and unvalidated, so the lookup table
    * must not be reachable through `Object.prototype`. With an object literal,
    * `status = 'toString'` matched, blocked entry, and rendered
    * `"function toString() { [native code] }"` as the reason. A `Map` has no such

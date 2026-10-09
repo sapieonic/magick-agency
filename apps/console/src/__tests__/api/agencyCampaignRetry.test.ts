@@ -5,13 +5,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *
  * ── What this layer can get wrong, and each is silent ──────────────────────
  *  1. **`X-Account-Id`.** `apiFetch` takes it as the fourth argument, so an
- *     omitted one surfaces only at core as `400 Missing required header:
- *     x-mgkvc-account`, masked by master and naming nothing in cusui. That is
+ *     omitted one surfaces only at the server as `400 Missing required header:
+ *     x-mgkvc-account`, masked by the server and naming nothing in the console. That is
  *     how the whole agency surface once shipped non-functional.
- *  2. **The actor.** Master fills `agent_user_id` and `actor_name` from the
+ *  2. **The actor.** The server fills `agent_user_id` and `actor_name` from the
  *     authenticated session. An actor the browser sends is an actor the browser
  *     can forge, so the body must not carry one.
- *  3. **The selector encoding.** Core parses the preview's query string and the
+ *  3. **The selector encoding.** The server parses the preview's query string and the
  *     create's JSON object through ONE function, so the two must name the same
  *     dimensions the same way — a preview that promises a count the create does
  *     not deliver is the exact class of defect the shared parser exists to
@@ -74,7 +74,7 @@ describe('retryPreview', () => {
   });
 
   it('leaves the path bare when the selector encodes to nothing', async () => {
-    // Core answers 400 for an empty selector; a trailing `?` would be a second,
+    // The server answers 400 for an empty selector; a trailing `?` would be a second,
     // quieter way to get there.
     await retryPreview(CAMPAIGN, {}, TENANT, ACCOUNT);
     expect(call().url.endsWith('/retry/preview')).toBe(true);
@@ -102,7 +102,7 @@ describe('createRetry', () => {
     expect(body.config_overrides).toEqual({ caller_ids: ['+911234567890'] });
   });
 
-  it('never sends an actor — master fills it from the session', async () => {
+  it('never sends an actor — the server fills it from the session', async () => {
     await createRetry(CAMPAIGN, { selector: SELECTOR }, TENANT, ACCOUNT);
     const body = JSON.parse(call().init.body as string);
     expect(body).not.toHaveProperty('agent_user_id');
@@ -110,7 +110,7 @@ describe('createRetry', () => {
   });
 
   it('names the same dimensions the preview does', async () => {
-    // One parser in core reads both forms. If these two ever disagree, the
+    // One parser in the server reads both forms. If these two ever disagree, the
     // count a supervisor was shown is not the roster they get.
     await retryPreview(CAMPAIGN, SELECTOR, TENANT, ACCOUNT);
     await createRetry(CAMPAIGN, { selector: SELECTOR }, TENANT, ACCOUNT);

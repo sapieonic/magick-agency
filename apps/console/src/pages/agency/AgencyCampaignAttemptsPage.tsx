@@ -52,7 +52,7 @@ import styles from './AgencyCampaignAttemptsPage.module.css';
 const PAGE_SIZE = 50;
 
 /**
- * The campaign's Attempts view — one row per dial (MAG-159).
+ * The campaign's Attempts view — one row per dial.
  *
  * ── Why this is not `/app/calls/softphone/history` ─────────────────────────
  * Agency legs do land in `webrtc_calls`, so that page can show the ones that
@@ -258,7 +258,7 @@ export function AgencyCampaignAttemptsPage() {
     return n;
   }, [filters]);
 
-  // Caught here rather than sent: master refuses it too (400), but telling the
+  // Caught here rather than sent: the server refuses it too (400), but telling the
   // supervisor before they press Apply is the difference between a correction
   // and a support ticket.
   const invertedRange = Boolean(draftFrom && draftTo && draftFrom > draftTo);
@@ -275,7 +275,7 @@ export function AgencyCampaignAttemptsPage() {
 
       {/*
         The campaign workspace's section bar, in the same slot on every one of
-        its screens (`MAG-166`). These four sections used to be reachable only
+        its screens. These four sections used to be reachable only
         as secondary buttons on the detail page's header row — the same row
         that carries Stop — so getting from Contacts to Call attempts meant
         going back through the campaign first.
@@ -528,7 +528,7 @@ export function AgencyCampaignAttemptsPage() {
                         {noRecording === null ? (
                           /*
                             A link, never an embedded player: the call may have
-                            been purged since — core keeps this id un-FK'd so the
+                            been purged since — the API keeps this id un-FK'd so the
                             attempt outlives the call — and the destination page
                             is where "no longer available" can be said properly.
 

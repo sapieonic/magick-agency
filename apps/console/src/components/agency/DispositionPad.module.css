@@ -1,4 +1,4 @@
-/* No new tokens (§1). Semantic colour is fixed feature-wide: green = success,
+/* No new tokens. Semantic colour is fixed feature-wide: green = success,
    red = a destructive or suppressing outcome, amber = pending. */
 
 .pad {

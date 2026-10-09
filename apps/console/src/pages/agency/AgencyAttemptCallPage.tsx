@@ -48,7 +48,7 @@ import styles from './AgencyAttemptCallPage.module.css';
  * primary application's shell, gated on the primary application's `calls.dialer`
  * capability, with the campaign context and the list the reader was reading both
  * gone. The link pointed there because that was the only place the endpoint
- * existed (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
+ * existed.
  *
  * It renders the shared `CallDetailView`, because the call shape genuinely is the
  * same — one `webrtc_calls` row either way. What is different is everything
@@ -60,7 +60,7 @@ import styles from './AgencyAttemptCallPage.module.css';
  * This page fetched the attempt and used exactly one field off it
  * (`attempt_number`, for the breadcrumb leaf), then rendered the SOFTPHONE's
  * facts card: Provider, and an `Initiated By` that on an agency leg is the
- * dialing session id (core's `agency-dialer.ts` sets `initiatedBy:
+ * dialing session id (the API's `agency-dialer.ts` sets `initiatedBy:
  * cmd.sessionId`). So clicking a row in the attempts list landed the supervisor
  * on a page carrying LESS agency information than the row they clicked, plus a
  * raw UUID. Everything they came for — which agent worked it, how it was written
@@ -74,9 +74,9 @@ import styles from './AgencyAttemptCallPage.module.css';
  *
  * ── The purged call is a first-class state, not an error ───────────────────
  *
- * `agency_call_attempts.webrtc_call_id` is deliberately un-FK'd (core migration
- * 076) because both sides purge on independent retention windows, so an attempt
- * routinely outlives its call. Core answers 200 with `call_availability` rather
+ * `agency_call_attempts.webrtc_call_id` is deliberately un-FK'd (by design)
+ * because both sides purge on independent retention windows, so an attempt
+ * routinely outlives its call. The API answers 200 with `call_availability` rather
  * than 404 precisely so this page can say what happened, and rendering an error
  * here would throw that away — a red alert reads as "something is broken",
  * when the truthful answer is "this aged out, and here is the attempt record
@@ -90,7 +90,7 @@ import styles from './AgencyAttemptCallPage.module.css';
  *
  * That empty state used to be the whole page when `call` was null: it promised
  * "the attempt record below is retained" and then rendered nothing below it. Yet
- * §7b's central claim about this surface is that an attempt routinely outlives
+ * The central claim about this surface is that an attempt routinely outlives
  * its call, so `call === null` is not an edge case — it is the steady state for
  * every row older than the call-side retention window, and those are exactly the
  * compliance rows this page was built for. The page fetched the attempt, held the
@@ -107,7 +107,7 @@ import styles from './AgencyAttemptCallPage.module.css';
  * ── Every state renders the trail and the section bar ──────────────────────
  *
  * Loading and error included, which is where the first version dropped both.
- * Master forwards core's `attempt_not_found` verbatim (allow-listed through the
+ * The server forwards the dialer runtime's `attempt_not_found` unchanged (allow-listed through the
  * error mask on purpose), so following a link to a deleted or renumbered attempt
  * showed the honest sentence — and a single "Retry loading" button that returns
  * the same 404 forever, with the way back computed twelve lines above and never
@@ -136,7 +136,7 @@ const AGENCY_ANALYSIS_MESSAGES: Record<string, string> = {
 /**
  * Whether an error is one that retrying cannot fix.
  *
- * `attempt_not_found` is master forwarding core's answer for an attempt that is
+ * `attempt_not_found` is the server forwarding the dialer runtime's answer for an attempt that is
  * not on this campaign, or an id that is not a UUID — a stale or hand-edited
  * link. A 403 is the `agency.supervise` floor refusing the read, which no number
  * of presses changes either (`RequireCapability` fails open by design, so a
@@ -421,7 +421,7 @@ export default function AgencyAttemptCallPage() {
    * Neither state below carries the attempt facts, and that is a limit rather
    * than an omission: one request serves the attempt and its call together, so
    * before it settles there is no attempt to render, and when it fails there is
-   * none either — including the 403, where master refused the read and sent no
+   * none either — including the 403, where the server refused the read and sent no
    * row. The facts appear the moment there is an attempt, call or no call.
    *
    * There is no third case where a record is on screen and a later fetch fails.
@@ -534,14 +534,14 @@ export default function AgencyAttemptCallPage() {
         roleLabels={AGENCY_ROLE_LABELS}
         identityFacts={identityFacts}
         identityCards={identityCards}
-        // The agency's OWN analytics entitlement, not the softphone's. Master
+        // The agency's OWN analytics entitlement, not the softphone's. The server
         // withholds the transcript and summary fields for the same capability, so
         // this hides a section that would otherwise render empty.
         analysisEnabled={isEnabled(AGENCY_ANALYTICS_CAPABILITY)}
         analysisTitle="Call summary"
         analysisMessages={AGENCY_ANALYSIS_MESSAGES}
         retryLabel="Try again"
-        // The agency's own recording entitlement. Master nulls `recording_url`
+        // The agency's own recording entitlement. The server nulls `recording_url`
         // when it is off, which from inside the view is indistinguishable from a
         // recording still finalising — so without this the page promised "check
         // back soon" for one that is never coming.

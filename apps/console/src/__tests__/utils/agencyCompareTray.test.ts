@@ -277,8 +277,8 @@ describe('agencyCompareTray — the floor row', () => {
 
   it('renders NO band for a percentile block the payload did not carry', () => {
     /**
-     * `benchmark.aht` is additive (D10) and merge order puts this console last, so a
-     * master mid-deploy simply has no band to show. `null` renders nothing rather than
+     * `benchmark.aht` is additive and merge order puts this console last, so a
+     * the API mid-deploy simply has no band to show. `null` renders nothing rather than
      * "no median yet" — that sentence is a claim about the FLOOR, and making it about
      * an unshipped field would be a false one.
      */

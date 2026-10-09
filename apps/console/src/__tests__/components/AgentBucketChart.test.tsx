@@ -29,7 +29,7 @@ import type { AgencyAgentStatsBucket } from '../../types/agency-stats';
 afterEach(cleanup);
 
 /**
- * A bucket in the shape core actually sends: `YYYY-MM-DD`, no time and no
+ * A bucket in the shape the server actually sends: `YYYY-MM-DD`, no time and no
  * offset.
  *
  * This fixture used to carry an ISO midnight instant, and that mismatch is what

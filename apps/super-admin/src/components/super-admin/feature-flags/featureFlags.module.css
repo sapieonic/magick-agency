@@ -245,7 +245,7 @@
   color: var(--text-muted);
 }
 
-/* ── Policy warning (flags master marks as needing care, e.g. personal data in logs) ── */
+/* ── Policy warning (flags the server marks as needing care, e.g. personal data in logs) ── */
 .policyWarning {
   display: flex;
   align-items: flex-start;

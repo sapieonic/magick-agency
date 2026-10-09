@@ -17,7 +17,7 @@ import styles from './AgencyCampaignContactsPage.module.css';
 /**
  * Add more contacts to an existing campaign.
  *
- * Master's ingest already supports this — `campaign_id` on the ingest request
+ * The server's ingest already supports this — `campaign_id` on the ingest request
  * targets any campaign, and only a dry run may omit it. Nothing surfaced it, so
  * a roster could be loaded exactly once, at creation. A campaign that exhausted
  * its list had to be recreated, which loses its history and its stats.
@@ -26,7 +26,7 @@ import styles from './AgencyCampaignContactsPage.module.css';
  * column mapping, the polling contract and the rejected-rows export cannot
  * drift between the two entry points.
  *
- * ── It moved from `…/contacts` to `…/contacts/add` on MAG-159 ───────────────
+ * ── It moved from `…/contacts` to `…/contacts/add` ───────────────
  * This page used to BE `/agency/campaigns/:id/contacts`, which meant the one
  * URL in the product that named the contacts was the one place you could not
  * see them — its own heading read "Add contacts". That path now serves the
@@ -92,13 +92,13 @@ export function AgencyCampaignContactsPage() {
      * The refusal below is decided from the status fetched when the page
      * loaded, and a supervisor can stop the campaign from another tab, or the
      * pacing leader can finalize it to `completed`, while this page sits open on
-     * a mapping screen. Master accepts the ingest either way and the rows land
+     * a mapping screen. The server accepts the ingest either way and the rows land
      * somewhere that will never dial them — which looks exactly like a
      * successful import.
      *
      * This narrows the window, it does not close it: the check and the ingest
-     * are still two requests, and only a terminal-status guard inside master's
-     * ingest route would make the refusal atomic. That belongs in master and is
+     * are still two requests, and only a terminal-status guard inside the server's
+     * ingest route would make the refusal atomic. That belongs in the server and is
      * filed rather than faked here — throwing from this callback is caught by
      * the hook and surfaces as a failed start, which is the honest outcome.
      */
@@ -149,7 +149,7 @@ export function AgencyCampaignContactsPage() {
       )}
 
       {/*
-        Not offered on a campaign that can never dial again. Master would accept
+        Not offered on a campaign that can never dial again. The server would accept
         the ingest and the rows would sit unreachable forever, which looks like
         a successful import and is not one.
       */}

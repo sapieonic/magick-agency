@@ -37,9 +37,8 @@ describe('formatDuration', () => {
   it('formats 3661 seconds as 61:01', () => expect(formatDuration(3661)).toBe('61:01'));
 });
 
-// PORT NOTE (magick-agency): `formatCredits`, `formatLedgerMillicredits` and
-// `formatCreditsExact` are removed with credits (plan §3.3), and their three
-// describes (21 cases) with them. Every other case in this file is verbatim.
+// There are no credit formatters (agency has no credits), so no cases cover
+// `formatCredits`, `formatLedgerMillicredits` or `formatCreditsExact`.
 
 describe('formatPhone', () => {
   // falsy guards

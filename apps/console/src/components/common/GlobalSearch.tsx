@@ -15,12 +15,9 @@ interface PageEntry {
   capability?: string;
 }
 
-// PORT NOTE (magick-agency): cusui's page directory listed every AI, broadcast,
-// messaging, knowledge, credits and API-key page. Only the entries for surfaces
-// the console ports are kept — the agency workspace, Team and Notifications —
-// each verbatim with its comment; `Call Summaries` is added for the analysis
-// profiles page, now the agency's own (gated on agency's `agency_call_analysis`
-// flag and `agency.analytics` capability, as its route is).
+// The page directory: the agency workspace, Team and Notifications, plus
+// `Call Summaries` for the analysis profiles page (gated on the
+// `agency_call_analysis` flag and `agency.analytics` capability, as its route is).
 const PAGES: PageEntry[] = [
   // Agency Dialer. These live OUTSIDE `/app` in their own workspace shell, so
   // selecting one leaves the main app — which is exactly what the sidebar's

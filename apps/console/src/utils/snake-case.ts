@@ -21,7 +21,7 @@ export function toSnakeCase(value: string): string {
 
 /**
  * The server's bound on an analysis dimension `key`
- * (`analyticsDimensionSchema` in core). Mirrored here so the key we derive is
+ * (`analyticsDimensionSchema` in the server). Mirrored here so the key we derive is
  * always sendable — the user never types the key, so a key that fails
  * validation is a bug on our side, not something they can correct.
  */
@@ -32,11 +32,11 @@ export const MAX_DIMENSION_KEY_LENGTH = 50;
  *
  * The key is an implementation detail (it names a property in the analysis
  * JSON schema and a JSONB key in reporting), so the editors hide it and derive
- * it from what the user typed. That derivation must therefore satisfy core's
+ * it from what the user typed. That derivation must therefore satisfy the server's
  * `^[a-z][a-z0-9_]*$` + ≤50 contract for ANY description, since the user has no
  * field to fix if it doesn't:
  *
- * - leading non-letters are dropped — core requires a letter first, so
+ * - leading non-letters are dropped — the server requires a letter first, so
  *   "2nd attempt" must not derive `2nd_attempt`;
  * - the result is capped at 50 chars, preferring to cut at a word boundary so a
  *   long description yields a readable key rather than a severed word;
@@ -64,7 +64,7 @@ export function toDimensionKey(value: string): string {
 }
 
 /**
- * Whether `key` already satisfies core's contract and can be sent as-is.
+ * Whether `key` already satisfies the server's contract and can be sent as-is.
  *
  * Used to leave an EXISTING dimension's key alone on save. The key identifies a
  * dimension in stored `call_analysis` results and in reporting aggregates, so

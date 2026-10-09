@@ -1,8 +1,8 @@
 /**
  * Error helpers shared across the UI.
  *
- * The Magick Master platform service masks internal/upstream error detail
- * before it reaches the client (see ClickUp 86d3fh88c / magick-master#119).
+ * The server masks internal/upstream error detail
+ * before it reaches the client.
  * A masked response looks like:
  *
  *   {
@@ -45,7 +45,7 @@ const MASKED_ERROR_LABELS = ['Internal Error', 'Request Failed'];
  * which carry a meaningful `message`) are NOT masked.
  */
 export function isMaskedErrorBody(statusCode: number, body: unknown): boolean {
-  // Server / core / provider failures are always masked.
+  // Server / dialer-runtime / provider failures are always masked.
   if (statusCode >= 500) return true;
 
   if (typeof body !== 'object' || body === null) return false;
@@ -90,7 +90,7 @@ export function splitRequestId(message: string): { message: string; requestId?: 
 
 /**
  * Canonical "turn an unknown thrown value into a user-facing string" helper.
- * Returns the message verbatim (request-id marker included, if any) so callers
+ * Returns the message unchanged (request-id marker included, if any) so callers
  * and display components stay consistent.
  */
 export function getErrorMessage(

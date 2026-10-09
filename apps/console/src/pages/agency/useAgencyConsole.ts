@@ -64,13 +64,13 @@ import type {
  * is an ordering or lifecycle rule that no individual module can enforce alone.
  */
 
-/** Debounce for the notes autosave (§A.13.7). */
+/** Debounce for the notes autosave. */
 export const NOTES_DEBOUNCE_MS = 2000;
 /** How long we wait for `agent_state` before reconciling from the response. */
 export const AGENT_STATE_RECONCILE_MS = 3000;
 
 /**
- * §A.13.8's "disposition submitted, no `agent_state` follows" row, verbatim.
+ * The copy for a disposition submitted with no `agent_state` following it.
  *
  * Exported so the test names the string once: a copy assertion written out by hand
  * in the test is a test of the test.
@@ -92,7 +92,7 @@ const AGENT_STATES: readonly AgencyAgentState[] = [
 /**
  * The advisory `agent_state` off a disposition response, read defensively.
  *
- * `AgencyDispositionResponse` types `agent_state` as required, but §A.13.8's row
+ * `AgencyDispositionResponse` types `agent_state` as required, but's row
  * has an explicit *"if that is also absent"* arm — so the absence has to be
  * representable at runtime or that arm is unreachable and its copy is dead. A body
  * missing the field, or carrying a state outside the union, yields `null` and the
@@ -129,7 +129,7 @@ export interface AgencyConsoleState {
    * why it carries the attempt id rather than a bare boolean, and why it names
    * **which** cue. All three get a visual, told apart by count, direction and
    * duration (`VISUAL_CUE_SPECS`) — a single shared flash would tell the agent that
-   * something happened and not what, which is what `AD-P2-U-07` was filed for.
+   * something happened and not what, which is what this fixes.
    */
   cueFlash: CueFlash | null;
   /**
@@ -164,7 +164,7 @@ export interface AgencyConsoleState {
    */
   noteCodeSelectionMethod: (method: 'number_key' | 'click') => void;
   /**
-   * §A.13.8: set only after `AGENT_STATE_RECONCILE_MS` of silence following a
+   * set only after `AGENT_STATE_RECONCILE_MS` of silence following a
    * saved disposition, and only when the response carried no usable advisory
    * state. Non-null means the pad is locked so the same attempt cannot be
    * submitted twice into the gap.
@@ -180,7 +180,7 @@ export interface AgencyConsoleState {
 
   presenceBusy: boolean;
   /**
-   * Core's refusal of a presence change, stated. Non-null is a *response* the
+   * The API's refusal of a presence change, stated. Non-null is a *response* the
    * agent can act on — most importantly 409 `attempt_not_dispositionable`, the
    * refusal that makes a required disposition mandatory — never an error banner.
    */
@@ -208,7 +208,7 @@ export interface AgencyConsoleState {
  * **`details`, not `body`.** `ApiError` (`src/api/client.ts`) carries `statusCode`
  * and `details`; there is no `body` field on it and never was. Reading `body` made
  * every agency failure look like an empty 400 in production: the 409
- * disposition-required refusal never surfaced core's message, and
+ * disposition-required refusal never surfaced the API's message, and
  * `unknown_disposition_code` / `unknown_break_reason` never delivered their
  * `allowed_codes`, which is the only way the console can resync a stale catalog.
  * `dncFailureCopy` in `utils/agencyDncCopy.ts` already read `details` — this file
@@ -290,7 +290,7 @@ export function useAgencyConsole(
    *   Deriving this from `agentState === 'on_call'` or from a bridge `status`
    *   frame would put the agent's voice on the wire before audio is actually
    *   flowing to their socket — the same class of mistake as firing the connect
-   *   cue on `answered` (§A.3.1).
+   *   cue on `answered`.
    *
    * `retainedAttempt` is deliberately absent: wrap-up keeps the *panel* up, not
    * the call. A console still capturing through wrap-up would hold the mic while
@@ -336,8 +336,8 @@ export function useAgencyConsole(
    * need the socket at all. The three states differ in the way that decides it:
    *
    *  * `superseded` — another window holds the session, has its own pad, and ours
-   *    may still *land*, racing theirs. That is §A.8.3's hazard. Lock.
-   *  * `session_gone` — core says the session does not exist, so the write would
+   *    may still *land*, racing theirs. That is's hazard. Lock.
+   *  * `session_gone` — the API says the session does not exist, so the write would
    *    404 and a disabled control is the honest rendering of that. Lock.
    *  * `disconnected` — our socket died and NOTHING replaced it. There is no rival
    *    pad, the routes still work, and the agent may be mid-wrap-up with a
@@ -427,7 +427,7 @@ export function useAgencyConsole(
   useEffect(() => {
     if (!bootstrap) return;
     setCatalog(bootstrap.disposition_catalog);
-    // What bootstrap advertises IS the accepted set: core serves its six built-ins
+    // What bootstrap advertises IS the accepted set: the API serves its six built-ins
     // when the campaign configures none, so this is never empty in practice.
     setBreakReasons(bootstrap.break_reasons);
   }, [bootstrap]);
@@ -631,21 +631,21 @@ export function useAgencyConsole(
 
   // ── Disposition ───────────────────────────────────────────────────────────
   /**
-   * Frame-bound, per §A.13.1: `bridged` opens the pad, and it stays open through a
+   * Frame-bound, : `bridged` opens the pad, and it stays open through a
    * `released` that requires a disposition. Nothing here reads `status`/`ended`.
    *
    * ── Three routes in, one latch out ──────────────────────────────────────────
    * The wrap-up unlock used to rest solely on `agent_state{state:'wrapup'}`, a
-   * frame core did not emit at all until this week. When it was missing the pad
+   * frame the API did not emit at all until this week. When it was missing the pad
    * greyed out the instant the call ended and stayed grey — `/available` then 409s
    * `attempt_not_dispositionable` and the agent is stuck until the sweep closes
    * the attempt, so **every disposition on a `requires_disposition` campaign was
    * lost that way**. One frame should not be able to do that again, so wrap-up is
    * derived from three independent sources and any one of them suffices:
    *
-   *  (a) `agent_state` says `wrapup` — the frame path, now that core sends it;
+   *  (a) `agent_state` says `wrapup` — the frame path, now that the API sends it;
    *  (b) the `released` frame said `requires_disposition` — available *before*
-   *      `agent_state` on core's own ordering (`released` → `agent_state` →
+   *      `agent_state` on the API's own ordering (`released` → `agent_state` →
    *      `wrapup`), so it opens the pad a tick earlier and survives that frame
    *      going missing entirely;
    *  (c) a wrap-up anchor exists and requires a disposition — the only route a
@@ -658,16 +658,16 @@ export function useAgencyConsole(
    * gated on `retainedAttempt`, and (c) on `wrapup`, and **all three fields are
    * cleared by every frame that can end a wrap-up**:
    *
-   *   - `agent_state` with `state !== 'wrapup'` (§A.13.5's single authority),
-   *   - `reserved` (a new reservation always wins, §A.8.4),
+   *   - `agent_state` with `state !== 'wrapup'` ('s single authority),
+   *   - `reserved` (a new reservation always wins),
    *   - **`ready` with `state !== 'wrapup'`** — and this third one was missing.
    *
    * That omission was a real unlock over a closed window, not a theoretical one.
    * `released{requires_disposition:true}` → socket drops → the wrap-up lapses
-   * server-side → core emits `agent_state{available}` into the dead socket →
+   * server-side → the API emits `agent_state{available}` into the dead socket →
    * reconnect. `ready` restored `agentState` and touched nothing else, so (a) went
    * off while (b) stayed **on** — pad enabled, `currentAttemptId` still the
-   * finished attempt. The agent wrote up a call into a window core had closed and
+   * finished attempt. The agent wrote up a call into a window the API had closed and
    * the submit 409'd. Since `ready` is a full-state snapshot the fix belongs
    * there, not in a fourth condition here; see the `ready` handler in
    * `useAgencyStation`.
@@ -675,8 +675,8 @@ export function useAgencyConsole(
    * `missedRelease` is deliberately NOT a fourth route, and the reasoning is the
    * same one that makes the `ready` reconciliation necessary: it reports a call
    * that ended while the socket was away. When that call's wrap-up is still open
-   * core sends `active_wrapup` alongside it and (c) fires on its own; when it is
-   * not, core will refuse the disposition — so a pad unlocked from a
+   * the API sends `active_wrapup` alongside it and (c) fires on its own; when it is
+   * not, the API will refuse the disposition — so a pad unlocked from a
    * `missedRelease` would invite the agent to write into a window that has already
    * closed, which is exactly what the stale (b) was doing.
    */
@@ -687,7 +687,7 @@ export function useAgencyConsole(
   /**
    * ── A LOST STATION LOCKS THE PAD ───────────────────────────────────────────
    *
-   * §A.8.3 asks for the console behind the supersede screen to be inert, and says
+   * asks for the console behind the supersede screen to be inert, and says
    * why in one line: *"so there is no chance of the agent typing a note into a
    * dead tab."* Until this guard, `live` was cleared only by `released` — which a
    * terminal close never delivers — so a superseded window kept a fully enabled
@@ -698,7 +698,7 @@ export function useAgencyConsole(
    * from a tab the product has declared dead, racing the other window's own pad.
    * Neither "lost" nor "saved" is an answer anyone would sign off.
    *
-   * Newly reachable rather than theoretical: core only started sending `4409` in
+   * Newly reachable rather than theoretical: the API only started sending `4409` in
    * this same change, so `superseded` was previously almost unreachable.
    */
   const padUnlocked =
@@ -706,7 +706,7 @@ export function useAgencyConsole(
     && (Boolean(live?.bridgedAt) || inWrapupByState || inWrapupByRelease || inWrapupByAnchor);
   const padEnabled = padUnlocked && waitingForDialer === null;
   /**
-   * **Notes track the window, not the lock.** The §A.13.8 lock exists to stop a
+   * **Notes track the window, not the lock.** The lock exists to stop a
    * second submit; the notes route is still accepted through wrap-up, and closing
    * the field would strand the agent's only artefact of the call behind a control
    * that was disabled for an unrelated reason.
@@ -730,7 +730,7 @@ export function useAgencyConsole(
    * Merged identically to `buildSubmitPayload`'s own view (`notes || form.notes`), so
    * the visible block and the guard that builds the request cannot disagree; a
    * whitespace-only note fails `noteSatisfied`'s trim in both, which is what keeps the
-   * client's rule the same rule core enforces at `disposition.ts`.
+   * client's rule the same rule the API enforces at `disposition.ts`.
    */
   const block = useMemo(
     () => blockReason(catalog, { ...form, notes: notes || form.notes }, clock.now),
@@ -760,7 +760,7 @@ export function useAgencyConsole(
      * One `Ctrl+Enter` inside the notes field is exactly that task — `NotesField`
      * owns the key and calls `submit()`, the event then bubbles to the page's window
      * handler which calls it again — so the two state guards let both requests go
-     * out, and core records whichever lands second against an attempt the first has
+     * out, and the API records whichever lands second against an attempt the first has
      * already dispositioned.
      *
      * A ref is the only guard that can see the first call from inside the second.
@@ -770,7 +770,7 @@ export function useAgencyConsole(
     if (submitInFlight.current) return;
     if (submitting) return;
     /**
-     * §A.13.6's second half of "double-submit is prevented twice": a second success
+     *'s second half of "double-submit is prevented twice": a second success
      * for an attempt already recorded is **ignored rather than sent**. The first
      * half is the disabled button, and it is not enough on its own — `Ctrl+Enter`
      * reaches this function without going near the button.
@@ -853,7 +853,7 @@ export function useAgencyConsole(
           }
 
           /**
-           * §A.13.8's "disposition submitted, no `agent_state` follows" row.
+           *'s "disposition submitted, no `agent_state` follows" row.
            *
            * The response's `agent_state` **races the socket by design** and is read
            * only through `advisoryAgentState()`, which refuses to hand it over once
@@ -863,9 +863,9 @@ export function useAgencyConsole(
            *
            * Note what this does NOT do: it never writes the hint into the rail's
            * state. **`agent_state` remains the sole authority for the rail and for
-           * wrap-up ending** (§A.13.1's "Never by" column, which excludes this
+           * wrap-up ending** ('s "Never by" column, which excludes this
            * response explicitly). The hint's licensed use is the queued-break case
-           * §A.13.6 names — the post-submit state may be `break`, not `available`,
+           * names — the post-submit state may be `break`, not `available`,
            * and the pill's subject is gone once it is.
            *
            * **Two fire-time guards, and each one catches a case the other cannot.**
@@ -904,7 +904,7 @@ export function useAgencyConsole(
             /**
              * **The line is rendered in BOTH arms.**
              *
-             * §A.13.8 reads "reconcile from the response's `agent_state`; **if that
+             * reads "reconcile from the response's `agent_state`; **if that
              * is also absent**, rail: …", which an earlier revision of this file
              * took as forbidding the copy in the reconcile arm. The agent cannot
              * tell "reconciled, still waiting" from "the frame never arrived" —
@@ -915,7 +915,7 @@ export function useAgencyConsole(
              * **Placement and duplication are the coordinator's ruling, pending
              * designer ratification** (the string itself is the designer's). Called
              * out rather than blended into the spec citation so the judgement is
-             * attributable: §A.13.8 does not say this in as many words.
+             * attributable: does not say this in as many words.
              */
             if (bootstrap) trackAgencyWaitingForDialer({ campaign_id: bootstrap.campaign_id });
             setWaitingForDialer(WAITING_FOR_DIALER_COPY);
@@ -943,11 +943,11 @@ export function useAgencyConsole(
             /* nothing to do */
           }
           /**
-           * CR-1's confirmation, and the reason it is not a flat "Disposition
-           * saved.": when the disposition scheduled a callback, the time core
+           * the callback copy's confirmation, and the reason it is not a flat "Disposition
+           * saved.": when the disposition scheduled a callback, the time the API
            * actually booked is the one thing the agent needs back — and
            * `confirmationCopy` is where the "we", never "I" rule lives. It had
-           * **zero callers** until this line, so D11's mitigation existed, was
+           * **zero callers** until this line, so the shared-pool mitigation existed, was
            * tested, and never reached a screen.
            */
           setAnnouncement(
@@ -956,7 +956,7 @@ export function useAgencyConsole(
                 findDisposition(catalog, payload.disposition_code)?.label ??
                 payload.disposition_code,
               nextAttemptAt: outcome.nextAttemptAt,
-              // PORT NOTE (magick-agency, CONTRACT-DIFF §1): the asked-for time,
+              // The asked-for time,
               // so a callback moved into calling hours says so.
               callbackRequestedAt: outcome.callbackRequestedAt,
             }),
@@ -1072,20 +1072,20 @@ export function useAgencyConsole(
       /**
        * **A refusal here is a response, not an error state.**
        *
-       * Core's `/sessions/:id/available` answers **409 `attempt_not_dispositionable`**
-       * while a required disposition is outstanding (`agency.routes.ts:146`), and
+       * The API's `/sessions/:id/available` answers **409 `attempt_not_dispositionable`**
+       * while a required disposition is outstanding (`agency.routes.ts`), and
        * that refusal is the entire mechanism making a disposition mandatory —
        * collapse "I'm ready" into "I'm done writing up" and an agent skips every
-       * one. Master forwards it verbatim rather than mirroring the rule, and the
+       * one. The server forwards it unchanged rather than mirroring the rule, and the
        * code survives the error mask, so it arrives here intact.
        *
        * Swallowing it — which this handler did — is the worst of the options: the
        * agent presses the control, nothing happens, nothing is said, and the only
        * reading available to them is that the product is broken. The remedy is one
-       * sentence and core already wrote it.
+       * sentence and the API already wrote it.
        *
-       * `message` verbatim rather than console copy: no spec string exists for this
-       * path (§A.13.3 requires *a* stated reason and does not supply one), and
+       * The `message` is shown as received rather than as console copy: no spec string exists for this
+       * path ( requires *a* stated reason and does not supply one), and
        * inventing normative copy is the designer's call, not mine. It reads
        * correctly today — "Submit a disposition for your last call before going
        * available." — and `no_station` likewise.
@@ -1112,7 +1112,7 @@ export function useAgencyConsole(
         const response = await setAgentBreak(bootstrap.session_id, code, tenantId, accountId);
         /**
          * **`break_reason`, not `pending_break_reason`** — the mirror carried the
-         * wrong name and core has never sent it on this body, so this read
+         * wrong name and the API has never sent it on this body, so this read
          * `undefined` every time and the `?? code` fallback quietly carried the
          * pill. It worked only because the code was already in hand here; nothing
          * else on this path would have been so lucky.
@@ -1213,18 +1213,18 @@ export function useAgencyConsole(
    * The pill used to be fed only by the HTTP responses above, which made a queued
    * break invisible — and therefore uncancellable — to any console that did not
    * itself issue the request: a supervisor-queued break, a second window, or the
-   * agent's own break followed by a socket blip. Core carries `pending_state` on
+   * agent's own break followed by a socket blip. The API carries `pending_state` on
    * the frames for exactly that reason — on `agent_state`, and now on `ready` too.
    *
    * Keyed on the statement counter and not on the code, because **absence is the
    * signal**. `/break/cancel` emits an `agent_state` with the pending fields
    * omitted precisely to say the queue is now empty, so this must be able to write
-   * `null` — and it can only tell "core says nothing is queued" from "no frame has
+   * `null` — and it can only tell "the API says nothing is queued" from "no frame has
    * spoken yet" by watching a marker that moves on every statement. Depending on
    * the code alone would make the clearing case a no-op, because it is already null.
    *
    * **`agentStateSince` was that marker and could not stay.** `ready` carries no
-   * `since` — deliberately, since a reconnect is not a transition and core will not
+   * `since` — deliberately, since a reconnect is not a transition and the API will not
    * invent the instant a break was queued — so a reconnect restating the queue never
    * moved it. Two consequences, both real: after a page reload mid-wrap-up
    * `agentStateSince` is `null` and the guard rejected the only frame that could

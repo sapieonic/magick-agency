@@ -6,17 +6,17 @@ import { ORIGINATOR } from '../../config';
 import { brand } from '../../brand';
 
 /**
- * Magick Agency ships no link to, and no visible mention of, MagickVoice
+ * Magick Agency ships no link to, and no visible mention of, the parent product
  * (decision B17, Manas 2026-10-09: "this shouldn't have any linking present").
  *
- * NEW in Magick Agency (no cusui source). A source scan, for the reason
+ * A source scan, for the reason
  * `agencyShellBoundary.test.ts` gives for being one: a link to the parent product
  * renders and navigates perfectly, so nothing at the DOM can tell it is wrong.
  *
  * What is scanned is everything that ships: every non-test file under `src/`
  * (code, CSS, JSON), `index.html`, `vite.config.ts` (it picks the default brand)
  * and the brand packs. Comments are stripped first — provenance notes such as
- * "ported from cusui, where this said MagickVoice" are documentation, not
+ * a note saying which brand a line used to carry is documentation, not
  * product, and a guard that fires on its own documentation gets deleted.
  * Tests are not scanned: their fixtures may name the parent product's hosts.
  */
@@ -106,8 +106,8 @@ function parentBrandMentions(): string[] {
   });
 }
 
-describe('no MagickVoice branding or links (B17)', () => {
-  it('names MagickVoice nowhere in shipped source, outside comments', () => {
+describe('no parent-product branding or links (B17)', () => {
+  it('names the parent product nowhere in shipped source, outside comments', () => {
     expect(parentBrandMentions()).toEqual([]);
   });
 

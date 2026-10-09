@@ -4,10 +4,10 @@ import { MemoryRouter } from 'react-router-dom';
 import type { AgencyColumnAnalysis, AgencyIngestJob } from '../../types/agency-campaign';
 
 /**
- * `AD-P3-U-01` at the PAGE level.
+ * The same behaviour at the PAGE level.
  *
  * The rule this file exists for: **a component test passing does not mean the
- * page renders the component.** `AD-P2-U-01` was claimable on green component
+ * page renders the component.** that was claimable on green component
  * tests while `AgentConsolePage.tsx` composed none of them. So every assertion
  * below goes through `CampaignBuilderPage` — the mapper, the summary and the
  * counters are asserted where an operator would see them.
@@ -27,7 +27,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
-// The caller-ID picker is a hard gate on this page: core rejects a campaign with
+// The caller-ID picker is a hard gate on this page: The API rejects a campaign with
 // an empty `caller_ids`, so nothing downstream runs until one is chosen.
 vi.mock('../../hooks/usePhoneNumbers', () => ({
   usePhoneNumbers: () => ({
@@ -166,11 +166,11 @@ afterEach(() => {
 });
 
 describe('the page composes the mapper', () => {
-  it('shows the real row limit from master rather than a copied constant', async () => {
+  it('shows the real row limit from the API rather than a copied constant', async () => {
     await renderPage();
     fillBasics();
     goToStep('Who to call');
-    // §B.2: the number the admin is told must be the real one.
+    // The number the admin is told must be the real one.
     expect((await screen.findByTestId('ingest-limits')).textContent).toContain('1,000,000 rows');
   });
 
@@ -215,7 +215,7 @@ describe('the page composes the mapper', () => {
   /**
    * The country code applied to numbers written without one.
    *
-   * Master normalises every un-prefixed number by prepending a server-side
+   * The API normalises every un-prefixed number by prepending a server-side
    * default (`91` unless the env says otherwise). Nothing surfaced it, so a US
    * roster imported "100% accepted" and dialed India.
    */
@@ -297,7 +297,7 @@ describe('the page composes the ingest summary', () => {
     expect(notice.textContent).toContain('rejected total');
   });
 
-  it('offers the per-row error report when master kept one', async () => {
+  it('offers the per-row error report when the API kept one', async () => {
     mocks.startRosterIngest.mockResolvedValue({ job_id: 'job-1', status: 'completed' });
     mocks.downloadRejectedRows.mockResolvedValue(new Blob(['row_number,_reason\n88,bad\n']));
 
@@ -351,9 +351,9 @@ describe('the page composes the ingest summary', () => {
     expect(screen.getByRole('button', { name: 'Stop the import' })).toBeTruthy();
   });
 
-  it('surfaces what core refused on arrival, outside the reconciling counters', async () => {
-    // Master threads core's own duplicate count through the job payload. It is
-    // NOT a slice of `rejected` — those are rows master never sent — so it
+  it('surfaces what the API refused on arrival, outside the reconciling counters', async () => {
+    // The server threads the dialer runtime's own duplicate count through the job payload. It is
+    // NOT a slice of `rejected` — those are rows the API never sent — so it
     // cannot be a tile or a rejection group, and the accepted count it qualifies
     // has to be named as an overstatement rather than silently corrected.
     mocks.startRosterIngest.mockResolvedValue({ job_id: 'job-1', status: 'completed' });
@@ -382,7 +382,7 @@ describe('the page composes the ingest summary', () => {
     expect(screen.getByTestId('core-refused-sample').textContent).toContain('start of the file');
   });
 
-  it('shows no refusal block when core refused nothing', async () => {
+  it('shows no refusal block when the API refused nothing', async () => {
     mocks.startRosterIngest.mockResolvedValue({ job_id: 'job-1', status: 'completed' });
 
     await reachMapping();

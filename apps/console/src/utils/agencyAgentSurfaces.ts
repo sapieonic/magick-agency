@@ -23,7 +23,7 @@
  *
  * The reverse — a link from inside the console back to these — is a different
  * problem with a different answer, because navigating away from a live station
- * closes the socket and leaves core holding the agent's lease for up to 45s with
+ * closes the socket and leaves the server holding the agent's lease for up to 45s with
  * no screen attached. `STATION_HISTORY_LINKS` in `agencyStationExit.ts` solves it
  * with `target="_blank"`, and `agencyAgentSurfaces.test.ts` pins those two
  * destinations against this list so a renamed route cannot fix one and break the

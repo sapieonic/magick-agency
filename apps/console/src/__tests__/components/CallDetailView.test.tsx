@@ -187,7 +187,7 @@ describe('the identity of a call is the product’s answer, not this file’s', 
 
 describe('a missing recording says which kind of missing', () => {
   it('does not promise "check back soon" when the product may not play recordings', async () => {
-    // Master nulls `recording_url` on a tenant without the capability and leaves
+    // The server nulls `recording_url` on a tenant without the capability and leaves
     // `recording_requested` true, so this is exactly the pair the old copy read.
     renderView({
       call: { ...CALL, recording_url: null, recording_requested: true },
@@ -239,7 +239,7 @@ describe('a missing recording says which kind of missing', () => {
 });
 
 describe('a recording the provider serves directly', () => {
-  // Core hands back an absolute URL when the provider serves the file publicly
+  // The server hands back an absolute URL when the provider serves the file publicly
   // (VoiceLink/Elision) instead of one of its own proxy paths, because its egress
   // cannot reach that host. Asserted on the SHARED view because both products
   // format through it — the softphone and the agency supervisor alike.
@@ -304,7 +304,7 @@ describe('a recording the provider serves directly', () => {
 
 describe('a transcript that aged out is a state, not an absence', () => {
   it('says the transcript was deleted when the summary outlived it', () => {
-    // Core's retention step nulls `conversation_log` and leaves
+    // The server's retention step nulls `conversation_log` and leaves
     // `analysis_status` at `completed`, so the section simply vanished from under
     // a summary that is still on screen.
     renderView({ call: { ...CALL, conversation_log: null } });

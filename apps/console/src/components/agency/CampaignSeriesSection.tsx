@@ -41,7 +41,7 @@ import styles from './CampaignSeriesSection.module.css';
  * Every number, proportion and sentence below comes from
  * `utils/agencyCampaignSeries.ts` (or, for the activity chart, from
  * `bucketSeries`, which is the per-agent chart's own derivation reused because
- * master serves the same bucket shape). This file is assembly: a picker, four
+ * the API serves the same bucket shape). This file is assembly: a picker, four
  * states, and a choice of chart.
  */
 
@@ -160,7 +160,7 @@ export function CampaignSeriesSection({
       <div className={styles.body}>
         {state.status === 'error' && (
           /*
-            The server's own sentence, and no retry button. A master that predates
+            The server's own sentence, and no retry button. An API that predates
             the route answers 404 on every attempt, so a Retry here would be a
             control that cannot work — and this console cannot tell that 404 from
             a transient one. The section says what happened and the rest of the

@@ -9,12 +9,12 @@ import {
 import type { AgencyIngestJob } from '../../types/agency-campaign';
 
 /**
- * `AD-P3-U-01` acceptance (b): *the counts are displayed and reconcile to the
+ * requirement: *the counts are displayed and reconcile to the
  * file's row count*.
  *
  * The arithmetic under test is `accepted + rejected = rows_read`, with
  * `duplicates` and `dnc_suppressed` as **breakdowns of `rejected`**. That is the
- * shape master actually produces — a duplicate row goes through the same
+ * shape the API actually produces — a duplicate row goes through the same
  * `reject()` as every other rejection, and DNC-listed rows are moved from
  * accepted to rejected rather than counted a third way.
  */
@@ -174,7 +174,7 @@ describe('rejection groups', () => {
   });
 
   it('renders an unknown code rather than dropping its rows from the list', () => {
-    // A reason master adds later must not silently vanish from a screen whose
+    // A reason the API adds later must not silently vanish from a screen whose
     // groups are supposed to account for the whole rejected total.
     const summary = buildIngestSummary(
       job({
@@ -222,14 +222,14 @@ describe('the high-rejection warning', () => {
 });
 
 /**
- * What core refused on arrival.
+ * What the API refused on arrival.
  *
- * `accepted`/`rejected` are master's count of what it decided to SEND; this is
- * core's count of what it would not TAKE. They are measured on opposite sides of
- * a network hop, so they cannot be reconciled — and `MAG-113` is the record of
- * what happens when a summary claims an arithmetic the payload cannot support.
+ * `accepted`/`rejected` are the API's count of what it decided to SEND; this is
+ * the API's count of what it would not TAKE. They are measured on opposite sides of
+ * a network hop, so they cannot be reconciled — and a summary that claims an arithmetic the
+ * payload cannot support is a defect.
  */
-describe('rows core refused on arrival', () => {
+describe('rows the API refused on arrival', () => {
   const REUPLOAD = job({
     rows_read: 5_000,
     accepted: 4_800,
@@ -251,7 +251,7 @@ describe('rows core refused on arrival', () => {
     expect(summary.coreRefused).toBe(1_204);
   });
 
-  it('states it as a floor, because master’s own count can undercount', () => {
+  it('states it as a floor, because the API’s own count can undercount', () => {
     // A chunk whose response was lost in transit replays as zero, so the number
     // is "at least". Printing it as an exact total is the lie worth preventing.
     const notice = buildIngestSummary(REUPLOAD).coreRefusedNotice!;
@@ -272,7 +272,7 @@ describe('rows core refused on arrival', () => {
   });
 
   it('offers the sampled rows as examples from the start of the file', () => {
-    // Master caps the sample at 20 in file order, so on a heavily-colliding
+    // The API caps the sample at 20 in file order, so on a heavily-colliding
     // re-upload chunk 0 alone fills it. Presenting it as a spread across the
     // file would have an operator conclude the later rows were fine.
     const sample = buildIngestSummary(REUPLOAD).coreRefusedSample!;
@@ -289,15 +289,15 @@ describe('rows core refused on arrival', () => {
     expect(summary.coreRefusedSample).toBeNull();
   });
 
-  it('is silent when core refused nothing', () => {
+  it('is silent when the API refused nothing', () => {
     const summary = buildIngestSummary(OPERATOR_FILE);
     expect(summary.coreRefused).toBe(0);
     expect(summary.coreRefusedNotice).toBeNull();
     expect(summary.coreRefusedSample).toBeNull();
   });
 
-  it('renders nothing rather than NaN for a job written before master had the columns', () => {
-    // Master defaults these itself, but a row from before its migration 055 has
+  it('renders nothing rather than NaN for a job written before the API had the columns', () => {
+    // The API defaults these itself, but a row from before its migration 055 has
     // no key at all — and `NaN duplicates` over a real import is worse than
     // silence.
     const legacy = job();
@@ -320,14 +320,14 @@ describe('rows core refused on arrival', () => {
 
 describe('terminal notices', () => {
   it('says how many rows a cancelled import actually loaded', () => {
-    // §B.8: never a silent partial. An operator told only "cancelled" assumes
+    // Never a silent partial. An operator told only "cancelled" assumes
     // either all or none, and both are wrong.
     const notice = terminalNotice(job({ status: 'cancelled', rows_read: 12_481, accepted: 6_204 }));
     expect(notice).toContain('6,204');
     expect(notice).toContain('12,481');
   });
 
-  it('surfaces the failure message when master gave one', () => {
+  it('surfaces the failure message when the API gave one', () => {
     expect(
       terminalNotice(job({ status: 'failed', error_message: 'Could not read the CSV.' })),
     ).toBe('Could not read the CSV.');

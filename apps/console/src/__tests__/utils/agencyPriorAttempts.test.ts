@@ -36,7 +36,7 @@ const PARENT = {
 
 describe('grouping by campaign', () => {
   it('puts this campaign first, then the ancestor', () => {
-    // Core sends newest-first, and here the ancestor's attempt is the newest —
+    // The API sends newest-first, and here the ancestor's attempt is the newest —
     // the agent's own pass still leads, because it is the context for the call
     // they are about to take.
     const groups = groupPriorAttempts(
@@ -54,7 +54,7 @@ describe('grouping by campaign', () => {
     expect(groups[1]!.campaignName).toBe('Q3 Winback');
   });
 
-  it('keeps core’s newest-first order inside each group', () => {
+  it('keeps the API’s newest-first order inside each group', () => {
     const groups = groupPriorAttempts(
       [
         attempt({ attempt_number: 3, ended_at: '2026-08-22T10:00:00.000Z' }),
@@ -72,8 +72,8 @@ describe('grouping by campaign', () => {
     ]);
   });
 
-  it('leaves a never-ended attempt at the bottom where core put it', () => {
-    // Core's `NULLS LAST` keeps a reaped or orphaned attempt out of the top
+  it('leaves a never-ended attempt at the bottom where the API put it', () => {
+    // The API's `NULLS LAST` keeps a reaped or orphaned attempt out of the top
     // slot. Re-sorting here would be a second answer to that and would put it
     // first the moment either side changed.
     const groups = groupPriorAttempts(
@@ -128,7 +128,7 @@ describe('the non-retry case is unchanged', () => {
   it('reads an attempt with no campaign id as belonging to this campaign', () => {
     // Before the lineage read existed, every prior attempt came from the
     // contact's own row on the campaign the agent is joined to — so that is the
-    // only thing an older core could have meant, and the degraded case is
+    // only thing an older API could have meant, and the degraded case is
     // exactly today's flat list rather than a group headed by nothing.
     const stale = { ...attempt(), campaign_id: '', campaign_name: '' };
     const groups = groupPriorAttempts([stale], 'camp-child', 'Q3 Winback — Retry 1');

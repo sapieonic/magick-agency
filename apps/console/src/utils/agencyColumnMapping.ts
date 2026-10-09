@@ -5,8 +5,8 @@ import type {
 import type { AgencyContextDisplay } from '../types/agency';
 
 /**
- * Column mapping (§B.3) — the roles, their arity rules, and the request they
- * build (`AD-P3-U-01` acceptance (a): *the operator can map any column as the
+ * Column mapping — the roles, their arity rules, and the request they
+ * build (requirement: *the operator can map any column as the
  * phone number*).
  *
  * Pure, per the house pattern. The rules here are worth a module rather than a
@@ -18,18 +18,18 @@ import type { AgencyContextDisplay } from '../types/agency';
  *    the mapper offers it explicitly and the ingest request carries it in
  *    `ignore_columns` — which excludes it from `context` entirely, not merely
  *    from the display.
- *  - **The phone suggestion is a suggestion.** Master withholds it when two
+ *  - **The phone suggestion is a suggestion.** The API withholds it when two
  *    columns are too close to call (`phone_column_ambiguous`), and this module
  *    preselects **nothing** in that case rather than picking the higher score.
  *    Guessing wrong here dials the wrong people.
  *  - **The country code is a mapping decision too.** A bare 10-digit number in
- *    the file has no country in it; master supplies one, and until now nothing
+ *    the file has no country in it; the API supplies one, and until now nothing
  *    let the operator say which. See {@link countryCodeError}.
  */
 
 export type ColumnRole = 'phone' | 'timezone' | 'hero' | 'detail' | 'ignore';
 
-/** Up to four fields get the agent's big-type treatment (§A.6.1). */
+/** Up to four fields get the agent's big-type treatment. */
 export const MAX_HERO_FIELDS = 4;
 
 export const ROLE_LABELS: Record<ColumnRole, string> = {
@@ -52,24 +52,24 @@ export interface MappingState {
    */
   heroOrder: string[];
   /**
-   * The country code master applies to a number that carries none.
+   * The country code the API applies to a number that carries none.
    *
    * **Empty means "send nothing", which is not the same as "send the default".**
-   * Master falls back to `DEFAULT_PHONE_COUNTRY_CODE` (env, `91` unset) inside
+   * The API falls back to `DEFAULT_PHONE_COUNTRY_CODE` (env, `91` unset) inside
    * `phone-normalizer.ts`, and only the server knows what that env holds — so
    * seeding this with a literal `'91'` would turn today's inherited default into
-   * a value cusui asserts, and would change what is dialed anywhere the env
+   * a value this console asserts, and would change what is dialed anywhere the env
    * differs. Empty is the only value that is provably a no-op.
    */
   defaultCountryCode: string;
 }
 
 /**
- * Seed a mapping from master's analysis.
+ * Seed a mapping from the API's analysis.
  *
  * Everything defaults to `detail`; the suggested phone column is preselected
- * **only** when master offered one. A timezone column is never auto-detected —
- * D4 says an unmapped contact uses the campaign default, and silently mapping a
+ * **only** when the API offered one. A timezone column is never auto-detected —
+ * The design says an unmapped contact uses the campaign default, and silently mapping a
  * column named `TZ` that holds something else is worse than asking. The country
  * code is likewise never inferred from the file: `analysis` carries no signal
  * for it, and guessing it wrong dials a different country.
@@ -130,7 +130,7 @@ export function setDefaultCountryCode(state: MappingState, value: string): Mappi
 }
 
 /**
- * Master's own rule (`/^\+?\d{1,3}$/` on both the analyze and ingest schemas),
+ * The API's own rule (`/^\+?\d{1,3}$/` on both the analyze and ingest schemas),
  * mirrored so a typo is caught in front of the field rather than as a 400 after
  * the file has been uploaded.
  *
@@ -186,7 +186,7 @@ export function ignoredColumns(state: MappingState): string[] {
 /**
  * The share of sampled rows whose value in this column normalises to E.164,
  * rendered under the phone select so the operator learns the rejection rate
- * **before** ingest rather than after (§B.3).
+ * **before** ingest rather than after.
  */
 export function phoneValidityLine(
   analysis: AgencyColumnAnalysis,
@@ -256,7 +256,7 @@ export function buildIngestRequest(
 
 /**
  * The `context_display` the campaign is saved with — this is the `hero_fields`
- * config the Agent Console reads (§A.6.1).
+ * config the Agent Console reads.
  *
  * Order is the operator's pick order, not file order: the console renders heroes
  * top-down and the first one is what an agent reads while the phone is ringing.

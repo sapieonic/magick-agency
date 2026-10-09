@@ -30,7 +30,7 @@ import type { AgencyAttempt, AgencyKeysetPage } from '../../types/agency-spine';
  *  4. **The campaign column degrades truthfully.** The row carries an id and no
  *     name, and a campaign somebody was unstaffed from still has their calls on
  *     it.
- *  5. **There is no CSV export, deliberately** — master's performance plugin has
+ *  5. **There is no CSV export, deliberately** — the API's performance plugin has
  *     no csv route, so a button would 404 every time it was pressed.
  */
 
@@ -209,7 +209,7 @@ describe('AgentAttemptsPage — the account-resolution trap', () => {
 
   it('sends BOTH ids on every read', async () => {
     // `apiFetch` sends `X-Account-Id` only when the fourth argument is present,
-    // and core requires it — an omitted one does not degrade, it produces a 400
+    // and the API requires it — an omitted one does not degrade, it produces a 400
     // about a header this client never sent.
     renderPage();
     await waitFor(() => expect(mocks.getMyAttempts).toHaveBeenCalled());
@@ -222,7 +222,7 @@ describe('AgentAttemptsPage — the account-resolution trap', () => {
 describe('AgentAttemptsPage — the rows a call list cannot show', () => {
   it('reads the caller-scoped route, never the supervisor twin', async () => {
     /**
-     * `my-attempts` takes no subject: master scopes it to the caller. A page that
+     * `my-attempts` takes no subject: The API scopes it to the caller. A page that
      * reached for the twin here would be naming the subject of its own history,
      * which is exactly what the paired routes exist to make impossible — and it
      * would 403 for the only role this page is for.
@@ -310,7 +310,7 @@ describe('AgentAttemptsPage — the campaign column', () => {
 
   it('falls back to a shortened id for a campaign nothing can name', async () => {
     /**
-     * The honest degradation. A campaign core could not identify still has real
+     * The honest degradation. A campaign the API could not identify still has real
      * attempts, so a BLANK cell would say the dial belonged to nothing — and a
      * bare 36-character UUID dressed as a name is something no reader can use.
      * `Campaign 4f21ab90` is neither: it says "a campaign, and here is enough of
@@ -323,7 +323,7 @@ describe('AgentAttemptsPage — the campaign column', () => {
     expect(cell.textContent).toBe('Campaign 4f21ab90');
     expect(cell.textContent).not.toBe('');
     expect(cell.textContent).not.toBe(UNRESOLVABLE_CAMPAIGN.campaign_id);
-    // The whole id is still reachable, for a supervisor chasing it in master.
+    // The whole id is still reachable, for a supervisor chasing it in the API.
     expect(cell.getAttribute('title')).toBe(UNRESOLVABLE_CAMPAIGN.campaign_id);
   });
 
@@ -533,13 +533,13 @@ describe('AgentAttemptsPage — the filters', () => {
   it('searches by phone number, sending the param alongside every other filter', async () => {
     /**
      * The control was REMOVED once, and pinning why is the point of this test.
-     * Master's whitelist for the two agent routes did not carry `phone` and
+     * The API's whitelist for the two agent routes did not carry `phone` and
      * `forwardAllowedQuery` dropped an unlisted key SILENTLY, so the search
      * answered 200 with the person's entire unfiltered history presented as the
      * matches. Every row wrong, more rows than were asked for, and nothing on
      * screen saying so.
      *
-     * Both halves have landed on master — `phone` is forwarded, and an unknown key
+     * Both halves have landed on the API — `phone` is forwarded, and an unknown key
      * is now rejected with a 400 rather than dropped — so the search is real and
      * the input is back.
      *
@@ -579,7 +579,7 @@ describe('AgentAttemptsPage — the filters', () => {
      * that an empty result could not read as "nothing matched" for a search that
      * was never sent. With the search real, the exclusion inverted into the same
      * lie the other way round: a narrowed list with no Clear button and a badge
-     * claiming nothing is applied. Both halves landed on master — `phone` is
+     * claiming nothing is applied. Both halves landed on the API — `phone` is
      * forwarded on the agent routes and an unknown key is now rejected rather
      * than dropped — so the helpers changed, in the leaf module.
      *
@@ -656,7 +656,7 @@ describe('AgentAttemptsPage — the filters', () => {
   });
 
   it('refuses an inverted range before sending it', async () => {
-    // Master refuses it too (400), but telling the reader before they press Apply
+    // The API refuses it too (400), but telling the reader before they press Apply
     // is the difference between a correction and a support ticket.
     renderPage();
     await screen.findByTestId(`my-attempt-row-${CONNECTED.id}`);
@@ -699,8 +699,8 @@ describe('AgentAttemptsPage — the disposition-code filter', () => {
   it('says a code with a comma in it cannot be searched for', async () => {
     /**
      * Such a code is unfilterable end to end and the client cannot fix it:
-     * master's `forwardAllowedQuery` joins repeated params with a comma and
-     * core's `multiParam` splits on one, so the code arrives as two and matches
+     * The API's `forwardAllowedQuery` joins repeated params with a comma and
+     * the API's `multiParam` splits on one, so the code arrives as two and matches
      * nothing. The answer is an EMPTY list, which reads as a fact about the
      * person rather than about the encoding — the exact failure this screen's
      * other honesty sentences exist to prevent.
@@ -740,8 +740,8 @@ describe('AgentAttemptsPage — the disposition-code filter', () => {
   it('keeps a code containing a COMMA as one value', async () => {
     /**
      * One value, because that is what the operator typed and this box asks for a
-     * code "exactly as it was set up". The code will not MATCH — master joins
-     * repeated params with a comma and core splits on one — but the client must
+     * code "exactly as it was set up". The code will not MATCH — the API joins
+     * repeated params with a comma and the API splits on one — but the client must
      * not be the thing that mangles it: splitting on commas in the entry box
      * would produce the same two useless codes one hop earlier, while hiding
      * that the code the reader typed is the one thing that cannot be filtered
@@ -784,11 +784,11 @@ describe('AgentAttemptsPage — the shape of the screen', () => {
   it('offers no CSV export, and does not import the downloader', async () => {
     /**
      * Considered and rejected on a hard fact rather than forgotten: the campaign
-     * spine has `/campaigns/:id/attempts.csv`, and master's performance plugin has
+     * spine has `/campaigns/:id/attempts.csv`, and the API's performance plugin has
      * NO csv route — neither `my-attempts.csv` nor the supervisor twin. So
      * `downloadSpineCsv` pointed at this data would 404, and an Export button would
      * be a control that fails every time it is pressed. Adding one is a
-     * cross-service change (core, then master), not a screen change.
+     * cross-service change (the server first, then the console), not a screen change.
      *
      * Pinned at the DOM and at the import, because the tempting way to add it is to
      * copy the campaign page's header wholesale.
@@ -817,7 +817,7 @@ describe('AgentAttemptsPage — the shape of the screen', () => {
      * A full-viewport page with no navigation and no link is the trap
      * `DialerUnavailable` documents. Safe here, unlike on the station: this page
      * holds no socket, so leaving it cannot strand a customer against an agent
-     * core still believes is available.
+     * the API still believes is available.
      *
      * It used to be a `back` link plus one `sibling`, authored per page — so this
      * screen linked to two of the three agent surfaces and never said which one

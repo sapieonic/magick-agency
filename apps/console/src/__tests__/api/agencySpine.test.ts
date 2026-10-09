@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
- * The attempt-spine API client (MAG-159).
+ * The attempt-spine API client.
  *
  * Two things are pinned. The query builder, because a filter dropped on the way
  * out is a WIDER result set presented as a narrower one — and on this surface
  * the operator reads the result as a fact about the campaign. And the
  * truncation signal, because it is read out of headers another service writes
- * and then shown to an operator verbatim.
+ * and then shown to an operator unchanged.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -52,8 +52,8 @@ describe('query building', () => {
     );
     const url = mocks.apiFetch.mock.calls[0]![0] as string;
     // The form both services accept, and the one `agencyStats.ts` sends. It does
-    // NOT make a comma inside a value survive — master joins the repeats with a
-    // comma and core splits on one — which is why that is asserted nowhere.
+    // NOT make a comma inside a value survive — the server joins the repeats with a
+    // comma and the server splits on one — which is why that is asserted nowhere.
     expect(url).toContain('outcome=abandoned&outcome=no_answer');
     expect(url).not.toContain('outcome=abandoned%2Cno_answer');
   });
@@ -72,7 +72,7 @@ describe('query building', () => {
     expect(url).toContain('limit=25');
   });
 
-  it('always passes the account id through — an omitted one is a 400 from core', async () => {
+  it('always passes the account id through — an omitted one is a 400 from the server', async () => {
     await getCampaignContacts('camp-1', {}, {}, 'tenant-9', 'account-9');
     expect(mocks.apiFetch).toHaveBeenCalledWith(
       expect.any(String), {}, 'tenant-9', 'account-9',

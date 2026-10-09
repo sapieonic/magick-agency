@@ -11,10 +11,9 @@ import styles from './AgencyLayout.module.css';
 /**
  * The Agency workspace shell.
  *
- * A second shell rather than a section of `AppLayout`, for the reason the UX
- * spec gives for the station (§A.1) and one more: the two products have
- * different navigation *shapes*. The main app's sidebar is nine collapsible
- * sections built for browsing; agency is three destinations an operator returns
+ * A second shell rather than a section of `AppLayout`, because the two
+ * surfaces have different navigation *shapes*. The platform sidebar is
+ * built for browsing a list of sections; agency is three destinations an operator returns
  * to all day. Folding agency into the main tree would add a tenth section that
  * is mostly empty, and folding the main tree into agency would put nine
  * irrelevant sections in front of a supervisor watching a live campaign.
@@ -56,11 +55,9 @@ export function AgencyLayout() {
             sidebar is behind a menu button and an exit hidden inside a drawer is
             not an exit.
 
-            PORT NOTE (magick-agency, decision B17): cusui labelled this "Back to
-            MagickVoice" with a back arrow, because `/app` was the parent
-            product. Here `/app` is in-product, so the link stays (removing it
+            Decision B17: `/app` is in-product, so the link stays (removing it
             would leave a supervisor no way to Team or Call summaries from the
-            workspace) and says where it goes instead. The label is hidden below
+            workspace) and says where it goes. The label is hidden below
             the mobile breakpoint, so the link carries the name itself.
           */}
           <Link to="/app" className={styles.backLink} aria-label="Team and settings">
@@ -75,7 +72,7 @@ export function AgencyLayout() {
         </div>
 
         {/*
-          Every agency call is account-scoped: core requires `x-mgkvc-account` on
+          Every agency call is account-scoped: the API requires `x-mgkvc-account` on
           every authenticated route and answers 400 without it. Rather than let
           each page fire a request that fails with a header error naming nothing
           the operator can act on, the shell says what is missing once. Only

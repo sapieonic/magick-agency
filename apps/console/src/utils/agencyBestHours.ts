@@ -83,7 +83,7 @@ export const BEST_HOURS_CELLS = BEST_HOURS_DAYS * BEST_HOURS_HOURS;
  *
  * A constant rather than `Intl`'s locale weekdays, and deliberately: the wire
  * carries a NUMBER because naming a day is a formatting decision that belongs in
- * the console (D3), and 0 = Sunday is the value `EXTRACT(DOW)` produces. Deriving
+ * the console, and 0 = Sunday is the value `EXTRACT(DOW)` produces. Deriving
  * the names from a locale would make the row order depend on the reader's
  * first-day-of-week and re-introduce exactly the off-by-one against ISO's 1 = Monday
  * that the numeric wire value exists to avoid.
@@ -176,7 +176,7 @@ export const BEST_HOURS_VIEW_HINTS: Record<BestHoursView, string> = {
  * The zone the buckets were ACTUALLY cut in, or `null`.
  *
  * ── Read through a `typeof` guard, and the direction of the fallback matters ─
- * `resolved_timezone` is additive and merge order is core → master → cusui, so this
+ * `resolved_timezone` is additive and ships server-side first, then in this console, so this
  * console can meet a service that predates it. The fallback is **silence**, not a
  * guess: `undefined` (the field never arrived) and `null` (a read with no zoned
  * dimension) are two different arrivals and both mean "this surface may not name a
@@ -213,7 +213,7 @@ export function bestHoursZone(page: AgencyGroupPage): string | null {
     rule is that the axis names the zone the buckets were cut in **or nothing**, and
     a name that resolves to nothing is not a name.
 
-    Note what this does NOT claim: core's buckets are still correct — it cut them
+    Note what this does NOT claim: The server's buckets are still correct — it cut them
     with the value Postgres accepted. This console just cannot say which zone that
     was, which is the same position an absent field leaves it in, and it degrades the
     same way.
@@ -236,9 +236,9 @@ export function bestHoursHourAxisLabel(zone: string | null): string | null {
  * Said on the surface when {@link bestHoursZone} could not name a zone.
  *
  * It names the consequence rather than the cause, and that is deliberate now that
- * there are two causes: the field did not arrive (a core that predates it), or it
+ * there are two causes: the field did not arrive (a the server that predates it), or it
  * arrived carrying a name this build cannot resolve. **Both leave the reader in
- * exactly the same position** — the columns are true, because core cut them in
+ * exactly the same position** — the columns are true, because the server cut them in
  * whatever zone Postgres accepted, but this console cannot say which zone that was,
  * and a reader who assumes their own would be five and a half hours out on a
  * campaign in another one. One sentence for both, because a reader cannot act
@@ -346,7 +346,7 @@ interface ZonedParts {
  * A formatter for one named zone, or `null` when the name is not one.
  *
  * `Intl.DateTimeFormat` throws a `RangeError` on an unknown `timeZone`, and this is
- * exactly the input that can be one: core's zone comes out of `COALESCE(z.name,
+ * exactly the input that can be one: The server's zone comes out of `COALESCE(z.name,
  * 'UTC')` and is therefore always a real IANA name today, but the value reaching
  * this client crossed two services and a hand-mirrored type. A caught `RangeError`
  * degrades to "coverage unknown"; an uncaught one takes the section down.
@@ -568,7 +568,7 @@ export interface BestHoursMatrix {
  *
  * The contribution screen's `contributionRatesReportable`, on the same payload and
  * with the same permissive fallback for the same reason: an absent flag must not
- * withhold every rate on the screen the moment this console runs ahead of core. On
+ * withhold every rate on the screen the moment this console runs ahead of the server. On
  * a heatmap the permissive fallback is also the only one that degrades sensibly —
  * `false` would hatch all 168 cells and leave a map with no map on it.
  *
@@ -606,7 +606,7 @@ function ratesReportable(row: AgencyGroupRow): boolean {
  *     already made. The roster's "absent means do not withhold" precedent is a
  *     judgement about a column of words, and it does not carry to a colour ramp.
  *
- * The cost is bounded and visible: on a core that predates the field the CONVERSION
+ * The cost is bounded and visible: on a the server that predates the field the CONVERSION
  * view hatches every cell, `bestHoursWithheldReadout` says how many and advises a
  * longer window, and the other two views — including `volume`, which is always
  * reportable by construction (E6) — are untouched. A map that says "I cannot rate

@@ -53,7 +53,7 @@ import {
  *
  * Every fixture cell's rates and flags are derived from its own counts (see
  * `helpers/bestHours.ts`), so no case here can assert a state the server cannot
- * emit — which is the MAG-106 failure the phase-01 contract names.
+ * emit — which is the impossible-payload failure.
  */
 
 /** A convenience: pull one cell out of a matrix without indexing through two arrays. */
@@ -112,7 +112,7 @@ describe('agencyBestHours — E3, the zone the buckets were cut in', () => {
 
   it('says NOTHING when the field did not arrive, rather than guessing', () => {
     /**
-     * A core that predates the field. The honest answer is silence: "the 18:00
+     * A an API that predates the field. The honest answer is silence: "the 18:00
      * column" is not a fact until a zone is named, and a wrong name is a rostering
      * decision. `undefined` is what makes the `typeof` guard load-bearing.
      */
@@ -132,7 +132,7 @@ describe('agencyBestHours — E3, the zone the buckets were cut in', () => {
      * ⚠️ It accepted any non-blank string, and the surface then contradicted itself
      * on exactly the campaign whose zone is broken.
      *
-     * Core resolves the zone through `LEFT JOIN pg_timezone_names` and COALESCEs to
+     * The API resolves the zone through `LEFT JOIN pg_timezone_names` and COALESCEs to
      * `'UTC'`, so a garbage `default_timezone` does not raise — which is deliberate,
      * and which means a name that resolves to nothing can reach this client through
      * two services and a hand-mirrored type. `weekdayCoverage` already refused such a
@@ -297,7 +297,7 @@ describe('agencyBestHours — E4, coverage in the resolved zone', () => {
 
   it('refuses on an unusable zone name, an unparseable bound or an empty window', () => {
     // `Intl.DateTimeFormat` throws a RangeError on an unknown `timeZone`, and this is
-    // the one input that can be one — core's `COALESCE(z.name, 'UTC')` crossed two
+    // the one input that can be one — the API's `COALESCE(z.name, 'UTC')` crossed two
     // services and a hand-mirrored type to get here.
     expect(weekdayCoverage(WEEK_FROM, WEEK_TO, 'Not/AZone').known).toBe(false);
     expect(weekdayCoverage('not a date', WEEK_TO, FIXTURE_ZONE).known).toBe(false);
@@ -677,7 +677,7 @@ describe('agencyBestHours — E6, three views over one payload', () => {
     /**
      * The other half of failing closed, and the half that stops it becoming a
      * client-side threshold. A cell the SERVER cleared is quotable even on counts
-     * this console would not have cleared itself: the threshold is core's to tune,
+     * this console would not have cleared itself: the threshold is the API's to tune,
      * and `AGENCY_ROSTER_MIN_RATE_DENOMINATOR` is mirrored so the console can say
      * the number rather than apply it.
      */

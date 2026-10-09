@@ -279,7 +279,7 @@ describe('loginPathFor — which door', () => {
  * bypass family nobody has thought of yet.
  */
 describe('safeReturnPath — the invariant', () => {
-  const ORIGIN = 'https://app.magickvoice.com';
+  const ORIGIN = 'https://app.example.com';
   const CANDIDATES = [
     '/dialer',
     '/station?campaign=1',
@@ -338,7 +338,7 @@ describe('isLoginPath', () => {
         The invite page is not a sign-in page and belongs in this set anyway,
         because it fails the same way and worse. It is reached from an email BY
         SOMEBODY WITH NO ACCOUNT, and a 401 there is routine rather than
-        exceptional: master answers one for a Firebase token it will not accept,
+        exceptional: the API answers one for a Firebase token it will not accept,
         seconds after the visitor created their very first credential. Outside
         this set, that 401 makes both guards set
         `window.location.href = sessionExpiredLoginUrl()` — discarding the

@@ -7,7 +7,7 @@ import {
 import { advisoryAgentState } from '../../utils/agencyStaleResponse';
 
 /**
- * Core's frozen disposition shape (`AD-P2-C-04`, contract `606d3cb`).
+ * The API's frozen disposition shape.
  *
  * Two of these are cases a console gets wrong by reading the status code
  * literally, and one is the field that drops a live call if read directly.
@@ -110,10 +110,10 @@ describe('validation rejections keep their code and allowed_codes', () => {
   });
 });
 
-describe('the saved outcome carries the time core actually booked', () => {
+describe('the saved outcome carries the time the API actually booked', () => {
   it('keeps `next_attempt_at`, so the confirmation can name the callback time', () => {
     // Without it the console can only say "Disposition saved." — and
-    // `confirmationCopy`, where CR-1's "we" lives, had zero callers.
+    // `confirmationCopy`, where the callback copy's "we" lives, had zero callers.
     expect(
       classifySubmitOutcome({
         status: 200,
@@ -133,7 +133,7 @@ describe('the saved outcome carries the time core actually booked', () => {
   });
 });
 
-describe('the confirmation copy — CR-1, always "we"', () => {
+describe('the confirmation copy — always "we"', () => {
   it('states the outcome plainly when nothing is scheduled', () => {
     // `contact_state` is `completed` and `next_attempt_at` null for almost every
     // P2 disposition.
@@ -143,7 +143,7 @@ describe('the confirmation copy — CR-1, always "we"', () => {
 
   it('says "we" and never "I" when a callback was honoured', () => {
     // A callback re-enters the roster as an ordinary pending contact and whichever
-    // agent is available takes it (D11), so "I'll call you back" is a promise the
+    // agent is available takes it, so "I'll call you back" is a promise the
     // product breaks. This copy is the entire mitigation for that decision.
     const copy = confirmationCopy({
       dispositionLabel: 'Callback',
@@ -208,9 +208,9 @@ describe('agent_state on the response is advisory — reading it directly drops 
 
 /**
  * `handleSubmitResponse` — the stale guard and the classifier, welded in the only
- * safe order (§A.13.6's stale-response rule).
+ * safe order (the stale-response rule).
  *
- * The proof §A.13.6 asks for is specific, and it names which assertion matters:
+ * The proof the stale-response rule asks for is specific, and it names which assertion matters:
  * "Asserting only that the error does not render passes while the note
  * contamination is still present, **so the notes assertion is the one that
  * matters**." At this tier the equivalent is that the outcome carries no
@@ -221,8 +221,8 @@ describe('handleSubmitResponse — the guard runs first, always', () => {
   const B = 'attempt-b';
 
   it('discards A’s 400 when B is on the station, with nothing to restore', () => {
-    // The sequence is ordinary, not exotic: submit for A, core reserves B, A's
-    // 400 lands. §A.8.4 requires the new `reserved` to win.
+    // The sequence is ordinary, not exotic: submit for A, the API reserves B, A's
+    // 400 lands. the stale-response rule requires the new `reserved` to win.
     const outcome = handleSubmitResponse(
       { attemptId: A },
       { status: 400, body: { code: 'note_required', message: 'Notes are required', allowed_codes: ['x'] } },
@@ -300,7 +300,7 @@ describe('handleSubmitResponse — the guard runs first, always', () => {
 });
 
 /**
- * NEW (magick-agency, CONTRACT-DIFF §1): core's `callback_requested_at`. Core
+ * The API's `callback_requested_at`. The API
  * defers a callback outside the contact's calling window to the next window
  * open; `next_attempt_at` is then the time it will really dial, and the request
  * comes back separately. "When they differ, the console should say what will

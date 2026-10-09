@@ -23,7 +23,7 @@ import styles from './AgencyAnalyticsPage.module.css';
  * ── Why this exists, and why the sidebar's old note is now spent ────────────
  * `AgencySidebar` used to carry a comment explaining that the Supervisor
  * Dashboard was "deliberately absent rather than present-and-empty", because
- * core's stats payload produced no `pacing_state`, `stall_reason`, per-agent rows
+ * the API's stats payload produced no `pacing_state`, `stall_reason`, per-agent rows
  * or connect split — and "a health strip with no diagnosis in it is worse than no
  * health strip: it reads as *nothing wrong* when the truth is *nothing measured*".
  *
@@ -42,14 +42,14 @@ import styles from './AgencyAnalyticsPage.module.css';
  * inconsistency: here the numbers ARE what the reader came for.
  *
  * They are fetched concurrently, and each independently: `allSettled`, not `all`.
- * One campaign whose stats read fails — core deleted it, a 500, a timeout — annotates
+ * One campaign whose stats read fails — the API deleted it, a 500, a timeout — annotates
  * its own card and leaves every other campaign's figures on screen. With `all`,
  * the first failure would blank the whole page, which for a page a supervisor
  * opens *because* something looks wrong is the worst possible failure mode.
  *
  * ── The second tab: the floor, then one person ─────────────────────────────
  * This page used to be campaign-only, and this docstring used to say so. It no
- * longer is: master now serves per-agent history (`GET /agency/agents/:userId/
+ * longer is: the server now serves per-agent history (`GET /agency/agents/:userId/
  * stats`, the supervisor twin of the route an agent reads about themselves), and
  * a supervisor's second question after "which campaign needs me" is "which
  * person". Before this there was nowhere in the product to ask it — the attempts
@@ -71,7 +71,7 @@ import styles from './AgencyAnalyticsPage.module.css';
  * to every page view, for a surface most visits do not scroll to. A tab mounts
  * when it is chosen.
  *
- * Gated on `hasPermission(role, 'agency.supervise')` — master's exact floor on
+ * Gated on `hasPermission(role, 'agency.supervise')` — the server's exact floor on
  * both twins. Anything looser renders a tab whose first read 403s; anything
  * tighter hides it from an `account_admin` who holds it.
  *
@@ -147,8 +147,7 @@ export function AgencyAnalyticsPage() {
    * one's results; it does not prevent a resolved promise writing into an unmounted
    * component, because nothing bumps it on unmount — and `load` is also the retry
    * handler, whose cleanup `useEffect` never receives. So a navigate-away shortly
-   * after pressing Retry left a chain that still called `setState` (raised in review
-   * on PR #263).
+   * after pressing Retry left a chain that still called `setState` (raised in review).
    *
    * Two guards rather than one because they answer different questions: "is this
    * result still the newest?" and "is there still anything to render into?".
@@ -263,7 +262,7 @@ export function AgencyAnalyticsPage() {
   const canCreate = hasPermission(role, 'agency.campaigns.write');
   /**
    * **Must be `agency.supervise` and nothing else.** It is the exact permission
-   * master floors `GET /agency/agents/:userId/{stats,attempts}` on. A looser gate
+   * the server floors `GET /agency/agents/:userId/{stats,attempts}` on. A looser gate
    * (say `agency.campaigns.read`, which is what the campaign half of this page
    * needs) renders a tab whose first read 403s for a `viewer`; a tighter one
    * hides it from an `account_admin`, the very role the permission floors at.

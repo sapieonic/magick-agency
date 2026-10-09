@@ -7,7 +7,7 @@ import {
 } from '../../utils/agencyStaleResponse';
 
 /**
- * The cross-contact leak at the §A.13.6 / §A.13.7 seam (spec `bcc2890`).
+ * The cross-contact leak at the seam (spec `bcc2890`).
  *
  * Read the pad simulation below before the assertions. The decision function on
  * its own is three lines and looks obviously right; what these tests have to
@@ -20,7 +20,7 @@ const B = 'attempt-customer-b';
 
 /**
  * The smallest thing that can exhibit the bug: a pad holding notes for whichever
- * attempt is currently on the station, plus the §A.13.6 error clauses.
+ * attempt is currently on the station, plus the error clauses.
  *
  * `applyError` is written the way the spec reads clause by clause — preserve the
  * note, re-enable submit, render inline — with the guard as its first line. Take
@@ -34,7 +34,7 @@ class PadSimulator {
   submitDisabled = false;
   readonly diagnostics: string[] = [];
 
-  /** A new `reserved` always wins (§A.8.4): fresh pad, fresh empty notes. */
+  /** A new `reserved` always wins: fresh pad, fresh empty notes. */
   reserve(attemptId: string): void {
     this.currentAttemptId = attemptId;
     this.notes = '';
@@ -48,7 +48,7 @@ class PadSimulator {
     return { attemptId, notes };
   }
 
-  /** The §A.13.6 failure path, guard first. */
+  /** The failure path, guard first. */
   applyError(inFlight: { attemptId: string; notes: string }, message: string): void {
     const decision = decideDispositionResponse(
       { attemptId: inFlight.attemptId },
@@ -76,7 +76,7 @@ describe('the leak, and that the guard closes it', () => {
     pad.reserve(A);
     const inFlight = pad.submit(A, "A said don't call before 6pm, spouse is ill");
 
-    // 2. A new `reserved` for customer B arrives — correctly, per §A.8.4.
+    // 2. A new `reserved` for customer B arrives — correctly, 
     pad.reserve(B);
 
     // 3. A's 400 lands.
@@ -119,7 +119,7 @@ describe('the leak, and that the guard closes it', () => {
   });
 
   it('STILL preserves the note on a same-attempt 400 — the normal path is intact', () => {
-    // The guard must not be a blanket suppression. This is the case §A.13.6 is
+    // The guard must not be a blanket suppression. This is the case is
     // actually written for: the note is the agent's only artefact of an
     // eight-minute call and nothing may clear it on an error path.
     const pad = new PadSimulator();

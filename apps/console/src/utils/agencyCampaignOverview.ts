@@ -21,9 +21,9 @@ import { RATE_MIN_ATTEMPTS, ratesWithheld } from './agencyCampaignPerformance';
  * **A missing number is never a zero, and a null rate is never 0%.** The stats
  * payload carries three different absences and they read differently:
  *
- * 1. **`undefined`** — the field did not arrive (an older core, an older
- *    master, or a partial read). Renders `—` and `known: false`.
- * 2. **`null`** — core carried the field and has nothing to measure. Every rate
+ * 1. **`undefined`** — the field did not arrive (an older the server, an older
+ *    the API, or a partial read). Renders `—` and `known: false`.
+ * 2. **`null`** — the server carried the field and has nothing to measure. Every rate
  *    on this payload is null before its denominator exists. The sub-line that
  *    would have quoted it is **dropped**, rather than printed as `0%`.
  * 3. **A real `0`** — a measurement, and the only one of the three that is a
@@ -47,7 +47,7 @@ import { RATE_MIN_ATTEMPTS, ratesWithheld } from './agencyCampaignPerformance';
  *
  * No rate is re-derived here. A blended connect rate computed from
  * `attempts_connected / attempts_total` would be a second, different connect
- * rate for the same campaign, which is exactly what core's single wire figure
+ * rate for the same campaign, which is exactly what the server's single wire figure
  * exists to prevent.
  */
 
@@ -91,7 +91,7 @@ function pct(value: number): string {
  * Three ways to get `null`, and the third is the interesting one:
  *
  * - `undefined` — the field didn't arrive.
- * - `null` — core carried it and has nothing to measure.
+ * - `null` — the server carried it and has nothing to measure.
  * - **The campaign has too few dials to publish a percentage at all.**
  *
  * That last is `ratesWithheld`, imported from `agencyCampaignPerformance`
@@ -169,7 +169,7 @@ export interface ContactFunnelState {
  * moving (dialing, then bridged), what is still to come, then the two ways a
  * contact leaves the list.
  *
- * The hints are carried verbatim from the counters this replaced, with two
+ * The hints are carried unchanged from the counters this replaced, with two
  * exceptions, both of which were claims the payload does not support:
  *
  * - **Suppressed no longer says "Skipped".** On a collections campaign the
@@ -225,7 +225,7 @@ const ON_CALL_DERIVED_HINT =
 type CountedKey = Exclude<ContactStateKey, 'contacts_on_call'>;
 
 /**
- * The buckets core actually counts — the terms of the subtraction below.
+ * The buckets the server actually counts — the terms of the subtraction below.
  *
  * `contacts_on_call` is excluded by its type because the stats payload has no
  * field for it; that absence is the gap {@link contactFunnel} closes.
@@ -262,7 +262,7 @@ export interface ContactFunnelCell extends ContactFunnelState {
   /**
    * True when {@link count} was worked out by subtraction rather than read.
    *
-   * Only ever true for `contacts_on_call`, and only until core carries the
+   * Only ever true for `contacts_on_call`, and only until the server carries the
    * field. It exists so the panel can mark the figure as inferred: it is the
    * one number here that is not a measurement, and the module's standing rule
    * is that a derived figure never passes itself off as a reading.
@@ -309,7 +309,7 @@ export interface ContactFunnel {
    *
    * The invariant this panel claims: **every contact is in a listed cell or in
    * here.** So while `contacts_on_call` is derived it is `0` by construction —
-   * the remainder *is* that cell — and it only goes positive once core carries
+   * the remainder *is* that cell — and it only goes positive once the server carries
    * a real `contacts_on_call` that, with the five, still leaves something over.
    *
    * `null` means the question could not be asked: no total, a counter missing,
@@ -381,7 +381,7 @@ export function contactFunnel(stats: AgencyCampaignStats | null): ContactFunnel 
 
   /*
     Prefer a reading over a derivation, always. `contacts_on_call` is not on the
-    payload today, but it is the field core would add to close this properly, so
+    payload today, but it is the field the server would add to close this properly, so
     the moment it appears the subtraction stops being used — without a second
     change here.
   */
@@ -389,11 +389,11 @@ export function contactFunnel(stats: AgencyCampaignStats | null): ContactFunnel 
   const onCallMeasured = typeof measuredOnCall === 'number';
 
   /*
-    The remainder is taken against everything KNOWN, which once core carries
+    The remainder is taken against everything KNOWN, which once the server carries
     `contacts_on_call` includes it.
 
     Summing only the five would leave `unaccounted` describing the gap the
-    measured cell has already filled: core sending `contacts_on_call: 2` where
+    measured cell has already filled: The server sending `contacts_on_call: 2` where
     the five leave 3 would report 3 unaccounted beside a cell reading 2, and the
     genuinely unexplained 1 would go unnamed. Counting the measurement keeps one
     invariant true in both worlds — **every contact is in a listed cell or in
@@ -434,7 +434,7 @@ export function contactFunnel(stats: AgencyCampaignStats | null): ContactFunnel 
 
   /*
     "On a call" earns its row only when it has something to say. A measured
-    zero is still a fact worth reading — so it stays once core carries the field
+    zero is still a fact worth reading — so it stays once the server carries the field
     — but a *derived* zero says only "the buckets reconcile", which the absence
     of the row already says more quietly.
   */
@@ -647,7 +647,7 @@ export function listWorkedRing(stats: AgencyCampaignStats | null): ListWorkedRin
 
   const worked = (parts as number[]).reduce((sum, p) => sum + p, 0);
   /*
-    More contacts finished than exist. Not a state core produces, but a payload
+    More contacts finished than exist. Not a state the server produces, but a payload
     assembled mid-deploy from two versions is, and the arc was already clamped
     while the number beside it was not — so the ring drew a full circle with
     "160%" in the middle of it and captioned it "16 of 10 contacts".
@@ -738,13 +738,13 @@ export function pulseFigures(stats: AgencyCampaignStats | null): PulseFigures {
  *
  * ── Why an absent field produces no line either ────────────────────────────
  * `attempts_retried` is one of the two NICE-TO-HAVE fields on this payload, so
- * an older core or an older master simply does not send it. There is nothing to
+ * an older server simply does not send it. There is nothing to
  * fall back on: retries cannot be derived from any other field here, and
  * `retries_pending` counts a different population entirely (what is queued, not
  * what was placed). So the line is dropped, and the dial count reads exactly as
  * it did before the field existed.
  *
- * Guarded against a retry count above the total, which is not a number core can
+ * Guarded against a retry count above the total, which is not a number the server can
  * produce but is one a mid-deploy pairing of two versions could: "including
  * 8,000 retries" under "6,742 dials" is a screen nobody can act on, so it says
  * nothing instead.
@@ -762,7 +762,7 @@ function retriesPlacedSub(stats: AgencyCampaignStats | null): string | null {
 /**
  * Bar order for the floor: busiest first, and `offline` is absent entirely.
  *
- * An agent who signed out is not on shift — the same rule core's `shift_seconds`
+ * An agent who signed out is not on shift — the same rule the server's `shift_seconds`
  * applies and the same one `foldOccupancy` keeps on the agent performance page.
  * Including them would dilute every share by signed-out time and make "3 of 9
  * free" a fraction of a floor that is not there.
@@ -899,13 +899,13 @@ function wrapupLabel(seconds: number): string {
 
 // ── The lifecycle: when it started, how long it ran, who stopped it ─────────
 //
-// `started_at`, `ended_at` and `last_transition_by` (MAG-167). The three of them
+// `started_at`, `ended_at` and `last_transition_by`. The three of them
 // are what let a TERMINAL campaign — the primary case for this workspace, not an
 // edge of it — say anything at all about itself: without them a stopped campaign
 // is a page of frozen counters with no answer to "when", "how long" or "who".
 //
 // Every function below tolerates all three being absent, because they are new on
-// the campaign row and this console talks to whatever master is deployed. An
+// the campaign row and this console talks to whatever API is deployed. An
 // absent line is OMITTED rather than dashed, for the reason `howItRanLines`
 // states: "Started —" reads as a failed read, and on a campaign that genuinely
 // never started it reads as a wrong one.
@@ -1028,10 +1028,10 @@ export interface CampaignTimeline {
   /**
    * `Priya Sharma`, or `Automatically`, or `null`.
    *
-   * **`last_transition_by: null` is not an absence** — it is core saying nobody
+   * **`last_transition_by: null` is not an absence** — it is the server saying nobody
    * did this, which on a campaign that hit the abandonment ceiling is the single
    * most useful sentence on the page. So it reads "Automatically" rather than
-   * being dropped. Only an ABSENT field (an older master) drops the line, and
+   * being dropped. Only an ABSENT field (an older API) drops the line, and
    * only because this console then has nothing to say either way.
    */
   actor: string | null;
@@ -1082,8 +1082,8 @@ export function campaignTimeline(
   */
   const verb = ending === 'completed' ? 'Finished' : 'Stopped';
   /*
-    `undefined` is "this master did not carry the field" and says nothing;
-    `null` is core saying the transition had no human behind it, which is a fact
+    `undefined` is "this API did not carry the field" and says nothing;
+    `null` is the server saying the transition had no human behind it, which is a fact
     worth a line. See the field's own note.
   */
   /*
@@ -1183,8 +1183,8 @@ export function howItEndedLines(
     `agents_live` can never answer "was anyone ever on this" — and that is the
     question behind every stopped campaign whose contacts are still pending.
 
-    `null` means NOT MEASURED (an older core, or a campaign predating the agent
-    event log) and is dropped, never rendered as `0`. A `0` core actually
+    `null` means NOT MEASURED (an older the server, or a campaign predating the agent
+    event log) and is dropped, never rendered as `0`. A `0` the server actually
     measured is kept: "nobody was ever at a station" is the finding, and it is
     the one this line exists for.
   */

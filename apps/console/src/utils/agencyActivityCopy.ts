@@ -13,10 +13,10 @@ import type { ActivityRetention, ActivityRow } from '../types/agency-activity';
 /**
  * What the trail cannot cover, sourced from the API rather than hardcoded.
  *
- * Core's audit table is monthly-partitioned and the retention purge DROPs whole
+ * The server's audit table is monthly-partitioned and the retention purge DROPs whole
  * partitions, so a campaign older than the window returns a partial trail that
  * looks like a complete one. The number is configured server-side (in the
- * retention Lambda, not even in core's own config), so a copy in this client
+ * retention Lambda, not even in the server's own config), so a copy in this client
  * would be a second number that goes stale and tells the operator the wrong
  * thing — the same reason the ingest wizard fetches its limits.
  *
@@ -67,7 +67,7 @@ export function formatActivityTimestamp(at: string): string {
 }
 
 /**
- * Core has no user table, so a non-`system:` actor on a dialer row is the
+ * The server has no user table, so a non-`system:` actor on a dialer row is the
  * CLIENT that made the request (an originator string such as
  * `magick-agency-console`), never a person. Rendered plainly it reads as the
  * name of whoever acted, which on an attribution surface is the worst possible
@@ -79,7 +79,7 @@ export const CLIENT_ACTOR_TOOLTIP =
   + 'The matching “Console” row for this action names the person.';
 
 /**
- * The banner for a page missing core's half.
+ * The banner for a page missing the server's half.
  *
  * Deliberately names WHAT is missing rather than saying "some data is
  * unavailable": a supervisor who does not know that status changes and the

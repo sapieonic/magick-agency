@@ -160,7 +160,7 @@ describe('BestHours — what it asks for', () => {
     expect(mocks.getAgencyGroupedStats).not.toHaveBeenCalled();
   });
 
-  it('waits for both ids rather than firing a read master would 400', async () => {
+  it('waits for both ids rather than firing a read the server would 400', async () => {
     mocks.useTenant.mockReturnValue(tenant({ accountId: null }));
     renderView();
     await waitFor(() => expect(screen.getByTestId('best-hours-loading')).toBeTruthy());
@@ -294,7 +294,7 @@ describe('BestHours — E4 and E5, said out loud above the grid', () => {
      * cell painted its served `100%` as the darkest square on the map and set the
      * ramp's upper end, which is E5's own failure at 168× scale.
      *
-     * On a core that predates `success_rate_reportable` the honest map is a hatched
+     * On a server that predates `success_rate_reportable` the honest map is a hatched
      * one that says so, and the reader is told how many cells and what to do about
      * it. The connect-rate view beside it is unaffected: it has the flag it needs.
      */

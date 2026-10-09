@@ -16,7 +16,7 @@ import type { AgencySessionBootstrap } from '../../types/agency';
  *  1. **Nothing carried audio.** The only frame the console ever sent was
  *     `{event:'ping'}`, and inbound `media` was never read. A call reserved,
  *     bridged, ran a talk timer and billed, with silence in both directions.
- *  2. **`media` fell into the diagnostic sink.** Core relays ~50 frames a second
+ *  2. **`media` fell into the diagnostic sink.** The server relays ~50 frames a second
  *     for the length of a conversation, and the sink is a `setDiagnostics` call
  *     — so the console was committing React state fifty times a second, for the
  *     audio it was simultaneously failing to play. Routing `media` to the sink
@@ -170,7 +170,7 @@ describe('the station socket carries audio', () => {
 
     it('leaves the OTHER bridge frames in the diagnostic sink', async () => {
       // The rule is "`media` is not diagnostic", not "bridge frames are not
-      // diagnostic". `status`/`ended` must still land there (§A.3.1).
+      // diagnostic". `status`/`ended` must still land there.
       const view = await mounted();
       act(() => latest().emit({ event: 'status', status: 'answered' }));
       expect(view.result.current.diagnostics.at(-1)?.event).toBe('status');
@@ -206,7 +206,7 @@ describe('the station socket carries audio', () => {
   });
 
   describe('uplink — the agent’s voice', () => {
-    it('writes exactly the envelope core reads', async () => {
+    it('writes exactly the envelope the server reads', async () => {
       const view = await mounted();
       act(() => {
         expect(view.result.current.sendMedia('QUJD')).toBe(true);
@@ -215,7 +215,7 @@ describe('the station socket carries audio', () => {
       //
       // Heartbeat frames are filtered rather than the whole buffer compared: an
       // open socket now sends one `ping` immediately, because the `pong` it
-      // answers with is what resets the reconnect backoff (`86d44papk`) and
+      // answers with is what resets the reconnect backoff and
       // waiting a full `heartbeat_ms` for that proof made a session that blipped
       // in its first 10 s carry backoff it had not earned. The assertion that
       // matters here is that the media envelope is byte-exact, not that this
@@ -261,7 +261,7 @@ describe('the station socket carries audio', () => {
       expect(latest().sent).toEqual([]);
     });
 
-    it('refuses a payload over core’s ceiling instead of shipping it into a drop', async () => {
+    it('refuses a payload over the server’s ceiling instead of shipping it into a drop', async () => {
       const view = await mounted();
       const before = latest().sent.length;
       expect(view.result.current.sendMedia('a'.repeat(128001))).toBe(false);

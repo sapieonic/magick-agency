@@ -33,14 +33,14 @@ import styles from '../../pages/calls/CallDetailPage.module.css';
 export type { RecordingOutcome };
 
 /**
- * ─── ONE CALL DETAIL VIEW, TWO PRODUCTS ─────────────────────────────────────
+ * ─── ONE CALL DETAIL VIEW, TWO CALLERS ─────────────────────────────────────
  *
- * `webrtc_calls` rows are served by two products — the primary application's
- * softphone and the agency power dialer — and until this component existed only
- * the softphone had a detail page. So the agency workspace linked its attempt
- * rows into `/app/calls/dialer/history/:id`: the other product's shell, gated on
- * the other product's capability, with the campaign context and the list the
- * reader came from both gone (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
+ * `webrtc_calls` rows are served by two surfaces — the softphone and the agency
+ * power dialer — and until this component existed only the softphone had a
+ * detail page. So the agency workspace linked its attempt rows into
+ * `/app/calls/dialer/history/:id`: the other surface's shell, gated on its
+ * capability, with the campaign context and the list the reader came from both
+ * gone.
  *
  * The call SHAPE is genuinely shared — same table, same timing, same recording
  * and summary sections — so the fix is one view with two callers, not two views.
@@ -50,7 +50,7 @@ export type { RecordingOutcome };
  * The first draft of this component hardcoded the softphone's own facts card —
  * Destination, Caller ID, Status, Outcome, **Provider**, **Initiated By** — and
  * the agency page inherited it. That is wrong in both directions. For an agency
- * leg `initiated_by` is the dialing SESSION id (core's `agency-dialer.ts` sets
+ * leg `initiated_by` is the dialing SESSION id (the API's `agency-dialer.ts` sets
  * `initiatedBy: cmd.sessionId`), so a paying agency customer read a raw UUID on
  * the page this whole change exists to create; and `outcome` there is the media
  * leg's (`browser_hangup`), not the attempt's (`Connected`), which is the word
@@ -75,7 +75,7 @@ export type { RecordingOutcome };
  * breadcrumb, a softphone recording URL and a session UUID by saying nothing at
  * all — which is exactly how the original cross-shell link came to exist. The
  * compile error is the point, the same way it is for the `scope` parameter on
- * core's repository reads.
+ * the API's repository reads.
  *
  * `roleLabels` and `onRetryAnalysis` are `| undefined` rather than optional on
  * purpose: passing `undefined` is a real choice in both cases (a product whose
@@ -183,7 +183,7 @@ export interface CallDetailViewProps {
    * Whether this product may play recordings at all, resolved by the caller from
    * its own capability — the sibling of `analysisEnabled`.
    *
-   * It exists because a refusal and a delay look identical from here. Master
+   * It exists because a refusal and a delay look identical from here. The API
    * nulls `recording_url` for a tenant without `agency.recording` while leaving
    * `recording_requested` true, and the page then said *"A recording was
    * requested … check back soon"* — a false promise on an entitlement refusal,
@@ -265,11 +265,11 @@ function FactItem({ fact }: { fact: CallFact }) {
 }
 
 /**
- * One {@link CallFactCard} — a titled grid of a product's own facts.
+ * One {@link CallFactCard} — a titled grid of a surface's own facts.
  *
- * Exported alongside the view itself, because these facts belong to the PRODUCT
+ * Exported alongside the view itself, because these facts belong to the surface
  * rather than to the call. An agency attempt outlives its call by
- * design (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b: the link is un-FK'd and the two
+ * design (the link is un-FK'd and the two
  * sides purge on independent windows), so the attempt's record has to render on a
  * page where there is no call for this view to draw at all. Rendering it there
  * through this component rather than a second card of its own is what keeps one
@@ -474,7 +474,7 @@ export function CallDetailView({
           // No handler ⇒ no button. Omitting one does NOT fall through to the AI
           // product's endpoint from here — see the header. Beyond that:
           // retryable from failed always, and from expired only when a recording
-          // actually landed later, because core 400s ANALYSIS_NO_RECORDING
+          // actually landed later, because the API 400s ANALYSIS_NO_RECORDING
           // otherwise and offering the button without one is a guaranteed dead end.
           canRetry={
             onRetryAnalysis !== undefined
@@ -500,16 +500,16 @@ export function CallDetailView({
       )}
 
       {/* ── The transcript that aged out, said out loud ───────────────────
-          Core's retention step nulls `conversation_log` on its own shorter
+          The API's retention step nulls `conversation_log` on its own shorter
           window and leaves `analysis_status` at `completed`
-          (`retention-purge.ts`, §14.6) — so the section above simply vanished
+          — so the section above simply vanished
           from under a summary still on screen, and a compliance reader concluded
           the call had never been transcribed. Agency deliberately gave itself a
           separate, longer transcript window, which makes this the state that
           surface exists to explain.
 
           `completed` is the unambiguous signal rather than a guess: it is only
-          ever written after `persistTranscript` has stored the turns (core's
+          ever written after `persistTranscript` has stored the turns (the API's
           `dialer-analysis-job.repository.ts`), so a completed summary with no
           turns means there WERE turns and they have been deleted. */}
       {analysisEnabled && !conversationLog && call.analysis_status === 'completed' && (
@@ -546,7 +546,7 @@ function extensionForMime(mimeType: string | null): string {
 const RECORDING_ABSENCE_COPY = {
   purged: 'The recording for this call has passed its retention window and been deleted.',
   not_recorded: 'This call was not recorded.',
-  /** Also said BEFORE any fetch — master withholds the url, so there is nothing to ask for. */
+  /** Also said BEFORE any fetch — the API withholds the url, so there is nothing to ask for. */
   forbidden:
     'This call was recorded, but playing recordings is not enabled for this account. '
     + 'An admin can turn it on.',
@@ -571,11 +571,11 @@ function RecordingSection({
 
   const hasRecording = Boolean(call.recording_url);
   /**
-   * An absolute `recording_url` means core handed us a public provider file
+   * An absolute `recording_url` means the API handed us a public provider file
    * (VoiceLink/Elision) rather than one of its own proxy paths, because its
    * egress is firewalled off from that host — so the browser plays it as-is and
    * no fetch of ours is involved. A relative value is a proxy path and goes
-   * through the injected fetcher, which supplies auth headers. Core decides
+   * through the injected fetcher, which supplies auth headers. The API decides
    * which we get (`resolveClientRecordingUrl`); this side only has to notice.
    */
   const isDirectUrl = /^https?:\/\//i.test(call.recording_url ?? '');
@@ -634,7 +634,7 @@ function RecordingSection({
    * (c) Requested, and this product may not play it.
    *
    * Checked BEFORE the "still processing" branch, because from here the two are
-   * indistinguishable: master nulls `recording_url` on the capability and leaves
+   * indistinguishable: the API nulls `recording_url` on the capability and leaves
    * `recording_requested` true, so "check back soon" was being promised for a
    * recording that is never coming.
    */

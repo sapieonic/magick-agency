@@ -233,7 +233,7 @@ describe('who calls it', () => {
    * `/agency/join/:token` is fully public by design — no `RequireAuth`, no
    * capability, no flag — because the visitor has no account and no tenant to
    * resolve an entitlement against; the single-use token in the URL is the
-   * authority, and master enforces it on the claim. The reason the gates matter
+   * authority, and the server enforces it on the claim. The reason the gates matter
    * everywhere else does not apply here either: they exist so a REFUSED reader
    * never registers a surface they were not shown, and nobody can be refused a
    * page with no gate on it.

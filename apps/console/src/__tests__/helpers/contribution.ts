@@ -6,7 +6,7 @@ import {
 } from '../../types/agency-stats';
 
 /**
- * Contribution fixtures — the grouped read, as master serves it.
+ * Contribution fixtures — the grouped read, as the server serves it.
  *
  * ── COMPLETE, and the defaults are the honest case ────────────────────────
  * Same rule as `roster.ts`: every field the contract declares required is present,
@@ -25,15 +25,15 @@ import {
  * about. `contributionRow`'s conversions (24) are deliberately a clean share of
  * `campaignTotalRow`'s (80) — 30% — so a share assertion cannot pass on a rounding
  * accident, and the total is deliberately LARGER than the sum of the default rows,
- * because that is the shape master actually serves: the campaign's own line counts
+ * because that is the shape the server actually serves: the campaign's own line counts
  * everyone who dialled it, and the rows do not.
  *
  * ── The second flag is DERIVED here, because the server derives it ─────────
  * `success_rate_reportable` is `rates_reportable` AND `connected >= 20`, so a
- * fixture that hardcoded it could be overridden into a state core cannot emit — a
+ * fixture that hardcoded it could be overridden into a state the server cannot emit — a
  * row with `rates_reportable: false` and a quotable conversion rate — and a test
  * would then pin behaviour on a payload that does not exist. So it is computed
- * from whatever the override left behind, exactly as core computes it, and an
+ * from whatever the override left behind, exactly as the server computes it, and an
  * EXPLICIT value still wins: the boundary cases pass the flag by hand precisely so
  * they are asserting the console's use of the server's answer rather than this
  * file's arithmetic.
@@ -102,7 +102,7 @@ export function thinContributionRow(
  * The campaign's OWN line — the second read, grouped by `campaign` alone.
  *
  * It carries no `agent_name` and its key has no `agent_user_id`, because no row of
- * this read belongs to a person. That is exactly why master drops nobody from it,
+ * this read belongs to a person. That is exactly why the server drops nobody from it,
  * and therefore why it can exceed the rows above it.
  */
 export function campaignTotalRow(over: Partial<AgencyGroupRow> = {}): AgencyGroupRow {

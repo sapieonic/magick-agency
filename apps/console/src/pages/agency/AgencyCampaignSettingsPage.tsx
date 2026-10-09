@@ -49,7 +49,7 @@ import styles from './AgencyCampaignSettingsPage.module.css';
  * Edit an existing campaign's configuration.
  *
  * The pieces for this were all written and never assembled: `configFromCampaign`
- * exists, is tested for a lossless round trip (`AD-P3-U-02` acceptance (c)), and
+ * exists, is tested for a lossless round trip (a lossless round trip), and
  * had **no production caller** — configuration could only be set inside the
  * creation wizard. So a campaign with the wrong calling window had to be
  * recreated to fix it.
@@ -57,7 +57,7 @@ import styles from './AgencyCampaignSettingsPage.module.css';
  * **Editing a running campaign is deliberately allowed and not gated.** The
  * calling window is most often discovered to be wrong *while* the campaign is
  * dialing outside it, and forcing a pause to correct that would mean the fix
- * costs more than the fault. Core re-reads the campaign every pacing tick, so an
+ * costs more than the fault. The API re-reads the campaign every pacing tick, so an
  * edit applies to future attempts; an attempt already dispatched keeps the
  * snapshot it was dialed with. The banner says so rather than leaving the
  * operator to guess whether the change took effect mid-run.
@@ -88,7 +88,7 @@ export function AgencyCampaignSettingsPage() {
 
   const canEdit = hasPermission(role, 'agency.campaigns.write');
 
-  // L1 (UX) gating only — master's 403 is the real enforcement, and
+  // L1 (UX) gating only — the server's 403 is the real enforcement, and
   // `useGovernance` fails OPEN, so a missing/failed map leaves both controls
   // fully usable and the server has the last word. `RequireCapability` is
   // deliberately NOT used: it is a route guard that renders a full-page
@@ -96,9 +96,7 @@ export function AgencyCampaignSettingsPage() {
   const { isEnabled: isCapabilityEnabled } = useGovernance();
   const recordingEnabled = isCapabilityEnabled(AGENCY_RECORDING_CAPABILITY);
   const analyticsEnabled = isCapabilityEnabled(AGENCY_ANALYTICS_CAPABILITY);
-  // PORT NOTE (magick-agency): cusui also required the profile-LIST capability
-  // (`calls.dialer.analytics`, master's) before fetching, and named it when off.
-  // Agency gates the list on a permission only, so `agency.analytics` alone
+  // The profile list is gated on a permission only, so `agency.analytics` alone
   // decides — see `utils/agencyCampaignRecording.ts`.
   const {
     profiles: analysisProfiles,
@@ -153,7 +151,7 @@ export function AgencyCampaignSettingsPage() {
         `fieldErrors` was only ever filled from a server response, so a purely
         client-side finding (a duplicate code, an unlabelled outcome) produced a
         banner pointing at fields that looked fine. `validateConfig` keys
-        exactly as master does, so the two land in the same place.
+        exactly as the server does, so the two land in the same place.
       */
       const errors = validateConfig(config);
       setFieldErrors(errors);
@@ -167,7 +165,7 @@ export function AgencyCampaignSettingsPage() {
       setFieldErrors({ name: 'A campaign needs a name.' });
       return;
     }
-    // Core rejects an empty pool and the pacing engine throws without one, so
+    // The API rejects an empty pool and the pacing engine throws without one, so
     // saving an empty selection would either 400 or — worse, on a running
     // campaign — leave it unable to place its next call.
     if (callerIds.length === 0) {
@@ -179,7 +177,7 @@ export function AgencyCampaignSettingsPage() {
     setSaveError(null);
     setFieldErrors({});
     // Built before the request so the refusal mapper can tell a 404 that means
-    // "your profile is gone" from any other 404 — master masks core's body, so
+    // "your profile is gone" from any other 404 — the server masks the dialer runtime's body, so
     // what we sent is the only evidence left (see `campaignSaveRefusal`).
     const recordingFields = recordingPayload({ recordingEnabled, analyticsEnabled, next: recording });
     try {
@@ -188,7 +186,7 @@ export function AgencyCampaignSettingsPage() {
       // write, and cannot half-apply.
       //
       // There is no `description` here, and the re-seed below is why its absence
-      // matters more than it looks: core stores no such column, so the field came
+      // matters more than it looks: the API stores no such column, so the field came
       // back empty from the very save that reported success and the form wiped
       // itself in front of the operator.
       const updated = await updateAgencyCampaign(
@@ -205,14 +203,14 @@ export function AgencyCampaignSettingsPage() {
       );
       setCampaign(updated);
       // Computed against what was ABOUT TO BE SAVED, before the re-seed below
-      // replaces `config` with whatever master normalised it to.
+      // replaces `config` with whatever the server normalised it to.
       const priorOrder = dispositionOrderRef.current;
       const nextOrder = config.dispositions.map((d) => d.code);
       const reordered =
         priorOrder !== null &&
         (priorOrder.length !== nextOrder.length ||
           priorOrder.some((code, i) => code !== nextOrder[i]));
-      // Re-seed EVERY field from what came back, not from what was sent. Master
+      // Re-seed EVERY field from what came back, not from what was sent. The server
       // normalises some values, and leaving the form showing the submitted
       // version would hide a difference the next save would then re-submit.
       // Re-seeding the config alone is the subtle version of the same bug: the
@@ -251,7 +249,7 @@ export function AgencyCampaignSettingsPage() {
         setSaveError(refusal);
         return;
       }
-      // Master answers `{ details: { field: message } }` keyed by the body path,
+      // The server answers `{ details: { field: message } }` keyed by the body path,
       // so the message lands on the field that caused it.
       const mapped = fieldErrorsFromResponse(err);
       if (Object.keys(mapped).length > 0) setFieldErrors(mapped);
@@ -273,7 +271,7 @@ export function AgencyCampaignSettingsPage() {
 
   const recordGate = recordingGate({ enabled: recordingEnabled, current: recording.record });
   const summaryGate = analysisGate({ enabled: analyticsEnabled, current: recording.profileId });
-  // Off→on is what master refuses, so the box locks only in that direction: a
+  // Off→on is what the server refuses, so the box locks only in that direction: a
   // grandfathered campaign whose capability was revoked can still be switched
   // off, which is the whole point of the asymmetry.
   const recordLocked = !canEdit || (!recordGate.canEnable && !recording.record);
@@ -281,7 +279,7 @@ export function AgencyCampaignSettingsPage() {
   const canPickProfile = analyticsEnabled;
   // Visible when the capability is on (picker, or a notice saying why the list
   // is unreadable) — and also when it is OFF but a profile is already set, so
-  // the clearing path master allows is reachable. Keyed on the LOADED campaign,
+  // the clearing path the server allows is reachable. Keyed on the LOADED campaign,
   // not on form state: keyed on state, pressing "Remove summary profile" would
   // make the whole block vanish before the operator had saved it.
   const summaryVisible = analyticsEnabled || (campaign.analysis_profile_id ?? null) !== null;
@@ -290,7 +288,7 @@ export function AgencyCampaignSettingsPage() {
   // an option either way so the round trip stays lossless instead of silently
   // re-saving as "no summary". `storedProfileStatus` is what decides whether
   // that absence is a verdict ("no longer listed") or just an in-flight/failed
-  // fetch that has not answered the question yet (`MAG-152`) — see the option
+  // fetch that has not answered the question yet — see the option
   // rendering below.
   const profileStatus = storedProfileStatus({
     storedProfileId,
@@ -311,7 +309,7 @@ export function AgencyCampaignSettingsPage() {
 
       {/*
         The campaign workspace's section bar, in the same slot on every one of
-        its screens (`MAG-166`). These four sections used to be reachable only
+        its screens. These four sections used to be reachable only
         as secondary buttons on the detail page's header row — the same row
         that carries Stop — so getting from Contacts to Call attempts meant
         going back through the campaign first.
@@ -365,7 +363,7 @@ export function AgencyCampaignSettingsPage() {
       </div>
 
       {/*
-        Recording + call summary (`MAG-147`). Both fields already existed on the
+        Recording + call summary. Both fields already existed on the
         wire and could be set by nothing but curl; the two capabilities that
         govern them guarded a surface that did not exist.
       */}

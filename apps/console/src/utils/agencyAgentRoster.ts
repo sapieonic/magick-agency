@@ -28,7 +28,7 @@ import type {
  *
  * There is now exactly ONE exception, and it is a figure the payload does not
  * carry: the team row's POOLED utilisation, which the benchmark makes derivable
- * (D10's `shift_seconds`) but does not itself state. It goes through the sibling
+ * (`shift_seconds`) but does not itself state. It goes through the sibling
  * module's single `ratePct` helper rather than a local `n / d * 100` — see
  * {@link teamUtilisation}, and note that it divides the BENCHMARK's own figures,
  * never the rows'.
@@ -195,7 +195,7 @@ export function withheldRateTitle(cell: Extract<RosterCell, { kind: 'withheld' }
  * `true` would REVEAL rates the console withholds today, and re-deriving
  * `connected >= AGENCY_ROSTER_MIN_RATE_DENOMINATOR` here would be this client
  * computing a threshold the constant's own doc comment forbids it to compute — a
- * second answer that disagrees with the server's the moment core tunes it.
+ * second answer that disagrees with the server's the moment it is tuned.
  */
 export function successRateReportable(row: AgencyRosterAgentRowWithName): boolean {
   return typeof row.success_rate_reportable === 'boolean'
@@ -209,7 +209,7 @@ export function successRateReportable(row: AgencyRosterAgentRowWithName): boolea
  * ── There is no "no dials" copy here, and its absence is deliberate ────────
  * An earlier revision rendered *"No dials in this window"* for
  * `connect_rate_pct === null`, and had a test constructing `attempts: 0` to prove
- * it. **That row cannot exist.** Core builds the roster from
+ * it. **That row cannot exist.** The server builds the roster from
  * `rosterAttemptTotals`, which is a `COUNT(*) … GROUP BY s.agent_user_id` over
  * rows already filtered on `dialed_at IS NOT NULL` — a group only exists because
  * at least one dial fell in it, so `attempts >= 1` on every served row and
@@ -219,7 +219,7 @@ export function successRateReportable(row: AgencyRosterAgentRowWithName): boolea
  *
  * A sentence for an impossible payload is worse than no sentence: it reads as a
  * state the product handles, and a test asserting it passes over data the server
- * cannot send — the MAG-106 pattern the phase-01 contract names. So the null arm
+ * cannot send — a pattern that passes tests without proving anything. So the null arm
  * is now the module's generic inert fallback: it still renders rather than
  * throwing if the shape ever changes, and it makes no claim about why.
  *
@@ -473,7 +473,7 @@ export function connectBullet(
  * flag exists to prevent.
  *
  * ── There is no `no_dials` kind, and there cannot be ───────────────────────
- * It was removed rather than left unused. Core groups over rows filtered on
+ * It was removed rather than left unused. The server groups over rows filtered on
  * `dialed_at IS NOT NULL`, so every served row has `attempts >= 1` and a chip for
  * `attempts === 0` was unreachable UI with a passing test over it — see
  * {@link connectRateCell} for the same deletion and the same reasoning.
@@ -519,7 +519,7 @@ export interface RosterFlag {
  *
  * ── The band comparison needs the band's OWN denominator ───────────────────
  * `rates_reportable` is `attempts >= 20` — the row's headline threshold. The
- * SUCCESS-rate percentiles have a second floor on top: core only admits a row to
+ * SUCCESS-rate percentiles have a second floor on top: The server only admits a row to
  * that pool when `connected >= 20` as well. So a row with 400 dials and 3
  * connects is `rates_reportable: true`, is NOT in the pool the band came from,
  * and comparing its 33% conversion rate against that band would flag somebody
@@ -567,11 +567,11 @@ export function rosterFlag(
 
     ── The bug this shape exists to prevent ──────────────────────────────────
     The `connected` comparison below used to run unconditionally, right after the
-    guard above. So on a server that does send the flag, a row the server had
+    guard above. So on a server that does send the flag, a row the dialer runtime had
     admitted to the success-rate pool (`success_rate_reportable: true`) could
     still be dropped here by this client's own `connected < 20` — a second answer
-    to a question the server had already answered, which disagrees with the server
-    the moment core tunes that threshold and disagrees with the conversion CELL
+    to a question the dialer runtime had already answered, which disagrees with the server
+    the moment the server tunes that threshold and disagrees with the conversion CELL
     sitting in the same row (which gates on the flag alone).
     `AGENCY_ROSTER_MIN_RATE_DENOMINATOR`'s own doc comment forbids computing with
     it for exactly this reason: it is mirrored so the console can SAY the number,
@@ -617,7 +617,7 @@ export function rosterFlag(
  * The rows on the page that carry a chip — what the "needs attention" filter lists,
  * and what its count counts.
  *
- * The filter exists because of `limit`. cusui asks for the contract's maximum
+ * The filter exists because of `limit`. this console asks for the contract's maximum
  * (200) and there is no server-side paging in phase 01, so on a floor larger than
  * that the ranking decides who is visible — and under `conversions desc` the rows
  * cut are the LOWEST converters, which is the population a supervisor triaging
@@ -669,7 +669,7 @@ export function agentInitials(displayName: string): string {
  * cannot arrive: `last_dialed_at` is `MAX(a.dialed_at)` over a group that only
  * exists because a dial fell in it, and `campaigns` is a `COUNT(DISTINCT
  * a.campaign_id)` over the same group — so both are `>= 1` on every served row.
- * `include_inactive` changes which rows master RETURNS, never how core built
+ * `include_inactive` changes which rows the server RETURNS, never how the dialer runtime built
  * them. See {@link connectRateCell} for the same deletion and the same reasoning.
  *
  * What is left is an inert fallback for a shape this payload cannot produce: the
@@ -696,7 +696,7 @@ export function rosterSubline(row: AgencyRosterAgentRowWithName): string {
  * ── It takes the percentiles and NOTHING else, deliberately ────────────────
  * An earlier revision passed `agents_rated` in and, on an all-null block, said
  * *"no agent cleared 20 calls"*. That sentence is only reliably true of the
- * CONNECT-rate pool, and core resolved the three pools differently:
+ * CONNECT-rate pool, and the server resolved the three pools differently:
  *
  *  - `rates_reportable` is `attempts >= AGENCY_ROSTER_MIN_RATE_DENOMINATOR` — the
  *    row's HEADLINE denominator. A row without it enters no pool at all.
@@ -706,7 +706,7 @@ export function rosterSubline(row: AgencyRosterAgentRowWithName): string {
  *    with 400 dials and 3 connects is `rates_reportable: true`, is in the
  *    connect-rate pool, and is absent from the success-rate one. That row's own
  *    flag for this is `success_rate_reportable` — see {@link successRateReportable}.
- *  - `aht`'s pool — D10's fourth block, added after this list was written — is
+ *  - `aht`'s pool — the fourth block, added after this list was written — is
  *    the SAME predicate as `success_rate`'s: `rates_reportable` AND
  *    `connected >= 20` AND non-null. `aht_seconds` divides by `connected`, which
  *    is precisely the denominator that second floor protects. It is emphatically
@@ -762,7 +762,7 @@ export function bandReadout(
  * `inactive_omitted` with `typeof`. A block whose
  * members are not numbers-or-null is not a thin cohort, it is a shape this build
  * does not understand, and the difference matters: "no median yet — too few rated
- * agents" is a claim about the FLOOR, and printing it for a field master has not
+ * agents" is a claim about the FLOOR, and printing it for a field the API has not
  * shipped yet would be a false one.
  *
  * So `null` here means "say nothing", and a present block with a null median says
@@ -796,8 +796,8 @@ function readPercentiles(block: unknown): AgencyRosterPercentiles | null {
  * the colons are the format's whole virtue; in prose they are its failure.
  *
  * `null` when the payload did not carry the block, which is an ordinary arrival
- * rather than a violation: `benchmark.aht` is additive (phase 02a, D10) and merge
- * order puts this console last, so a master mid-deploy simply has no band to show
+ * rather than a violation: `benchmark.aht` is additive (additive) and merge
+ * order puts this console last, so an API mid-deploy simply has no band to show
  * here. The pooled `aht_seconds` beside it is unaffected and stays on screen —
  * every absence on this surface degrades to the next-best true statement.
  */
@@ -809,7 +809,7 @@ export function ahtBandReadout(benchmark: AgencyRosterBenchmark): string | null 
 
 /**
  * The team row's utilisation — a REAL pooled rate now that the benchmark carries a
- * pooled denominator, with the median stand-in kept for a master that does not.
+ * pooled denominator, with the median stand-in kept for an API that does not.
  *
  * ── What this replaced ────────────────────────────────────────────────────
  * Every other pinned cell shows the floor's own rate with the distribution
@@ -838,7 +838,7 @@ export function ahtBandReadout(benchmark: AgencyRosterBenchmark): string | null 
  *    what this cell showed before the field existed, labelled exactly as it was.
  *    A missing additive field costs the cell its pooled figure, never the render.
  *  - **`unmeasured`** — the field arrived and the floor has no measured shift at
- *    all (core's agent-state event log shipped after the dialer, so a session
+ *    all (the server's agent-state event log shipped after the dialer, so a session
  *    that predates it has no events rather than zeroed ones). An em dash and a
  *    phrase, never `0%`: nobody's shift being recorded is not a floor that sat
  *    idle.
@@ -913,17 +913,17 @@ export function teamUtilisation(benchmark: AgencyRosterBenchmark): TeamUtilisati
 
 /**
  * The team row's utilisation readout **for a payload with no pooled shift** — the
- * pre-D10 fallback, not the rule.
+ * pre-`shift_seconds` fallback, not the rule.
  *
  * ── What this was, and what it now is ─────────────────────────────────────
  * It used to be the only reading available: the benchmark carried the cohort's
  * `talk_seconds` and `wrapup_seconds` and no pooled denominator, so the floor's
  * actual utilisation was not derivable and the cell showed the cohort MEDIAN with
- * this note saying so. D10 added `benchmark.shift_seconds`, so the floor's own
+ * this note saying so. The server added `benchmark.shift_seconds`, so the floor's own
  * rate IS derivable and {@link teamUtilisation} is what the cell renders.
  *
  * This function is now reached on exactly one path: the additive field has not
- * arrived (a master mid-deploy), and the cell degrades to precisely the figure and
+ * arrived (an API mid-deploy), and the cell degrades to precisely the figure and
  * precisely the label it carried before the field existed. It is kept rather than
  * inlined so that fallback is one named, tested thing.
  *
@@ -996,23 +996,23 @@ export function rosterCountReadout(page: AgencyRosterPage): string {
  * related but independent, because of the ORDER the two services apply their
  * rules in:
  *
- *  - core scopes, ranks, and cuts to `limit`; `total_agents` is its pre-`limit`
+ *  - The server scopes, ranks, and cuts to `limit`; `total_agents` is its pre-`limit`
  *    population and is also the benchmark's population;
- *  - **master then filters the page it was handed**, dropping departed members and
+ *  - **The API then filters the page it was handed**, dropping departed members and
  *    reporting how many in `inactive_omitted`.
  *
  * So `rows.length` is "the top `limit`, minus the departed ones that happened to be
  * in it". A default read can legitimately come back with 1 row, `total_agents: 3`
  * and `inactive_omitted: 1`: "showing 1 of 3" is wrong, and "showing 1 of 2" is not
- * computable either, because master never saw the two agents core cut. The
- * alternative — master shipping hundreds of agent ids to core on a GET so the
+ * computable either, because the server never saw the two agents the dialer runtime cut. The
+ * alternative — the server shipping hundreds of agent ids to the dialer runtime on a GET so the
  * filter could happen first — is not phase 01's trade.
  *
  * The honest form is therefore three separate true statements, and this is one of
  * them: the roster was cut, and by which order. The order is named because "the
  * rest" only means something relative to the ranking that selected these rows.
  *
- * The guard adds BOTH of master's drop counts back in before comparing —
+ * The guard adds BOTH of the API's drop counts back in before comparing —
  * `inactive_omitted` and `unattributed_omitted` — so a page that fitted
  * comfortably under the limit and simply had rows removed does not claim to have
  * been truncated.
@@ -1021,19 +1021,19 @@ export function truncationNote(page: AgencyRosterPage): string | null {
   /*
     The key first, and its absence means SILENCE rather than a comparison.
 
-    `inactive_omitted` is master's addition, and master has a documented degrade
-    path that serves core's body unfiltered — with no such key on it. Read
+    `inactive_omitted` is the API's addition, and the API has a documented degrade
+    path that serves the server's body unfiltered — with no such key on it. Read
     straight, `total_agents <= rows.length + undefined` is `1 <= NaN`, which is
     `false`, so the note fired on EVERY page: a supervisor looking at their whole
     floor was told the rest of it was further down an order. The guard is the
-    client's own robustness and stays even though master is being fixed in
+    client's own robustness and stays even though the API is being fixed in
     parallel to always emit the field — the two fixes are independent, and a
     comparison against `undefined` should never be reachable from a typed field
     the wire can omit.
   */
   if (typeof page.inactive_omitted !== 'number') return null;
   /*
-    And R4's third state is now COUNTED rather than reasoned about. Master drops an
+    And R4's third state is now COUNTED rather than reasoned about. The API drops an
     id with no membership row of any status ("never in this tenant") and reports it
     separately, because folding it into `inactive_omitted` would claim a person left
     a team they were never on. `total_agents` counts those rows and `rows` does not,
@@ -1053,7 +1053,7 @@ export function truncationNote(page: AgencyRosterPage): string | null {
 /**
  * "2 former members hidden", or `null`.
  *
- * Core returns departed agents because it cannot know they departed; master drops
+ * The dialer runtime returns departed agents because it cannot know they departed; the server drops
  * them. This sentence is what stops that from being a silent edit — and it names
  * them as FORMER MEMBERS rather than "hidden rows", because the reader's question
  * is "where is Priya", not "why are there fewer rows".
@@ -1074,7 +1074,7 @@ export function inactiveNote(page: AgencyRosterPage): string | null {
  *
  * ── Why "everyone left" was not a safe thing to assume ─────────────────────
  * Both screens derived this as `rows.length === 0` on a `ready` page and printed
- * *"Everyone who dialled in this window has since left the team"*. Master has TWO
+ * *"Everyone who dialled in this window has since left the team"*. The API has TWO
  * independent reasons to drop a row and they mean opposite things to the reader:
  *
  *  - `inactive_omitted` — a former member. Revealable: the toggle exists for it,
@@ -1084,7 +1084,7 @@ export function inactiveNote(page: AgencyRosterPage): string | null {
  *    `include_inactive` widens the membership filter and these rows match no
  *    membership at all. Telling the reader to tick it is advice that does nothing.
  *
- * So `{ rows: [], unattributed_omitted: 3 }` — an ordinary master response, not a
+ * So `{ rows: [], unattributed_omitted: 3 }` — an ordinary the API response, not a
  * shape violation — claimed three people had resigned. On a supervisory surface
  * that is not a wording nit: it is a statement about named colleagues, made from a
  * count that says nothing of the kind.
@@ -1106,8 +1106,8 @@ export function allRowsHiddenReason(page: {
   unattributed_omitted?: number;
 }): RosterHiddenReason | null {
   if (!Array.isArray(page.rows) || page.rows.length > 0) return null;
-  // Both through `typeof`, for `truncationNote`'s reason: master has a degrade path
-  // that serves core's body unfiltered, and `undefined > 0` is a comparison this
+  // Both through `typeof`, for `truncationNote`'s reason: The API has a degrade path
+  // that serves the server's body unfiltered, and `undefined > 0` is a comparison this
   // client should never make against a field the wire can omit.
   const departed = typeof page.inactive_omitted === 'number' ? page.inactive_omitted : 0;
   const unattributed =
@@ -1145,8 +1145,8 @@ export function benchmarkUsable(benchmark: AgencyRosterBenchmark): boolean {
  * decision on the surface.
  *
  * ── What went wrong, concretely ────────────────────────────────────────────
- * The roster defaulted to `campaign_id: null`. Core applies no campaign predicate
- * when the parameter is omitted and master forwards without defaulting, so the
+ * The roster defaulted to `campaign_id: null`. The server applies no campaign predicate
+ * when the parameter is omitted and the API forwards without defaulting, so the
  * DEFAULT screen pooled every campaign in the account into one cohort — and the
  * median, the middle-half band and the per-row chips were all computed against
  * that pool. A telecaller agency works several car dealerships at once, each with
@@ -1181,7 +1181,7 @@ export function cohortComparable(page: AgencyRosterPage): boolean {
  * ── It says what is actually switched off, which is not the bands ─────────
  * It used to say "the band comparison is switched off", while the pinned team row
  * went on rendering four bands — connect rate, conversion rate, utilisation and,
- * since D10, handling time. Those are facts about the cohort and they are true of
+ * since `shift_seconds`, handling time. Those are facts about the cohort and they are true of
  * a pooled cohort too; a sentence claiming they are absent is contradicted by the
  * row directly beneath it. What `comparable === false` actually suppresses is the
  * per-PERSON comparison against them — {@link rosterFlag}'s two band chips and
@@ -1214,8 +1214,8 @@ export function mixedCohortNote(page: AgencyRosterPage): string | null {
  *     no roster to show. That ordering is a recency ordering — it is the only one
  *     the payload supports directly.
  *  2. **The list's own order**, used only to break ties inside a status class.
- *     Core serves `GET /campaigns` as `ORDER BY created_at DESC` and master
- *     forwards the body verbatim, so position 0 is the newest campaign. Relying on
+ *     The dialer runtime serves `GET /campaigns` as `ORDER BY created_at DESC` and the server
+ *     forwards the body unchanged, so position 0 is the newest campaign. Relying on
  *     it for the tie-break and nothing more is the point: if that order ever
  *     changes, the default moves between two campaigns of the same status rather
  *     than becoming wrong.
@@ -1339,7 +1339,7 @@ export const ROSTER_COLUMNS: readonly RosterColumn[] = [
 /**
  * The `limit` this console asks for — the contract's maximum.
  *
- * cusui used to send none, so core's default of 100 applied and an agency with
+ * This console used to send none, so the server's default of 100 applied and an agency with
  * 180 agents silently lost 80 rows. Under `conversions desc` the eighty cut are
  * the LOWEST converters, which is the exact population a supervisor is triaging.
  * 200 is the contract's ceiling (`limit` is `1..200`), there is no server-side

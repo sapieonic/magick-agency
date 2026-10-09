@@ -6,7 +6,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
  * The agent home — every campaign they are staffed on, and the way into each.
  *
  * ── What this file inherits ────────────────────────────────────────────────
- * The landing logic moved here from `AgentLanding` when master began allowing an
+ * The landing logic moved here from `AgentLanding` when the API began allowing an
  * agent several assignments. Every case the old `AgentLanding.test.tsx` protected
  * is carried forward, and they are the ones worth naming because each records a
  * bug that shipped:
@@ -102,7 +102,7 @@ describe('AgentHomePage — one assignment', () => {
 
   it('STILL redirects when that one campaign is merely paused', async () => {
     /**
-     * Core has no status check on join — a paused campaign accepts the agent and
+     * The API has no status check on join — a paused campaign accepts the agent and
      * they wait for their supervisor to resume it. An earlier version of
      * `assignmentEntry` blocked this, which meant a supervisor pausing for two
      * minutes locked every one of their agents out of the station. This case is the
@@ -142,9 +142,9 @@ describe('AgentHomePage — one assignment', () => {
 
   it('redirects when the status could not be resolved at all', async () => {
     /**
-     * `campaign_status` is null whenever master's best-effort lookup failed. The
+     * `campaign_status` is null whenever the API's best-effort lookup failed. The
      * campaign is very probably fine, so a null must not refuse — otherwise a
-     * thirty-second core blip locks every agent out of a running campaign, which
+     * thirty-second the API blip locks every agent out of a running campaign, which
      * is strictly worse than the refusal screen the status exists to avoid.
      */
     mocks.getMyAssignments.mockResolvedValue([assignment({ campaign_status: null })]);
@@ -157,9 +157,9 @@ describe('AgentHomePage — one assignment', () => {
   });
 
   it('redirects on a status this client has never heard of', async () => {
-    // Core owns the campaign lifecycle and master forwards its value verbatim, so
-    // a status core adds arrives before this client knows the word. Refusing
-    // unknown-to-us would lock agents out of a state core considers dialable.
+    // The API owns the campaign lifecycle and the API forwards its value unchanged, so
+    // a status the API adds arrives before this client knows the word. Refusing
+    // unknown-to-us would lock agents out of a state the API considers dialable.
     mocks.getMyAssignments.mockResolvedValue([assignment({ campaign_status: 'draining' })]);
 
     renderAt();
@@ -175,7 +175,7 @@ describe('AgentHomePage — several assignments', () => {
     /**
      * The reason this page exists. A supervisor's staffing list says what an agent
      * MAY work; it cannot say what they are working at 2pm, and picking one for
-     * them would be exactly the silent choice migration 064 removed from master.
+     * them would be exactly the silent choice the server no longer makes.
      */
     mocks.getMyAssignments.mockResolvedValue([
       assignment(),
@@ -197,7 +197,7 @@ describe('AgentHomePage — several assignments', () => {
   });
 
   it('says that only one campaign can be worked at a time', async () => {
-    // Being live on one campaign is core's session index, and an agent who does
+    // Being live on one campaign is the API's session index, and an agent who does
     // not know that reads a refusal at the second station as a broken app.
     mocks.getMyAssignments.mockResolvedValue([
       assignment(),
@@ -243,8 +243,8 @@ describe('AgentHomePage — several assignments', () => {
 
   it('renders a name-less campaign without a hole where the name should be', async () => {
     /**
-     * `campaign_name` is nullable on master's wire — a best-effort core lookup,
-     * documented null for a core outage or a deleted campaign. Rendered unguarded,
+     * `campaign_name` is nullable on the API's wire — a best-effort the API lookup,
+     * documented null for the API outage or a deleted campaign. Rendered unguarded,
      * a brief outage produced rows with empty names beside an "Enter station"
      * link, which reads as a broken app rather than a transient upstream.
      */
@@ -313,7 +313,7 @@ describe('AgentHomePage — the arrivals', () => {
 
 describe('AgentHomePage — nothing to work, and nothing to say', () => {
   it('tells an unassigned agent who fixes it', async () => {
-    // An empty array is master's steady state for "nobody has staffed this agent",
+    // An empty array is the API's steady state for "nobody has staffed this agent",
     // not a failure — and the two must not render the same, because one is fixed by
     // their supervisor and the other by support.
     mocks.getMyAssignments.mockResolvedValue([]);
@@ -339,7 +339,7 @@ describe('AgentHomePage — nothing to work, and nothing to say', () => {
 describe('AgentHomePage — the account guards', () => {
   it('waits for both ids before asking', async () => {
     // `TenantContext` resolves the account asynchronously; a request sent in that
-    // window carries no `X-Account-Id` and master answers a 400 that has nothing
+    // window carries no `X-Account-Id` and the API answers a 400 that has nothing
     // to do with the agent's assignments.
     mocks.useTenant.mockReturnValue(tenant({ accountId: null, accountResolution: 'loading' }));
 
@@ -423,7 +423,7 @@ describe('AgentHomePage — who it is for', () => {
 
 /*
  * NEW in Magick Agency (decision B17): the exit for a viewer/operator on the
- * agent persona read "Back to MagickVoice"; it now reads "Go to settings" and
+ * agent persona read a back link to the old platform; it now reads "Go to settings" and
  * still lands on `/app`, this console's own platform zone. A dedicated agent
  * gets no exit at all (level 5 has nothing to return to).
  */
@@ -468,7 +468,7 @@ describe('AgentHomePage — the way to "My performance"', () => {
    * This is the only screen a dedicated `agent` reliably passes through, so it is
    * the only place a link to their own numbers can live. It deliberately does NOT
    * go on the station: navigating away closes the station socket, and for up to 45
-   * seconds afterwards core still has the agent in the dialable pool with no
+   * seconds afterwards the API still has the agent in the dialable pool with no
    * console attached — a reservation landing in that window bridges a customer to
    * nobody (`agencyStationExit.ts`, and the reason Exit refuses while
    * `available`). A "check your stats" link beside a live call is that bug with a

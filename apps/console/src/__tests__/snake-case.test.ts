@@ -42,7 +42,7 @@ describe('toSnakeCase', () => {
   });
 });
 
-/** Core's contract for `analytics_config.custom_dimensions[].key`. The user
+/** The API's contract for `analytics_config.custom_dimensions[].key`. The user
  *  never types the key, so anything the derivation can emit must satisfy this. */
 const CORE_KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
 
@@ -59,7 +59,7 @@ describe('toDimensionKey', () => {
   });
 
   it('caps an over-long description at 50 chars', () => {
-    // The description from the bug report (ClickUp 86d3zb01t), which derived a
+    // The description from the bug report, which derived a
     // >50-char key and failed the save with a Zod path naming a hidden field.
     const key = toDimensionKey(
       "Date the caller wants to visit the store, as stated during a reservation, in DD/MM/YYYY format — relative terms like 'today' or 'tomorrow' should be resolved",
@@ -86,7 +86,7 @@ describe('toDimensionKey', () => {
   });
 
   it('drops leading non-letters so the key starts with a letter', () => {
-    // Core requires a leading letter: `2nd_attempt` would be rejected.
+    // The API requires a leading letter: `2nd_attempt` would be rejected.
     expect(toDimensionKey('2nd attempt outcome')).toBe('nd_attempt_outcome');
     expect(toDimensionKey('  !!! agreed')).toBe('agreed');
   });
@@ -97,7 +97,7 @@ describe('toDimensionKey', () => {
     expect(toDimensionKey('123')).toBe('');
   });
 
-  it('always emits a key core would accept, or nothing', () => {
+  it('always emits a key the API would accept, or nothing', () => {
     const descriptions = [
       'Whether the customer agreed to pay',
       "Date of visit in DD/MM/YYYY — relative terms like 'today' resolved to a real date",

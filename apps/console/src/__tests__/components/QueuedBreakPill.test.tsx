@@ -6,7 +6,7 @@ import { QueuedBreakPill } from '../../components/agency/QueuedBreakPill';
 afterEach(cleanup);
 
 /**
- * The queued-break pill (§A.13.4).
+ * The queued-break pill.
  *
  * The interesting requirement is not the click — it is that **focus survives an
  * unrelated re-render**. This console re-renders whenever a frame lands, and if

@@ -14,7 +14,7 @@ import type { AgencyRosterPage } from '../../types/agency-stats';
  *     people and rendering the comparison. The mutation that reds it is any fetch at
  *     all — including the tempting one, a `compare_to` param on the per-agent route,
  *     which would expose that param on the AGENT's own scorecard in the same edit
- *     because master shares one query whitelist between the two.
+ *     because the server shares one query whitelist between the two.
  *  2. **It is suppressed entirely on a pooled cohort.** A pooled multi-campaign band
  *     is not a peer group, and `mixedCohortNote` above the table has already told the
  *     reader the per-person comparison is switched off there.

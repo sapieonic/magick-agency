@@ -32,8 +32,7 @@ export const TELEPHONY_PROVIDER_ALIASES: Record<string, string> = {
   generic_sip: 'Sanchar',
 };
 
-// PORT NOTE (magick-agency): cusui's BYOC marker copy (`BYOC_BADGE_LABEL`,
-// `BYOC_BADGE_TITLE`, `BYOC_OPTION_SUFFIX`) is removed — BYOC is not ported.
+// There is no BYOC marker copy: BYOC is not supported.
 
 /** Normalise an API slug or vendor display name into a map key. */
 export function normalizeTelephonyProviderKey(provider: string): string {

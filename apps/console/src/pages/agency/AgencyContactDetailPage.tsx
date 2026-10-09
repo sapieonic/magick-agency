@@ -39,7 +39,7 @@ const PAGE_SIZE = 50;
 
 /**
  * One contact: every attempt against it, its uploaded columns, and a way to
- * each attempt's recording (MAG-159).
+ * each attempt's recording.
  *
  * This is the "why was this number called four times" view — the question a
  * compliance request actually arrives asking, which the platform previously had

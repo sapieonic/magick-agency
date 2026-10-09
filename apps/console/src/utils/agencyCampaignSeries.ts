@@ -69,7 +69,7 @@ export const CAMPAIGN_SERIES_WINDOW_LABELS: Record<CampaignSeriesWindow, string>
 };
 
 /**
- * Core's own cap, restated so the client never forms a request core will refuse.
+ * The server's own cap, restated so the client never forms a request the dialer runtime will refuse.
  *
  * A campaign that ran longer is not an error and is not truncated silently: the
  * range keeps the MOST RECENT 92 days and {@link campaignSeriesRangeNote} says
@@ -114,8 +114,8 @@ export interface CampaignLifespan {
    * Whether the campaign has finished — the authority on every decision here.
    *
    * **`ended_at` is not that authority and must never be used as it.** It is
-   * optional on the row precisely because a master that predates the lifecycle
-   * timestamps does not send it, and this console talks to whatever master is
+   * optional on the row precisely because an API that predates the lifecycle
+   * timestamps does not send it, and this console talks to whatever API is
    * deployed. Keying "has it finished?" on the timestamp made a campaign that
    * stopped in July default to the last 14 days — fourteen empty bars under a
    * heading promising a trend — and print "today is still in progress" beneath
@@ -232,7 +232,7 @@ export function defaultCampaignSeriesWindow(
   campaign: CampaignLifespan | null,
 ): CampaignSeriesWindow {
   const available = campaignSeriesWindows(campaign);
-  // The STATUS decides, not `ended_at` — a finished campaign whose master never
+  // The STATUS decides, not `ended_at` — a finished campaign whose the API never
   // sent a timestamp still wants its whole life, not the last fortnight of
   // nothing. See `CampaignLifespan.status`.
   if (finished(campaign) && available.includes('life')) return 'life';
@@ -257,7 +257,7 @@ const RELATIVE_DAYS: Record<Exclude<CampaignSeriesWindow, 'life'>, number> = {
 const DEFAULT_RELATIVE_DAYS = 14;
 
 /**
- * The range to ask master for.
+ * The range to ask the API for.
  *
  * ── Whole LOCAL days, and an exclusive end that is derived ─────────────────
  * `to` is the start of the day AFTER the last day shown, never a
@@ -295,7 +295,7 @@ export function campaignSeriesRange(
     still filling. Status is what this module says decides — that has to hold
     here as well as in the default window.
 
-    An `ended_at` in the future is not a thing core produces either, but clock
+    An `ended_at` in the future is not a thing the server produces either, but clock
     skew between a server and a browser is very ordinary, and a range ending
     tomorrow would ask for a day that cannot have happened.
   */
@@ -411,7 +411,7 @@ export function campaignSeriesRangeNotes(range: CampaignSeriesRange): string[] {
  * contiguous 24 hours, because an agent works campaigns in several zones. One
  * campaign has exactly one zone, so the honest note here is a short sentence —
  * but it needs the zone's NAME to be worth saying at all, which is why the
- * contract asks master to echo it back. Absent zone, no note: "days are counted
+ * contract asks the API to echo it back. Absent zone, no note: "days are counted
  * in the campaign's time zone" without naming it tells a reader nothing they
  * can check.
  */
@@ -423,7 +423,7 @@ export function campaignSeriesZoneNote(series: AgencyCampaignSeries | null): str
     ── The range is cut in the READER's day, the buckets in the campaign's ───
     `campaignSeriesRange` builds its bounds from a local `Date`, so a supervisor
     in Los Angeles asking for "the last 7 days" of a Kolkata campaign sends a
-    window whose edges fall at 12:30 in the campaign's own clock. Master answers
+    window whose edges fall at 12:30 in the campaign's own clock. The API answers
     with the campaign-days that window touches — so eight buckets can arrive for
     a seven-day request, and the first and last each cover part of a day.
 
@@ -551,7 +551,7 @@ export type RateSeriesKey = 'connect' | 'conversion';
 
 /** One day of the rate chart. Both rates may be `null`, independently. */
 export interface RatePoint {
-  /** The bucket's own `YYYY-MM-DD`, verbatim, and the row key. */
+  /** The bucket's own `YYYY-MM-DD`, unchanged, and the row key. */
   start: string;
   /** A short axis label — day of the month, on the reader's calendar. */
   label: string;
@@ -708,7 +708,7 @@ const LINE_SPECS: readonly LineSpec[] = [
 /**
  * The rate chart's data.
  *
- * Buckets are **not re-sorted** — the order is master's, and re-deriving it here
+ * Buckets are **not re-sorted** — the order is the API's, and re-deriving it here
  * would give the screen a second opinion about a sequence the server already
  * ordered. A malformed `bucket_start` keeps its raw value as the label rather
  * than being dropped, for the reason `bucketSeries` states: losing a bucket

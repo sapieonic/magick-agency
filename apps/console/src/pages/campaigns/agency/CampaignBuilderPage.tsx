@@ -107,12 +107,12 @@ export default function CampaignBuilderPage() {
     const created = await createAgencyCampaign(
       {
         name: name.trim(),
-        // No `description`: core stores no such column and its update whitelist
+        // No `description`: the API stores no such column and its update whitelist
         // does not list it, so sending one wrote nothing. See the note on
         // `AgencyCampaign`.
-        // Both required by core, and both omitted before this existed:
+        // Both required by the API, and both omitted before this existed:
         // `caller_ids` is rejected when empty, and `telephony_provider` defaults
-        // to `'vobiz'` in migration 072 — so a campaign left to the default
+        // to `'vobiz'` in the schema — so a campaign left to the default
         // would dial on the wrong provider from a VoiceLink-only pool.
         caller_ids: callerIds,
         telephony_provider: AGENCY_TELEPHONY_PROVIDER,
@@ -172,7 +172,7 @@ export default function CampaignBuilderPage() {
         `fieldErrors` was only ever filled from a server response, so a purely
         client-side finding (a duplicate code, an unlabelled outcome) produced a
         banner pointing at fields that looked fine. `validateConfig` keys
-        exactly as master does, so the two land in the same place.
+        exactly as the server does, so the two land in the same place.
       */
       const errors = validateConfig(config);
       setFieldErrors(errors);
@@ -220,7 +220,7 @@ export default function CampaignBuilderPage() {
         });
       }
     } catch (err: unknown) {
-      // Master answers `{ details: { field: message } }` keyed by the path into
+      // The server answers `{ details: { field: message } }` keyed by the path into
       // the body, so the message lands on the field that caused it rather than
       // in one banner the operator has to map back by hand.
       const mapped = fieldErrorsFromResponse(err);

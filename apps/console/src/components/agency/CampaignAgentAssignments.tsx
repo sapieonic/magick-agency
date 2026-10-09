@@ -12,7 +12,7 @@ import type { AgencyAssignedAgent } from '../../types/agency-campaign';
 import styles from './CampaignAgentAssignments.module.css';
 
 /**
- * Who is staffed on this campaign (`MAG-160`, §A.1).
+ * Who is staffed on this campaign.
  *
  * ── This is not the agent floor, and the two must not be confused ───────────
  * `AgentFloor` immediately below is **live session state**: who is signed in
@@ -31,17 +31,17 @@ import styles from './CampaignAgentAssignments.module.css';
  * An assignment decides where an `agent` is *sent by default* when they open
  * the app — nothing more. Joining a station is gated on
  * `agency.station.connect` alone, so a supervisor covering a shift can still
- * join a campaign nobody assigned them to, which is the case master's RBAC
+ * join a campaign nobody assigned them to, which is the case the API's RBAC
  * comments protect explicitly.
  *
  * ── Several campaigns per person, one at a time, and no live session touched ──
- * Master enforces one active assignment per user per CAMPAIGN (its migration 064),
+ * The API enforces one active assignment per user per CAMPAIGN (its migration 064),
  * so assigning someone already staffed elsewhere **adds** — it does not move them.
  * That is what lets an agency run Renewals in the morning and Collections after
  * lunch with the same people; under the previous per-tenant rule the second
  * assignment silently unstaffed them from the first.
  *
- * Being LIVE on one campaign at a time is unchanged and is core's, not this table's:
+ * Being LIVE on one campaign at a time is unchanged and is the API's, not this table's:
  * if they are still joined to another campaign, their next join is refused with
  * `session_on_other_campaign` and their console tells them to leave that station
  * first. Nobody is yanked off a call by a staffing change, which is why this panel
@@ -56,7 +56,7 @@ export interface CampaignAgentAssignmentsProps {
    *
    * **This must be that exact permission** — the same rule `AgentFloor`'s props
    * state. All four assignment routes are floored on `agency.supervise` in
-   * master, so a looser gate renders a panel whose first read 403s, and a
+   * the API, so a looser gate renders a panel whose first read 403s, and a
    * tighter one hides staffing from an `account_admin` who holds it.
    */
   canSupervise: boolean;
@@ -67,7 +67,7 @@ export interface CampaignAgentAssignmentsProps {
    * Read off the stats payload the page already has for `AgentFloor` — a prop,
    * never a second fetch. It is what makes "assigned but not here" sayable.
    *
-   * **`null` is not an empty floor.** Core may not have produced the per-agent
+   * **`null` is not an empty floor.** The API may not have produced the per-agent
    * rows, or the stats read may have failed; claiming everyone is missing on the
    * strength of a payload we did not get would put a warning against every name
    * on the page. Unknown renders no signal at all.
@@ -148,8 +148,8 @@ function AssignmentPanel({
       showToast('Assigned to this campaign.', 'success');
       await load();
     } catch (err: unknown) {
-      // A 404 here is "not a member of this tenant" — master's own answer, and
-      // worth showing verbatim rather than flattening to "could not assign".
+      // A 404 here is "not a member of this tenant" — the API's own answer, and
+      // worth showing as-is rather than flattening to "could not assign".
       showErrorToast(err, 'Could not assign that person.');
     } finally {
       setBusyUserId(null);
@@ -249,7 +249,7 @@ function AssignmentPanel({
           {agents.map((agent) => (
             <li key={agent.user_id} className={styles.row}>
               <span className={styles.person}>
-                {/* `name: null` means master could not resolve the person — a
+                {/* `name: null` means the API could not resolve the person — a
                     removed user, or one outside this tenant. The id is shown
                     rather than a blank, so a supervisor can still unassign a row
                     they cannot name. */}
@@ -264,9 +264,9 @@ function AssignmentPanel({
               {/*
                 ── Assigned here, but not AT a station here ────────────────────
                 Staffing and sessions are deliberately independent: a
-                reassignment moves master's row and never touches a live
+                reassignment moves the API's row and never touches a live
                 session, so an agent moved mid-shift appears on this list
-                immediately while still working their old campaign — and core
+                immediately while still working their old campaign — and the API
                 refuses their next join here until they leave that station. A
                 supervisor reading a name with no tile on the floor beside it
                 has no way to tell "hasn't started yet" from "is elsewhere and
@@ -317,7 +317,7 @@ function AssignmentPanel({
  * `utils/agencyPersona.ts`.
  *
  * ── The fallback still matters, for the reason the old note gave ───────────
- * `role` comes off the wire from master, so it is typed as a plain string and a
+ * `role` comes off the wire from the API, so it is typed as a plain string and a
  * role added there before it is mirrored here must render as itself rather than
  * crash a supervisor's page. `agencyPersonaLabel` returns `null` for anything it
  * cannot place — including that unmirrored role, since `hasPermission` scores an

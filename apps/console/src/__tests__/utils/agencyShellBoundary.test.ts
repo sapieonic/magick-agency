@@ -4,12 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 /**
- * `<WorkspaceExit/>` is the only `/app` link agency code may contain (§7b).
+ * `<WorkspaceExit/>` is the only `/app` link agency code may contain.
  *
  * ── The bug this is the guard for ──────────────────────────────────────────
  * The agency workspace (`AgencyLayout`, everything under `/agency`, `/dialer` and
  * `/station`) and the primary AI application (`AppLayout`, everything under
- * `/app`) are separate shells, and §7b makes that a boundary rather than a
+ * `/app`) are separate shells, and makes that a boundary rather than a
  * coincidence: *"A link that crosses shells is a bug even when the data it lands
  * on is correct, because it strands the reader outside the context they were
  * working in."* The concrete leak was call-shaped deep links — a row in a
@@ -20,7 +20,7 @@ import { describe, expect, it } from 'vitest';
  *
  * ── Why this is a source-scanning test and not a rendering one ─────────────
  * The previous attempt at this boundary was enforced by a comment asking
- * reviewers to watch for it, and it leaked — §7b: *"Prose does not hold a
+ * reviewers to watch for it, and it leaked: *"Prose does not hold a
  * boundary."* A behavioural test cannot replace it either: every one of these
  * links renders perfectly and navigates successfully, so there is no assertion to
  * make at the DOM about a link that is wrong for a reason no renderer can see.
@@ -31,7 +31,7 @@ import { describe, expect, it } from 'vitest';
  * else.
  *
  * ── What is NOT a violation ────────────────────────────────────────────────
- * §7b names three zones, not two, and the third is the one that gets misread.
+ * names three zones, not two, and the third is the one that gets misread.
  * Team and membership (including inviting agents), credits, billing and invoices,
  * the tenant audit log, API keys, settings, onboarding, and tenant/account
  * switching are **platform** surfaces, shared by both products by design. They
@@ -42,14 +42,14 @@ import { describe, expect, it } from 'vitest';
  * the only ones, by routing them through one component that says out loud that it
  * is an exit.
  *
- * `AgencyLayout`'s own "Team & settings" link (cusui: "Back to MagickVoice") was considered and deliberately
+ * `AgencyLayout`'s own "Team & settings" link was considered and deliberately
  * left alone: it lives in `src/components/layout/`, outside all three guarded
  * roots, because it is the shell itself rather than a page inside it. It is the
  * canonical example of a correct exit.
  *
  * ── All THREE roots, and the third is easy to miss ────────────────────────
  * `src/pages/campaigns/agency/` is agency code despite sitting under a path that
- * says `campaigns` — it is the agency campaign builder. §7b calls this out by
+ * says `campaigns` — it is the agency campaign builder. calls this out by
  * name for exactly that reason. Guarding only the two obvious roots would leave
  * the builder as a hole the size of a whole feature.
  *

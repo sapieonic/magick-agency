@@ -2,7 +2,7 @@ import { correctedInstant, remainingUntil, formatDuration } from './agencyClock'
 import type { AgencyWrapupHold, AgencyWrapupState } from '../types/agency';
 
 /**
- * The wrap-up countdown (`AD-P2-U-01` criterion (b)).
+ * The wrap-up countdown (a lossless round trip).
  *
  * Pure, so the drift properties can be asserted against a fake clock that jumps
  * rather than by watching a bar. Everything here derives from the **absolute
@@ -35,9 +35,8 @@ export interface WrapupAnchor {
   /**
    * Why the window is held. Set at entry for a timerless wrap-up.
    *
-   * PORT NOTE (magick-agency): typed as the hold union, which now carries core's
-   * `supervisor_hold` (CONTRACT-DIFF §1). cusui's literal was
-   * `'disposition_required'` alone.
+   * Typed as the hold union, which carries the server's
+   * `supervisor_hold` as well as `'disposition_required'`.
    */
   heldReason: AgencyWrapupHold | null;
   /**
@@ -77,7 +76,7 @@ export function openWrapup(
 }
 
 /**
- * Which wrap-up panel to render (§A.13.5.1).
+ * Which wrap-up panel to render.
  *
  * - `counting` — a real deadline is running. Bar, digits, the lot.
  * - `held` — **no deadline; ends when you act.** One panel with one meaning for
@@ -110,7 +109,7 @@ export interface WrapupView {
   /**
    * True while the window is open and waiting on the agent rather than on a
    * clock. The countdown does **not** count negative and never shows an overrun
-   * readout (§A.13.5).
+   * readout.
    */
   holding: boolean;
 }
@@ -129,10 +128,10 @@ export function wrapupView(
   dispositionSubmitted: boolean,
 ): WrapupView {
   if (anchor.deadlineMs === null) {
-    // The held panel. No deadline, so no digits and — per §A.13.5.1 — **no bar
+    // The held panel. No deadline, so no digits and — by design — **no bar
     // and no empty track**.
     //
-    // `holding` is true whenever core named a reason at entry. That covers the
+    // `holding` is true whenever the server named a reason at entry. That covers the
     // timerless `wrapup_seconds = 0` case, where no countdown could ever lapse
     // into a hold, so the reason has to arrive with the frame or the agent faces
     // a panel with no deadline, no timer, and nothing explaining why it is open.
@@ -185,8 +184,7 @@ export function hasWrapup(anchor: WrapupAnchor | null): anchor is WrapupAnchor {
 }
 
 /**
- * The two countdown announcements, at 10s and 3s only (§A.11 caps announcements
- * so the assertive region is not a metronome).
+ * The two countdown announcements, at 10s and 3s only (capped so the assertive region is not a metronome).
  *
  * Returns the threshold crossed on this repaint, or null. Crossing is computed
  * from the previous and current remaining values rather than from equality,
@@ -205,13 +203,13 @@ export function announcementThreshold(
 }
 
 /**
- * PORT NOTE (magick-agency): NEW, for core's `supervisor_hold` (CONTRACT-DIFF §1).
+ * For the server's `supervisor_hold`.
  * Unlike `disposition_required`, a supervisor's hold is NOT the agent's to end:
  * submitting the disposition does not release it, so the panel keeps saying why
- * the agent is still out of the pool until core sends the next wrap-up or state
+ * the agent is still out of the pool until the server sends the next wrap-up or state
  * frame. Treating it like the disposition hold would clear the reason the moment
  * the agent saved, and leave them on an unexplained open window — the "the app
- * has hung" reading core's contract warns about.
+ * has hung" reading the server's contract warns about.
  */
 function supervisorHeld(anchor: WrapupAnchor): boolean {
   return anchor.heldReason === 'supervisor_hold';

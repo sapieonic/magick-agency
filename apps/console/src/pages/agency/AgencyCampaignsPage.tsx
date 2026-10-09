@@ -99,7 +99,7 @@ export function AgencyCampaignsPage() {
             >
               <div className={styles.rowMain}>
                 <span className={styles.rowName}>{campaign.name}</span>
-                {/* No description: core stores none, so this row rendered the
+                {/* No description: the API stores none, so this row rendered the
                     name and then nothing. See the note on `AgencyCampaign`. */}
               </div>
               <AgencyCampaignStatusBadge status={campaign.status} />

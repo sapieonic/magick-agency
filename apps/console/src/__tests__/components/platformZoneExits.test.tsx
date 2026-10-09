@@ -3,10 +3,9 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 /*
- * NEW in Magick Agency (decision B17). The agency shell's exits read "Back to
- * MagickVoice" in cusui, because `/app` was the parent product. Here `/app` is
- * this console's own platform zone (Team, Notifications, Call summaries), so the
- * exits stay and say where they go. These cases pin the label and destination.
+ * Decision B17. `/app` is this console's own platform zone (Team,
+ * Notifications, Call summaries), so the agency shell's exits stay and say where
+ * they go; no exit mentions a parent product. These cases pin the label and destination.
  */
 
 const mocks = vi.hoisted(() => ({ useTenant: vi.fn() }));

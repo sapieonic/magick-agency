@@ -18,11 +18,11 @@ import styles from './AgentHomePage.module.css';
  *
  * ── What this replaces, and why a page rather than a redirect ───────────────
  * `AgentLanding` used to resolve ONE assignment and bounce the agent straight to
- * `/station?campaign=<id>`. That was the right shape while master allowed one
+ * `/station?campaign=<id>`. That was the right shape while the server allowed one
  * active assignment per person: with a single destination there is nothing to
  * choose, so a chooser would have been a click in front of the only answer.
  *
- * Master now allows several (its migration 064), because an agency runs Renewals
+ * The server now allows several, because an agency runs Renewals
  * in the morning and Collections after lunch and the old rule made the second
  * assignment silently destroy the first. Once an agent can hold two, "which one?"
  * is a question only they can answer — a supervisor's staffing list says what they
@@ -35,7 +35,7 @@ import styles from './AgentHomePage.module.css';
  * a feature.
  *
  * ── Full-viewport, outside every shell ─────────────────────────────────────
- * For the reason `/station` is (§A.1) and `AgentLanding` before it: an `agent` is
+ * For the reason `/station` is and `AgentLanding` before it: an `agent` is
  * hierarchy level 5 and inherits no navigation, so a shell around this would be an
  * empty sidebar — "that is not navigation, it is noise". It is deliberately NOT
  * inside `AgencyLayout` for the same reason, even though it is an agency surface:
@@ -84,7 +84,7 @@ export function AgentHomePage() {
     /**
      * Both ids, for the reason `AgentConsolePage` spells out at its own join:
      * `TenantContext` resolves the account asynchronously, and a request sent in
-     * that window carries no `X-Account-Id`, which master answers with a 400 that
+     * that window carries no `X-Account-Id`, which the server answers with a 400 that
      * has nothing to do with the agent's assignments.
      */
     if (!tenantId || !accountId) return undefined;
@@ -238,9 +238,9 @@ function AssignmentRow({ assignment }: { assignment: AgencyAssignment }) {
       <div className={styles.rowMain}>
         <span className={styles.name}>{campaignName(assignment)}</span>
         <span className={styles.meta}>
-          {/* The badge renders an unrecognised status verbatim rather than
-              mapping it to a default, which is what lets master forward core's
-              value without this client mirroring core's lifecycle. */}
+          {/* The badge renders an unrecognised status as-is rather than
+              mapping it to a default, which is what lets the server forward the dialer runtime's
+              value without this client mirroring the API's lifecycle. */}
           {assignment.campaign_status ? (
             <AgencyCampaignStatusBadge status={assignment.campaign_status} />
           ) : null}
@@ -292,7 +292,7 @@ function Centred({
  * ── Same-tab here, and NEW-TAB on the station ─────────────────────────────
  * `AgentHomePage` holds no socket and no session, so these are ordinary links.
  * The station is the opposite: navigating away from the console closes the
- * station socket, and for up to 45 seconds afterwards core still has the agent in
+ * station socket, and for up to 45 seconds afterwards the API still has the agent in
  * the dialable pool with no screen attached — a reservation landing in that
  * window bridges a customer to nobody (`agencyStationExit.ts`, and the reason
  * Exit refuses while `available`). A same-tab "check your stats" link beside a
@@ -344,8 +344,7 @@ function SurfaceNav() {
 /**
  * The way back for someone who has a platform to go back to.
  *
- * PORT NOTE (magick-agency, decision B17): the wording is "Go to settings"
- * (cusui: "Back to MagickVoice"). `/app` here is this console's platform zone,
+ * Decision B17: the wording is "Go to settings". `/app` here is this console's platform zone,
  * which for a `viewer` or `operator` opens on Notifications (and Call summaries
  * where analysis is on) — so "settings" says where the link goes. Kept rather
  * than replaced with a sign-out: these roles have a real in-product destination.
@@ -356,11 +355,11 @@ function SurfaceNav() {
  * `isDedicatedAgent`, which is false for exactly the roles that see this link.
  *
  * ── Why the destination goes through `WorkspaceExit` ───────────────────────
- * The `/app` above is deliberate and correct, and §7b is explicit that it stays:
+ * The `/app` above is deliberate and correct:
  * the platform zone — team and membership, credits, billing, the tenant audit
  * log, API keys, settings, tenant/account switching — is shared by both products
  * by design, so an agency surface linking there is not a boundary violation. The
- * violation §7b is about is the *other* kind of `/app` link, the call-shaped deep
+ * violation to avoid is the *other* kind of `/app` link, the call-shaped deep
  * link that dumps a supervisor out of `AgencyLayout` and loses the campaign they
  * were reading.
  *
@@ -392,8 +391,8 @@ function stationPath(campaignId: string): string {
 /**
  * The campaign's name, or a stand-in.
  *
- * `campaign_name` is nullable on master's wire — a best-effort core lookup,
- * documented null for a core outage or a deleted campaign. Rendered unguarded, a
+ * `campaign_name` is nullable on the server's wire — a best-effort API lookup,
+ * documented null for an API outage or a deleted campaign. Rendered unguarded, a
  * brief outage produced rows with empty names and a link reading "Enter station"
  * beside nothing, which reads as a broken app rather than a transient upstream.
  */

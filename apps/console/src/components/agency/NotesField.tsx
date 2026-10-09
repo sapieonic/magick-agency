@@ -7,7 +7,7 @@ import {
 import styles from './NotesField.module.css';
 
 /**
- * The notes field and its status line (§A.13.7).
+ * The notes field and its status line.
  *
  * All the truthfulness rules are in `agencyNotes` — the seven-state status line,
  * the tone rule, the keystroke-vs-save comparison — because every one of them fails
@@ -81,7 +81,7 @@ export const NotesField = forwardRef<HTMLTextAreaElement, NotesFieldProps>(funct
         value={value}
         /**
          * A real `disabled` here is correct and is NOT the mechanism-(b) hazard.
-         * §A.13.9's fixed tab order requires inactive controls to be `disabled` so
+         *'s fixed tab order requires inactive controls to be `disabled` so
          * they are skipped rather than reordered, and this transition is driven by
          * `agent_state` leaving wrap-up — at which point the notes route stops
          * accepting writes anyway, so a focusable-but-inert textarea would invite
@@ -97,7 +97,7 @@ export const NotesField = forwardRef<HTMLTextAreaElement, NotesFieldProps>(funct
 
       {/*
         The status line. Tone AND weight, because colour alone is not a distinction
-        (§A.11) — a colour-blind agent, or a badly-calibrated agency-floor monitor,
+ — a colour-blind agent, or a badly-calibrated agency-floor monitor,
         must still see the difference between "Saved 14:32" and "Not saved to the
         server".
 

@@ -7,7 +7,7 @@
  * queue length, an ETA or a statistic this client does not have.
  *
  * The middle column's guide is **not interactive**. Tab order on this screen
- * is frozen (§A.13.9): a control that appeared only while idle would jump
+ * is frozen: a control that appeared only while idle would jump
  * into the sequence between "waiting" and "connected", which is the exact
  * moment a misclick hangs up on a person.
  */

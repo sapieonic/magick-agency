@@ -8,13 +8,13 @@ import {
 } from '../../utils/agencyMedia';
 
 /**
- * The **wire format**, pinned against core rather than against our own intent.
+ * The **wire format**, pinned against the API rather than against our own intent.
  *
  * Every constant and every shape below was read out of
- * `magic-voice-core/src/core/webrtc-bridge-manager.ts` and is repeated here as a
+ * the server's WebRTC bridge manager and is repeated here as a
  * literal on purpose. Asserting `encodeAgencyMediaFrame` against
  * `JSON.stringify({event:'media', ...})` would be the function testing itself;
- * asserting it against the literal string core's `JSON.parse` has to accept is
+ * asserting it against the literal string the API's `JSON.parse` has to accept is
  * the only version that catches a rename.
  *
  * The bug this file exists to make impossible: the console produced no audio at
@@ -23,7 +23,7 @@ import {
  */
 
 describe('the agency station audio wire format', () => {
-  it('produces exactly the envelope core reads', () => {
+  it('produces exactly the envelope the API reads', () => {
     // `webrtc-bridge-manager.ts:1083` — `data.event === 'media' && typeof
     // data.media?.payload === 'string'`. Nothing else is inspected, and nothing
     // else may be required.
@@ -42,40 +42,40 @@ describe('the agency station audio wire format', () => {
     expect(AGENCY_MEDIA_FRAME_SAMPLES / AGENCY_MEDIA_SAMPLE_RATE).toBeCloseTo(0.02, 5);
   });
 
-  describe('the frame ceiling is core’s, not a guess', () => {
+  describe('the frame ceiling is the API’s, not a guess', () => {
     /**
-     * **This is NOT a cross-repo check, and it cannot be one.** Core is a
+     * **This is NOT a cross-repo check, and it cannot be one.** The API is a
      * separate submodule with its own build; nothing here imports from it, and a
      * test that read `webrtc-bridge-manager.ts` off disk would pass locally and
      * fail in CI, where only this repo is checked out.
      *
      * An earlier version asserted `MAX_AGENCY_MEDIA_PAYLOAD_CHARS === 64000 * 2`
      * — our literal against our other literal, arranged to look like a
-     * derivation from core's constant. It could not fail for any reason worth
-     * knowing about: if core tightened its bound to the arithmetically correct
+     * derivation from the API's constant. It could not fail for any reason worth
+     * knowing about: if the API tightened its bound to the arithmetically correct
      * `ceil(64000/3)*4 = 85336`, every frame between 85337 and 128000 would
-     * start vanishing into core's silent drop with this test still green.
+     * start vanishing into the API's silent drop with this test still green.
      *
      * So the assertions below pin the two things that are actually ours to
      * defend — the guard's boundary behaviour, and that real traffic is nowhere
      * near it — and the cross-repo agreement is named as a manual obligation in
      * `agencyMedia.ts` rather than pretended at here.
      */
-    it('is the transcribed value, re-checked by hand against core', () => {
+    it('is the transcribed value, re-checked by hand against the API', () => {
       expect(MAX_AGENCY_MEDIA_PAYLOAD_CHARS).toBe(128000);
     });
 
-    it('is comfortably above base64’s true 4/3 expansion of core’s byte limit', () => {
-      // The property that makes the transcription safe *today*: whatever core
+    it('is comfortably above base64’s true 4/3 expansion of the API’s byte limit', () => {
+      // The property that makes the transcription safe *today*: whatever the API
       // meant by `* 2`, 128000 is not below the honest encoded bound, so we
-      // never reject a frame core would have accepted.
+      // never reject a frame the API would have accepted.
       const honestEncodedBound = Math.ceil(64000 / 3) * 4;
       expect(honestEncodedBound).toBe(85336);
       expect(MAX_AGENCY_MEDIA_PAYLOAD_CHARS).toBeGreaterThanOrEqual(honestEncodedBound);
     });
 
-    it('refuses a payload core would silently drop', () => {
-      // Core logs and returns. A frame we hand it over the ceiling is audio that
+    it('refuses a payload the API would silently drop', () => {
+      // The API logs and returns. A frame we hand it over the ceiling is audio that
       // vanishes two services away with nothing on this side to show for it.
       expect(encodeAgencyMediaFrame('a'.repeat(MAX_AGENCY_MEDIA_PAYLOAD_CHARS + 1))).toBeNull();
       // And the boundary itself is accepted, so the guard is `>` and not `>=`.
@@ -98,8 +98,8 @@ describe('the agency station audio wire format', () => {
     });
   });
 
-  describe('reading core’s downlink frame', () => {
-    it('accepts the frame core actually writes', () => {
+  describe('reading the API’s downlink frame', () => {
+    it('accepts the frame the API actually writes', () => {
       // `:1154` / `:1157` — identical envelope in both carrier branches.
       expect(readAgencyMediaPayload({ event: 'media', media: { payload: 'QUJD' } })).toBe('QUJD');
     });

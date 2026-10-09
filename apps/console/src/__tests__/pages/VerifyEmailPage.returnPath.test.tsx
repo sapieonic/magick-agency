@@ -86,10 +86,9 @@ describe('where verification sends somebody afterwards', () => {
   });
 
   it('sends a new session to the carried destination too — there is no onboarding', async () => {
-    // PORT NOTE (magick-agency): cusui's case was "sends a genuinely new user to
-    // onboarding regardless". Agency has no `/onboarding` and no sign-up (path 4
-    // of `/auth/session` refuses with `no_membership`), so the `is_new` branch is
-    // deleted and even an `is_new: true` payload goes to `returnTo`.
+    // Agency has no `/onboarding` and no sign-up (path 4
+    // of `/auth/session` refuses with `no_membership`), so even an
+    // `is_new: true` payload goes to `returnTo`.
     mocks.completeEmailVerification.mockResolvedValue({ is_new: true });
     renderAt('/verify-email?next=%2Fstation');
     fireEvent.click(screen.getByRole('button', { name: /verified my email/i }));

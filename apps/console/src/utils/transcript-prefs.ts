@@ -8,10 +8,9 @@
  *
  * NOTE: localStorage is per browser/device, so this preference does not sync
  * across a user's devices. Moving to cross-device would need a real
- * user-preferences store in magick-master.
+ * user-preferences store in the API.
  */
 
-// PORT NOTE (magick-agency, decision B17): renamed from cusui's `magickvoice-transcript-visible`; no stored values to migrate.
 const STORAGE_KEY = 'magick-agency-transcript-visible';
 
 /** Transcripts are shown by default — the toggle is opt-out. */

@@ -13,8 +13,8 @@ import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStat
  * An `agent` is hierarchy level 5 and holds four `agency.*` permissions and
  * nothing else. Every nav entry in `AppLayout` floors at `viewer` or higher, so an
  * agent who reaches `/app` gets a shell with an empty sidebar around a dashboard
- * of empty panels — §A.1: *"an `agent` … inherits nothing … that is not
- * navigation, it is noise"*.
+ * of empty panels. An `agent` inherits nothing, and a shell with no navigation is
+ * noise.
  *
  * So this wraps `/app`'s element rather than adding a nav link, which is what
  * makes it apply to every `/app/*` path an agent could reach — including the
@@ -26,7 +26,7 @@ import { AGENT_LANDING_PARAM, agentLandingArrival } from '../../utils/agencyStat
  * A previous revision gated on `agencyPersona(role) === 'agent'`. Because the
  * agent permissions floor at level 5, that predicate is true for `viewer` (10) and
  * `operator` (20) as well — so this component redirected them out of `/app` too.
- * `/dialer` is gated on the `agency` capability, which master's frozen catalog
+ * `/dialer` is gated on the `agency` capability, which the API's frozen catalog
  * defaults to `false`, so in every tenant that had not bought the dialer those two
  * roles landed on a full-viewport "not available for your account" with no
  * sidebar, no link out, and (logout living only in `TopBar`, inside `AppLayout`)

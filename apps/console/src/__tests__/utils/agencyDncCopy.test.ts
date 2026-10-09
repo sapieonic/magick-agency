@@ -13,7 +13,7 @@ import {
 import type { AgencyDncResponse } from '../../types/agency';
 
 /**
- * `AD-P3-U-03` (b) and (c), plus §A.7.5's *never overstate a compliance action*.
+ * Criteria (b) and (c), plus the rule *never overstate a compliance action*.
  */
 
 function response(over: Partial<AgencyDncResponse> = {}): AgencyDncResponse {
@@ -53,7 +53,7 @@ describe('the tenant-wide escalation states the wider scope and its permanence',
   });
 
   it('says it cannot be undone from the console, and who can', () => {
-    // Irreversibility discovered afterwards is the failure §A.7.5 guards
+    // Irreversibility discovered afterwards is the failure the never-overstate rule guards
     // against; "only an admin can" is the actionable half.
     const hint = dncTenantConfirmHint('+919820041772');
     expect(hint).toContain('undo');
@@ -83,11 +83,11 @@ describe('the outcome promises only what the response promised', () => {
   });
 
   it('the campaign-scoped mark does NOT claim the list while the write is in flight', () => {
-    // The over-claim guard, and the defect this pair exists for. Core writes the
-    // roster rows `suppressed` and then forwards to master; when that forward
+    // The over-claim guard, and the defect this pair exists for. The API writes the
+    // roster rows `suppressed` and then forwards to the API; when that forward
     // cannot land it still answers 200 with `dnc_recorded: false`, and NO entry
-    // exists on any list. Claiming one is the overstatement §A.7.5 forbids — and
-    // core's own abandon log says why it matters: nothing then stops a re-upload
+    // exists on any list. Claiming one is the overstatement that rule forbids — and
+    // the API's own abandon log says why it matters: nothing then stops a re-upload
     // of the number into this same campaign.
     const copy = dncOutcomeCopy(response({ dnc_recorded: false }), 'campaign');
     expect(copy).not.toContain('It’s on this campaign’s Do Not Call list');
@@ -111,7 +111,7 @@ describe('the outcome promises only what the response promised', () => {
 
   it('the tenant-wide mark narrows the claim to AGENCY dialing (Q2)', () => {
     // The unqualified "no campaign in this workspace will dial it again" is the
-    // sentence `DncPage` narrowed away from: the dial-time gate lives in core's
+    // sentence `DncPage` narrowed away from: the dial-time gate lives in the API's
     // `agency/pre-dial-gates.ts` and nothing in AI dispatch consults it, so the
     // widest true claim is every agency campaign. This is the copy an AGENT reads
     // and may repeat to the customer, so it must be no wider than the page's.
@@ -121,7 +121,7 @@ describe('the outcome promises only what the response promised', () => {
 
   it('the tenant-wide mark WEAKENS to this campaign only while the list write is in flight', () => {
     // The load-bearing case. `dnc_recorded: false` is a success with a smaller
-    // promise: core suppressed the contact locally, master's tenant-wide row is
+    // promise: the API suppressed the contact locally, the API's tenant-wide row is
     // not confirmed. An agent may repeat this sentence to the customer.
     const copy = dncOutcomeCopy(response({ dnc_recorded: false }), 'tenant');
     expect(copy).toContain('this campaign');
@@ -146,7 +146,7 @@ describe('the outcome promises only what the response promised', () => {
 
 /**
  * The two action labels and the title are what an agent reads under pressure and
- * what `AgentConsolePage`'s tests key off. Pinned verbatim so a future edit to
+ * what `AgentConsolePage`'s tests key off. Pinned exactly so a future edit to
  * the outcome copy in this module cannot drift them as a side effect.
  */
 describe('the labels an agent chooses between', () => {
@@ -173,9 +173,9 @@ describe('when the control is unavailable', () => {
   });
 
   it('is blocked with no live attempt — the same condition as “not your attempt”', () => {
-    // (c): the console only ever holds an attempt core reserved to THIS agent,
+    // (c): the console only ever holds an attempt the API reserved to THIS agent,
     // so "no live attempt" is exactly the disabling condition the criterion asks
-    // for. Core's 403 `not_your_attempt` is the enforcement behind it.
+    // for. The API's 403 `not_your_attempt` is the enforcement behind it.
     expect(dncBlockReason({ ...base, hasLiveAttempt: false })).toBe('no_live_attempt');
     expect(DNC_BLOCK_COPY.no_live_attempt).toContain('on a call');
   });
@@ -195,7 +195,7 @@ describe('when the control is unavailable', () => {
 
 describe('failure copy', () => {
   it('says plainly that the call moved on, rather than “contact support”', () => {
-    // `not_your_attempt` is allow-listed through master's error mask precisely
+    // `not_your_attempt` is allow-listed through the API's error mask precisely
     // so it can be said in words on an agent's screen.
     const copy = dncFailureCopy(
       Object.assign(new Error('Forbidden'), { details: { code: 'not_your_attempt' } }),

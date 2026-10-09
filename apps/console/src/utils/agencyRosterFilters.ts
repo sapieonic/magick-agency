@@ -21,16 +21,16 @@ import type { AgencyContactFilters } from '../types/agency-spine';
  *    of two representations; with them in the URL it describes one.
  *
  * ── Repeated params, never comma-joined ────────────────────────────────────
- * Matching what this client sends to master on every agency filter. A
+ * Matching what this client sends to the API on every agency filter. A
  * comma-joined value would additionally be unable to carry a disposition code
- * containing a comma — which master's `forwardAllowedQuery` and core's
+ * containing a comma — which the server's `forwardAllowedQuery` and the dialer runtime's
  * `multiParam` already cannot, but there is no reason for the URL to lose it a
  * second time before the request is even built.
  *
  * ── An unrecognised key is ignored, not preserved ──────────────────────────
  * Reading is an allow-list. A hand-edited or stale link degrades to the filters
  * this build knows rather than forwarding an unknown key to a route that would
- * 400 `unknown_query_params` — master's contacts (and attempts) lists refuse
+ * 400 `unknown_query_params` — the API's contacts (and attempts) lists refuse
  * anything not on their allow-list, they no longer drop it. Forwarding a typo
  * would fail the whole page load instead of showing the filters this build
  * understands.

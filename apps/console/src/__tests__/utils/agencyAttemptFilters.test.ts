@@ -148,7 +148,7 @@ describe('isAttemptFiltered — whether an empty result is about the query', () 
      * This assertion used to run the other way, and both readings obeyed the same
      * rule: **a key is counted if and only if the surface can actually send it.**
      *
-     * `phone` was excluded because master's whitelist for the two agent routes
+     * `phone` was excluded because the API's whitelist for the two agent routes
      * dropped it silently — the control returned an unfiltered list dressed as a
      * search result, so counting it would have turned an empty page into "your
      * search matched nothing" about a search that never happened. `phone` is now in
@@ -262,8 +262,8 @@ describe('observedDispositionCodes — a suggestion list, never a catalog', () =
      * typed — including a comma. This function must therefore not split one.
      *
      * Such a code is nevertheless **unfilterable end to end**, and that is not
-     * this function's doing: master's `forwardAllowedQuery` joins repeated params
-     * with a comma and core's `multiParam` splits on one. Splitting here would
+     * this function's doing: The API's `forwardAllowedQuery` joins repeated params
+     * with a comma and the API's `multiParam` splits on one. Splitting here would
      * produce the same two useless codes one hop earlier while hiding the fact
      * that the code the reader typed cannot match.
      */
