@@ -17,6 +17,7 @@
  *  - `APP_VERSION` and `SERVICE_NAME` come from `@magick-agency/observability` subpaths, and the
  *    heap gauge's meter is named after `SERVICE_NAME` (core: 'voice-ai-orchestrator.runtime').
  *  - `shutdownOtelSdk` gives up after `OTEL_SHUTDOWN_TIMEOUT_MS` (see it).
+ *  - Nothing starts unless `OTEL_SERVICE_NAME` is set as well (see `otelServiceNamed`).
  * Comments are core's except where marked or where they described deleted code (the scrape, the
  * `:9090` reader, core's `:64-69`, `:150-152`, `:246`). Kept as core wrote them: the `sdkRef`
  * story below is about core's billing counter (`webhook_fanout_abandoned_total`), which this app
@@ -57,6 +58,11 @@ import {
 
 const otlpEndpoint = process.env['OTEL_EXPORTER_OTLP_ENDPOINT'];
 const otelEnabled = process.env['OTEL_ENABLED'] === 'true';
+// PORT NOTE (magick-agency): not in core. Export also needs an explicit OTEL_SERVICE_NAME (Manas,
+// 2026-10-09). The fallback name, `magick-agency`, is the production name Grafana's
+// `agency_service_name_regex` selects, so an unnamed process (a laptop, a staging box missing the
+// variable) would page as production. Core's fallback (`voice-ai-orchestrator`) matches no rule.
+const otelServiceNamed = Boolean(process.env['OTEL_SERVICE_NAME']);
 
 /**
  * The live SDK, so the application's own shutdown sequence can flush it LAST.
@@ -106,15 +112,19 @@ export async function shutdownOtelSdk(): Promise<void> {
 const resourceAttributes = buildResourceAttributes(process.env, { version: APP_VERSION, hostname });
 
 // Only initialize OTel when explicitly enabled AND an endpoint is configured.
-if (otelEnabled && otlpEndpoint) {
+// PORT NOTE (magick-agency): AND the service is named (`otelServiceNamed`).
+if (otelEnabled && otlpEndpoint && otelServiceNamed) {
   console.log(`[otel] Initializing OpenTelemetry — endpoint: ${otlpEndpoint}`);
 } else {
   if (otelEnabled && !otlpEndpoint) {
     console.warn('[otel] OTEL_ENABLED=true but OTEL_EXPORTER_OTLP_ENDPOINT is not set — skipping');
   }
+  if (otelEnabled && otlpEndpoint && !otelServiceNamed) {
+    console.warn('[otel] OTEL_ENABLED=true but OTEL_SERVICE_NAME is not set — skipping (unnamed, it would alert as production)');
+  }
 }
 
-if (otelEnabled && otlpEndpoint) {
+if (otelEnabled && otlpEndpoint && otelServiceNamed) {
   // Force HTTP/protobuf protocol — Grafana Cloud doesn't support gRPC.
   // This also controls the auto-configured log exporter inside NodeSDK.
   process.env['OTEL_EXPORTER_OTLP_PROTOCOL'] = 'http/protobuf';

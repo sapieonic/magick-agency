@@ -78,6 +78,7 @@ Other rulings of 2026-10-09 (not numbered questions):
 | Super-admin audit writes | Stay fire-and-forget (master), but a failed write is logged at ERROR with action, actor and target instead of being dropped silently. (OQ-8) | **Decided — changed** |
 | B7, B12, B13, B15 | As recorded above. | **Decided — keep** |
 | B6 | Handle now (with the OTel SDK). Service names `magick-agency[-Staging\|-Dedicated]`; same PagerDuty service as core/master; panels 12/13 move to settled attempts. | **Decided — changed (superproject)** |
+| Unnamed exporter | With `OTEL_ENABLED=true` but no `OTEL_SERVICE_NAME`, the SDK does not start (warns), because the fallback `magick-agency` is the production name B6 pages on. | **Decided — changed** |
 | OTel export path | OTLP push only (core's Grafana Cloud path); core's `:9090` scrape is not ported. Branch `feat/otel-sdk`, PR #4; `PORTING.md` "OpenTelemetry SDK". | **Decided — changed** |
 | pg span parameters | Keep core's `enhancedDatabaseReporting: true` (pg spans carry query parameter values, as in core and master); core's comment saying otherwise is annotated as wrong. | **Decided — keep** |
 | Credentials on spans | Redacted on spans as in logs: `?token=`, `sig=`, `*verify_token=`, signed-URL keys and media-stream path tokens, on server spans and (query values) on outgoing `http`/`fetch` spans. | **Decided — changed** |

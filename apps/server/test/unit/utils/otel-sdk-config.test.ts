@@ -391,8 +391,21 @@ describe('src/instrumentation.ts wiring (source audit)', () => {
     it('installs no meter provider with export off, so every instrument stays a no-op as before', () => {
       // OTLP only (no :9090): the one provider is NodeSDK's, inside the exporting branch.
       expect(src).not.toMatch(/setGlobalMeterProvider|new MeterProvider\(/);
-      expect(src).toMatch(/if \(otelEnabled && otlpEndpoint\) \{\n\s+\/\/ Force HTTP\/protobuf/);
+      expect(src).toMatch(/if \(otelEnabled && otlpEndpoint && otelServiceNamed\) \{\n\s+\/\/ Force HTTP\/protobuf/);
       expect(src).toContain("const otelEnabled = process.env['OTEL_ENABLED'] === 'true';");
+    });
+
+    it('starts nothing without OTEL_SERVICE_NAME: the fallback is the production name Grafana alerts on', () => {
+      // Manas, 2026-10-09. `buildResourceAttributes` still falls back to SERVICE_NAME (core's
+      // shape), so the gate is what keeps an unnamed process out of production's series.
+      expect(src).toContain("const otelServiceNamed = Boolean(process.env['OTEL_SERVICE_NAME']);");
+      const gates = src.match(/^if \(otelEnabled && otlpEndpoint[^)]*\) \{$/gm) ?? [];
+      expect(gates).toEqual([
+        'if (otelEnabled && otlpEndpoint && otelServiceNamed) {',
+        'if (otelEnabled && otlpEndpoint && otelServiceNamed) {',
+      ]);
+      expect(src).toContain('OTEL_SERVICE_NAME is not set — skipping');
+      expect(buildResourceAttributes({}, { version: '0', hostname: () => 'h' })['service.name']).toBe('magick-agency');
     });
 
     it('loads .env before anything reads process.env (master src/instrumentation.ts:1-2)', () => {

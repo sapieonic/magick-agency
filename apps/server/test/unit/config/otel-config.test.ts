@@ -33,13 +33,19 @@ describe('config.otel', () => {
     });
   });
 
-  it('exports only when OTEL_ENABLED is exactly "true" AND an endpoint is set, as instrumentation.ts gates it', () => {
+  it('exports only when OTEL_ENABLED is exactly "true" AND an endpoint AND a service name are set, as instrumentation.ts gates it', () => {
     const endpoint = 'http://localhost:4318';
-    expect(otel({ OTEL_ENABLED: 'true', OTEL_EXPORTER_OTLP_ENDPOINT: endpoint })).toMatchObject({ exporting: true, endpoint });
-    expect(otel({ OTEL_ENABLED: 'true' }).exporting).toBe(false);
-    expect(otel({ OTEL_ENABLED: 'true', OTEL_EXPORTER_OTLP_ENDPOINT: '' }).exporting).toBe(false);
+    const named = { OTEL_SERVICE_NAME: 'magick-agency-Staging' };
+    expect(otel({ ...named, OTEL_ENABLED: 'true', OTEL_EXPORTER_OTLP_ENDPOINT: endpoint })).toMatchObject({ exporting: true, endpoint });
+    expect(otel({ ...named, OTEL_ENABLED: 'true' }).exporting).toBe(false);
+    expect(otel({ ...named, OTEL_ENABLED: 'true', OTEL_EXPORTER_OTLP_ENDPOINT: '' }).exporting).toBe(false);
     for (const v of ['TRUE', '1', 'yes', '']) {
-      expect(otel({ OTEL_ENABLED: v, OTEL_EXPORTER_OTLP_ENDPOINT: endpoint }).exporting).toBe(false);
+      expect(otel({ ...named, OTEL_ENABLED: v, OTEL_EXPORTER_OTLP_ENDPOINT: endpoint }).exporting).toBe(false);
+    }
+    // Unnamed, the fallback would be Grafana's production name: no export (Manas, 2026-10-09).
+    for (const unnamed of [{}, { OTEL_SERVICE_NAME: '' }] as Record<string, string>[]) {
+      const o = otel({ ...unnamed, OTEL_ENABLED: 'true', OTEL_EXPORTER_OTLP_ENDPOINT: endpoint });
+      expect(o).toMatchObject({ exporting: false, serviceName: 'magick-agency' });
     }
   });
 

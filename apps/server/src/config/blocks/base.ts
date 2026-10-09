@@ -137,12 +137,18 @@ export const baseConfigSchema = z.object({
     /** Base URL; the SDK appends `/v1/traces`, `/v1/metrics` and `/v1/logs`. Blank = unset. */
     endpoint: z.string().optional().transform((v) => v || undefined),
     metricsExportIntervalMs: z.string().optional().transform(resolveMetricsExportIntervalMs),
-    serviceName: z.string().optional().transform((v) => v || SERVICE_NAME),
+    /** Blank = unset. */
+    serviceName: z.string().optional().transform((v) => v || undefined),
     serviceInstanceIdEnabled: z.string().optional().transform((v) => v === 'true'),
-  }).transform((o) => ({
+  }).transform(({ serviceName, ...o }) => ({
     ...o,
-    /** Traces, metrics and logs leave the process only when both are set (`instrumentation.ts`). */
-    exporting: o.enabled && o.endpoint !== undefined,
+    serviceName: serviceName ?? SERVICE_NAME,
+    /**
+     * Traces, metrics and logs leave the process only when OTel is enabled, the endpoint is set
+     * AND `OTEL_SERVICE_NAME` is set (`instrumentation.ts`): the fallback name is the production
+     * name Grafana alerts on (Manas, 2026-10-09).
+     */
+    exporting: o.enabled && o.endpoint !== undefined && serviceName !== undefined,
   })),
 });
 
