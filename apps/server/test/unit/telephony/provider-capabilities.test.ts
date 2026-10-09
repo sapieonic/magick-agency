@@ -1,9 +1,6 @@
-// PORT NOTE (magick-agency): ported from core test/unit/telephony/provider-capabilities.test.ts@4850d1d9.
-// VoiceLink is the only carrier here: the other seven adapters (and their ADAPTERS
-// rows), the `supportsTransfer` / `TRANSFER_CAPABLE_PROVIDERS` imports and the
-// transfer-gate case are deleted (no escalation). The registry read now expects
-// one provider, and the cancel-capable cohort is the empty set. Deleted and
-// modified cases are listed in PORTING.md (Lane C).
+// VoiceLink is the only carrier here, so the registry read expects one provider
+// and the cancel-capable cohort is the empty set. There is no transfer gate (no
+// escalation).
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -99,7 +96,7 @@ describe('TelephonyProvider capabilities — every adapter in the registry decla
     // Stated as a set as well as per adapter, so a flip is visible as a change
     // to the platform's cancel-capable cohort — which is what the later
     // predictive-pacing work gates on (the capability, never the provider name).
-    // PORT NOTE (magick-agency): core's cohort was telnyx/twilio/vobiz, none carried.
+    // VoiceLink cannot cancel a ringing leg, so the cohort is empty.
     expect(ADAPTERS.filter((a) => a.cancelRinging).map((a) => a.name).sort())
       .toEqual([]);
   });

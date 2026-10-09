@@ -1,5 +1,3 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/unit/audio/telephony-clip.test.ts@4850d1d9.
-// Verbatim (relative paths unchanged).
 import { describe, it, expect } from 'vitest';
 import { toTelephonyClip, TELEPHONY_CLIP_SAMPLE_RATE } from '../../../src/audio/telephony-clip.js';
 import { pcmToAlaw, pcmToMulaw } from '../../../src/utils/audio.js';

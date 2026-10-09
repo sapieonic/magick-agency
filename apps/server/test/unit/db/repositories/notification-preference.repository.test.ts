@@ -35,8 +35,7 @@ const USER = '44444444-4444-4444-8444-444444444444';
 const OTHER_USER = '55555555-5555-4555-8555-555555555555';
 const TENANT = '11111111-1111-4111-8111-111111111111';
 
-// PORT NOTE (magick-agency): typed as `UpsertNotificationPreferenceInput` (master
-// leaves it inferred). Agency's lint typechecks tests (decision B1), and the
+// Typed as `UpsertNotificationPreferenceInput`: lint typechecks tests (decision B1), and the
 // inferred `frequency: string` does not satisfy `DigestFrequency | null`.
 function pref(over: Record<string, unknown> = {}): UpsertNotificationPreferenceInput {
   return {

@@ -4,10 +4,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * `notification_deliveries` — the claim-before-send idempotency ledger.
  *
  * This repository is the ONLY thing between an at-least-once trigger and
- * duplicate mail (docs/reference/magick-master/CLAUDE.md, Notifications). Nothing upstream is exactly-once:
+ * duplicate mail (see the notifications design). Nothing upstream is exactly-once:
  * EventBridge is at-least-once by contract, the trigger Lambda retries any
  * non-2xx, an operator re-runs the internal route by hand, and a retry after a
- * timeout reaches a DIFFERENT master instance while the first is still working
+ * timeout reaches a DIFFERENT server instance while the first is still working
  * — the case an in-process "already running" flag cannot see.
  *
  * The pool is mocked, so nothing here observes which ROWS a predicate selects.
@@ -82,7 +82,7 @@ describe('notificationDeliveryRepository.claim', () => {
   });
 
   it('keeps tenant_id IN the conflict target — a two-tenant admin gets BOTH digests', async () => {
-    // The bug this pins was real, not hypothetical (docs/reference/magick-master/CLAUDE.md, migration 072).
+    // The bug this pins was real, not hypothetical (migration 072).
     // Drop `tenant_id` from the key and a consultant who is account_admin in
     // tenants A and B receives A's digest; B's INSERT — same event_key, same
     // period, same inbox — hits the conflict, returns zero rows, and is skipped
@@ -322,7 +322,7 @@ describe('notificationDeliveryRepository.recordOutcomeByKey', () => {
     // `sent`, turning a successful delivery into a recorded failure — and the
     // campaign gate calls this on paths that CAN race a concurrent
     // finalization (the fenced dispatched transition, the reconcile sweeper, a
-    // core webhook redelivery).
+    // voice-engine webhook redelivery).
     await notificationDeliveryRepository.recordOutcomeByKey(key, 'sent');
     expect(call().sql).toContain("AND status = 'pending'");
   });

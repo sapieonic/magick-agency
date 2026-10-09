@@ -166,7 +166,7 @@ describe('MembershipInviteRepository', () => {
 
     it('puts the tenant boundary in the STATEMENT, not in a downstream if', async () => {
       /**
-       * docs/reference/magick-master/CLAUDE.md's RBAC rule 1, on the only tenant-route-reachable write here.
+       * The tenant boundary belongs in the statement itself (the only tenant-route-reachable write here).
        * `POST /invites/resend` takes `membership_id` from a request body, and a
        * membership id travels in URLs, logs and support threads — so "the caller
        * knew the id" is never evidence they may act on it. The route does resolve
@@ -529,7 +529,7 @@ describe('MembershipInviteRepository', () => {
 
     it('binds a row that already carries THE CLAIMANT\u2019S OWN uid', async () => {
       /**
-       * The ordinary "add an agent who already has a MagickVoice login" invite,
+       * The ordinary "add an agent who already has a login" invite,
        * and the case a stub-only predicate refused.
        *
        * `POST /users/invite` reuses the existing `users` row when the address is

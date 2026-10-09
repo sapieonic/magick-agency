@@ -1,15 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-// ─── The authoritative rollout through-line (Quinn's IE sequence) ────────────
+// ─── The authoritative rollout through-line ──────────────────────────────────
 //
-// Anchored at CORE's authoritative path: the REAL FeatureFlagService driving the
-// REAL resolution + cache + invalidation, over a MOCKED repository whose override
-// rows are an in-memory set we mutate between steps. This is the cross-service
-// *logic* through-line — the master proxy and cusui render layers are already
-// covered per-layer (master super-admin route tests, cusui FeatureFlagsContext
-// tests); here we prove service → cache → invalidate → resolve → GATE for real,
-// since that gate (connection-create + dispatch) is what whatsapp_personal hangs
-// on regardless of the UI.
+// The REAL FeatureFlagService driving the REAL resolution + cache +
+// invalidation, over a MOCKED repository whose override rows are an in-memory
+// set we mutate between steps. This is the *logic* through-line — the route and
+// console render layers are covered per-layer; here we prove
+// service → cache → invalidate → resolve → GATE for real, since that gate
+// (connection-create + dispatch) is what whatsapp_personal hangs on regardless
+// of the UI.
 
 vi.mock('@magick-agency/observability', () => ({
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -33,13 +32,10 @@ import { FeatureFlagService } from '../../../src/feature-flags/feature-flag.serv
 import type { FeatureFlagOverrideRecord } from '@magick-agency/db/models/feature-flag.model';
 import { FIXTURE_FLAGS } from '../../helpers/fixture-flags.js';
 
-// PORT NOTE (magick-agency): ported from core
-// test/unit/scenarios/feature-flag-rollout-scenarios.test.ts@4850d1d9. The
-// through-line under test (service → cache → invalidate → resolve → gate) is the
-// service's; the flag is an UNREGISTERED copy of core's `whatsapp_personal`
-// (`test/helpers/fixture-flags.ts`) because agency's registry does not carry it
-// and `isEnabled` resolves the definition it is handed. Mocks target agency
-// module specifiers. Otherwise verbatim.
+// The through-line under test (service → cache → invalidate → resolve → gate) is
+// the service's; the flag is an UNREGISTERED fixture copy of `whatsapp_personal`
+// (`test/helpers/fixture-flags.ts`) because the registry does not carry it
+// and `isEnabled` resolves the definition it is handed.
 const PREFIX = 'mvc:';
 const WA = FIXTURE_FLAGS.whatsapp_personal;
 

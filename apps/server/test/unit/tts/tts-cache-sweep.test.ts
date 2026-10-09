@@ -1,5 +1,3 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/unit/tts/tts-cache-sweep.test.ts@4850d1d9.
-// Only changes: logger mock specifier -> @magick-agency/observability.
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import fs from 'node:fs';
 

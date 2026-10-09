@@ -1,5 +1,5 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core@4850d1d9 test/unit/utils/concurrency.test.ts.
-// Renamed `.core.test.ts`: master@a1f0756a has a different suite at the same path (concurrency.test.ts).
+// Covers `runWithConcurrency`; the sibling concurrency.test.ts covers the semaphore
+// and `mapWithConcurrency`.
 
 import { describe, it, expect, vi } from 'vitest';
 import { runWithConcurrency } from '../../../src/utils/concurrency.js';

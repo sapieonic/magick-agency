@@ -1,7 +1,3 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/unit/audio/ensure-pcm-clip.test.ts@4850d1d9.
-// Only changes: mock specifiers. logger mock -> @magick-agency/observability (spreads the real module so
-// the source's withSpan, previously imported from the unmocked tracing.js, stays real); db/connection mock
-// -> @magick-agency/db; AudioFileRecord type import -> @magick-agency/db/models/audio-file.model.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Hoisted mocks ──────────────────────────────────────────────────────
@@ -169,7 +165,7 @@ describe('ensurePcmClip', () => {
     });
   });
 
-  describe('cache miss with a stored hash (§9.7 — simulates another replica)', () => {
+  describe('cache miss with a stored hash (simulates another replica)', () => {
     it('re-downloads from S3, re-decodes, and re-populates the cache under the SAME hash', async () => {
       // The row says the file decoded fine and this is its key…
       const af = makeAudioFile({ pcm_audio_hash: 'audiohash-mp3bytes', pcm_sample_rate: 8000, pcm_channels: 1 });
@@ -264,7 +260,7 @@ describe('ensurePcmClip', () => {
     });
   });
 
-  describe('legacy row healing (§9.8 — pcm_audio_hash IS NULL)', () => {
+  describe('legacy row healing (pcm_audio_hash IS NULL)', () => {
     it('decodes from S3 and PERSISTS hash + rate + channels onto the row', async () => {
       const af = makeAudioFile({ pcm_audio_hash: null, pcm_sample_rate: null, pcm_channels: null });
 
@@ -300,7 +296,7 @@ describe('ensurePcmClip', () => {
     });
   });
 
-  describe('failure propagation (§5.8 fail-closed)', () => {
+  describe('failure propagation (fail-closed)', () => {
     it('propagates AudioDecodeError for an undecodable legacy audio/mp4 row', async () => {
       mocks.decodeToPcm16.mockRejectedValue(
         new mocks.AudioDecodeError('mpg123: Format not recognised', 'UNSUPPORTED_FORMAT'),

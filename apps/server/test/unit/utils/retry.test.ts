@@ -1,7 +1,3 @@
-/*
- * PORT NOTE (magick-agency): ported from core test/unit/utils/retry.test.ts @4850d1d9.
- * Cases unchanged; the logger mock points at `@magick-agency/observability`.
- */
 import { describe, it, expect, vi } from 'vitest';
 import { withRetry } from '../../../src/utils/retry.js';
 

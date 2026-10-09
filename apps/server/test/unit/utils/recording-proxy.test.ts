@@ -1,16 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
 /*
- * PORT NOTE (magick-agency): replaces core test/unit/utils/recording-proxy-byoc.test.ts
- * @4850d1d9 (30 cases), whose subject (per-carrier credentials, BYOC sources, the
- * credential seam) is deleted (plan §4). What carries over, rewritten against the
- * allow-list: the "HOST check, not a substring match" suite (the 8 hostile URLs, real
- * host, subdomain, case, unparseable) now asserts `recordingHostMatches`, and the
- * `proxyCallRecording` suite (404 without a recording, fetch) asserts no credentials
- * are attached and an off-list host is refused with 502 without fetching. The
- * Twilio / VoBiz / Plivo / Telnyx header cases, `resolveRecordingAuthSource` and the
- * `fetchRecordingBytes` credential case are deleted with their functions. New: Range
- * forwarding and the https-only rule.
+ * Covers the recording proxy against the host allow-list: the "HOST check, not a
+ * substring match" suite (hostile URLs, real host, subdomain, case, unparseable)
+ * asserts `recordingHostMatches`, and the `proxyCallRecording` suite (404 without
+ * a recording, fetch) asserts no credentials are attached and an off-list host is
+ * refused with 502 without fetching. Also covers Range forwarding and the
+ * https-only rule.
  */
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -25,7 +21,7 @@ const HOSTS = ['voicelink.test'] as const;
 const GOOD = 'https://recordings.voicelink.test/a/b.mp3';
 
 describe('recording host matching is a HOST check, not a substring match', () => {
-  // `recording_url` is persisted verbatim from the carrier's UNAUTHENTICATED
+  // `recording_url` is persisted unmodified from the carrier's UNAUTHENTICATED
   // recording webhook, so the string inspected is attacker-chosen.
   const HOSTILE = [
     ['userinfo', 'https://voicelink.test@evil.example/rec.mp3'],

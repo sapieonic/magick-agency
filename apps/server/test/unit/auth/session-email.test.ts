@@ -1,4 +1,3 @@
-// PORT NOTE (magick-agency): ported from master test/unit/auth/session-email.test.ts@a1f0756a — verbatim, import specifiers remapped only.
 import { describe, it, expect } from 'vitest';
 import { sessionLinkEmail } from '../../../src/auth/session-email.js';
 

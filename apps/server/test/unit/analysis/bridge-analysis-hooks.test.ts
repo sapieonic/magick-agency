@@ -1,32 +1,15 @@
 /**
  * Bridge analysis hooks — the enqueue-gate test, against the seam implementation.
  *
- * Ported from core test/unit/core/webrtc-bridge-manager.analysis.test.ts@4850d1d9
- * (21 cases). Core drove `maybeEnqueueAnalysis` through `WebRtcBridgeManager.endCall`;
- * here the bridge is lane C's, so the same gate ladder is driven through
+ * The gate ladder is driven through
  * `createBridgeAnalysisHooks().onCallFinalized(facts)` with the facts the bridge hands
- * over (docs/seams.md §3.2). The §7 gates:
+ * over (docs/seams.md). The gates:
  *  - feature off (no config.dialerAnalysis) ⇒ NULL analysis_status, no enqueue.
  *  - flag off ⇒ NULL, no enqueue.
  *  - not answered / too short / no consent ⇒ analysis_status='skipped', no enqueue.
  *  - all gates pass ⇒ enqueue with the snapshotted profile; recording present ⇒ wake.
  *  - profile resolution: explicit id → account default → common-only.
  *  - enqueue failure never reaches the bridge.
- *
- * Case ledger (also in PORTING.md): 21 source cases (11 + 10) -> 14 ported, 7 deleted as
- * bridge intake / softphone (lane C's tests, or
- * gone with the softphone): "account toggle explicitly false" (gate 3 is deleted; the
- * inverse is the opt-out test below), the browser-vs-agency byte-identity case and the
- * `createBridgedCall` row-stamping cases ("campaign's analysis_profile_id reaches the
- * job", "`record_calls: false`", "account recording ceiling": the intake writes
- * `recording_requested` / `analysis_profile_id`, which the hook only READS, so the hook
- * is driven with the row the intake would have written), "gates a softphone call on
- * dialer_call_analysis", "the softphone account opt-out still disables softphone
- * analysis". Modified: "enqueue failure never breaks teardown or settlement" (no
- * settlement here: asserts the hook resolves), "dialer flag off does not stop an agency
- * job" (asserts the dialer flag is never consulted), "softphone opt-out does not disable
- * agency analysis" (asserts account settings are never read). New: extra gate and failure
- * cases, `onRecordingReady` (5) and the seam registration case.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -105,7 +88,7 @@ function callRow(over: Record<string, unknown> = {}) {
   };
 }
 
-/** The facts the bridge hands the seam at finalize (docs/seams.md §3.2). */
+/** The facts the bridge hands the seam at finalize (docs/seams.md). */
 function facts(over: Partial<BridgeCallFinalizedFacts> = {}): BridgeCallFinalizedFacts {
   return {
     callId: 'call-1', tenantId: 't1', accountId: 'a1', campaignId: 'camp-1',
@@ -166,8 +149,7 @@ describe('bridge analysis hooks — onCallFinalized gate', () => {
 
   it('explicit analysis_profile_id (stamped on the row at dial time) wins over the account default (M1)', async () => {
     mockRepo.findById.mockResolvedValue(callRow({ analysis_profile_id: 'prof-explicit', analysis_language: 'hi-IN' }));
-    // PORT NOTE (magick-agency, Phase 8): the profile row carries its owner, which the hook
-    // now checks (see the NEW case below); core's mock row omitted it.
+    // The profile row carries its owner, which the hook checks (see the owned-by case below).
     mockProfileRepo.findById.mockResolvedValue({ id: 'prof-explicit', tenant_id: 't1', account_id: 'a1', context: 'renewals', custom_dimensions: [], language_hint: 'hi-IN' });
     mockProfileRepo.findDefault.mockResolvedValue({ id: 'prof-default', context: 'x', custom_dimensions: [], language_hint: 'en-IN' });
 
@@ -181,7 +163,7 @@ describe('bridge analysis hooks — onCallFinalized gate', () => {
   it.each([
     ['another tenant', { tenant_id: 't2', account_id: 'a1' }],
     ['another account of the same tenant', { tenant_id: 't1', account_id: 'a2' }],
-  ])('NEW (Phase 8): a stamped profile id owned by %s is never snapshotted — the account default is used', async (_label, owner) => {
+  ])('a stamped profile id owned by %s is never snapshotted — the account default is used', async (_label, owner) => {
     mockRepo.findById.mockResolvedValue(callRow({ analysis_profile_id: 'prof-foreign' }));
     mockProfileRepo.findById.mockResolvedValue({ id: 'prof-foreign', ...owner, context: 'FOREIGN', custom_dimensions: [{ key: 'leak', description: 'd', type: 'boolean' }], language_hint: 'fr-FR' });
     mockProfileRepo.findDefault.mockResolvedValue({ id: 'prof-default', tenant_id: 't1', account_id: 'a1', context: null, custom_dimensions: [], language_hint: null });

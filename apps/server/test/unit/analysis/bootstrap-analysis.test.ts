@@ -1,12 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /*
- * New (magick-agency): `bootstrap/analysis.ts` is core's `src/index.ts:535-549,846-848`
- * wiring, which core never unit-tested. Pins: nothing is wired unless dialer analysis is
+ * `bootstrap/analysis.ts` wires the dialer analysis worker. Pins: nothing is wired unless dialer analysis is
  * enabled AND a transcriber AND the analysis service can be built; when wired the
  * worker is woken once, the seam hooks are registered, and stop() shuts the worker down
  * and puts the seam back to its no-op; the retention timer exists only with a window
- * (and, Manas 2026-10-09, the parsed default config has one: transcripts at 30 days).
+ * (and the parsed default config has one: transcripts at 30 days).
  */
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -105,8 +104,8 @@ describe('startAnalysis', () => {
     expect(mocks.runPurge).toHaveBeenCalledTimes(2);
   });
 
-  // Manas, 2026-10-09: the transcript window defaults to core's 30 days, so a deploy that sets
-  // no retention env still runs the (transcript half of the) purge. NEW (magick-agency).
+  // The transcript window defaults to 30 days, so a deploy that sets
+  // no retention env still runs the (transcript half of the) purge.
   it('with the DEFAULT parsed config (no retention env) the purge is scheduled: transcripts 30 days, rows kept', async () => {
     vi.useFakeTimers();
     const parsed = parseConfig({ DATABASE_URL: 'postgresql://u:p@localhost:5436/x', REDIS_URL: 'redis://localhost:6383/0' });

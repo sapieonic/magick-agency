@@ -12,8 +12,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
  *
  * That last one is what made the gap visible. Its fan-out was capped in WIDTH at
  * 6 and not at all in TIME, so a width cap bounded the burst and not the wait —
- * one slow round could hold a webhook handler for five minutes, and core's
- * dispatcher (`WEBHOOK_TIMEOUT_MS`, default 5000, with three retries) would have
+ * one slow round could hold a webhook handler for five minutes, and the
+ * webhook dispatcher (`WEBHOOK_TIMEOUT_MS`, default 5000, with three retries) would have
  * given up and redelivered long before, re-sending mail already delivered.
  *
  * ── Why this is asserted on the signal and not on elapsed time ─────────────
@@ -129,7 +129,7 @@ describe('sendEmail bounds the request', () => {
    * whichever outcome the client picked. The delivery ledger reads the outcome
    * itself, and there the distinction decides whether a claim is kept: a timeout
    * may have been ACCEPTED by Mailjet, so the notice is never re-sent, while a
-   * released claim invites the next core webhook redelivery to send again.
+   * released claim invites the next webhook redelivery to send again.
    *
    * The detection used to be `err instanceof Error && err.name === 'TimeoutError'`
    * and the case above is exactly the shape that hides its two real failures —

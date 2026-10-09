@@ -1,7 +1,3 @@
-/*
- * PORT NOTE (magick-agency): ported from core test/unit/transcription/gemini-transcriber.test.ts
- * @4850d1d9. Cases unchanged; only the logger mock path differs.
- */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({

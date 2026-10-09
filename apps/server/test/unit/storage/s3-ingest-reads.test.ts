@@ -29,13 +29,8 @@ vi.mock('@aws-sdk/s3-request-presigner', () => ({ getSignedUrl: vi.fn() }));
 import { initS3Client, headFile, getFileStream } from '../../../src/storage/s3.js';
 
 /*
- * PORT NOTE (magick-agency, lane B2, decision B14): ported from master
- * test/unit/storage/s3.test.ts@a1f0756a, the three `headFile` cases (verbatim bodies; only the
- * `initS3Client` argument changes to core's `{ audioBucket, … }` shape and the import is core's
- * one module). Master's other 4 cases (not-initialized, upload, delete, getFileBuffer) cover
- * functions that are core's, not appended by B2, and are not ported here. NEW, no master twin:
- * the two `getFileStream` cases and the bucket/key assertion (master had no test for
- * `getFileStream`).
+ * Covers the `headFile` cases and the two `getFileStream` cases, plus the bucket/key
+ * assertion (decision B14).
  */
 describe('S3 reads used by the agency CSV ingest', () => {
   beforeEach(() => {
@@ -67,9 +62,8 @@ describe('S3 reads used by the agency CSV ingest', () => {
     await expect(headFile('agency-ingest/t/u/roster.csv')).resolves.toEqual({});
   });
 
-  // The modified line in `headFile` (master's `startTimer`/`stopTimer` → hrtime + `observe`) and the
-  // two counters have no master test; these pin master's metric names' labels and the unit (seconds).
-  it('headFile counts the operation with master\'s labels and observes its duration in seconds', async () => {
+  // These pin the metric labels and the duration unit (seconds).
+  it('headFile counts the operation with its labels and observes its duration in seconds', async () => {
     mocks.send.mockResolvedValue({ ContentLength: 1 });
 
     await headFile('k');
@@ -90,7 +84,7 @@ describe('S3 reads used by the agency CSV ingest', () => {
     expect(mocks.observe).not.toHaveBeenCalled();
   });
 
-  it('getFileStream counts a get_stream success with master\'s labels', async () => {
+  it('getFileStream counts a get_stream success with its labels', async () => {
     mocks.send.mockResolvedValue({ Body: Readable.from([]) });
     await getFileStream('k');
     expect(mocks.inc).toHaveBeenCalledWith({ operation: 'get_stream', status: 'success' });

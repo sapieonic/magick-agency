@@ -1,4 +1,3 @@
-// PORT NOTE (magick-agency): ported from master test/unit/cache/local-cache.test.ts@a1f0756a — verbatim, import specifiers remapped only.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { LocalCache, LOCAL_CACHE_FAMILIES } from '../../../src/cache/local-cache.js';
 

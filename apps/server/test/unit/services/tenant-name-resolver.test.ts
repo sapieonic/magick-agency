@@ -1,7 +1,3 @@
-/*
- * PORT NOTE (magick-agency): ported from master test/unit/services/tenant-name-resolver.test.ts@a1f0756a
- * (16 cases → 14). Two PostHog cases deleted, one trimmed; all marked.
- */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -22,8 +18,6 @@ vi.mock('@magick-agency/db/repositories/account.repository', () => ({
 vi.mock('../../../src/cache/redis-cache.js', () => ({
   redisCache: { get: mocks.cacheGet, set: mocks.cacheSet, del: mocks.cacheDel },
 }));
-// PORT NOTE (magick-agency): master's `analytics/posthog.js` mock is removed with
-// the `identifyGroups` call (no analytics module in agency).
 vi.mock('@magick-agency/observability', () => ({ createChildLogger: mocks.createChildLogger }));
 
 import {
@@ -55,10 +49,6 @@ describe('resolveTenantAccountNames', () => {
     expect(mocks.cacheSet).toHaveBeenCalledWith('cache:tenant:full:t-1', { name: 'Acme' }, expect.any(Number));
     expect(mocks.cacheSet).toHaveBeenCalledWith('cache:account:full:a-1', { name: 'West', tenant_id: 't-1' }, expect.any(Number));
   });
-
-  // PORT NOTE (magick-agency): master's 'registers the resolved names as PostHog
-  // group properties' is deleted — the `identifyGroups` call is removed (no
-  // analytics module in agency).
 
   it('serves names from cache without hitting the repositories', async () => {
     mocks.cacheGet.mockImplementation(async (key: string) =>
@@ -103,8 +93,7 @@ describe('resolveTenantAccountNames', () => {
      * refuses a foreign account before any route runs, so on the HTTP path this is
      * a second lock — but this function has other callers (the scheduler,
      * recurring schedules, the bulk-dispatch consumer) and what the name is used
-     * FOR is why it matters: it is forwarded to core as `x-mgkvc-account-name` and
-     * registered as a PostHog group property. One mismatched pair attributes one
+     * FOR is why it matters: it is forwarded to the voice engine as `x-mgkvc-account-name`. One mismatched pair attributes one
      * tenant's calls and events to another tenant's account, silently and
      * permanently.
      */
@@ -116,12 +105,7 @@ describe('resolveTenantAccountNames', () => {
     // Omitted, not thrown: this function decorates a request and must never fail
     // one. A missing name header is already a supported outcome; a wrong one is not.
     expect(result).toEqual({ tenantName: 'Acme' });
-    // PORT NOTE (magick-agency): master also asserted the PostHog
-    // `identifyGroups` call carried `accountName: undefined`; that call is removed.
   });
-
-  // PORT NOTE (magick-agency): master's 'passes resolved names (even partial) to
-  // identifyGroups' is deleted, for the same reason.
 
   it('skips account resolution when no accountId is provided', async () => {
     mocks.tenantFindById.mockResolvedValue({ name: 'Acme' });

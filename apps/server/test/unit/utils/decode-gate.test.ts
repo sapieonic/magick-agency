@@ -1,5 +1,3 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/unit/utils/decode-gate.test.ts@4850d1d9.
-// Verbatim (relative paths unchanged; ../../../src/config/schema.js exports appConfigSchema).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // `decode-gate.ts` imports the real config module, whose loader calls

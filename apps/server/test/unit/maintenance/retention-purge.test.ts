@@ -1,18 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /*
- * PORT NOTE (magick-agency): ported from core test/unit/maintenance/retention-purge.test.ts
- * @4850d1d9 (19 cases -> 16), against the AGENCY SLICE of the purge (see the module's
- * header). Deleted, with the targets they covered: "deletes a concurrency group only
- * once...", "keeps IVR sessions still referenced by a surviving call", "falls the agency
- * transcript window back to the softphone one when unset" (no softphone window), and the
- * `kb_*` date-cast block inside the order case. Rewritten for the slice: the order case
- * (two tables), the two "purges each product's ... under its own predicate" cases (now:
- * the purge touches the two agency tables and nothing else), the window-binding cases
- * (the agency window is the only row window; unset means no row purge), the transcript-window binding (UPDATE agency_calls, one statement,
- * unset = none) and the report. New: the transcript step nulls `conversation_log` AND
- * `transcript_meta` and never `call_analysis` (the "analysis survives" invariant).
- * Real-Postgres coverage of that invariant is test/integration/db/agency-retention-purge.
+ * Covers the AGENCY SLICE of the purge (see the module's header): the purge touches the
+ * two agency tables and nothing else; the agency window is the only row window (unset
+ * means no row purge); the transcript step is one `UPDATE agency_calls` (unset = none) that
+ * nulls `conversation_log` AND `transcript_meta` and never `call_analysis` (the "analysis
+ * survives" invariant); and the report. Real-Postgres coverage of that invariant is
+ * test/integration/db/agency-retention-purge.
  */
 const mocks = vi.hoisted(() => ({
   query: vi.fn(),
@@ -213,7 +207,7 @@ describe('runRetentionPurge (agency slice)', () => {
     expect(rowSql).not.toContain('status');
   });
 
-  it('does not touch audit_logs at all (partition maintenance is lane A\'s)', async () => {
+  it('does not touch audit_logs at all (partition maintenance is separate)', async () => {
     mockQueries();
     const report = await runRetentionPurge();
     expect(report).not.toHaveProperty('audit_partitions_dropped');

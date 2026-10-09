@@ -1,10 +1,8 @@
 /**
  * The VoiceLink carrier fixture (`src/telephony/voicelink/voicelink-carrier.fixture.json`)
- * is the cross-repo pin for VoiceLink webhook behaviour. It is committed
- * BYTE-IDENTICAL with core's future copy (plan §5, docs/seams.md §5): edit both
- * copies in one cross-repo change, never one alone. Every entry's body is
- * transcribed from a core test (its `source` field names the file and test), and
- * this file asserts the ported normaliser still produces the recorded
+ * pins VoiceLink webhook behaviour. Every entry's body is a recorded carrier
+ * payload (its `source` field names where it came from), and
+ * this file asserts the normaliser still produces the recorded
  * normalised shape, CallEvent and terminal classification for each.
  *
  * It also asserts the fixture covers every `case` of the `parseVoicelinkWebhook`

@@ -12,7 +12,7 @@ import type { MembershipRole } from '@magick-agency/contracts/rbac';
  * not answerable with RBAC stubbed. So `requirePermission` here is the real
  * factory over the real `PERMISSION_MATRIX`, and the role is set per request.
  *
- * §16.6's second check is the reason: the property that matters is true at the
+ * The reason is that the property that matters is true at the
  * point of CONSUMPTION (this route, with this role) and not merely in the matrix.
  * `test/unit/rbac/roles.agent.test.ts` already pins the matrix; a floor pinned
  * there and then wired to the wrong permission string in the route is exactly the
@@ -43,8 +43,8 @@ vi.mock('../../../src/auth/session.middleware.js', () => ({ sessionMiddleware: a
 vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
   tenantContextMiddleware: async () => {},
 }));
-// PORT NOTE (magick-agency): master's `requireCapability('agency')` stub is gone with the
-// governance gate it stubbed (the route no longer registers it; see the route's header).
+// There is no `requireCapability('agency')` stub: the route registers no governance gate
+// (see the route's header).
 
 import { dncRoutes } from '../../../src/api/routes/dnc.routes.js';
 
@@ -142,7 +142,7 @@ describe('RBAC floors, exercised through the real permission matrix', () => {
     const { app } = await buildApp('agent');
 
     // An agent's DNC power is attempt-scoped — `POST /proxy/agency/attempts/:id/dnc`,
-    // where core verifies they are that attempt's reserved agent. `agency.dnc.write`
+    // where the dialer runtime verifies they are that attempt's reserved agent. `agency.dnc.write`
     // must not also open a route that takes any number the caller names.
     const res = await app.inject({
       method: 'POST',
@@ -246,8 +246,8 @@ describe('POST /dnc — attribution and scope', () => {
     const arg = mocks.add.mock.calls[0]![0] as Record<string, unknown>;
     /**
      * The request carries `X-Account-Id`, so scoping to it would be the obvious
-     * reading — and it would mean nothing an operator adds ever reaches core's
-     * flat `dnc:{tenantId}` set (§2.3: tenant-wide rows only). Numbers would sit
+     * reading — and it would mean nothing an operator adds ever reaches the
+     * dial-time check (tenant-wide rows only). Numbers would sit
      * on the list and keep being dialed by the dial-time check.
      */
     expect(arg['accountId']).toBeUndefined();
@@ -549,7 +549,7 @@ describe('GET /dnc — filters', () => {
     expect(arg['offset']).toBe(0);
 
     // An unbounded limit on a list that can hold a whole regulator file is a
-    // way to ask master to serialise millions of rows into one response.
+    // way to ask the server to serialise millions of rows into one response.
     expect((await app.inject({ method: 'GET', url: '/dnc/?limit=500' })).statusCode).toBe(400);
     expect((await app.inject({ method: 'GET', url: '/dnc/?offset=-1' })).statusCode).toBe(400);
     await app.close();
@@ -672,7 +672,7 @@ describe('DELETE /dnc/:id', () => {
   });
 });
 
-describe('platform audit trail (`MAG-70`)', () => {
+describe('platform audit trail', () => {
   it('POST /dnc audits the add with counts and scope, and NO phone numbers', async () => {
     mocks.add.mockResolvedValue({
       added: 1,
