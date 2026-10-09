@@ -22,12 +22,12 @@ interface StationEntry {
 /**
  * Agent presence and replica ownership.
  *
- * **The agent's station socket is the anchor of ownership** (§3). Whatever replica
+ * **The agent's station socket is the anchor of ownership.** Whatever replica
  * accepts the socket owns that agent, writes `agency:station:{sessionId}` with a
  * 30s TTL, and renews it from the socket's own heartbeat. Socket closes or
  * heartbeat lapses ⇒ key expires ⇒ the agent is no longer available anywhere.
  *
- * Core is single-replica for v1 (D2), so the ownership key currently always
+ * The server is single-replica in v1, so the ownership key currently always
  * resolves to us. It is written and read anyway, from day one, so the invariant
  * "dial only on the owning replica" is exercised continuously rather than being
  * dead code that rots until someone needs it — which is the whole reason the
@@ -55,19 +55,16 @@ export class StationRegistry {
     //
     // ── 4409, AND A LOG LINE ─────────────────────────────────────────────────
     //
-    // This was a bare `close()` inside a swallowing `try`, which is two silences
-    // in one line. A close frame with no code makes the peer report 1005/1006 —
-    // the RFC 6455 "no status received" sentinels — so a supersede was
-    // indistinguishable from a network drop **to the console, to master's proxy
-    // (which launders an unsendable code to 1000) and to anyone reading the
-    // logs**, where it did not appear at all. `4409` is already declared as
-    // `AgencyStationCloseCode` and was never sent by anything.
+    // A bare `close()` inside a swallowing `try` would be two silences in one
+    // line. A close frame with no code makes the peer report 1005/1006 — the
+    // RFC 6455 "no status received" sentinels — so a supersede would be
+    // indistinguishable from a network drop **to the console and to anyone
+    // reading the logs**, where it would not appear at all. `4409` is declared
+    // in `AgencyStationCloseCode` for exactly this.
     //
-    // ⚠️ DEPLOY ORDER. The console's 4409 handler is terminal — it sets
-    // `connection: 'superseded'`, does not retry, and releases the microphone —
-    // and the shipped supersede screen has no way back. So this must not be
-    // enabled until the console's own overlapped-reconnect fix is live, or the
-    // console delivers a dead station to itself. See the commit body.
+    // ⚠️ The console's 4409 handler is terminal — it sets
+    // `connection: 'superseded'`, does not retry, and releases the microphone.
+    // Send it only for a socket a newer one for the same session has replaced.
     const prior = this.stations.get(entry.sessionId);
     if (prior && prior.ws !== entry.ws) {
       log.info({ sessionId: entry.sessionId, campaignId: entry.campaignId },
@@ -141,7 +138,7 @@ export class StationRegistry {
   }
 
   /**
-   * Which replica owns this agent. Under D2 this is always us when the agent is
+   * Which replica owns this agent. With one replica this is always us when the agent is
    * live — but the dial path asks anyway, so the question is load-bearing from
    * day one rather than becoming load-bearing on the day we scale out.
    */
@@ -158,7 +155,7 @@ export class StationRegistry {
 
   /**
    * Which of these agents' stations are held right now — the supervisor floor's
-   * liveness column (§C.4 risk rank 4, `MAG-148`).
+   * liveness column.
    *
    * ── Why this is not a loop over `ownerOf` ────────────────────────────────────
    *
@@ -175,8 +172,8 @@ export class StationRegistry {
    *    from. So this **throws** instead, and the route maps that to `connected:
    *    null` = unknown. Distinguishing the two is the whole point of the method.
    *
-   * With no Redis configured, the in-process map is the truthful authority under D2
-   * (single replica) and is used directly.
+   * With no Redis configured, the in-process map is the truthful authority (single
+   * replica) and is used directly.
    *
    * @throws whatever ioredis throws. Callers must treat that as "unknown", never
    *   as "disconnected".
@@ -194,7 +191,7 @@ export class StationRegistry {
     sessionIds.forEach((id, i) => {
       // Presence is the whole signal: the key carries a 30s TTL renewed by the
       // station ping, so a key that exists means a ping landed inside that window.
-      // The replica id inside it is deliberately not parsed — under D2 it is always
+      // The replica id inside it is deliberately not parsed — with one replica it is always
       // us, and after scale-out "some replica holds this agent" is still exactly
       // the question the floor is asking.
       out.set(id, raw[i] != null);
@@ -208,7 +205,7 @@ export class StationRegistry {
 
   /**
    * Is this agent's station held ANYWHERE — the cross-replica answer that
-   * `POST /sessions/:id/available` will need (ticket 86d44path).
+   * `POST /sessions/:id/available` will need.
    *
    * ── ⚠️ NOT WIRED IN, AND NOT SAFE TO WIRE IN ON ITS OWN ────────────────────
    *
@@ -270,7 +267,7 @@ export class StationRegistry {
    * route that previously touched no Redis. Single replica is unaffected, because
    * the local hit short-circuits before any of this.
    *
-   * The local map is checked FIRST and short-circuits, which is what keeps the D2
+   * The local map is checked FIRST and short-circuits, which is what keeps the
    * single-replica and no-Redis configurations behaving exactly as they did.
    *
    * Do NOT read that as "the map is ground truth" — an earlier draft of this
@@ -309,7 +306,7 @@ export class StationRegistry {
     // ownership key — but because short-circuiting here is what preserves the
     // existing single-replica behaviour, which is the common case.
     if (this.stations.has(sessionId)) return 'connected';
-    // No Redis configured is D2: the in-process map IS the authority, and a miss
+    // No Redis configured means one replica: the in-process map IS the authority, and a miss
     // is a genuine absence rather than something we failed to look up.
     if (!this.redis) return 'absent';
     try {
@@ -344,7 +341,7 @@ export class StationRegistry {
    * what keeps that from costing a live conversation.
    *
    * The decision to close is NOT taken here: the registry has no way to ask whether
-   * an agent is mid-call, and this socket is also the media leg (§7).
+   * an agent is mid-call, and this socket is also the media leg.
    */
   silentSince(graceMs: number, now = Date.now()): StationEntry[] {
     const out: StationEntry[] = [];
@@ -373,7 +370,7 @@ export class StationRegistry {
    * Push a control frame to an agent.
    *
    * Synchronous by design — `reserved` in particular must reach the wire inside
-   * the dial tick, before the dial is placed (§9). Returns false when the socket
+   * the dial tick, before the dial is placed. Returns false when the socket
    * is gone, which the caller must treat as "this agent is not really there".
    *
    * ── `expectedWs`: THE THIRD SOCKET-SCOPED GUARD ───────────────────────────

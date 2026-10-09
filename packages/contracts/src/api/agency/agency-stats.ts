@@ -1,5 +1,5 @@
 /**
- * Per-AGENT numbers — the shapes master serves under `/proxy/agency/my-*` and
+ * Per-AGENT numbers — the shapes the public API layer serves under `/proxy/agency/my-*` and
  * `/proxy/agency/agents/:userId/*`.
  *
  * ── Why these are not `AgencyCampaignStats` ─────────────────────────────────
@@ -17,7 +17,7 @@
  * supervisor twin, floored at `agency.supervise`) return the SAME body. So one
  * type serves both, and the panel that renders it cannot drift between the agent
  * looking at their own shift and the supervisor looking at theirs. The scoping
- * difference is entirely master's: this client never sends an agent id on the
+ * difference is entirely the public API layer's: this client never sends an agent id on the
  * `my-` routes, because a client that could name the subject of its own stats
  * read is a client that can ask for somebody else's.
  *
@@ -33,13 +33,13 @@
  * not carry the field, so the answer is "didn't load", not "nothing to measure".
  * The rate fields are declared `number | null` because the contract promises
  * them; the pure helpers in `utils/agencyAgentPerformance.ts` nevertheless accept
- * `undefined` and render it as its own state, so a master mid-deploy degrades a
+ * `undefined` and render it as its own state, so a server mid-deploy degrades a
  * figure rather than crashing a render.
  */
 
 /*
   `by_state` reuses the supervisor floor's own record type rather than
-  re-declaring the six states. Core seeds every state with a zero on both
+  re-declaring the six states. The dialer runtime seeds every state with a zero on both
   payloads, so the shape is genuinely the same one — and a second copy of an
   agent-state union is exactly the drift `AgencyAgentLiveState`'s own comment
   exists to prevent.
@@ -53,8 +53,8 @@ export type AgencyStatsBucketWidth = 'day' | 'week' | 'month';
  * Where an agent's shift went, in seconds per state.
  *
  * ── Absent, all-zero, and measured are THREE different things ───────────────
- * Core computes this from its agent-state event log, which shipped after the
- * dialer did. A session that predates the log has no events, so master answers
+ * The dialer runtime computes this from its agent-state event log, which shipped after the
+ * dialer did. A session that predates the log has no events, so the public API layer answers
  * with **zeros rather than nulls** — and a zeroed breakdown rendered as a chart
  * is a confident claim that an agent spent a shift doing nothing at all.
  *
@@ -68,7 +68,7 @@ export interface AgencyOccupancy {
    * The whole measured shift in seconds — the denominator, and it **excludes
    * `offline`**.
    *
-   * Core's rule, not a reading of it: `foldOccupancy` adds every state to
+   * The dialer runtime's rule, not a reading of it: `foldOccupancy` adds every state to
    * `by_state` and every state but `offline` to this total, because an agent who
    * logged out at 17:00 was not on shift at 18:00 and folding that in would make
    * every short shift look unoccupied. `offline` stays on the payload because
@@ -79,7 +79,7 @@ export interface AgencyOccupancy {
    * shares diluted by signed-out time and a remainder that could never be
    * positive.
    *
-   * Not necessarily equal to that sum either: core's event log can have gaps (a
+   * Not necessarily equal to that sum either: the dialer runtime's event log can have gaps (a
    * browser closed mid-state, a session the reaper closed), so the states can
    * sum to less. The breakdown therefore renders shares of the **sum it can
    * see** and names the remainder rather than silently inflating a percentage.
@@ -121,7 +121,7 @@ export interface AgencyAgentStatsTotals {
   aht_seconds: number | null;
   /** How many distinct campaigns this agent worked in the range. */
   campaigns: number;
-  /** Absent on a master that predates the event log; see {@link AgencyOccupancy}. */
+  /** Absent on a public API layer that predates the event log; see {@link AgencyOccupancy}. */
   occupancy?: AgencyOccupancy | null;
 }
 
@@ -129,7 +129,7 @@ export interface AgencyAgentStatsTotals {
  * One bucket of the series.
  *
  * ── `bucket_start` is cut in each CAMPAIGN'S timezone, not the reader's ─────
- * Core buckets an attempt by the campaign's own timezone, because that is the
+ * The dialer runtime buckets an attempt by the campaign's own timezone, because that is the
  * timezone the campaign's calling window is enforced in. Every attempt lands in
  * exactly one bucket, so the buckets still sum to the totals exactly — but for
  * an agent working campaigns in two timezones a "day" is not one contiguous
@@ -143,7 +143,7 @@ export interface AgencyAgentStatsBucket {
   /**
    * `YYYY-MM-DD` — a calendar DAY, not an ISO-8601 instant.
    *
-   * It carries no time and no offset, and that is deliberate on core's side
+   * It carries no time and no offset, and that is deliberate on the dialer runtime's side
    * rather than an omission: the label is formatted in SQL (`bucketStartSql`)
    * precisely so no zone attaches to it, because node-pg parses a bare
    * `timestamp` into a LOCAL-time `Date` and would put the server's zone back on
@@ -168,7 +168,7 @@ export interface AgencyAgentStatsBucket {
 /**
  * One campaign's slice of the range.
  *
- * **There is no `campaign_name` here, and that is master's contract rather than
+ * **There is no `campaign_name` here, and that is the public API layer's contract rather than
  * an omission to work around.** The name has to be resolved by the caller from a
  * list it already holds — `GET /agency/my-campaigns` for an agent, the campaign
  * list for a supervisor — and an id with no match renders as an id, never as a
@@ -222,16 +222,16 @@ export interface AgencyAgentStats {
 export interface AgencyStaffingHistoryEntry {
   campaign_id: string;
   /**
-   * Nullable for the same reason it is on `AgencyMyAssignment`: master resolves
-   * it through a best-effort call to core, which can be down or can have deleted
+   * Nullable for the same reason it is on `AgencyMyAssignment`: the public API layer resolves
+   * it through a best-effort call to the dialer runtime, which can be down or can have deleted
    * the campaign. Rendered through a stand-in, never as an empty cell.
    */
   campaign_name: string | null;
   /**
-   * Core's lifecycle value, forwarded verbatim by master.
+   * The dialer runtime's lifecycle value, forwarded unchanged by the public API layer.
    *
    * **A status this build does not recognise must still render.** That is what
-   * lets core add a lifecycle state without this client mirroring it, and
+   * lets the dialer runtime add a lifecycle state without this client mirroring it, and
    * `AgencyCampaignStatusBadge` deliberately prints an unknown status as-is —
    * keep that property when rendering these rows.
    */
@@ -240,9 +240,9 @@ export interface AgencyStaffingHistoryEntry {
   /** `null` while the assignment is current. */
   unassigned_at: string | null;
   /**
-   * Master's own answer to "is this assignment current".
+   * The public API layer's own answer to "is this assignment current".
    *
-   * Read this rather than re-deriving it from `unassigned_at === null`: master
+   * Read this rather than re-deriving it from `unassigned_at === null`: the public API layer
    * owns the staffing table and can end an assignment in ways this client has no
    * business modelling, and two sources for one boolean is two answers.
    */
@@ -254,12 +254,12 @@ export interface AgencyStaffingHistoryEntry {
  *
  * **The key is `assignments`, not `campaigns`.** An earlier revision of this file
  * called it `campaigns`, which type-checked perfectly and failed silently at
- * runtime: master sends `{ assignments: [...] }`, so the reader below found
+ * runtime: the public API layer sends `{ assignments: [...] }`, so the reader below found
  * `undefined`, fell through to `?? []`, and every agent's staffing history
  * rendered as "you have never been staffed on anything" — no error, no empty
  * state distinguishable from the real one, nothing in the console.
  *
- * The name is master's to choose and it already chose: the sibling route
+ * The name is the public API layer's to choose and it already chose: the sibling route
  * `/my-assignments` on this same prefix returns `{ assignments }`, and
  * `AgencyMyAssignments` in `agency-campaign.ts` mirrors it. A second noun for the
  * same concept on one prefix is how the next reader gets this wrong again.
@@ -275,7 +275,7 @@ export interface AgencyStaffingHistory {
 // ─── The ROSTER read ─────────────────────────────────────────────────────────
 //
 // Everything above is ONE PERSON over a range. What follows is the whole floor
-// over a range: `GET /proxy/agency/agents/stats`, master's proxy of core's
+// over a range: `GET /proxy/agency/agents/stats`, the public API layer's proxy of the dialer runtime's
 // `GET /api/v1/agency-agents/stats`.
 //
 // ── Why the roster is not a list of the shapes above ────────────────────────
@@ -286,15 +286,15 @@ export interface AgencyStaffingHistory {
 // flattened, plus the two things a line needs that a per-agent read does not —
 // whether its rates may be quoted at all, and what the rest of the floor did.
 //
-// ── The phase-01 contract, and the one place cusui's copy differs ───────────
-// These mirror `magic-voice-core/src/agency/contracts.ts` field for field. The
-// difference is master's, and it is additive in exactly two places: `agent_name`
-// on every row (core has no user table — design D3 — and can only ever serve a
-// uuid), and `inactive_omitted` at the top level (core cannot know who is still a
-// member). So {@link AgencyRosterAgentRow} is core's row verbatim,
+// ── The roster contract, and the one place the console's copy differs ───────────
+// These match the frozen contract in `../../agency` field for field. The
+// difference is the public API layer's, and it is additive in exactly two places: `agent_name`
+// on every row (the dialer runtime has no user table and can only ever serve a
+// uuid), and `inactive_omitted` at the top level (the dialer runtime cannot know who is still a
+// member). So {@link AgencyRosterAgentRow} is the dialer runtime's row unchanged,
 // {@link AgencyRosterAgentRowWithName} is what reaches a browser, and
-// {@link AgencyRosterPage} is master's envelope — which is the only one this
-// client can ever receive, because cusui never reaches core.
+// {@link AgencyRosterPage} is the public API layer's envelope — which is the only one this
+// client can ever receive, because the console never reaches the dialer runtime.
 
 /**
  * Minimum denominator before a rate is REPORTABLE.
@@ -305,7 +305,7 @@ export interface AgencyStaffingHistory {
  * place rather than three consumers each re-deriving it from a constant they
  * happen to hold. A client that compared `attempts` to this number would be a
  * second answer to "may this rate be quoted", and the two would disagree the
- * moment core tuned the threshold or changed which denominator it counts.
+ * moment the dialer runtime tuned the threshold or changed which denominator it counts.
  *
  * It is mirrored anyway because the console has to SAY the threshold out loud —
  * "fewer than 20 calls" in a footnote is a sentence, and a sentence built from a
@@ -324,7 +324,7 @@ export const AGENCY_ROSTER_MIN_RATE_DENOMINATOR = 20;
  * the hundred agents with the most successes is not the answer to "slowest handle
  * time".
  *
- * Nulls sort LAST in both directions on the four nullable metrics — core's rule,
+ * Nulls sort LAST in both directions on the four nullable metrics — the dialer runtime's rule,
  * stated here because it is the thing a reader assumes wrongly: a row with no
  * measurable rate is not the best row and it is not the worst row, it is not
  * ranked. `agent_user_id` is the tiebreaker on every sort, so repeated reads and
@@ -345,14 +345,14 @@ export type AgencyRosterSort =
 export type AgencyRosterOrder = 'asc' | 'desc';
 
 /**
- * One agent's line on the roster — core's row, verbatim.
+ * One agent's line on the roster — the dialer runtime's row, unchanged.
  *
  * The null-not-zero rule that governs this whole file governs every rate here,
  * and it bites hardest on a roster: a table is scanned rather than read, so a
  * `0%` in a column of real percentages is indistinguishable from a bad shift.
  */
 export interface AgencyRosterAgentRow {
-  /** Master's user id. Opaque to core (D3) and opaque to this client. */
+  /** The public API layer's user id. Opaque to the dialer runtime and opaque to this client. */
   agent_user_id: string;
   attempts: number;
   connected: number;
@@ -390,7 +390,7 @@ export interface AgencyRosterAgentRow {
    *
    * `null` — never `0` — when `shift_seconds` is 0, which is also what an
    * unmeasured occupancy read produces. Zero and unmeasured are indistinguishable
-   * here for the same reason they are on {@link AgencyOccupancy}: core's
+   * here for the same reason they are on {@link AgencyOccupancy}: the dialer runtime's
    * agent-state event log shipped after the dialer, so a session that predates it
    * has no events rather than zeroed ones.
    */
@@ -437,10 +437,10 @@ export interface AgencyRosterAgentRow {
    * `rates_reportable`, whose denominator really is `attempts`.
    *
    * Optional, and an absent value falls back to {@link rates_reportable} rather
-   * than to `true` — merge order is core → master → cusui, so this console can
+   * than to `true` — the console and server deploy independently, so this console can
    * meet a service that predates the field, and the honest fallback is exactly
    * the behaviour that shipped before it (withhold on the dial threshold),
-   * never a *wider* set of quoted rates than the console showed yesterday.
+   * never a *wider* set of quoted rates than console showed yesterday.
    */
   success_rate_reportable?: boolean;
 }
@@ -448,7 +448,7 @@ export interface AgencyRosterAgentRow {
 /**
  * A roster row as it reaches a browser.
  *
- * Master resolves the name on the proxy hop, exactly as it already does on
+ * The public API layer resolves the name on the proxy hop, exactly as it already does on
  * `/agents/:userId/stats` — **one query for the whole page, not one lookup per
  * row** — and a failed lookup yields `null` and a logged warning rather than a
  * 500. So `null` here means *unresolvable* (a deleted user, an id from outside
@@ -500,8 +500,8 @@ export interface AgencyRosterBenchmark {
   talk_seconds: number;
   wrapup_seconds: number;
   /**
-   * The cohort's POOLED shift, and the break inside it — phase 02a's D10, and
-   * additive rather than a change to the frozen shape.
+   * The cohort's POOLED shift, and the break inside it — additive
+   * rather than a change to the frozen shape.
    *
    * ── What it closes ────────────────────────────────────────────────────────
    * The benchmark carried the cohort's `talk_seconds` and `wrapup_seconds` and no
@@ -519,11 +519,11 @@ export interface AgencyRosterBenchmark {
    * by comparing the whole team row's `textContent` across the toggle.
    *
    * ── Absence is a real arrival, and it must DEGRADE ────────────────────────
-   * Merge order is core → master → cusui, so this console normally deploys last
+   * The console and server deploy independently, so this console normally deploys last
    * and the field is present. It is nevertheless read through a `typeof` guard —
    * exactly as {@link AgencyRosterPage.inactive_omitted} is — because a
    * hand-mirrored type is a claim about the wire and not proof of it, and a
-   * master mid-deploy must cost the team row its pooled figure rather than the
+   * the public API layer mid-deploy must cost the team row its pooled figure rather than the
    * whole roster section. See `teamUtilisation` in `utils/agencyAgentRoster.ts`,
    * which falls back to the median stand-in that preceded this field.
    *
@@ -546,7 +546,7 @@ export interface AgencyRosterBenchmark {
   connect_rate: AgencyRosterPercentiles;
   success_rate: AgencyRosterPercentiles;
   /**
-   * Handling time's distribution — D10's second additive field.
+   * Handling time's distribution — an additive field.
    *
    * The benchmark had handle time only as the pooled scalar {@link aht_seconds},
    * so AHT was the one metric with a team figure and no band beside it: a
@@ -555,17 +555,16 @@ export interface AgencyRosterBenchmark {
    *
    * ── Which rows are in this pool, stated once and correctly ────────────────
    * `rates_reportable` **AND `connected >= 20`** AND a non-null `aht_seconds` —
-   * D10's ruling, and the SAME predicate `success_rate`'s pool uses rather than
+   * The SAME predicate `success_rate`'s pool uses rather than
    * a restatement of it. `aht_seconds` divides by `connected`, which is exactly
    * the denominator that second floor exists to protect.
    *
-   * An earlier version of this comment said "gated exactly as `success_rate`'s
-   * pool is — `rates_reportable` and a non-null value", and those two clauses
-   * disagree: the gloss after the dash is how `occupancy_pct`'s pool is gated,
-   * and the two differ for every row with `1 <= connected < 20`. Reading it and
-   * gating an AHT comparison on `rates_reportable` alone would flag a
+   * Do not read this as "gated exactly as `success_rate`'s
+   * pool is — `rates_reportable` and a non-null value": those two clauses
+   * disagree, since the gloss after the dash is how `occupancy_pct`'s pool is gated,
+   * and the two differ for every row with `1 <= connected < 20`. Gating an AHT comparison on `rates_reportable` alone would flag a
    * 400-dial/3-connect row against a band it was excluded from — the identical
-   * defect phase 01 already fixed for conversion rate, in `rosterFlag`.
+   * defect already fixed for conversion rate, in `rosterFlag`.
    *
    * So this payload's four percentile blocks describe up to **three**
    * populations: `connect_rate` and `occupancy_pct` over every reportable row,
@@ -601,22 +600,22 @@ export interface AgencyRosterPage {
   order: AgencyRosterOrder;
   limit: number;
   /**
-   * Agents matching scope+window, counted by CORE **before** `limit` and before
-   * master's departed-member filter. Also the population {@link benchmark} was
+   * Agents matching scope+window, counted by the dialer runtime **before** `limit` and before
+   * the public API layer's departed-member filter. Also the population {@link benchmark} was
    * computed over.
    *
    * ── This is NOT the denominator of a "showing N of M" ──────────────────────
-   * The two services apply their rules in an order that makes the fraction
-   * uncomputable: core scopes, ranks and cuts to `limit`, and **master then filters
+   * The dialer runtime and the public API layer apply their rules in an order that makes the fraction
+   * uncomputable: the dialer runtime scopes, ranks and cuts to `limit`, and **the public API layer then filters
    * the page it was handed**, dropping departed members and reporting the count in
    * {@link inactive_omitted}. So `rows.length` is "the top `limit`, minus whichever
-   * departed members happened to be inside it", and master never saw the agents
-   * core cut.
+   * departed members happened to be inside it", and the public API layer never saw the agents
+   * the dialer runtime cut.
    *
    * A default read can legitimately return 1 row with `total_agents: 3` and
    * `inactive_omitted: 1`. "Showing 1 of 3" is wrong; "showing 1 of 2" is not
-   * derivable. The alternative — master shipping hundreds of agent ids to core on a
-   * GET so the filter could run first — is not phase 01's trade.
+   * derivable. The alternative — the public API layer shipping hundreds of agent ids to the dialer runtime on a
+   * GET so the filter could run first — is not the trade made here.
    *
    * So the console states the three facts separately and never combines them. See
    * `truncationNote` and `rosterCountReadout` in `utils/agencyAgentRoster.ts`.
@@ -625,17 +624,17 @@ export interface AgencyRosterPage {
   rows: AgencyRosterAgentRowWithName[];
   benchmark: AgencyRosterBenchmark;
   /**
-   * Rows MASTER removed because the member is no longer active — `0` when
+   * Rows the public API layer removed because the member is no longer active — `0` when
    * `include_inactive=true` was sent.
    *
-   * Core returns departed agents because it cannot know they departed (it has no
-   * user table); master drops them. This count is what stops that from being a
+   * The dialer runtime returns departed agents because it cannot know they departed (it has no
+   * user table); the public API layer drops them. This count is what stops that from being a
    * silent edit: "2 former members hidden", with a way to see them, is honest,
    * and a roster that quietly omits the person a supervisor is looking for is
    * not.
    *
    * It does **not** affect {@link benchmark} or {@link total_agents} in either
-   * state — master never recomputes them, so they are byte-identical whether or
+   * state — the public API layer never recomputes them, so they are byte-identical whether or
    * not rows were dropped. A pinned team row that MOVED when the reader revealed
    * former members would be a bug: it would be a different number under the same
    * name, which is exactly what the benchmark's own doc comment forbids.
@@ -643,8 +642,8 @@ export interface AgencyRosterPage {
   inactive_omitted: number;
 
   /**
-   * Rows MASTER dropped because it could not attribute them to a person at all —
-   * R4's third state: an id with no membership row of any status ("never in this
+   * Rows the public API layer dropped because it could not attribute them to a person at all —
+   * The third state: an id with no membership row of any status ("never in this
    * tenant"), logged and dropped, deliberately never folded into
    * {@link inactive_omitted}.
    *
@@ -655,7 +654,7 @@ export interface AgencyRosterPage {
    * further down an order. Adding this count back before the comparison is what
    * makes the note say something true. See `truncationNote`.
    *
-   * Optional and read through `typeof`: master invented it, so an absent value
+   * Optional and read through `typeof`: the public API layer invented it, so an absent value
    * means 0 and restores exactly today's behaviour rather than inventing a count.
    */
   unattributed_omitted?: number;
@@ -665,7 +664,7 @@ export interface AgencyRosterPage {
 //
 // Everything above is either one person over a range or one row per PERSON. What
 // follows is one general aggregate over agency dial attempts, grouped by up to two
-// dimensions: `GET /proxy/agency/agents/grouped-stats`, master's proxy of core's
+// dimensions: `GET /proxy/agency/agents/grouped-stats`, the public API layer's proxy of the dialer runtime's
 // `GET /api/v1/agency-agents/grouped-stats`.
 //
 // ── Why it is a second route rather than `group_by` on the roster ────────────
@@ -696,7 +695,7 @@ export interface AgencyRosterPage {
  * `day_of_week` is a NUMBER on the wire (0 = Sunday … 6 = Saturday, matching
  * Postgres `EXTRACT(DOW …)`) rather than a name: a locale-dependent day name in a
  * payload is a formatting decision that belongs in the console, and restating
- * core's 0=Sunday as a string invites an off-by-one against ISO's 1=Monday.
+ * the dialer runtime's 0=Sunday as a string invites an off-by-one against ISO's 1=Monday.
  */
 export type AgencyGroupDimension =
   | 'agent'
@@ -717,7 +716,7 @@ export type AgencyGroupDimension =
  *
  * **`disposition_code: null` is a GROUP, not a gap.** An attempt with no
  * disposition submitted is precisely the number a supervisor is looking for on
- * that screen, so core emits it as `null` rather than folding it into an "other"
+ * that screen, so the dialer runtime emits it as `null` rather than folding it into an "other"
  * bucket, and the console names it. That is why the member is `string | null` and
  * "present" has to be tested against `group_by` rather than against `undefined`.
  */
@@ -770,7 +769,7 @@ export interface AgencyGroupRow {
    * than only on the roster: a row is "enough volume to quote a rate for" whether
    * it is one agent on one campaign, a whole campaign, or one weekday-hour cell.
    *
-   * Merge order is core → master → cusui, so this console can meet a core that
+   * The console and server deploy independently, so this console can meet a dialer runtime that
    * predates the field. Read it through a `typeof` guard and treat an absent
    * value as "do not withhold" — a screen that withholds every rate because a
    * field is missing is worse than the gap the field closed. Declared optional
@@ -804,8 +803,8 @@ export interface AgencyGroupRow {
 /**
  * A grouped row as it reaches a browser.
  *
- * `agent_name` is master's addition and is present **only when `agent` is one of
- * the grouped dimensions** — core has no user table and can only ever serve a
+ * `agent_name` is the public API layer's addition and is present **only when `agent` is one of
+ * the grouped dimensions** — the dialer runtime has no user table and can only ever serve a
  * uuid. `null` means unresolvable (a deleted user, an id from outside the tenant),
  * never "no name": render it through `agentDisplayName`, exactly as a roster row's
  * is. `undefined` means this read was not grouped by agent and the question does
@@ -855,20 +854,20 @@ export interface AgencyGroupPage {
   order: AgencyRosterOrder;
   limit: number;
   /**
-   * Groups matching scope+window, counted by CORE **before** `limit` and before
-   * master's departed-member filter.
+   * Groups matching scope+window, counted by the dialer runtime **before** `limit` and before
+   * the public API layer's departed-member filter.
    *
    * ── Not the denominator of a "showing N of M" ─────────────────────────────
    * The same uncomputable fraction the roster's `total_agents` carries a note
-   * about, for the same reason and in the same order: core scopes, groups and cuts
-   * to `limit`, then master filters the page it was handed. `total_groups`,
+   * about, for the same reason and in the same order: the dialer runtime scopes, groups and cuts
+   * to `limit`, then the public API layer filters the page it was handed. `total_groups`,
    * `rows.length` and {@link inactive_omitted} are three independent true facts
    * and no fraction is derivable from them.
    */
   total_groups: number;
   rows: AgencyGroupRowWithName[];
   /**
-   * Rows MASTER removed because the agent is no longer an active member.
+   * Rows the public API layer removed because the agent is no longer an active member.
    *
    * **`0` is meaningful in two different ways here, and both are true.** When
    * `agent` is grouped it means nothing was dropped (or `include_inactive` was
@@ -890,16 +889,16 @@ export interface AgencyGroupPage {
    * who booked nothing moves no SHARE at all. The note names what is missing and
    * makes no quantitative claim about the size of the gap.
    *
-   * Always emitted by master, including on the degrade path where it cannot
-   * recognise core's body — a client's `n <= rows.length + undefined` is
+   * Always emitted by the public API layer, including on the degrade path where it cannot
+   * recognise the dialer runtime's body — a client's `n <= rows.length + undefined` is
    * `n <= NaN`, which is `false`, and the client then renders a truncation note on
    * an untruncated page. Read through a `typeof` guard all the same.
    */
   inactive_omitted: number;
 
   /**
-   * Groups MASTER dropped because it could not attribute them to a person —
-   * R4's third state, and never part of {@link inactive_omitted}.
+   * Groups the public API layer dropped because it could not attribute them to a person —
+   * The third state, and never part of {@link inactive_omitted}.
    *
    * Two consumers, both of them sentences that were false without it:
    * `contributionTruncationNote`, which compared `total_groups` against
@@ -913,13 +912,13 @@ export interface AgencyGroupPage {
   unattributed_omitted?: number;
 
   /**
-   * The zone the time buckets were ACTUALLY cut in — phase 02b's E3.
+   * The zone the time buckets were ACTUALLY cut in.
    *
    * A `string` when any grouped dimension is zoned (`day`, `day_of_week`,
    * `hour_of_day`); `null` when none is, because there is then nothing to name.
    *
    * ── Why the client cannot derive it, and must not try ──────────────────────
-   * Core resolves the zone through `LEFT JOIN pg_timezone_names z ON lower(z.name)
+   * The dialer runtime resolves the zone through `LEFT JOIN pg_timezone_names z ON lower(z.name)
    * = lower(c.default_timezone)` and uses `COALESCE(z.name, 'UTC')`. That join is a
    * LEFT join on purpose — an unresolvable `default_timezone` must not raise
    * `22023` and take out every other campaign's numbers in the same statement — so
@@ -935,7 +934,7 @@ export interface AgencyGroupPage {
    * returns that one: `windowRangeReadout` prints
    * `Intl.DateTimeFormat().resolvedOptions().timeZone`, which is correct for its
    * own caption (the window bounds really are cut from a local `Date`) and wrong
-   * for an hour axis. Two zones on one screen is the defect E3 exists to prevent,
+   * for an hour axis. Two zones on one screen is the defect this rule exists to prevent,
    * so everything that names or reasons about the heatmap's zone takes it as an
    * ARGUMENT — see `bestHoursZone` and `weekdayCoverage` in
    * `utils/agencyBestHours.ts`, neither of which may reach for `Intl`'s default.

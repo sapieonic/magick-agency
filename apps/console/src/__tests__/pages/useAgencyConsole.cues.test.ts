@@ -15,7 +15,7 @@ import { useAgencyConsole } from '../../pages/agency/useAgencyConsole';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
 /**
- * **The connect cue reaching a real speaker (`MAG-39`).**
+ * **The connect cue reaching a real speaker.**
  *
  * `CueDispatcher` and `WebAudioCueSink` were built, unit-tested and shipped with
  * **no production caller at all**: `useAgencyConsole` simply never passed `cues`
@@ -256,7 +256,7 @@ describe('the connect cue is wired to the console, not just to a test', () => {
     const entry = cueEntries(view)[0];
     expect(entry).toBeDefined();
     expect(entry!.detail).toContain('attempt=att-1');
-    // Parsed as a number under §A.4.3.1's 150ms budget, not matched as a
+    // Parsed as a number under the 150ms budget, not matched as a
     // substring: `lag=NaNms` would satisfy a `toContain('lag=')`.
     const lag = Number(/lag=(\d+)ms/.exec(entry!.detail)?.[1]);
     expect(Number.isFinite(lag)).toBe(true);
@@ -267,7 +267,7 @@ describe('the connect cue is wired to the console, not just to a test', () => {
     /**
      * The failure this must never produce: a "customer connected" chime four
      * minutes into a live conversation, telling the agent something happened when
-     * nothing did. Core deliberately does not re-emit `bridged` for a resumed
+     * nothing did. The API deliberately does not re-emit `bridged` for a resumed
      * attempt for exactly this reason — `ready.active_attempt` carries `bridged_at`
      * instead — and the dispatcher records the attempt as already-connected.
      */

@@ -34,8 +34,8 @@ describe('dispositionLabel', () => {
   it('falls back to the code rather than hiding a historical row', () => {
     /*
       Four ways to miss, and the code is what we know in all four: an older
-      master that sends no catalog, a campaign still loading, a code retired
-      from the catalog since the call was filed, and a code core wrote that the
+      the API that sends no catalog, a campaign still loading, a code retired
+      from the catalog since the call was filed, and a code the API wrote that the
       catalog never held. A dash would say the call was never written up — and a
       row filed under a retired code is exactly what an audit is about.
     */
@@ -97,7 +97,7 @@ describe('recordingDisabledNote', () => {
       reads a current flag as a history of the rows under it.
 
       `record_calls` is PATCHable at any point in a campaign's life, and
-      `agencyCampaignRecording.ts` is built around that case — master
+      `agencyCampaignRecording.ts` is built around that case — the API
       deliberately permits the on→off write even to a tenant that has LOST
       `agency.recording`, precisely so a campaign can be switched off mid-life.
       A campaign that recorded four hundred calls and was then switched off is a
@@ -120,7 +120,7 @@ describe('recordingDisabledNote', () => {
   it('claims nothing off a field that never arrived', () => {
     /*
       The module's standing rule. `record_calls` is optional because an older
-      master does not send it, and announcing "this campaign does not record
+      the API does not send it, and announcing "this campaign does not record
       calls" off an absence would be a confident claim about a campaign we know
       nothing about — on the screen a compliance question is asked from.
     */

@@ -1,5 +1,3 @@
-// PORT NOTE (magick-agency): ported from core test/unit/core/telephony-release.test.ts@4850d1d9;
-// verbatim except two type-only fixes the server tsconfig needs (marked PORT).
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import {
@@ -40,7 +38,7 @@ function makeGuards(opts: {
       : {
         providerConcurrencyGuard: {
           release: providerRelease,
-          // PORT: type-only cast (core did not typecheck tests).
+          // type-only cast (the server tsconfig typechecks tests).
           ...(opts.releaseAll ? { releaseAll: opts.releaseAll as NonNullable<NonNullable<TelephonyReleaseGuards['providerConcurrencyGuard']>['releaseAll']> } : {}),
         },
       }),
@@ -340,7 +338,7 @@ describe('releaseTelephonyLease', () => {
 
     it('never lets a synchronous throw from a guard escape into teardown', async () => {
       const { guards, accountRelease, providerRelease } = makeGuards();
-      // PORT: type-only non-null assertion (core did not typecheck tests).
+      // type-only non-null assertion (the server tsconfig typechecks tests).
       (guards.concurrencyGuard!.release as ReturnType<typeof vi.fn>)
         .mockImplementation(() => { throw new Error('sync boom'); });
 

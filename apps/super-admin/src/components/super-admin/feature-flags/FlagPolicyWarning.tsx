@@ -7,11 +7,11 @@ interface Props {
 }
 
 /**
- * The operator warning master attaches to a flag with a handling policy
+ * The operator warning the server attaches to a flag with a handling policy
  * (`policy.warning`, e.g. transcript logging writes personal data into Loki).
  * Rendered beside the flag's controls on the tenant tab and the global
  * registry, and inside the reason dialog before an enable. Renders nothing for
- * an ordinary flag — or for any flag when an older master sends no policy.
+ * an ordinary flag — or for any flag when an older server sends no policy.
  */
 export function FlagPolicyWarning({ flag }: Props) {
   const warning = flag.policy?.warning;

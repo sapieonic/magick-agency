@@ -89,9 +89,9 @@ describe('parseVoicelinkWebhook — call.ended is NOT proof of an answer', () =>
   // The branch used to be an unconditional `hangup` on the documented assumption
   // that VoiceLink only emits call.ended for answered calls. Production disproved
   // it (429 call.ended vs 206 call.answered over 24h on dedicated), and because a
-  // call.ended payload carries no `callStatus`, CallManager's hangup handler found
+  // call.ended payload carries no `callStatus`, the hangup handler found
   // an empty rawCallStatus, matched nothing, and settled `completed` — phantom
-  // successes with talk_time_seconds=0. Payloads below are verbatim from
+  // successes with talk_time_seconds=0. Payloads below are unmodified captures from
   // experiment/captures + the live incident (call effa5952-…).
 
   it('an UNANSWERED call.ended (no callStatus, null answeredAt) is an error, not a hangup', () => {
@@ -107,7 +107,7 @@ describe('parseVoicelinkWebhook — call.ended is NOT proof of an answer', () =>
           endedAt: '2026-08-07T10:18:35.000+05:30',
           durationSec: null,
         },
-      } as never, // PORT NOTE (magick-agency): type-only cast — tsc now checks tests; the capture's nulls are wire data the type omits
+      } as never, // type-only cast: the capture's nulls are wire data the type omits
       'our-call-id',
     );
     expect(event).not.toBeNull();
@@ -116,7 +116,7 @@ describe('parseVoicelinkWebhook — call.ended is NOT proof of an answer', () =>
   });
 
   it('an ANSWERED call.ended still maps to hangup via answeredAt (it has no callStatus)', () => {
-    // Verbatim capture: 2026-07-11T06-39-57-498Z (answered, 4s talk time).
+    // Recorded capture: 2026-07-11T06-39-57-498Z (answered, 4s talk time).
     const event = parseVoicelinkWebhook(
       {
         event: 'call.ended',
@@ -209,7 +209,7 @@ describe('parseVoicelinkWebhook — call.ended is NOT proof of an answer', () =>
   });
 
   it('the live incident call.failed payload classifies as no_answer', () => {
-    // Verbatim: experiment/captures/2026-07-11T07-18-13-231Z__006__webhook-event.json
+    // Recorded capture: experiment/captures/2026-07-11T07-18-13-231Z__006__webhook-event.json
     const event = parseVoicelinkWebhook(
       {
         event: 'call.failed',
@@ -222,7 +222,7 @@ describe('parseVoicelinkWebhook — call.ended is NOT proof of an answer', () =>
           hangupReason: 'Network out of order',
           sipStatus: '503',
         },
-      } as never, // PORT NOTE (magick-agency): type-only cast — tsc now checks tests; the capture's nulls are wire data the type omits
+      } as never, // type-only cast: the capture's nulls are wire data the type omits
       'our-call-id',
     );
     expect(event!.eventType).toBe('error');
@@ -232,7 +232,7 @@ describe('parseVoicelinkWebhook — call.ended is NOT proof of an answer', () =>
 });
 
 describe('parseVoicelinkWebhook — terminal events carry the carrier disposition', () => {
-  // Verbatim shape of a real unanswered call (2026-08-07). Before the
+  // Unmodified shape of a real unanswered call (2026-08-07). Before the
   // disposition was attached, this settled as failed/TELEPHONY_ERROR — the
   // "NO ANSWER" the carrier reported was buried in a JSON.stringify'd blob.
   const NO_ANSWER_BODY = {
@@ -299,7 +299,7 @@ describe('parseVoicelinkWebhook — terminal events carry the carrier dispositio
   it('omits dispositionCause rather than restating the status as the reason', () => {
     // Only callStatus — no carrier wording anywhere. "NO ANSWER" must NOT become
     // the cause: it restates dispositionStatus, and emitting it would suppress
-    // CallManager's raw-body fallback, which is strictly more diagnostic.
+    // the raw-body fallback, which is strictly more diagnostic.
     const event = parseVoicelinkWebhook(
       { event: 'call.failed', call: { id: 'c1', callStatus: 'NO ANSWER' } },
       'c',
@@ -328,7 +328,7 @@ describe('parseVoicelinkWebhook — terminal events carry the carrier dispositio
 });
 
 describe('classifyVoicelinkOutcome — specific failure categories', () => {
-  // PORT NOTE (magick-agency): type-only cast — tsc now checks tests and several cases omit `callStatus`; runtime value unchanged.
+  // Type-only cast: several cases omit `callStatus`; the runtime value is unchanged.
   const base = { event: 'call.completed', direction: 'outbound' as const, status: '', hangupCause: '', hangupReason: '', sipStatus: '' } as { event: string; direction: 'outbound'; status: string; hangupCause: string; hangupReason: string; sipStatus: string; callStatus: string };
 
   it('answered → completed', () => {
@@ -448,7 +448,7 @@ describe('classifyVoicelinkOutcome — specific failure categories', () => {
 });
 
 /**
- * Fixtures below are VERBATIM staging captures (Loki, 2026-08-07 and 2026-08-08),
+ * Fixtures below are unmodified staging captures (Loki, 2026-08-07 and 2026-08-08),
  * from two independent trials of manually-labelled calls. They are the evidence
  * for the "clean teardown ⇒ busy" branch and exist to stop it being re-tuned from
  * the Q.850 spec instead of from what VoiceLink actually sends.
@@ -601,7 +601,7 @@ describe('classifyVoicelinkOutcome — real VoiceLink captures (labelled by hand
 
   it('end-to-end: parseVoicelinkWebhook attaches dispositionStatus=busy', () => {
     // The classifier is only half the path — the disposition has to survive into
-    // the event metadata for CallManager.emitCarrierDisposition to route it.
+    // the event metadata for the carrier-disposition emitter to route it.
     const ev = parseVoicelinkWebhook({
       event: 'call.ended',
       call: { id: 'vl-1', ...DECLINED_CAPTURE },
@@ -642,7 +642,7 @@ describe('classifyVoicelinkOutcome — real VoiceLink captures (labelled by hand
  * Exhaustive coverage of the clean-teardown ⇒ `busy` branch and the normalizer's
  * string coercion.
  *
- * Every payload below is a verbatim staging capture, from two independent trials
+ * Every payload below is an unmodified staging capture, from two independent trials
  * of manually-placed calls whose real disposition was recorded by hand at dial
  * time (2026-08-07 and 2026-08-08, via the temporary raw-body diagnostic in
  * `webhooks.routes.ts`). The hand-label is in each test name — that is the
@@ -904,8 +904,8 @@ describe('normalizeVoicelinkWebhook — hangupCause/sipStatus coercion', () => {
 });
 
 describe('parseVoicelinkWebhook — the four labelled captures, end to end', () => {
-  // Verbatim staging captures. The classifier is only half the path — the
-  // disposition must survive into metadata for CallManager to route it.
+  // Unmodified staging captures. The classifier is only half the path — the
+  // disposition must survive into metadata for the call handler to route it.
   const ANSWERED = {
     status: 'ended', hangupCause: '16', sipStatus: '200',
     answeredAt: '2026-08-08T11:10:35.000+05:30', durationSec: 22,

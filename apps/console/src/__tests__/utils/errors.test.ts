@@ -80,7 +80,7 @@ describe('appendRequestId / splitRequestId round-trip', () => {
 });
 
 describe('getErrorMessage', () => {
-  it('returns the Error message verbatim (marker included)', () => {
+  it('returns the Error message unchanged (marker included)', () => {
     const err = new Error(appendRequestId('Masked.', RID));
     expect(getErrorMessage(err)).toBe(`Masked.${REQUEST_ID_SEPARATOR}${RID}`);
   });

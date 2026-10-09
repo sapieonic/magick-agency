@@ -31,7 +31,7 @@ import {
 import type { AgencyCampaign, AgencyRetryOutcome } from '../../types/agency-campaign';
 
 /**
- * `AD-P3-U-02`: (a) built-in codes cannot be deleted and the reason is explained
+ * Acceptance: (a) built-in codes cannot be deleted and the reason is explained
  * inline; (b) server validation errors map to the offending field; (c) the form
  * round-trips an existing campaign without loss.
  */
@@ -46,13 +46,13 @@ function config(over: Partial<CampaignConfigState> = {}): CampaignConfigState {
 }
 
 describe('the built-in codes', () => {
-  it('names exactly the three §2.4 codes', () => {
+  it('names exactly the three built-in codes', () => {
     expect([...BUILT_IN_CODES]).toEqual(['voicemail', 'callback', 'do_not_call']);
     for (const code of BUILT_IN_CODES) expect(isBuiltInCode(code)).toBe(true);
     expect(isBuiltInCode('promised_to_pay')).toBe(false);
   });
 
-  it('seeds a new campaign with them, matching what master defaults to', () => {
+  it('seeds a new campaign with them, matching what the API defaults to', () => {
     expect(EMPTY_CAMPAIGN_CONFIG.dispositions.map((entry) => entry.code)).toEqual([
       ...BUILT_IN_CODES,
     ]);
@@ -61,13 +61,13 @@ describe('the built-in codes', () => {
     expect(EMPTY_CAMPAIGN_CONFIG.dispositions[2]!.suppress).toBe(true);
   });
 
-  it('gives do_not_call `suppress` and NOT `terminal`, matching core and master', () => {
+  it('gives do_not_call `suppress` and NOT `terminal`, matching the API', () => {
     /**
      * The three copies of this catalog have to agree and cannot share a
      * constant, so this is the only thing stopping them drifting.
      *
      * `terminal` was the flag this copy added and neither of the others has.
-     * Core's `resolveDispositionDecision` reads `suppress` first and returns
+     * The API's `resolveDispositionDecision` reads `suppress` first and returns
      * from that arm, so on this entry `terminal` can never be observed — and if
      * an operator ever clears `suppress`, the leftover flag downgrades the
      * contact from `suppressed` to the weaker `completed`. It is `suppress`, not
@@ -117,7 +117,7 @@ describe('catalog copies are independent, now that a retry rule can be edited', 
     expect(payload.disposition_catalog![0]!.retry).toEqual({ max_attempts: 2 });
   });
 
-  it('seeds a switched-on retry from core’s own voicemail rule', () => {
+  it('seeds a switched-on retry from the API’s own voicemail rule', () => {
     // Named rather than a literal in the component: seeding `max_attempts: 0`
     // would be a rule the engine ignores, so the control would appear inert.
     expect(DEFAULT_DISPOSITION_RETRY).toEqual({ delay_minutes: 240, max_attempts: 2 });
@@ -166,7 +166,7 @@ describe('the outcome card’s own copy', () => {
       expect(slugifyCode('Café №2')).toBe('cafe_no2');
     });
 
-    it('never exceeds the 50 characters master allows, and never ends on an underscore', () => {
+    it('never exceeds the 50 characters the API allows, and never ends on an underscore', () => {
       const code = slugifyCode('a'.repeat(48) + ' bcdef');
       expect(code.length).toBeLessThanOrEqual(50);
       expect(code.endsWith('_')).toBe(false);
@@ -208,7 +208,7 @@ describe('the outcome card’s own copy', () => {
       expect(summary).toContain('It counts as a success.');
     });
 
-    it('reports suppress rather than terminal when both are set, matching core’s precedence', () => {
+    it('reports suppress rather than terminal when both are set, matching the API’s precedence', () => {
       // `resolveDispositionDecision` checks suppress first and returns, so a
       // summary that reported "finished on this campaign" would be describing
       // the arm that cannot run.
@@ -251,8 +251,8 @@ describe('the outcome card’s own copy', () => {
 
 describe('wrap-up auto-return', () => {
   /**
-   * Core has stored `wrapup_auto_return` since migration 072 and reads it in
-   * `wrapup-manager.ts` — `false` holds the agent in wrap-up until they mark
+   * The API has always stored `wrapup_auto_return` and reads it in
+   * the wrap-up manager — `false` holds the agent in wrap-up until they mark
    * themselves ready. The form hardcoded it and never sent it, so every campaign
    * ran on the column default and no operator could change it.
    */
@@ -276,13 +276,13 @@ describe('wrap-up auto-return', () => {
     expect(buildConfigPayload(state).wrapup_auto_return).toBe(false);
   });
 
-  it('falls back to core’s own default when the campaign does not carry the field', () => {
+  it('falls back to the API’s own default when the campaign does not carry the field', () => {
     const state = configFromCampaign({ id: 'camp-1', name: 'Collections', status: 'draft' });
     expect(state.autoReturn).toBe(true);
   });
 });
 
-describe('validation, keyed exactly as master keys its details', () => {
+describe('validation, keyed exactly as the API keys its details', () => {
   it('accepts the default configuration', () => {
     expect(validateConfig(config())).toEqual({});
     expect(configBlockReason(config())).toBeNull();
@@ -325,7 +325,7 @@ describe('validation, keyed exactly as master keys its details', () => {
   });
 
   it('refuses a window that starts and ends at the same time', () => {
-    // Core reads start === end as permanently closed, not as 24 hours: a
+    // The API reads start === end as permanently closed, not as 24 hours: a
     // saveable campaign that can never dial.
     const state = config({ window: { ...EMPTY_CAMPAIGN_CONFIG.window, start: '09:00', end: '09:00' } });
     expect(validateConfig(state)['calling_window_end']).toContain('never dial');
@@ -453,22 +453,22 @@ describe('the retry preview', () => {
 });
 
 /**
- * `MAG-100` (reopened): master added `agent_disconnected` and `orphaned` to
- * `RETRY_POLICY_OUTCOMES` and core ships real, non-zero defaults for both
- * (`retry-policy.ts`'s `DEFAULT_RETRY_POLICY`), but cusui's union and table
+ * The API added `agent_disconnected` and `orphaned` to
+ * `RETRY_POLICY_OUTCOMES` and the API ships real, non-zero defaults for both
+ * (`retry-policy.ts`'s `DEFAULT_RETRY_POLICY`), but this form's union and table
  * never followed — an operator could not tune the one lever that controls how
  * many of a customer's own retries an our-fault drop consumes.
  */
-describe('the our-fault outcome — `agent_disconnected` (MAG-100, MAG-97)', () => {
-  it('is in the table master and core both support', () => {
+describe('the our-fault outcome — `agent_disconnected`', () => {
+  it('is in the table the API both support', () => {
     expect(RETRY_OUTCOMES).toContain('agent_disconnected');
   });
 
-  it('does NOT expose `orphaned` — core never reads a campaign\u2019s value for it', () => {
+  it('does NOT expose `orphaned` — the API never reads a campaign\u2019s value for it', () => {
     /*
-     * Master accepts the key and core ships a `DEFAULT_RETRY_POLICY` entry, which
+     * The API accepts the key and the API ships a `DEFAULT_RETRY_POLICY` entry, which
      * is exactly what makes it look safe to expose. But the only producer that
-     * consults a policy for `orphaned` is core\u2019s reaper, and it passes `null`
+     * consults a policy for `orphaned` is the API\u2019s reaper, and it passes `null`
      * deliberately, taking only the bound; the dial path gates its policy read on
      * `outcome === 'agent_disconnected'`.
      *
@@ -480,8 +480,8 @@ describe('the our-fault outcome — `agent_disconnected` (MAG-100, MAG-97)', () 
     expect(OUR_FAULT_RETRY_OUTCOMES).not.toContain('orphaned');
   });
 
-  it('is an editable row, NOT fixed at zero — core reads the configured cap', () => {
-    // Unlike `invalid`/`connected`, this has no short-circuit in core: a
+  it('is an editable row, NOT fixed at zero — the API reads the configured cap', () => {
+    // Unlike `invalid`/`connected`, this has no short-circuit in the API: a
     // configured cap genuinely governs the outcome, so hiding the inputs
     // behind a fixed-zero cell would make the row lie about what it does.
     expect(FIXED_ZERO_OUTCOMES).not.toContain('agent_disconnected');
@@ -505,7 +505,7 @@ describe('the our-fault outcome — `agent_disconnected` (MAG-100, MAG-97)', () 
   it('tells the operator the bound can be LOWERED, which is the half that bites', () => {
     /*
      * The first version said the platform limit "cannot be raised from here" and
-     * called it "smaller". Both misled. Core takes
+     * called it "smaller". Both misled. The API takes
      * `min(configured, OUR_FAULT_REDIAL_BOUND)`: the row cannot raise it, but it
      * CAN lower it — and the two are equal at 3, not smaller. An operator reading
      * that text would conclude the row could not affect the bound at all, and
@@ -517,17 +517,17 @@ describe('the our-fault outcome — `agent_disconnected` (MAG-100, MAG-97)', () 
   });
 
   it('spells out what 0 actually does, because "0 attempts" does not convey it', () => {
-    // Core retires the contact outright once `ourFaultAttemptsUsed >= 0` — it
+    // The API retires the contact outright once `ourFaultAttemptsUsed >= 0` — it
     // does not merely skip a redial. Never dialed again, allowance unused.
     expect(OUR_FAULT_RETRY_COPY).toMatch(/retires that contact for good/);
     expect(OUR_FAULT_ZERO_WARNING).toMatch(/retires the contact permanently/);
   });
 
-  it('previews an UNSET row as core’s default, not as "not retried"', () => {
+  it('previews an UNSET row as the API’s default, not as "not retried"', () => {
     /*
      * The preview and the callout sat on the same screen saying opposite things:
-     * the preview said "not retried", the callout said core retries anyway. The
-     * preview was the wrong one — an absent key means core falls back to
+     * the preview said "not retried", the callout said the API retries anyway. The
+     * preview was the wrong one — an absent key means the API falls back to
      * `DEFAULT_RETRY_POLICY`, which is the whole reason the callout exists.
      */
     const preview = retryPreview('agent_disconnected', undefined);
@@ -566,18 +566,18 @@ describe('the our-fault outcome — `agent_disconnected` (MAG-100, MAG-97)', () 
 });
 
 /**
- * After the 2026-09-08 pilot, core gained a `canceled` outcome — a dial we
- * stopped before anyone picked up — master's `RETRY_POLICY_OUTCOMES` accepts the
- * key, and core's `resolveOurFaultRedial` genuinely reads a campaign's value for
+ * After the 2026-09-08 pilot, the API gained a `canceled` outcome — a dial we
+ * stopped before anyone picked up — the API's `RETRY_POLICY_OUTCOMES` accepts the
+ * key, and the API's `resolveOurFaultRedial` genuinely reads a campaign's value for
  * it. That last clause is the whole argument for a row: it is the test
  * `orphaned` fails.
  */
 describe('the third our-fault outcome — `canceled` (pilot 2026-09-08)', () => {
-  it('is in the table, because core reads a campaign’s value for it', () => {
+  it('is in the table, because the API reads a campaign’s value for it', () => {
     /*
-     * The distinction from `orphaned`, which master also accepts and which is
+     * The distinction from `orphaned`, which the API also accepts and which is
      * deliberately absent two describes up. A cancelled dial is never bridged,
-     * so core's `ended` handler always routes it to `resolveOurFaultRedial`,
+     * so the API's `ended` handler always routes it to `resolveOurFaultRedial`,
      * and that function reads `policy?.canceled` for a stricter cap and for the
      * delay. `orphaned`'s only producer passes `null` instead.
      */
@@ -596,10 +596,10 @@ describe('the third our-fault outcome — `canceled` (pilot 2026-09-08)', () => 
     expect(OUTCOME_LABELS.canceled).toContain('before answer');
   });
 
-  it('previews an UNSET row as core’s our-fault fallback, not as "not retried"', () => {
+  it('previews an UNSET row as the API’s our-fault fallback, not as "not retried"', () => {
     /*
      * Same defect the `agent_disconnected` case pins, arrived at differently:
-     * `canceled` never reaches `DEFAULT_RETRY_POLICY` (core documents that entry
+     * `canceled` never reaches `DEFAULT_RETRY_POLICY` (the API documents that entry
      * as unread), so an unset row falls back to
      * `DEFAULT_OUR_FAULT_REDIAL_DELAY_MINUTES` (5) and `OUR_FAULT_REDIAL_BOUND`
      * (3) — which is exactly `OUR_FAULT_RETRY_DEFAULT`. Saying "not retried"
@@ -611,7 +611,7 @@ describe('the third our-fault outcome — `canceled` (pilot 2026-09-08)', () => 
     expect(preview).toContain(String(OUR_FAULT_RETRY_DEFAULT.max_attempts));
   });
 
-  it('is SENT, unlike `invalid` — the key is live at master and at core', () => {
+  it('is SENT, unlike `invalid` — the key is live at the API', () => {
     const state = configFromCampaign({
       id: 'camp-1',
       name: 'Collections',
@@ -681,9 +681,9 @@ describe('round-tripping an existing campaign', () => {
     expect(CAMPAIGN.calling_days).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
-  it('HEALS a stored `retry_policy.invalid`, dropping it on the next save (MAG-103)', () => {
+  it('HEALS a stored `retry_policy.invalid`, dropping it on the next save', () => {
     /**
-     * MAG-103 made master refuse `retry_policy.invalid` — core suppresses an
+     * The API refuses `retry_policy.invalid` — the API suppresses an
      * unreachable number before any policy is read, so a rule on it can never
      * fire. This form cannot CREATE the key (it is a fixed-zero row with no
      * inputs), but it hydrates `retry_policy` as a lossless spread, so a campaign
@@ -709,13 +709,13 @@ describe('round-tripping an existing campaign', () => {
     // The inert key is gone…
     expect(payload.retry_policy).not.toHaveProperty('invalid');
     // …and `in` too, since `{invalid: undefined}` would still serialise as a key
-    // and master would still refuse it.
+    // and the API would still refuse it.
     expect('invalid' in (payload.retry_policy as object)).toBe(false);
 
-    // …while EVERY other key survives byte-for-byte. `AD-P3-U-02` acceptance (c)
+    // …while EVERY other key survives byte-for-byte. the requirement
     // still holds for everything else — trading one silent loss for another is
     // not a fix. `connected` in particular is NOT stripped: it has no
-    // short-circuit in core, so its rule genuinely overrides the built-in.
+    // short-circuit in the API, so its rule genuinely overrides the built-in.
     expect(payload.retry_policy).toEqual({
       no_answer: { delay_minutes: 45, max_attempts: 3 },
       connected: { max_attempts: 0 },
@@ -741,7 +741,7 @@ describe('round-tripping an existing campaign', () => {
   });
 
   it('sends an EMPTY retry policy as {} rather than omitting it', () => {
-    // `{}` means "core's documented per-key defaults", not "retry nothing", and
+    // `{}` means "the API's documented per-key defaults", not "retry nothing", and
     // it is the ORDINARY case — a campaign nobody configured retries for.
     const payload = buildConfigPayload(config({ retryPolicy: {} }));
     expect(payload.retry_policy).toEqual({});
@@ -750,15 +750,15 @@ describe('round-tripping an existing campaign', () => {
 
   it('keeps an explicitly empty catalog, which is a legal configuration', () => {
     // An empty catalog means "agents do not disposition on this campaign", which
-    // core supports on purpose. Silently re-seeding the built-ins would delete
+    // the API supports on purpose. Silently re-seeding the built-ins would delete
     // that configuration.
     const payload = buildConfigPayload(config({ dispositions: [] }));
     expect(payload.disposition_catalog).toEqual([]);
   });
 });
 
-describe('mapping master’s validation answer onto fields', () => {
-  it('reads the flat details record master sends', () => {
+describe('mapping the API’s validation answer onto fields', () => {
+  it('reads the flat details record the API sends', () => {
     const err = Object.assign(new Error('Validation Error'), {
       statusCode: 400,
       details: {
@@ -775,7 +775,7 @@ describe('mapping master’s validation answer onto fields', () => {
   });
 
   it('is keyed identically to the client-side finding for the same rule', () => {
-    // The point of mirroring master's field paths: a rule only master knows
+    // The point of mirroring the API's field paths: a rule only the API knows
     // renders in the same place as one this module catches.
     const clientKey = Object.keys(
       validateConfig(config({ window: { ...EMPTY_CAMPAIGN_CONFIG.window, start: '09:00', end: '09:00' } })),

@@ -1,10 +1,10 @@
 /**
- * Campaign recording + call-summary opt-in (`MAG-147`).
+ * Campaign recording + call-summary opt-in.
  *
  * Two fields on an agency campaign — `record_calls` and `analysis_profile_id` —
- * were settable by nothing but curl. Core has read both since migration 072,
- * master's governance catalog has declared `agency.recording` / `agency.analytics`
- * since the catalog was written, and as of magick-master#197 master actually
+ * were settable by nothing but curl. The server reads both,
+ * the API's governance catalog has declared `agency.recording` / `agency.analytics`
+ * since the catalog was written, and the API now actually
  * refuses them to a capability-off tenant. No UI offered either field to anyone,
  * so the two capabilities guarded a surface that did not exist.
  *
@@ -12,7 +12,7 @@
  * `analysisProfileForm.ts`) — no form library anywhere in this SPA.
  *
  * ── The rule that is easy to get backwards ───────────────────────────────────
- * **Master refuses only ENABLING.** `record_calls: false`, an absent
+ * **The API refuses only ENABLING.** `record_calls: false`, an absent
  * `record_calls`, and `analysis_profile_id: null` all pass **even with the
  * capability off** — deliberately, so a tenant that LOSES the capability can
  * still edit the campaign and, the case that matters, can still turn recording
@@ -27,34 +27,31 @@ import type { AgencyCampaign } from '../types/agency-campaign';
 import type { CallAnalysisProfile } from '../types/call-analysis-profile';
 
 /**
- * The two capability keys, mirrored VERBATIM from master's frozen governance
- * catalog (`magick-master/src/governance/catalog.ts`) and from the strings
+ * The two capability keys, mirrored exactly from the API's frozen governance
+ * catalog and from the strings
  * `assertCampaignBehavioralCapabilities` passes to `assertCapability` in
  * `proxy-agency-campaigns.routes.ts`.
  *
- * The three repos cannot share a constant, so the unit test that pins these
- * against the same literals master enforces is the only thing keeping them from
+ * The server and this console cannot share a constant, so the unit test that pins these
+ * against the same literals the API enforces is the only thing keeping them from
  * drifting into a gate that silently guards nothing.
  */
 export const AGENCY_RECORDING_CAPABILITY = 'agency.recording';
 export const AGENCY_ANALYTICS_CAPABILITY = 'agency.analytics';
 
 /*
- * PORT NOTE (magick-agency): cusui's `PROFILE_LIST_CAPABILITY`
- * (`calls.dialer.analytics`) is removed. Master gated READING the profile list on
- * that softphone capability and WRITING `analysis_profile_id` on
- * `agency.analytics`, so the settings page had to name a second, missing
- * capability. Agency has no governance and no softphone: the list is gated on the
+ * There is no separate capability for READING the profile list: the list is
+ * gated on the
  * `agency.analysis_profiles.read` permission alone, so a tenant that may write
  * the field may always read the list.
  */
 
 /**
- * Core's code for "that analysis profile isn't yours / doesn't exist"
- * (`profile-preflight.ts`). Mirrored verbatim, like the capability keys above.
+ * The server's code for "that analysis profile isn't yours / doesn't exist"
+ * (`profile-preflight.ts`). Mirrored exactly, like the capability keys above.
  *
  * It exists so this refusal can be identified rather than guessed at. Until
- * master allow-lists it the body still arrives masked and codeless — which is
+ * the API allow-lists it the body still arrives masked and codeless — which is
  * why {@link isProfile404} keeps the codeless fallback rather than switching to
  * the code alone.
  */
@@ -99,7 +96,7 @@ export interface CapabilityGate {
  * `enabled` here is the governance capability, `current` is what the form holds
  * right now (not what was loaded) — so once an operator switches a grandfathered
  * campaign off, the control correctly locks, because switching it back on is the
- * thing master refuses.
+ * thing the API refuses.
  */
 export function recordingGate(args: { enabled: boolean; current: boolean }): CapabilityGate {
   if (args.enabled) return { canEnable: true, notice: null };
@@ -123,7 +120,7 @@ export function recordingGate(args: { enabled: boolean; current: boolean }): Cap
 /**
  * The call-summary control's state. Same asymmetry as recording: a profile that
  * is already set can always be cleared, because `analysis_profile_id: null`
- * passes master's guard with the capability off.
+ * passes the API's guard with the capability off.
  */
 export function analysisGate(args: { enabled: boolean; current: string }): CapabilityGate {
   if (args.enabled) return { canEnable: true, notice: null };
@@ -146,7 +143,7 @@ export function resolveProfileId(profileId: string): string | null {
 
 /**
  * Whether the stored profile id is present in the fetched list — and, when it
- * is not, whether that absence means anything (`MAG-152`).
+ * is not, whether that absence means anything.
  *
  * `useCallAnalysisProfiles` initialises `profiles` to `[]`, which by itself is
  * indistinguishable from a list that genuinely does not contain the campaign's
@@ -182,7 +179,7 @@ export function storedProfileStatus(args: {
  * The two fields' contribution to the PATCH body.
  *
  * A field is **omitted**, not sent, whenever sending it would be an *enabling*
- * write the capability forbids — master answers 403 rather than stripping it, so
+ * write the capability forbids — the API answers 403 rather than stripping it, so
  * an unconditional send would make a capability-off tenant unable to save an
  * unrelated edit (a rename, a calling window) on a campaign that already had
  * recording on.
@@ -236,17 +233,17 @@ function errorBody(err: unknown): { status: number | null; body: Record<string, 
  * brief tabulates it — the difference is load-bearing and is why this function
  * exists at all:
  *
- *  1. **403 `{ error: 'capability_disabled', capability }`** — master's own
- *     refusal, raised BEFORE it calls core, so `sawCoreErrorStatus` is false and
- *     the error-mask hook passes it through verbatim. `ApiError` reduces that
+ *  1. **403 `{ error: 'capability_disabled', capability }`** — the API's own
+ *     refusal, raised BEFORE it calls the server, so `sawCoreErrorStatus` is false and
+ *     the error-mask hook passes it through unchanged. `ApiError` reduces that
  *     body to the message `'capability_disabled'`, which is a wire token, not
  *     something to show an operator.
- *  2. **403 `{ error: 'Feature Not Enabled', message }`** — from core, and the
- *     one core 4xx whose label is on master's `FORWARDABLE_ERROR_LABELS`
+ *  2. **403 `{ error: 'Feature Not Enabled', message }`** — from the server, and the
+ *     one dialer-runtime 4xx whose label is on the server's `FORWARDABLE_ERROR_LABELS`
  *     allow-list, so its message survives masking and is already legible.
  *  3. **404 `{ error: 'Not Found', message: 'Analysis profile not found' }`** —
  *     ⚠️ **this body never reaches the browser.** `'Not Found'` is not on the
- *     allow-list and the payload carries no `details`, so master's error-mask
+ *     allow-list and the payload carries no `details`, so the API's error-mask
  *     hook rewrites it to `{ error: 'Request Failed', message: 'Something went
  *     wrong … quote the request ID' }`. The only thing left to reason from is
  *     that WE sent a profile id, which is why this takes `sentAnalysisProfile`
@@ -280,7 +277,7 @@ export function campaignSaveRefusal(
         'Removing a summary profile is always allowed.'
       );
     }
-    // A capability master gates on that this build does not know by name. Say
+    // A capability the API gates on that this build does not know by name. Say
     // which one rather than falling through to the bare `capability_disabled`.
     return capability
       ? `This change needs the ‘${capability}’ capability, which is turned off for this account. Ask an administrator to enable it.`
@@ -307,8 +304,8 @@ export function campaignSaveRefusal(
  * **The naive test — `status === 404 && sentAnalysisProfile` — is wrong, and
  * wrong in the direction that costs the most.** This PATCH has other 404s, and
  * they are the *legible* ones: `requireOwned` answers `campaign_not_found` and
- * the apology guard answers `announcement_not_found`, both of which master
- * ALLOW-LISTS and forwards verbatim with a real message. Claiming the profile
+ * the apology guard answers `announcement_not_found`, both of which the API
+ * ALLOW-LISTS and forwards unchanged with a real message. Claiming the profile
  * whenever one happens to be in the payload throws that message away and
  * replaces it with advice that cannot work.
  *
@@ -320,7 +317,7 @@ export function campaignSaveRefusal(
  * real problem. That is a worse outcome than the masked 404 this branch exists
  * to rescue, because here a good message existed and we discarded it.
  *
- * So: claim it only when core NAMED it, or when the body carries no code at all
+ * So: claim it only when the server NAMED it, or when the body carries no code at all
  * — the masked shape, which is the only case where guessing from what we sent is
  * all anyone has. A 404 carrying some *other* code is somebody else's, and
  * falling through lets the real message through.

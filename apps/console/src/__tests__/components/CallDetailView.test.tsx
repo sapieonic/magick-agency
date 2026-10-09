@@ -5,17 +5,17 @@ import type { WebRtcCallRecord } from '../../types/webrtc-call';
 import type { CallAnalysisResult } from '../../types/call';
 
 /**
- * The shared call-detail view — one component, two products.
+ * The call-detail view — one component, with caller-supplied identity.
  *
  * ── What this file exists to prevent ────────────────────────────────────────
  * Everything asserted here is a defect that shipped, and every one of them
  * rendered perfectly. "It renders the call" was true of the version that offered
- * an agency supervisor a primary "Try again" button wired to the AI product's
- * endpoint, and true of the version that dropped a purged transcript out of the
+ * an agency supervisor a primary "Try again" button wired to
+ * `/proxy/calls/:id/retry-analysis`, and true of the version that dropped a purged transcript out of the
  * DOM entirely. So the assertions are about what the component says when
  * something is ABSENT — a retry route it does not have, a recording it may not
  * play, a transcript that has aged out — because that is where a shared view
- * silently inherits the wrong product's answer.
+ * silently inherits the wrong caller's answer.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -27,8 +27,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 /*
- * `api/calls` is the AI product's client, and `AnalysisStatusCard` defaults its
- * retry to `retryAnalysis` in it. Mocked here so the "no handler ⇒ no call"
+ * `AnalysisStatusCard` defaults its retry to `retryAnalysis` in `api/calls`. Mocked here so the "no handler ⇒ no call"
  * assertion below is an assertion about behaviour rather than about a module
  * that happened not to be imported.
  */
@@ -170,7 +169,7 @@ describe('the identity of a call is the product’s answer, not this file’s', 
     expect(screen.getByTestId('call-fact-Agent').textContent).toContain('Ravi Menon');
     expect(screen.getByText('Disposition')).toBeTruthy();
     expect(screen.getByText('asked us to call after 6pm')).toBeTruthy();
-    // The softphone's own facts are NOT baked in: a caller that does not pass
+    // Generic call facts are NOT baked in: a caller that does not pass
     // Provider or Initiated By does not get them — which is what stopped an
     // agency supervisor reading a dialing-session UUID off this page.
     expect(screen.queryByTestId('call-fact-Provider')).toBeNull();
@@ -187,7 +186,7 @@ describe('the identity of a call is the product’s answer, not this file’s', 
 
 describe('a missing recording says which kind of missing', () => {
   it('does not promise "check back soon" when the product may not play recordings', async () => {
-    // Master nulls `recording_url` on a tenant without the capability and leaves
+    // The server nulls `recording_url` on a tenant without the capability and leaves
     // `recording_requested` true, so this is exactly the pair the old copy read.
     renderView({
       call: { ...CALL, recording_url: null, recording_requested: true },
@@ -224,7 +223,7 @@ describe('a missing recording says which kind of missing', () => {
   });
 
   it('stays unqualified when the fetcher itself cannot say why', async () => {
-    // `null` is the softphone's client collapsing every failure. Inventing one of
+    // `null` is a client collapsing every failure. Inventing one of
     // the four sentences above for it would put a specific claim on a caller that
     // made none.
     renderView({ fetchRecording: vi.fn().mockResolvedValue(null) });
@@ -239,10 +238,10 @@ describe('a missing recording says which kind of missing', () => {
 });
 
 describe('a recording the provider serves directly', () => {
-  // Core hands back an absolute URL when the provider serves the file publicly
+  // The server hands back an absolute URL when the provider serves the file publicly
   // (VoiceLink/Elision) instead of one of its own proxy paths, because its egress
-  // cannot reach that host. Asserted on the SHARED view because both products
-  // format through it — the softphone and the agency supervisor alike.
+  // cannot reach that host. Asserted on the shared view because every caller
+  // formats through it.
   const VOICELINK_URL =
     'https://voiceflowai.elisiontec.com/voiceapp-recordings/client_1150/2026-07-11/abc.mp3';
 
@@ -304,7 +303,7 @@ describe('a recording the provider serves directly', () => {
 
 describe('a transcript that aged out is a state, not an absence', () => {
   it('says the transcript was deleted when the summary outlived it', () => {
-    // Core's retention step nulls `conversation_log` and leaves
+    // The server's retention step nulls `conversation_log` and leaves
     // `analysis_status` at `completed`, so the section simply vanished from under
     // a summary that is still on screen.
     renderView({ call: { ...CALL, conversation_log: null } });

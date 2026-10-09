@@ -1,13 +1,4 @@
 import { createChildLogger } from '@magick-agency/observability';
-// PORT NOTE (magick-agency): ported from core src/core/telephony-release.ts@4850d1d9;
-// only the logger import specifier changed. The observer seam
-// (`setTelephonyReleaseObserver`) is kept verbatim; core wired it in src/index.ts to
-// `trackTelephonyLeaseRelease`, and here the lane C owner wires it at boot to the same
-// function from @magick-agency/observability/metrics/voice (the doc comment below
-// still says `src/index.ts`, verbatim). `TelephonyReleaseSource` is a closed
-// Prometheus label set and is kept verbatim, including members agency never emits
-// (e.g. the GroupRefiller's `refill_*` labels; likely also the static/IVR dequeue
-// and batch-cancel ones), so a later core fix to this file ports cleanly.
 import type { CompositeReleaseResult } from './provider-concurrency-guard.js';
 
 const log = createChildLogger({ component: 'telephony-release' });
@@ -31,9 +22,7 @@ const log = createChildLogger({ component: 'telephony-release' });
  *   correct) or leases that TTL-expired before teardown — and in that second case
  *   `DEL` returns 0, so the counter was never decremented and real drift exists.
  *   That is exactly the "delayed-visibility drift" the self-heal sweep exists for,
- *   so callers should arm the sweep on `noop` as well as on `failure`. The `source`
- *   label discriminates in practice: `noop{source="session_end"}` is mostly
- *   TTL-expiry, `noop{source="*_batch_cancel"}` is mostly duplicate teardown.
+ *   so callers should arm the sweep on `noop` as well as on `failure`.
  *   Terminal — no fallback — because the per-guard releases run the same DEL-gated
  *   script against the same keys and provably cannot do anything either.
  * - `fallback` — the composite was declined or inconclusive, so each scope was
@@ -51,9 +40,9 @@ const log = createChildLogger({ component: 'telephony-release' });
  * `failure` unreachable in production and label a total teardown failure as the
  * benign-looking `fallback`. The composite's own `failed` status is therefore the
  * signal. Note the converse limit: on the degraded path the fallback's success is
- * unobservable, so alert on a *rate*, not on any single occurrence. The shipped
- * rule pages on `outcome=~"failure|partial"` — a 1-scope release parks the rest,
- * which is the same operational problem — and deliberately not on `noop`.
+ * unobservable, so alert on a *rate*, not on any single occurrence: page on
+ * `outcome=~"failure|partial"` — a 1-scope release parks the rest, which is the
+ * same operational problem — and deliberately not on `noop`.
  */
 export type TelephonyReleaseOutcome = 'composite' | 'partial' | 'noop' | 'fallback' | 'failure';
 
@@ -65,10 +54,13 @@ const DRIFT_OUTCOMES: ReadonlySet<TelephonyReleaseOutcome> = new Set(['failure',
  * Teardown call sites, as a closed set. This is a Prometheus label, so it must be
  * owned by the code rather than assembled from runtime values.
  *
- * Not a complete denominator for releases: browser sessions (global lease only)
- * and the three partial-acquire rollback paths in `call-manager.ts` release
- * without going through here, so `sum(telephony_lease_release_total)` is releases
- * *through this helper*, not all releases.
+ * Only `webrtc` (the WebRTC bridge's teardown) is emitted in this service; the
+ * other members have no call site here.
+ *
+ * Not a complete denominator for releases: the partial-acquire rollbacks in
+ * `acquireTelephonyConcurrency` release without going through here, so
+ * `sum(telephony_lease_release_total)` is releases *through this helper*, not all
+ * releases.
  */
 export type TelephonyReleaseSource =
   | 'session_end'
@@ -79,9 +71,6 @@ export type TelephonyReleaseSource =
   | 'dequeue_static_failed'
   | 'dequeue_ivr_claim_lost'
   | 'dequeue_ivr_failed'
-  // The per-broadcast GroupRefiller's twins of the four dequeue labels above,
-  // so a refill-path release is never mistaken for an SQS one — plus the
-  // rollback of an admission it took just as shutdown began.
   | 'refill_static_claim_lost'
   | 'refill_static_failed'
   | 'refill_ivr_claim_lost'
@@ -106,12 +95,10 @@ type DeclineReason = 'degraded_guard' | 'no_provider' | 'no_release_all' | 'miss
  * and test doubles can share the production release path.
  */
 export interface TelephonyReleaseGuards {
-  /** Optional for test doubles only. In production `CallManager` declares all
-   * three as non-nullable `readonly` members and every call site passes a real
-   * `CallManager`, so the null branch is not a production path — the pre-existing
-   * `if (callManager.concurrencyGuard)` checks these replaced were already dead
-   * code. Kept because a missing guard must degrade to "release what exists"
-   * rather than throw, and the decline is logged so it cannot go unnoticed. */
+  /** Optional for test doubles only. In production `TelephonyGuardHost` declares
+   * all three, so the null branch is not a production path. Kept because a
+   * missing guard must degrade to "release what exists" rather than throw, and
+   * the decline is logged so it cannot go unnoticed. */
   concurrencyGuard?: {
     release(callId: string): Promise<void>;
     isDegraded?(): boolean;
@@ -132,22 +119,19 @@ export interface TelephonyReleaseGuards {
    * This is deliberately part of the contract rather than a line each caller
    * remembers to write. `noop` and `partial` are terminal — no per-scope fallback
    * runs — so a caller that ignores the outcome silently leaves a counter
-   * over-reporting, and the sites most likely to hit those cases (carrier status
-   * webhooks, batch cancel, sessionless cancel) are exactly the ones running on a
-   * replica with no live session, where the demand-driven sweep is most likely
-   * already dormant. `triggerDequeue()` does not reconcile. Every site that passes
-   * a `CallManager` gets this for free.
+   * over-reporting, and a teardown on a replica with no other live call is where
+   * the demand-driven sweep is most likely already dormant. The bridge passes
+   * `TelephonyGuardHost`, which provides it.
    *
    * Omit it where the caller already wakes the sweep unconditionally on the same
-   * path — the SQS-dequeue rollbacks do — so it cannot be double-counted.
+   * path, so it cannot be double-counted.
    */
   wakeSelfHeal?(): void;
 }
 
 export interface TelephonyReleaseParams {
-  /** The key the leases were acquired under — `external_ref_id` for AI calls, the
-   * row id for static/IVR, a random uuid for WebRTC. NOT necessarily the call id,
-   * which is why it is logged as `concurrencyKey`. */
+  /** The key the leases were acquired under — a random uuid for a WebRTC bridge
+   * call. NOT the call id, which is why it is logged as `concurrencyKey`. */
   concurrencyKey: string;
   tenantId: string;
   accountId: string;
@@ -161,16 +145,15 @@ export interface TelephonyReleaseParams {
 }
 
 /**
- * Metric emission is a registration seam rather than a direct
- * `src/utils/metrics.js` import: 175 test files mock that module with an explicit
- * factory, and Vitest throws the moment production code reads an export a factory
- * does not list. Importing it on a path ~20 teardown suites execute would fail
- * every one of them on an unrelated property access.
+ * Metric emission is a registration seam rather than a direct import of the
+ * metrics module: suites mock that module with an explicit factory, and Vitest
+ * throws the moment production code reads an export a factory does not list.
+ * Importing it on a path the teardown suites execute would fail every one of them
+ * on an unrelated property access.
  *
- * This is a test-architecture workaround, not an architectural boundary (unlike
- * the AI layer's alerting/PostHog seams, which exist by rule). `src/index.ts`
- * wires it at startup and a test pins that wiring; unwired, the release path
- * behaves identically and emits nothing.
+ * This is a test-architecture workaround, not an architectural boundary.
+ * `bootstrap/voice.ts` wires it at startup and a test pins that wiring; unwired,
+ * the release path behaves identically and emits nothing.
  */
 type TelephonyReleaseObserver = (outcome: TelephonyReleaseOutcome, source: TelephonyReleaseSource) => void;
 
@@ -218,12 +201,12 @@ export function resetTelephonyReleaseLatches(): void {
  * different counters, so running both cannot double-decrement.
  *
  * **A missing provider.** `releaseAll` builds the provider key from the provider
- * name and reports `unavailable` without one, releasing *nothing*. `CallSession`
- * defaults `telephonyProvider` to `''`, so this is reachable by a session that
- * never had one stamped; such a call still holds global + account leases.
+ * name and reports `unavailable` without one, releasing *nothing*. A teardown
+ * with no provider stamped reaches this; such a call still holds global +
+ * account leases.
  *
- * **A guard without `releaseAll`, or a missing core guard.** Older embedders and
- * test doubles. Anything the typed contract doesn't recognise is inconclusive.
+ * **A guard without `releaseAll`, or a missing global/account guard.** Test
+ * doubles. Anything the typed contract doesn't recognise is inconclusive.
  *
  * ## Why falling back after a failed composite cannot double-release
  *
@@ -235,7 +218,7 @@ export function resetTelephonyReleaseLatches(): void {
  * Note one latent coupling: the degraded gate reads `degradedMode`, which is NOT
  * set when a guard is simply constructed with `redis: null`. That case is handled
  * only because `releaseAll` then also reports `unavailable` — i.e. it relies on
- * all three guards sharing one Redis client, as `CallManager` constructs them.
+ * all three guards sharing one Redis client, as `TelephonyGuardHost` constructs them.
  */
 export async function releaseTelephonyLease(
   guards: TelephonyReleaseGuards,

@@ -62,9 +62,9 @@ export default function AnalysisProfilesPage() {
     a refusal closed the dialog, left the row in the list, and said nothing. The
     operator pressed Delete again and concluded the page was broken.
 
-    That matters most for core's `profile_in_use_by_agency_campaign` 409, whose
+    That matters most for the API's `profile_in_use_by_agency_campaign` 409, whose
     entire content IS the remedy — which campaigns depend on this profile, and that
-    cloning it is the way out. It is deliberately allow-listed through master's
+    cloning it is the way out. It is deliberately allow-listed through the server's
     error mask so the message survives the hop; having it survive the hop and then
     be dropped by the client is the same outcome as masking it, reached later.
 
@@ -189,7 +189,7 @@ export default function AnalysisProfilesPage() {
       await remove(deleteTarget.id);
     } catch (err) {
       // `ApiError.extractMessage` returns the body's `message`, so a 409 arrives
-      // here as the sentence core wrote. The fallback is only for a transport
+      // here as the sentence the API wrote. The fallback is only for a transport
       // failure with no body at all.
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete this summary setup');
     } finally {
@@ -475,7 +475,7 @@ export default function AnalysisProfilesPage() {
                       "did the answers match what was looked up?" has nothing to
                       judge: every such call is `not_applicable`, or the model
                       guesses and poisons the aggregate. Nor does the knowledge
-                      dashboard read the dimension; it reads core's own retrieval
+                      dashboard read the dimension; it reads the API's own retrieval
                       rollups (`getKnowledgeAnalytics`). */}
                   {!atDimensionLimit && (
                     <button type="button" className={styles.addBtn} onClick={addDimension}>

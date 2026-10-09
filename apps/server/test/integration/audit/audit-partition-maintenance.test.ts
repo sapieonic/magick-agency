@@ -9,10 +9,8 @@ import {
 } from '../../../src/audit/audit-partition-maintenance.js';
 
 /**
- * The partition job on the REAL baseline (Postgres 5436): the create half is NEW
- * (no source had a runtime creator), the drop half is core's/master's
- * `purgeAuditPartitions`. Ported case: master
- * `test/integration/maintenance/retention-purge.test.ts@a1f0756a` "leaves the audit
+ * The partition job on the REAL baseline (Postgres 5436): the create half and the drop half
+ * (`purgeAuditPartitions`), including "leaves the audit
  * partitions alone when the cutoff predates all of them".
  *
  * The suite drops and creates partitions of the shared test database, so

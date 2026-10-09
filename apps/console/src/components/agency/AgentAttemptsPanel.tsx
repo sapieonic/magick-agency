@@ -67,30 +67,30 @@ import styles from './AgentAttemptsPanel.module.css';
  * what no campaign-scoped view can show. `AgencyAttempt.campaign_id` exists for
  * this column.
  *
- * The row carries an **id and no name** (core has the name; the row does not), so
+ * The row carries an **id and no name** (the API has the name; the row does not), so
  * the name is resolved through a map the CALLER already holds — the agent's
  * staffing history on one surface, the account's campaign list on the other.
  * Never a fetch per row, and never a second list on this component's own account:
  * two campaign lists is two answers about which campaigns exist. An id with no
  * match degrades through `campaignLabel` to `Campaign <first 8 chars>`, which is
- * the honest reading — a campaign somebody was unstaffed from, or one core could
+ * the honest reading — a campaign somebody was unstaffed from, or one the API could
  * not identify, still has real attempts, and neither a blank cell (which says the
  * dial belonged to nothing) nor a bare UUID dressed as a name is true.
  *
  * ── There is deliberately NO CSV export here ───────────────────────────────
  * Considered and rejected on a hard fact, recorded so the next reader does not
  * take its absence for an oversight: the campaign spine has
- * `GET /campaigns/:id/attempts.csv`, and **master's performance plugin has no csv
+ * `GET /campaigns/:id/attempts.csv`, and **the API's performance plugin has no csv
  * route at all** — neither `my-attempts.csv` nor the supervisor twin. So
  * `downloadSpineCsv` pointed at this data would 404, and an Export button would be
  * a control that fails every time it is pressed. Adding the route is a
- * cross-service change (core, then master) rather than a screen change, and it is
+ * server-side change rather than a screen change, and it is
  * not what this screen is for: an agent checking their own afternoon between calls
  * does not need a spreadsheet, and a supervisor who does need one already has the
  * campaign-scoped export where the row limits and truncation copy live.
  *
  * ── The phone search is back, and what had to land first ──────────────────
- * It was removed rather than left broken. Master's whitelist for the two agent
+ * It was removed rather than left broken. The API's whitelist for the two agent
  * routes (`AGENT_ATTEMPT_QUERY_PARAMS`) did not carry `phone`, and
  * `forwardAllowedQuery` dropped an unlisted key **silently** — so the control
  * answered 200 with the person's whole unfiltered history and presented it as
@@ -98,7 +98,7 @@ import styles from './AgentAttemptsPanel.module.css';
  * them wrong, and nothing on screen saying so. A control that 400s would at
  * least be visible.
  *
- * Both halves have since landed on master. `phone` is forwarded on both agent
+ * Both halves have since landed on the API. `phone` is forwarded on both agent
  * routes, and `forwardAllowedQuery` now **rejects** an unknown key with a 400
  * instead of dropping it — which is the half that matters more, because it means
  * the next param this surface sends can no longer fail invisibly. So the search
@@ -256,12 +256,12 @@ export function AgentAttemptsPanel({ subject, campaignNames, caption }: AgentAtt
       operator typed and this box asks for a code "exactly as it was set up".
 
       It will NOT match, and that is worth knowing rather than believing
-      otherwise: master's `forwardAllowedQuery` joins repeated params with a
-      comma and core's `multiParam` splits on one, so `Not interested, will call
-      back` reaches core as two codes and the list comes back empty. Splitting
+      otherwise: the API's `forwardAllowedQuery` joins repeated params with a
+      comma and the API's `multiParam` splits on one, so `Not interested, will call
+      back` reaches the API as two codes and the list comes back empty. Splitting
       here would not help — it would produce the same two codes one hop earlier
       while hiding that the code the reader typed is unfilterable. Making it
-      work is a core-then-master change to the filter encoding.
+      work is a server-side change to the filter encoding.
     */
     setDraftCodes((current) => (current.includes(code) ? current : [...current, code]));
     setCodeEntry('');
@@ -348,8 +348,8 @@ export function AgentAttemptsPanel({ subject, campaignNames, caption }: AgentAtt
           </p>
           {/*
             The one code this filter cannot find, named where it would be typed.
-            A comma in a code is unfilterable end to end (master joins the
-            repeated params with one, core splits on one), and the answer that
+            A comma in a code is unfilterable end to end (the API joins the
+            repeated params with one, the API splits on one), and the answer that
             comes back is an EMPTY list — which reads as "you have no calls
             written up that way" rather than as a limit of the encoding. Same
             rule as the sentence above it: a filter that silently returns nothing
@@ -428,7 +428,7 @@ export function AgentAttemptsPanel({ subject, campaignNames, caption }: AgentAtt
           </label>
           {/*
             The same placeholder as the campaign-scoped view, because it is the
-            same search: master forwards `phone` on both agent routes, and core
+            same search: the API forwards `phone` on both agent routes, and the server
             picks its mode from what was typed — a leading `+` means a complete
             E.164 and is matched exactly, anything else is matched as a suffix. So
             "whole number, or the last few digits" describes what will actually
@@ -641,7 +641,7 @@ function AttemptRow({
       <td
         className={resolved ? undefined : styles.mutedCell}
         /* The full id in the title, so a supervisor chasing an unresolvable
-           campaign has something to search master's staffing table with. */
+           campaign has something to search the API's staffing table with. */
         title={resolved ? undefined : attempt.campaign_id}
         data-testid={`my-attempt-campaign-${attempt.id}`}
       >
@@ -696,7 +696,7 @@ function AttemptRow({
             same words the campaign attempts view uses — an attempt that never
             produced a media leg has nothing to link to, and that is a fact rather
             than a failure. Whether the CALL still exists is the destination page's
-            answer to give (core keeps the id un-FK'd so the attempt outlives it),
+            answer to give (the API keeps the id un-FK'd so the attempt outlives it),
             which is exactly why this is a link and never an embedded player.
           */}
           {recordingCellCopy(attempt) === null ? (

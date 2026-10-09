@@ -1,7 +1,5 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/unit/tts/tts-file-cache-atomic.test.ts@4850d1d9.
-// Changes: type-only fix
-// for the server tsconfig (typechecks tests): the three `(p: never, d: never)` writeFileSync mocks cast
-// through `unknown` (TS2352).
+// The three `(p: never, d: never)` writeFileSync mocks cast through `unknown` (TS2352), because
+// the server tsconfig typechecks tests.
 import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';

@@ -1,10 +1,7 @@
 import { describe, it, expect } from 'vitest';
-// PORT NOTE (magick-agency): ported from core test/unit/scenarios/voicelink-config-factory-scenarios.test.ts@4850d1d9.
-// `telephonySchema` lives in config/blocks/voice.ts here (the VoiceLink-only
-// block). The raw config is verbatim: the other providers' keys are stripped by
-// the schema, which the first case proves harmless. Deleted the co-configured
-// vobiz case (VoBiz not carried) and the `VobizAdapter` import. Listed in
-// PORTING.md (Lane C).
+// `telephonySchema` lives in config/blocks/voice.ts (the VoiceLink-only block).
+// The raw config carries other providers' keys; the schema strips them, which the
+// first case proves harmless.
 import { telephonySchema } from '../../../src/config/blocks/voice.js';
 import { TelephonyProviderRegistry } from '../../../src/telephony/factory.js';
 import { VoicelinkAdapter } from '../../../src/telephony/voicelink/voicelink.adapter.js';

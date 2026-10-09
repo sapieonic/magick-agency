@@ -14,7 +14,7 @@
   No literal accents anywhere. `--accent` is injected per brand at build time
   (`brands/<name>/brand.config.json` → `__BRAND__` → `src/brand/index.ts`), so a
   hardcoded `#7c5cfc` would render the Samarthya whitelabel — whose accent is a
-  gold `#c9a063` with a `flat` elevation style — as MagickVoice purple on the
+  gold `#c9a063` with a `flat` elevation style — as the default purple on the
   first screen its agents ever see. The only literal colours in this file are
   Google's four brand fills in the button's SVG, which live in the markup.
 
@@ -400,10 +400,10 @@
 }
 
 /*
-  The way onward from an error that HAS one — today, master's `identity_in_use`
+  The way onward from an error that HAS one — today, the server's `identity_in_use`
   conflict, where the fix is to sign in with the colliding account rather than to
   try this page again. Inside the alert box rather than under it, because the
-  sentence and its remedy are one thing to read: master's message says "sign in
+  sentence and its remedy are one thing to read: the server's message says "sign in
   with it directly" and this is the only place on the page that can be pressed to
   do so.
 */

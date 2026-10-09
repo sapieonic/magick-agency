@@ -141,8 +141,8 @@ describe('what the parser deliberately does not produce', () => {
     if (!result.ok) return;
     // The path fixes the campaign, so a query parameter for it can only agree with
     // `:id` or be wrong — the same reason the campaign-scoped attempt spine has no
-    // `campaignId` while the agent-scoped one does. Master's unknown-query-parameter
-    // check is what turns it into a 400; core simply has nowhere to put it.
+    // `campaignId` while the agent-scoped one does. The public API layer's unknown-query-parameter
+    // check is what turns it into a 400; the internal handlers simply have nowhere to put it.
     expect(Object.keys(result.filters).sort()).toEqual(['bucket', 'from', 'to']);
     expect(result.filters as unknown as Record<string, unknown>).not.toHaveProperty('campaignId');
   });

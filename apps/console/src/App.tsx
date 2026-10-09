@@ -15,28 +15,23 @@ import { AppLayout } from './components/layout/AppLayout';
 import { AgentLanding } from './components/agency/AgentLanding';
 
 /*
- * PORT NOTE (magick-agency): cusui's `src/App.tsx` @ ee5beb44, cut to the
- * console's scope (docs/history/briefs/phase-9-console.md). Kept verbatim, comments
- * included: the agency doors (`/agency/login`, `/agency/join/:token`), the root
- * `HomeRedirect`, the four full-viewport agent routes (`/station`, `/dialer`,
- * `/dialer/performance`, `/dialer/attempts`), the whole `/agency` tree, and the
- * `/app` shell — now the PLATFORM zone only: Team, Notifications and Call
- * Summaries. Changed:
- *  - `/login` renders `AgencyLoginPage`. cusui's `LoginPage` (AI marketing, a
- *    sign-up tab, the super-admin mode) and `/onboarding` are not ported: agency
- *    has no self-serve sign-up (session path 4 is refused, plan §3.1).
- *  - `/app`'s index is `AppHomeRedirect` (cusui: the AI `DashboardPage`).
+ * Route table. Contents: the agency doors (`/agency/login`,
+ * `/agency/join/:token`), the root `HomeRedirect`, the four full-viewport agent
+ * routes (`/station`, `/dialer`, `/dialer/performance`, `/dialer/attempts`), the
+ * whole `/agency` tree, and the `/app` shell — the PLATFORM zone only: Team,
+ * Notifications and Call Summaries. Notes:
+ *  - `/login` renders `AgencyLoginPage`. There is no marketing page, sign-up
+ *    tab or `/onboarding`: agency has no self-serve sign-up (session path 4 is
+ *    refused, plan).
+ *  - `/app`'s index is `AppHomeRedirect`.
  *  - `call-summaries` is gated on agency's `agency.analytics` capability and
- *    `agency_call_analysis` flag (cusui: `calls.dialer.analytics` and the
- *    softphone's `dialer_call_analysis`).
- *  - Providers: `MetadataProvider` (AI metadata) and `SuperAdminProvider` (the
- *    super-admin console is its own app) are not mounted; `GovernanceProvider`
- *    now derives from the session's settings map. `IndependenceDayDecor` is not
- *    ported.
- * Every other cusui route (calls, prompts, IVR, automations, broadcasts,
- * messaging, SIP, escalation, knowledge, schedules, contact lists, accounts,
- * credits, API keys, audit log, tenant settings, phone numbers, super-admin) is
- * AI or out of scope and is not ported; the catch-all still sends them to `/app`.
+ *    `agency_call_analysis` flag.
+ *  - Providers: `GovernanceProvider` derives from the session's settings map.
+ *    There is no metadata provider, and the super-admin console is its own app.
+ * Any other path (calls, prompts, IVR, automations, broadcasts, messaging, SIP,
+ * escalation, knowledge, schedules, contact lists, accounts, credits, API keys,
+ * audit log, tenant settings, phone numbers) is out of scope; the catch-all
+ * sends it to `/app`.
  */
 
 const AppHomeRedirect = lazy(() => import('./pages/AppHomeRedirect'));
@@ -98,13 +93,13 @@ export default function App() {
                 needing to know it exists.
 
                 ── One identity system, two entrances ──────────────────────────
-                Not a second auth tree. Agency staff are ordinary master users
+                Not a second auth tree. Agency staff are ordinary users
                 with tenant memberships, and this page calls the same
                 `signInEmail`/`signInGoogle` as `LoginPage` and produces the same
                 session; super-admin's separate JWT is the pattern this
                 deliberately does NOT follow. What differs is the signup (there
                 is none, because `POST /auth/session` provisions a tenant for an
-                address master does not recognise), the pitch, and the landing —
+                address the server does not recognise), the pitch, and the landing —
                 which defaults to `/agency` so `AgencyHomeRedirect` resolves the
                 persona instead of this page guessing it. See
                 `pages/agency/AgencyLoginPage`.
@@ -134,7 +129,7 @@ export default function App() {
                 where failing closed costs the agency a member of staff.
 
                 The authority on this page is the single-use token in the URL, and
-                master enforces it: `POST /invites/:token/claim` reads the token,
+                the server enforces it: `POST /invites/:token/claim` reads the token,
                 not the caller's session or the address they sign in with. That is
                 what lets this page exist without a guard in front of it, and it
                 is also the fix for the defect `/agency/login` can only diagnose —
@@ -169,7 +164,7 @@ export default function App() {
 
               {/*
                 The app root, routed on ENTITLEMENT rather than fixed at `/app`
-                (handoff E4). A pure-agency tenant used to sign in to an AI
+                A pure-agency tenant used to sign in to an AI
                 dashboard of numbers it does not generate; now the default shell
                 follows what the tenant has. See `HomeRedirect` for the predicate,
                 for why `calls` cannot be part of it, and for why the decision is
@@ -231,8 +226,8 @@ export default function App() {
                 `AgentHomePage`.
 
                 Gated identically to `/station` — the same capability and flag, both
-                default off — so this is invisible until master grants the
-                capability and core enables the flag. `RequireAuth` carries the
+                default off — so this is invisible until the server grants the
+                capability and the server enables the flag. `RequireAuth` carries the
                 deep link through sign-in, which is what makes a bookmarked
                 `/dialer` survive the first sign-in of the day.
               */}
@@ -312,7 +307,7 @@ export default function App() {
                 This is the CROSS-campaign list, which is what makes it a separate
                 surface rather than a link into `/agency/campaigns/:id/attempts`:
                 that one is scoped by its URL and floored at `agency.supervise`, so
-                an agent cannot read even their own rows through it. Master serves
+                an agent cannot read even their own rows through it. The server serves
                 the pair — `my-attempts` for the caller, `agents/:userId/attempts`
                 for their supervisor — and the supervisor half is read by the
                 per-agent section on `AgencyAnalyticsPage`, through the same panel.
@@ -342,8 +337,8 @@ export default function App() {
                   Gated once here rather than per-route: `AgencyLayout` renders
                   nothing but agency surfaces, so a per-child gate would repeat
                   the same two checks four times and give four chances to forget
-                  one. Both default off, so this is invisible until master grants
-                  the capability and core enables the flag. */}
+                  one. Both default off, so this is invisible until the server grants
+                  the capability and the server enables the flag. */}
               <Route
                 path="/agency"
                 element={
@@ -366,7 +361,7 @@ export default function App() {
                 <Route path="campaigns" element={<AgencyCampaignsPage />} />
                 <Route path="campaigns/new" element={<AgencyCampaignBuilderPage />} />
                 {/*
-                  MAG-166. The detail page is now three sections rather than one
+                  The detail page is now three sections rather than one
                   long scroll, and each is its own URL so a section survives a
                   refresh, can be sent to a colleague and answers the back
                   button. All three mount the same component — which reads the
@@ -382,7 +377,7 @@ export default function App() {
                 <Route path="campaigns/:id/agents" element={<AgencyCampaignDetailPage />} />
                 <Route path="campaigns/:id/settings" element={<AgencyCampaignSettingsPage />} />
                 {/*
-                  MAG-159. `campaigns/:id/contacts` now shows the ROSTER — the
+                  `campaigns/:id/contacts` now shows the ROSTER — the
                   contacts and where each one got to. It used to render an
                   upload form whose own heading read "Add contacts", so the one
                   URL in the product that named the contacts was the one place
@@ -394,12 +389,11 @@ export default function App() {
                   rejected-rows export cannot have drifted in the move.
 
                   `campaigns/:id/attempts` is the other half: one row per dial,
-                  including the dials that never reached an agent — which is
-                  what `/app/calls/softphone/history`, being a CALL list, cannot
-                  show at all.
+                  including the dials that never reached an agent — which a CALL
+                  list cannot show at all.
 
                   No extra guard. The layout above already requires the `agency`
-                  capability and the `agency_dialer_enabled` flag, and master
+                  capability and the `agency_dialer_enabled` flag, and the server
                   gates all three routes on `agency.supervise`.
                 */}
                 <Route path="campaigns/:id/contacts" element={<AgencyCampaignRosterPage />} />
@@ -409,11 +403,11 @@ export default function App() {
                 {/*
                   The agency's own call detail — the page whose absence sent
                   attempt rows into `/app/calls/dialer/history/:id`, out of this
-                  shell and onto a `calls.dialer`-gated route (design §7b).
+                  shell and onto a `calls.dialer`-gated route (design).
 
                   No extra guard: the parent already gates the whole subtree on
                   the `agency` capability and the `agency_dialer_enabled` flag,
-                  and master floors the endpoint at `agency.supervise`. React
+                  and the server floors the endpoint at `agency.supervise`. React
                   Router ranks the static `attempts` segment above this dynamic
                   one, so the list route above is unaffected.
 
@@ -435,16 +429,16 @@ export default function App() {
                   different shell, tenant-wide, with no campaign scoping.
 
                   No extra guard. The layout above already requires the `agency`
-                  capability and the `agency_dialer_enabled` flag, and master
-                  gates the route itself on `audit.read` — whose floor MAG-157
-                  dropped to `account_admin`, the same floor as `agency.supervise`,
+                  capability and the `agency_dialer_enabled` flag, and the server
+                  gates the route itself on `audit.read` — whose floor
+                  is `account_admin`, the same floor as `agency.supervise`,
                   so the supervisor who controls a campaign can read its trail.
                 */}
                 <Route path="campaigns/:id/activity" element={<AgencyCampaignActivityPage />} />
                 {/*
                   Every campaign's numbers on one screen. No extra guard: the
                   layout above already requires the `agency` capability and the
-                  `agency_dialer_enabled` flag, and master gates both reads this
+                  `agency_dialer_enabled` flag, and the server gates both reads this
                   page makes — the campaign list and each `/stats` — on
                   `agency.campaigns.read`, which is also what the sidebar
                   entry checks.
@@ -471,7 +465,7 @@ export default function App() {
                 <Route index element={<AppHomeRedirect />} />
                 <Route path="team" element={<TeamPage />} />
                 {/* Per-user notification subscriptions. No RequireCapability and no
-                    permission guard: the page is about the signed-in person and master
+                    permission guard: the page is about the signed-in person and the server
                     takes no subject on any of its routes, so there is nobody else it
                     could expose. Gating it would lock people out of their own
                     unsubscribe. */}

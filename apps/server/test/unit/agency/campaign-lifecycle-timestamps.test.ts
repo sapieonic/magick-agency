@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// Migration 108 — `started_at`, `ended_at` and `last_transition_by` on the
+// `started_at`, `ended_at` and `last_transition_by` on the
 // campaign row.
 //
 // ── The regression this suite exists to make un-shippable ──────────────────
 //
-// `started_at` has existed since 072 and was WRONG: the routes passed
+// `started_at` was WRONG: the routes passed
 // `{ started_at: new Date() }` on `/resume` as well as `/start`, and the UPDATE
 // said `COALESCE($n, started_at)` — new value FIRST — so every resume overwrote
 // it. A campaign that began at 09:00, paused for lunch and resumed at 14:05
@@ -181,10 +181,10 @@ describe('last_transition_by answers "who caused the CURRENT status"', () => {
   it('writes the actor when one is supplied', async () => {
     await new AgencyCampaignRepository().transitionStatus(
       'camp-1', ['draft'], 'running',
-      { last_transition_by: { user_id: 'u-manas', name: 'Manas N' } },
+      { last_transition_by: { user_id: 'u-supervisor', name: 'Test Supervisor' } },
     );
-    expect(paramsOf()[3]).toBe('u-manas');
-    expect(paramsOf()[4]).toBe('Manas N');
+    expect(paramsOf()[3]).toBe('u-supervisor');
+    expect(paramsOf()[4]).toBe('Test Supervisor');
   });
 
   it('writes NULL — never leaves the old actor — when none is supplied', async () => {
@@ -202,12 +202,12 @@ describe('last_transition_by answers "who caused the CURRENT status"', () => {
   it('an id-only actor stores a NULL name rather than an empty string', async () => {
     await new AgencyCampaignRepository().transitionStatus(
       'camp-1', ['draft'], 'running',
-      { last_transition_by: { user_id: 'u-manas', name: null } },
+      { last_transition_by: { user_id: 'u-supervisor', name: null } },
     );
-    // Core has no user table (D3), so a name is only ever what master sent. NULL is
+    // There is no user table in the voice engine, so a name is only ever what the public API layer sent. NULL is
     // a real state — an id-only actor — and it is a different fact from "nobody
     // caused this".
-    expect(paramsOf()[3]).toBe('u-manas');
+    expect(paramsOf()[3]).toBe('u-supervisor');
     expect(paramsOf()[4]).toBeNull();
   });
 
@@ -240,12 +240,6 @@ describe('the abandonment auto-pause is genuinely unattributed', () => {
   });
 });
 
-/*
- * PORT NOTE (magick-agency, Phase 8): the source file's last describe (7 cases), which
- * lane B1 deferred because the formatter belongs to the campaign routes. Verbatim; the
- * formatter is core `src/api/responses/agency-campaign.response.ts`@4850d1d9, ported to
- * the same path with only its contracts import re-pointed.
- */
 // ─── the wire fold ──────────────────────────────────────────────────────────
 
 describe('the two actor columns become ONE wire object', () => {
@@ -254,14 +248,14 @@ describe('the two actor columns become ONE wire object', () => {
     started_at: new Date('2026-08-11T09:00:00.000Z'),
     ended_at: null,
     completed_at: null,
-    last_transition_by_user_id: 'u-manas',
-    last_transition_by_name: 'Manas N',
+    last_transition_by_user_id: 'u-supervisor',
+    last_transition_by_name: 'Test Supervisor',
     ...patch,
   } as never);
 
   it('folds an attributed transition into { user_id, name }', () => {
     const wire = formatAgencyCampaignResponse(row());
-    expect(wire.last_transition_by).toEqual({ user_id: 'u-manas', name: 'Manas N' });
+    expect(wire.last_transition_by).toEqual({ user_id: 'u-supervisor', name: 'Test Supervisor' });
     // The flat columns must not ALSO be on the wire: two nullable siblings is three
     // states for one fact, one of which is nonsense.
     expect(wire).not.toHaveProperty('last_transition_by_user_id');
@@ -279,7 +273,7 @@ describe('the two actor columns become ONE wire object', () => {
     const wire = formatAgencyCampaignResponse(row({ last_transition_by_name: null }));
     // Half the actor is still an actor a console can link to a user. Dropping it
     // because the display name is missing would lose information the row is holding.
-    expect(wire.last_transition_by).toEqual({ user_id: 'u-manas', name: null });
+    expect(wire.last_transition_by).toEqual({ user_id: 'u-supervisor', name: null });
   });
 
   it('refuses a name with no id, because the id IS the identity', () => {

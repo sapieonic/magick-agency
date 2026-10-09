@@ -1,30 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): ported from core test/unit/agency/spine-read-routes.test.ts@4850d1d9.
- * Mock paths re-pointed only (logger → a partial `@magick-agency/observability` mock;
- * announcement / call / account-settings / profile repositories → `@magick-agency/db/repositories/*`;
- * leaf modules → `@magick-agency/domain/*`; `contracts.js` → `@magick-agency/contracts/agency`).
- * Cases verbatim unless noted here. MODIFIED: the agent filter in "passes outcome, agent and date filters through" is a UUID
- * (`AGENT_U9`). NEW: "a non-UUID agent_user_id is a 400, not a 500 from Postgres 22P02".
- */
-
 // ---------------------------------------------------------------------------
-// MAG-159 — `GET /agency-campaigns/:id/{attempts,contacts}`.
+// `GET /agency-campaigns/:id/{attempts,contacts}`.
 //
 // ── The assertion this file exists for ─────────────────────────────────────
 //
-// These routes serve every phone number on a campaign. Core registers auth
-// middleware PER ROUTE PLUGIN, not globally (docs/reference/magic-voice-core/CLAUDE.md), and this exact
-// mistake has already shipped once here: `agencyInternalRoutes` was mounted as
-// a sibling of `internalRoutes`, inherited none of its hooks, and left the
-// roster-ingest route reachable unauthenticated.
+// These routes serve every phone number on a campaign. Auth middleware is registered
+// PER ROUTE PLUGIN, not globally, and this exact mistake has already shipped once
+// here: a plugin was mounted as a sibling of the plugin that carries the auth hooks,
+// inherited none of them, and left the roster-ingest route reachable unauthenticated.
 //
 // So the first test asserts the middleware actually runs on both new routes,
 // rather than trusting that they were declared on the right plugin. It is
 // deliberately NOT a status-code assertion — a route that does not exist also
-// answers 404, which is the MAG-106 trap.
+// answers 404, which is a trap.
 // ---------------------------------------------------------------------------
 
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
@@ -86,8 +76,8 @@ const HEADERS = { 'x-mgkvc-tenant': 't1', 'x-mgkvc-account': 'a1' };
 const CAMPAIGN = { id: 'c1', tenant_id: 't1', account_id: 'a1', name: 'Q3', status: 'stopped' };
 const EMPTY = { rows: [], next_cursor: null, limit: 50 };
 /**
- * PORT NOTE (magick-agency): core's `'u9'`. `agency_agent_sessions.agent_user_id` is a
- * UUID column in agency's baseline, and the route now refuses a non-UUID filter before
+ * `agency_agent_sessions.agent_user_id` is a
+ * UUID column in the baseline, and the route refuses a non-UUID filter before
  * it reaches the `22P02` cast (see the last case in "filters reach the repository").
  */
 const AGENT_U9 = '99999999-9999-4999-8999-999999999999';
@@ -107,7 +97,7 @@ beforeEach(() => {
   contacts.listForCampaign.mockResolvedValue(EMPTY);
 });
 
-describe('the routes are behind core auth', () => {
+describe('the routes are behind auth', () => {
   it('runs authMiddleware on both list routes', async () => {
     const app = await makeApp();
     await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/attempts', headers: HEADERS });
@@ -200,9 +190,8 @@ describe('filters reach the repository', () => {
     await app.close();
   });
 
-  // PORT NOTE (magick-agency): NEW, no source twin. Core's column was VARCHAR, so a
-  // non-UUID agent filter matched nothing (an empty page); agency's is UUID, so the same
-  // value is a `22P02` and a 500. Refused like the contact_id filter above.
+  // The column is a UUID, so a non-UUID agent filter would be a `22P02` and a 500.
+  // Refused like the contact_id filter above.
   it('a non-UUID agent_user_id is a 400, not a 500 from Postgres 22P02', async () => {
     const app = await makeApp();
     const res = await app.inject({

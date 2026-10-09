@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// AD-P4-C-02 — auto-pause on the abandonment ceiling.
+// Auto-pause on the abandonment ceiling.
 //
 // A hard compliance guardrail, so the tests are written against the ways it
 // could plausibly LOOK correct while never firing, or fire when it must not:
@@ -14,10 +14,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //   * N replicas each pausing the same breach and each raising an alert;
 //   * and — the one that cannot be caught by adding a case later — an
 //     auto-RESUME arm appearing, which acceptance (c) forbids.
-//
-// PORT NOTE (magick-agency, Phase 6): core test/unit/agency/abandonment-guardrail.test.ts
-// @4850d1d9, verbatim. Only import/mock specifiers changed (path rule: logger →
-// `@magick-agency/observability`, the predicate → `@magick-agency/domain`).
 // ---------------------------------------------------------------------------
 
 vi.mock('@magick-agency/observability', () => ({
@@ -203,8 +199,8 @@ describe('refusal 4 — one abandoned call in too coarse a sample', () => {
     // campaign could NEVER be auto-paused — a compliance guardrail silently
     // disabled, found in an audit rather than by a test.
     //
-    // NOT a supported setting: migration 089 CHECKs `> 0` and master's config
-    // validation rejects it. But `ceiling_pct` arrives from a LEFT JOIN and is
+    // NOT a supported setting: the schema CHECKs `> 0` and the public API
+    // layer's config validation rejects it. But `ceiling_pct` arrives from a LEFT JOIN and is
     // typed nullable, so this is defence against a value that cannot be stored
     // rather than against an operator choice — an earlier version of this test
     // name claimed the latter.

@@ -2,9 +2,9 @@
  * DialerAnalysisWorker unit test.
  *
  * Drives the worker's `sweepOnce` + poll lifecycle against a mocked job repo and
- * runner, asserting §7 ordering + durability:
+ * runner, asserting ordering + durability:
  *  - each tick runs promote → expire → claim → recover IN ORDER.
- *  - promotion runs before expiry (B1: a lost-wake job is rescued, not expired).
+ *  - promotion runs before expiry (a lost-wake job is rescued, not expired).
  *  - claim uses SKIP LOCKED (repo) and each claimed job goes through the runner.
  *  - crash recovery via stale heartbeat does NOT consume an attempt (repo does it; we
  *    assert recoverStale is called with the attempts_total ceiling).
@@ -15,11 +15,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /*
- * PORT NOTE (magick-agency): ported from core test/unit/core/dialer-analysis-worker.test.ts
- * @4850d1d9 (16 cases -> 13). Deleted: the three "settlement sweep (B2)" cases (the
- * settle step is removed, plan §4). Modified: the ordering case ends at `recover`,
- * the gauge case drops the settlement-pending-age half, the step-failure case
- * asserts `recover` (the last step) still ran. Mocks point at agency's module paths.
+ * There is no settle step: the ordering case ends at `recover`, and the
+ * step-failure case asserts `recover` (the last step) still ran.
  */
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -124,7 +121,7 @@ describe('DialerAnalysisWorker.sweepOnce ordering', () => {
     expect(order).toEqual(['promote', 'expire', 'claim', 'recover']);
   });
 
-  it('promotion runs before expiry (B1 — rescues a lost-wake job)', async () => {
+  it('promotion runs before expiry (rescues a lost-wake job)', async () => {
     const calls: string[] = [];
     mockJobRepo.promoteRecordingReady.mockImplementation(async () => { calls.push('promote'); return 1; });
     mockJobRepo.expireAwaitingRecording.mockImplementation(async () => { calls.push('expire'); return []; });
@@ -151,7 +148,7 @@ describe('DialerAnalysisWorker.sweepOnce ordering', () => {
     expect(mockRunnerRun).toHaveBeenCalledTimes(2);
   });
 
-  it('recovery passes the attempts_total ceiling (M7, repo decrements attempts)', async () => {
+  it('recovery passes the attempts_total ceiling (repo decrements attempts)', async () => {
     await makeWorker().sweepOnce();
     expect(mockJobRepo.recoverStale).toHaveBeenCalledWith(expect.any(Date), CFG.maxAttemptsTotal);
   });

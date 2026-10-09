@@ -1,6 +1,6 @@
-/* No new tokens (§0.1 principle 5). The focus ring comes from the global
+/* No new tokens ( principle 5). The focus ring comes from the global
    `button:focus-visible` rule and must NOT be overridden anywhere in this
-   feature (§1.1). */
+   feature. */
 
 .region {
   display: flex;
@@ -17,7 +17,7 @@
 }
 
 .presence {
-  /* 40px per §A.13.3. Geometry is frozen: this must not change between states,
+  /* 40px  Geometry is frozen: this must not change between states,
      because a control that moves 12px is a misclick and a misclick on this
      screen hangs up on a human being. */
   height: 40px;

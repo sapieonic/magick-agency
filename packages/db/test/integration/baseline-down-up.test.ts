@@ -65,7 +65,7 @@ describe('baseline down → up', () => {
     expect(reapplied.rows.map((r) => r.name)).toEqual(['0001_baseline']);
   });
 
-  it('a fresh apply seeds exactly one telephony provider: voicelink (master 043)', async () => {
+  it('a fresh apply seeds exactly one telephony provider: voicelink', async () => {
     // Checked here rather than in baseline.test.ts because that file truncates.
     const { rows } = await getTestPool().query<{ name: string }>('SELECT name FROM telephony_providers');
     expect(rows.map((r) => r.name)).toEqual(['voicelink']);

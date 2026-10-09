@@ -1,16 +1,9 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core
-// test/unit/agency/agency-dialer-lineage.test.ts@4850d1d9 (5 cases → 5). Deleted: none.
-// Modified (no case changed meaning):
-//  - mock/import specifiers follow the path rule (logger → `@magick-agency/observability`;
-//    break-manager / timers / abandonment-predicate → `@magick-agency/domain/*`);
-//  - the campaign fixture drops `sip_connection_id` (SIP deleted, plan §5; the dialer
-//    no longer passes `sipConnectionId`, docs/seams.md §3.1). No assertion read it.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // The agent panel's history, now scoped to a contact's RETRY LINEAGE.
 //
-// Retry campaigns COPY contacts rather than sharing them (DR-2 — every piece of
+// Retry campaigns COPY contacts rather than sharing them (every piece of
 // per-campaign state lives on the row, and sharing one would make
 // `uq_agency_attempt_live` a cross-campaign lock), so the previous pass's
 // attempts hang off a DIFFERENT `agency_contacts` row. Without the lineage read
@@ -35,7 +28,7 @@ vi.mock('@magick-agency/observability', () => ({
 vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: { vobiz: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/vobiz' } },
+    telephony: { vobiz: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/vobiz' } },
   },
 }));
 
@@ -70,7 +63,7 @@ import type { DialCommand } from '../../../src/agency/dial-dispatcher.js';
 
 const CAMPAIGN = {
   id: 'camp-child', name: 'Q3 Winback — Retry 1', telephony_provider: 'vobiz',
-  record_calls: false, analysis_profile_id: null, // PORT NOTE: `sip_connection_id` dropped (SIP deleted)
+  record_calls: false, analysis_profile_id: null,
   disposition_catalog: [], wrapup_seconds: 0, wrapup_auto_return: true,
   retry_policy: {}, abandon_announcement_id: null,
 } as any;
@@ -164,8 +157,8 @@ describe('the panel reads the CHAIN, not the contact row', () => {
   });
 
   it('falls back to the contact\'s own id when root_contact_id is not populated', async () => {
-    // Unreachable in practice — migrations run in the container entrypoint before
-    // the app boots, so 113's backfill has run — but a `null` would reach
+    // Unreachable in practice — trg_agency_contacts_root stamps every inserted
+    // contact — but a `null` would reach
     // `WHERE root_contact_id = $1` and match nothing, because NULL is never equal
     // to anything. The fallback degrades to "this contact's own history" rather
     // than silently to "no history".
@@ -176,7 +169,7 @@ describe('the panel reads the CHAIN, not the contact row', () => {
 
   it('carries campaign_id, campaign_name and dialed_at onto every prior attempt', async () => {
     // "Attempt 2" means nothing once attempts come from two campaigns, and
-    // `attempt_number` RESETS in each retry campaign (DR-2) so it is no longer a
+    // `attempt_number` RESETS in each retry campaign, so it is no longer a
     // global ordering. `dialed_at` is the fallback time for a row whose `ended_at`
     // is null because it never ended.
     repos.attempt.findPriorForContactLineage.mockResolvedValueOnce([

@@ -1,11 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /*
- * PORT NOTE (magick-agency): ported from core test/unit/db/repositories/dialer-analysis-job.repository.test.ts
- * @4850d1d9 (32 cases -> 27). Statements target `agency_calls`. Deleted with the settlement
- * step (plan §4): "settlement age gauge anchors on settlement_pending_since" (2) and
- * "settlement sweep primitives" (3). Modified: the two `completeWithAnalysis` cases no
- * longer assert settlement columns; they assert the job completes with
+ * Statements target `agency_calls`. There is no settlement step: the two
+ * `completeWithAnalysis` cases assert the job completes with
  * `analysis_audio_seconds` recorded and that NO settlement column is written. Mocked-SQL
  * cases cannot catch column drift, so every method is also run on real Postgres in
  * test/integration/repositories/dialer-analysis-job.repository.test.ts.

@@ -2,25 +2,21 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 /*
- * PORT NOTE (magick-agency): ported from core test/unit/agency/profile-in-use-reference-check.test.ts
- * @4850d1d9. Cases unchanged. The routes take auth and the campaign reference check as
- * options (`ProfileRouteAuth`, `ProfileDependents`; the latter is lane B's
- * `agencyCampaignRepository` at Phase 8), so the suite injects them instead of mocking
- * `auth.middleware` / `agency.repository`; the flag mock is `agency_call_analysis`
- * alone. The prose below describes core.
+ * The routes take auth and the campaign reference check as options
+ * (`ProfileRouteAuth`, `ProfileDependents`), so the suite injects them instead of
+ * mocking `auth.middleware` / `agency.repository`; the flag mock is
+ * `agency_call_analysis` alone.
  */
 
 // ---------------------------------------------------------------------------
-// Q3's reference check, at the route: a live agency campaign vetoes retiring the
+// The reference check, at the route: a live agency campaign vetoes retiring the
 // analysis profile it depends on.
 //
-// Analysis profiles stay a SHARED primitive (docs/reference/magickvoice-platform/docs/agency-dialer-design.md §7b,
-// Q3) — the softphone attaches one per call, an agency campaign names one in its
-// config or names none and inherits the account default — but only the primary
-// app can author or retire one, and master gates PUT/DELETE on
-// `calls.dialer.analytics` ALONE. So a primary-app admin could take a running
-// campaign's analysis definition away, with nothing refusing them and nothing
-// telling anyone.
+// An agency campaign names an analysis profile in its config, or names none and
+// inherits the account default — but profiles are authored and retired on their
+// own surface (`/app/call-summaries`), not from the campaign. Without the check an
+// admin could take a running campaign's analysis definition away, with nothing
+// refusing them and nothing telling anyone.
 //
 // ── TWO dependency classes, and the rule over them is asymmetric ────────────
 //
@@ -52,7 +48,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 // ── The refusal body carries counts, never campaign names ───────────────────
 //
 // `AgencyCampaignDependent` is `{ id, status }` by design: this body crosses to a
-// caller master gates on `calls.dialer.analytics` alone, who may hold no agency
+// caller the public API layer gates on `calls.dialer.analytics` alone, who may hold no agency
 // entitlement whatsoever, and campaign names are the agency product's vocabulary.
 // So the message reports how many and in what statuses, and `details.campaigns`
 // carries ids and statuses for a console that DOES hold `agency.analytics` to
@@ -68,16 +64,14 @@ import Fastify, { type FastifyInstance } from 'fastify';
 //
 // ── Why `code` is asserted literally ───────────────────────────────────────
 //
-// Master's error mask rewrites any core 4xx it cannot recognise into "contact
-// support and quote this request id" — useless for a refusal whose entire content
-// is the remedy. This body survives the mask TWO independent ways (verified in
-// magick-master `src/api/middleware/error-mask.middleware.ts`):
+// The public API layer's error mask rewrites any 4xx it cannot recognise into
+// "contact support and quote this request id" — useless for a refusal whose entire
+// content is the remedy. This body survives the mask TWO independent ways:
 // `profile_in_use_by_agency_campaign` is in `FORWARDABLE_ERROR_CODES` by that
 // exact string, and `isStructuredClientError` also passes any body with a
-// non-null `details`. Belt and braces on purpose — master's own comment says
-// `details.campaigns` is a plausible thing for core to trim later — but the code
-// is the one that does not depend on a field core owns, which is why it is pinned
-// literally rather than matched loosely.
+// non-null `details`. Belt and braces on purpose — `details.campaigns` is a
+// plausible thing to trim later — but the code is the one that does not depend on
+// that field, which is why it is pinned literally rather than matched loosely.
 // ---------------------------------------------------------------------------
 
 const mocks = vi.hoisted(() => ({
@@ -187,7 +181,7 @@ describe('DELETE — refused while a live agency campaign depends on the profile
     // omitted: a consumer reading `details.inheriting_account_default` needs the
     // field present on every refusal, and `undefined` is not `0`.
     expect(body.details.inheriting_account_default).toBe(0);
-    // `code` clears master's mask by the allow-list; `details` clears it a second,
+    // `code` clears the error mask by the allow-list; `details` clears it a second,
     // independent way via `isStructuredClientError`. Both are asserted because
     // either one alone would be enough today and the redundancy is deliberate.
     expect(body.error).toBe('Conflict');

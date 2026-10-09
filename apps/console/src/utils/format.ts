@@ -1,6 +1,4 @@
-// PORT NOTE (magick-agency): cusui's three credit formatters (`formatCredits`,
-// `formatCreditsExact`, `formatLedgerMillicredits`) are removed with credits
-// (extraction plan §3.3); the rest of this file is verbatim.
+// There are no credit formatters: credits are not part of Magick Agency yet.
 
 export function formatDate(dateStr: string): string {
   const d = new Date(dateStr);

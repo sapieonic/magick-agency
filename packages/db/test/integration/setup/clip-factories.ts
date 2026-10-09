@@ -3,16 +3,12 @@ import { getTestPool } from './test-utils.js';
 import { DEFAULTS } from './factories.js';
 
 /**
- * PORT NOTE (magick-agency): `insertAudioFile` and `insertAnnouncement` from core
- * `test/integration/setup/factories.ts@4850d1d9`, kept in their own file so the
- * clip suites do not contend with other lanes editing `factories.ts` (merge into
- * it freely). Ids default to the UUID `DEFAULTS` of `factories.ts`.
+ * `insertAudioFile` and `insertAnnouncement`, kept in their own file apart from
+ * `factories.ts`. Ids default to the UUID `DEFAULTS` of `factories.ts`.
  *
- *  - `insertAudioFile`: verbatim.
- *  - `insertAnnouncement`: modified for the baseline (decision 4, uploaded clip
- *    only). Core defaulted to a TTS row (`type: 'tts'`, `tts_text`, `tts_voice`,
- *    `tts_language`); those columns are dropped and `type` is CHECKed to
- *    `'audio'`. The default is now `type: 'audio'`, and because
+ *  - `insertAnnouncement` follows the baseline (uploaded clip only):
+ *    there are no `tts_text` / `tts_voice` / `tts_language` columns and `type` is
+ *    CHECKed to `'audio'`. The default is `type: 'audio'`, and because
  *    `announcements_audio_check` requires an `audio_file_id` on an active audio
  *    row, the factory inserts an audio file in the same tenant/account when the
  *    caller passes no `audio_file_id` key (pass `audio_file_id: null` explicitly

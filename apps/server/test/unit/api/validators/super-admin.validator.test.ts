@@ -1,11 +1,7 @@
 /*
- * PORT NOTE (magick-agency): ported from master test/unit/api/validators/super-admin.validator.test.ts@a1f0756a
- * (37 cases → 54: 23 verbatim + 31 NEW). Deleted with `topupCreditsSchema` /
- * `deductCreditsSchema` (no credits in v1, plan §3.3 / Decided S6): the 7
- * `topupCreditsSchema` and 7 `deductCreditsSchema` cases, and their imports.
- * NEW (after the verbatim block): the agency schemas the port adds —
- * `addUserToTenantSchema.account_id`, `changeMembershipRoleSchema`,
- * `updateAgencyAccountSettingsSchema` and `usageCountsQuerySchema`.
+ * Super-admin validators. There are no credits in v1 (decision S6), so there are no top-up or
+ * deduct schemas. The second block covers the agency schemas: `addUserToTenantSchema.account_id`,
+ * `changeMembershipRoleSchema`, `updateAgencyAccountSettingsSchema` and `usageCountsQuerySchema`.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -135,12 +131,12 @@ describe('superAdminAuditQuerySchema', () => {
   });
 });
 
-// ── PORT NOTE (magick-agency): NEW — the agency schemas ──────────────────────
+// ── The agency schemas ───────────────────────────────────────────────────────
 
 const UUID_A = '11111111-1111-4111-8111-111111111111';
 const UUID_B = '22222222-2222-4222-8222-222222222222';
 
-describe('addUserToTenantSchema — account_id (NEW)', () => {
+describe('addUserToTenantSchema — account_id', () => {
   const valid = { email: 'user@example.com', role: 'agent' as const };
 
   it('leaves account_id undefined when omitted (a tenant-wide membership)', () => {
@@ -160,7 +156,7 @@ describe('addUserToTenantSchema — account_id (NEW)', () => {
   });
 });
 
-describe('changeMembershipRoleSchema (NEW)', () => {
+describe('changeMembershipRoleSchema', () => {
   it('accepts each of the six roles, tenant_owner included', () => {
     for (const role of ['tenant_owner', 'tenant_admin', 'account_admin', 'operator', 'viewer', 'agent'] as const) {
       expect(changeMembershipRoleSchema.parse({ role }).role).toBe(role);
@@ -181,7 +177,7 @@ describe('changeMembershipRoleSchema (NEW)', () => {
   });
 });
 
-describe('updateAgencyAccountSettingsSchema (NEW)', () => {
+describe('updateAgencyAccountSettingsSchema', () => {
   it('accepts webrtc_max_duration_seconds at both bounds (60 and 14400)', () => {
     expect(updateAgencyAccountSettingsSchema.parse({ webrtc_max_duration_seconds: 60 }).webrtc_max_duration_seconds).toBe(60);
     expect(updateAgencyAccountSettingsSchema.parse({ webrtc_max_duration_seconds: 14_400 }).webrtc_max_duration_seconds).toBe(14_400);
@@ -228,7 +224,7 @@ describe('updateAgencyAccountSettingsSchema (NEW)', () => {
   });
 });
 
-describe('usageCountsQuerySchema (NEW)', () => {
+describe('usageCountsQuerySchema', () => {
   const window = { from: '2026-09-01T00:00:00.000Z', to: '2026-10-01T00:00:00.000Z' };
 
   it('accepts an ISO from/to window on its own', () => {

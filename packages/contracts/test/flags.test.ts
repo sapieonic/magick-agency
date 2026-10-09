@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AGENCY_FLAGS, AGENCY_FLAG_KEYS, type AgencyClientFlagMap } from '../src/flags';
 
-/** Core `src/feature-flags/registry.ts` @ 4850d1d9 — lines 429-440, 693-702, 739-751. */
+/** The expected flag definitions. */
 const EXPECTED = {
   agency_dialer_enabled: { default: false, envVar: 'FF_AGENCY_DIALER', clientExposed: true },
   agency_late_binding: { default: false, envVar: 'FF_AGENCY_LATE_BINDING', clientExposed: undefined },
@@ -14,7 +14,7 @@ describe('agency flags', () => {
     expect(AGENCY_FLAG_KEYS).toHaveLength(3);
   });
 
-  it.each(AGENCY_FLAG_KEYS)('%s keeps core’s key, type, default, scopes, envVar and exposure', (key) => {
+  it.each(AGENCY_FLAG_KEYS)('%s keeps its key, type, default, scopes, envVar and exposure', (key) => {
     const def = AGENCY_FLAGS[key];
     expect(def.key).toBe(key);
     expect(def.type).toBe('boolean');

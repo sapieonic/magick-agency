@@ -31,7 +31,7 @@ describe('openWrapup — the anchor is captured once', () => {
    * tells the two implementations apart — and `ends_at` is authoritative.
    */
   it('follows ends_at when it disagrees with since + wrapup_seconds', () => {
-    // A campaign configured for 30s, but core says the window ends in 45s
+    // A campaign configured for 30s, but the API says the window ends in 45s
     // (a wrap-up extended because a disposition is required, say).
     const anchor = openWrapup(frame({ ends_at: '2026-08-11T12:00:45.000Z' }), 0, OPENED_AT);
 
@@ -138,7 +138,7 @@ describe('wrapupView — recomputed from the anchor, never decremented', () => {
 describe('the timerless wrap-up — wrapup_seconds = 0 with a required disposition', () => {
   /**
    * `wrapup_seconds = 0` means "no timer", **not** "no wrap-up". When a
-   * disposition is required core emits a wrap-up frame that is held from the
+   * disposition is required the API emits a wrap-up frame that is held from the
    * very first frame: `ends_at: null`, `held_reason` set at entry, ended only by
    * the agent submitting or a supervisor forcing return.
    *
@@ -169,7 +169,7 @@ describe('the timerless wrap-up — wrapup_seconds = 0 with a required dispositi
   });
 
   it('reports auto_return from the FRAME, not the campaign config', () => {
-    // The campaign here sets auto-return true; core reports false because with
+    // The campaign here sets auto-return true; the API reports false because with
     // no window it cannot mean what it says. `auto_return: true` beside
     // `ends_at: null` would be indistinguishable from "the countdown failed to
     // arrive", and the console would render a spinner on a wrap-up that is
@@ -191,7 +191,7 @@ describe('the timerless wrap-up — wrapup_seconds = 0 with a required dispositi
   });
 });
 
-describe('the held panel — §A.13.5.1', () => {
+describe('the held panel', () => {
   /**
    * All sources of `ends_at: null` collapse onto ONE panel with one meaning:
    * *no deadline; ends when you act.* Not branched per source — the agent's next
@@ -286,9 +286,9 @@ describe('announcementThreshold', () => {
 });
 
 /**
- * NEW (magick-agency, CONTRACT-DIFF §1): core's second hold reason,
+ * The API's second hold reason,
  * `supervisor_hold` — "a supervisor is holding this agent out of the pool
- * deliberately". cusui's union lacked it. Unlike `disposition_required` it is not
+ * deliberately". Unlike `disposition_required` it is not
  * the agent's to end, so saving the disposition must not clear it.
  */
 describe('supervisor_hold — held by somebody else', () => {

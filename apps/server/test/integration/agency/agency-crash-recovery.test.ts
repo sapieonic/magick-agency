@@ -12,18 +12,14 @@ import {
 import { uuidFor } from '../setup/factories.js';
 
 /*
- * PORT NOTE (magick-agency, Phase 6): ported from core
- * test/integration/agency/agency-crash-recovery.test.ts@4850d1d9 — 6 cases, all kept.
- * Modified: the connection mock (agency's `@magick-agency/db`); `agent_user_id`
+ * Notes: the connection mock (`@magick-agency/db`); `agent_user_id`
  * literals are UUIDs (`uuidFor('agent-2')`, the baseline types the column UUID);
- * `idleLeader`'s registry (decision B8) — core built `new DncRegistry(null, '')`, a
- * registry with no Redis that answers `unavailable` to everything. The collapsed
- * registry takes a repository instead of Redis, so the same "answers `unavailable` to
- * everything" registry is one whose `dnc_entries` read always fails (it maps every
+ * `idleLeader`'s registry (decision B8) must answer `unavailable` to everything. The
+ * registry takes a repository instead of Redis, so that registry is one whose `dnc_entries` read always fails (it maps every
  * failed read to `unavailable`, never `clear`).
  */
 
-// PORT NOTE: core mocked `src/db/connection.js`; agency's pool lives in `@magick-agency/db`
+// The DB pool lives in `@magick-agency/db`
 // (the server's repositories import its root, packages/db's repositories `./connection`).
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
 vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
@@ -36,7 +32,7 @@ const {
 } = await import('../../../src/db/repositories/agency.repository.js');
 
 /**
- * T-C — crash recovery (§6.2).
+ * T-C — crash recovery.
  *
  * `gracefulShutdown()` handles SIGTERM. It does not handle SIGKILL, OOM or a hard
  * crash, and those strand rows in states INVISIBLE to the pacing loop: contacts
@@ -45,12 +41,12 @@ const {
  * the dialing target). The documented failure is SILENT contact loss and a
  * campaign that can never reach `completed` — so counting is the whole test.
  *
- * A real `kill -9` of the core process is NOT automated here and I am not going
- * to pretend otherwise: core's integration harness runs in-process and there is
- * no precedent in 163 integration files for spawning it as a child. What IS
+ * A real `kill -9` of the server process is NOT automated here and I am not going
+ * to pretend otherwise: the integration harness runs in-process and there is
+ * no precedent for spawning it as a child. What IS
  * automated is the state a SIGKILL leaves behind, written directly, plus the
  * negative case that proves the reaper is load-bearing. The real signal drill is
- * a recorded manual exercise (D-CRASH in the test plan).
+ * a recorded manual exercise.
  */
 
 const LIVE_ATTEMPT_STATES = ['queued', 'dialing', 'ringing', 'answered', 'bridged'] as const;
@@ -74,7 +70,7 @@ function idleLeader(broadcasts: unknown[]) {
   // so `dialUpTo` returns before it claims a contact and the pre-dial gates are
   // never reached: this leader exists to drive finalize, and it must not become
   // able to dial by accident.
-  // PORT NOTE (B8): core's `new DncRegistry(null, '')` — see the header.
+  // Decision B8: no DNC store is needed in this leader.
   const dnc = new DncRegistry({
     findSuppressed: async () => { throw new Error('no DNC store in this leader'); },
   });
@@ -96,8 +92,8 @@ describe('agency crash recovery (integration)', () => {
   it('T-C1: the startup reaper recovers every stranded row and leaves the roster whole', async () => {
     const campaign = await insertAgencyCampaign({ status: 'running', contacts_total: 12 });
     const session = await insertAgentSession(campaign.id, { state: 'on_call' });
-    await insertAgentSession(campaign.id, { state: 'available', agent_user_id: uuidFor('agent-2') }); // PORT NOTE: UUID column
-    await insertAgentSession(campaign.id, { state: 'reserved', agent_user_id: uuidFor('agent-3') }); // PORT NOTE: UUID column
+    await insertAgentSession(campaign.id, { state: 'available', agent_user_id: uuidFor('agent-2') }); // UUID column
+    await insertAgentSession(campaign.id, { state: 'reserved', agent_user_id: uuidFor('agent-3') }); // UUID column
 
     // 5 contacts stranded mid-dial, one per live attempt state.
     const stranded = [];
@@ -140,7 +136,7 @@ describe('agency crash recovery (integration)', () => {
     }
 
     // ── ROSTER WHOLENESS ────────────────────────────────────────────────
-    // The failure §6.2 describes is silent LOSS, so the count is the assertion.
+    // The failure describes is silent LOSS, so the count is the assertion.
     const { rows: census } = await getTestPool().query<{ state: string; n: string }>(
       `SELECT state, COUNT(*)::text AS n FROM agency_contacts
         WHERE campaign_id = $1 GROUP BY state`,
@@ -238,8 +234,8 @@ describe('agency crash recovery (integration)', () => {
     // As originally written this row was created at `now()` and survived purely
     // on the age filter, which made the test's name ("never a live one") a claim
     // its body could not check: the sweep consulted no liveness signal at all
-    // when this was written, and passed. §16.6 rule 1 — the fixture supplied the
-    // answer. `AD-P2-C-08`.
+    // when this was written, and passed. the fixture supplied the
+    // answer.
     const live = await insertAgencyContact(campaign.id, { state: 'in_flight' });
     const liveAttempt = await insertAgencyAttempt(campaign.id, live.id, { state: 'bridged' });
     await getTestPool().query(
@@ -252,8 +248,8 @@ describe('agency crash recovery (integration)', () => {
       // `AgencyDialer` reports exactly this from `liveByAttempt`.
       activeAttemptIds: () => [liveAttempt.id],
       // Arm 2 deliberately says "no station anywhere", so arm 1 is the sole
-      // protection — which is also the production shape inside an
-      // `AD-P2-C-07` deferred-hangup window, where the agent's socket has
+      // protection — which is also the production shape inside the
+      // deferred-hangup window, where the agent's socket has
       // closed and its Redis ownership key is already deleted.
       ownerOf: async () => null,
     }).sweepOnce();
@@ -277,8 +273,8 @@ describe('agency crash recovery (integration)', () => {
 
   it('T-C3b: a live attempt held by ANOTHER replica survives too', async () => {
     // The multi-replica arm, which no unit-tier mock can prove against real rows.
-    // `liveByAttempt` is per-process, so once core scales out this is the only
-    // thing stopping replica A reaping replica B's live conversations. §6.2:
+    // `liveByAttempt` is per-process, so once the dialer runtime scales out this is the only
+    // thing stopping replica A reaping replica B's live conversations.:
     // "non-terminal and owned by a replica whose heartbeat is gone" — so a
     // heartbeat that is NOT gone must be respected whoever owns it.
     const campaign = await insertAgencyCampaign({ status: 'running' });

@@ -11,7 +11,7 @@ import { EMPTY_DISPOSITION_FORM, type DispositionFormState } from '../../utils/a
 import type { AgencyDisposition } from '../../types/agency';
 
 /**
- * `DispositionPad` (§A.7.2 visual, §A.13.6 behaviour).
+ * `DispositionPad` ( visual behaviour).
  *
  * The pad is assembly, so most of its correctness is already unit-tested in
  * `agencyDispositionForm`. What is only observable here is what the *markup* does:
@@ -56,8 +56,8 @@ function setup(props: Partial<Parameters<typeof DispositionPad>[0]> = {}) {
  */
 const optionByName = (name: string | RegExp) => screen.getByRole('button', { name });
 
-describe('catalog order reaches the DOM verbatim', () => {
-  it('renders in the order core delivered, not sorted by anything', () => {
+describe('catalog order reaches the DOM unchanged', () => {
+  it('renders in the order the server delivered, not sorted by anything', () => {
     // A sort by label would put Callback first; by success flag, Sale. Both look
     // reasonable in review, and either silently remaps every agent's fingers the
     // moment an admin renames a code.
@@ -131,7 +131,7 @@ describe('selection', () => {
 
 describe('arrow keys select immediately', () => {
   it('moves and selects in one step, so highlight and value never disagree', () => {
-    // §A.13.9: "selection is immediate". A separate commit step would create a
+    // "selection is immediate". A separate commit step would create a
     // state where the row looks chosen and the value is still the old one.
     const { onChange } = setup({ form: { ...EMPTY_DISPOSITION_FORM, selectedCode: 'sale' } });
     fireEvent.keyDown(screen.getByRole('group', { name: 'Disposition' }), { key: 'ArrowDown' });
@@ -160,7 +160,7 @@ describe('arrow keys select immediately', () => {
 
 describe('enable / disable is frame-bound and always states its reason', () => {
   it('renders every option while disabled, so the geometry does not shift', () => {
-    // §0.1: every region renders in every state. A pad that appears at `bridged`
+    // every region renders in every state. A pad that appears at `bridged`
     // moves the column under the agent's cursor at the worst moment.
     setup({ enabled: false, disabledReason: 'available when connected' });
     expect(screen.getByRole('group', { name: 'Disposition' }).querySelectorAll('button')).toHaveLength(5);
@@ -174,7 +174,7 @@ describe('enable / disable is frame-bound and always states its reason', () => {
   });
 
   it('uses aria-disabled on the options, never the disabled attribute', () => {
-    // §A.13.9 names the pad as one of the four places this bites: it re-renders
+    // names the pad as one of the four places this bites: it re-renders
     // whenever an `agent_state` frame lands, and a real `disabled` arriving under
     // a focused option blurs it — with re-enabling NOT restoring focus. A keyboard
     // agent would be dropped to `<body>` by a frame that had nothing to do with
@@ -204,7 +204,7 @@ describe('rejection is inline, inside the pad, and spends nothing', () => {
   });
 
   it('keeps the note on the error path', () => {
-    // §A.13.6: "Nothing clears the notes on any error path."
+    // "Nothing clears the notes on any error path."
     const form: DispositionFormState = { selectedCode: 'sale', notes: 'eight minutes of context', callbackAt: null };
     setup({ form, rejection: CATALOG_CHANGED_COPY });
     // The pad does not own the textarea, so the proof at this tier is that it
@@ -239,7 +239,7 @@ describe('the semantic edges', () => {
   });
 });
 
-describe('the callback row — CR-1 in the one place it is read aloud', () => {
+describe('the callback row — the copy in the one place it is read aloud', () => {
   it('appears only for a code that requires a datetime', () => {
     setup({ form: { ...EMPTY_DISPOSITION_FORM, selectedCode: 'sale' } });
     expect(screen.queryByText(CALLBACK_GROUND_TRUTH_COPY)).toBeNull();
@@ -249,8 +249,8 @@ describe('the callback row — CR-1 in the one place it is read aloud', () => {
     expect(screen.getByText(CALLBACK_GROUND_TRUTH_COPY)).toBeTruthy();
   });
 
-  it('says "we", never "I" — D11 puts the callback back in the pool', () => {
-    // This copy is the ENTIRE mitigation for D11: whichever agent is available
+  it('says "we", never "I" — the shared pool puts the callback back in the pool', () => {
+    // This copy is the ENTIRE mitigation for Shared pool: whichever agent is available
     // takes it, so "I'll call you back" is a promise the product breaks.
     setup({ form: { ...EMPTY_DISPOSITION_FORM, selectedCode: 'callback' } });
     expect(screen.getByText('When should we call back?')).toBeTruthy();

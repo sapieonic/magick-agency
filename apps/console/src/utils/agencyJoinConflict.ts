@@ -17,12 +17,12 @@ import type { AgencyAgentState, AgencySessionConflict } from '../types/agency';
  * use Leave station. So the copy names the campaign, says whether they are
  * mid-call there, and the page renders a link to it.
  *
- * Master forwards core's body verbatim (status **and** body), so the shape below
- * is core's `AgencySessionCampaignConflict`, not a master invention.
+ * The server forwards the dialer runtime's body unchanged (status **and** body), so the shape below
+ * is the dialer runtime's `AgencySessionCampaignConflict`, not a server invention.
  *
- * **How it survives master's error mask is worth knowing exactly**, because the
+ * **How it survives the API's error mask is worth knowing exactly**, because the
  * seam is thin: it is NOT that the body carries `details` — it carries none, and
- * master's own test asserts their absence. It survives solely because
+ * the API's own test asserts their absence. It survives solely because
  * `session_on_other_campaign` reaches `FORWARDABLE_ERROR_CODES` through the
  * `AGENCY_ACTION_ERROR_CODES` spread. That allow-list entry is the only thing
  * holding this screen up; delete it and every field below arrives masked, this
@@ -30,7 +30,7 @@ import type { AgencyAgentState, AgencySessionConflict } from '../types/agency';
  * remedy.
  *
  * The parse is duck-typed rather than `instanceof ApiError` so this module has no
- * dependency on the API layer and can be unit-tested against a plain object —
+ * dependency on the server and can be unit-tested against a plain object —
  * the same reason `agencyCampaignRecording.ts` reads errors that way.
  */
 
@@ -88,12 +88,12 @@ export function parseJoinConflict(err: unknown): AgencySessionConflict | null {
 }
 
 /**
- * Core's own sentence, out of a conflict body the parser **refused**.
+ * The server's own sentence, out of a conflict body the parser **refused**.
  *
  * The pair is deliberate. `parseJoinConflict` stays strict — a screen shaped
  * like one that names a campaign, which then names none, looks broken — so a
  * body missing a structured field still falls through to the ordinary error
- * path. This is what that path is allowed to say once it gets there: core now
+ * path. This is what that path is allowed to say once it gets there: The server now
  * sends a `message` on the 409, and its sentence beats the generic "Could not
  * join the campaign." by a distance.
  *
@@ -158,7 +158,7 @@ export function conflictIsMidCall(state: AgencyAgentState): boolean {
  *
  * `state` is not decoration: an agent who is `on_call` on the other campaign must
  * not be told to go and leave it right now — that is a live customer. So the
- * remedy is conditional on the state, which is exactly why core sends it.
+ * remedy is conditional on the state, which is exactly why the server sends it.
  */
 export function joinConflictCopy(conflict: AgencySessionConflict): JoinConflictCopy {
   const stateLabel = AGENCY_FLOOR_STATE_LABELS[conflict.state];

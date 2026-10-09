@@ -47,7 +47,7 @@ export class ApiError extends Error {
   public readonly isMasked: boolean;
 
   /**
-   * Seconds until a 429 may be retried. Taken from `Retry-After`, core's
+   * Seconds until a 429 may be retried. Taken from `Retry-After`, the server's
    * `retryAfter` body field, or `"Try again in N seconds"`. Poll loops must
    * honour this rather than charging the tenant+API-key budget at cadence.
    */
@@ -94,8 +94,8 @@ export class ApiError extends Error {
       answer, so it goes first; a body carrying only `message` is untouched by
       this and still falls through to it.
 
-      Both keys, same array: `details` is what core sends and `issues` is what
-      master's automation writes send.
+      Both keys, same array: `details` is what the server sends and `issues` is what
+      the server's automation writes send.
     */
     // Validation error shape: { error: "Validation Error", details: [{ message, path }] }
     if (Array.isArray(d['details']) && d['details'].length > 0) {
@@ -104,7 +104,7 @@ export class ApiError extends Error {
     }
 
     // The SAME array of validation problems under a different key:
-    // `{ error: 'Bad Request', issues: [...] }`. That is what master replies to
+    // `{ error: 'Bad Request', issues: [...] }`. That is what the server replies to
     // every automation write.
     if (Array.isArray(d['issues']) && d['issues'].length > 0) {
       const messages = formatValidationIssues(d['issues']);
@@ -114,7 +114,7 @@ export class ApiError extends Error {
     // Standard error shape: { message: "..." }
     if (typeof d['message'] === 'string') return d['message'];
 
-    // Zod validation shape from core: { error: "Validation failed", details: { fieldErrors: { field: ["msg"] } } }
+    // Zod validation shape from the server: { error: "Validation failed", details: { fieldErrors: { field: ["msg"] } } }
     if (typeof d['error'] === 'string' && d['details'] && typeof d['details'] === 'object' && !Array.isArray(d['details'])) {
       const det = d['details'] as Record<string, unknown>;
       const fieldErrors = det['fieldErrors'] as Record<string, string[]> | undefined;
@@ -127,7 +127,7 @@ export class ApiError extends Error {
       }
     }
 
-    // Core "all recipients failed" shape: { error: "...", calls: [{ error_message }] }
+    // The server "all recipients failed" shape: { error: "...", calls: [{ error_message }] }
     if (typeof d['error'] === 'string' && Array.isArray(d['calls'])) {
       const calls = d['calls'] as Array<{ error_message?: string; phone?: string }>;
       const firstFailed = calls.find(c => c.error_message);

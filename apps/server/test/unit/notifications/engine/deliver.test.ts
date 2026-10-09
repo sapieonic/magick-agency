@@ -1,16 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 /**
- * PORT NOTE (magick-agency): `deliver.ts` is trimmed to `buildDedupeKey` (see its
- * header), so of master's suite only the six `buildDedupeKey` cases are kept,
- * verbatim. Deleted, because the code they drive was reached only by the credits
- * digest runner (plan §3.3/§3.5): `dispatchNotification` (17), `scopeToken` (1),
- * 'the claim, per SendEmailOutcome' (5 table rows + 4), 'partial outcomes across
- * one fan-out' (4), 'writes that fail after the mail has gone' (4), 'scopeToken
- * edges' (4), 'buildDedupeKey edges' › 'composes with scopeToken to separate the
- * two scopes of one tenant' (1), 'the transport guard, once more' (4) — 44 of
- * master's 50. With them went master's mocks (config, delivery repository,
- * mailjet client, logger) and fixtures (`input`, `claimAll`, `RENDERED`, `ACCOUNT`).
+ * `deliver.ts` is trimmed to `buildDedupeKey`, so only its cases live here.
  */
 
 import { buildDedupeKey } from '../../../../src/notifications/engine/deliver.js';

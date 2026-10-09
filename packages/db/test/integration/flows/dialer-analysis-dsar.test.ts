@@ -2,9 +2,8 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { insertWebrtcCall } from '../setup/factories.js';
 /*
- * PORT NOTE (magick-agency): ported from core test/integration/flows/dialer-analysis-dsar.test.ts@4850d1d9
- * (1 case -> 1), real Postgres 5436. `webrtc_calls` -> `agency_calls`; ids from the UUID
- * factories. The job still completes (it no longer "settles").
+ * Real Postgres. Rows live in `agency_calls`; ids come from the UUID factories.
+ * The job still completes (there is no settlement step).
  */
 vi.mock('../../../src/connection.js', () => ({ getPool: () => getTestPool() }));
 const { dialerAnalysisJobRepository: jobs } = await import('../../../src/repositories/dialer-analysis-job.repository.js');

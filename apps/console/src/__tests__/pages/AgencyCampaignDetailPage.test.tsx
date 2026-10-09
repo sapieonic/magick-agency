@@ -24,7 +24,7 @@ const mocks = vi.hoisted(() => ({
   showToast: vi.fn(),
   showErrorToast: vi.fn(),
   forceAgentAvailable: vi.fn(),
-  // The staffing panel (`MAG-160`) — a second consumer of `api/agency` on this
+  // The staffing panel — a second consumer of `api/agency` on this
   // page, and of the tenant member list it picks from.
   listCampaignAgents: vi.fn(),
   assignAgent: vi.fn(),
@@ -33,7 +33,7 @@ const mocks = vi.hoisted(() => ({
   // hook hid the defect these tests are meant to catch — see below.
   listTenantMembers: vi.fn(),
   /*
-    `MAG-167`: the Overview panel mounts `CampaignSeriesSection`, which owns its
+    The Overview panel mounts `CampaignSeriesSection`, which owns its
     own read and fires it on mount. Mocked here rather than left to a real
     `fetch` — an unmocked one would make every test on this page depend on the
     network, and the section's own behaviour is covered where it lives.
@@ -103,7 +103,7 @@ function stats(over: Partial<AgencyCampaignStats> = {}): AgencyCampaignStats {
     attempts_total: 1400,
     attempts_connected: 610,
     agents_live: 4,
-    // The supervisor payload (MAG-71). A healthy campaign by default: no stall,
+    // The supervisor payload. A healthy campaign by default: no stall,
     // so the strip's diagnosis renders nothing and each test opts into the
     // condition it is about.
     stall: null,
@@ -137,7 +137,7 @@ function wrappingAgent(over: Partial<AgencySupervisorAgent> = {}): AgencySupervi
 }
 
 /**
- * MAG-166: the page is three sections, each its own URL, and all three mount
+ * the page is three sections, each its own URL, and all three mount
  * the same component. Tests name the section they are about — the default is
  * the one a supervisor lands on.
  */
@@ -220,7 +220,7 @@ describe('campaign detail — the status-to-action matrix', () => {
     ['draft', ['Start dialing', 'Stop'], [], ['Pause', 'Resume']],
     ['running', ['Pause', 'Stop'], [], ['Start dialing', 'Resume']],
     ['paused', ['Resume', 'Stop'], [], ['Pause', 'Start dialing']],
-    // MAG-134: `stopping` no longer hides the controls a supervisor reaches for.
+    // `stopping` no longer hides the controls a supervisor reaches for.
     // The pacing leader still owns the final write — the buttons are refused,
     // with the reason on screen, rather than being absent and unexplained.
     ['stopping', [], ['Resume', 'Stop'], ['Start dialing', 'Pause']],
@@ -346,8 +346,8 @@ describe('campaign detail — stopping', () => {
 
 describe('campaign detail — a stale Start/Resume must not 409', () => {
   /**
-   * chitboss UAT: 7× `POST …/start` and 1× `POST …/resume` against campaigns
-   * that were already live. MAG-134 already hides those buttons for the
+   * Seen in production use: 7× `POST …/start` and 1× `POST …/resume` against campaigns
+   * that were already live. The page already hides those buttons for the
    * status the view holds; these cases are the view being behind the server.
    */
 
@@ -578,7 +578,7 @@ describe('campaign detail — counters', () => {
 });
 
 /**
- * ── The page is sections now (`MAG-166`) ───────────────────────────────────
+ * ── The page is sections now ───────────────────────────────────
  *
  * It used to be one scroll carrying eleven counters, four derived performance
  * read-outs, the guardrails, the live floor and the staffing roster — with the
@@ -684,7 +684,7 @@ describe('campaign detail — sections', () => {
     expect(screen.getByTestId('campaign-tab-agents-count').textContent).toBe('2');
 
     cleanup();
-    // No per-agent rows is NOT an empty floor — core may not have produced them,
+    // No per-agent rows is NOT an empty floor — the server may not have produced them,
     // or the read failed. A `0` here would be a claim drawn from our ignorance.
     mocks.getAgencyCampaignStats.mockResolvedValue(stats({ agents: undefined, agents_live: 4 }));
     renderPage();
@@ -693,7 +693,7 @@ describe('campaign detail — sections', () => {
   });
 });
 
-describe('campaign detail — the health strip (§C.2)', () => {
+describe('campaign detail — the health strip', () => {
   it('renders NOTHING when the campaign is not stalled', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'Collections' });
@@ -732,7 +732,7 @@ describe('campaign detail — the health strip (§C.2)', () => {
       stats({
         stall: { code: 'dnc_unavailable', tenant_wide: true },
         // Deliberately out of priority order on the wire. The console must sort
-        // it itself — relying on core's ordering means a producer-side reorder
+        // it itself — relying on the server's ordering means a producer-side reorder
         // silently changes what a supervisor reads.
         other_stalls: ['elevated_failure_rate', 'concurrency_saturated'],
       }),
@@ -764,7 +764,7 @@ describe('campaign detail — the health strip (§C.2)', () => {
   });
 });
 
-describe('campaign detail — concurrency (CR-2 / D10)', () => {
+describe('campaign detail — concurrency is read-only', () => {
   it('reads out the live count against the ceiling', async () => {
     mocks.getAgencyCampaignStats.mockResolvedValue(
       stats({ concurrency_limit: 5, concurrency_in_use: 3 }),
@@ -779,7 +779,7 @@ describe('campaign detail — concurrency (CR-2 / D10)', () => {
     renderPage();
     const readout = await screen.findByTestId('concurrency-readout');
 
-    // D10 is explicit: the supervisor sees it and cannot set it. Rendering any
+    // The contract is explicit: the supervisor sees it and cannot set it. Rendering any
     // affordance here would be a claim the platform cannot honour.
     expect(readout.querySelector('input')).toBeNull();
     expect(readout.querySelector('button')).toBeNull();
@@ -923,7 +923,7 @@ describe('campaign detail — pause does not cancel live calls', () => {
   });
 });
 
-describe('campaign detail — the agent floor (MAG-148, §C.4)', () => {
+describe('campaign detail — the agent floor ', () => {
   /**
    * The wiring the component's own tests cannot see: that the page threads the
    * campaign's `wrapup_seconds` into rank 1's threshold, and that the roster it
@@ -962,7 +962,7 @@ describe('campaign detail — the agent floor (MAG-148, §C.4)', () => {
   });
 
   it('says the roster didn’t load rather than showing an empty floor', async () => {
-    // The pre-MAG-148 wire: `agents_live` and no `agents`. Rendering that as
+    // The older wire: `agents_live` and no `agents`. Rendering that as
     // "nobody is on this campaign" would be a claim about staffing drawn from
     // our own ignorance.
     mocks.getAgencyCampaignStats.mockResolvedValue(stats({ agents: undefined, agents_live: 4 }));
@@ -995,12 +995,12 @@ describe('campaign detail — the agent floor (MAG-148, §C.4)', () => {
   });
 });
 
-describe('campaign detail — permissions (MAG-136: agency.supervise)', () => {
+describe('campaign detail — permissions (agency.supervise)', () => {
   /**
-   * Asserted here rather than left to master's 403.
+   * Asserted here rather than left to the server's 403.
    *
    * The controls check `agency.supervise` (floored at `account_admin`), which is
-   * what master's four lifecycle proxies now gate on. Two roles below that floor
+   * what the server's four lifecycle proxies now gate on. Two roles below that floor
    * are worth pinning by name: an `agent` — the Agency Dialer role, deliberately
    * BELOW `viewer` — and a `viewer`. Neither may see a control, and neither may
    * invoke one, because a button that 403s on click is a worse answer than no
@@ -1025,7 +1025,7 @@ describe('campaign detail — permissions (MAG-136: agency.supervise)', () => {
 
   it('an operator is now below the floor too — the gate moved off proxy.schedules.write', async () => {
     // `operator` used to hold `proxy.schedules.write` and so used to see all
-    // four controls. MAG-136 made the lifecycle supervisory; master matched.
+    // four controls. the lifecycle is now supervisory, and the server matches.
     mocks.useTenant.mockReturnValue({
       tenantId: 'tenant-1',
       accountId: 'account-1',
@@ -1053,11 +1053,11 @@ describe('campaign detail — permissions (MAG-136: agency.supervise)', () => {
   });
 
   /**
-   * ── The floor's control uses the SAME permission (MAG-148 / MAG-142) ───────
+   * ── The floor's control uses the SAME permission  ───────
    *
    * `AgentFloor` takes `canSupervise` as a prop, so its own tests can only prove
    * the component honours whatever it is handed. What is proved HERE is that the
-   * page hands it `hasPermission(role, 'agency.supervise')` — the thing master
+   * page hands it `hasPermission(role, 'agency.supervise')` — the thing the server
    * actually gates `POST /proxy/agency/sessions/:id/force-available` on. Passing
    * a looser check (or a literal `true`) would compile, render, and 403 on click
    * for exactly the role that must never reach it.
@@ -1106,9 +1106,9 @@ describe('campaign detail — permissions (MAG-136: agency.supervise)', () => {
 });
 
 /**
- * ── The staffing panel (`MAG-160`) ─────────────────────────────────────────
+ * ── The staffing panel ─────────────────────────────────────────
  *
- * Master floors all four assignment routes on `agency.supervise`, so the panel's
+ * The server floors all four assignment routes on `agency.supervise`, so the panel's
  * very first request 403s for anyone below it. That makes the gate a property of
  * the page — the component takes `canSupervise` as a prop and can only prove it
  * honours what it is handed — and the same rule `AgentFloor`'s props comment
@@ -1206,10 +1206,10 @@ describe('campaign detail — assigned agents', () => {
 });
 
 /**
- * ── Assigned here, but not AT a station here (`MAG-160`) ────────────────────
+ * ── Assigned here, but not AT a station here ────────────────────
  *
- * Reassignment deliberately does not touch live sessions: master moves its own
- * row, and core refuses the agent's next join here until they leave their old
+ * Reassignment deliberately does not touch live sessions: the server moves its own
+ * row, and the server refuses the agent's next join here until they leave their old
  * station. So a moved agent appears on this list immediately while still working
  * somewhere else, and a supervisor reading a name with no tile on the floor has
  * no way to tell "hasn't started yet" from "is stuck elsewhere" unless the list
@@ -1248,7 +1248,7 @@ describe('campaign detail — the not-yet-joined signal', () => {
   });
 
   it('claims nothing when the floor is unknown', async () => {
-    // No per-agent rows is NOT an empty floor — core may not have produced them,
+    // No per-agent rows is NOT an empty floor — the server may not have produced them,
     // or the stats read failed. Marking everyone absent on the strength of a
     // payload we never received would put a warning against every name here.
     mocks.getAgencyCampaignStats.mockResolvedValue(stats({ agents: undefined }));
@@ -1263,7 +1263,7 @@ describe('campaign detail — the not-yet-joined signal', () => {
 });
 
 /**
- * ── The campaign's own clock (`MAG-167`) ────────────────────────────────────
+ * ── The campaign's own clock ────────────────────────────────────
  *
  * The header used to carry one meta line — "Updated 10:23" — which is when this
  * SCREEN last read the server, not anything about the campaign. A supervisor
@@ -1307,7 +1307,7 @@ describe('campaign detail — the header timeline', () => {
   });
 
   it('omits the whole line when the campaign carries no start, rather than dashing it', async () => {
-    // An older master. The campaign did not fail to start — we were not told.
+    // An older server. The campaign did not fail to start — we were not told.
     mocks.getAgencyCampaign.mockResolvedValue(campaign());
 
     renderPage();
@@ -1365,7 +1365,7 @@ describe('campaign detail — how it ended', () => {
 
   it('says the dialer stopped it when nobody did', async () => {
     /*
-      `null` is core saying the transition had no human behind it — the
+      `null` is the server saying the transition had no human behind it — the
       abandonment auto-pause. On a campaign that stopped itself this is the
       single most useful sentence on the page, so it is said rather than
       dropped, and never left as an unattributed dash.
@@ -1391,7 +1391,7 @@ describe('campaign detail — how it ended', () => {
   });
 
   it('skips the block entirely when none of the fields arrived', async () => {
-    // An older master carries none of the three, and the stats payload no peak.
+    // An older server carries none of the three, and the stats payload no peak.
     // A heading over an empty list is worse than no heading: it says the
     // campaign ended in a way nobody recorded.
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'stopped' }));
@@ -1699,7 +1699,7 @@ describe('the campaign header names the retry chain', () => {
   });
 
   it('leaves the campaign page intact when the lineage read fails', async () => {
-    // A master that predates the route answers 404. Putting an error strip at
+    // A server that predates the route answers 404. Putting an error strip at
     // the top of every campaign in the product for the length of a deploy — over
     // a line that is empty for almost all of them — is worse than showing what
     // this build showed before the feature existed.
@@ -1718,7 +1718,7 @@ describe('Retry contacts, from the campaign header', () => {
 
     fireEvent.click(screen.getByTestId('campaign-retry-action'));
 
-    // Contract §8: no answer, busy, and the ones nobody dialed. Everything else
+    // Contract no answer, busy, and the ones nobody dialed. Everything else
     // is opt-in and reached by narrowing the Contacts tab first.
     await waitFor(() =>
       expect(mocks.retryPreview).toHaveBeenCalledWith(

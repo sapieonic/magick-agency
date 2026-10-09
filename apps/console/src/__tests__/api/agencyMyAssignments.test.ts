@@ -34,7 +34,7 @@ describe('getMyAssignments', () => {
 
   it('threads tenant and account through', async () => {
     // `TenantContext` resolves the account asynchronously; a call made without it
-    // gets a 400 from master that has nothing to do with the agent's assignments.
+    // gets a 400 from the server that has nothing to do with the agent's assignments.
     mocks.apiFetch.mockResolvedValue({ assignments: [] });
 
     await getMyAssignments(TENANT, ACCOUNT);
@@ -64,7 +64,7 @@ describe('getMyAssignments', () => {
   });
 
   it('returns an empty array for an unstaffed agent', async () => {
-    // Master's `200 { assignments: [] }`. The page renders "not assigned yet" from
+    // The server's `200 { assignments: [] }`. The page renders "not assigned yet" from
     // `length === 0`, so this must not become null or undefined.
     mocks.apiFetch.mockResolvedValue({ assignments: [] });
 
@@ -73,7 +73,7 @@ describe('getMyAssignments', () => {
 
   it('returns an empty array when the body is absent altogether', async () => {
     /**
-     * `apiFetch` resolves `undefined` for a 204. No master version answers 204 on
+     * `apiFetch` resolves `undefined` for a 204. No server version answers 204 on
      * this route — an older one has no route at all and answers 404, which
      * `apiFetch` throws on — so this guard is for a shape nobody currently sends.
      * It is kept because the alternative failure is `.map` of undefined inside
@@ -87,7 +87,7 @@ describe('getMyAssignments', () => {
   it('lets an error propagate, because "could not ask" is a different screen', async () => {
     // "Nobody has staffed you" is fixed by a supervisor; "we could not find out" is
     // fixed by support. Swallowing this into `[]` would send the agent to the wrong
-    // person — including against an older master, which 404s this route.
+    // person — including against an older server, which 404s this route.
     mocks.apiFetch.mockRejectedValue(new Error('Not Found'));
 
     await expect(getMyAssignments(TENANT, ACCOUNT)).rejects.toThrow(/Not Found/);

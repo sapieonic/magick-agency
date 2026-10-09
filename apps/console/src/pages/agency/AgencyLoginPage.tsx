@@ -21,12 +21,12 @@ import styles from './AgencyLoginPage.module.css';
  *
  * ── Why the dialer gets a second sign-in page ──────────────────────────────
  * The same identity system, a different entrance. Agency staff are ordinary
- * master users — an `agent` or a supervisor is a membership row carrying an RBAC
- * role, and every agency route authorizes on that membership through master's
+ * users of the server — an `agent` or a supervisor is a membership row carrying an RBAC
+ * role, and every agency route authorizes on that membership through the server's
  * `tenantContextMiddleware` — so this page calls exactly the same
  * `signInEmail`/`signInGoogle` as `/login` and produces exactly the same session.
  * It is NOT the parallel tree super-admin has (its own JWT in `sessionStorage`,
- * its own `saFetch`, its own middleware in master); a second credential store
+ * its own `saFetch`, its own middleware in the server); a second credential store
  * would have to duplicate the memberships and would break the inheritance that
  * lets a supervisor cover a shift on a station (see `utils/agencyPersona`).
  *
@@ -36,25 +36,25 @@ import styles from './AgencyLoginPage.module.css';
  * why the door is chosen from the DESTINATION rather than from a role.
  *
  * ── No Sign Up tab, and that is the point ──────────────────────────────────
- * `POST /auth/session` provisions a brand-new tenant for an address master does
- * not recognise (`master/src/api/routes/auth.routes.ts`, path 4). An invited
+ * `POST /auth/session` provisions a brand-new tenant for an address the server does
+ * not recognise (the unknown-address path of the session route). An invited
  * agent's membership is activated by matching the address they sign in with
  * against the stub row `POST /users/invite` wrote for them — that IS the
- * activation mechanism, per `master/src/notifications/invite-mailer.ts`. So on
+ * activation mechanism, per the invite mailer. So on
  * this page a signup is never the thing the visitor wanted: it puts them in a
  * private empty tenant of their own while the membership their supervisor created
  * sits unclaimed, and nothing tells either of them. There is no signup here.
  *
- * The same hazard survives one way in — Google, with an address master has never
+ * The same hazard survives one way in — Google, with an address the server has never
  * seen — and {@link UnrecognisedAccount} below is what this page can do about it
- * without a change in master. Read its docstring before deciding this page is
+ * without a change in the server. Read its docstring before deciding this page is
  * paranoid: it is the commonest way an agency onboarding goes wrong.
  *
  * ── It serves BOTH personas, and does not try to tell them apart ───────────
  * An agent and a supervisor sign in through the same form. Which of them somebody
  * is only becomes knowable after sign-in, from the RBAC role on their membership
  * — the persona is derived from permissions (`agencyPersona`), and there is no
- * membership to derive it from until master answers. So this page asks nobody to
+ * membership to derive it from until the server answers. So this page asks nobody to
  * self-identify, and routes on the answer instead: the default destination is
  * `/agency`, which is `AgencyHomeRedirect`, which already sends a supervisor to
  * their campaign list and an agent to `/dialer`. Adding a role picker here would
@@ -87,7 +87,7 @@ const PERSONAS = [
  * with a bare "not part of your plan" and no hint that the real problem is the
  * address they signed in with.
  *
- * Nothing in the session can recover it, which is the crux: master answers the
+ * Nothing in the session can recover it, which is the crux: the server answers the
  * SECOND `POST /auth/session` from path 1 (found by `firebase_uid`) with
  * `is_new: false`, because by then the tenant it provisioned genuinely exists.
  * `is_new` is true exactly once, on the response that created it, so if this page
@@ -133,9 +133,8 @@ function clearUnrecognised(): void {
 }
 
 /**
- * The address of the credential a refused Google sign-in left behind. cusui read
- * it off the session (`session.user.email`); a refused sign-in has no session, so
- * it is read where `api/client.ts` reads the token — Firebase's current user.
+ * The address of the credential a refused Google sign-in left behind. A refused
+ * sign-in has no session, so it is read where `api/client.ts` reads the token — Firebase's current user.
  */
 function firebaseUserEmail(): string | null {
   try {
@@ -151,44 +150,28 @@ function getAuthFailureReason(error: unknown): 'auth_error' | 'session_error' | 
 }
 
 /**
- * PORT NOTE (magick-agency): in Magick Agency this screen answers a REFUSAL, not
- * a provisioning. Agency has no session path 4: `POST /auth/session` answers 403
- * `no_membership` for a verified identity it has no user, stub or invite for
- * (extraction plan §3.1), so nothing is created and "the honest limit" below — a
- * stray tenant already provisioned by the time this renders — no longer applies.
- * The trigger moved with it: cusui rendered this on `session.is_new`; this page
- * renders it on the 403's code (`sessionRefusalCode`), from the button press and
- * from `useAuth().sessionRefusal` after a reload (the listener's refusal). The
- * copy is unchanged — it was always about the address, which is still the cause.
- * The "go to MagickVoice" escape link is removed: `/login` IS this page in the
- * console, so the link led back here.
+ * Shown when a sign-in on THIS door was refused because the server does not
+ * recognise the address.
  *
- * Shown when a sign-in on THIS door produced a brand-new tenant.
+ * This screen answers a REFUSAL, not a provisioning. `POST /auth/session` answers
+ * 403 `no_membership` for a verified identity it has no user, stub or invite for,
+ * so nothing is created. The page renders it on the 403's code
+ * (`sessionRefusalCode`), from the button press and from
+ * `useAuth().sessionRefusal` after a reload (the listener's refusal). The copy is
+ * about the address, which is the cause. There is no escape link to a second
+ * sign-in page: `/login` IS this page in the console, so it would lead back here.
  *
- * ── What `is_new` means here, as opposed to on `/login` ────────────────────
- * On `/login` a new tenant is the product working: somebody signed up. Here it can
- * only mean master did not recognise the address — which for a person who came to
- * the agency door means the invite was sent to a different address, or they picked
- * the wrong Google account, or the supervisor typo'd it. The membership they are
- * looking for still exists on the stub row, unclaimed, and the tenant they just
- * landed in is empty and not theirs.
+ * ── What the refusal means here ─────────────────────────────────────────────
+ * For a person who came to the agency door it means the invite was sent to a
+ * different address, or they picked the wrong Google account, or the supervisor
+ * typo'd it. The membership they are looking for still exists on the stub row,
+ * unclaimed, and nothing has been created for them under the address they used.
  *
- * ── Why this is a screen rather than a redirect to `/onboarding` ───────────
- * `/onboarding` walks somebody through setting up a workspace, which is the exact
- * wrong instruction: the workspace they want already exists and they are one
- * corrected address away from it. Sending them there produces a half-configured
- * stray tenant and an agent who still cannot work.
- *
- * ── The honest limit, and what would actually close it ─────────────────────
- * By the time this renders, master has ALREADY provisioned the tenant — session
- * creation and provisioning are the same call, so there is no point at which the
- * client can decline. This screen can therefore only name the problem and offer
- * the way out (sign out, try the right address); it cannot prevent the stray row.
- * Closing it properly needs master: an opt-out on `POST /auth/session` — a
- * `provision: false` in the body, answered with a 404 rather than a new tenant —
- * which this page would send and `/login` would not. That is a small, contained
- * master change and the right follow-up; it is deliberately not bundled here,
- * because it changes an endpoint every client shares.
+ * ── Why this is a screen rather than a redirect to onboarding ──────────────
+ * Walking somebody through setting up a workspace is the exact wrong
+ * instruction: the workspace they want already exists and they are one
+ * corrected address away from it. This screen names the problem and offers the
+ * way out (sign out, try the right address).
  */
 function UnrecognisedAccount({
   email,
@@ -286,12 +269,10 @@ export default function AgencyLoginPage() {
   /**
    * The one place this page decides what a successful session means.
    *
-   * PORT NOTE (magick-agency): cusui's `is_new` branch (the unrecognised-account
-   * diagnosis on a freshly provisioned tenant) is gone from here — `is_new` is
-   * always `false` in agency, and the same diagnosis now comes from the 403
-   * `no_membership` refusal, in {@link showUnrecognised}. Everything else follows
-   * cusui: an unverified address has a step to finish first, and honouring a deep
-   * link past it would drop somebody into a station mid-setup.
+   * The unrecognised-account diagnosis comes from the 403 `no_membership`
+   * refusal, in {@link showUnrecognised}. An unverified address has a step to
+   * finish first, and honouring a deep link past it would drop somebody into a
+   * station mid-setup.
    */
   const landAfterSignIn = () => {
     /*
@@ -304,7 +285,7 @@ export default function AgencyLoginPage() {
   };
 
   /**
-   * The refusal half of what cusui's `landAfterSignIn` did on `is_new`: reported
+   * Handles the refusal: reported
    * as a FAILURE (`unrecognised_account`), remembered for a reload, and rendered.
    * Returns whether `err` was that refusal.
    */
@@ -434,10 +415,10 @@ export default function AgencyLoginPage() {
   const displayError = localError || error || (sessionExpired ? SESSION_EXPIRED_MESSAGE : null);
 
   /**
-   * PORT NOTE (magick-agency): the refusal can also arrive WITHOUT a button
+   * The refusal can also arrive WITHOUT a button
    * press — a reload, or a Firebase credential restored on a cold open, is synced
    * by `AuthContext`'s listener, which records the 403's code as
-   * `sessionRefusal`. That is the agency equivalent of cusui's reload hole the
+   * `sessionRefusal`. That is the reload hole the
    * `sessionStorage` seed below closes, so it renders the same screen.
    */
   const refusedOnSync = unrecognised === null && sessionRefusal === 'no_membership' && !user;
@@ -668,9 +649,8 @@ export default function AgencyLoginPage() {
           </button>
 
           {/*
-            PORT NOTE (magick-agency): cusui's "Not agency staff? Sign in to
-            MagickVoice" cross-link to `/login` is removed — the console has one
-            door, and `/login` is this page.
+            No cross-link to a second sign-in page: the console has one door,
+            and `/login` is this page.
           */}
         </div>
       </div>

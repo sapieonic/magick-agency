@@ -2,8 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS, insertWebrtcCall } from '../setup/factories.js';
 /*
- * PORT NOTE (magick-agency): ported from core test/integration/flows/dialer-analysis-gating.test.ts@4850d1d9
- * (2 cases -> 2), real Postgres 5436. `webrtc_calls` -> `agency_calls`; ids from the UUID
+ * Real Postgres. Rows live in `agency_calls`; ids come from the UUID
  * factories. The seeded profile row uses the factory tenant/account UUIDs and a UUID id.
  */
 vi.mock('../../../src/connection.js', () => ({ getPool: () => getTestPool() }));

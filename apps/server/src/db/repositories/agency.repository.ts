@@ -16,7 +16,7 @@ import type {
   AgencyLapsedWrapupRow,
 } from '../models/agency.model.js';
 import { AGENCY_ATTEMPT_LIVE_STATES, AGENCY_CAMPAIGN_TERMINAL_STATUSES } from '../models/agency.model.js';
-// The supervisor read surface's cursor (MAG-159). `KEYSET_AT_SQL` is projected
+// The supervisor read surface's cursor. `KEYSET_AT_SQL` is projected
 // alongside every paged row so the cursor carries `created_at` at its true
 // MICROSECOND precision — see that module for why a millisecond round-trip
 // silently drops rows.
@@ -41,14 +41,14 @@ import type {
   AgencyRetryPreview,
   AgencyRetrySelector,
 } from '@magick-agency/contracts/agency';
-// The three cross-repo bounds (wire contract §8). A leaf module, imported rather
+// The shared retry bounds. A leaf module, imported rather
 // than restated, so the number the API publishes as `max_seed_rows` and the number
 // the transaction refuses on are the same token.
 import { PRIOR_ATTEMPT_LIMIT, RETRY_MAX_SEED_ROWS } from '@magick-agency/domain/retry-campaign-bounds';
 // The roster's rate-reportability floor. Imported rather than restated because it
-// is a CROSS-SERVICE number: master and cusui both render "not enough calls" from
-// the same threshold, and a second copy here is how core's percentiles come to
-// exclude a row the console still labels reportable.
+// is a SHARED number: the console renders "not enough calls" from the same
+// threshold, and a second copy here is how these percentiles come to exclude a
+// row the console still labels reportable.
 import { AGENCY_ROSTER_MIN_RATE_DENOMINATOR } from '@magick-agency/contracts/agency';
 // The window the strip's copy names, imported so the SQL and the sentence agree.
 import { RECENT_FAILURE_WINDOW_MINUTES } from '../../agency/campaign-health.js';
@@ -111,13 +111,13 @@ import type {
   AgencyRosterPage,
 } from '@magick-agency/contracts/agency';
 // The compliance ceiling the supervisor gauge is drawn against, imported rather
-// than re-declared: `AD-P4-C-02`'s auto-pause fires on the same number, and two
+// than re-declared: the abandonment auto-pause fires on the same number, and two
 // copies of a regulatory threshold is how a dashboard comes to draw one line while
 // the guardrail enforces another.
 import { DEFAULT_ABANDONMENT_CEILING_PCT } from '../../agency/campaign-config.js';
 // THE single definition of "the same number", imported rather than re-expressed.
 // `DncRegistry.check` runs this on both sides of its comparison and
-// `markDncOnMaster` runs it before forwarding; `suppressByPhone` below must agree
+// `markDnc` runs it before storing; `suppressByPhone` below must agree
 // with both to the byte or it suppresses a different set of rows than the mark
 // claims to have suppressed. See its own header for why a second, SQL-shaped copy
 // of this rule was deliberately not written.
@@ -128,7 +128,7 @@ import { normalizeE164 } from '../../agency/dnc-registry.js';
 // the date rules).
 import type { CampaignSeriesParams } from '../../agency/campaign-series.js';
 // The reaper's auto-stamp for a wrap-up nobody wrote up. Imported rather than
-// respelled: `AD-P4-C-01`'s third connect bucket is defined as "NULL or this",
+// respelled: the supervisor dashboard's third connect bucket is defined as "NULL or this",
 // and a local copy would drift from the reaper that writes it — putting every
 // abandoned write-up back into the human column, which is the defect the bucket
 // exists to remove. Safe to import: `disposition.ts` has type-only imports.
@@ -142,55 +142,53 @@ export interface AgencyIngestResult {
   duplicate_chunk: boolean;
   total_contacts: number;
   /**
-   * Rows this chunk carried that the roster already held **verbatim** — same
+   * Rows this chunk carried that the roster already held **exactly** — same
    * phone, same `context`, same `timezone` — and which were therefore discarded.
    *
-   * Since migration 083 the identity is the row's CONTENT, not its position in
-   * the file (see 083's header for why job-id namespacing is the wrong key).
-   * That makes this number mean something narrower and more useful than it did:
-   * not "this campaign is already populated" but "you sent us these exact people
-   * again". A top-up carrying genuinely new rows now reports zero here.
+   * The identity is the row's CONTENT, not its position in the file (job-id
+   * namespacing would be the wrong key). That makes this number narrow and
+   * useful: not "this campaign is already populated" but "you sent us these exact people
+   * again". A top-up carrying genuinely new rows reports zero here.
    *
    * Reported rather than silently absorbed because `accepted: 0` otherwise has
    * two completely different meanings to an operator — "this chunk held no valid
-   * rows" and "every row you sent was already on the roster" — and master cannot
-   * tell them which if all it receives is a zero.
+   * rows" and "every row you sent was already on the roster" — and the ingest
+   * job cannot tell them which if all it receives is a zero.
    *
    * Note this is **not** the same signal as `duplicate_chunk`, which means the
    * whole chunk was replayed under the same idempotency key (a retry, and
    * success). This one is a *different* job carrying rows we already hold — the
-   * shape a re-upload after a master restart takes, and the case the row-level
-   * index carries alone.
+   * shape a re-upload after a server restart takes (the ingest job mints a fresh
+   * job id on every run), and the case the row-level index carries alone.
    */
   rejected_duplicate_rows: number;
   /**
-   * The `source_row_number`s of the discarded rows, capped — enough for master to
-   * name them in an error without an unbounded payload on a 1M-row campaign
-   * (Q-D). When `rejected_duplicate_rows` exceeds the cap, this is a sample, not
+   * The `source_row_number`s of the discarded rows, capped — enough for the
+   * ingest summary to name them without an unbounded payload on a 1M-row
+   * campaign. When `rejected_duplicate_rows` exceeds the cap, this is a sample, not
    * the set. Rows carrying no row number are counted above but cannot be named
    * here.
    */
   duplicate_source_rows: number[];
   /**
-   * Set (and only ever `true`) when this is a REPLAY of a chunk applied before
-   * migration 084, whose rejection counts were therefore never recorded.
+   * Set (and only ever `true`) when this is a REPLAY of a chunk applied without
+   * recorded rejection counts.
    *
    * **`rejected_duplicate_rows: 0` alongside this flag means "unknown", not
-   * "none".** That reading matters: master retries on 5xx and on timeout, so a
-   * chunk core committed whose response was lost comes back as a replay, and a
-   * replay that reports a confident zero makes the operator's ingest summary
-   * undercount what core actually refused. It can never overcount.
+   * "none".** That reading matters: a replay that reported a confident zero
+   * would make the operator's ingest summary undercount what the original
+   * application refused. It can never overcount.
    *
    * Absent on every other response — every fresh application, and every replay of
-   * a chunk applied from 084 onward, where the recorded number (including a
+   * a chunk that recorded its counts, where the recorded number (including a
    * recorded 0) is exact. Absence therefore means "these counts are trustworthy",
-   * which is the fail-safe default for a master that does not yet read the flag:
-   * it behaves exactly as it does today rather than newly mistrusting good counts.
+   * which is the fail-safe default: a reader that ignores the flag never
+   * mistrusts good counts.
    *
    * Deliberately a separate boolean rather than making `rejected_duplicate_rows`
-   * nullable — master parses that field as a number and cusui is about to render
-   * it, so widening its type would break both. This adds surface instead of
-   * changing it.
+   * nullable — the ingest job (`agency-ingest.service.ts`) sums that field as a
+   * number into the summary the console renders, so widening its type would
+   * break both. This adds surface instead of changing it.
    */
   rejection_counts_unavailable?: boolean;
 }
@@ -198,7 +196,7 @@ export interface AgencyIngestResult {
 /**
  * How many colliding row numbers to name back. A sample, not the set.
  *
- * Bounds what is STORED as well as what is returned (migration 084): the sample is
+ * Bounds what is STORED as well as what is returned: the sample is
  * persisted on the chunk marker so a replay can reproduce it, and an unbounded
  * array on a table holding one row per 500-row chunk of every roster ever uploaded
  * is not something to write down.
@@ -218,7 +216,7 @@ const MAX_REPORTED_DUPLICATE_ROWS = 20;
  *
  * A literal fragment with no interpolated input, and it must stay byte-identical
  * to the expression indexed by `idx_agency_contacts_campaign_phone_digits`
- * (migration 087) — Postgres matches expression indexes structurally, so a stray
+ * — Postgres matches expression indexes structurally, so a stray
  * space or a `'[^\d]'` spelling costs the index and turns an agent's button press
  * into a scan of every contact in the campaign, silently.
  */
@@ -234,8 +232,7 @@ const CONTACT_PHONE_DIGITS_SQL = "regexp_replace(phone_e164, '[^0-9]', '', 'g')"
  * disposition, the fastest wrap-ups there are). `forced`, `agent_left` and
  * `campaign_stopped` are excluded: each measures a supervisor's patience, an
  * agent vanishing or a campaign ending, and all three move the average toward
- * "shorten the allotment" — the opposite of what those events mean. Migration
- * 088's header is the long form of this.
+ * "shorten the allotment" — the opposite of what those events mean.
  */
 const WRAPUP_MEASURED_RESOLUTIONS_SQL =
   "wrapup_resolution IN ('disposition_submitted','auto_return','agent_returned')";
@@ -335,7 +332,7 @@ const AGENCY_RESOLVED_ZONE_JOIN_SQL =
  * `attempts` / `connected` are plain counts; `successes` goes through
  * {@link successDispositionSql} so the campaign roll-up and every agent read
  * count the same conversion. The two durations are the ones with history, and both
- * comments below are load-bearing rather than decorative — see migration 088 and
+ * comments below are load-bearing rather than decorative — see
  * the reaper.
  *
  * ⚠️ Every column is cast `::text`. That is not cosmetic: node-pg returns `bigint`
@@ -360,7 +357,7 @@ const AGENCY_ATTEMPT_METRICS_SQL = `COUNT(*)::text AS attempts,
                   AND a.ended_at IS NOT NULL
                   AND a.outcome IS DISTINCT FROM 'orphaned'), 0)::text AS talk_seconds,
               -- MEASURED wrap-up, never the wrapup_seconds allotment copied from
-              -- the campaign at wrap-up entry (migration 088: averaging that hands
+              -- the campaign at wrap-up entry (averaging that hands
               -- the operator their own setting back as if it were evidence), and
               -- only the three resolutions that are evidence of how long wrap-up
               -- takes.
@@ -372,7 +369,7 @@ const AGENCY_ATTEMPT_METRICS_SQL = `COUNT(*)::text AS attempts,
 
 /**
  * A machine connect is an agent who sat through an answering machine, and the
- * only signal for it is the agent's own write-up: AMD is out of scope (D1), so
+ * only signal for it is the agent's own write-up: AMD is out of scope, so
  * nothing else in the system knows. Kept as one constant because the count, its
  * complement (`human_connects`) and both AHT variants must all agree on the same
  * code — a second spelling would put a voicemail in the human column and in the
@@ -438,7 +435,7 @@ const zeroAgentsByState = (): AgencyAgentsByState => ({
   break: 0,
 });
 
-// ─── Supervisor read surface — shared paging machinery (MAG-159) ────────────
+// ─── Supervisor read surface — shared paging machinery ────────────
 
 /**
  * Positional-parameter accumulator.
@@ -471,16 +468,16 @@ function params(): { values: unknown[]; add: (value: unknown) => string } {
  *
  * The expression is `CONTACT_PHONE_DIGITS_SQL`, reused rather than respelled so
  * it stays byte-identical to `idx_agency_contacts_campaign_phone_digits`
- * (migration 087) — Postgres matches expression indexes structurally, so a
+ * — Postgres matches expression indexes structurally, so a
  * different spelling of the same regex silently costs the index. With the
  * campaign predicate that makes the EXACT form an index scan.
  *
  * The SUFFIX form — "the last four digits", the useful partial shape, since
- * every stored value begins with a country code — is served by migration 095's
+ * every stored value begins with a country code — is served by
  * `idx_agency_contacts_phone_suffix`, which indexes the REVERSED digits: a
  * suffix search on a string is a prefix search on its reverse. Written naively
  * as `LIKE '%1234'` it was a 289ms parallel sequential scan of a 1M-row
- * campaign; through that index it is 1.0ms. See the plans in the MAG-159 PR.
+ * campaign; through that index it is 1.0ms.
  *
  * `alias` is the table holding `phone_e164` — `agency_contacts` in both reads,
  * reached through a join on the attempts side. Aliasing does not affect index
@@ -511,7 +508,7 @@ function phoneCondition(
     return `${digits} = ${p.add(term)}`;
   }
   // A suffix search on the number is a PREFIX search on its reverse, which is
-  // what `idx_agency_contacts_phone_suffix` (migration 095) indexes. Written as
+  // what `idx_agency_contacts_phone_suffix` indexes. Written as
   // `LIKE 'x%'` rather than a hand-rolled range so the planner does the
   // `~>=~ / ~<~` rewrite itself — getting the upper bound wrong by hand is a
   // silently short result set. The literal `%` is appended in SQL, so the
@@ -575,7 +572,7 @@ function contactFilterConditions(
 }
 
 /**
- * The DR-4 exclusion, as SQL. **Unconditional, and not driven by the selector.**
+ * The never-retried suppression exclusion, as SQL. **Unconditional, and not driven by the selector.**
  *
  * `suppressed_reason` has four values. Two of them are never retried, whatever a
  * selector says:
@@ -593,8 +590,8 @@ function contactFilterConditions(
  * things. A selector of `state: ['suppressed']` names neither and matches both,
  * which is why this arm cannot be conditional on what the selector said.
  *
- * ⚠️ **Scope, stated plainly:** the DNC list is checked at DIAL time, from Redis,
- * per attempt (`pre-dial-gates.ts`), so a number suppressed AFTER this roster was
+ * ⚠️ **Scope, stated plainly:** the DNC list is checked at DIAL time, from
+ * `dnc_entries` (decision B8), per attempt (`pre-dial-gates.ts`), so a number suppressed AFTER this roster was
  * seeded is still refused. This exclusion is about INTENT, not enforcement — it
  * stops the platform writing a roster row that says "we intend to call this
  * person", which is a different and worse artefact than a call that gets stopped.
@@ -607,8 +604,8 @@ function neverSeededSuppressionSql(alias: string): string {
   //
   // ⚠️ The obvious spelling — `${alias}.suppressed_reason = ANY('{dnc,invalid}')`
   // — is WRONG here, and it shipped. Callers use this predicate NEGATED
-  // (`NOT (...)`), and `suppressed_reason` is nullable with no default
-  // (073:34), so it is NULL for every contact that was never suppressed —
+  // (`NOT (...)`), and `suppressed_reason` is nullable with no default,
+  // so it is NULL for every contact that was never suppressed —
   // which is nearly the whole retryable roster.
   //
   // Three-valued logic then does this: `NULL = ANY(...)` is NULL, `NOT NULL` is
@@ -631,7 +628,7 @@ function neverSeededSuppressionSql(alias: string): string {
   // rule for this column, and this function departed from it.
   //
   // Pinned against a real database by `test/integration/agency/
-  // retry-seeding.integration.test.ts`. A text assertion cannot see this class
+  // agency-retry-seeding.test.ts`. A text assertion cannot see this class
   // of defect; do not "simplify" it back under one.
   return `COALESCE(${alias}.suppressed_reason, '') = ANY('{dnc,invalid}')`;
 }
@@ -682,7 +679,7 @@ function retrySelectionConditions(
     );
   }
 
-  // The two dimensions that are NOT contact filters (design §4.2). `pending`
+  // The two dimensions that are NOT contact filters. `pending`
   // contacts on a campaign that was stopped mid-run are the single most obvious
   // retry there is, and no combination of the closed vocabularies expresses
   // "nobody ever dialled these".
@@ -701,7 +698,7 @@ function retrySelectionConditions(
 
   // ── Never the contact we are calling RIGHT NOW ────────────────────────────
   //
-  // Unconditional, like DR-4's suppression exclude and for the same reason: it
+  // Unconditional, like the suppression exclude above and for the same reason: it
   // is a property of the row, not a dimension the operator chose.
   //
   // `claimDialable` flips `state → in_flight` when an attempt starts;
@@ -747,7 +744,7 @@ function retrySelectionConditions(
   //
   // Pinned against a real database, not against this string: the unit suite
   // asserts SQL TEXT and cannot see that `IS NULL` and `= 0` are both true of a
-  // live first dial. That is exactly how the NULL-unsafe DR-4 predicate
+  // live first dial. That is exactly how the NULL-unsafe suppression predicate
   // survived a green suite.
   conditions.push(`${alias}.state <> 'in_flight'`);
   conditions.push(
@@ -909,12 +906,12 @@ export class AgencyCampaignRepository {
     // on the whole expression. `update()` is unaffected throughout: it writes
     // `col = $n`, so the column supplies the type.
     //
-    // NOTE (drift): the defaults below duplicate migration 072's column defaults,
+    // NOTE (drift): the defaults below duplicate the schema's column defaults,
     // and `CAMPAIGN_CONFIG_COLUMN_DEFAULTS` in `src/agency/campaign-config.ts`
     // duplicates them a third time. Omitting the NULL columns from the INSERT
     // entirely and letting the DB defaults apply would collapse this copy — a
     // worthwhile follow-up, deliberately not bundled into a production hotfix.
-    // If you change a default here, change it in migration 072 too.
+    // If you change a default here, change it in the schema too.
     const { rows } = await getPool().query<AgencyCampaignRecord>(
       `INSERT INTO agency_campaigns
          (tenant_id, account_id, name, caller_ids, telephony_provider,
@@ -968,7 +965,7 @@ export class AgencyCampaignRepository {
    *
    * ── Why the exclusions are counted rather than simply not matched ──────────
    *
-   * `excluded` is the DR-4 rows the selector DID match. A supervisor who selects
+   * `excluded` is the never-retried suppressed rows the selector DID match. A supervisor who selects
    * "everything suppressed" and is handed 40 instead of 300 will report it as a
    * bug unless they are told the other 260 were DNC and invalid. So the
    * suppression arm is evaluated as a projection (`FILTER (WHERE …)`) rather than
@@ -1082,7 +1079,7 @@ export class AgencyCampaignRepository {
    * The child campaign row, its contacts and its `contacts_total` commit
    * together. A half-seeded retry campaign is the worst outcome available: it
    * looks startable and dials a subset nobody chose. There is also no campaign
-   * delete route in either service, so a bad partial result is not something the
+   * delete route, so a bad partial result is not something the
    * supervisor can clean up.
    *
    * Shape follows `applyIngestChunk` — `connect`/`BEGIN`/`ROLLBACK` on any throw/
@@ -1118,7 +1115,7 @@ export class AgencyCampaignRepository {
     selector: AgencyRetrySelector;
     /**
      * The MERGED, already-validated config columns: the parent's values with the
-     * request's `config_overrides` applied on top (DR-10).
+     * request's `config_overrides` applied on top.
      *
      * Merged by the ROUTE, not here, because the route is where the merged result
      * has to be run through `validateAgencyCampaignConfig` /
@@ -1131,14 +1128,13 @@ export class AgencyCampaignRepository {
     /**
      * The caller's idempotency key, or `null` for an unkeyed create.
      *
-     * Minted by the BROWSER when the retry dialog opens and forwarded verbatim
-     * by master (migration 115's header has the argument): a key minted per
-     * request, anywhere downstream, is a different value on the second attempt
-     * and protects nothing.
+     * Minted by the console when the retry dialog opens and passed through
+     * unchanged by the route: a key
+     * minted per request, anywhere downstream, is a different value on the second
+     * attempt and protects nothing.
      *
-     * `null` means no replay protection, which is the honest state for a caller
-     * that sends none — core's API answers a tenant API key directly, without
-     * traversing master, so an unkeyed create must still work.
+     * `null` means no replay protection: the route accepts a body with no
+     * `idempotency_key` and creates the retry unkeyed.
      */
     idempotencyKey: string | null;
   }): Promise<
@@ -1257,7 +1253,7 @@ export class AgencyCampaignRepository {
       // Every placeholder is BARE — no COALESCE anywhere — and that is deliberate
       // rather than incidental. A bare `$n` in `VALUES (...)` takes its type from
       // the target column; a `$n` inside `COALESCE(...)` does not, which is the
-      // 42804 that made `POST /agency-campaigns` fail outright in 1.73.1 (see
+      // 42804 that once made `POST /agency-campaigns` fail outright (see
       // `create()`'s header and `campaign-insert-param-types.test.ts`). There is
       // nothing to default here: the parent row supplies a value for every column,
       // so the defaults `create()` restates in SQL have no work to do and the
@@ -1265,7 +1261,7 @@ export class AgencyCampaignRepository {
       //
       // ── What is NOT copied, and why each one ────────────────────────────
       //
-      // `status` (the child starts `draft`, DR-9 — creation and starting stay
+      // `status` (the child starts `draft` — creation and starting stay
       // separate verbs, and it side-steps `uq_agency_campaign_running` at creation
       // time rather than failing the create for a reason that has nothing to do
       // with the retry), `started_at`, `ended_at`, `completed_at`,
@@ -1275,7 +1271,7 @@ export class AgencyCampaignRepository {
       // auto-pause record onto a campaign that has never dialled.
       //
       // `status` is omitted from the column list entirely rather than written as
-      // `'draft'`: 072's DEFAULT is `draft`, and naming it here would be a second
+      // `'draft'`: the column DEFAULT is `draft`, and naming it here would be a second
       // copy of that default with nothing keeping the two in step.
       const created = await client.query<AgencyCampaignRecord>(
         `INSERT INTO agency_campaigns
@@ -1307,16 +1303,16 @@ export class AgencyCampaignRepository {
           input.config.record_calls, input.config.analysis_profile_id, input.createdBy,
           input.config.abandon_announcement_id, input.config.abandonment_ceiling_pct,
           input.parent.id,
-          // The chain head. A generation-0 parent carries NULL here (migration 111
+          // The chain head. A generation-0 parent carries NULL here (it
           // deliberately does not stamp itself), so the child of a first retry gets
           // the parent's own id and every deeper generation inherits it unchanged.
           input.parent.root_campaign_id ?? input.parent.id,
           input.parent.retry_generation + 1,
-          // DR-5: the selector as a RECORD, never re-executed. Stored normalised
+          // The selector as a RECORD, never re-executed. Stored normalised
           // (see `parseRetrySelector`) so the agent's banner can be rendered from
           // it without re-parsing against a catalog it was not validated against.
           JSON.stringify(input.selector),
-          // Migration 115. NULL for an unkeyed caller, which the partial unique
+          // NULL for an unkeyed caller, which the partial unique
           // index treats as no constraint at all.
           input.idempotencyKey,
         ],
@@ -1326,7 +1322,7 @@ export class AgencyCampaignRepository {
       // ── The roster, in ONE statement ─────────────────────────────────────
       //
       // ⚠️ `source_row_number` IS DELIBERATELY NOT IN THIS COLUMN LIST, for the
-      // same reason it is absent from `applyIngestChunk`'s (085): 073's
+      // same reason it is absent from `applyIngestChunk`'s:
       // `uq_agency_contacts_source_row` is still live and partial on
       // `source_row_number IS NOT NULL`, so a row that stores NULL sits outside it.
       // Writing it here would make two seeded rows that happened to share a CSV
@@ -1340,10 +1336,10 @@ export class AgencyCampaignRepository {
       // bare, so only a content collision is swallowed and a genuine constraint
       // problem still throws — and the collision it swallows is real: a parent may
       // legitimately hold two byte-identical rows (the fingerprint index is
-      // per-campaign, and a pre-083 row carries NULL and sits outside it), which
+      // per-campaign, and a row with a NULL fingerprint sits outside it), which
       // would otherwise 23505 the transaction.
       //
-      // ── The omitted columns are the DR-2 reset ──────────────────────────
+      // ── The omitted columns are the retry reset ─────────────────────────
       //
       // `state`, `attempt_count`, `our_fault_attempts`, `next_attempt_at`,
       // `last_outcome`, `last_disposition` and `suppressed_reason` are all absent
@@ -1357,13 +1353,13 @@ export class AgencyCampaignRepository {
       // campaigns is nine our-fault redials on one number. The bound exists to stop
       // one broken agent workstation redialling without limit inside a single run,
       // which a supervisor deliberately authoring a second campaign is not; but it
-      // is now technically reachable and design §7.3 flags it for the compliance
-      // decision rather than quietly shipping it. Do not "fix" it by carrying the
+      // is now technically reachable, and it is left as an open compliance
+      // decision rather than quietly settled here. Do not "fix" it by carrying the
       // counter across — that is a decision about a regulation nobody has
       // established, not an implementation detail.
       //
       // `root_contact_id` is passed through explicitly, which is what makes a
-      // generation-3 contact still point at generation 0; migration 112's trigger
+      // generation-3 contact still point at generation 0; `trg_agency_contacts_root`
       // only fires when the column arrives NULL, so it leaves these rows alone.
       const seedParams = params();
       const childId = seedParams.add(campaign.id);
@@ -1453,7 +1449,7 @@ export class AgencyCampaignRepository {
   /**
    * The campaign a spent retry idempotency key already created, if any.
    *
-   * Scoped to tenant AND account, matching the index's scope (migration 115).
+   * Scoped to tenant AND account, matching the index's scope.
    * Both halves matter and for different reasons: a key from another tenant is a
    * different intent that happens to collide, and a key from a sibling ACCOUNT is
    * a different customer's desk — answering it with this row would hand that
@@ -1480,7 +1476,7 @@ export class AgencyCampaignRepository {
    *
    * ── `COALESCE(root_campaign_id, id)`, on BOTH sides ───────────────────────
    *
-   * Migration 111 deliberately leaves `root_campaign_id` NULL on a generation-0
+   * `root_campaign_id` is deliberately left NULL on a generation-0
    * campaign (stamping it would need a trigger on `agency_campaigns` or a backfill
    * that restamps `updated_at` on every row, and unlike the contacts case this
    * read is not on the dial hot path). So the chain head is
@@ -1496,8 +1492,7 @@ export class AgencyCampaignRepository {
    * distinction the payload already carries in its length.
    *
    * Tenant- and account-scoped like every other campaign read, and the scoping is
-   * what bounds the scan: there is no index on `root_campaign_id` (111's header
-   * says why — an account holds campaigns in the hundreds and an expression
+   * what bounds the scan: there is no index on `root_campaign_id` (an account holds campaigns in the hundreds and an expression
    * comparison would not use one anyway).
    */
   async campaignLineage(
@@ -1582,12 +1577,12 @@ export class AgencyCampaignRepository {
       'wrapup_seconds', 'wrapup_auto_return', 'retry_policy', 'disposition_catalog',
       'break_reasons',
       'context_display', 'record_calls', 'analysis_profile_id',
-      // `AD-P4-C-02` acceptance (d): the ceiling is an operator setting, so it is
+      // The abandonment ceiling is an operator setting, so it is
       // patchable on a live campaign. NOT nullable — the column is NOT NULL with
       // a DEFAULT, so "unset it" means "put it back to the default", which the
       // caller expresses by sending the default rather than by sending null.
       'abandonment_ceiling_pct',
-      // `AD-P2-C-05`. Patchable, and `null` legitimately clears it back to
+      // The abandon announcement. Patchable, and `null` legitimately clears it back to
       // "hang up without an apology" — so this key must survive `v === undefined`
       // filtering below, which it does, and must not be defaulted anywhere.
       'abandon_announcement_id',
@@ -1612,19 +1607,19 @@ export class AgencyCampaignRepository {
    * Supervisor dashboard payload. Two round trips: every scalar aggregate in one
    * statement, plus the agent roster.
    *
-   * **Typed against the contract on purpose** (`AD-P4-C-04`). This returned
+   * **Typed against the contract on purpose.** This returned
    * `Record<string, number>` while `AgencyCampaignStats` declared three fields as
    * REQUIRED that no line here produced — `abandoned_24h`, `answered_24h` and
    * `abandonment_rate_24h_pct`. An index signature satisfies every field name, so
    * the compiler cheerfully agreed the contract was met and every consumer read
-   * `undefined` off a field typed non-optional. `AD-P4-C-02`'s auto-pause is
+   * `undefined` off a field typed non-optional. The abandonment auto-pause is
    * specified against `abandonment_rate_24h_pct`, and `undefined > ceiling` is
    * `false` — the guardrail would have read as present in review and never fired.
    * The `Omit` is what makes a future required field a compile error here instead:
    * the route supplies `campaign_id`/`status`, this method owes the rest.
    *
    * The 24h numbers are derived **from `agency_call_attempts`, not from the
-   * metric counters** (`AD-P2-C-06` acceptance (b), restated by `MAG-45`): a
+   * metric counters**: a
    * metric counter is process-local, so a regulatory window cannot be rebuilt
    * from a replica that started five minutes ago, and the counter under-reports by
    * construction (see `isAbandonedAttempt`'s header). This reads the same
@@ -1640,7 +1635,7 @@ export class AgencyCampaignRepository {
    * against a window one tick later than its denominator is how a rate briefly
    * exceeds 100% and trips a guardrail on arithmetic alone.
    *
-   * The roster is the deliberate second statement (`AD-P4-C-01`). It is
+   * The roster is the deliberate second statement. It is
    * set-returning and there is no honest way to fold rows into a list of scalars;
    * it also carries no rate whose halves could disagree.
    */
@@ -1665,7 +1660,7 @@ export class AgencyCampaignRepository {
          (SELECT COUNT(*) FROM agency_call_attempts WHERE campaign_id = $1 AND state <> 'ended')::text AS attempts_live,
          (SELECT COUNT(*) FROM agency_call_attempts WHERE campaign_id = $1)::text AS attempts_total,
          (SELECT COUNT(*) FROM agency_call_attempts WHERE campaign_id = $1 AND outcome = 'connected')::text AS attempts_connected,
-         -- Dials that were NOT a contact's first (ClickUp 86d45k0bk item 3).
+         -- Dials that were NOT a contact's first.
          --
          -- A different question from retries_pending two lines up, and the pair
          -- is the one most likely to be read as one number: that counts contacts
@@ -1676,7 +1671,7 @@ export class AgencyCampaignRepository {
          -- everybody first time.
          --
          -- attempt_number is the attempts table's own counter, derived at insert
-         -- from MAX(attempt_number) over the contact's rows (AD-P2-C-12), NOT
+         -- from MAX(attempt_number) over the contact's rows, NOT
          -- from agency_contacts.attempt_count — the two were decoupled on
          -- purpose, and the consequence here is that an OUR-FAULT redial (a dropped
          -- station socket, a reaper requeue) is counted even though it never spent
@@ -1707,7 +1702,7 @@ export class AgencyCampaignRepository {
               AND answered_at > now() - ($2 || ' hours')::interval
               AND (${ABANDONED_ATTEMPT_PREDICATE_SQL}))::text AS abandoned_24h,
 
-         -- ── Flow, over the campaign's lifetime (AD-P4-C-01 §C.3) ───────────
+         -- ── Flow, over the campaign's lifetime ─────────────────────────────
          --
          -- bridged_at IS NOT NULL is the denominator gate throughout, NOT
          -- outcome = 'connected'. bridged_at is the instant media actually
@@ -1738,11 +1733,10 @@ export class AgencyCampaignRepository {
               AND bridged_at IS NOT NULL
               AND disposition_code = $3)::text AS machine_connects,
 
-         -- Conversions -- the is_success flag, counted for the first time. It
-         -- has existed on every catalog entry since migration 072 and NOTHING
-         -- read it: its only other reference in core is a type check in the
-         -- config validator, so the platform confirmed the operator's answer was
-         -- a boolean and then threw it away.
+         -- Conversions -- the is_success flag. It is on every catalog entry,
+         -- and its only other reader is a type check in the config validator:
+         -- without this count the operator's answer would be confirmed as a
+         -- boolean and then thrown away.
          --
          -- See successDispositionSql for the two shape decisions the predicate
          -- rests on: EXISTS rather than a JOIN (which would double-count a
@@ -1771,8 +1765,8 @@ export class AgencyCampaignRepository {
          -- AHT is ended_at - bridged_at: the AGENT's leg. Deliberately not the
          -- persisted talk_seconds, which is anchored on answered_at (the
          -- carrier's answer) and is nonzero even when no agent ever bridged —
-         -- an abandoned attempt settles carrying the apology clip's talk time
-         -- (MAG-119). Averaging that would fold ring-to-bridge latency and
+         -- an abandoned attempt settles carrying the apology clip's talk time.
+         -- Averaging that would fold ring-to-bridge latency and
          -- abandoned calls into the one number whose purpose is agent work.
          -- outcome <> 'orphaned' on both: the reaper settles a crash-orphaned
          -- attempt with ended_at = now() AT SWEEP TIME, so a conversation whose
@@ -1793,14 +1787,13 @@ export class AgencyCampaignRepository {
 
          -- Measured wrap-up, never the configured allotment. wrapup_seconds is
          -- what was OWED, copied from the campaign at wrap-up entry, so averaging
-         -- it hands the operator their own setting back as if it were evidence
-         -- (migration 088).
+         -- it hands the operator their own setting back as if it were evidence.
          (SELECT AVG(EXTRACT(EPOCH FROM (wrapup_ended_at - wrapup_started_at))) FROM agency_call_attempts
             WHERE campaign_id = $1
               AND wrapup_started_at IS NOT NULL
               AND wrapup_ended_at IS NOT NULL
               AND ${WRAPUP_MEASURED_RESOLUTIONS_SQL})::text AS avg_wrapup_seconds,
-         -- The campaign's own ceiling (AD-P4-C-02 (d)). A subquery rather than a
+         -- The campaign's own ceiling. A subquery rather than a
          -- join because every other line here is one, and the row is already in
          -- cache from the route's ownership check a moment earlier.
          (SELECT abandonment_ceiling_pct FROM agency_campaigns
@@ -1862,10 +1855,9 @@ export class AgencyCampaignRepository {
       attempts_live: num('attempts_live'),
       attempts_total: attemptsTotal,
       attempts_connected: num('attempts_connected'),
-      // ALWAYS emitted, even though the contract types it optional. The `?` is
-      // there for a master/console talking to a core that predates the field;
-      // this core has it, so omitting it would make "absent" ambiguous between
-      // "old core" and "zero redials" — and `campaign-stats-contract.test.ts`
+      // ALWAYS emitted, even though the contract types it optional: omitting it
+      // would make "absent" ambiguous with "zero redials" — and
+      // `campaign-stats-contract.test.ts`
       // asserts the produced key set against the field roster, so a conditional
       // spread here would red that suite rather than shipping quietly.
       attempts_retried: num('attempts_retried'),
@@ -1878,7 +1870,7 @@ export class AgencyCampaignRepository {
       // trusted before it has measured anything.
       abandonment_rate_24h_pct: abandonmentRatePct({ answered: answered24h, abandoned: abandoned24h }),
 
-      // ── AD-P4-C-01: the supervisor dashboard ──────────────────────────────
+      // ── The supervisor dashboard ──────────────────────────────────────────
       agents,
       // Tallied from the roster rather than read as its own `GROUP BY`, so the
       // breakdown and the floor beside it are the same observation of the same
@@ -1887,7 +1879,7 @@ export class AgencyCampaignRepository {
       // states because a missing key is indistinguishable from zero to a consumer,
       // and the console renders all six.
       agents_by_state: agents.reduce<AgencyAgentsByState>((acc, agent) => {
-        // Guarded rather than blind. Migration 074's CHECK and the union agree
+        // Guarded rather than blind. The state CHECK and the union agree
         // today; if a seventh state is ever added to one and not the other, an
         // invented key here is one the console's exhaustive switch cannot render,
         // and the six it does promise would all still be present — so nothing
@@ -1896,7 +1888,7 @@ export class AgencyCampaignRepository {
         // `Object.hasOwn`, not `in`: `in` walks the prototype chain, so a state
         // literally named `constructor` or `toString` would pass the guard and
         // then do `Object.prototype.toString + 1` → a NaN own-property on the
-        // payload. Unreachable through migration 074's CHECK, but the guard did
+        // payload. Unreachable through the state CHECK, but the guard did
         // not do what its comment claimed.
         if (Object.hasOwn(acc, agent.state)) acc[agent.state] += 1;
         return acc;
@@ -1917,7 +1909,7 @@ export class AgencyCampaignRepository {
       aht_seconds: avg('aht_seconds'),
       aht_seconds_including_machine: avg('aht_seconds_including_machine'),
       avg_wrapup_seconds: avg('avg_wrapup_seconds'),
-      // The CAMPAIGN's ceiling (`AD-P4-C-02` acceptance (d)), not the constant.
+      // The CAMPAIGN's ceiling, not the constant.
       // Serving the constant here while the guardrail fired on the column would
       // draw the dashboard's threshold in a different place from the line that
       // actually pauses the campaign — the exact drift
@@ -1931,7 +1923,7 @@ export class AgencyCampaignRepository {
   }
 
   /**
-   * The floor, one row per LIVE agent session on this campaign (§C.4).
+   * The floor, one row per LIVE agent session on this campaign.
    *
    * Unsorted on purpose: the console orders by RISK — longest in `wrapup`, longest
    * on a break, idle longest — and those rules change with the UI, so a server-side
@@ -1950,9 +1942,9 @@ export class AgencyCampaignRepository {
       break_reason: string | null;
       calls_handled: string;
     }>(
-      // `calls_handled` counts by `reserved_agent_id`, which is a SESSION id
-      // (migration 079), so this is the attempts handled in THIS session — what
-      // §C.4 asks for, and what makes an agent who rejoined after a shift start
+      // `calls_handled` counts by `reserved_agent_id`, which is a SESSION id,
+      // so this is the attempts handled in THIS session — what
+      // the floor shows, and what makes an agent who rejoined after a shift start
       // from zero rather than inheriting the morning's count.
       //
       // A LEFT JOIN so an agent who has handled nothing is still on the floor:
@@ -1979,7 +1971,7 @@ export class AgencyCampaignRepository {
 
     return rows.map((r) => ({
       // Already in the `GROUP BY`; it was one projection short of the wire, and the
-      // omission would have surfaced as an unwireable button in cusui rather than
+      // omission would have surfaced as an unwireable button in the console rather than
       // as anything failing here.
       session_id: r.session_id,
       agent_user_id: r.agent_user_id,
@@ -2110,8 +2102,8 @@ export class AgencyCampaignRepository {
    * `c.tenant_id`/`c.account_id` in `camp` AND in `agg`. Redundant, because the
    * route ran `requireOwned` first and `agg` filters on the same campaign id — and
    * kept, because it is the WHERE clause that separates two accounts' campaign
-   * data, and a caller reaching this method without the route's check (a future S2S
-   * surface, a test) must not get an answer for someone else's campaign.
+   * data, and a caller reaching this method without the route's check (a future
+   * route, a test) must not get an answer for someone else's campaign.
    */
   async statsSeries(
     scope: { tenantId: string; accountId: string },
@@ -2247,20 +2239,19 @@ export class AgencyCampaignRepository {
   /**
    * Move a campaign to a new status. Returns the updated row, or null when the
    * `from` guard did not match — which is how the pacing leader's exclusive claim
-   * on `running → completed` / `stopping → stopped` is enforced (§5.3: exactly one
+   * on `running → completed` / `stopping → stopped` is enforced (exactly one
    * writer, no race with the supervisor's controls).
    *
-   * ── The lifecycle stamps are DERIVED FROM `to`, not passed in (migration 108) ─
+   * ── The lifecycle stamps are DERIVED FROM `to`, not passed in ─
    *
-   * `started_at` and `ended_at`/`completed_at` used to arrive as a `patch` the
-   * caller assembled, and that is what made `started_at` wrong: the routes passed
-   * `{ started_at: new Date() }` on `/resume` as well as `/start`, and the UPDATE
-   * said `COALESCE($n, started_at)` — new value FIRST — so every resume overwrote
-   * the original. A campaign that began at 09:00, paused for lunch and resumed at
-   * 14:05 reported 14:05, and any elapsed-time reading of it was short by the
-   * morning.
+   * `started_at` and `ended_at`/`completed_at` are not a `patch` the caller
+   * assembles. Were the routes to pass `{ started_at: new Date() }` on `/resume`
+   * as well as `/start` with `COALESCE($n, started_at)` — new value FIRST — every
+   * resume would overwrite the original: a campaign that began at 09:00, paused
+   * for lunch and resumed at 14:05 would report 14:05, and any elapsed-time
+   * reading of it would be short by the morning.
    *
-   * Both are now computed here from the TARGET STATUS. That is not tidying: it
+   * Both are computed here from the TARGET STATUS. That is not tidying: it
    * moves the invariant from "what four call sites remember to pass" to a property
    * of the single statement that moves a status, so a fifth transition route
    * cannot reintroduce the bug by forgetting a parameter — there is no parameter
@@ -2273,8 +2264,8 @@ export class AgencyCampaignRepository {
    *     COALESCE is belt-and-braces rather than load-bearing; it costs nothing and
    *     it means a future re-open cannot silently restamp an end that happened.
    *   * `completed_at` — the LEGACY spelling of `ended_at`, written from the SAME
-   *     `CASE` so the two cannot drift. See migration 108 for why it is retained
-   *     rather than dropped, and why its name is wrong for a `stopped` campaign.
+   *     `CASE` so the two cannot drift. It is retained because it is already
+   *     on the wire, and its name is wrong for a `stopped` campaign.
    *
    * `now()` rather than a JS `Date`: it is the statement timestamp, so these
    * stamps and `updated_at` are the same instant by construction instead of two
@@ -2302,7 +2293,7 @@ export class AgencyCampaignRepository {
   ): Promise<AgencyCampaignRecord | null> {
     // Pause metadata is written UNCONDITIONALLY, never COALESCE'd, because every
     // transition has an opinion about it and "leave whatever was there" is wrong
-    // for all of them (`AD-P4-C-02`). A resume that preserved `pause_reason`
+    // for all of them. A resume that preserved `pause_reason`
     // would leave a running campaign claiming to be paused for a breach, and the
     // health strip's top-priority diagnosis reads exactly that field. Moving to
     // `paused` is a supervisor action by construction — the guardrail's own
@@ -2311,9 +2302,9 @@ export class AgencyCampaignRepository {
     const pausing = to === 'paused';
     const { rows } = await getPool().query<AgencyCampaignRecord>(
       `UPDATE agency_campaigns
-          -- The cast on the assignment is LOAD-BEARING, not decoration (AD-P4-C-02).
-          -- $3 is used twice over: as the value assigned to status (VARCHAR(20) per
-          -- 072, so Postgres deduces character varying) and in the five untyped
+          -- The cast on the assignment is LOAD-BEARING, not decoration.
+          -- $3 is used twice over: as the value assigned to status (VARCHAR(20) in
+          -- the baseline schema, so Postgres deduces character varying) and in the five untyped
           -- literal comparisons below, which deduce text. Without the cast the two
           -- deductions collide and the statement does not PARSE --
           -- 42P08 inconsistent types deduced for parameter $3, raised before any row
@@ -2329,7 +2320,7 @@ export class AgencyCampaignRepository {
                               ELSE ended_at END,
               -- The legacy spelling, from the SAME condition rather than a second
               -- one — two CASEs is how the pair comes to disagree on a status
-              -- someone adds to one list and not the other (migration 108).
+              -- someone adds to one list and not the other.
               completed_at = CASE WHEN $3 IN ('completed','stopped')
                                   THEN COALESCE(completed_at, now())
                                   ELSE completed_at END,
@@ -2380,7 +2371,7 @@ export class AgencyCampaignRepository {
   }
 
   /**
-   * The SQL half of §C.2's health strip (`AD-P4-C-01`).
+   * The SQL half of the supervisor dashboard's health strip.
    *
    * Separate from {@link stats} on purpose. `stats()` is the numbers a supervisor
    * reads; this is the evidence behind a *diagnosis*, it is only consulted when the
@@ -2475,7 +2466,7 @@ export class AgencyCampaignRepository {
   }
 
   /**
-   * Pause a campaign because its rolling rate crossed its ceiling (`AD-P4-C-02`).
+   * Pause a campaign because its rolling rate crossed its ceiling.
    *
    * **A conditional claim, not a read-then-write.** The abandonment refresh is a
    * per-replica `setInterval`, so every replica evaluates the same breach in the
@@ -2500,7 +2491,7 @@ export class AgencyCampaignRepository {
               pause_reason = 'abandonment_ceiling',
               paused_at = now(),
               pause_abandonment_rate_pct = $2,
-              -- CLEARED, not left alone (migration 108). This is the one
+              -- CLEARED, not left alone. This is the one
               -- transition with no human behind it at all, so
               -- last_transition_by must read null — "we do not know who", the
               -- documented meaning. Preserving whatever was there would leave the
@@ -2524,7 +2515,7 @@ export class AgencyCampaignRepository {
    * in flight, none connected-but-undispositioned. Note this is genuinely
    * different from "list exhausted": `next_attempt_at` can be hours out, so the
    * supervisor dashboard shows *contacts remaining* and *retries pending*
-   * separately (§5.3).
+   * separately.
    */
   async countOutstanding(campaignId: string): Promise<number> {
     const { rows } = await getPool().query<{ n: string }>(
@@ -2562,7 +2553,8 @@ export class AgencyCampaignRepository {
 
   /**
    * Campaigns that would break if this analysis profile stopped being usable —
-   * the read half of Q3's reference check (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
+   * the read half of the reference check that lets a live campaign veto removing
+   * the profile it depends on.
    *
    * `agency_campaigns.analysis_profile_id` is **live configuration**: the pacing
    * engine passes it into `createBridgedCall` on every dial, which stamps it onto
@@ -2574,11 +2566,10 @@ export class AgencyCampaignRepository {
    * the check cannot live on the read side instead: by the time that gate runs,
    * "gone" and "retired but still resolvable" look nothing alike.
    *
-   * Contrast `webrtc_calls.analysis_profile_id`, which carries no dependency worth
-   * guarding. Note the reason carefully, because migration 059's own comment gets
-   * it wrong and an earlier draft of this one repeated the mistake: that column IS
-   * re-read at run time — `webrtc-bridge-manager.ts` resolves a profile from it at
-   * end of call. What makes it safe is that it is read exactly once, minutes after
+   * Contrast `agency_calls.analysis_profile_id`, which carries no dependency worth
+   * guarding. Note the reason carefully, because the column's own comment in the
+   * baseline gets it wrong: that column IS re-read at run time —
+   * `bridge-analysis-hooks.ts` resolves a profile from it at end of call. What makes it safe is that it is read exactly once, minutes after
    * intake, through the UNSCOPED `findById`, which ignores `is_active` — so a
    * concurrent retire cannot break it. The call snapshots the pre-edit version,
    * which is precisely what provenance wants.
@@ -2594,8 +2585,8 @@ export class AgencyCampaignRepository {
    * campaign in a refusal body would be a worse bug than the one being reported.
    *
    * **No foreign key, and this is not a stand-in for one.** The link is un-FK'd on
-   * purpose — migration 072 declares `analysis_profile_id UUID` with no
-   * `REFERENCES`, following the posture §7 and migration 076 set for this whole
+   * purpose — `analysis_profile_id` is declared `UUID` with no
+   * `REFERENCES`, the posture taken for this whole
    * subsystem — so the check is advisory by construction: a campaign committed
    * between this read and the caller's write is invisible to it. A lock has been
    * proposed for it more than once in review, so the reasons not to take one are
@@ -2604,10 +2595,9 @@ export class AgencyCampaignRepository {
    * *The cost.* Closing the window means every writer of
    * `agency_campaigns.analysis_profile_id` — the campaign POST and PATCH in
    * `agency-campaigns.routes.ts` today, and every future one — taking a row lock on
-   * `call_analysis_profiles`, a table the primary app owns, inside its own write.
-   * That is the cross-product coupling the un-FK'd link exists to avoid, bought
-   * back by hand and in the harder-to-see direction: an agency write blocking on a
-   * lock in the AI product's table.
+   * `call_analysis_profiles` inside its own write. That is the coupling the
+   * un-FK'd link exists to avoid, bought back by hand and in the harder-to-see
+   * direction: a campaign write blocking on a lock held by a profile edit.
    *
    * *The size.* The window is the gap from this read to the mutation committing —
    * one round trip for the `retire`/`edit` path, two when the caller also takes the
@@ -2678,7 +2668,7 @@ export class AgencyCampaignRepository {
    * the account default.
    *
    * ── Why this is a second, separate question ────────────────────────────────
-   * `analysis_profile_id` on a campaign is OPT-IN — migration 072 gives it no
+   * `analysis_profile_id` on a campaign is OPT-IN — it has no
    * default, so `NULL` is the ordinary case. And the end-of-call gate resolves
    * `explicit id → account default → none` (`webrtc-bridge-manager.ts`). So a
    * campaign with a NULL reference is not a campaign with no dependency; it is a
@@ -2746,10 +2736,10 @@ export class AgencyContactRepository {
    * `FOR UPDATE SKIP LOCKED` is the correctness mechanism, not an optimisation:
    * with it, even a split-brain window — GC pause, partition, clock skew — cannot
    * hand the same contact to two leaders. The Redis leader lease is only the
-   * efficiency mechanism that stops us doing the work twice (§4.1).
+   * efficiency mechanism that stops us doing the work twice.
    *
    * The first three terms are exactly what `idx_agency_contacts_dialable` serves,
-   * which is why anything not dialable right now must not satisfy them (§4.2).
+   * which is why anything not dialable right now must not satisfy them.
    *
    * ── The fourth term, and why it is NOT in the index ──────────────────────
    *
@@ -2769,14 +2759,15 @@ export class AgencyContactRepository {
    * `idx_agency_contacts_dialable` for `campaign_id`/`state`/`next_attempt_at`
    * and applies this one as a filter on the tuples it returns. Narrowing the
    * index's own predicate to match would mean `DROP INDEX` + `CREATE INDEX`
-   * under `ACCESS EXCLUSIVE` inside the startup migration transaction (087
-   * records why `CONCURRENTLY` is not available here) — blocking THE hot dialing
+   * under `ACCESS EXCLUSIVE` inside the startup migration transaction (where
+   * `CONCURRENTLY` is not available) — blocking THE hot dialing
    * query on up to 1M rows — to remove a handful of rows from an index. The rows
    * this term excludes are ones the `markState` guard makes impossible to create
    * going forward, so the selectivity won back is ~zero and the lock is not.
    *
    * That does mean the predicate is no longer *identical* to the index's, which
-   * is a real weakening of the §4.2 rule as stated. The rule that still holds,
+   * is a real weakening of the rule that the claim's predicate IS the index's.
+   * The rule that still holds,
    * and the one to check a future term against: every term must either be served
    * by the index or be cheap to evaluate on an already-narrowed row set. A term
    * that is neither belongs in the index, migration cost and all.
@@ -2803,7 +2794,7 @@ export class AgencyContactRepository {
    * Return a claimed contact to the pool.
    *
    * `nextAttemptAt` must move the clock forward for any condition that has NOT
-   * cleared (§4.2). A contact returned with `now()` because it was outside its
+   * cleared. A contact returned with `now()` because it was outside its
    * calling window is re-claimed on the very next tick, and a campaign whose
    * contacts are all out of hours spins at 4 claims/second all night burning agent
    * reservations on calls it will never place.
@@ -2818,8 +2809,7 @@ export class AgencyContactRepository {
   }
 
   /**
-   * Charge one attempt against a contact's retry budget and report the new total
-   * (`AD-P3-C-01`).
+   * Charge one attempt against a contact's retry budget and report the new total.
    *
    * Exists because the outcome policy needs the **post-bump** count and `markState`
    * bumps inside its own `UPDATE`, returning nothing — so a caller that both bumps
@@ -2848,9 +2838,9 @@ export class AgencyContactRepository {
   }
 
   /**
-   * Charge one OUR-FAULT redial and report the new total (`AD-P3-C-09`, MAG-97).
+   * Charge one OUR-FAULT redial and report the new total.
    *
-   * The deliberate omission is `attempt_count`. This is the whole ticket: an
+   * The deliberate omission is `attempt_count`. This is the whole point: an
    * agent's socket dropping before the call bridged, or our own replica dying
    * mid-attempt, must not spend the CUSTOMER's retry allowance — with
    * `max_attempts: 3`, three of our faults would otherwise retire someone whose
@@ -2890,15 +2880,16 @@ export class AgencyContactRepository {
    * `DEFAULT_RETRY_POLICY` carries `agent_disconnected: { 5min, ×3 }` and
    * `orphaned: { 0min, ×3 }`, so `resolveRetryDecision` and
    * `resolveOurFaultRedial` both answer `pending`; `claimDialable` used to gate on
-   * `state = 'pending'` alone. The customer who said "stop calling me" is dialled
-   * again from the same campaign inside five minutes, with `dnc_recorded: true`
-   * and every dashboard green.
+   * `state = 'pending'` alone. The roster then hands the customer who said "stop
+   * calling me" back to the same campaign's dialer inside five minutes, with
+   * `dnc_recorded: true` and every dashboard green.
    *
-   * It is specifically THIS change's defect. A mark used to write a TENANT-WIDE
-   * `dnc_entries` row, which reached the flat `dnc:{tenantId}` set, so the
-   * pre-dial `SISMEMBER` caught the resurrected contact. Scoping the mark to the
-   * campaign removes that backstop by design (§2.3) — for the marked contact the
-   * blast radius is strictly LARGER after the scoping change, not smaller.
+   * The dial-time check also refuses that number: `markDnc` writes a
+   * campaign-scoped `dnc_entries` row in the mark's own transaction (decision B8),
+   * and `DncRegistry.check` widens by scope, so the pre-dial gate suppresses the
+   * contact before a dial. This guard is the roster-side half and must hold on its
+   * own: without it the contact row says `pending` for a number the list refuses,
+   * and every reader of the roster sees a dialable contact.
    *
    * ── Why the guard is keyed on the REASON ──────────────────────────────────
    *
@@ -2984,8 +2975,8 @@ export class AgencyContactRepository {
    *     be guarded by it.
    *   * `applyIngestChunk` — INSERTs new rows at the `pending` column default. Out
    *     of scope by construction: a re-uploaded roster row is a NEW contact with
-   *     no reason to freeze, and master's `dnc_entries` is what covers a re-upload.
-   *     This is the gap the abandoned-mark alert in `dnc-mark.ts` is about.
+   *     no reason to freeze, and the dial-time read of `dnc_entries` is what
+   *     covers a re-upload.
    */
   async markState(
     contactId: string,
@@ -3071,38 +3062,37 @@ export class AgencyContactRepository {
 
   /**
    * Suppress EVERY roster row in this campaign that carries this number — not
-   * just the one an attempt points at (MAG-1xx, campaign-scoped DNC).
+   * just the one an attempt points at.
    *
    * ── Why this exists, and what breaks without it ──────────────────────────
    *
-   * A mark-DNC used to be enforced twice: `markState(attempt.contact_id, …)`
-   * took ONE row off this campaign's roster, and master's tenant-wide
-   * `dnc_entries` row reached the flat `dnc:{tenantId}` set and stopped the
-   * number being dialed **anywhere**, including from a second row in this same
-   * campaign. Now that the mark is campaign-scoped, that second mechanism no
-   * longer covers the first's blind spot, and the by-contact-id write becomes
-   * the ONLY in-campaign enforcement there is.
+   * `markState(attempt.contact_id, …)` takes ONE row off this campaign's
+   * roster. The `dnc_entries` row `markDnc` writes in the same transaction
+   * (decision B8) stops the dial-time check passing the number for the whole
+   * campaign, but it does not touch the roster: a second row with the same number
+   * would stay `pending`, and every reader of the roster would count it dialable.
    *
-   * The blind spot is not hypothetical. Migration 073 refuses a
+   * That second row is not hypothetical. The schema refuses a
    * `UNIQUE (campaign_id, phone_e164)` **on purpose** — "two people on one
    * household landline, two contacts behind one company switchboard, a shared
    * family mobile" are legitimate rows and dropping one is data loss — so one
    * campaign holding the same number twice is a supported, common state. Suppress
-   * only the dialled row and the duplicate stays `pending` and is dialled: a
-   * customer who said "stop calling me" rung again, from the same campaign, with
-   * every dashboard green.
+   * only the dialled row and the duplicate stays `pending`: the roster goes on
+   * offering a customer who said "stop calling me" to the same campaign, with
+   * every dashboard green, and only the dial-time check stands between that row
+   * and a call.
    *
    * DNC is a property of the NUMBER, never of the roster row, which is why every
-   * row matching it goes — the previous behaviour (the tenant-wide set) blocked
-   * that number across every campaign, so suppressing the duplicates HERE is
-   * strictly narrower than what shipped before, not broader.
+   * row matching it goes. That is no broader than the mark itself: the
+   * campaign-scoped `dnc_entries` row already blocks the number across this
+   * whole campaign.
    *
    * ── Matching: `normalizeE164`, in TypeScript, deliberately ────────────────
    *
    * `phone_e164` is stored **as the roster gave it** — `applyIngestChunk` inserts
-   * master's string verbatim and there is no normalizing trigger or CHECK on the
-   * column, which is exactly why `markDncOnMaster` normalizes before forwarding
-   * and why the pre-dial gate normalizes before checking. So this cannot compare
+   * the ingest's string unchanged and there is no normalizing trigger or CHECK on
+   * the column, which is exactly why `markDnc` normalizes before storing and why
+   * the pre-dial gate normalizes before checking. So this cannot compare
    * `phone_e164 = $x`; `+1 (415) 555-0100` and `+14155550100` are the same number
    * and different strings.
    *
@@ -3117,8 +3107,8 @@ export class AgencyContactRepository {
    * What SQL does instead is a strictly LOOSER prefilter — "same digits, ignoring
    * every non-digit" — which is a provable superset of what `normalizeE164` can
    * match (anything it normalizes contains only digits, `+`, spaces, `-`, `(`,
-   * `)`), and is index-backed by `idx_agency_contacts_campaign_phone_digits`
-   * (migration 087). The narrow, exact decision stays in TypeScript. Keep the
+   * `)`), and is index-backed by `idx_agency_contacts_campaign_phone_digits`.
+   * The narrow, exact decision stays in TypeScript. Keep the
    * expression below byte-identical to that index's or the plan silently degrades
    * to a scan.
    *
@@ -3126,15 +3116,15 @@ export class AgencyContactRepository {
    *
    * An unlocked SELECT then a second UPDATE lets {@link claimDialable} take a
    * duplicate BETWEEN the two. The tick already holds that contact in memory,
-   * and the pre-dial DNC gate only consults the tenant-flat Redis set, which a
-   * campaign-scoped mark never enters — so that press still places the call.
-   * That is the duplicate-row hole this method exists to close.
+   * and its pre-dial check reads `dnc_entries` as committed, so a check that runs
+   * before the mark's transaction commits does not see the new row — that press
+   * still places the call. That is the duplicate-row hole this lock closes.
    *
    * `FOR UPDATE` (not `SKIP LOCKED`) holds every candidate until the UPDATE
    * commits. `claimDialable` uses `SKIP LOCKED`, so it skips a row we hold
    * rather than waiting, and cannot take it. We wait if a claim is already in
    * flight, then suppress the now-`in_flight` row; that one call may still
-   * complete (the tick has it in memory — the residual the PR recorded), but
+   * complete (the tick has it in memory — a known residual), but
    * {@link markState} then refuses to resurrect it.
    *
    * ── `next_attempt_at` is NOT touched, and that is the invariant ──────────
@@ -3144,7 +3134,7 @@ export class AgencyContactRepository {
    * entirely (identical semantics, `COALESCE(NULL, next_attempt_at)`). It is inert
    * — `claimDialable` gates on `state = 'pending'` — but it means the STATE is what
    * takes a contact off the roster and the STATE is what a test here must assert.
-   * Clearing the column belongs to `AD-P3-C-04`, not to a compliance write.
+   * Clearing the column is not a compliance write's job.
    *
    * @param reason value for `suppressed_reason`. Written unconditionally to
    *   `alwaysContactId`'s row — the agent marked THAT row, and an explicit mark
@@ -3173,12 +3163,11 @@ export class AgencyContactRepository {
     reason: string,
     opts: { alwaysContactId?: string | undefined; lastDisposition?: string | undefined } = {},
     /**
-     * PORT NOTE (magick-agency, Phase 8; decision B8, lead ruling): join the CALLER's
-     * transaction instead of opening one — the agent's DNC mark writes `dnc_entries`, the
-     * roster suppression and the optional disposition in ONE transaction
-     * (`POST /attempts/:id/dnc`). The caller owns BEGIN / COMMIT / ROLLBACK and release; the
-     * SELECT … FOR UPDATE then UPDATE run on its client, so the row locks are held until its
-     * COMMIT. Without it, core's own transaction, verbatim.
+     * Join the CALLER's transaction instead of opening one (decision B8): the agent's DNC
+     * mark writes `dnc_entries`, the roster suppression and the optional disposition in ONE
+     * transaction (`POST /attempts/:id/dnc`). The caller owns BEGIN / COMMIT / ROLLBACK and
+     * release; the SELECT … FOR UPDATE then UPDATE run on its client, so the row locks are
+     * held until its COMMIT. Omitted, this method opens its own transaction.
      */
     deps: { client?: PoolClient } = {},
   ): Promise<string[]> {
@@ -3295,14 +3284,13 @@ export class AgencyContactRepository {
 
 
   /**
-   * One campaign's roster, newest first, keyset-paginated (MAG-159,
-   * acceptance 2).
+   * One campaign's roster, newest first, keyset-paginated.
    *
    * ── `context` is deliberately absent from this projection ───────────────────
    * Columns the operator marked `Ignore` at ingest never reach the stored JSONB
-   * at all (master's `agency-csv-ingest.ts` drops them before the row is
-   * written), so the exclusion the UX spec's §E.3 warning is about *is* enforced
-   * at ingest rather than at render. But `context_display.hidden` is a render
+   * at all (`agency-csv-ingest.ts` drops them before the row is written), so
+   * the exclusion marking a column `Ignore` promises *is* enforced at ingest
+   * rather than at render. But `context_display.hidden` is a render
    * rule, and this list has a wider audience than the agent screen that rule was
    * written for — and it feeds a CSV export, which is a materially larger
    * exposure than one drawer. So the bulk read simply does not carry it: the
@@ -3310,12 +3298,12 @@ export class AgencyContactRepository {
    * a client can apply `hidden` the way the console does.
    *
    * ── Plan ────────────────────────────────────────────────────────────────────
-   * Needs `idx_agency_contacts_reporting (campaign_id, created_at DESC, id DESC)`
-   * from migration 095. Every pre-existing index on this table is built for the
+   * Needs `idx_agency_contacts_reporting (campaign_id, created_at DESC, id DESC)`.
+   * Every other index on this table is built for the
    * DIAL path — `idx_agency_contacts_dialable` is partial on `state = 'pending'`,
-   * i.e. it excludes most of what a supervisor reads — so without 095 this is a
+   * i.e. it excludes most of what a supervisor reads — so without it this is a
    * sequential scan plus a sort of up to a million rows on a route someone pages
-   * through. Plans quoted in the MAG-159 PR.
+   * through.
    */
   async listForCampaign(input: {
     campaignId: string;
@@ -3372,7 +3360,7 @@ export class AgencyContactRepository {
     if (!row) return null;
     return {
       ...projectContactRow(row),
-      // Verbatim. Every value is untrusted display text; the client applies
+      // Unfiltered. Every value is untrusted display text; the client applies
       // `context_display.hidden` before rendering. See the class note above.
       context: row.context ?? {},
     };
@@ -3394,13 +3382,13 @@ export class AgencyContactRepository {
    * a replay be a single cheap conflict on `uq_agency_ingest_chunk` instead of 500
    * per-row upserts.
    *
-   * `uq_agency_contacts_row_fingerprint` (083) sits beneath it, and is not merely
-   * defence in depth: master mints a fresh job id on every run, so a re-upload
-   * after a restart cannot conflict on the chunk marker at all and the row-level
+   * `uq_agency_contacts_row_fingerprint` sits beneath it, and is not merely
+   * defence in depth: the ingest job gets a fresh job id on every run
+   * (`AgencyIngestJobRepository.create` is an unconditional INSERT), so a
+   * re-upload after a restart cannot conflict on the chunk marker at all and the row-level
    * guard is the only thing stopping the rows that already landed from landing
-   * twice. It keys on row CONTENT rather than on the file position 073 used —
-   * see 083 for why that distinction is what makes topping up a live campaign
-   * possible without giving that guard away.
+   * twice. It keys on row CONTENT rather than on the file position, which is what
+   * makes topping up a live campaign possible without giving that guard away.
    */
   async applyIngestChunk(params: {
     campaignId: string;
@@ -3430,16 +3418,17 @@ export class AgencyContactRepository {
       );
 
       // Conflict ⇒ this chunk already landed. Roll back and say so explicitly —
-      // master treats it as success and needs the signal to avoid double-counting.
+      // the ingest job treats it as success and needs the signal to avoid
+      // double-counting.
       //
       // **The rollback semantics below are load-bearing and unchanged.** Nothing is
-      // re-applied here; the transactional idempotency 077 established is the whole
-      // point. What changed is only what the replay can SAY: it reads back the
-      // counts the ORIGINAL application recorded (084), so a redelivery is
-      // indistinguishable from the response master lost. It used to return a
-      // confident zero it had no basis for — it rolls back before the per-row loop,
-      // so it never had counts of its own — and master's ingest summary undercounted
-      // every row core had refused.
+      // re-applied here; the chunk marker's transactional idempotency is the whole
+      // point. The replay also says something: it reads back the
+      // counts the ORIGINAL application recorded, so a replay answers what
+      // the original answered. It has no counts of its own — it rolls back before
+      // the per-row loop — so without the recorded ones it could only return a
+      // confident zero, and the ingest summary would undercount every row the
+      // original refused.
       if (marker.rowCount === 0) {
         await client.query('ROLLBACK');
         // Read AFTER the rollback and on the pool, matching `countForCampaign`
@@ -3453,7 +3442,7 @@ export class AgencyContactRepository {
           total_contacts: await this.countForCampaign(params.campaignId, client),
           rejected_duplicate_rows: recorded.rejected ?? 0,
           duplicate_source_rows: recorded.sourceRows ?? [],
-          // NULL ⇒ applied before 084, so the zeros above are "unknown", not
+          // NULL ⇒ the chunk recorded no counts, so the zeros above are "unknown", not
           // "none". Never invented as a number; the flag is how the response says
           // it does not know.
           ...(recorded.rejected === null ? { rejection_counts_unavailable: true } : {}),
@@ -3471,34 +3460,30 @@ export class AgencyContactRepository {
         // Naming the index means only the row-idempotency collision is swallowed
         // and anything else throws, which is what we want it to do.
         //
-        // The target is `row_fingerprint` (083), not `source_row_number` (073):
+        // The target is `row_fingerprint`, not `source_row_number`:
         // the row number is the position in ONE file, so a second file's rows
-        // 2..N collided with the first's and a top-up could never land. The
+        // 2..N would collide with the first's and a top-up could never land. The
         // fingerprint is computed **in SQL from these same bound parameters**,
-        // by the same function 083's backfill used, so there is exactly one
-        // definition of "the same roster row" and no chance of this insert and
-        // that backfill disagreeing about it.
+        // by the same function the retry seeding path uses, so there is exactly one
+        // definition of "the same roster row".
         //
-        // ── `source_row_number` IS DELIBERATELY NOT IN THIS COLUMN LIST (085) ──
+        // ── `source_row_number` IS DELIBERATELY NOT IN THIS COLUMN LIST ──
         //
-        // Naming the fingerprint index is not enough on its own: 073's
-        // `uq_agency_contacts_source_row` is STILL LIVE — it cannot be dropped
-        // until no pre-083 replica can serve a request, because their INSERT
-        // infers it and the drop raises 42P10 — so a top-up file's row 2 still
-        // collides with the first file's row 2, and that 23505 is no longer
-        // swallowed now that the inference names a different index. CI proved it:
-        // both top-up arms of `agency-ingest-idempotency.test.ts` failed on that
-        // constraint.
+        // Naming the fingerprint index is not enough on its own:
+        // `uq_agency_contacts_source_row` is STILL in the schema, so writing the
+        // column would make a top-up file's row 2 collide with the first file's
+        // row 2, and that 23505 is not swallowed because the conflict target names
+        // a different index. The top-up arms of `agency-ingest-idempotency.test.ts`
+        // fail on exactly that constraint if the column comes back.
         //
         // That index is PARTIAL on `source_row_number IS NOT NULL`, so a row that
         // stores NULL sits outside it. Leaving the column out of this list is what
-        // makes top-up work in THIS release: old replicas keep writing and
-        // enforcing it among their own rows and cannot see ours. The CSV line
-        // number is not lost — it moves to `csv_line_number` (085), which is
+        // makes top-up work. The CSV line
+        // number is not lost — it goes to `csv_line_number`, which is
         // unindexed provenance and can never reinstate the collision.
         //
         // Do not "tidy" the column back in. It reads like restoring a dropped
-        // field and it re-breaks D1 the moment two files share a line number.
+        // field and it re-breaks top-up the moment two files share a line number.
         const res = await client.query(
           `INSERT INTO agency_contacts
              (campaign_id, tenant_id, account_id, phone_e164, context, csv_line_number, timezone,
@@ -3509,8 +3494,8 @@ export class AgencyContactRepository {
              DO NOTHING`,
           [
             params.campaignId, params.tenantId, params.accountId, c.phone_e164,
-            // `$6` is the INPUT's `source_row_number` (master's wire field name,
-            // unchanged) stored into `csv_line_number`. The wire contract does not
+            // `$6` is the INPUT's `source_row_number` (the ingest's field name,
+            // unchanged) stored into `csv_line_number`. The input contract does not
             // move just because the column did.
             JSON.stringify(c.context ?? {}), c.source_row_number ?? null, c.timezone ?? null,
           ],
@@ -3518,7 +3503,7 @@ export class AgencyContactRepository {
         if (res.rowCount === 0) {
           rejectedDuplicateRows++;
           // Reported from the INPUT row, never from a stored value — which is why
-          // 085 moving the column changes nothing about what the operator is told.
+          // the column the number is stored in changes nothing about what the operator is told.
           if (c.source_row_number != null && duplicateRows.length < MAX_REPORTED_DUPLICATE_ROWS) {
             duplicateRows.push(c.source_row_number);
           }
@@ -3527,8 +3512,8 @@ export class AgencyContactRepository {
         }
       }
 
-      // Record what this chunk refused, in the SAME transaction that refused it
-      // (084). It cannot be recomputed later: a row rejected by
+      // Record what this chunk refused, in the SAME transaction that refused it.
+      // It cannot be recomputed later: a row rejected by
       // `uq_agency_contacts_row_fingerprint` leaves nothing behind — the surviving
       // contact is the one that was already there and is byte-identical to the one
       // we dropped — so if the number is not written down here it is gone, and the
@@ -3572,11 +3557,11 @@ export class AgencyContactRepository {
   }
 
   /**
-   * What a previously-applied chunk recorded that it refused (084).
+   * What a previously-applied chunk recorded that it refused.
    *
-   * `rejected: null` is the honest "never recorded" — a chunk applied before 084 —
+   * `rejected: null` is the honest "never recorded" —
    * and is reported as `rejection_counts_unavailable` rather than as a zero. A
-   * chunk applied since records a real number, so a recorded `0` genuinely means
+   * chunk that recorded its counts has a real number, so a recorded `0` genuinely means
    * "this chunk refused nothing".
    *
    * `sourceRows` is a capped sample (`MAX_REPORTED_DUPLICATE_ROWS`), matching the
@@ -3632,7 +3617,7 @@ export class AgencyContactRepository {
     return Number(rows[0]?.n ?? 0);
   }
 
-  /** Chunk indexes master sent that never landed — lets it re-send just the gap. */
+  /** Chunk indexes the ingest job sent that never landed — lets it re-send just the gap. */
   async missingChunks(campaignId: string, ingestJobId: string, chunkCount: number): Promise<number[]> {
     const { rows } = await getPool().query<{ chunk_index: number }>(
       'SELECT chunk_index FROM agency_ingest_chunks WHERE campaign_id = $1 AND ingest_job_id = $2',
@@ -3675,7 +3660,7 @@ export class AgencyAttemptRepository {
    *
    * Deriving from the attempts table instead separates the two concerns for good:
    * `attempt_count` stays purely the retry budget, and the number sequence stays
-   * unique per contact across all history, which `AD-P3-C-02`'s retry policy reads.
+   * unique per contact across all history, which the retry policy reads.
    * Two concurrent inserts can still both read the same MAX — but that is now a
    * genuine, self-correcting race caught by the index and retried on the next tick,
    * rather than a permanent wedge, and `uq_agency_attempt_live` already makes two
@@ -3708,7 +3693,7 @@ export class AgencyAttemptRepository {
     } catch (err) {
       // 23505 = unique_violation. Both indexes mean "move on", but they mean very
       // different things operationally and MUST NOT share a log line — that
-      // conflation is what hid AD-P2-C-12 for a whole phase. A live-attempt refusal
+      // conflation is what once hid the attempt-numbering wedge. A live-attempt refusal
       // is a correctness backstop doing its job and is expected under contention;
       // an attempt-number refusal is a lost race that should be vanishingly rare,
       // and a *steady stream* of them means numbers are colliding systematically.
@@ -3743,23 +3728,23 @@ export class AgencyAttemptRepository {
       bridged_at?: Date;
       ended_at?: Date;
       talk_seconds?: number;
-      /** The wrap-up window owed on this attempt (AD-P2-C-02). Duration, not a
+      /** The wrap-up window owed on this attempt. Duration, not a
        *  deadline: with `ended_at` it says what was owed and from when, which is
        *  what lets the `no_disposition` sweep finish a wrap-up whose in-process
        *  timer died with its process. */
       wrapup_seconds?: number;
       /** When wrap-up actually began. Stamped by `WrapupManager`, deliberately never
        *  inferred from `ended_at` — two writers that agree today are still two
-       *  writers (migration 088). */
+       *  writers. */
       wrapup_started_at?: Date;
       /** When wrap-up actually ended. */
       wrapup_ended_at?: Date;
-      /** How it ended — a `WrapupResolution`. Migration 088 CHECKs the values, and
+      /** How it ended — a `WrapupResolution`. The column CHECKs the values, and
        *  `stats()`'s `avg_wrapup_seconds` averages only the ones that measure the
        *  work rather than an interruption. */
       wrapup_resolution?: string;
       /**
-       * WHY this attempt reached no agent (migration 119). Diagnosis only — the
+       * WHY this attempt reached no agent. Diagnosis only — the
        * compliance numerator keys on `ABANDONED_ATTEMPT_PREDICATE_SQL`, never on
        * this column, and NULL means "not an abandoned attempt" rather than
        * "cause unknown".
@@ -3851,7 +3836,7 @@ export class AgencyAttemptRepository {
   }
 
   /**
-   * Record a disposition, idempotently on the code (`AD-P2-C-04`).
+   * Record a disposition, idempotently on the code.
    *
    * **One guarded statement, and that is the whole design.** The predicate
    * `disposition_code IS NULL OR disposition_code = $2` makes first-write and
@@ -3879,9 +3864,8 @@ export class AgencyAttemptRepository {
     onBehalf: boolean;
   },
   /**
-   * PORT NOTE (magick-agency, Phase 8; decision B8): run on the caller's client so the DNC
-   * route's optional disposition commits or rolls back with its `dnc_entries` row. Omitted:
-   * the pool, verbatim.
+   * Run on the caller's client (decision B8) so the DNC route's optional disposition
+   * commits or rolls back with its `dnc_entries` row. Omitted: the pool.
    */
   deps: { client?: Pick<PoolClient, 'query'> } = {},
   ): Promise<AgencyCallAttemptRecord | null> {
@@ -3932,8 +3916,7 @@ export class AgencyAttemptRepository {
    * ALL non-terminal attempts, not just pre-answer ones. A bridged call still
    * holds an account concurrency slot, so excluding `answered`/`bridged` would
    * make the tick reserve agents and claim contacts only to be refused by the
-   * guard, every tick, forever, whenever agents outnumber the account limit
-   * (§4.2).
+   * guard, every tick, forever, whenever agents outnumber the account limit.
    */
   async countLive(campaignId: string): Promise<number> {
     const { rows } = await getPool().query<{ n: string }>(
@@ -3946,19 +3929,18 @@ export class AgencyAttemptRepository {
 
   /**
    * One campaign's attempts, newest first, keyset-paginated — the supervisor
-   * read of the audit spine (MAG-159, acceptance 1).
+   * read of the audit spine.
    *
    * ── What this must NOT be ───────────────────────────────────────────────────
-   * `/app/calls/dialer/history` already lists agency legs, because they land in
-   * `webrtc_calls`. It cannot answer the question this route exists for: being a
-   * CALL list, it structurally cannot show an attempt that never produced a call
+   * A list of CALLS (`agency_calls`) cannot answer the question this route exists
+   * for: being a CALL list, it structurally cannot show an attempt that never produced a call
    * — a `queued` attempt the reaper ended as `orphaned`, an `abandoned` one that
    * rang and found no agent, a `failed` dial. Those are precisely the rows a
    * compliance question is about.
    *
-   * So the FROM clause is `agency_call_attempts`, and `webrtc_calls` is not
+   * So the FROM clause is `agency_call_attempts`, and `agency_calls` is not
    * joined at all — not even to enrich. `webrtc_call_id` is emitted as an id for
-   * the client to resolve separately, because migration 075 made it deliberately
+   * the client to resolve separately, because it is deliberately
    * un-FK'd so the attempt row outlives a purged call, and any join to that table
    * would silently drop exactly the attempts whose history was purged.
    *
@@ -3979,25 +3961,23 @@ export class AgencyAttemptRepository {
    * it the leading column is unbound and neither can be used. A `?phone=`
    * filter then fell back to a **parallel sequential scan of the tenant's
    * contacts** — measured 153ms (exact) and 181ms (suffix) on 400k rows,
-   * against 0.29ms with the predicate present. That is the `MAG-153` shape
-   * migration 095 exists to remove, reappearing on the one route the
-   * migration's own header does not describe. Do not "simplify" it away.
+   * against 0.29ms with the predicate present. That is the sequential-scan shape
+   * the reporting indexes exist to remove, reappearing on this route. Do not "simplify" it away.
    *
    * ── Plan ────────────────────────────────────────────────────────────────────
    * Driven by `idx_agency_attempts_keyset (campaign_id, created_at DESC,
-   * id DESC)` (migration 095). Every filter here is a predicate applied to rows
+   * id DESC)`. Every filter here is a predicate applied to rows
    * that index has already produced in order, so the `LIMIT` stops the scan
    * early instead of sorting the campaign.
    *
-   * ⚠️ **NOT** 075's `idx_agency_attempts_reporting`, and the difference is not
+   * ⚠️ **NOT** `idx_agency_attempts_reporting`, and the difference is not
    * academic. That index is `(campaign_id, created_at DESC)` with no `id`, so it
    * cannot serve the row-wise `(created_at, id) < ($1, $2)` comparison: Postgres
    * degrades to reading the whole `created_at` tie group and sorting it, on
-   * every page. MAG-159's ticket called 075's index "exactly the index a keyset
-   * on `(created_at DESC, id)` wants" and that was wrong — ties here are the
+   * every page. It looks like exactly the index a keyset on
+   * `(created_at DESC, id)` wants, and it is not — ties here are the
    * normal case, because the attempt batcher and roster ingest both insert
-   * inside one transaction where `now()` is fixed. See migration 095's header
-   * for the measured plan. Plans quoted in the MAG-159 PR.
+   * inside one transaction where `now()` is fixed.
    */
   async listForCampaign(input: {
     campaignId: string;
@@ -4130,9 +4110,9 @@ export class AgencyAttemptRepository {
    *
    * ── The attempt points at a SESSION, not at a person ────────────────────────
    *
-   * `reserved_agent_id` is an `agency_agent_sessions.id` (migration 075/079), and
-   * `agent_user_id` — master's user id, opaque to core (D3) — lives on the
-   * session. Sessions are per shift, so one person's history is a set of session
+   * `reserved_agent_id` is an `agency_agent_sessions.id`, and
+   * `agent_user_id` — the app's `users.id`, opaque to the dialer tables (no FK) —
+   * lives on the session. Sessions are per shift, so one person's history is a set of session
    * ids that grows every day they work. That two-hop join is why an agent's own
    * record needs its own route rather than a query parameter.
    *
@@ -4145,20 +4125,19 @@ export class AgencyAttemptRepository {
    * filters on a SET of session ids and orders by `created_at`. So the planner
    * drives from the session join and sorts what it gathers.
    *
-   * Not even migration 104's `idx_agency_attempts_agent_dialed` — the index the
+   * Not even `idx_agency_attempts_agent_dialed` — the index the
    * sibling `/stats` route exists on. It is partial (`WHERE dialed_at IS NOT
    * NULL`) and this query carries no predicate implying that, deliberately (see
    * the `created_at` bound below: an attempt that never dialled must still be
-   * listed), so the planner cannot use it without dropping rows. Migration 104's
-   * header states the same thing from the other side.
+   * listed), so the planner cannot use it without dropping rows.
    *
    * That is accepted rather than indexed away, and the bound is what makes it
    * acceptable: the row set is one person's attempts, not a campaign's — a full
    * shift is hundreds of dials, a year is tens of thousands. The index that would
    * make this a single range scan is `(reserved_agent_id, created_at DESC, id
    * DESC)`, and it is deliberately NOT added: `agency_call_attempts` is written on
-   * every dial, migration 090's header measures what a fourth overlapping index
-   * costs that write path, and nobody has measured how deep anyone actually pages
+   * every dial, a fourth overlapping index taxes
+   * that write path, and nobody has measured how deep anyone actually pages
    * this. Add it when a plan on production volume says so, not on this reasoning.
    */
   async listForAgent(input: {
@@ -4177,12 +4156,12 @@ export class AgencyAttemptRepository {
     //
     // ── The tenant/account scope is NOT optional, and it is on the SESSION ────
     //
-    // `agent_user_id` is master's user id (D3) and is opaque here: core cannot
-    // tell whose it is, cannot tell a real one from a guess, and has no route by
-    // which the caller proves they own it. Every other read on this surface is
+    // `agent_user_id` is the app's `users.id` and is opaque here: the dialer
+    // tables cannot tell whose it is, cannot tell a real one from a guess, and
+    // this read has no route by which the caller proves they own it. Every other read on this surface is
     // scoped by resolving a CAMPAIGN the caller owns first (`requireOwned`); this
     // one has no campaign in its path, so the scope has to be a predicate. Without
-    // it, any tenant holding an API key could read any other tenant's agent by
+    // it, any authenticated tenant could read any other tenant's agent by
     // supplying their user id — the whole cross-campaign history, phone numbers
     // and dispositions included.
     //
@@ -4244,19 +4223,19 @@ export class AgencyAttemptRepository {
    * ── This replaces a per-contact-row read, and the widening is the feature ──
    *
    * It used to be `WHERE contact_id = $1`, which is one campaign's worth of
-   * history. Retry campaigns COPY contacts rather than sharing them (DR-2 — every
+   * history. Retry campaigns COPY contacts rather than sharing them (every
    * piece of per-campaign state lives on the row, and sharing one would make
    * `uq_agency_attempt_live` a cross-campaign lock), so "we called this person
    * twice last month" lives on a DIFFERENT row from the one being dialled now.
    * Keying on `root_contact_id` is what buys that history back, and the
-   * denormalised root (migration 112) is what keeps it ONE indexed equality
+   * denormalised root is what keeps it ONE indexed equality
    * instead of a recursive walk — see below for why that matters here
    * specifically.
    *
    * ── `ORDER BY` moved off `attempt_number`, and that is load-bearing ────────
    *
    * `attempt_number` is per contact ROW and **resets in every retry campaign**
-   * (DR-2 — a retry is a fresh allowance, which is the point of authoring one).
+   * (a retry is a fresh allowance, which is the point of authoring one).
    * Ordering by it interleaves two passes into nonsense: the parent's attempt 3
    * would sort above the child's attempt 1 even though the child's is more
    * recent. `ended_at DESC NULLS LAST` orders by when the dial actually finished,
@@ -4291,7 +4270,7 @@ export class AgencyAttemptRepository {
    *   3. Nothing may be added between the caller's `reserved` send and its dial.
    *
    * If this ever becomes slow enough to matter the answer is
-   * `idx_agency_contacts_root` (migration 114) or dropping the campaign join —
+   * `idx_agency_contacts_root` or dropping the campaign join —
    * never moving the send.
    *
    * @param rootContactId `agency_contacts.root_contact_id`, i.e. the head of the
@@ -4317,12 +4296,12 @@ export class AgencyAttemptRepository {
   }
 
   /**
-   * The **startup** reaper's sweep, and only that (§6.2).
+   * The **startup** reaper's sweep, and only that.
    *
    * ⚠️ **Do not call this from a running process.** The justification below holds
    * at boot and nowhere else: it is "any non-terminal attempt is dead *because
    * this process has just started and no other process could own it*", not "any
-   * non-terminal attempt is dead". `AD-P2-C-08` found the periodic sweep calling
+   * non-terminal attempt is dead". The periodic sweep was once found calling
    * this with an age cutoff, which quietly reinterpreted a boot-only argument as
    * a general one and reaped live conversations — see `sweepOnce` in
    * `src/agency/reaper.ts` for what that cost and what replaced it.
@@ -4348,7 +4327,7 @@ export class AgencyAttemptRepository {
 
   /**
    * Non-terminal attempts older than a cutoff — **candidates** for the periodic
-   * sweep, not a verdict on any of them (`AD-P2-C-08`).
+   * sweep, not a verdict on any of them.
    *
    * Read-only on purpose. Deciding whether one of these is genuinely leaked needs
    * two liveness questions the database cannot answer — this replica's in-process
@@ -4374,7 +4353,7 @@ export class AgencyAttemptRepository {
    * that settled normally in between is already terminal, so this writes nothing
    * to it. Without the guard the sweep would overwrite a real outcome with
    * `orphaned` and return a contact whose call had in fact just connected —
-   * §5.3's exactly-one-writer rule, enforced in SQL rather than hoped for.
+   * the exactly-one-writer rule, enforced in SQL rather than hoped for.
    */
   async reapByIds(attemptIds: string[]): Promise<AgencyCallAttemptRecord[]> {
     if (attemptIds.length === 0) return [];
@@ -4390,7 +4369,7 @@ export class AgencyAttemptRepository {
   }
 
   /**
-   * Conversations whose wrap-up lapsed with nothing written up (`AD-P2-C-08` (b)).
+   * Conversations whose wrap-up lapsed with nothing written up.
    *
    * Every clause is load-bearing:
    * - `state='ended'` + `outcome='connected'` + `bridged_at IS NOT NULL` — there
@@ -4418,8 +4397,8 @@ export class AgencyAttemptRepository {
       `SELECT a.*,
               c.disposition_catalog AS campaign_disposition_catalog,
               c.retry_policy        AS campaign_retry_policy,
-              -- The contact's retry BUDGET (AD-P3-C-01), not the attempt's own
-              -- attempt_number. The two were deliberately decoupled by AD-P2-C-12,
+              -- The contact's retry BUDGET, not the attempt's own
+              -- attempt_number. The two are deliberately decoupled,
               -- and the policy is evaluated against the budget. This path does NOT
               -- bump it (the attempt was counted when it ended), so the stored value
               -- is already the post-attempt count the policy is defined on.
@@ -4501,7 +4480,7 @@ const JOIN_UPSERT_ATTEMPTS = 3;
  * Every write below projects this shape, which is what makes the event log
  * exhaustive **by construction** rather than by anyone remembering: the four
  * methods on this class are the only writers of `agency_agent_sessions.state`
- * anywhere in core (verified by grep, not by assumption — the callers are the
+ * anywhere in the server (verified by grep, not by assumption — the callers are the
  * three session routes, the dialer's bridge and release paths, the wrap-up
  * manager, the two presence paths in `runtime.ts`, and the startup reaper), so a
  * transition that reaches the database and not the log is not reachable without
@@ -4540,9 +4519,8 @@ export class AgencyAgentSessionRepository {
    *    statement rather than a CTE on the first one ──────────────────────────
    *
    * Folding the INSERT into the UPDATE would be atomic and tempting, and it would
-   * be wrong: any failure of the insert — the table absent because migration 105
-   * has not run on this database yet, the `to_state` CHECK refusing a seventh
-   * state someone added to migration 074 and not here, a disk full — would roll
+   * be wrong: any failure of the insert — the events table unavailable, the `to_state` CHECK refusing a seventh
+   * state someone added to the schema and not here, a disk full — would roll
    * back the transition itself. The consequences are not symmetric. **A dropped
    * event costs one occupancy row; a thrown error mid-transition takes an agent
    * off the floor or wedges a live call** — `releaseAgent` would not return them
@@ -4552,7 +4530,7 @@ export class AgencyAgentSessionRepository {
    * So: separate statement, everything caught, logged at warn, and the caller
    * continues. The log line carries the states, because a swallowed CHECK
    * violation naming the offending state is the ONLY way the vocabulary drift
-   * described in migration 105's header becomes discoverable.
+   * described above becomes discoverable.
    *
    * Awaited rather than fired and forgotten: an unawaited promise here would be
    * an unhandled rejection on a path that must not have one, and would make the
@@ -4569,7 +4547,7 @@ export class AgencyAgentSessionRepository {
    *
    * ── `at` is CARRIED from the mutation, never defaulted by this INSERT ───────
    *
-   * Migration 105 gives `at` a `DEFAULT now()`, and leaning on it would stamp the
+   * `at` has a `DEFAULT now()`, and leaning on it would stamp the
    * event when THIS statement runs rather than when the state actually changed.
    * Being a second statement is what makes that gap exist at all (see above), and
    * the gap is not merely a small skew: two transitions on one session racing from
@@ -4619,7 +4597,7 @@ export class AgencyAgentSessionRepository {
           // label an interval with a reason that belongs to a different one.
           moved.map((r) => (r.to_state === 'break' ? r.break_reason : null)),
           // The mutation's own instant — see the header. Never omitted to let
-          // migration 105's DEFAULT now() fill it in.
+          // the column's DEFAULT now() fill it in.
           moved.map((r) => r.at),
         ],
       );
@@ -4644,21 +4622,21 @@ export class AgencyAgentSessionRepository {
   }
 
   /**
-   * Join, or REHYDRATE an existing live session (D2).
+   * Join, or REHYDRATE an existing live session.
    *
    * A returning agent must resume their row rather than get a new one — the unique
-   * index allows exactly one live session per (tenant, agent) since migration 092
-   * — and must land in `break`, never `available`, so the engine cannot dial into a
+   * index allows exactly one live session per (tenant, agent)
+   * (`uq_agency_agent_live_tenant`) — and must land in `break`, never `available`, so the engine cannot dial into a
    * pool that has not demonstrably re-attached. The agent clicks once to go
    * available.
    *
-   * ── Why the uniqueness is per TENANT and what that makes reachable (092) ───
-   * 074 allowed one live session per (campaign, agent), so one human could hold
+   * ── Why the uniqueness is per TENANT and what that makes reachable ───
+   * Were it unique per (campaign, agent), one human could hold
    * two live sessions on two campaigns. The reservation CAS key is
    * `agency:agent:{sessionId}:state` — per session — so those two sessions are two
    * independently reservable agents attached to one pair of ears, and both pacing
-   * ticks can bridge a customer at once. 092 makes the database refuse the second
-   * session, which is why this method can now FAIL rather than always returning a
+   * ticks can bridge a customer at once. `uq_agency_agent_live_tenant` makes the database refuse the second
+   * session, which is why this method can FAIL rather than always returning a
    * row.
    *
    * ── Why this is one statement and never check-then-insert ──────────────────
@@ -4686,7 +4664,7 @@ export class AgencyAgentSessionRepository {
     replicaId: string;
   }): Promise<AgencyAgentJoinResult> {
     for (let attempt = 0; attempt < JOIN_UPSERT_ATTEMPTS; attempt++) {
-      // ── The `prev` CTE is how a join gets logged (migration 105) ───────────
+      // ── The `prev` CTE is how a join gets logged ───────────
       //
       // The upsert has two outcomes and the transition log needs to tell them
       // apart: a fresh INSERT is the session's FIRST transition, which the log
@@ -4698,12 +4676,12 @@ export class AgencyAgentSessionRepository {
       // answer that on its own. All CTEs of one statement see the same snapshot,
       // so `prev` reads the row as it was before the upsert; the outer LEFT JOIN
       // then makes `from_state IS NULL` mean exactly "this row did not exist",
-      // which is the same thing migration 105 uses NULL to mean. The `xmax = 0`
+      // which is the same thing NULL means in the event log's `from_state`. The `xmax = 0`
       // inserted-vs-updated trick would answer the narrower question and still
       // leave the previous state unknown.
       //
       // `prev` is keyed on the same predicate as the arbiter index — the agent's
-      // one live session in the tenant (092) — not on the proposed row, because
+      // one live session in the tenant (`uq_agency_agent_live_tenant`) — not on the proposed row, because
       // the conflicting row may be on a different campaign.
       const { rows } = await getPool().query<AgencyAgentSessionRecord & {
         from_state: AgencyAgentState | null;
@@ -4736,7 +4714,7 @@ export class AgencyAgentSessionRepository {
         // Destructured rather than passed through: the two log-only columns must
         // not ride along on `AgencyAgentSessionRecord`, which is spread into the
         // bootstrap payload — an extra field on the wire is a contract nobody
-        // agreed to and one that master would start depending on.
+        // agreed to and one that the console would start depending on.
         // `at` is destructured out for the same reason the two `from_*` columns
         // are: `AgencyAgentSessionRecord` is spread into the bootstrap payload,
         // and a log-only column riding along becomes a contract nobody agreed to.
@@ -4802,7 +4780,7 @@ export class AgencyAgentSessionRepository {
    * The agent's one live session anywhere in the tenant, if any.
    *
    * `LIMIT 1` is a formality, not a choice between candidates: `uq_agency_agent_live_tenant`
-   * (092) permits at most one row to satisfy this predicate. It is written this
+   * (`uq_agency_agent_live_tenant`) permits at most one row to satisfy this predicate. It is written this
    * way so a future reader does not have to reason about which row they get.
    */
   async findLiveForAgent(tenantId: string, agentUserId: string): Promise<AgencyAgentSessionRecord | null> {
@@ -4862,7 +4840,7 @@ export class AgencyAgentSessionRepository {
                  s.state AS to_state, s.break_reason,
                  -- The transition's own instant, projected by the statement that
                  -- performed it. recordTransitions inserts it verbatim rather than
-                 -- letting migration 105's DEFAULT now() stamp the log write.
+                 -- letting the column's DEFAULT now() stamp the log write.
                  clock_timestamp() AS at`,
       [id, state, breakReason ?? null],
     );
@@ -4898,7 +4876,7 @@ export class AgencyAgentSessionRepository {
                  s.state AS to_state, s.break_reason,
                  -- The transition's own instant, projected by the statement that
                  -- performed it. recordTransitions inserts it verbatim rather than
-                 -- letting migration 105's DEFAULT now() stamp the log write.
+                 -- letting the column's DEFAULT now() stamp the log write.
                  clock_timestamp() AS at`,
       [id],
     );
@@ -4915,7 +4893,7 @@ export class AgencyAgentSessionRepository {
   }
 
   /**
-   * Every session → offline. The startup reaper's agent half (§6.2).
+   * Every session → offline. The startup reaper's agent half.
    *
    * Logged, and this one matters more than it looks: it is the transition that
    * closes every interval the CRASHED process left open. Without it, an agent who
@@ -4956,7 +4934,7 @@ export class AgencyAgentSessionRepository {
 }
 
 /**
- * The rolling abandonment window (`AD-P2-C-06`).
+ * The rolling abandonment window.
  *
  * Its own class because it is the one reader whose whole purpose is to be an
  * INDEPENDENT audit of the Prometheus counters — it touches nothing in process,
@@ -5012,7 +4990,7 @@ export class AgencyAbandonmentRepository {
  * in one non-terminal state, right now.
  *
  * `state` is deliberately typed `string` and NOT `AgencyAttemptState`, even
- * though `ck_agency_attempt_state` (migration 075) does constrain the column to
+ * though `ck_agency_attempt_state` does constrain the column to
  * exactly that union. Typing it would make the CHECK constraint the definition of
  * a **Prometheus label vocabulary**, and the house rule is that label values are
  * bounded by *source code*, never by anything outside it — a migration can widen
@@ -5032,14 +5010,9 @@ export interface AgencyLiveAttemptStateRow {
 /**
  * The dialer's live-concurrency read — attempts in flight, split by state.
  *
- * Exists because `calls_active_current` reads **flat 0 for the agency dialer**:
- * that gauge is fed only from `CallManager`'s AI `activeSessions` map
- * (`src/core/call-manager.ts`), and an agency leg is a WebRTC bridge session that
- * never enters it. So the one platform-wide "how many calls are up" number is
- * structurally blind to the dialer, which is finding 4 of the 2026-09-08 pilot
- * debrief. It is not fixable by widening that gauge: adding a `call_type` label
- * to a live series terminates it, and a second writer into a map-derived value
- * would race the AI path.
+ * It feeds `agency_live_attempts_current` (published by
+ * `live-concurrency-metrics.ts`), the dialer's "how many calls are up" number,
+ * derived from the attempts table rather than from any in-process map.
  *
  * Its own class for the same reason `AgencyAbandonmentRepository` has one — it
  * exists solely to be read by a metrics publisher on a timer, touches nothing in
@@ -5065,8 +5038,7 @@ export class AgencyLiveConcurrencyRepository {
    * that is load-bearing twice over:
    *
    * 1. It matches `uq_agency_attempt_live`'s partial-index predicate
-   *    (`ON agency_call_attempts (contact_id) WHERE state <> 'ended'`,
-   *    migration 075) *byte for byte*, which is what lets the planner prove the
+   *    (`ON agency_call_attempts (contact_id) WHERE state <> 'ended'`) *byte for byte*, which is what lets the planner prove the
    *    index covers the query. Bound as `$1` the predicate is opaque at plan
    *    time and this degrades to a scan of a table that grows for the life of
    *    the account. So the cost of this read is bounded by **live concurrency**
@@ -5081,8 +5053,7 @@ export class AgencyLiveConcurrencyRepository {
    * than listing the five live states: the gauge and the tick then cannot
    * disagree about what "in flight" means, so the published family reconciles
    * with the number the tick subtracted from the account limit. Two definitions of
-   * occupancy — one an operator reads, one the dialer acts on — is exactly the
-   * class of divergence `AD-P2-C-11` is a case study in.
+   * occupancy — one an operator reads, one the dialer acts on — would drift apart.
    *
    * ⚠️ Reconciling it in PromQL means `sum by (state)` ACROSS STATES and then
    * `max` ACROSS REPLICAS, in that order — never a bare `sum()`. This query is
@@ -5090,7 +5061,8 @@ export class AgencyLiveConcurrencyRepository {
    * a bare `sum()` returns R times the truth. An earlier version of this
    * paragraph said `sum(agency_live_attempts_current)` *is* occupancy, which is
    * true of one replica's samples and false of the metric anyone actually queries.
-   * See the aggregator note on the gauge in `src/utils/metrics.ts`.
+   * See the aggregator note on the gauge in
+   * `@magick-agency/observability/metrics/agency`.
    *
    * No `ORDER BY`: the consumer publishes a set of gauge samples, so ordering
    * would buy nothing and cost a sort on every tick.
@@ -5276,7 +5248,7 @@ interface AgencyGroupRawRow {
  * error whichever one was forgotten.
  *
  * ⚠️ `disposition` assigns UNCONDITIONALLY, including when the value is `null`.
- * That is the contract's D3 rule expressed in one line: `null` is a real key value
+ * That is the grouped-stats contract's null-key rule expressed in one line: `null` is a real key value
  * — the un-dispositioned group — so the member must be PRESENT and null, never
  * absent. `?? null` also normalises a missing column to `null` rather than letting
  * `undefined` reach a JSON payload, where it would vanish and make the group look
@@ -5413,8 +5385,8 @@ export class AgencyAgentStatsRepository {
    * rather than a filter.
    *
    * There is no campaign in this route's path, so there is nothing to run
-   * `requireOwned` against: `agent_user_id` is master's user id, opaque to core
-   * (D3), and core cannot tell a real one from a guess. Both reads below therefore
+   * `requireOwned` against: `agent_user_id` is the app's `users.id`, opaque to
+   * the dialer tables, which cannot tell a real one from a guess. Both reads below therefore
    * scope on `agency_agent_sessions` — which carries the tenant and account
    * stamped from the campaign — so an agent id from another tenant resolves to no
    * sessions, no attempts and no events, i.e. an empty record rather than someone
@@ -5429,8 +5401,8 @@ export class AgencyAgentStatsRepository {
       // ── Occupancy degrades ALONE; the rest of the record does not ─────────
       //
       // The two reads answer different questions and only one of them depends on
-      // migration 105. An occupancy-specific failure — the events table absent
-      // because 105 has not run on this database yet, the same drift the write
+      // the session event log. An occupancy-specific failure — the events table
+      // unreadable, the same drift the write
       // path already swallows — must not discard attempt totals that were read
       // successfully: the caller asked "what did I do", and answering it with a
       // 500 because a second statement about where their time went could not run
@@ -5447,7 +5419,7 @@ export class AgencyAgentStatsRepository {
       // available: `AgencyAgentOccupancy` documents `by_state` as "all six states,
       // always present", so there is no way to say "not measured" on this payload
       // and the degraded record is INDISTINGUISHABLE from an agent who has no
-      // events at all (a session predating 105). Making the two distinguishable is
+      // events at all (a session with no recorded transitions). Making the two distinguishable is
       // a contract change, not a catch block; until then the log line below is the
       // only place the difference exists.
       this.occupancyBuckets(scope, params).catch((err: unknown) => {
@@ -5670,7 +5642,7 @@ export class AgencyAgentStatsRepository {
   }
 
   /**
-   * Seconds per (bucket, state), from the transition log (migration 105).
+   * Seconds per (bucket, state), from the transition log.
    *
    * ── How an interval is built ────────────────────────────────────────────────
    *
@@ -5719,12 +5691,12 @@ export class AgencyAgentStatsRepository {
    *
    * ── A session with no events reads as zero, and that is the honest answer ────
    *
-   * Sessions that predate migration 105 have no rows here, so they contribute no
+   * Sessions with no recorded transitions have no rows here, so they contribute no
    * intervals and every state comes back 0 — see `zeroOccupancy`. The alternative
    * would be reconstructing time-in-state from `agency_agent_sessions.state_since`,
    * which is a snapshot every transition overwrites: it would attribute an agent's
    * ENTIRE history to whichever state they happen to be in now. Occupancy is
-   * meaningful from this migration forward and silent before it.
+   * meaningful only where events were recorded.
    *
    * `offline` is measured and returned but excluded from `shift_seconds`
    * (`foldOccupancy`), so a session that ended hours ago cannot dilute occupancy
@@ -5776,8 +5748,8 @@ export class AgencyAgentStatsRepository {
             AND s.joined_at < $3
             AND (s.left_at IS NULL OR s.left_at > $2)${campaignFilter}
        ), in_window AS (
-         -- e.agent_user_id = $1 is the denormalised copy migration 105 exists to
-         -- carry, and it is what makes idx_agency_session_events_agent
+         -- e.agent_user_id = $1 is the denormalised copy the event
+         -- log carries, and it is what makes idx_agency_session_events_agent
          -- (agent_user_id, at) usable: without it the planner has no predicate on
          -- the index's leading column, so the range on at cannot be driven from it.
          -- The join to sess stays -- it is what carries the campaign's zone and
@@ -5796,7 +5768,7 @@ export class AgencyAgentStatsRepository {
          -- window non-reproducible between two runs of the same query -- one run
          -- reports the agent went on break at 08:55, the next reports available.
          -- Ties are real in rows already in the table: before at was carried from
-         -- the mutation, the batch INSERT took migration 105's DEFAULT now(), which
+         -- the mutation, the batch INSERT took the column's DEFAULT now(), which
          -- is the transaction timestamp and therefore identical for every row of a
          -- markAllOffline sweep of the whole floor.
          SELECT DISTINCT ON (e.session_id) e.session_id, e.to_state, e.at, e.id
@@ -5931,8 +5903,7 @@ export class AgencyAgentStatsRepository {
    *
    * `stats()` issues its two statements in parallel because both are bounded by
    * one agent id it already holds. This one cannot, and the reason is an index:
-   * `idx_agency_session_events_agent` is `(agent_user_id, at)`, and migration
-   * 105's own header states that **the index is only reachable because the reader
+   * `idx_agency_session_events_agent` is `(agent_user_id, at)`, and **the index is only reachable because the reader
    * predicates on `agent_user_id`** — `session_id` is deliberately not indexed at
    * all. A roster-shaped occupancy read has no single agent, so issued in parallel
    * it would range on `e.at` with nothing on the index's leading column and drive
@@ -6010,7 +5981,7 @@ export class AgencyAgentStatsRepository {
       ? []
       : await this.rosterOccupancyTotals(scope, params, agentIds).catch((err: unknown) => {
         // Same catch, same warning, same reasoning as `stats()`: the realistic
-        // failure is migration 105 not having run on this database yet, which is
+        // failure is the event table being unreadable, which is
         // the drift the WRITE path already swallows in `recordTransitions`. Both
         // sides of the transition log are non-fatal and the warn line is the only
         // symptom either produces.
@@ -6131,8 +6102,8 @@ export class AgencyAgentStatsRepository {
    * One row per agent who dialled, over `[from, to)` on `dialed_at`.
    *
    * `stats()`'s `attemptBuckets` with the bucket removed and the agent id moved
-   * from a predicate into the `GROUP BY`. Every column definition is carried over
-   * verbatim and for the reasons stated there — the AGENT's leg for talk time
+   * from a predicate into the `GROUP BY`. Every column definition is the same,
+   * character for character, and for the reasons stated there — the AGENT's leg for talk time
    * rather than the persisted column, orphans excluded because the reaper stamps
    * `ended_at` at sweep time, MEASURED wrap-up rather than the campaign's
    * allotment — because the roster and the per-agent record are read side by side
@@ -6140,19 +6111,19 @@ export class AgencyAgentStatsRepository {
    *
    * ── The index this drives, and why it is the BILLING one ──────────────────
    *
-   * Not `idx_agency_attempts_agent_dialed` (migration 104). That index is
+   * Not `idx_agency_attempts_agent_dialed`. That index is
    * `(reserved_agent_id, dialed_at DESC) WHERE dialed_at IS NOT NULL` and its
    * leading column is a session id this statement has no predicate on — the whole
    * point of a roster is that it does not name an agent. What fits exactly is
-   * `idx_agency_attempts_billing` (migration 081):
+   * `idx_agency_attempts_billing`:
    * `(dialed_at, campaign_id) WHERE dialed_at IS NOT NULL`, whose own comment says
    * `dialed_at` MUST lead because the billing sweep "is a time range across all
    * campaigns and has no campaign_id to filter on". That is this statement's shape
    * too, and `?campaign_id=` narrows on the index's second column when supplied.
    * The sessions and campaigns then join by primary key.
    *
-   * So the roster's attempt aggregate needs no new index, and 104 stays what its
-   * header says it is: the single-agent read's index, not this one's.
+   * So the roster's attempt aggregate needs no new index, and `idx_agency_attempts_agent_dialed` stays the single-agent read's index,
+   * not this one's.
    */
   private async rosterAttemptTotals(
     scope: { tenantId: string; accountId: string },
@@ -6258,10 +6229,10 @@ export class AgencyAgentStatsRepository {
    * paragraph above. An EMPTY partition (`OVER ()`) cannot emit its first row until
    * it has seen the last one, so the plan MATERIALISES all `total_groups` rows —
    * spilling to disk past `work_mem` — even when `limit` is 1. Two dimensions over
-   * a 92-day window can be tens of thousands of groups, and core sets no
+   * a 92-day window can be tens of thousands of groups, and the server sets no
    * `statement_timeout` anywhere, so nothing cuts that short. Pushing the slice down
    * still wins on what crosses the WIRE, which is what it was for; it does not make
-   * the read cheap, and the window cap (D7) is the only thing bounding it.
+   * the read cheap, and the window cap is the only thing bounding it.
    *
    * ── The ORDER BY is TOTAL, which is what makes `limit` reproducible ────────
    *
@@ -6282,7 +6253,7 @@ export class AgencyAgentStatsRepository {
    * {@link GROUP_DIMENSION_SQL}, {@link GROUP_SORT_ORDER_SQL}. No caller-supplied
    * character reaches the statement; `limit` is a bound parameter like every value.
    *
-   * ── The zone apparatus is carried over unchanged, and joined UNCONDITIONALLY ─
+   * ── The zone apparatus is reused unchanged, and joined UNCONDITIONALLY ─────
    *
    * {@link AGENCY_RESOLVED_ZONE_JOIN_SQL} with {@link AGENCY_RESOLVED_ZONE_SQL},
    * exactly as `attemptBuckets` has it and for exactly the reason stated there:
@@ -6302,7 +6273,7 @@ export class AgencyAgentStatsRepository {
    * statement, which is cheap enough that the first reason wins uncontested.
    *
    * Whether a time dimension may be grouped AT ALL is decided in
-   * {@link parseGroupedStatsQuery} (contract D5): across campaigns in different
+   * {@link parseGroupedStatsQuery}: across campaigns in different
    * zones "the 18:00 row" is not one thing, so it is refused rather than answered
    * in UTC. That refusal is a product rule and lives with the other parsing rules;
    * by the time this method runs, the zone is already unambiguous.
@@ -6311,7 +6282,7 @@ export class AgencyAgentStatsRepository {
    *
    * The driving predicate is the half-open window on `dialed_at` plus an optional
    * `campaign_id`, with the sessions and campaigns joined by primary key — which is
-   * `idx_agency_attempts_billing` (migration 081), `(dialed_at, campaign_id) WHERE
+   * `idx_agency_attempts_billing`, `(dialed_at, campaign_id) WHERE
    * dialed_at IS NOT NULL`, leading on exactly the column this scan is driven from.
    * Same argument as `rosterAttemptTotals`, and the same conclusion: nothing here
    * wants an index that does not exist. Grouping columns do not want indexes anyway
@@ -6383,18 +6354,18 @@ export class AgencyAgentStatsRepository {
     // "the 18:00 column is not a fact until a zone is named" at the presentation
     // layer.
     //
-    // ⚠️ A deliberate, narrow exception to this read's one-statement rule (D4), and
-    // it is not in tension with D4's reasoning. D4 refused occupancy here because
-    // occupancy scans `agency_agent_session_events`, whose `session_id` is indexed
+    // ⚠️ A deliberate, narrow exception to this read's one-statement rule, and
+    // it is not in tension with the reason this read refuses occupancy: occupancy
+    // scans `agency_agent_session_events`, whose `session_id` is indexed
     // by nothing, against a row count that is a PRODUCT of cardinalities. This is a
     // primary-key lookup of one campaign row plus a lateral against a ~1,200-row
     // view, at most once per request, and only on the single-campaign zoned read —
-    // the reads D4 was protecting do not issue it at all.
+    // the reads that refusal protects do not issue it at all.
     const zoneCampaignId = groupedPageHasSingleZone(p) ? p.campaignId : undefined;
 
     // ── The session join is LEFT unless `agent` is what is being ATTRIBUTED ────
     //
-    // `agency_call_attempts.reserved_agent_id` is NULLABLE (migration 075) and it is
+    // `agency_call_attempts.reserved_agent_id` is NULLABLE and it is
     // NULL on every attempt that failed before an agent was ever on it. An INNER
     // join therefore DROPS those attempts, and on a campaign-shaped read
     // (`hour_of_day`, `campaign`, `disposition`, `day`, with no `agent`) dropping
@@ -6414,8 +6385,8 @@ export class AgencyAgentStatsRepository {
     //
     // ⚠️ So the two readings deliberately do NOT reconcile: an hour-grouped total
     // can exceed the sum of the agent-grouped rows over the same window, and the
-    // difference is exactly the unreserved attempts. That is the same asymmetry D8
-    // documents for master's `inactive_omitted`, one layer down, and it is a
+    // difference is exactly the unreserved attempts. That is the same asymmetry
+    // `inactive_omitted` documents in `agency-agent-identity.ts`, one layer down, and it is a
     // property of the QUESTION rather than a defect of the statement.
     //
     // ── Which is why the scope predicate now sits on the ATTEMPT ───────────────
@@ -6425,7 +6396,7 @@ export class AgencyAgentStatsRepository {
     // the WHERE clause instead of by the join, and the fix above would be silently
     // undone. The scope is therefore a predicate on `a` — which is where it belongs
     // anyway. The attempt is the row being counted, `a.tenant_id`/`a.account_id` are
-    // `NOT NULL` (migration 075), and that is the column pair the billing sweep
+    // `NOT NULL`, and that is the column pair the billing sweep
     // scopes on. The session's own scope is not lost: it moves into the JOIN
     // condition, so a session in another account cannot attribute this account's
     // attempt under EITHER join word — it drops the row where `agent` is grouped,
@@ -6638,7 +6609,7 @@ export class AgencyAgentStatsRepository {
    * ── `agent_user_id = ANY($1)` is not a filter, it is the driving predicate ──
    *
    * It appears on BOTH event reads, exactly as `stats()` carries `= $1` on both,
-   * and for the identical reason spelled out in migration 105's header:
+   * and for the identical reason spelled out above:
    * `idx_agency_session_events_agent` is `(agent_user_id, at)` and `session_id` is
    * deliberately not indexed, so without a predicate on the leading column the
    * planner has nothing to drive the range on `at` from. The ids come from the
@@ -6649,7 +6620,7 @@ export class AgencyAgentStatsRepository {
    * of a tenant-and-account-scoped statement, and `sess` re-applies both
    * predicates anyway. That is deliberate belt-and-braces on a surface where the
    * WHERE clause is the only thing separating two accounts' floors — an
-   * `agent_user_id` is opaque to core (D3) and could legitimately collide across
+   * `agent_user_id` is opaque to the dialer tables and could legitimately collide across
    * tenants.
    */
   private async rosterOccupancyTotals(
@@ -6692,8 +6663,8 @@ export class AgencyAgentStatsRepository {
             AND s.joined_at < $3
             AND (s.left_at IS NULL OR s.left_at > $2)${campaignFilter}
        ), in_window AS (
-         -- e.agent_user_id = ANY($1) is the denormalised copy migration 105 exists
-         -- to carry, and it is what makes idx_agency_session_events_agent
+         -- e.agent_user_id = ANY($1) is the denormalised copy the event log
+         -- carries, and it is what makes idx_agency_session_events_agent
          -- (agent_user_id, at) usable: without a predicate on the leading column
          -- the range on at cannot be driven from it, and session_id is indexed by
          -- nothing at all. The join to sess stays -- it is what applies the
@@ -6714,7 +6685,7 @@ export class AgencyAgentStatsRepository {
          --
          -- e.id DESC breaks a tie on at, and ties are real in rows already in the
          -- table: before at was carried from the mutation, the batch INSERT took
-         -- migration 105's DEFAULT now() -- the transaction timestamp, identical
+         -- the column's DEFAULT now() -- the transaction timestamp, identical
          -- for every row of a markAllOffline sweep of the whole floor. Without the
          -- tiebreak DISTINCT ON returns whichever row the executor reached first,
          -- so the carried-in state is not reproducible between two runs.

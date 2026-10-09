@@ -1,24 +1,14 @@
 /*
- * PORT NOTE (magick-agency): ported from master test/integration/api/auth.routes.test.ts@a1f0756a
- * (16 cases → 13 ported + 6 NEW). Real Postgres (5436, the worktree's test DB)
- * through `initDbPool`, replacing master's `vi.mock('src/db/connection.js')`:
- * agency's repositories import `@magick-agency/db`'s `connection.ts` directly, so
- * the pool must be the real singleton. Firebase `verifyIdToken` stays mocked.
+ * Auth routes on real Postgres (5436, the test DB) through `initDbPool`: the
+ * repositories import `@magick-agency/db`'s `connection.ts` directly, so the pool
+ * must be the real singleton. Firebase `verifyIdToken` stays mocked.
  *
- * Changed:
- *  - 'auto-provisions a new user (201) …' → the path-4 REFUSAL (plan §3.1): 403
- *    `no_membership`, and nothing written to `users`, `tenants`, `accounts` or
- *    `memberships` (no credits/core key/phone — none exist).
- *  - GET /me: `governance` (a mocked governance service) → `settings`, the real
- *    per-account map from `account_settings`; the fail-open case makes the real
- *    map builder throw through a spy.
- * Deleted (path-4 provisioning, which agency does not have): 'auto-assigns a
- * signup-pool number as the tenant default when one is available', 'still
- * provisions the tenant (201) without a phone when the signup pool is empty',
- * 'does not fail signup (201) when phone assignment throws'.
- * Mocks removed with the modules: core-client, crypto, config, tracing,
- * tenant-core-credential, phone-number, tenant-phone-assignment, governance and
- * master's metrics Proxy (the route no longer imports a metric).
+ *  - Session path 4 (a new user with no membership) is a REFUSAL: 403
+ *    `no_membership`, and nothing is written to `users`, `tenants`, `accounts` or
+ *    `memberships` (there is no signup provisioning: no credits, API key or phone).
+ *  - GET /me returns `settings`, the real per-account map from `account_settings`;
+ *    the fail-open case makes the real map builder throw through a spy.
+ *  - There is no signup-pool number assignment, so no phone-assignment cases.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { vi } from 'vitest';
@@ -47,7 +37,7 @@ vi.mock('../../../src/auth/firebase.js', () => ({
   verifyIdToken: mocks.verifyIdToken,
 }));
 
-// PORT NOTE (magick-agency): partial — `packages/db`'s pool imports `logger`
+// Partial mock: `packages/db`'s pool imports `logger`
 // from the same package, so only `createChildLogger` is replaced.
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/observability')>()),
@@ -64,8 +54,7 @@ vi.mock('../../../src/auth/session.middleware.js', () => ({
   invalidateUserCache: vi.fn(),
 }));
 
-// PORT NOTE (magick-agency): replaces master's governance-service mock. A spy
-// that runs the REAL map builder unless a test makes it throw.
+// A spy that runs the REAL settings-map builder unless a test makes it throw.
 vi.mock('../../../src/settings/agency-account-settings.js', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../../src/settings/agency-account-settings.js')>();
   mocks.buildSettingsMap.mockImplementation(real.buildAgencyAccountSettingsMap);
@@ -116,9 +105,7 @@ describe('auth routes (integration)', () => {
   beforeEach(async () => {
     await truncateAll();
     vi.clearAllMocks();
-    // PORT NOTE (magick-agency): master's core-key / crypto / credential / phone /
-    // governance defaults are gone with their mocks; the settings spy is reset to
-    // the real builder.
+    // The settings spy is reset to the real builder.
     mocks.buildSettingsMap.mockImplementation(realBuildSettingsMap);
   });
 
@@ -127,10 +114,8 @@ describe('auth routes (integration)', () => {
   // ────────────────────────────────────────────────────────────────────────
 
   describe('POST /session', () => {
-    // PORT NOTE (magick-agency): master's 'auto-provisions a new user (201) with
-    // tenant, account, membership, and 100k signup bonus' — same token, same
-    // route; path 4 now REFUSES and writes nothing (plan §3.1). Master's three
-    // signup-pool / phone-assignment cases that followed are deleted.
+    // Path 4 REFUSES a user with no membership and writes nothing (no
+    // auto-provisioning, no signup bonus, no signup-pool phone assignment).
     it('refuses a new user (403 no_membership) and writes no user, tenant, account or membership', async () => {
       const firebaseUid = 'fb-new-user-001';
       const email = 'newuser@example.com';
@@ -208,8 +193,7 @@ describe('auth routes (integration)', () => {
       expect(body.tenants[0].id).toBe(tenant.id);
       expect(body.memberships).toHaveLength(1);
 
-      // PORT NOTE (magick-agency): master asserted `createCoreApiKey` was not
-      // called; there is no core key. Nothing new was written instead.
+      // There is no API key to provision. Nothing new was written.
       expect(await identityRowCounts()).toMatchObject({ users: 1, tenants: 1, memberships: 1 });
 
       await app.close();
@@ -217,7 +201,7 @@ describe('auth routes (integration)', () => {
 
     describe('path 1 repairs a row flagged by an unverified invite claim', () => {
       /**
-       * Migration 073 flags a row whose identity was bound without proving its
+       * `users.email_unverified` flags a row whose identity was bound without proving its
        * address, and every by-address reuse path then refuses it. The repair was
        * documented as happening on path 2 — which the flagged population never
        * reaches, because the claim wrote their own `firebase_uid` onto the row,
@@ -367,8 +351,7 @@ describe('auth routes (integration)', () => {
       expect(body.memberships).toHaveLength(1);
       expect(body.memberships[0].role).toBe('operator');
 
-      // PORT NOTE (magick-agency): master asserted `createCoreApiKey` was not
-      // called; there is no core key. The stub was activated in place instead.
+      // There is no API key to provision. The stub was activated in place.
       expect(await identityRowCounts()).toMatchObject({ users: 1, memberships: 1 });
 
       await app.close();
@@ -505,11 +488,11 @@ describe('auth routes (integration)', () => {
   });
 
   // ────────────────────────────────────────────────────────────────────────
-  // NEW (magick-agency): the four session paths, each through the real route
-  // on real Postgres (plan §3.1, §9 "session path 4 never creates a tenant").
+  // The four session paths, each through the real route on real Postgres
+  // (session path 4 never creates a tenant).
   // ────────────────────────────────────────────────────────────────────────
 
-  describe('NEW: session paths 1–4 (plan §3.1)', () => {
+  describe('session paths 1–4', () => {
     async function postSession(decoded: Record<string, unknown>, payload: Record<string, unknown> = { id_token: 't' }) {
       mocks.verifyIdToken.mockResolvedValue(decoded);
       const app = Fastify();
@@ -668,9 +651,7 @@ describe('auth routes (integration)', () => {
       expect(body.memberships).toHaveLength(1);
       expect(body.memberships[0].role).toBe('account_admin');
 
-      // PORT NOTE (magick-agency): master asserted the mocked governance map
-      // (`governance`, resolved for the primary membership). Agency answers the
-      // per-account `settings` map — here the one account the membership reaches,
+      // The response carries the per-account `settings` map: here the one account the membership reaches,
       // with no settings row, so every field is a default.
       expect(body).not.toHaveProperty('governance');
       expect(body.settings).toEqual({
@@ -688,9 +669,7 @@ describe('auth routes (integration)', () => {
       await app.close();
     });
 
-    // PORT NOTE (magick-agency): `governance: {}` → `settings: {}`; the throw is
-    // injected into the real settings-map builder instead of a mocked governance
-    // service.
+    // The throw is injected into the real settings-map builder.
     it('sends settings: {} (fail-open) and still 200 when the resolver throws', async () => {
       const tenant = await insertTenant();
       const account = await insertAccount({ tenant_id: tenant.id });

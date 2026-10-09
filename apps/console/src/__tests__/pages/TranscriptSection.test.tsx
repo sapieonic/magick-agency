@@ -43,7 +43,7 @@ vi.mock('../../components/common/ErrorText', () => ({
 import { TranscriptSection } from '../../components/calls/CallDetailSections';
 import { loadTranscriptVisible } from '../../utils/transcript-prefs';
 
-const STORAGE_KEY = 'magick-agency-transcript-visible'; // B17 rename (cusui: `magickvoice-transcript-visible`)
+const STORAGE_KEY = 'magick-agency-transcript-visible'; // renamed in decision B17
 
 const ENTRIES = [
   { role: 'assistant' as const, content: 'Hello, am I speaking with Alex?', timestamp: '2026-01-01T00:00:00.000Z' },

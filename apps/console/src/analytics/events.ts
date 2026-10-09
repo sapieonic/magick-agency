@@ -27,12 +27,11 @@ import type { BuilderStepId } from '../pages/campaigns/agency/builderFlow';
  * All emitters delegate to `captureEvent`, which is a safe no-op when analytics
  * is disabled (no key configured).
  *
- * ── The product dimension is NOT declared here (E8) ─────────────────────────
- * The names in this catalog are flat and stay flat. The two products share one
- * PostHog project, so `webrtc_call_placed` from the Softphone had nothing
- * separating it from an agency station dial; the separator is a `product`
- * super-property — `'ai'` | `'agency'` — registered by whichever shell is
- * mounted (`useProductSurface`, called by `AppLayout` and `AgencyLayout`). Every
+ * ── The product dimension is NOT declared here ─────────────────────────
+ * The names in this catalog are flat and stay flat. The separator between shells
+ * is a `product` super-property — `'ai'` | `'agency'` — registered by whichever
+ * shell is mounted (`useProductSurface`, called by `AppLayout` for the `/app`
+ * zone and by `AgencyLayout`). Every
  * event below carries it without any emitter or call site knowing it exists, and
  * so do autocapture, pageviews and errors. Do NOT add a `product` property to an
  * emitter's shape: two sources for one dimension is how the two disagree.
@@ -41,27 +40,18 @@ import type { BuilderStepId } from '../pages/campaigns/agency/builderFlow';
  * carry no `product` at all.
  */
 
-// PORT NOTE (magick-agency): cusui's trackers for the AI product are removed with
-// the surfaces that called them — IVR workflows, automations, prompts, call-script
-// AutoPilot, recurring schedules, the campaign (broadcast) composer and its
-// concurrency/balance refusals, the bulk-dispatch jobs list, the AI dashboard,
-// the softphone (WebRTC dialer), onboarding, messaging connections, credits, the
-// "core funnel extensions" (dashboard quick actions and trend range, composer
-// steps, launch failures, softphone failures), call follow-ups and the broadcast
-// panel view. Every remaining emitter is verbatim.
-
 // --- Activation, setup, monetization, and reliability -------------------
 
 declare const analyticsPathBrand: unique symbol;
 export type AnalyticsPath = string & { readonly [analyticsPathBrand]: true };
-// PORT NOTE (magick-agency): cut to the agency gates. cusui's capability ids also
-// listed the AI product's (`calls.dialer`, `calls.dialer.analytics`, `ivr`,
+// Cut to the agency gates. The capability ids deliberately omit the AI
+// product's (`calls.dialer`, `calls.dialer.analytics`, `ivr`,
 // `scheduling`, `campaigns`, `messaging`, `sip`, `escalation`, `automations`,
 // `automations.branching`), and its flag ids `custom_sip` / `ai_call_transfer`;
 // none exists in Magick Agency. `agency_call_analysis` is added because it is the
 // one other flag a console route is gated on (`/app/call-summaries`).
 type CapabilityGateId =
-  // Agency Dialer. Mirrors master's governance catalog; keep in lockstep with
+  // Agency Dialer. Mirrors the server's capability gates; keep in lockstep with
   // `KNOWN_CAPABILITY_GATES` in RequireCapability.tsx — a gate missing from
   // either list is a gate whose unavailability is invisible in analytics.
   | 'agency'
@@ -103,7 +93,7 @@ type AuthFailureReason =
   | 'session_error'
   /**
    * Credentials were accepted, but the address is not on an agency workspace —
-   * master answered with a brand-new tenant instead of the membership the invite
+   * the server answered with a brand-new tenant instead of the membership the invite
    * wrote. Only the agency door reports this: at `/login` a new tenant is somebody
    * signing up, which is the product working.
    *
@@ -122,7 +112,7 @@ type FileSizeBucket =
   | '100kb_1mb'
   | '1mb_10mb'
   | '10mb_plus';
-// `agent` is here because the invite picker now offers it (`MAG-160`). The enum
+// `agent` is here because the invite picker now offers it (the invite picker's role list). The enum
 // has to cover every role a `team_invite_*` event can actually carry, or the one
 // role the Agency Dialer exists for is the one invite nobody ever measures.
 //
@@ -153,7 +143,7 @@ type ExportFailureReason =
   | 'timeout'
   | 'network_error'
   | 'permission_error'
-  // Master refused to write a file that would be missing part of the trail
+  // The server refused to write a file that would be missing part of the trail
   // (the 424 `AgencyCampaignActivityPage` already renders as a banner).
   | 'incomplete_source'
   | 'unknown_error';
@@ -200,7 +190,7 @@ export function trackEmailVerificationRequired(props: {
 }
 
 type SetupEventProps = {
-  // PORT NOTE (magick-agency): only the team-invite events remain; the contact
+  // Only the team-invite events exist; the contact
   // list, audio, API-key and phone-number setup events went with their pages.
   team_invite_sent: {
     role: AccountRole;
@@ -273,7 +263,7 @@ export function trackApiErrorEvent(props: {
 // code, a label, a name, a message, or a phone number. In particular:
 //
 //   - A disposition/break-reason is identified by its `code_index`/
-//     `reason_index` — its position in the catalog core delivered (the same
+//     `reason_index` — its position in the catalog the server delivered (the same
 //     index the agent's number keys bind to) — never its `code` or `label`.
 //   - `err.message` / `AgencyActionErrorResponse.message` / `stallCopy()`
 //     text is never sent; only the closed `AgencyActionErrorCode` /
@@ -285,7 +275,7 @@ export function trackApiErrorEvent(props: {
 //     ACTING user is already `distinct_id`; the target is a bucketed state.
 //   - Cue settings (`CueSettings.tsx`) are deliberately NOT instrumented per
 //     user: the feature exists so an agent can set an accessibility need
-//     "without telling their employer anything about themselves" (§A.4.3.1),
+//     "without telling their employer anything about themselves",
 //     and an event carrying `connect_flash` would be exactly that
 //     disclosure, readable by any tenant admin with project access. Do not
 //     add one.
@@ -327,7 +317,7 @@ export function trackAgencyStationConnectionChanged(props: {
   /**
    * Why the console stopped, on `disconnected` only. The two causes need
    * different responses — `flapping` points at the network or a load balancer,
-   * `heartbeat` at core's own pong path — and a single `disconnected` bucket
+   * `heartbeat` at the server's own pong path — and a single `disconnected` bucket
    * made the incident visible but not triageable.
    */
   cause?: 'heartbeat' | 'flapping';
@@ -431,7 +421,7 @@ export function trackAgencyPresenceRefused(props: {
 
 export function trackAgencyBreakRequested(props: {
   campaign_id: string;
-  /** Position in `break_reasons` core delivered — never the code/label. */
+  /** Position in `break_reasons` the server delivered — never the code/label. */
   reason_index: number;
   is_paid: boolean | null;
   /** The request landed as a queued (pending) break rather than an immediate one. */
@@ -636,7 +626,7 @@ export function trackAgencyActivityFiltered(props: {
   /** Count of selected actions — never the action names/labels. */
   action_filter_count: number;
   has_date_range: boolean;
-  /** `available_actions` was served by master — false means the filter is hidden. */
+  /** `available_actions` was served by the server — false means the filter is hidden. */
   vocabulary_available: boolean;
 }): void {
   captureEvent('agency_activity_filtered', props);
@@ -686,7 +676,7 @@ export function trackAgencyRosterIngestCompleted(props: {
   dnc_suppressed: number;
   /** Rejection ratio crossed the mis-mapped-column threshold. */
   high_rejection: boolean;
-  /** accepted + rejected === rows_read. False is a core/master arithmetic alarm. */
+  /** accepted + rejected === rows_read. False is a server-side arithmetic alarm. */
   reconciles: boolean;
   top_reason: AgencyIngestReasonCode | null;
 }): void {
@@ -759,7 +749,7 @@ export function trackAgentSurfaceViewed(props: {
  *
  * What this one carries instead is the honesty state of the page, because that is
  * what a question about this screen will be about: whether the campaign's own line
- * (the Share column's denominator) was readable at all, whether master hid rows,
+ * (the Share column's denominator) was readable at all, whether the server hid rows,
  * and whether `limit` cut the page. `truncated` is the derived answer rather than
  * three counts to re-derive downstream — the console already owns that arithmetic,
  * and two places computing it is how the two disagree.
@@ -772,9 +762,9 @@ export function trackAgencyCampaignContributionViewed(props: {
   campaign_id: string;
   /** The window the figures were read over — the roster's own vocabulary. */
   window: AgentStatsWindow;
-  /** Rows actually on screen, after master's filtering and core's `limit`. */
+  /** Rows actually on screen, after the server's filtering and the dialer runtime's `limit`. */
   rows: number;
-  /** Core's pre-limit, pre-filter count of groups — with one campaign, agents. */
+  /** The server's pre-limit, pre-filter count of groups — with one campaign, agents. */
   total_groups: number;
   /** The campaign-grouped line came back. `false` means the Share column is blank. */
   total_read: boolean;
@@ -826,13 +816,13 @@ export function trackAgencyBestHoursViewed(props: {
   cells: number;
   /** Cells with at least one dial. */
   cells_with_dials: number;
-  /** Cells the server said not to rate, so they carry no colour. The E5 number. */
+  /** Cells the server said not to rate, so they carry no colour. */
   withheld_cells: number;
   /** Cells never inside `[from, to)`. `0` when coverage could not be derived. */
   out_of_window_cells: number;
   /** `false` when there was no zone to derive coverage in, so blanks are ambiguous. */
   coverage_known: boolean;
-  /** Core's pre-limit count of groups, for the one case where 168 is not the whole map. */
+  /** The server's pre-limit count of groups, for the one case where 168 is not the whole map. */
   total_groups: number;
 }): void {
   captureEvent('agency_best_hours_viewed', props);
@@ -903,7 +893,7 @@ export function trackAgencyStaleResponseDiscarded(props: {
 // The PII rule bites unusually hard on this page, because almost everything on
 // it is exactly what must not be sent: the invited address, the address the
 // visitor signed in with, the inviter's name, and the workspace's name. None of
-// those appear below. What is left — the role, whether master could name the
+// those appear below. What is left — the role, whether the server could name the
 // inviter, which credential method was used, and whether the address matched —
 // is the whole of what the funnel needs, and none of it identifies anybody.
 //
@@ -939,7 +929,7 @@ type InviteClaimFailureReason =
   /** They answered the address-mismatch confirmation with "use a different account". */
   | 'mismatch_declined'
   /**
-   * Master refused the claim because that Firebase account already belongs to a
+   * The server refused the claim because that Firebase account already belongs to a
    * different user row here (`identity_in_use`).
    *
    * Its own reason rather than `claim_error`, because it is the one conflict this
@@ -963,14 +953,14 @@ type InviteClaimFailureReason =
 export function trackAgencyInviteViewed(props: {
   /**
    * Built from {@link InviteUnavailableStatus} rather than restated, so a status
-   * master adds cannot be reported by the page and silently dropped from the
+   * the server adds cannot be reported by the page and silently dropped from the
    * funnel — the compiler names every place it has to be handled. `pending` and
    * `unreachable` are this page's own, and neither is a wire value.
    */
   status: InviteUnavailableStatus | 'pending' | 'unreachable';
   /** Null on every status but `pending`, where the invite body is the thing read. */
   role: AccountRole | null;
-  /** Whether master could name who sent it. An unnamed invite is colder to receive. */
+  /** Whether the server could name who sent it. An unnamed invite is colder to receive. */
   has_inviter: boolean;
 }): void {
   captureEvent('agency_invite_viewed', props);

@@ -22,10 +22,9 @@ interface NavItem {
  * Only surfaces that exist today.
  *
  * ── The Supervisor Dashboard's absence has ended, and here is the record ────
- * This note used to explain why §C's dashboard was "deliberately absent rather
- * than present-and-empty": core's stats payload produced no `pacing_state`,
- * `stall_reason`, per-agent rows or human/machine connect split (`MAG-65`,
- * `MAG-120`), and "a health strip with no diagnosis in it is worse than no health
+ * This note used to explain why the supervisor dashboard was "deliberately absent rather
+ * than present-and-empty": the API's stats payload produced no `pacing_state`,
+ * `stall_reason`, per-agent rows or human/machine connect split, and "a health strip with no diagnosis in it is worse than no health
  * strip — it reads as *nothing wrong* when the truth is *nothing measured*".
  *
  * All four landed and the campaign detail page has rendered them for some time,
@@ -56,7 +55,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     /* Same floor as the campaign list, because it reads the same list plus one
-       `/stats` per campaign — and both are `agency.campaigns.read` in master.
+       `/stats` per campaign — and both are `agency.campaigns.read` in the API.
        Gating it any higher would hide a page whose every request would succeed. */
     label: 'Analytics',
     to: '/agency/analytics',

@@ -31,7 +31,7 @@ import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/
  * **The audio path, at the page.**
  *
  * Every agency call was dead air on both ends: the console never asked for the
- * microphone and never read the `media` frames core was relaying to it. Nothing
+ * microphone and never read the `media` frames the API was relaying to it. Nothing
  * errored — the panel populated, `bridged` arrived, the talk timer ran and the
  * call billed — which is precisely why it survived to a live shift.
  *
@@ -39,7 +39,7 @@ import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/
  * jsdom/happy-dom has no audio hardware, no real `AudioWorklet` and no real
  * resampler, so nothing here proves the *sound* is right. What it can prove, and
  * what a reviewer would otherwise have to take on faith, is the wiring: that
- * frames leave only while an attempt is bridged, in the envelope core reads;
+ * frames leave only while an attempt is bridged, in the envelope the API reads;
  * that mute stops them; that a blocked microphone produces a sentence the agent
  * can act on; and that every track is stopped when the call ends and when the
  * page goes away. The doubles below are therefore deliberately dumb — they
@@ -317,7 +317,7 @@ class FakeSocket {
 
 const latest = () => FakeSocket.instances[FakeSocket.instances.length - 1]!;
 
-/** Frames the console put on the wire as audio, in core's envelope. */
+/** Frames the console put on the wire as audio, in the API's envelope. */
 function mediaFrames(): string[] {
   return latest()
     .sent.filter((raw) => (JSON.parse(raw) as { event: string }).event === 'media')
@@ -475,7 +475,7 @@ describe('the microphone is armed on reservation, not on connect', () => {
 
   it('sends NOTHING while the attempt is only reserved', async () => {
     /**
-     * The gate that matters most. Core drops browser media until its PSTN leg is
+     * The gate that matters most. The API drops browser media until its PSTN leg is
      * live, so an early frame is not audible anywhere — but "the server discards
      * it" is not the reason to send it, and a console that streams from
      * reservation is streaming a room the customer has not joined.
@@ -543,7 +543,7 @@ describe('the microphone is armed on reservation, not on connect', () => {
   });
 });
 
-describe('the uplink opens on `bridged` and carries core’s envelope', () => {
+describe('the uplink opens on `bridged` and carries the API’s envelope', () => {
   it('puts captured audio on the socket once bridged', async () => {
     await onCall();
     speak();
@@ -556,8 +556,8 @@ describe('the uplink opens on `bridged` and carries core’s envelope', () => {
     expect(frames[0]).toBe(btoa(SILENT_FRAME_BYTES));
   });
 
-  it('writes the frame shape core’s reader accepts, verbatim', async () => {
-    // `webrtc-bridge-manager.ts:1083` inspects `event` and `media.payload` and
+  it('writes the frame shape the API’s reader accepts, exactly', async () => {
+    // The bridge reader inspects `event` and `media.payload` and
     // nothing else. Asserting the raw JSON catches a renamed key that a
     // payload-only assertion would sail past.
     await onCall();
@@ -613,7 +613,7 @@ describe('the uplink opens on `bridged` and carries core’s envelope', () => {
 });
 
 describe('inbound audio reaches playback instead of the diagnostic sink', () => {
-  it('schedules every media frame core relays', async () => {
+  it('schedules every media frame the API relays', async () => {
     await onCall();
     await act(async () => {
       latest().emit({ event: 'media', media: { payload: btoa(SILENT_FRAME_BYTES) } });
@@ -1177,11 +1177,11 @@ describe('a station that is never coming back releases the microphone', () => {
     /**
      * **The rest of the story the test above starts, and the case that shipped
      * broken.** The blip is recoverable and the microphone is rightly kept — but
-     * only until core answers, and core's answer here is that the call is over.
+     * only until the API answers, and the API's answer here is that the call is over.
      *
-     * Core sends `missed_release` **exactly** when it holds no attempt
-     * (`agency.routes.ts:880`) and only when the `released` frame could not be
-     * delivered (`agency-dialer.ts:646`, `if (!delivered)`) — which is precisely the
+     * The API sends `missed_release` **exactly** when it holds no attempt
+     * (in the station route) and only when the `released` frame could not be
+     * delivered (the dialer's `if (!delivered)` branch) — which is precisely the
      * state this test is in: `live` still set from before the drop. `ready` used to
      * apply its fields only when present, so `live` survived a frame whose whole
      * meaning was that it should not: the `audio.sync` effect keys on
@@ -1235,7 +1235,7 @@ describe('a station that is never coming back releases the microphone', () => {
     expect(tracks[0]!.stop).toHaveBeenCalled();
     // And the agent is finally told what happened. `panelAttempt` stayed truthy
     // while `live` survived, which suppressed the only component that renders this
-    // — so the notice core had already consumed on read was destroyed, not delayed.
+    // — so the notice the API had already consumed on read was destroyed, not delayed.
     expect(screen.getByTestId('missed-release').textContent).toContain(
       'While you were disconnected',
     );
@@ -1248,7 +1248,7 @@ describe('a browser that suspends the audio graph says so', () => {
   /**
    * **The mid-call reload, and the worst failure this feature can produce.**
    *
-   * `ready.active_attempt` rehydrates a bridged attempt and core deliberately
+   * `ready.active_attempt` rehydrates a bridged attempt and the API deliberately
    * does not re-emit `bridged`, so a reload lands the console straight back into
    * a live call. On a fresh page load with no user gesture, `getUserMedia`
    * resolves from the persisted permission — but both `AudioContext`s come up

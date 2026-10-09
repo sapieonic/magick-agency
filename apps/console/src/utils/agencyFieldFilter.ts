@@ -1,5 +1,5 @@
 /**
- * The contact-panel field filter (§A.6.3).
+ * The contact-panel field filter.
  *
  * Pure and separate from the component for the same reason `agencyContext`'s
  * resolution rules are: "matches header and value, case-insensitive, substring"

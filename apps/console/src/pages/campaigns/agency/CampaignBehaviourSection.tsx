@@ -26,7 +26,7 @@ import type { AgencyDispositionEntry, AgencyRetryOutcome } from '../../../types/
 import styles from './CampaignBehaviourSection.module.css';
 
 /**
- * Campaign configuration (`AD-P3-U-02`, §B.5 + §B.6): calling hours, the
+ * Campaign configuration: calling hours, the
  * disposition catalog, the retry policy and wrap-up.
  *
  * Every rule lives in `utils/agencyCampaignConfigForm.ts`; this is assembly plus
@@ -34,19 +34,18 @@ import styles from './CampaignBehaviourSection.module.css';
  *
  *  - **The built-in lock explains itself inline.** A lock icon with no reason
  *    reads as a permissions bug, and the reason is not "the server refuses" —
- *    master deliberately does not enforce it. It is that removing one silently
+ *    the server deliberately does not enforce it. It is that removing one silently
  *    removes a capability the agent needs.
  *  - **`invalid` and `connected` are shown fixed at zero**, not hidden. Hiding
  *    them invites the operator to assume they retry.
- *  - **`agent_disconnected` and `canceled` are labelled "our fault"** (`MAG-100`,
- *    `MAG-97`; `canceled` from the 2026-09-08 pilot) and share one callout
+ *  - **`agent_disconnected` and `canceled` are labelled "our fault"** (`canceled` came from the 2026-09-08 pilot) and share one callout
  *    saying the thing about them that
- *    is easy to get wrong: the row can only LOWER core's platform bound, never
+ *    is easy to get wrong: the row can only LOWER the API's platform bound, never
  *    raise it, and lowering it to 0 retires the contact on the first pre-connect
  *    failure rather than merely skipping a redial. `orphaned` is deliberately
- *    absent — core never reads a campaign's value for it, so the row would be an
+ *    absent — the API never reads a campaign's value for it, so the row would be an
  *    inert control, which is the test `canceled` passes and it does not.
- *  - **Concurrency is displayed, never offered (CR-2, D10).** No input, no
+ *  - **Concurrency is displayed, never offered.** No input, no
  *    stepper, no Edit link — a greyed-out input reads as "you lack permission
  *    today" and produces a support ticket with no resolution.
  *
@@ -60,7 +59,7 @@ import styles from './CampaignBehaviourSection.module.css';
  *    what it does, and the card closes with {@link dispositionSummary} — the
  *    combination stated as one sentence, the same argument as the calling-window
  *    echo. `suppress` + `terminal` together get {@link SUPPRESS_BEATS_TERMINAL_NOTE},
- *    because core returns on the first and the second is then unreachable.
+ *    because the API returns on the first and the second is then unreachable.
  *  - **The order was declared to matter and could not be changed.** The hint
  *    said this is the agent's number-key order; the only way to reorder was to
  *    delete an entry and retype it, and a built-in could not be deleted at all.
@@ -93,7 +92,7 @@ export type BehaviourSectionId = 'hours' | 'behaviour';
 export interface CampaignBehaviourSectionProps {
   state: CampaignConfigState;
   onChange: (next: CampaignConfigState) => void;
-  /** Keyed by body path — client findings and master's `details` land alike. */
+  /** Keyed by body path — client findings and the server's `details` land alike. */
   fieldErrors: Record<string, string>;
   /** Injectable for tests; the echo is clock-derived. */
   now?: Date;
@@ -143,12 +142,12 @@ export function CampaignBehaviourSection({
       The seed supplies whichever half the operator did NOT type, so it has to be
       a value that is safe to have been chosen for them.
 
-      For an our-fault row, `max_attempts: 0` is not: core reads
+      For an our-fault row, `max_attempts: 0` is not: the API reads
       `min(configured, OUR_FAULT_REDIAL_BOUND)` and retires the contact once
       `ourFaultAttemptsUsed >= effectiveBound`, so a zero it never saw typed
       meant one agent-side drop before connect permanently retired that contact.
       Typing a number into the *delay* box was enough to do it. Seeding from
-      core's own default keeps an untouched field at core's behaviour, which is
+      the API's own default keeps an untouched field at the API's behaviour, which is
       what an operator editing the other field is entitled to assume.
     */
     const seed = OUR_FAULT_RETRY_OUTCOMES.includes(outcome)
@@ -333,13 +332,13 @@ export function CampaignBehaviourSection({
         </p>
 
         {/*
-          CR-2 / D10: displayed, never offered. There is no `/proxy/account-settings`
+          Concurrency is displayed, never offered. There is no `/proxy/account-settings`
           route and none is being added — concurrency is a commercial lever, and an
           account that can raise its own limit can raise its own carrier spend.
           Broadcasts (not agency campaigns) now have a narrow READ-ONLY projection,
           `GET /proxy/calls/concurrency-limits`, and a per-broadcast "Simultaneous
           calls" cap that can only LOWER concurrency below that limit — never raise
-          it (ClickUp 14ygtkj9pgr). Nothing here changes: the agency pacing engine
+          it. Nothing here changes: the agency pacing engine
           has no per-campaign cap, and this stays a read-out.
         */}
         <p className={styles.concurrency} data-testid="concurrency-note">
@@ -361,7 +360,7 @@ export function CampaignBehaviourSection({
             const locked = isBuiltInCode(entry.code);
             const name = entry.label || entry.code || `Outcome ${index + 1}`;
             /*
-              Precedence, from core's `resolveDispositionDecision`: suppress
+              Precedence, from the API's `resolveDispositionDecision`: suppress
               beats terminal beats callback beats disposition-retry. A retry
               control under either of the first two would be a control that
               cannot fire, so the reason takes its place.
@@ -505,7 +504,7 @@ export function CampaignBehaviourSection({
 
                 {/*
                   The disposition's OWN retry — the one the retry table says
-                  lives here. Offered only where core would read it.
+                  lives here. Offered only where the API would read it.
                 */}
                 {retryUnreachable ? (
                   entry.retry ? (
@@ -648,7 +647,7 @@ export function CampaignBehaviourSection({
                         {/*
                           Not a validation error — 0 is a legitimate choice. It
                           is a consequence the word "0" does not convey beside a
-                          field labelled "attempts": core retires the contact
+                          field labelled "attempts": the API retires the contact
                           outright rather than merely skipping a redial.
                         */}
                         {ourFault && rule?.max_attempts === 0 && (
@@ -678,14 +677,14 @@ export function CampaignBehaviourSection({
         </p>
 
         {/*
-          `agent_disconnected` (MAG-100, MAG-97) and `canceled` (pilot
+          `agent_disconnected` and `canceled` (pilot
           2026-09-08): OUR
           fault, not the customer's. One callout for both rows — the rule it
           states is identical for each, and two paragraphs under one table would
           be read as one anyway.
 
           The earlier wording of this callout said the platform bound "cannot be
-          raised from here" and called it "smaller". Both were misleading. Core
+          raised from here" and called it "smaller". Both were misleading. The API
           takes `min(configured, OUR_FAULT_REDIAL_BOUND)`, so the row cannot
           raise it — true — but it CAN lower it, which is the half that bites;
           and the two are equal at 3, not smaller. An operator reading the old
@@ -719,7 +718,7 @@ export function CampaignBehaviourSection({
           The other half of wrap-up, and the half that decides how an agent's
           shift feels: with it on, the countdown puts them back in the pool by
           itself; with it off, they sit in wrap-up until they say they are done.
-          Core has supported it since migration 072 and nothing here ever sent
+          The API has long supported it and nothing here ever sent
           it, so every campaign ran on the column default.
         */}
         <div className="form-group">
@@ -733,7 +732,7 @@ export function CampaignBehaviourSection({
           </label>
           <p className={styles.hint} data-testid="auto-return-hint">
             {/*
-              Named separately for `wrapupSeconds === 0` because core only starts
+              Named separately for `wrapupSeconds === 0` because the API only starts
               a countdown when there is BOTH a window and this flag
               (`wrapup-manager.ts`): with no window there is nothing to count
               down, so the checkbox is stored but inert until a window exists.

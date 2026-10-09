@@ -117,33 +117,33 @@ import styles from './AgentConsolePage.module.css';
  *  2. **Only authoritative frames move the UI.** Everything visual is derived
  *     from `useAgencyConsole`, which routes bridge-originated `status`/`ended` to
  *     a diagnostic sink. The connect treatment keys off `bridgedAt` — set by
- *     `bridged` and nothing else (§A.13.1).
- *  3. **Tab order is fixed and does not vary by state** (§A.13.9): rail →
+ *     `bridged` and nothing else.
+ *  3. **Tab order is fixed and does not vary by state**: rail →
  *     column 1 → column 2 → column 3 (pad, then notes) → action bar (Break →
  *     Save → Hang up). Inactive controls are `disabled` so they are *skipped*
  *     rather than reordered, which is the mechanism that keeps the order stable —
  *     and the reason every region renders in every state.
  *
- * The `⚙` station menu (`MAG-160`) obeys all three: it is in the **header**
+ * The `⚙` station menu obeys all three: it is in the **header**
  * beside cue settings — never the action bar, whose Break → Save → Hang up
  * sequence rule 3 pins — and its items are refused in place with a stated reason
  * rather than disappearing, so nothing moves. (They are refused on *different*
  * states: Exit is additionally refused while `available`, because it leaves the
  * agent in the dialable pool with no console attached. The whole argument lives
  * at the predicates in `agencyStationExit.ts`.) There
- * is deliberately no single-key shortcut for either: §A.9's keys are for the
+ * is deliberately no single-key shortcut for either:'s keys are for the
  * call in front of the agent, and a stray keypress that ends a session would be
  * the worst possible thing to bind a letter to.
  *
- * `C` (callback), `D` (mark DNC) and `/` (contact-panel field filter, §A.6.3)
- * ARE wired, as of `AD-P3-U-03`/`MAG-90` — `C` through the pad's handle so the
+ * `C` (callback), `D` (mark DNC) and `/` (contact-panel field filter)
+ * ARE wired, now — `C` through the pad's handle so the
  * selection and the focus move together, `D` through the DNC control's, so the
  * key opens the same confirmation the button does, and `/` by focusing the
  * filter input directly, since it owns no confirmation and no selection to
  * hand off.
  */
 /**
- * The `<input>` types a printable key belongs to, i.e. the positions §A.9's
+ * The `<input>` types a printable key belongs to, i.e. the positions's
  * single-key shortcuts must stay out of.
  *
  * A **deny**-list rather than an allow-list, because the unknown case has to fall
@@ -154,14 +154,14 @@ import styles from './AgentConsolePage.module.css';
  * radio, a checkbox and a range slider have no use for the letter `b`, so treating
  * them as text fields made **every** page shortcut dead while focus sat inside the
  * cue-settings popover: the one surface the agent who cannot hear the cues has to
- * open (`AD-P2-U-07`), and the same "operable but effectively unreachable" shape
- * that surface was moved to the header to avoid. §A.9 suppresses these keys so that
+ * open, and the same "operable but effectively unreachable" shape
+ * that surface was moved to the header to avoid. suppresses these keys so that
  * typing a note containing "b" cannot open the break menu mid-sentence; a radio
  * group cannot produce that failure and so does not earn the suppression.
  *
  * This was invisible because `AgentConsolePage.cueVisual.test.tsx`'s `press()`
- * fired at `document` instead of at the focused element — the exact class `MAG-90`
- * called out in writing.
+ * fired at `document` instead of at the focused element — the exact class of
+ * test gap called out in writing.
  */
 const NON_TEXT_INPUT_TYPES = new Set([
   'radio',
@@ -222,7 +222,7 @@ export default function AgentConsolePage() {
    * development, so a cleanup-only effect left this `false` for the rest of
    * the page's life. `confirmSwitch` would then set `switching` and never
    * clear it — a permanent "Switching…" with Cancel doing nothing, even once
-   * the three requests had already committed. (Caught in review on PR #277.)
+   * the three requests had already committed.
    */
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -242,7 +242,7 @@ export default function AgentConsolePage() {
   const liveAttemptRef = useRef<string | null>(null);
   /**
    * The **panel's** attempt as of now — `live`'s, or the one retained through
-   * wrap-up (`MAG-126`).
+   * wrap-up.
    *
    * A second ref beside `liveAttemptRef` rather than a replacement for it,
    * because the two answer different questions and a single ref would have to
@@ -255,14 +255,14 @@ export default function AgentConsolePage() {
    */
   const panelAttemptRef = useRef<string | null>(null);
 
-  // §A.6.3: matches header and value, case-insensitive, substring, as you type.
+  // matches header and value, case-insensitive, substring, as you type.
   const [fieldFilter, setFieldFilter] = useState('');
 
   const [dncInFlight, setDncInFlight] = useState(false);
   const [dncOutcome, setDncOutcome] = useState<string | null>(null);
   const [dncFailure, setDncFailure] = useState<string | null>(null);
   /**
-   * Why a hang-up can be reported as failed at all (`MAG-112`).
+   * Why a hang-up can be reported as failed at all.
    *
    * There was nowhere to put this before, because the rejection was swallowed —
    * and it was swallowed on the reasoning that the socket frame had already done
@@ -276,7 +276,7 @@ export default function AgentConsolePage() {
   // greyed button on this screen reads as an outage.
   const mayMarkDnc = usePermission('agency.dnc.write');
   // The tenant-wide escalation is a DIFFERENT, higher floor — `agency.dnc.manage`
-  // (`account_admin`), the same permission master requires to remove an entry.
+  // (`account_admin`), the same permission the server requires to remove an entry.
   // Marking campaign-scoped stays at `agent`; only the wider, harder-to-undo
   // escalation is gated behind this.
   const mayMarkDncTenantWide = usePermission('agency.dnc.manage');
@@ -319,8 +319,8 @@ export default function AgentConsolePage() {
      *
      * `TenantContext` resolves the account asynchronously — it is null on first
      * render and again for a moment after a tenant switch. Joining in that
-     * window sends no `X-Account-Id`, master forwards no `x-mgkvc-account`, and
-     * core answers the exact 400 this console was fixed to stop producing.
+     * window sends no `X-Account-Id`, the server forwards no `x-mgkvc-account`, and
+     * the API answers the exact 400 this console was fixed to stop producing.
      *
      * The retry when the account lands then succeeds, which is what made this
      * survivable-looking and is precisely why it was not: `joinError` gates the
@@ -333,9 +333,9 @@ export default function AgentConsolePage() {
 
     /**
      * Refuse locally when this browser already knows the agent is live on
-     * another campaign. The 409 from `POST /sessions` is core doing its job;
-     * firing it from a view that already has the answer is the UAT warning
-     * ("already live on another campaign") and MAG-134's "don't send the
+     * another campaign. The 409 from `POST /sessions` is the API doing its job;
+     * firing it from a view that already has the answer is the warning
+     * ("already live on another campaign") and the "don't send the
      * click" rule applied to the join path. Resume of the SAME campaign still
      * POSTs — that is a refresh of this station, not a second join.
      */
@@ -374,7 +374,7 @@ export default function AgentConsolePage() {
          * The one refusal the tenant-wide live-session rule makes reachable for
          * an ordinary agent: they are still joined to another campaign. It is an
          * answer with a remedy in it, so it must not fall through to the generic
-         * message — core states the campaign and their state there precisely so
+         * message — the API states the campaign and their state there precisely so
          * this screen can name both. See `agencyJoinConflict.ts`.
          */
         const conflict = parseJoinConflict(err);
@@ -389,7 +389,7 @@ export default function AgentConsolePage() {
         }
         /**
          * A conflict body the parser REFUSED — a structured field missing or
-         * unreadable — still carries core's own sentence, and that is a better
+         * unreadable — still carries the API's own sentence, and that is a better
          * thing to put in front of an agent than the generic fallback. The
          * parser stays strict on purpose (a conflict screen that names no
          * campaign reads as broken), so the degraded reading is chosen here
@@ -453,7 +453,7 @@ export default function AgentConsolePage() {
    * unless the cache is THIS campaign — a stale conflict record for another
    * campaign must not be rewritten from this console's state.
    *
-   * `session_gone` is terminal (4404): core no longer has this session, and
+   * `session_gone` is terminal (4404): the API no longer has this session, and
    * reconnecting cannot help. Touching after that would keep a second campaign
    * refused locally for as long as this page stays mounted. Clear only when
    * the record is still this campaign — another tab may already have written
@@ -489,7 +489,7 @@ export default function AgentConsolePage() {
    * A ref rather than the closed-over value: the rejection resolves after the
    * render that created the handler, and a new `reserved` may have landed in
    * between. Reporting the previous call's failure over the new one is the same
-   * stale-response hazard §A.13.6 refuses for dispositions.
+   * stale-response hazard refuses for dispositions.
    *
    * Clearing on change is part of the same rule — a failure notice must not
    * outlive the call it describes. And `live` is deliberately the right scope
@@ -512,7 +512,7 @@ export default function AgentConsolePage() {
   );
 
   /**
-   * §A.6.3. Scoped to tier 2 (`resolved.fields`) only — the hero row is capped at
+   * Scoped to tier 2 (`resolved.fields`) only — the hero row is capped at
    * four and always visible, and the empty-field disclosure is already collapsed
    * to one summary row, so neither is the "40 rows is scan cost" problem this
    * filter exists to solve.
@@ -558,13 +558,13 @@ export default function AgentConsolePage() {
         : 0,
     });
     /**
-     * **The HTTP route is the only hangup path** (`MAG-112`).
+     * **The HTTP route is the only hangup path**.
      *
      * This used to send the station socket's `hangup` control frame as the
      * primary and treat the HTTP call as belt-and-braces, swallowing its
      * rejection so "a failed fallback must not surface as an error for a hang-up
      * that worked". Exactly backwards: the frame was read by neither listener on
-     * that socket and core registered no route, so the HTTP call was the only
+     * that socket and the API registered no route, so the HTTP call was the only
      * one that could work — and it 404'd, silently, into that same catch. The
      * agent's hang-up button did nothing and said nothing.
      *
@@ -573,8 +573,8 @@ export default function AgentConsolePage() {
      * no-op into a loud one.
      *
      * **No automatic retry** — a retry landing after a new `reserved` hangs up a
-     * different customer (§A.7.1.1), the same shape as the stale disposition
-     * response §A.13.6 forbids. The agent retries by holding the button again.
+     * different customer, the same shape as the stale disposition
+     * response forbids. The agent retries by holding the button again.
      */
     void hangupAttempt(attemptId, tenantId ?? undefined, accountId ?? undefined).catch((err: unknown) => {
       // Guarded against a stale response: by the time this rejects the agent may
@@ -613,11 +613,11 @@ export default function AgentConsolePage() {
   const stationCampaignId = bootstrap?.campaign_id ?? campaignId;
 
   /**
-   * Leave the station — the session-ending exit (§A.13.3).
+   * Leave the station — the session-ending exit.
    *
    * `leaveAgencySession` has existed since Phase 1 and was **called from
    * nowhere**: the console had no way out except closing the tab, which tells
-   * core nothing until the heartbeat grace expires. It is wired here rather than
+   * the API nothing until the heartbeat grace expires. It is wired here rather than
    * rewritten.
    *
    * Behind a confirmation because it is not undoable in one click — rejoining
@@ -626,7 +626,7 @@ export default function AgentConsolePage() {
    *
    * On failure the dialog **stays open** carrying the reason, and the confirm
    * button becomes the retry. Navigating away on a leave that did not land would
-   * leave the agent believing they had stopped receiving calls while core still
+   * leave the agent believing they had stopped receiving calls while the API still
    * had them in the pool — the one outcome this control exists to prevent.
    */
   const confirmLeave = useCallback(() => {
@@ -686,7 +686,7 @@ export default function AgentConsolePage() {
    * A rejoin failure used to leave the confirm button retrying the WHOLE
    * chain from `resume` — but by the time `rejoin` can fail, `leave` has
    * already succeeded, so redoing `resume` calls `createAgencySession` on the
-   * campaign the agent just left, rejoining it (raised in review on PR #277).
+   * campaign the agent just left, rejoining it.
    * Reset only where a switch attempt genuinely starts over: the button's
    * `onClick` below (a fresh conflict, nothing done yet) — never inside
    * `confirmSwitch` itself, so a retry after any failure resumes from
@@ -700,7 +700,7 @@ export default function AgentConsolePage() {
   /**
    * The join-conflict screen's one-click remedy (`agencyJoinConflict.ts`).
    *
-   * The conflict body core sends (`session_on_other_campaign`) names the OTHER
+   * The conflict body the API sends (`session_on_other_campaign`) names the OTHER
    * campaign and the agent's state there, but never a `session_id` — nothing
    * on that response was ever meant to be a session lookup key. `leaveAgencySession`
    * needs exactly that id, so getting one is the first of three chained
@@ -714,8 +714,7 @@ export default function AgentConsolePage() {
    * join, from a page with no socket open to the other campaign to keep it
    * current. It can be stale by the time this actually runs, so the resumed
    * session's OWN `state` — current, because this request just resumed that
-   * exact session — is checked again before `leave` ever fires (raised in
-   * review on PR #277: without this, an agent who went `available` → `on_call`
+   * exact session — is checked again before `leave` ever fires (without this, an agent who went `available` → `on_call`
    * elsewhere could have that live call ended out from under them).
    */
   const confirmSwitch = useCallback(async () => {
@@ -819,8 +818,7 @@ export default function AgentConsolePage() {
          * agent is not "still at" `conflict.campaign_name` any more, so
          * this screen has nothing true left to say and retrying THIS dialog
          * would call `createAgencySession(conflict.campaign_id)` again,
-         * rejoining the campaign that was just left (raised in review on
-         * PR #277). The ordinary join screen is the honest state instead —
+         * rejoining the campaign that was just left. The ordinary join screen is the honest state instead —
          * it already knows how to retry: reloading this route re-runs the
          * plain join effect, which starts clean because the conflict really
          * is gone.
@@ -882,10 +880,10 @@ export default function AgentConsolePage() {
   }, [navigate, stationCampaignId, agentState]);
 
   /**
-   * Mark the contact on the line Do Not Call (§A.7.5), scoped to whichever of
+   * Mark the contact on the line Do Not Call, scoped to whichever of
    * the two choices the agent made in the dialog.
    *
-   * The request asserts `scope`, not a campaign id — core already knows the
+   * The request asserts `scope`, not a campaign id — the API already knows the
    * campaign from the attempt it is looking at, so this console has nothing to
    * name. `scope === 'campaign'` (the default) is sent explicitly rather than by
    * omission, so the request is self-describing in a log or a test even though
@@ -896,10 +894,10 @@ export default function AgentConsolePage() {
    * or a single click to the request. The outcome copy is scoped to *both* which
    * choice was made and what the response actually promised: on the tenant-wide
    * escalation, `dnc_recorded: false` means that wider list write is still in
-   * flight, and claiming it anyway is the overstatement §A.7.5 forbids.
+   * flight, and claiming it anyway is the overstatement forbids.
    *
    * **No retry.** A retry landing after a new `reserved` would suppress a
-   * different customer — the same hazard §A.7.1.1 refuses for the hang-up.
+   * different customer — the same hazard refuses for the hang-up.
    */
   const confirmDnc = useCallback(
     (scope: DncScope, origin: 'shortcut' | 'click') => {
@@ -922,7 +920,7 @@ export default function AgentConsolePage() {
           // Call" shown against the customer now on the line is a claim about the
           // wrong person.
           //
-          // The guard reads the **panel's** attempt and not `live`'s (`MAG-126`).
+          // The guard reads the **panel's** attempt and not `live`'s.
           // `live` has a writer this used to ignore — `released` clears it — so
           // keyed on `live` all three of these handlers returned early at hangup,
           // for a contact still on screen and about to be dispositioned. That lost
@@ -964,7 +962,7 @@ export default function AgentConsolePage() {
 
   /**
    * A new **contact** clears the previous one's DNC result — it was about
-   * someone else (`MAG-126`).
+   * someone else.
    *
    * Keyed on the panel's attempt, for the reason the effect below spells out at
    * length for the field filter: `released` sets `live` to null, so keyed on
@@ -997,7 +995,7 @@ export default function AgentConsolePage() {
   }, [panelAttempt?.attempt_id]);
 
   /**
-   * §A.6.3: the filter clears on the next `reserved` event, not on every render
+   * the filter clears on the next `reserved` event, not on every render
    * of the contact panel — and **not at hangup**.
    *
    * Keyed on the **panel's** attempt rather than `live`'s, because `live` has a
@@ -1025,7 +1023,7 @@ export default function AgentConsolePage() {
   }, [panelAttempt?.attempt_id]);
 
   /**
-   * The global keyboard map (§A.9, §A.13.9).
+   * The global keyboard map.
    *
    * **All single-key shortcuts are suppressed while focus is inside a text
    * input**, except `Esc` and `Ctrl`/`Cmd`+`Enter` — otherwise typing a note
@@ -1071,7 +1069,7 @@ export default function AgentConsolePage() {
 
       if (key === 'a') {
         // One key for two verbs, because the rail says which one is on offer and
-        // the agent is never asked to remember (§A.13.3).
+        // the agent is never asked to remember.
         if (agentState === 'offline') {
           event.preventDefault();
           cons.goAvailable('shortcut');
@@ -1107,7 +1105,7 @@ export default function AgentConsolePage() {
       }
 
       if (key === '/') {
-        // §A.6.3. Focuses the filter input; nothing to enable/disable here — the
+        // Focuses the filter input; nothing to enable/disable here — the
         // box is present at every density and in every call state, so there is
         // no "refuses" branch the way `C` and `N` have one. Once focus lands
         // inside the input, `inTextField` above is what stops this branch from
@@ -1140,7 +1138,7 @@ export default function AgentConsolePage() {
       }
 
       if (key === 'd') {
-        // Opens the confirmation, never the request. §A.7.5 exists for the
+        // Opens the confirmation, never the request. exists for the
         // customer who says "take me off your list" and hangs up in three
         // seconds — reachable in one key, still impossible to do by accident.
         event.preventDefault();
@@ -1151,9 +1149,9 @@ export default function AgentConsolePage() {
 
       if (key >= '1' && key <= '9') {
         if (!cons.padEnabled) return;
-        // Index-based against the catalog **in the order core delivered it**. A
+        // Index-based against the catalog **in the order the API delivered it**. A
         // client-side sort would silently remap every agent's muscle memory the
-        // moment an admin renames a code (§A.13.6).
+        // moment an admin renames a code.
         const entry = dispositionForNumberKey(cons.catalog, key);
         // Emitted once the pad is at least enabled — a digit typed while the pad
         // is closed isn't a shortcut attempt on this surface.
@@ -1181,8 +1179,8 @@ export default function AgentConsolePage() {
   /*
     The join conflict, ahead of `joinError` — both are "the station did not
     open", and this one is the case with a remedy in it. One live session per
-    agent per TENANT (core migration 092; 074's per-campaign comment was
-    superseded deliberately), so being refused here means they are still joined
+    agent per TENANT (deliberate: the earlier per-campaign limit was
+    superseded), so being refused here means they are still joined
     somewhere else, and the link is the way to the Leave-station control that
     frees them.
   */
@@ -1323,22 +1321,22 @@ export default function AgentConsolePage() {
             </span>
           ) : null}
           {/*
-            Cue settings live in the header, not the action bar (`AD-P2-U-07`).
+            Cue settings live in the header, not the action bar.
 
             Two reasons, both about the agent rather than the layout. It is a
-            **display** preference and not a call action — §A.13.9's action-bar
+            **display** preference and not a call action's action-bar
             sequence (Break → Save → … → Hang up) is the set of things that act on
             a live call, and a control that changes how the console looks does not
             belong between Mark DNC and Hang up. And it must be reachable in two
             keystrokes from a cold start: the agent most likely to need it is the
             one who cannot hear the cues, and making them Tab past the whole
             contact panel to find the switch is the same "operable but effectively
-            unreachable" shape `AD-P2-U-04` was filed for.
+            unreachable" shape this guards against.
           */}
           <CueSettings prefs={cons.cuePrefs} onChange={cons.setCuePrefs} />
           {/*
             The way OUT of the station, beside cue settings and deliberately not
-            in the action bar: §A.13.9 fixes that bar's sequence (Break → Save →
+            in the action bar: fixes that bar's sequence (Break → Save →
             … → Hang up) as a tab-order guarantee, and an item inserted there
             moves controls an agent reaches by muscle memory — the neighbour
             being the one that hangs up on a person. Leaving is also not a call
@@ -1404,28 +1402,28 @@ export default function AgentConsolePage() {
         onEndBreak={cons.endBreak}
         waitingForDialer={cons.waitingForDialer}
         cueFlash={cons.cueFlash}
-        // PORT NOTE (magick-agency, CONTRACT-DIFF §1): core's reconnect window.
+        // The API's reconnect window.
         deferredHangupMs={bootstrap?.intervals.deferred_hangup_ms ?? null}
         /*
           The way back from `superseded` / `disconnected`. Handed straight from the
           station hook: reclaiming a station and reconnecting to one are the same
-          act, because core gives the station to whoever attaches last.
+          act, because the API gives the station to whoever attaches last.
         */
         onReconnect={station.reconnect}
       />
 
       {/*
-        A refusal is a response, not an alarm: core declines `/available` while a
+        A refusal is a response, not an alarm: the API declines `/available` while a
         disposition is outstanding, and that refusal is what makes the disposition
-        mandatory. Rendered under the rail with the remedy core stated, never in
-        the rail — the rail is the call's state (§A.13.4).
+        mandatory. Rendered under the rail with the remedy the API stated, never in
+        the rail — the rail is the call's state.
       */}
       {cons.presenceRefusal ? (
         <p className={styles.presenceRefusal}>{cons.presenceRefusal}</p>
       ) : null}
 
       {/* Assertive region, used ONLY for connect, disconnect and the direct
-          result of a button the agent just pressed (§A.11 — exactly two live
+          result of a button the agent just pressed ( — exactly two live
           regions, and this is the second). */}
       <div className={styles.srOnly} role="alert" aria-live="assertive">
         {cons.announcement}
@@ -1448,7 +1446,7 @@ export default function AgentConsolePage() {
         cannot appear or disappear under a cursor. Anything derived from a FRAME
         must not be placed here.
 
-        **`selection_summary` is rendered verbatim.** Core builds it from the
+        **`selection_summary` is rendered as received.** The API builds it from the
         frozen selector on the child campaign's row, so the sentence the agent
         reads and the query that put this contact in front of them cannot
         disagree. Re-deriving it from anything this client holds would be a
@@ -1456,7 +1454,7 @@ export default function AgentConsolePage() {
         the input, because the selector is deliberately not on the bootstrap.
 
         Not a live region: it is standing context, not an event, and the console
-        has exactly two live regions (§A.11) both spent on the call itself.
+        has exactly two live regions both spent on the call itself.
       */}
       {bootstrap?.retry_context ? (
         <p className={styles.retryBanner} data-testid="retry-context">
@@ -1537,7 +1535,7 @@ export default function AgentConsolePage() {
             ) : (
               <>
                 {/*
-                  §A.6.3. Present whenever there is a tier-2 list to search —
+                  Present whenever there is a tier-2 list to search —
                   "the filter box is present at all densities, so the gesture is
                   the same every time" — but not when the panel has nothing to
                   filter (0 non-empty fields), which would only invite typing
@@ -1628,14 +1626,14 @@ export default function AgentConsolePage() {
                 {panelAttempt.prior_attempts.length > 0 ? (
                   /*
                     ── Grouped by campaign, this one first ────────────────────
-                    Core's read is lineage-scoped now: a contact retried from an
+                    The API's read is lineage-scoped now: a contact retried from an
                     earlier campaign carries that campaign's attempts here too.
                     A flat list of them is unreadable, because `attempt_number`
                     is per-campaign and RESETS — two passes would each show an
                     "attempt 1" and nothing would say which pass either belonged
                     to. The campaign name is what makes the history legible, and
                     it is also the only thing about an ancestor campaign the
-                    agent is given (retry design DR-7): no stats, no connect
+                    agent is given: no stats, no connect
                     rate, no roster counts, no agent roster.
 
                     The heading count stays the TOTAL across groups, because it
@@ -1776,7 +1774,7 @@ export default function AgentConsolePage() {
 
         {/* Not an error: the queued break was promoted to a real one, which is the
             ordinary outcome of pressing ✕ at the end of wrap-up. No danger
-            styling, and the recovery is `End break` in the rail (§A.13.4). */}
+            styling, and the recovery is `End break` in the rail. */}
         {cons.breakAlreadyStarted ? (
           <span className={styles.breakAlreadyStarted}>Your break already started.</span>
         ) : null}
@@ -1795,7 +1793,7 @@ export default function AgentConsolePage() {
         </button>
 
         {/*
-          §A.13.6: the reason is rendered **next to the submit control**, never as a
+          the reason is rendered **next to the submit control**, never as a
           toast — "an agent must not return to `available` believing a disposition
           saved when it did not". Only once the pad is live: before that the pad
           carries its own "available when connected", and two stated reasons for one
@@ -1826,7 +1824,7 @@ export default function AgentConsolePage() {
         />
 
         {/*
-          Mute sits between DNC and Hang up, which keeps §A.13.9's stated
+          Mute sits between DNC and Hang up, which keeps's stated
           sequence (Break → Save → … → Hang up) intact while putting it beside
           the other control that acts on the live call.
 
@@ -1834,7 +1832,7 @@ export default function AgentConsolePage() {
           A label that flips to "Muted" would be a state read as a verb — the
           agent presses a button that says "Muted" expecting to become muted.
 
-          Disabled when the uplink is not open, per §A.13.9's rule that inactive
+          Disabled when the uplink is not open, 's rule that inactive
           controls are disabled so they are skipped rather than reordered.
           Keyed off `audio.sending` rather than `live` alone: a call that is up
           while the microphone failed has nothing to mute, and offering the
@@ -1899,7 +1897,7 @@ export default function AgentConsolePage() {
            * Without this, cancelling mid-request unmounts the dialog, the
            * rejection then sets `leaveFailure` on a surface nobody can see, and
            * the menu item reads "Leave station" again: the agent believes they
-           * left while core still has them in the pool. That is verbatim the
+           * left while the API still has them in the pool. That is exactly the
            * outcome `confirmLeave` refuses to produce by navigation, arriving
            * through the Escape key instead.
            */
@@ -1953,12 +1951,12 @@ function IdlePanel({
         </>
       ) : release ? (
         /*
-          ── A release that no wrap-up ever explained (core `#290`) ──────────────
+          ── A release that no wrap-up ever explained ──────────────
           `releaseShape` is `wrapup` here, so the release copy belonged in the
           wrap-up rail — and this panel only renders once there is no attempt on
           screen, which means that wrap-up is over or never began. The station
           clears `release` when a wrap-up genuinely ends (see its `agent_state`
-          handler), so reaching this branch means it never did: core took the
+          handler), so reaching this branch means it never did: the API took the
           early return that skips both the `agent_state{wrapup}` and `wrapup`
           frames, and without this the agent's screen goes from a live call
           straight to the resting "Waiting for a call" with no account of the
@@ -1986,7 +1984,7 @@ function IdlePanel({
           staring at a reconnect spinner and needs to know the call is over, not to
           be told a fresh one ended.
 
-          **Core hands this over exactly once**: `takeMissedRelease` clears as it
+          **The API hands this over exactly once**: `takeMissedRelease` clears as it
           reads, so if the console does not put it on screen the record of the call
           the agent was on is gone for good, and an empty station after a drop
           reads as data loss.
@@ -2010,7 +2008,7 @@ function IdlePanel({
         here in the idle slot and only after the next call completes — never a
         toast, never the rail, and it must not steal focus: an alert about
         customer A while the agent is talking to customer B is worse than the loss
-        it reports (§A.13.6).
+        it reports.
       */}
       {lostDisposition ? <p className={styles.lostDisposition}>{lostDisposition}</p> : null}
     </div>
@@ -2110,12 +2108,12 @@ function ConnectionHealthPill({
  */
 
 /**
- * §A.6.3: "matching characters are marked". `highlightSegments` does the
+ * "matching characters are marked". `highlightSegments` does the
  * matching (pure, tested on its own); this wraps each matched slice in a
  * `<mark>` and leaves the rest as plain text.
  *
  * Never touches HTML in `text` — it only slices the string `agencyContext`
- * already stringified and never re-parses it, so §A.6.4's "value contains
+ * already stringified and never re-parses it, so's "value contains
  * HTML/markup: rendered as text, always" holds through the filter exactly as
  * it did without one.
  */

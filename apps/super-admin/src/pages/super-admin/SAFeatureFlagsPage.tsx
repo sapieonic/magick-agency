@@ -24,7 +24,7 @@ import styles from './SAFeatureFlagsPage.module.css';
  * The value a flag inherits when no global override is set.
  *
  * `env_default` is ALREADY the resolved inherit layer, not "the env var's
- * value": core's `resolveEnvDefault` returns the registry `default` when the
+ * value": the server's `resolveEnvDefault` returns the registry `default` when the
  * flag's env var is unset, and no flag has a null default — so the field is
  * populated for every registered flag and `entry.default` here is only a guard
  * against a payload that omits it.
@@ -53,7 +53,7 @@ function globalEffectiveOn(entry: FeatureFlagCatalogEntry): boolean {
  * reaching for the pre-warm kill switch during a provider-quota incident was
  * told `AI_PREWARM_ENABLED` was set to `true` when it may never have been set.
  *
- * The per-tenant tab CAN attribute this, because core's /resolve reports a
+ * The per-tenant tab CAN attribute this, because the server's /resolve reports a
  * per-flag `source` and only says `env` when the var is genuinely set and
  * non-empty (`resolveEnvOrRegistryDefault`). Restoring attribution here needs
  * the same signal on the catalog route — see the `env_set` follow-up.
@@ -77,7 +77,7 @@ interface PendingNumberEdit {
  * Platform-wide Feature Flags registry. The flag-first home: browse the whole
  * catalog, set each flag's GLOBAL default (audited, with optional expiry), and
  * roll a flag out across many tenants. Per-tenant overrides live on the tenant
- * detail page. UX: docs/reference/magick-comms-cusui/docs/superpowers/plans/feature-flags-ux-redesign.md.
+ * detail page.
  */
 export default function SAFeatureFlagsPage() {
   const [catalog, setCatalog] = useState<FeatureFlagCatalogEntry[]>([]);
@@ -144,7 +144,7 @@ export default function SAFeatureFlagsPage() {
   }, [catalog, q, owner, type, exposedOnly]);
 
   // Flags eligible for cross-tenant bulk rollout: boolean (the modal writes
-  // true/false), tenant-scopable, and not barred by master's policy.
+  // true/false), tenant-scopable, and not barred by the server's policy.
   const bulkable = useMemo(() => catalog.filter(canBulkRollOut), [catalog]);
 
   const commitGlobal = useCallback(async (key: string, value: unknown, reason: string, expiry: string) => {

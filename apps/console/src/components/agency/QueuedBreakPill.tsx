@@ -1,14 +1,14 @@
 import styles from './QueuedBreakPill.module.css';
 
 /**
- * "Break after this call — Lunch ✕" (§A.13.4).
+ * "Break after this call — Lunch ✕".
  *
  * Makes a deferred action visible. A break requested while `on_call` is queued
  * and applied at the end of wrap-up, and the failure mode without this pill is
  * specific and known: the agent presses Break, sees nothing change, and presses
  * it again.
  *
- * **This is a warning, not a receipt.** Core reports the queue with `peek`, never
+ * **This is a warning, not a receipt.** The API reports the queue with `peek`, never
  * `take` (`agency.routes.ts`, `wrapup-manager.ts`), and `releaseAgent` applies the
  * break the moment wrap-up ends whether or not this pill was ever on screen. So the
  * subject is not "we recorded your request" but "you are about to be taken out of
@@ -72,13 +72,13 @@ export function QueuedBreakPill({
    * it** — so a restore-after-response effect could never have worked either:
    * focus would already have been on `<body>` for the length of the request.
    *
-   * ── ⚠️ DO NOT GENERALISE THIS TO THE RAIL (§A.13.9) ─────────────────────────
+   * ── ⚠️ DO NOT GENERALISE THIS TO THE RAIL ─────────────────────────
    * There are **two** focus-loss mechanisms and they look like one bug:
    *
    *  (a) **the node is replaced by a re-render** — the rail rewrites every 250ms
    *      whether or not anyone interacted, so a focused control inside it is
    *      genuinely re-created and its focus genuinely must be captured and
-   *      restored. That is `AD-P2-U-04` and that handling has to stay.
+   *      restored. That handling has to stay.
    *  (b) **the node is disabled** — this component's case, fixed structurally by
    *      never disabling it.
    *

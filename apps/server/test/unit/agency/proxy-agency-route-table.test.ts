@@ -2,29 +2,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { readFileSync } from 'node:fs';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): master `test/unit/agency/proxy-agency-route-table.test.ts`
- * @a1f0756a. Source 29 cases (12 `it` literals, two of them inside `for…of` loops over 3 and 9
- * client calls, plus one `it.each` of 11 rows) → ported 29.
- *
- * Harness changes, and only these:
- *  - `proxyToCore` → `callCore` (`src/api/core-dispatch.js`), mocked under master's
- *    `proxyToCore` name so every assertion stays master's; the `resolveCoreApiKey` mock and its
- *    `beforeEach` re-arm are gone with the key (the hop is in-process);
- *  - `auditLogger` → `platformAuditLogger` (`src/audit/platform/audit-logger.js`);
- *  - the logger mock is a partial over `@magick-agency/observability`;
- *  - the `require-capability` mock is gone with governance (plan §3.2);
- *  - the s3 mock's `getFileBuffer` is core's `getFile` (B14), which the campaigns plugin imports.
- * Both plugins still register on `/proxy/agency`, and `/campaigns/:id/roster/clear` is still
- * registered only under `config.agency.rosterReplaceEnabled`, so both expected route sets are
- * master's unchanged. DELETED: none. MODIFIED: none. NEW: none.
- */
-
 /**
  * **The agency proxy's route table, asserted from Fastify's own routing.**
  *
  * ── Why this file exists ─────────────────────────────────────────────────────
- * "Which agency routes does master serve?" was answered twice in one day by
+ * "Which agency routes does the public API layer serve?" was answered twice in one day by
  * grepping for `\.(get|post)\(` and both answers were wrong the same way. Every
  * route carrying a `Params` type is written
  *
@@ -48,17 +30,17 @@ import { readFileSync } from 'node:fs';
  *    the router's own record, not source text. An addition or a removal shows up
  *    as a diff on a list, which is the cheapest possible review signal.
  * 2. **Every path the browser client actually calls resolves** — asserted as
- *    "not 404", which is precisely the property that matters. `AD-P2-M-01` was
+ *    "not 404", which is precisely the property that matters. A route was
  *    believed landed for hours partly because there was no assertion connecting
- *    the client's path strings to master's registrations: "ticket done" and
- *    "endpoint exists" were different events, and nothing in either repo's suite
+ *    the client's path strings to the registered routes: "ticket done" and
+ *    "endpoint exists" were different events, and nothing in the suite
  *    could tell them apart.
  *
  * The client list is hand-maintained here, and that is a real limitation worth
- * naming rather than hiding: master cannot import cusui. It is the same
- * hand-maintained-mirror arrangement as cusui's `types/agency.ts` against core's
- * contracts, and it carries the same duty — when `src/api/agency.ts` in
- * `magick-comms-cusui` gains a call, it gains a line here.
+ * naming rather than hiding: the server cannot import the console. It is the same
+ * hand-maintained-mirror arrangement as the console's `types/agency.ts` against
+ * the server's contracts, and it carries the same duty — when `src/api/agency.ts`
+ * in `apps/console` gains a call, it gains a line here.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -82,7 +64,6 @@ vi.mock('../../../src/auth/session.middleware.js', () => ({ sessionMiddleware: a
 vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
   tenantContextMiddleware: async () => {},
 }));
-// PORT NOTE (magick-agency): master's `require-capability` mock is gone with governance.
 // RBAC is stubbed open on purpose: this file asks "does the router know this
 // path", and a 403 would answer that just as well as a 200 while making the
 // assertion depend on the permission matrix, which its siblings already own.
@@ -114,7 +95,7 @@ const PREFIX = '/proxy/agency';
 
 /**
  * Every agency path the browser client issues, from `src/api/agency.ts` in
- * `magick-comms-cusui` — the exported functions, in file order.
+ * `apps/console` — the exported functions, in file order.
  *
  * Concrete ids rather than `:id` templates: the point is that the **router
  * resolves what the client sends**, and a parameterised path that fails to match
@@ -134,11 +115,11 @@ const CLIENT_CALLS: ReadonlyArray<{ fn: string; method: 'POST'; url: string }> =
 
 /**
  * Every CAMPAIGN path the supervisor console issues, from
- * `src/api/agencyCampaigns.ts` in `magick-comms-cusui`.
+ * `src/api/agencyCampaigns.ts` in `apps/console`.
  *
  * Deliberately not exhaustive over that file — it is the same hand-maintained
  * mirror the agent list above is, with the same duty and the same limitation
- * (master cannot import cusui). What earns a line here is a path whose SHAPE the
+ * (the server cannot import the console). What earns a line here is a path whose SHAPE the
  * router could get wrong: a nested segment after a param, a new sub-collection,
  * a verb that differs from its neighbours. A flat `GET /campaigns` cannot fail
  * to resolve in an interesting way; `GET /campaigns/:id/retry/preview` sitting
@@ -342,13 +323,13 @@ describe('every campaign path the supervisor console calls resolves', () => {
     /**
      * The specific routing hazard these three paths introduce, pinned rather
      * than assumed. `GET /campaigns/:id` floors at `viewer` and interpolates its
-     * param as the LAST segment of core's path; `GET /campaigns/:id/retry/preview`
+     * param as the LAST segment of the internal handler path; `GET /campaigns/:id/retry/preview`
      * floors two role levels above it. If find-my-way ever preferred the param
      * route, a viewer would reach the supervisory read — which is exactly the
      * escalation `rejectPathEscapingParams()` exists for, arriving by a
      * different door.
      *
-     * Asserted through the core path master builds, because that is the
+     * Asserted through the internal path the proxy builds, because that is the
      * observable difference: both routes answer 200 here.
      */
     const { app } = await buildCampaignApp();
@@ -375,7 +356,7 @@ describe('every path the browser client calls resolves', () => {
 
       /**
        * 404 is the only failure that matters here: it means the browser sends a
-       * request master does not serve, which is invisible in both repos' suites
+       * request the server does not serve, which is invisible to the rest of the suite
        * and surfaces to the agent as a button that does nothing. Any other status
        * — including a 400 or a 403 — proves the router matched.
        */
@@ -385,7 +366,7 @@ describe('every path the browser client calls resolves', () => {
   }
 });
 
-describe('every agent action route carries its RBAC permission (`AD-P3-M-05`)', () => {
+describe('every agent action route carries its RBAC permission', () => {
   /**
    * ── Why this is asserted against the SOURCE TEXT ───────────────────────────
    * `requirePermission` is mocked to a no-op at the top of this file (line ~67)
@@ -397,17 +378,17 @@ describe('every agent action route carries its RBAC permission (`AD-P3-M-05`)', 
    * `/sessions/:id/available`, `/sessions/:id/leave`, `/sessions/:id/station-token`,
    * `/sessions/:id/break`, and `/attempts/:id/dnc` are never called there at all.
    *
-   * Measured (`MAG-96`): deleting
+   * Measured: deleting
    * `preHandler: requirePermission('agency.station.connect')` from
    * `POST /sessions` in `proxy-agency-agent.routes.ts` left the entire
-   * `test/unit/agency/` suite green — 309 passed, 0 failed. That is the `MAG-89`
-   * shape: the roster-ingest route that shipped unauthenticated. These are the
+   * `test/unit/agency/` suite green — 309 passed, 0 failed. That is the same
+   * shape as the roster-ingest route that once shipped unauthenticated. These are the
    * routes an agent calls **mid-call** — hang up, submit disposition, mark DNC —
    * so an unguarded one is reachable by any authenticated caller in the tenant
    * regardless of role.
    *
-   * This is the same block `a8467ac` added for `proxy-agency-campaigns.routes.ts`,
-   * copied rather than reinvented: a source-text assertion per route, plus a
+   * The campaigns plugin (`proxy-agency-campaigns.routes.ts`) gets the same block:
+   * a source-text assertion per route, plus a
    * registration count so a route ADDED without a guard reds too — the per-route
    * list alone can only catch a guard removed from a route it already names, and
    * an added unguarded route is the real failure mode, not the hypothetical one.
@@ -452,7 +433,7 @@ describe('every agent action route carries its RBAC permission (`AD-P3-M-05`)', 
     /**
      * The list above can only catch a guard removed from a route it names. A
      * route ADDED without a guard would pass every case and be invisible —
-     * which is the `MAG-89` failure mode, not the hypothetical one. So count the
+     * which is a real failure mode, not a hypothetical one. So count the
      * registrations and require the table to cover them all. This is the same
      * count `EXPECTED_AGENT_ROUTES` above pins from Fastify's router (11) —
      * asserted independently here, from source text, because that assertion

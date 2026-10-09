@@ -3,10 +3,9 @@ import type pg from 'pg';
 import { getTestPool } from '../helpers/test-db.js';
 
 /**
- * Minimal row factories for the baseline schema tests. Modelled on core's
- * `test/integration/agency/agency-factories.ts` (insertAgencyCampaign & co), but
- * every tenant/account/user id is a UUID — the baseline's typing — instead of
- * core's free-form strings.
+ * Minimal row factories for the baseline schema tests (insertAgencyCampaign & co).
+ * Every tenant/account/user id is a UUID — the baseline's typing — never a
+ * free-form string.
  */
 
 type Row = Record<string, unknown> & { id: string };

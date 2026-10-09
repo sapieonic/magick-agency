@@ -7,7 +7,7 @@ import { matchRoutes } from 'react-router-dom';
  * The agency workspace's route table, asserted against the REAL paths.
  *
  * ── Why this exists ────────────────────────────────────────────────────────
- * MAG-159 reassigned `/agency/campaigns/:id/contacts` from the upload form to
+ * The campaign-roster change reassigned `/agency/campaigns/:id/contacts` from the upload form to
  * the roster and moved the upload to `…/contacts/add`. Every page test mounts
  * its component under a path it declares itself, so the whole move was
  * invisible to the suite: `AgencyCampaignContactsPage.test.tsx` went on

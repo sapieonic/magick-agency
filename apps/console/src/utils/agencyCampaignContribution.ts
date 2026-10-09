@@ -44,7 +44,7 @@ import type {
  * the gap. This module does not compute that flag and never did:
  * `AGENCY_ROSTER_MIN_RATE_DENOMINATOR` is documented as a number to EXPLAIN the
  * server's answer with and never to derive it, and a client-side threshold would
- * have been a second answer that disagreed with the roster's the moment core tuned
+ * have been a second answer that disagreed with the roster's the moment the server tuned
  * it. Now that the server states it, the rule is the roster's rule: a thin row's
  * connect and conversion rates render WORDS. See {@link contributionRatesReportable}
  * for what an ABSENT flag means, which is not the same as a `false` one.
@@ -77,7 +77,7 @@ export const CONTRIBUTION_GROUP_BY: readonly [AgencyGroupDimension, AgencyGroupD
  * The campaign's OWN line — one dimension, so exactly one row comes back.
  *
  * A separate read rather than a sum of the rows above, and that is the whole point
- * of the screen: with `agent` grouped, master drops the rows of people who have
+ * of the screen: with `agent` grouped, the API drops the rows of people who have
  * left the team, so the rows sum to less than the campaign did. Summing them would
  * silently redefine "the campaign's total" as "the total of the people still
  * here", which is the one number a supervisor would never think to doubt.
@@ -240,7 +240,7 @@ export function contributionCampaignOptions(
 /**
  * What this row is called.
  *
- * `agent_name` is master's, resolved on the proxy hop in one query for the page,
+ * `agent_name` is the API's, resolved on the proxy hop in one query for the page,
  * and `null` means UNRESOLVABLE (a deleted user, an id from outside the tenant)
  * rather than "no name" — so it goes through the same `agentDisplayName` fallback
  * the live floor and the roster use, and renders as a marked-as-an-id stand-in
@@ -259,7 +259,7 @@ export function contributionAgentName(row: AgencyGroupRowWithName): string {
   return agentDisplayName({ agent_user_id: id, agent_name: null });
 }
 
-/** True when master resolved a real name — the roster's `hasResolvedName`, over a group key. */
+/** True when the API resolved a real name — the roster's `hasResolvedName`, over a group key. */
 export function contributionNameResolved(row: AgencyGroupRowWithName): boolean {
   return Boolean(row.agent_name?.trim());
 }
@@ -281,14 +281,14 @@ export function contributionRowKey(row: AgencyGroupRowWithName, index: number): 
  *
  * ── An absent flag means "do not withhold", and that direction matters ─────
  * The house pattern, for the same reason {@link contributionAsymmetryNote} carries
- * one: merge order is core → master → cusui, so this console can meet a core that
- * predates the field, and master's documented degrade path serves core's body
+ * one: the server ships first, then this console, so this console can meet a server that
+ * predates the field, and the server's documented degrade path serves the dialer runtime's body
  * unrecognised. A comparison against `undefined` should never be reachable from a
  * typed field the wire can omit.
  *
  * The fallback is deliberately the PERMISSIVE one. Reading a missing flag as
  * `false` would withhold every rate on the screen the moment this console ran
- * ahead of core — a table of "Not enough calls" beside fat rows with hundreds of
+ * ahead of the server — a table of "Not enough calls" beside fat rows with hundreds of
  * dials, which is a worse and more confusing screen than the one this field was
  * added to fix. So an absent flag leaves today's behaviour exactly as it was, and
  * only an explicit `false` withholds.
@@ -387,7 +387,7 @@ export function contributionConversionCell(row: AgencyGroupRow): RosterCell {
  * Average handle time. `null` when no call has finished — never `0:00`.
  *
  * **Not gated on `rates_reportable`**, following the roster's `handleTimeCell`
- * verbatim and for its reason: the flag is about RATES, whose numerator is a count
+ * unchanged and for its reason: the flag is about RATES, whose numerator is a count
  * of a rare event and is therefore flattering or damning by luck at low volume. A
  * mean duration over eleven finished calls is noisy but it is not misleading — it
  * is genuinely how long those eleven took — and withholding it would leave the
@@ -408,7 +408,7 @@ export function contributionHandleTimeCell(row: AgencyGroupRow): RosterCell {
  * The share is `row.successes / total.successes`, where `total` is the
  * campaign-grouped row — the campaign as it actually was, departed agents
  * included. So the shares of the listed rows add to 100% only when every row of
- * the campaign is on screen, and fall short when master dropped one or `limit`
+ * the campaign is on screen, and fall short when the API dropped one or `limit`
  * cut one; {@link contributionAsymmetryNote} names what is missing, and
  * deliberately does NOT claim the shortfall equals it (a departed member who
  * booked nothing moves no share at all). Normalising it away (dividing by the sum
@@ -466,7 +466,7 @@ export function contributionShareCell(
 /**
  * `6 agents dialled this campaign` — the POPULATION, not the row count.
  *
- * `total_groups` is core's pre-`limit`, pre-filter count of groups, and with one
+ * `total_groups` is the server's pre-`limit`, pre-filter count of groups, and with one
  * campaign filtered and `agent` grouped a group IS an agent. It is the right
  * number for this sentence for the same reason `total_agents` is on the roster:
  * `rows.length` would move when a former member was dropped or when `limit` cut
@@ -499,8 +499,8 @@ export function contributionCountReadout(page: AgencyGroupPage): string | null {
  *
  * ── The asymmetry, concretely ─────────────────────────────────────────────
  * The campaign's own total is an aggregate over everyone who dialled it, and
- * master has nothing to drop from it: no row belongs to a person, so nobody can be
- * filtered out of it. The agent rows beside it are per-person, and master DOES
+ * the API has nothing to drop from it: no row belongs to a person, so nobody can be
+ * filtered out of it. The agent rows beside it are per-person, and the API DOES
  * drop some of them. So the two do not reconcile.
  *
  * Neither number is wrong. Showing them adjacent with nothing said is, and it is
@@ -517,11 +517,11 @@ export function contributionCountReadout(page: AgencyGroupPage): string | null {
  *     and NO bookings changes no share at all: two visible agents on 50 and 30 of
  *     a campaign's 80 still render `62.5% + 37.5% = 100.0%` while the sentence
  *     says they add to less. Their *work* is missing; their *share* is zero.
- *  2. **`unattributed_omitted`.** Rows master could not attribute to a person are
+ *  2. **`unattributed_omitted`.** Rows the API could not attribute to a person are
  *     dropped and counted separately from `inactive_omitted` (they never were
  *     members, so calling them former ones would be false), so they shrink the
  *     rows for a second reason that "exactly those members' work" denies.
- *  3. **Truncation.** `limit` is applied in SQL, so core cuts before master
+ *  3. **Truncation.** `limit` is applied in SQL, so the dialer runtime cuts before the server
  *     filters. A page with `total_groups: 260`, `limit: 200` renders this note and
  *     {@link contributionTruncationNote} simultaneously, and the old wording made
  *     them contradict each other on screen.
@@ -545,7 +545,7 @@ export function contributionAsymmetryNote(
 ): string | null {
   /*
     Both counts through `typeof`, for the same reason the roster's notes carry one:
-    master invented both fields and has a documented degrade path that serves core's
+    The server invented both fields and has a documented degrade path that serves the dialer runtime's
     body unrecognised, and a comparison against `undefined` should never be
     reachable from a typed field the wire can omit.
   */
@@ -571,7 +571,7 @@ export function contributionAsymmetryNote(
   }
   if (unattributed > 0) {
     // Named as what it is. These rows were never members, so "former" would be a
-    // false description of them, and the count is master's own for that reason.
+    // false description of them, and the count is the API's own for that reason.
     clauses.push(
       unattributed === 1
         ? '1 row could not be attributed to a person'
@@ -607,8 +607,8 @@ export function contributionAsymmetryNote(
  * "Showing the top 200 by conversions", or `null` when nothing was cut.
  *
  * The roster's rule, unchanged and for the same reason: **no "showing X of Y"
- * fraction is derivable here.** Core scopes, groups, ranks and cuts to `limit`;
- * master then filters the page it was handed. So `total_groups`, `rows.length` and
+ * fraction is derivable here.** The server scopes, groups, ranks and cuts to `limit`;
+ * the API then filters the page it was handed. So `total_groups`, `rows.length` and
  * `inactive_omitted` are three independent true facts, and this is one of them —
  * the page was cut, and by which order, because "the rest" only means something
  * relative to the ranking that selected these rows.
@@ -620,9 +620,9 @@ export function contributionAsymmetryNote(
 export function contributionTruncationNote(page: AgencyGroupPage): string | null {
   if (typeof page.inactive_omitted !== 'number') return null;
   /*
-    BOTH of master's drop counts are added back before the comparison, not just the
-    departed members. A row master could not attribute to a person is counted in
-    `total_groups` (core counted it) and is in neither `rows` nor
+    BOTH of the API's drop counts are added back before the comparison, not just the
+    departed members. A row the API could not attribute to a person is counted in
+    `total_groups` (the server counted it) and is in neither `rows` nor
     `inactive_omitted` — so without this the comparison was false with nothing
     truncated, and the note claimed the rest of the campaign was further down an
     order on a page showing all of it. Inherited from the roster, and fixed on both.

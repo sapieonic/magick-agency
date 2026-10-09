@@ -2,21 +2,13 @@ import { z } from 'zod';
 import type { FlagDefinition } from '../../feature-flags/registry.js';
 
 // Validation for the super-admin feature-flag management endpoints
-// (/super-admin/feature-flags/*). These mirror core's
-// /internal/feature-flags/* contract — master validates the request shape early
-// and core re-validates authoritatively (per-flag value-type checks, scope
-// permissions), passing 404/422 back through.
-//
-// PORT NOTE (magick-agency): hop collapse. There is no core behind this route,
-// so the "core re-validates" half now runs in-process in the route handler,
-// using `validateFlagValue` below (core `src/api/validators/feature-flags.validator.ts`,
-// ported here verbatim because this module is its only consumer). Core's own
-// body schemas (`upsertOverrideSchema` …) differed from master's only by the S2S
-// `updated_by` field, which is now the authenticated super admin's id read from
-// the request, never from the body — so they are not carried.
+// (/super-admin/feature-flags/*). The body schemas check the request shape; the
+// per-flag value-type and scope checks run in the route handler, using
+// `validateFlagValue` below. `updated_by` is never read from the body: it is the
+// authenticated super admin's id, taken from the request.
 // `tenant_id` / `account_id` are `.uuid()`: `feature_flag_overrides.tenant_id` /
-// `account_id` are UUID columns in the baseline (core's were VARCHAR), and a
-// malformed id would otherwise reach Postgres as `22P02` — a 500 for a bad request.
+// `account_id` are UUID columns, and a malformed id would otherwise reach
+// Postgres as `22P02` — a 500 for a bad request.
 
 /** Scope/column coherence shared by upsert + delete bodies. */
 const scopeCoherence = (
@@ -49,8 +41,8 @@ export const upsertFlagOverrideSchema = z
     account_id: z.string().uuid().optional(),
     value: z.unknown(),
     reason: z.string().max(500).nullable().optional(),
-    // UTC-only (Zulu) to match core's authoritative `z.string().datetime()` —
-    // keeps master from accepting an offset form (e.g. +05:30) that core 422s.
+    // UTC-only (Zulu): `z.string().datetime()` refuses an offset form such as
+    // +05:30.
     expires_at: z.string().datetime().nullable().optional(),
   })
   .superRefine(scopeCoherence);
@@ -73,9 +65,6 @@ export const bulkFlagOverrideSchema = z.object({
  * Validate an override value against a flag's declared type + optional
  * registry `validate`. Returns an error message, or `null` when valid. The type
  * fidelity check lives here (not the DB) because it depends on the flag.
- *
- * PORT NOTE (magick-agency): core `src/api/validators/feature-flags.validator.ts`
- * @4850d1d9, verbatim.
  */
 export function validateFlagValue(flag: FlagDefinition, value: unknown): string | null {
   switch (flag.type) {

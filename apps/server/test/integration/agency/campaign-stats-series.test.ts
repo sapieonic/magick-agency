@@ -12,7 +12,7 @@ const { insertAgencyCampaign, insertAgencyContact, insertAgencyAttempt } = await
 /**
  * ─── THE CAMPAIGN SERIES, BEHAVIOURALLY ─────────────────────────────────────
  *
- * `GET /agency-campaigns/:id/stats/series` (ClickUp 86d45k0bk item 1). Modelled on
+ * `GET /agency-campaigns/:id/stats/series`. Modelled on
  * `agent-stats-timezone-buckets.test.ts` — same `vi.mock` of the connection, same
  * `await import` ordering, same `beforeEach(truncateAll)` / `afterAll(closeTestPool)`,
  * same "drive the repository method, assert the returned payload" shape.

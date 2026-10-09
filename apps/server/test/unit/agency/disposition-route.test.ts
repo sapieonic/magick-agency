@@ -1,21 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Fastify from 'fastify';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): ported from core test/unit/agency/disposition-route.test.ts@4850d1d9
- * (source 37 → ported 37). Harness changes only: the logger mock is re-pointed from
- * `src/utils/logger.js` to a partial `@magick-agency/observability` mock, and the
- * `AgencyDisposition` type import from `src/agency/contracts.js` to
- * `@magick-agency/contracts/agency`. Every other mock path and every case is verbatim.
- * No case DELETED, MODIFIED or NEW.
- */
 
 // ---------------------------------------------------------------------------
-// AD-P2-C-04 — the route's own behaviour.
+// The route's own behaviour.
 //
 // `disposition.test.ts` covers the pure rules. This covers what only the route
 // can be wrong about: the ORDER the refusals come out in, the idempotent write,
-// the contact write, and the wrap-up release. §16.6's second question is why it
+// the contact write, and the wrap-up release. The property must hold where it is consumed, which is why it
 // registers the real `agencyRoutes` against a real Fastify instance and issues
 // real requests rather than calling the handler's parts — a validation order
 // asserted on the helpers is not asserted where a client meets it.
@@ -36,7 +28,7 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: { vobiz: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/vobiz' } },
+    telephony: { vobiz: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/vobiz' } },
   },
 }));
 
@@ -68,8 +60,8 @@ const { repos } = vi.hoisted(() => ({
     contact: {
       markState: vi.fn().mockResolvedValue(undefined),
       unclaim: vi.fn().mockResolvedValue(undefined),
-      // Read by `AD-P3-C-03` to resolve the contact's own timezone before it
-      // schedules a callback (D4). A callback is scheduled in the CUSTOMER's
+      // Read to resolve the contact's own timezone before it
+      // schedules a callback. A callback is scheduled in the CUSTOMER's
       // window, so the route cannot answer from the campaign row alone.
       findById: vi.fn(),
     },
@@ -150,8 +142,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   flags.isEnabled.mockResolvedValue(true);
   repos.attempt.findById.mockResolvedValue(attemptRow());
-  // An all-day, every-day window by default (`AD-P3-C-05`). These cases are about
-  // disposition semantics, and the migration-072 defaults (09:00–20:00 Mon–Fri)
+  // An all-day, every-day window by default. These cases are about
+  // disposition semantics, and the schema defaults (09:00–20:00 Mon–Fri)
   // would make every callback assertion depend on what time the suite ran.
   repos.campaign.findById.mockResolvedValue({
     id: 'camp-1', disposition_catalog: CATALOG,
@@ -174,7 +166,7 @@ describe('POST /attempts/:id/disposition — the happy path and the contract sha
 
     expect(res.statusCode).toBe(200);
     // Asserted as the whole object, not field by field: a field silently dropped
-    // from the response is exactly the drift master's merged forwarding would
+    // from the response is exactly the drift a merged response would
     // break on, and a per-field assertion cannot see an absence.
     expect(res.json()).toEqual({
       attempt_id: 'att-1',
@@ -183,7 +175,7 @@ describe('POST /attempts/:id/disposition — the happy path and the contract sha
       disposition_code: 'sale',
       contact_state: 'completed',
       next_attempt_at: null,
-      // Additive (`AD-P3-C-03`): what the agent ASKED for, echoed separately so
+      // Additive: what the agent ASKED for, echoed separately so
       // `next_attempt_at` can be the instant we will actually dial rather than a
       // repeat of the request. Null here — no callback was requested.
       callback_requested_at: null,
@@ -279,7 +271,7 @@ describe('POST /attempts/:id/disposition — idempotency', () => {
   });
 
   it('the route never reads the incumbent code to decide — the WRITE decides', async () => {
-    // §16.6's first question. If the route branched on `findById`'s
+    // If the route branched on `findById`'s
     // `disposition_code`, this test would supply the answer it claims to check:
     // here the row says `sale` and the write SUCCEEDS, which can only happen if
     // the decision came from the guarded statement. A read-then-write route
@@ -317,7 +309,7 @@ describe('POST /attempts/:id/disposition — callback_at is honoured, not just c
     expect(patch.next_attempt_at.toISOString()).toBe(FUTURE);
   });
 
-  it('binds the callback to nobody — it goes to the pool (D11)', async () => {
+  it('binds the callback to nobody — it goes to the pool', async () => {
     // The ratified decision. Nothing in the write may carry the originating
     // session, or agent-facing copy would have to say "I'll call you back".
     const app = await buildApp();
@@ -327,7 +319,7 @@ describe('POST /attempts/:id/disposition — callback_at is honoured, not just c
     expect(JSON.stringify(patch)).not.toContain('sess-1');
   });
 
-  // ── AD-P3-C-03: a callback lands on a time we can actually dial ──────────
+  // ── a callback lands on a time we can actually dial ──────────
   //
   // The whole content of the ticket, and the reason it is not just "store the
   // datetime". An agent says the time OUT LOUD to a customer. If the response
@@ -384,7 +376,7 @@ describe('POST /attempts/:id/disposition — callback_at is honoured, not just c
     });
 
     it('uses the CONTACT timezone, not the campaign default', async () => {
-      // D4 all the way through the callback path. 04:30Z is 10:00 IST — a Saturday
+      // The contact's timezone all the way through the callback path. 04:30Z is 10:00 IST — a Saturday
       // either way — but the next Monday 09:00 is a different instant in New York
       // than in Kolkata, and it is the customer's morning that matters.
       repos.contact.findById.mockResolvedValue({ id: 'contact-1', timezone: 'America/New_York' });
@@ -418,7 +410,7 @@ describe('POST /attempts/:id/disposition — callback_at is honoured, not just c
     it('still schedules when the contact row cannot be read', async () => {
       // A DB blip on the contact read must not fail an agent's disposition — the
       // conversation is over and the write is the record of it. The campaign
-      // default zone applies, which is D4's own fallback.
+      // default zone applies, which is the contact-timezone fallback.
       repos.contact.findById.mockRejectedValue(new Error('connection terminated'));
       const app = await buildApp();
       const res = await dispose(app, {
@@ -443,27 +435,27 @@ describe('POST /attempts/:id/disposition — callback_at is honoured, not just c
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// `AD-P3-C-02` acceptance (a) and (b), asserted WHERE THE PRECEDENCE IS
+// Disposition precedence, asserted WHERE THE PRECEDENCE IS
 // CONSUMED.
 //
 // `disposition-policy.test.ts` proves `resolveDispositionDecision` in isolation.
-// That is not enough for this ticket: §2.4's rule is that a disposition
+// That is not enough: the rule is that a disposition
 // overrides the OUTCOME policy, and the only place both exist is this route.
-// §16.6's second question — is the property true where it is consumed, not only
-// where it is implemented — is the whole reason for this block. A route that
+// Whether the property is true where it is consumed, not only
+// where it is implemented, is the whole reason for this block. A route that
 // computed the right decision and then wrote `callbackAt ? 'pending' :
-// 'completed'` anyway (Phase 2's line, which this ticket replaced) would keep
+// 'completed'` anyway (the earlier default, since replaced) would keep
 // every policy-level test green.
 //
 // The default `CATALOG` above carries no `retry`, `terminal` or `suppress` entry
 // at all, so none of these arms was reachable from this file before.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('POST /attempts/:id/disposition — AD-P3-C-02 precedence over the outcome policy', () => {
+describe('POST /attempts/:id/disposition — precedence over the outcome policy', () => {
   /** A clock, so `now + delay_minutes` is an exact instant rather than a window. */
   const NOW = new Date('2026-08-11T10:00:00.000Z');
 
-  /** §2.4's own catalog block — the three built-ins carrying their real flags. */
+  /** The built-in catalog block — the three built-ins carrying their real flags. */
   const SEMANTIC_CATALOG: AgencyDisposition[] = [
     { code: 'voicemail', label: 'Voicemail', retry: { delay_minutes: 240, max_attempts: 2 } },
     { code: 'not_interested', label: 'Not interested', terminal: true },
@@ -485,12 +477,12 @@ describe('POST /attempts/:id/disposition — AD-P3-C-02 precedence over the outc
   });
 
   it('(a) a `voicemail` retry beats `connected` being terminal by outcome policy', async () => {
-    // The ticket's headline case, and the one D1 forces to exist: with AMD off the
+    // The ticket's headline case, and the one that AMD being out of scope forces to exist: with AMD off the
     // carrier reports a voicemail pickup as `connected`, whose DEFAULT outcome rule
     // is `max_attempts: 0`. So the outcome policy's answer is "never call again"
     // and the agent's disposition's answer is "in four hours" — a cell where the
     // two halves genuinely disagree, which is what makes this assertion able to
-    // fail (§16.6's fourth pattern).
+    // fail.
     //
     // The attempt row's `outcome` is `connected` (the `attemptRow` default), and
     // one attempt of the two allowed is used.
@@ -530,11 +522,11 @@ describe('POST /attempts/:id/disposition — AD-P3-C-02 precedence over the outc
   });
 
   it('(b) a `terminal` disposition ends the contact with attempts still remaining', async () => {
-    // Criterion (b) verbatim: "regardless of attempts remaining". One attempt used
+    // Criterion (b): "regardless of attempts remaining". One attempt used
     // of a budget that would otherwise allow more, so `terminal` is demonstrably
     // the thing that stopped it rather than the arithmetic.
     //
-    // ⚠️ This case CONVERGES with Phase 2's `callbackAt ? 'pending' : 'completed'`
+    // ⚠️ This case CONVERGES with the earlier `callbackAt ? 'pending' : 'completed'`
     // — both answer `completed` — so on its own it cannot tell "terminal decided"
     // from "the old default decided". Measured, not assumed: reverting the route to
     // that line reds the other three arms in this block and leaves this one green.
@@ -556,9 +548,9 @@ describe('POST /attempts/:id/disposition — AD-P3-C-02 precedence over the outc
     // *refused* without it, so a console with a sticky datetime field or a
     // supervisor correcting a code without clearing the time produces exactly this.
     //
-    // Phase 2's line answers `pending` here; §2.4's precedence answers `completed`.
+    // The earlier line answers `pending` here; the precedence rule answers `completed`.
     // A cell where the two halves genuinely disagree is the only kind that can
-    // falsify the precedence claim (§16.6's fourth pattern).
+    // falsify the precedence claim.
     repos.contact.findById.mockResolvedValue({ id: 'contact-1', timezone: null, attempt_count: 1 });
     const app = await buildApp();
     const res = await dispose(app, {

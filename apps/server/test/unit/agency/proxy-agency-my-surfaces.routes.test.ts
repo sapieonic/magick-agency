@@ -27,22 +27,19 @@ import { PERMISSION_MATRIX, hasPermission } from '@magick-agency/contracts/rbac'
  * The `my-*` routes take their subject from `request.user.id` **server-side**. A
  * route that read a caller-supplied `agent_user_id` would pass every floor
  * assertion in this file and be a full read of any colleague's history, so the
- * subject is asserted on the OUTGOING core request rather than inferred from a
+ * subject is asserted on the OUTGOING the internal handler request rather than inferred from a
  * status code.
  */
 
 /*
- * PORT NOTE (magick-agency): master `test/unit/agency/proxy-agency-my-surfaces.routes.test.ts`@a1f0756a.
- * Changes (PORTING.md "Phase 8 — performance"):
- *  - mocks re-pointed: `callCore` for `proxyToCore` (same variable name), no `resolveCoreApiKey`,
- *    the logger mock is a partial `@magick-agency/observability`, repositories from `@magick-agency/db`;
+ *  - `callCore` is mocked as `mocks.proxyToCore`, with no API key to resolve; the logger mock is
+ *    a partial `@magick-agency/observability`, repositories come from `@magick-agency/db`, and
  *    RBAC from `@magick-agency/contracts/rbac`;
- *  - governance is gone (plan §3.2): the `requireCapability` double and the two cases that drove
- *    it by name are deleted; the plugin-level hook cases assert the two hooks that remain, and the
- *    "a plugin hook's refusal stops every route" case is re-expressed on `tenantContextMiddleware`;
- *  - platform API keys are gone (decision #5): the four key cases are deleted, and the
- *    `apiKeyOnly` / `apiKeyCreatedBy` fixture shapes with them;
- *  - `proxy.contact_lists.read` is `agency.campaigns.read`; `proxy.stats.read` /
+ *  - there is no capability gate: the plugin-level hook cases assert the two hooks that exist
+ *    (session, tenant context), and "a plugin hook's refusal stops every route" is expressed on
+ *    `tenantContextMiddleware`;
+ *  - platform API keys do not exist, so there are no key-caller cases;
+ *  - the stats routes check `agency.campaigns.read`; `proxy.stats.read` /
  *    `proxy.analytics.read` do not exist in agency's matrix (asserted).
  */
 
@@ -75,25 +72,23 @@ const mocks = vi.hoisted(() => ({
    */
   hooksRan: [] as string[],
   /**
-   * PORT NOTE (magick-agency): replaces master's `requireCapability` double. With the
-   * governance gate gone, the plugin-level hook whose refusal the "refuses on every route"
+   * The plugin-level hook whose refusal the "refuses on every route"
    * case drives is `tenantContextMiddleware`; set to make the double answer 403.
    */
   refuseTenantContext: false,
 }));
 
-// PORT NOTE (magick-agency): master mocked `proxyToCore` (`src/proxy/core-client.js`) and
-// `resolveCoreApiKey`; the hop is `callCore` (`src/api/core-dispatch.ts`) now and there is no
-// key to resolve. The mock keeps master's variable name so every assertion on it is master's.
+// The hop is `callCore` (`src/api/core-dispatch.ts`), mocked as `mocks.proxyToCore`; there is
+// no key to resolve.
 vi.mock('../../../src/api/core-dispatch.js', () => ({ callCore: mocks.proxyToCore }));
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/observability')>()),
   createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }));
-// The three plugin-level hooks are doubled rather than removed, and each records
-// that it ran. Authentication, tenant resolution and the entitlement gate are the
-// three things a unit test cannot exercise for real (they need Firebase, a
-// database and the governance store) and are also the three whose DELETION from
+// The two plugin-level hooks are doubled rather than removed, and each records
+// that it ran. Authentication and tenant resolution are the
+// two things a unit test cannot exercise for real (they need Firebase and a
+// database) and are also the two whose DELETION from
 // the plugin would change nothing any other case in this file can see.
 vi.mock('../../../src/auth/session.middleware.js', () => ({
   sessionMiddleware: async () => { mocks.hooksRan.push('session'); },
@@ -110,8 +105,6 @@ vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
     return undefined;
   },
 }));
-// PORT NOTE (magick-agency): master's `governance/require-capability.js` double is gone with the
-// gate (the route registers no capability hook).
 vi.mock('@magick-agency/db/repositories/membership.repository', () => ({
   membershipRepository: {
     findAnyByUserAndTenant: mocks.findAnyByUserAndTenant,
@@ -145,8 +138,6 @@ interface Caller {
    * Mutation testing found exactly that.
    */
   userId?: string | null;
-  // PORT NOTE (magick-agency): master's `apiKeyOnly` / `apiKeyCreatedBy` shapes are deleted
-  // with platform API keys (decision #5).
 }
 
 async function buildApp(caller: Caller = { role: 'account_admin' }): Promise<FastifyInstance> {
@@ -167,12 +158,12 @@ async function buildApp(caller: Caller = { role: 'account_admin' }): Promise<Fas
 }
 
 /**
- * An occupancy block in core's shape: `shift_seconds` plus ALL SIX states.
+ * An occupancy block in the internal handler's shape: `shift_seconds` plus ALL SIX states.
  *
- * `zeroOccupancy()`/`foldOccupancy` in core's `agent-record.ts` always emit every
+ * `zeroOccupancy()`/`foldOccupancy` in the internal handler's `agent-record.ts` always emit every
  * key — "a missing key is indistinguishable from zero to a consumer, and the
  * console renders all six states" — so a `{}` here is not a trimmed fixture, it is
- * a shape core cannot produce. A bucket carrying it would let a spread-based
+ * a shape the internal handler cannot produce. A bucket carrying it would let a spread-based
  * enrichment that dropped or reshaped `occupancy` pass, since there would be
  * nothing inside it to lose.
  *
@@ -193,19 +184,19 @@ function occupancy(overrides: Record<string, number> = {}) {
 }
 
 /**
- * Core's per-agent stats body, trimmed to the fields the assertions touch.
+ * The internal handler's per-agent stats body, trimmed to the fields the assertions touch.
  *
- * `from`/`to` are full ISO instants because that is what core sends: the
+ * `from`/`to` are full ISO instants because that is what the internal handler sends: the
  * repository builds them with `params.from.toISOString()`, and the contract types
  * them "the window as requested: `from` inclusive, `to` EXCLUSIVE, both ISO-8601
- * UTC". A bare `YYYY-MM-DD` here is a different type, and master forwards this
- * body verbatim — so a fixture in the wrong shape is a fixture that cannot catch a
+ * UTC". A bare `YYYY-MM-DD` here is a different type, and the public API layer forwards this
+ * body unchanged — so a fixture in the wrong shape is a fixture that cannot catch a
  * reshaping of it.
  *
- * `bucket_start` IS a bare `YYYY-MM-DD`, and deliberately: core formats it in SQL
+ * `bucket_start` IS a bare `YYYY-MM-DD`, and deliberately: the internal handler formats it in SQL
  * rather than serialising a `Date`, because node-pg parses a bare `timestamp` into
  * a LOCAL-time `Date` and would put the server's zone back on a value the query
- * went to some trouble to remove. The two fields differing is core's contract, not
+ * went to some trouble to remove. The two fields differing is the internal handler's contract, not
  * an inconsistency in this fixture.
  */
 function statsBody(agentUserId = AGENT_USER) {
@@ -240,15 +231,15 @@ function statsBody(agentUserId = AGENT_USER) {
 }
 
 /**
- * Core's attempt page for one agent.
+ * The internal handler's attempt page for one agent.
  *
- * `state` is drawn from core's `ATTEMPT_STATES` — `queued | dialing | ringing |
+ * `state` is drawn from the internal handler's `ATTEMPT_STATES` — `queued | dialing | ringing |
  * answered | bridged | ended` — and nothing else. This fixture used to carry
- * `dispositioned` and `closed`, neither of which core can emit: they are lifecycle
+ * `dispositioned` and `closed`, neither of which the internal handler can emit: they are lifecycle
  * words from the DISPOSITION vocabulary, and a fixture inventing them teaches the
  * next reader a state machine that does not exist. It also makes the file useless
- * as a reference for the `?state=` filter master forwards, where an invented value
- * is a 400 from core rather than a filter.
+ * as a reference for the `?state=` filter the public API layer forwards, where an invented value
+ * is a 400 from the internal handler rather than a filter.
  */
 function attemptsBody(agentUserId = AGENT_USER) {
   return {
@@ -294,9 +285,9 @@ describe('the floors, pinned against PERMISSION_MATRIX', () => {
     // `proxy.contact_lists.read` is the specific wrong choice: it is what the
     // campaign stats route next door uses, so it is the one a reviewer would
     // expect to see here.
-    // PORT NOTE (magick-agency): `proxy.contact_lists.read` is `agency.campaigns.read` here (same
-    // `viewer` floor). `proxy.stats.read` / `proxy.analytics.read` have no agency twin: asserted
-    // ABSENT, so neither can be the wrong choice.
+    // Here that is `agency.campaigns.read` (same `viewer` floor). `proxy.stats.read` /
+    // `proxy.analytics.read` have no agency twin: asserted ABSENT, so neither can be the
+    // wrong choice.
     expect(PERMISSION_MATRIX['agency.campaigns.read']).toBe('viewer');
     expect(hasPermission('agent', 'agency.campaigns.read')).toBe(false);
     expect(PERMISSION_MATRIX).not.toHaveProperty('proxy.stats.read');
@@ -333,9 +324,6 @@ describe('GET /my-stats and /my-attempts are reachable by a BARE agent', () => {
       }
     });
 
-    // PORT NOTE (magick-agency): master's `${path}: refuses a platform API key, which has no
-    // "my"` and `${path}: refuses a CREATOR-BACKED key too, not just a system one` (2 × 2 cases)
-    // are deleted with platform API keys (decision #5): no request here carries one.
   }
 });
 
@@ -375,14 +363,14 @@ describe('the my-* routes take the agent from the SESSION, never from the caller
 
   /**
    * The subject of a `my-*` route comes from the session and nothing a caller
-   * sends may influence it. Core already resolves it from the path — but a stray
-   * `agent_user_id` in the QUERY is a param core could later give a meaning to, at
+   * sends may influence it. The internal handler already resolves it from the path — but a stray
+   * `agent_user_id` in the QUERY is a param the internal handler could later give a meaning to, at
    * which point a filter nobody decided to expose would become reachable through
-   * master.
+   * the public API layer.
    *
    * That used to be prevented by the whitelist dropping the key silently. It is
    * now prevented by refusing the request outright, which is the same protection
-   * plus a signal: core is not called, and the caller is told which param was
+   * plus a signal: the internal handler is not called, and the caller is told which param was
    * rejected instead of receiving a 200 that looks like it was honoured.
    *
    * Note `agent_user_id` IS a legitimate filter on the campaign-scoped spine (a
@@ -404,7 +392,7 @@ describe('the my-* routes take the agent from the SESSION, never from the caller
     expect(res.json().details.unknown).toEqual(
       expect.arrayContaining(['agentUserId', 'agent_user_id', 'user_id']),
     );
-    // The important half: core never saw it.
+    // The important half: the internal handler never saw it.
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
     await app.close();
   });
@@ -425,15 +413,15 @@ describe('the my-* routes take the agent from the SESSION, never from the caller
   it('forwards the documented ATTEMPT filters — phone and contact_id included', async () => {
     /**
      * Asserted on the OUTGOING request rather than on a status code, because what
-     * this pins is which filters actually reach core. A filter left off the
+     * this pins is which filters actually reach the internal handler. A filter left off the
      * allowlist is now refused rather than dropped, so the old silent-200 failure
      * is gone — but a filter that is on the list and still fails to be forwarded
      * would be just as invisible, and that is what this catches.
      *
-     * Core applies both — `parseAgentAttemptFilters` delegates to the campaign
+     * The internal handler applies both — `parseAgentAttemptFilters` delegates to the campaign
      * spine's `parseAttemptFilters`, and `listForAgent` puts `a.contact_id = …`
-     * and `phoneCondition(…)` into the statement — and master's own campaign-spine
-     * whitelist (`ATTEMPT_QUERY_PARAMS`) has carried both since MAG-159. The
+     * and `phoneCondition(…)` into the statement — and the public API layer's own campaign-spine
+     * whitelist (`ATTEMPT_QUERY_PARAMS`) carries both. The
      * console sends `phone`.
      */
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
@@ -478,8 +466,8 @@ describe('the my-* routes take the agent from the SESSION, never from the caller
     await app.close();
   });
 
-  it('forwards core’s body and status verbatim — master reshapes no arithmetic', async () => {
-    // Core owns the rates, the AHT and the occupancy split. A second definition of
+  it('forwards the internal handler’s body and status unchanged — the public API layer reshapes no arithmetic', async () => {
+    // The internal handler owns the rates, the AHT and the occupancy split. A second definition of
     // "connect rate" on this hop is a second definition that drifts from the one
     // the supervisor's dashboard shows.
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
@@ -500,7 +488,7 @@ describe('the my-* routes take the agent from the SESSION, never from the caller
     await app.close();
   });
 
-  it('forwards a core error untouched rather than masking it here', async () => {
+  it('forwards an internal handler error untouched rather than masking it here', async () => {
     mocks.proxyToCore.mockResolvedValue({ status: 503, body: { error: 'Service Unavailable' } });
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
 
@@ -540,12 +528,12 @@ describe('the supervisory twins', () => {
 
     it(`${twin.path}: answers 404 — not 403 — for an agent outside this tenant`, async () => {
       /**
-       * Core treats `agent_user_id` as an opaque string (design D3: no user table,
-       * no FK on that column), so it cannot refuse a foreign id on master's behalf.
-       * `memberships` is master's, so this boundary exists only here.
+       * The internal handler treats `agent_user_id` as an opaque string (no user table,
+       * no FK on that column), so it cannot refuse a foreign id on the public API layer's behalf.
+       * `memberships` is the public API layer's, so this boundary exists only here.
        *
        * 404 rather than 403 because a cross-tenant id and a nonexistent one must be
-       * indistinguishable — rule 3 of docs/reference/magick-master/CLAUDE.md's RBAC section. A 403 would confirm
+       * indistinguishable. A 403 would confirm
        * the user id exists somewhere.
        */
       mocks.findAnyByUserAndTenant.mockResolvedValue([]);
@@ -554,7 +542,7 @@ describe('the supervisory twins', () => {
       const res = await app.inject({ method: 'GET', url: `${PREFIX}/${twin.path}` });
 
       expect(res.statusCode).toBe(404);
-      // Nothing was asked of core about a user this tenant does not employ.
+      // Nothing was asked of the internal handler about a user this tenant does not employ.
       expect(mocks.proxyToCore).not.toHaveBeenCalled();
       await app.close();
     });
@@ -636,8 +624,8 @@ describe('the supervisory twins', () => {
   }
 
   it('stats: adds agent_name beside the id, and changes nothing else', async () => {
-    // Core has no user table, so a supervisor comparing two agents would otherwise
-    // be comparing two UUIDs. A SPREAD, not a reconstruction: everything core sent
+    // The internal handler has no user table, so a supervisor comparing two agents would otherwise
+    // be comparing two UUIDs. A SPREAD, not a reconstruction: everything the internal handler sent
     // has to survive, including fields it adds after this was written.
     const app = await buildApp({ role: 'account_admin' });
 
@@ -661,7 +649,7 @@ describe('the supervisory twins', () => {
     await app.close();
   });
 
-  it('stats: leaves a non-2xx body exactly as core wrote it', async () => {
+  it('stats: leaves a non-2xx body exactly as the internal handler wrote it', async () => {
     mocks.proxyToCore.mockResolvedValue({ status: 404, body: { error: 'Not Found', code: 'agent_not_found' } });
     const app = await buildApp({ role: 'account_admin' });
 
@@ -700,7 +688,7 @@ describe('the supervisory twins', () => {
     await app.close();
   });
 
-  it('attempts: leaves a non-2xx body exactly as core wrote it', async () => {
+  it('attempts: leaves a non-2xx body exactly as the internal handler wrote it', async () => {
     /**
      * The stats twin has had this case since the surface shipped; the ATTEMPTS
      * twin did not, and the two guards are separate `result.status >= 200 &&
@@ -712,9 +700,9 @@ describe('the supervisory twins', () => {
      * It matters more here than on stats, because the failure is not merely a
      * stray key. `enrichAttemptAgentNames` reads `body.rows` and maps over it; an
      * error body has no `rows`, so running it over one either throws (a masked 500
-     * where core sent a diagnosable 404) or quietly rewrites the body into
+     * where the internal handler sent a diagnosable 404) or quietly rewrites the body into
      * something with a `rows` key — and `errorMaskHook` decides whether to forward
-     * or mask core's 4xx by inspecting exactly that body. A structured refusal
+     * or mask the internal handler's 4xx by inspecting exactly that body. A structured refusal
      * with `details` that arrived reshaped would be masked into "contact support",
      * which is the whole class of defect the mask's allow-list exists to prevent.
      */
@@ -752,7 +740,7 @@ describe('the supervisory twins', () => {
      * guard is the one that holds when the body is not error-shaped, and this is
      * the case that distinguishes them: a non-2xx that carries `rows`.
      *
-     * That shape is not invented for the mutation's benefit. Core's attempt reads
+     * That shape is not invented for the mutation's benefit. The internal handler's attempt reads
      * are paginated and partial-tolerant, and the neighbouring campaign-activity
      * surface already answers `{ rows, partial, partial_reason }` — a degraded read
      * that reported a non-2xx while still handing back the rows it managed to
@@ -760,7 +748,7 @@ describe('the supervisory twins', () => {
      * page, which `errorMaskHook` passes through untouched by policy.
      *
      * The harm if it were enriched is not the extra key. `errorMaskHook` decides
-     * whether to FORWARD or MASK core's 4xx by inspecting the body it is handed —
+     * whether to FORWARD or MASK the internal handler's 4xx by inspecting the body it is handed —
      * a forwarded refusal needs its `details`, and a body this route rewrote is a
      * body the mask judges differently. Plus a database round trip is spent
      * naming rows on a request that failed.
@@ -774,7 +762,7 @@ describe('the supervisory twins', () => {
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/agents/${AGENT_USER}/attempts` });
 
     expect(res.statusCode).toBe(424);
-    // Verbatim: no `agent_name` grafted onto any row, and `partial` intact.
+    // Unchanged: no `agent_name` grafted onto any row, and `partial` intact.
     expect(res.json()).toEqual({ ...attemptsBody(), partial: true, partial_reason: 'core_unavailable' });
     expect(mocks.findDisplayNamesInTenant).not.toHaveBeenCalled();
     await app.close();
@@ -836,17 +824,16 @@ describe('the supervisory twins', () => {
   });
 });
 
-describe('M10: the cohort band is SUPERVISOR-ONLY, and today it holds for free', () => {
+describe('the cohort band is SUPERVISOR-ONLY, and today it holds for free', () => {
   /**
    * ── Why a property nothing implements gets a test ──────────────────────────
-   * M10 (contract 02b, ruling E8): an agent may see every number about
+   * An agent may see every number about
    * THEMSELVES and no number about the cohort. It holds right now by
-   * construction rather than by code, and all three facts were checked against
-   * the tree rather than the design doc: core's `AgencyAgentStats`
-   * (`magic-voice-core/src/agency/contracts.ts`) has no `benchmark` field — the
+   * construction rather than by code: the internal handler's `AgencyAgentStats`
+   * (`src/agency/contracts.ts`) has no `benchmark` field — the
    * cohort band is `AgencyRosterPage.benchmark`, served only by the ROSTER read
-   * `GET /agents/stats`, floored at `agency.supervise` — master forwards this
-   * body verbatim, and `compare_to` appears in neither service's `src/`. There is
+   * `GET /agents/stats`, floored at `agency.supervise` — the public API layer forwards this
+   * body unchanged, and `compare_to` appears nowhere in `src/`. There is
    * nothing to delete in order to break it.
    *
    * Which is exactly why it needs pinning. A property that holds for free is the
@@ -864,25 +851,25 @@ describe('M10: the cohort band is SUPERVISOR-ONLY, and today it holds for free',
    * word is thereby accepted on the agent's own scorecard, in a diff whose every
    * line reads as supervisory. Nobody reviewing "add compare_to for the compare
    * tray" would see an agent acquiring a view of their cohort. The shared
-   * constant is the entire mechanism by which M10 dies quietly, and the file's
+   * constant is the entire mechanism by which this rule dies quietly, and the file's
    * whole design — the two halves of one question side by side so a change cannot
    * land on one and miss the other — is what makes the shortcut so easy to take.
    *
-   * E7's answer is that the tray needs no param at all: it is built from the
+   * The right answer is that the tray needs no param at all: it is built from the
    * roster read the supervisor already holds, and issues ZERO requests. So
    * `compare_to` is refused on BOTH halves below and not only the agent's. That
    * is deliberate over-pinning: a param accepted on the supervisory route is one
    * line from the shared list, and there is no supervisory need for it the roster
    * does not already answer. A future phase that genuinely wants one has to come
-   * here and argue with E7 first — which is the point.
+   * here and argue the case first — which is the point.
    *
    * ── What these tests do NOT guard, stated so nobody assumes they do ────────
-   * Master forwards this body VERBATIM (pinned above: "forwards core's body and
-   * status verbatim"), so if CORE ever grew a `benchmark` on its per-agent
-   * endpoint, master would serve it and no assertion here would notice. That
-   * direction is core's to keep, deliberately: a master that stripped keys out of
-   * core's payload would be a second opinion about the contract, which is the
-   * thing this hop exists not to be. What is guarded below is master never
+   * The public API layer forwards this body unchanged (pinned above: "forwards the internal handler's body and
+   * status unchanged"), so if the internal handler ever grew a `benchmark` on its per-agent
+   * endpoint, the public API layer would serve it and no assertion here would notice. That
+   * direction is the internal handler's to keep, deliberately: a public API layer that stripped keys out of
+   * the internal handler's payload would be a second opinion about the contract, which is the
+   * thing this hop exists not to be. What is guarded below is the public API layer never
    * INVENTING a cohort number, and never accepting the param that would ask for
    * one.
    */
@@ -891,12 +878,12 @@ describe('M10: the cohort band is SUPERVISOR-ONLY, and today it holds for free',
     /**
      * Two halves, and the second is the one that can actually fail.
      *
-     * The absent key alone is a weak assertion — core's fixture has no
+     * The absent key alone is a weak assertion — the internal handler's fixture has no
      * `benchmark`, so it passes against any route that does not add one. The way
-     * a route WOULD add one is the interesting half: a second core call to
+     * a route WOULD add one is the interesting half: a second the internal handler call to
      * `/agency-agents/stats`, lifting that page's cohort band and grafting it
      * beside the agent's own totals. That is a plausible feature request, it
-     * needs no new param at all, and it is M10's violation in full. So the core
+     * needs no new param at all, and it violates the rule in full. So the internal handler
      * calls are asserted — exactly one, and to the agent's own record — which is
      * evidence a missing key and a 200 cannot give.
      */
@@ -909,7 +896,7 @@ describe('M10: the cohort band is SUPERVISOR-ONLY, and today it holds for free',
     // Nor one level down, beside the totals an agent may legitimately read. A
     // band smuggled into `totals` is the same disclosure in a less obvious place.
     expect(res.json().totals).not.toHaveProperty('benchmark');
-    // ONE core call, and it is the per-agent record — never the roster, which is
+    // ONE the internal handler call, and it is the per-agent record — never the roster, which is
     // where `benchmark` legitimately lives and what a cohort line would need.
     expect(mocks.proxyToCore).toHaveBeenCalledTimes(1);
     expect(mocks.proxyToCore.mock.calls[0]![0].path).toBe(`/agency-agents/${AGENT_USER}/stats`);
@@ -926,7 +913,7 @@ describe('M10: the cohort band is SUPERVISOR-ONLY, and today it holds for free',
     /**
      * Verified rather than assumed: `compare_to` is not in
      * `AGENT_STATS_QUERY_PARAMS`, so `forwardAllowedQuery` should refuse the
-     * request outright — a 400 naming the param, with no core call — rather than
+     * request outright — a 400 naming the param, with no the internal handler call — rather than
      * dropping the key and answering 200 as though a cohort comparison had been
      * honoured. Both halves matter here: a DROPPED `compare_to` is a client that
      * believes it is reading a band and is in fact reading a bare scorecard, and
@@ -939,7 +926,7 @@ describe('M10: the cohort band is SUPERVISOR-ONLY, and today it holds for free',
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ code: 'unknown_query_params' });
     expect(res.json().details.unknown).toEqual(['compare_to']);
-    // The important half: core never saw it, so no cohort read was even attempted.
+    // The important half: the internal handler never saw it, so no cohort read was even attempted.
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
     await app.close();
   });
@@ -993,7 +980,7 @@ describe('M10: the cohort band is SUPERVISOR-ONLY, and today it holds for free',
      * being SHARED is what makes a supervisory-looking edit an agent-facing one.
      * If a future phase splits it in two so the supervisory route can take a
      * param the agent's cannot, this test reds — and that is intended, not
-     * collateral. E7 rules the param out on both routes, so a split is a contract
+     * collateral. The param is ruled out on both routes, so a split is a contract
      * change and has to be argued here rather than landed as a refactor.
      */
     const source = readFileSync(
@@ -1016,24 +1003,19 @@ describe('M10: the cohort band is SUPERVISOR-ONLY, and today it holds for free',
 
 describe('a request carrying NEITHER a key nor a user is refused, not answered', () => {
   /**
-   * ── The second half of `resolveMyAgentId`, which nothing reached ───────────
-   * That helper has two guards and they answer different conditions. The first —
-   * `isPlatformApiKeyCaller` — is asserted several times above, in both the
-   * system-key and creator-backed-key shapes, because it is the one that was
-   * wrong. The second, `if (!userId)`, was unreached by any test in the repo:
-   * coverage put `proxy-agency-staffing.routes.ts:223-224` (the `replyMissingActor`
-   * and `return null` inside it) among the file's only unexecuted lines.
+   * ── The guard in `resolveMyAgentId` ────────────────────────────────────────
+   * The guard `if (!userId)` (the `replyMissingActor` and `return null` inside it
+   * in `proxy-agency-staffing.routes.ts`) answers a request with no user.
    *
-   * ── Why it must not be folded into the first ───────────────────────────────
-   * It is tempting to read the two guards as alternatives — "either it is a key,
-   * or there is a user" — and delete this one as unreachable. The code says
+   * ── Why it must not be deleted as unreachable ─────────────────────────────
+   * It is tempting to read it as unreachable once a session exists. The code says
    * otherwise in as many words: *"a request with neither is still unattributable
-   * and must not interpolate `undefined` into core's path."*
+   * and must not interpolate `undefined` into the internal handler's path."*
    *
    * That is a concrete consequence, not a stylistic one. Without this guard the
-   * handler builds `/agency-agents/undefined/stats` and asks core for it with the
-   * tenant's real API key. Core treats `agent_user_id` as an OPAQUE STRING with no
-   * user table behind it (design D3) — so it cannot refuse the literal
+   * handler builds `/agency-agents/undefined/stats` and asks the internal handler for it with the
+   * tenant's real API key. The internal handler treats `agent_user_id` as an OPAQUE STRING with no
+   * user table behind it — so it cannot refuse the literal
    * `"undefined"`; it answers 200 with a zero-filled scorecard, or, worse, with
    * whatever any row bearing that string happens to hold. A 200 of confident
    * nonsense is the failure this refuses, and it is unfalsifiable from the client
@@ -1041,7 +1023,7 @@ describe('a request carrying NEITHER a key nor a user is refused, not answered',
    *
    * How the state arises at all: `sessionMiddleware`'s Firebase branch attaches
    * `request.user` only after `verifyIdToken` AND a successful DB load, and a
-   * future auth mode (an S2S caller, a signed internal hop, a middleware that
+   * future auth mode (a service-to-service caller, a signed internal hop, a middleware that
    * short-circuits on a cache miss) sets neither field. It is defence in depth
    * against a chain that changes, which is the reason to pin it rather than the
    * reason to remove it.
@@ -1054,21 +1036,19 @@ describe('a request carrying NEITHER a key nor a user is refused, not answered',
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/${path}` });
 
     expect(res.statusCode).toBe(400);
-    // Core's own code, so the console keys off one string whichever service refused.
+    // The internal handler's own code, so the console keys off one string whichever service refused.
     expect(res.json()).toMatchObject({ code: 'missing_actor' });
     await app.close();
   });
 
-  it.each(MY_ROUTES)('%s: spends no core round trip, and never builds a path', async (path) => {
-    // The stronger half: refusing here rather than at core is what stops
+  it.each(MY_ROUTES)('%s: spends no the internal handler round trip, and never builds a path', async (path) => {
+    // The stronger half: refusing here rather than at the internal handler is what stops
     // `/agency-agents/undefined/...` from ever being asked for.
     const app = await buildApp({ role: 'agent', userId: null });
 
     await app.inject({ method: 'GET', url: `${PREFIX}/${path}` });
 
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
-    // PORT NOTE (magick-agency): master also asserted `resolveCoreApiKey` was not called; there
-    // is no per-tenant core key in-process, so the `callCore` assertion above is the whole claim.
     await app.close();
   });
 
@@ -1078,10 +1058,8 @@ describe('a request carrying NEITHER a key nor a user is refused, not answered',
      * exported function rather than five copies of a literal. A console that
      * branches on the message would break the moment two handlers drifted.
      *
-     * PORT NOTE (magick-agency): there are no platform keys (decision #5), so the
-     * comparison is with `replyMissingActor` itself — the staffing plugin's shared
-     * answer that master's key-holder received — answered by a bare route. The
-     * claim is unchanged: this route answers an unattributable caller with exactly
+     * The comparison is with `replyMissingActor` itself — the staffing plugin's shared
+     * answer — answered by a bare route. This route answers an unattributable caller with exactly
      * that function's body, not a copy of it.
      */
     const { replyMissingActor } = await import(
@@ -1102,30 +1080,29 @@ describe('a request carrying NEITHER a key nor a user is refused, not answered',
   });
 });
 
-describe('the fixtures above are core’s shape, not an invented one', () => {
+describe('the fixtures above are the internal handler’s shape, not an invented one', () => {
   /**
    * ── Why a fixture's realism is worth asserting ────────────────────────────
-   * These four routes forward core's body VERBATIM, so every behavioural case in
+   * These four routes forward the internal handler's body unchanged, so every behavioural case in
    * this file is only as good as the body it is handed. Three of the fixtures were
-   * not shapes core can produce: `state: 'dispositioned'` and `state: 'closed'`
+   * not shapes the internal handler can produce: `state: 'dispositioned'` and `state: 'closed'`
    * (words from the disposition vocabulary, not the attempt state machine),
-   * `occupancy: {}` on a bucket (core always emits `shift_seconds` plus all six
-   * states), and `from: '2026-08-01'` (core sends a full ISO instant). Each one
+   * `occupancy: {}` on a bucket (the internal handler always emits `shift_seconds` plus all six
+   * states), and `from: '2026-08-01'` (the internal handler sends a full ISO instant). Each one
    * quietly taught the next reader a contract that does not exist, and the empty
    * occupancy had teeth: an enrichment that dropped or flattened it would have
    * passed, because there was nothing inside to lose.
    *
-   * Master holds no copy of core's vocabularies and cannot import them, so these
-   * are TRANSCRIPTIONS naming their source — the strongest thing a repository
-   * which cannot import core can do, and the same approach
-   * `error-mask.agency-contract.test.ts` takes for core's error codes.
+   * The public API layer holds no copy of the internal handler's vocabularies and cannot import them, so these
+   * are TRANSCRIPTIONS naming the file they mirror, and the same approach
+   * `error-mask.agency-contract.test.ts` takes for the internal handler's error codes.
    */
-  /** `ATTEMPT_STATES`, `magic-voice-core/src/agency/spine-filters.ts`. */
+  /** `ATTEMPT_STATES`, `src/agency/spine-filters.ts`. */
   const CORE_ATTEMPT_STATES = ['queued', 'dialing', 'ringing', 'answered', 'bridged', 'ended'];
-  /** `zeroOccupancy()`, `magic-voice-core/src/agency/agent-record.ts`. */
+  /** `zeroOccupancy()`, `src/agency/agent-record.ts`. */
   const CORE_OCCUPANCY_STATES = ['available', 'reserved', 'on_call', 'wrapup', 'break', 'offline'];
 
-  it('every attempt row carries a state core can actually emit', () => {
+  it('every attempt row carries a state the internal handler can actually emit', () => {
     for (const row of attemptsBody().rows) {
       expect(CORE_ATTEMPT_STATES, `'${row.state}' is not an attempt state`).toContain(row.state);
     }
@@ -1133,7 +1110,7 @@ describe('the fixtures above are core’s shape, not an invented one', () => {
 
   it('every occupancy block carries shift_seconds and all six states', () => {
     // Totals AND buckets. The bucket was the one that was empty, and a bucket's
-    // occupancy is the same type as the totals' — core has one folder for both.
+    // occupancy is the same type as the totals' — the internal handler has one folder for both.
     const blocks = [statsBody().totals.occupancy, ...statsBody().buckets.map((b) => b.occupancy)];
 
     for (const block of blocks) {
@@ -1142,51 +1119,46 @@ describe('the fixtures above are core’s shape, not an invented one', () => {
     }
   });
 
-  it('the stats window is an ISO instant, which is what core sends', () => {
-    // `params.from.toISOString()` in core's repository; the contract types both as
+  it('the stats window is an ISO instant, which is what the internal handler sends', () => {
+    // `params.from.toISOString()` in the internal handler's repository; the contract types both as
     // "ISO-8601 UTC", `from` inclusive and `to` EXCLUSIVE.
     for (const value of [statsBody().from, statsBody().to]) {
       expect(value).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
     }
   });
 
-  it('but bucket_start is a bare date, because core formats it in SQL', () => {
+  it('but bucket_start is a bare date, because the internal handler formats it in SQL', () => {
     // Not an inconsistency: node-pg parses a bare `timestamp` into a LOCAL-time
     // `Date`, which would put the server's zone back on a value the query went to
-    // some trouble to remove. The two fields differ in core's contract.
+    // some trouble to remove. The two fields differ in the internal handler's contract.
     expect(statsBody().buckets[0]!.bucket_start).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });
 
 describe('the plugin-level preHandler hooks actually run', () => {
   /**
-   * ── The gap this closes, measured ─────────────────────────────────────────
+   * ── The gap this closes ───────────────────────────────────────────────────
    * Every route in `ROUTES` below is individually guarded by `requirePermission`,
    * and that is asserted twice over (behaviourally per role, and against the
-   * source). The three hooks registered on the PLUGIN were asserted nowhere.
-   * Replacing `app.addHook('preHandler', requireCapability('agency'))` with a
-   * no-op removes the entitlement gate from every one of them and every case in
-   * this file stayed green — the doubles used to be bare no-ops, so a hook that
-   * never ran was indistinguishable from one that ran and allowed. The same held
-   * for
-   * `sessionMiddleware` (nothing authenticates the caller) and
-   * `tenantContextMiddleware` (nothing resolves or validates the tenant, and
-   * `request.tenantId!` would be whatever the harness put there).
+   * source). The two hooks registered on the PLUGIN would otherwise be asserted
+   * nowhere: replacing `sessionMiddleware` with a no-op (nothing authenticates the
+   * caller) or `tenantContextMiddleware` (nothing resolves or validates the tenant,
+   * and `request.tenantId!` would be whatever the harness put there) would leave
+   * every case in this file green, because a hook that never ran is
+   * indistinguishable from one that ran and allowed.
    *
-   * They cannot be exercised for real in a unit test — Firebase, a database and
-   * the governance store respectively — so the doubles record instead, and these
-   * cases assert the RECORD. A deletion leaves no entry and reds.
+   * They cannot be exercised for real in a unit test — Firebase and a database
+   * respectively — so the doubles record instead, and these cases assert the
+   * RECORD. A deletion leaves no entry and reds.
    *
    * ── Order is asserted, not just membership ────────────────────────────────
-   * `tenantContextMiddleware` reads `request.user` and `requireCapability` reads
-   * `request.tenantId`, so the chain only works in one order. Registration order
-   * is what fixes it, and it is exactly what a re-ordering edit would change while
-   * leaving all three present.
+   * `tenantContextMiddleware` reads `request.user`, so the chain only works in
+   * one order. Registration order is what fixes it, and it is exactly what a
+   * re-ordering edit would change while leaving both present.
    */
   /**
-   * ⚠️ **No count in prose.** This list said "the five routes below" while
-   * holding six — the drift the reviewer caught, and the same class as the
-   * `ALL THREE routes` title on core's PR. A number written next to a list is a
+   * **No count in prose.** A list that says "the five routes below" while
+   * holding six is drift. A number written next to a list is a
    * second source of truth for the list's length, and it is the copy that is
    * never updated. The case below derives the count from the file instead.
    */
@@ -1205,9 +1177,6 @@ describe('the plugin-level preHandler hooks actually run', () => {
     'agents/grouped-stats',
   ] as const;
 
-  // PORT NOTE (magick-agency): master's title and list ended `→ capability` /
-  // `'capability:agency'`; the governance gate is deleted (plan §3.2), so the chain is the two
-  // hooks that remain, still asserted in order.
   it.each(ROUTES)('%s runs session → tenant-context', async (path) => {
     const app = await buildApp({ role: 'account_admin' });
 
@@ -1236,21 +1205,14 @@ describe('the plugin-level preHandler hooks actually run', () => {
     expect(ROUTES).toHaveLength(registrations.length);
   });
 
-  // PORT NOTE (magick-agency): master's "asks for the `agency` capability by name, once per
-  // registration" is deleted with the governance gate it pinned (plan §3.2).
 
   it('refuses the request when a plugin-level hook refuses, on every route', async () => {
     /**
      * The other half: proving the hook's refusal is not swallowed. A `preHandler`
-     * that replies must stop the handler, and `requireCapability` is registered on
+     * that replies must stop the handler, and the hooks are registered on
      * the plugin rather than per route — so a route added tomorrow inherits this
-     * or nothing.
-     *
-     * PORT NOTE (magick-agency): re-expressed on `tenantContextMiddleware`, the
-     * plugin-level hook that now stands where the capability gate did (master's
-     * title: "refuses the request when the capability hook refuses, on every
-     * route"). Same claim: a plugin hook that replies stops every route, and core
-     * is never called.
+     * or nothing. Expressed on `tenantContextMiddleware`: a plugin hook that replies
+     * stops every route, and the internal handler is never called.
      */
     mocks.refuseTenantContext = true;
     const app = await buildApp({ role: 'account_admin' });
@@ -1277,9 +1239,7 @@ describe('the plugin-level preHandler hooks actually run', () => {
     );
     const hooks = source.match(/app\.addHook\('preHandler',\s*([^)]+)\)/g) ?? [];
 
-    // PORT NOTE (magick-agency): master's third entry,
-    // `app.addHook('preHandler', requireCapability('agency')`, is gone with governance; two hooks
-    // remain and a third (a new gate) still reds here.
+    // Two hooks exist; a third (a new gate) reds here.
     expect(hooks).toEqual([
       "app.addHook('preHandler', sessionMiddleware)",
       "app.addHook('preHandler', tenantContextMiddleware)",
@@ -1360,8 +1320,8 @@ describe('every performance route carries its RBAC permission', () => {
       // `grouped-stats` sorts before `stats` and is the same two-segment shape:
       // a static sibling, so there is no parametric route at this depth for it to
       // race. Its dispatch is asserted in
-      // `proxy-agency-grouped-stats.routes.test.ts` on the CORE path the handler
-      // builds, for the MAG-106 reason — a status code cannot tell "the grouped
+      // `proxy-agency-grouped-stats.routes.test.ts` on the internal handler path the handler
+      // builds — a status code cannot tell "the grouped
       // handler answered" from "the roster handler answered".
       'GET /proxy/agency/agents/grouped-stats',
       'GET /proxy/agency/agents/stats',

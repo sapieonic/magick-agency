@@ -1,12 +1,9 @@
 /*
- * PORT NOTE (magick-agency): ported from core `src/core/dialer-analysis-runner.ts`
- * (v1.123.2), re-keyed onto `agency_calls` through the shared repository. Changes,
- * each in PORTING.md: no settlement (the job completes with no charge step); the
- * `dialer.analysis.*` event-bus emits and the `analysis.completed` webhook dispatch
- * (step 12) are dropped; the fetch carries the VoiceLink recording-host allow-list
- * instead of `telephonyCredentialId`; the PostHog / LLM-observability emitters come
- * from `analytics/posthog.ts` and `analytics/llm-observability.ts`, as in core. The status machine, resume, truncation
- * retry, fencing and backoff are core's, verbatim.
+ * Reads and writes `agency_calls` through the shared repository. There is no
+ * settlement: the job completes with no charge step (decision S6). The recording
+ * fetch is gated by the VoiceLink recording-host allow-list. The PostHog /
+ * LLM-observability emitters come from `analytics/posthog.ts` and
+ * `analytics/llm-observability.ts`.
  */
 import type { AppConfig } from '../config/schema.js';
 import { dialerAnalysisJobRepository } from '@magick-agency/db/repositories/dialer-analysis-job.repository';
@@ -42,12 +39,12 @@ const log = createChildLogger({ component: 'dialer-analysis-runner' });
 /** The resolved (non-optional) dialer-analysis config block. */
 export type DialerAnalysisConfig = NonNullable<AppConfig['dialerAnalysis']>;
 
-/** Below this fraction of the DB-reported duration, a fetched recording is treated as truncated (§8). */
+/** Below this fraction of the DB-reported duration, a fetched recording is treated as truncated. */
 const AUDIO_SHORTFALL_RATIO = 0.8;
 /** Base backoff (s) for a retryable transcribe/analyze failure — doubled per attempt, capped. */
 const RETRY_BACKOFF_BASE_SECONDS = 30;
 const RETRY_BACKOFF_CAP_SECONDS = 1800;
-/** Rate-limit backoff base (s) — longer, jittered, and does NOT consume an attempt (M4). */
+/** Rate-limit backoff base (s) — longer, jittered, and does NOT consume an attempt. */
 const RATE_LIMIT_BACKOFF_BASE_SECONDS = 60;
 
 /** Internal control-flow signal: another replica/recovery generation owns the job. */
@@ -63,8 +60,8 @@ export interface DialerAnalysisRunnerDeps {
   analysisService: PostCallAnalysisService;
   config: DialerAnalysisConfig;
   /**
-   * VoiceLink recording hosts the fetch may touch (plan §4; `voicelinkRecording.allowedHosts`).
-   * New in agency. Omitted = empty = every fetch is refused (fail closed).
+   * VoiceLink recording hosts the fetch may touch (`voicelinkRecording.allowedHosts`).
+   * Omitted = empty = every fetch is refused (fail closed).
    */
   recordingHosts?: readonly string[];
 }
@@ -74,7 +71,7 @@ export interface DialerAnalysisRunnerDeps {
  * persist the transcript, analyse it, and complete both tables in one transaction.
  * Every step is generation-fenced via
  * the repository primitives, so a resurrected original runner can't stomp a recovered
- * run's output (M9).
+ * run's output.
  *
  * `run` **never throws** — the whole body is a try/catch. On error it classifies
  * retryable vs not, applies exponential backoff via the repo's requeue helpers, and
@@ -131,7 +128,7 @@ export class DialerAnalysisRunner {
         return;
       }
 
-      // ── 2. analyticsConfig from the SNAPSHOT (never a live profile lookup, M1). ─
+      // ── 2. analyticsConfig from the SNAPSHOT (never a live profile lookup). ─
       const snapshot = job.profile_snapshot;
       const analyticsConfig: AnalyticsConfig = { custom_dimensions: snapshot?.custom_dimensions ?? [] };
       const context = snapshot?.context ?? null;
@@ -153,7 +150,7 @@ export class DialerAnalysisRunner {
         transcriberDurationSeconds = call.transcript_meta?.duration_seconds ?? recordingDurationSeconds ?? 0;
         log.info({ callId, jobId, turns: entries.length }, 'Resuming dialer analysis from persisted transcript');
       } else {
-        // ── 4-6. Fetch + transcribe, with bounded in-attempt retries for the §8
+        // ── 4-6. Fetch + transcribe, with bounded in-attempt retries for the
         //   pre-finalization race (a URL served before the carrier finalized the
         //   recording returns TRUNCATED audio). The settle delay covers the common
         //   case; these retries cover the tail without burning a job attempt.
@@ -178,7 +175,7 @@ export class DialerAnalysisRunner {
         transcriberModel = result.model;
         transcriberDurationSeconds = result.durationSeconds;
 
-        // ── 7. Persist the transcript BEFORE analysis (fenced, M9). A transcript is
+        // ── 7. Persist the transcript BEFORE analysis (fenced). A transcript is
         //       valuable on its own; a later analysis failure then resumes cheaply. ─
         const transcriptMeta: TranscriptMeta = {
           provider: this.transcriber.provider,
@@ -188,7 +185,7 @@ export class DialerAnalysisRunner {
           turn_count: result.entries.length,
           latency_ms: Date.now() - transcribeStart,
           transcribed_at: new Date().toISOString(),
-          source_url: call.recording_url, // M16 — the URL this job actually consumed.
+          source_url: call.recording_url, // the URL this job actually consumed.
           diarization_failed: result.diarizationFailed,
         };
         const persisted = await dialerAnalysisJobRepository.persistTranscript(jobId, callId, generation, {
@@ -196,7 +193,7 @@ export class DialerAnalysisRunner {
           transcript_meta: transcriptMeta,
         });
         if (!persisted) {
-          // Fence rejected — a recovered run owns this job now. Abandon quietly (M9).
+          // Fence rejected — a recovered run owns this job now. Abandon quietly.
           log.warn({ callId, jobId, generation }, 'Transcript persist fenced out (stale claim generation); abandoning run');
           return;
         }
@@ -233,7 +230,7 @@ export class DialerAnalysisRunner {
       );
       this.observeStage('analyze', (Date.now() - analyzeStart) / 1000);
 
-      // ── 10. Complete BOTH tables in one transaction (M8), fenced. ─────────────
+      // ── 10. Complete BOTH tables in one transaction, fenced. ─────────────────
       const analysisAudioSeconds = billableAudioSeconds(recordingDurationSeconds, transcriberDurationSeconds);
       span?.setAttribute('analysis.audio_seconds', analysisAudioSeconds);
       const completed = await dialerAnalysisJobRepository.completeWithAnalysis(jobId, callId, generation, {
@@ -289,7 +286,7 @@ export class DialerAnalysisRunner {
 
   /**
    * Fetch the recording and transcribe it, retrying in-attempt on a truncated or
-   * failed fetch (§8 pre-finalization race).
+   * failed fetch (the pre-finalization race).
    *
    * A carrier can hand us a `recording_url` a moment before the file is finalized;
    * fetching then returns SHORT audio, which would otherwise be transcribed and
@@ -352,7 +349,7 @@ export class DialerAnalysisRunner {
           audio: fetched.bytes,
           mimeType: fetched.mimeType,
           languageHint,
-          // Mono carrier recording today; forward-looking (M3) — no channel map.
+          // Mono carrier recording today; forward-looking — no channel map.
           channelRoles: undefined,
           expectedDurationSeconds: recordingDurationSeconds ?? undefined,
         },
@@ -366,7 +363,7 @@ export class DialerAnalysisRunner {
       // hand it back so the caller can `skip` it (retrying would never help).
       if (result.entries.length === 0) return result;
 
-      // §8 duration cross-check: far less transcribed audio than the DB reports
+      // Duration cross-check: far less transcribed audio than the DB reports
       // means we very likely fetched a pre-finalization (truncated) file.
       if (recordingDurationSeconds && recordingDurationSeconds > 0) {
         const covered = coveredSeconds(result.entries, result.durationSeconds);
@@ -406,7 +403,7 @@ export class DialerAnalysisRunner {
 
   /**
    * Classify the error and drive the job to the right next state, never throwing.
-   *   - RATE_LIMITED           → requeue WITHOUT consuming an attempt (M4).
+   *   - RATE_LIMITED           → requeue WITHOUT consuming an attempt.
    *   - non-retryable          → fail immediately.
    *   - retryable + attempts left → requeue with exponential backoff.
    *   - retryable + exhausted  → fail.
@@ -474,7 +471,7 @@ function dialerRoleToAnalysisRole(role: DialerSpeakerRole): ConversationEntry['r
   return role === 'agent' ? 'assistant' : 'user';
 }
 
-/** The actual audio span covered by the transcript — a truncation signal (§8). */
+/** The actual audio span covered by the transcript — a truncation signal. */
 function coveredSeconds(entries: DialerTranscriptEntry[], fallback: number): number {
   let max = 0;
   for (const e of entries) {
@@ -484,7 +481,7 @@ function coveredSeconds(entries: DialerTranscriptEntry[], fallback: number): num
   return max > 0 ? max : fallback;
 }
 
-/** analysis_audio_seconds = min(recording duration, transcriber-reported duration) (M11); recorded, not charged. */
+/** analysis_audio_seconds = min(recording duration, transcriber-reported duration); recorded, not charged. */
 function billableAudioSeconds(recordingDurationSeconds: number | undefined, transcriberDurationSeconds: number): number {
   const t = Math.max(0, Math.round(transcriberDurationSeconds));
   if (recordingDurationSeconds == null || recordingDurationSeconds <= 0) return t;

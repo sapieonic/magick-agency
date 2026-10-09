@@ -3,8 +3,7 @@ import { VoicelinkAdapter } from '../../../../src/telephony/voicelink/voicelink.
 import type { VoicelinkConfig } from '../../../../src/telephony/voicelink/voicelink.types.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// VoiceLink adapter EDGE-CASES — complements voicelink.adapter.test.ts (owned by
-// another engineer, not touched here). Two areas:
+// VoiceLink adapter EDGE-CASES — complements voicelink.adapter.test.ts. Two areas:
 //   1. splitDestination degenerate inputs — pins the ACTUAL current behavior of
 //      the load-bearing CC split (empty, all-CC, shorter-than-CC, non-default CC).
 //   2. getCallStatus CDR path — happy parse, null-on-non-ok, and the
@@ -44,7 +43,7 @@ describe('VoicelinkAdapter — splitDestination edge cases (pins CURRENT behavio
     // 2 > 2 === false, so the peel branch is skipped and the whole thing becomes
     // the customer_number. ⚠️ Arguably wrong (a CC-only input yields a bogus
     // national number '91' rather than an empty one), but this is the ACTUAL
-    // current behavior — reported to main as a potential bug, NOT fixed here.
+    // current behavior, a known limitation that is deliberately left as is.
     expect(adapter.splitDestination('91')).toEqual({ countryCode: '91', customerNumber: '91' });
   });
 
@@ -61,7 +60,7 @@ describe('VoicelinkAdapter — splitDestination edge cases (pins CURRENT behavio
     // customer_number and stamps the India default CC '91'. ⚠️ This misroutes a
     // US number: the adapter can't recognize '1' as a CC unless configured.
     // Current behavior per the docstring's "fall back to the default CC with the
-    // number as-is". Reported to main; NOT fixed here.
+    // number as-is". A known limitation that is deliberately left as is.
     expect(adapter.splitDestination('+14155550100')).toEqual({
       countryCode: '91',
       customerNumber: '14155550100',
@@ -154,7 +153,7 @@ describe('VoicelinkAdapter — getCallStatus / getRecordingUrl CDR path', () => 
       // as the providerCallId, so the lookup can't match in production anyway
       // (~560 404s per ~591 dequeues), and the recording is already persisted
       // from the `call.completed` webhook body. The fetch sat in front of
-      // concurrency-slot release in CallManager.handleCallEnd.
+      // concurrency-slot release in the call-end handler.
       const adapter = new VoicelinkAdapter(VOICELINK_CONFIG);
       expect(await adapter.getRecordingUrl('vl-call-77')).toBeNull();
       expect(fetchMock).not.toHaveBeenCalled();

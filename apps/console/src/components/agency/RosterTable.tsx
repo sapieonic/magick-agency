@@ -317,9 +317,9 @@ export function RosterTable({
                   AHT was the one metric with a team figure and no band beside it:
                   the benchmark carried handling time only as a pooled scalar, so
                   four minutes had nothing saying whether it was ordinary here. The
-                  block is additive (D10), so an absent one renders NO line rather
+                  block is additive, so an absent one renders NO line rather
                   than "no median yet" — that sentence is a claim about the floor,
-                  and making it about a field master has not shipped would be a
+                  and making it about a field the API has not shipped would be a
                   false one. Same "median … · middle half …" shape as the two bands
                   above, in SECONDS.
                 */}
@@ -334,7 +334,7 @@ export function RosterTable({
               <div className={styles.teamRate}>
                 {/*
                   A REAL pooled rate, now that the benchmark carries a pooled
-                  `shift_seconds` (D10): `(talk + wrapup) / shift`, all of it off
+                  `shift_seconds`: `(talk + wrapup) / shift`, all of it off
                   the BENCHMARK. Summing the rows instead would make this cell move
                   when the reader revealed former members, which the benchmark's
                   contract forbids and a test pins by comparing this row's whole

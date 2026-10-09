@@ -61,7 +61,7 @@ describe('release copy — exhaustive over the contract union', () => {
   });
 
   it.each(ALL_REASONS.filter((r) => r.includes('_')))(
-    'never renders the multi-word code %s verbatim',
+    'never renders the multi-word code %s as-is',
     (reason) => {
       const copy = resolveReleaseCopy(frame({ reason }));
       expect(`${copy.headline} ${copy.subtext}`).not.toContain(reason);
@@ -74,8 +74,8 @@ describe('release copy — exhaustive over the contract union', () => {
 });
 
 describe('release copy — the fallback, tested with a deliberately bogus reason', () => {
-  // Core ships independently of the console, so an unrecognised reason is
-  // EXPECTED traffic after a core deploy, not a defect.
+  // The API ships independently of the console, so an unrecognised reason is
+  // EXPECTED traffic after an API deploy, not a defect.
   const bogus = frame({
     reason: 'quantum_entangled' as AgencyReleaseReason,
     message: 'The call ended for a reason this app does not know about.',
@@ -113,7 +113,7 @@ describe('release copy — the fallback, tested with a deliberately bogus reason
 
 describe('release shape', () => {
   it('branches on requires_disposition, NEVER on the reason', () => {
-    // Core decides whether the call actually reached the agent — it is the only
+    // The API decides whether the call actually reached the agent — it is the only
     // side that can know. Same reason, both shapes.
     expect(releaseShape(frame({ reason: 'completed', requires_disposition: true }))).toBe('wrapup');
     expect(releaseShape(frame({ reason: 'completed', requires_disposition: false }))).toBe(
@@ -129,8 +129,8 @@ describe('release shape', () => {
 });
 
 describe('copy rules', () => {
-  it('never promises the same agent will make the callback (CR-1)', () => {
-    // D11: a callback re-enters the roster as an ordinary pending contact and
+  it('never promises the same agent will make the callback', () => {
+    // Shared pool: a callback re-enters the roster as an ordinary pending contact and
     // whichever agent is available takes it. First-person-singular copy is a
     // promise the system cannot keep, and the copy IS the entire mitigation.
     for (const reason of ALL_REASONS) {

@@ -145,7 +145,7 @@ describe('agent stats — bucketing in each campaign\'s own timezone (integratio
     const nz = await insertAgencyCampaign({ default_timezone: NZ, status: 'stopped' });
     const ny = await insertAgencyCampaign({ default_timezone: NY, status: 'stopped' });
     const nzSession = await insertAgentSession(nz.id as string, { agent_user_id: AGENT });
-    // The NZ session is closed so migration 093's one-live-session-per-(tenant,
+    // The NZ session is closed so the one-live-session-per-(tenant,
     // agent) unique index permits the second one.
     await getTestPool().query('UPDATE agency_agent_sessions SET left_at = now() WHERE id = $1',
       [nzSession.id]);

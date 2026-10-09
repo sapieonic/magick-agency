@@ -1,5 +1,3 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core test/unit/agency/station-token.test.ts@4850d1d9 (5 → 5).
-// Verbatim. Import paths only (logger → `@magick-agency/observability`). No case deleted or modified.
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('@magick-agency/observability', () => ({

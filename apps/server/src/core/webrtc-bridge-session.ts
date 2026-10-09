@@ -1,9 +1,3 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/src/core/webrtc-bridge-session.ts@4850d1d9.
-// Removed: `sipConnectionId` (BYO SIP trunk egress, plan §5) and `telephonyCredentialId`
-// (BYOC carrier credential; the baseline dropped `agency_calls.telephony_credential_id`).
-// Imports re-pointed (logger → @magick-agency/observability, the call model →
-// @magick-agency/db's agency-call model). Everything else verbatim, including the
-// VoBiz/owned-socket vocabulary in comments, so a later core fix ports cleanly.
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
 import type { WebRtcCallStatus } from '@magick-agency/db/models/agency-call.model';
@@ -11,13 +5,11 @@ import { VoicelinkTranscoder } from '../utils/audio-fir.js';
 
 /**
  * In-memory state for a single WebRTC human-bridge call. Holds the two media
- * WebSockets (browser leg + VoBiz PSTN leg) and the lifecycle flags/timers, so
- * the bridge can relay audio between them and tear both down idempotently.
+ * WebSockets (browser leg + VoiceLink PSTN leg) and the lifecycle flags/timers,
+ * so the bridge can relay audio between them and tear both down idempotently.
  *
- * Deliberately separate from {@link CallSession} (which carries the AI pipeline,
- * pre-warm, AMD and silence-nudge machinery a human↔human bridge does not need).
- * Concurrency accounting is NOT held here — it is shared with AI calls via
- * CallManager's guards (see {@link WebRtcBridgeManager}).
+ * Concurrency accounting is NOT held here — it goes through
+ * `TelephonyGuardHost`'s guards (see {@link WebRtcBridgeManager}).
  */
 export class WebRtcBridgeSession {
   readonly callId: string;
@@ -49,8 +41,8 @@ export class WebRtcBridgeSession {
   /**
    * For providers that negotiate the media stream via a `start` frame (VoiceLink):
    * relay is gated until a valid `start` (correct codec/rate) is seen. Providers
-   * that stream immediately (VoBiz, whose readiness is the WS open + answer XML)
-   * start ready. Set false at construction for VoiceLink in the manager.
+   * that stream immediately start ready (the default). Set false at construction
+   * for VoiceLink in the manager.
    */
   providerMediaReady: boolean = true;
 
@@ -59,8 +51,8 @@ export class WebRtcBridgeSession {
    *  - 'ending' is entered when we initiate a local hangup for a provider whose
    *    carrier leg is torn down by closing our WS (VoiceLink): we close the WS and
    *    WAIT for the carrier's `call.ended`/`call.completed` (or a timeout) before
-   *    settling, so we never settle while the PSTN leg may still be billable.
-   *  - `endHandled` is the final, once-only terminal claim (persist + settle).
+   *    finalizing, so we never finalize while the PSTN leg may still be live.
+   *  - `endHandled` is the final, once-only terminal claim (persist + release).
    */
   ending: boolean = false;
   /** The terminal intent captured when `ending` was entered, replayed at finalize. */
@@ -68,8 +60,9 @@ export class WebRtcBridgeSession {
   private endConfirmationTimer: NodeJS.Timeout | null = null;
 
   /**
-   * Answer anchor (billable connect moment) — set at the VoBiz answer webhook,
-   * with the PSTN media-WS connect as a backstop if that webhook is dropped.
+   * Answer anchor (the connect moment) — set when the carrier reports the answer
+   * (VoiceLink's stream `start` or the normalized `answer` event), with the PSTN
+   * media-WS connect as a backstop if that report is dropped.
    * First-write-wins. Talk time is measured from here; 0 if never answered.
    */
   answeredAt: Date | null = null;
@@ -96,15 +89,14 @@ export class WebRtcBridgeSession {
   /**
    * Whether this session OWNS its browser WebSocket.
    *
-   * `true` (the default, and the whole of the existing browser dialer): the
-   * socket is minted per call, exists only for this call, and is closed at
-   * teardown.
+   * `true` (the default): the socket exists only for this call and is closed at
+   * teardown. No entry point here creates such a call.
    *
-   * `false` — a **borrowed** socket supplied already-open by the caller. The
-   * agency dialer's agent station socket is opened once at shift start and reused
-   * across hundreds of attempts, so closing it at the end of one call would log
-   * the agent out after their first conversation. A borrowed socket is
-   * *detached*, never closed. See docs/reference/magickvoice-platform/docs/agency-dialer-design.md §7.
+   * `false` — a **borrowed** socket supplied already-open by the caller, which is
+   * every call here. The agent's station socket is opened once at shift start and
+   * reused across hundreds of attempts, so closing it at the end of one call would
+   * log the agent out after their first conversation. A borrowed socket is
+   * *detached*, never closed.
    */
   browserWsOwned: boolean = true;
 
@@ -133,8 +125,8 @@ export class WebRtcBridgeSession {
    * socket. Null for an owned socket, where closing the socket disposes of its
    * listeners anyway.
    *
-   * This is the leak that matters: `attachBrowserLeg` registers
-   * `message`/`close`/`error` per call, and a station socket carrying an 8-hour
+   * This is the leak that matters: each attach registers `message`/`close`/
+   * `error` per call, and a station socket carrying an 8-hour
    * shift would accumulate hundreds of live handler sets — inert at first, then a
    * `MaxListenersExceededWarning`, then genuinely ambiguous handling as a stale
    * session's `close` handler races the current one.
@@ -144,8 +136,7 @@ export class WebRtcBridgeSession {
   /**
    * The terminal outcome recorded when this call's browser leg closes mid-call,
    * captured at attach so a **re-attach** can restore exactly the same handling.
-   * `browser_hangup` for the owned dialer; the caller's choice for a borrowed
-   * socket. Held here rather than re-derived, because a re-attach that guessed
+   * The caller's choice for a borrowed socket (`browser_hangup` otherwise). Held here rather than re-derived, because a re-attach that guessed
    * would settle a dropped agent's call under the wrong outcome.
    */
   browserHangupOutcome: string = 'browser_hangup';
@@ -154,17 +145,17 @@ export class WebRtcBridgeSession {
    * How long this call is held open after a **borrowed** browser socket closes,
    * waiting for the same caller to re-attach (0 = no grace, close ⇒ hang up).
    *
-   * The value is supplied by the caller at dial time and stored verbatim. The
+   * The value is supplied by the caller at dial time and stored as given. The
    * bridge neither chooses it nor knows why it is what it is — that is the
-   * agency dialer's `DEFERRED_HANGUP_MS`, and §7's one-way dependency means this
-   * file must stay ignorant of it.
+   * dialer runtime's `DEFERRED_HANGUP_MS`, and since the dialer runtime depends on
+   * the voice engine and never the reverse, this file must stay ignorant of it.
    */
   browserLegGraceMs: number = 0;
 
   /**
    * The in-process deferred-hangup timer, armed on a borrowed socket's close.
    *
-   * **This cannot be a Redis TTL, and not merely by convention** (§6.1): the
+   * **This cannot be a Redis TTL, and not merely by convention**: the
    * thing it defers is resuming media onto *this in-memory session*. If the
    * process died there is no session left to resume onto, so a key that survived
    * the process would be describing a resumption that can never happen. It is a
@@ -175,7 +166,7 @@ export class WebRtcBridgeSession {
   /**
    * The concurrency key (this call's id) under which the global + per-account
    * slots were acquired, and whether they're still held. Release is driven purely
-   * from this flag (idempotent), never from a DB read — mirrors CallSession.
+   * from this flag (idempotent), never from a DB read.
    */
   concurrencyKey: string | null = null;
   slotsHeld: boolean = false;
@@ -184,36 +175,32 @@ export class WebRtcBridgeSession {
   endHandled: boolean = false;
 
   /**
-   * Whether this call opted into recording (the `record` flag at dial time). Drives
-   * whether the answer XML emits VoBiz's <Record> element. Set at createCall.
+   * Whether this call opted into recording (the `record` flag at dial time, under
+   * the account's recording ceiling). Set in `placeOutboundLeg`.
    */
   recordEnabled: boolean = false;
   /**
-   * Agency back-references, mirrored from the `webrtc_calls` row (migration 076) so
-   * teardown can settle without re-reading it. Null for the browser dialer.
+   * Agency back-references, mirrored from the `agency_calls` row so teardown can
+   * hand them on (the analysis hooks' `campaignId`) without re-reading it.
    *
-   * **`campaignId` is a billing discriminator, not just provenance**: master prices a
-   * settlement carrying `campaign_id` as a flat `agency_connected_call` (25mc) rather
-   * than the 250mc/min `webrtc_call` talk-time rate. Held as its own field rather
-   * than read off `correlationId` (which happens to be the attempt id today) because
-   * that field is documented as an opaque value the bridge must not interpret —
-   * pricing must not depend on a coincidence.
+   * `campaignId` is held as its own field rather than read off `correlationId`
+   * (which happens to be the attempt id today) because that field is documented
+   * as an opaque value the bridge must not interpret.
    */
   campaignId: string | null = null;
   agencyAttemptId: string | null = null;
-  /** Finalized recording URL once the VoBiz recording callback lands (observability). */
+  /** Finalized recording URL once the carrier's terminal webhook reports it. */
   recordingUrl: string | null = null;
   /**
-   * Resolved max call duration (seconds). Stored so the answer XML can cap the
-   * <Record> length to it (avoids truncating long recordings) without re-resolving
-   * the feature flag. Set at createCall.
+   * Resolved max call duration (seconds), stored so it need not be re-read from
+   * account settings. Set in `placeOutboundLeg`.
    */
   maxDurationSeconds: number | null = null;
 
   /**
    * Relay instrumentation — counts of media frames forwarded each direction and
    * the worst-case in-process relay dwell (receive→forward) in microseconds.
-   * Lets us confirm core's own relay overhead is sub-millisecond, so steady-state
+   * Lets us confirm the bridge's own relay overhead is sub-millisecond, so steady-state
    * mouth-to-ear latency can be attributed to the network/jitter buffers, not us.
    */
   browserToPstnFrames: number = 0;
@@ -223,7 +210,7 @@ export class WebRtcBridgeSession {
   /**
    * Per-session stateful A-law⇄PCM transcoder (VoiceLink only) — retains FIR
    * history + decimation phase across frames so there are no boundary clicks.
-   * Null for providers that pass audio through verbatim (VoBiz).
+   * Null for a provider that passes audio through unchanged.
    */
   readonly transcoder: VoicelinkTranscoder | null;
 
@@ -267,8 +254,8 @@ export class WebRtcBridgeSession {
    *
    * Returns **true only on the write that actually anchored**, so a caller can
    * emit a one-shot "the carrier answered" observation without tracking that
-   * itself. Four separate call sites anchor (VoBiz answer webhook, VoiceLink
-   * stream start, the normalized `answer` event, and the PSTN-socket backstop) and
+   * itself. Three separate call sites anchor (VoiceLink stream start, the
+   * normalized `answer` event, and the PSTN-socket backstop) and
    * on a given call several of them fire — an anchor observer keyed on anything
    * other than this return value would emit once per site.
    */
@@ -294,9 +281,7 @@ export class WebRtcBridgeSession {
    * already true. Without the latch that call is announced twice, and the second
    * one is not cosmetic: the agency dialer's handler rewrites
    * `agency_call_attempts.bridged_at` with the later instant, which is one half
-   * of the SQL abandonment predicate (`MAG-137`). VoBiz escapes it only by
-   * ordering — its `<Stream>` connects after the answer webhook, so the bind
-   * finds one leg down — which is why a VoBiz-only test cannot see this.
+   * of the SQL abandonment predicate.
    *
    * A boolean rather than a `bridgedAt` timestamp, deliberately: the agency
    * dialer owns `bridged_at` and measures compliance from it, and a second
@@ -308,7 +293,7 @@ export class WebRtcBridgeSession {
     return true;
   }
 
-  /** Connected talk time in whole seconds (0 if never answered) — what billing rounds. */
+  /** Connected talk time in whole seconds (0 if never answered). */
   getTalkTimeSeconds(): number {
     if (this.answeredAt === null) return 0;
     return Math.round((Date.now() - this.answeredAt.getTime()) / 1000);
@@ -388,21 +373,18 @@ export class WebRtcBridgeSession {
    * binding exists to remove.
    *
    * **`browserWsOwned = false` from birth is the load-bearing part**, because it
-   * is what makes the two ownership guards correct for a call that has no socket
-   * yet — both of them read ownership, neither reads the socket:
+   * is what makes the ownership guards correct for a call that has no socket yet
+   * — they read ownership, not the socket:
    *
-   *  - `WebRtcBridgeManager.attachBrowserLeg` refuses a leg that is NOT owned, so
-   *    nobody who learns the call id can join the agent's audio through the
-   *    token-less `/browser-stream` route. That matters more here than on a
-   *    bound borrowed call: an unbound call mints no browser token either, so
-   *    `verifyWsToken`'s accept-on-missing-key fallback is exactly what an
-   *    intruder would hit, and ownership is the only thing refusing them.
+   *  - `WebRtcBridgeManager.bindBorrowedBrowserLeg` refuses a leg that IS owned,
+   *    so the answer-time bind works on this call and nowhere else.
    *  - `WebRtcBridgeManager.reattachBorrowedBrowserLeg` refuses a leg that IS
    *    owned, so the wifi-blip path starts working on this call the instant a
    *    socket is bound, with no third state to teach it about.
    *
-   * Leaving the default `true` until the bind would invert both of those for the
-   * whole ring window — which is precisely the window this mode exists to cover.
+   * Leaving the default `true` until the bind would refuse the bind itself and
+   * invert the re-attach guard for the whole ring window — which is precisely the
+   * window this mode exists to cover.
    */
   markBorrowedUnbound(hangupOutcome: string, graceMs: number): void {
     this.browserWsOwned = false;
@@ -469,7 +451,7 @@ export class WebRtcBridgeSession {
   /**
    * Close the WebSockets we own and clear timers. Safe to call more than once.
    *
-   * A **borrowed** browser socket is detached rather than closed (§7): it belongs
+   * A **borrowed** browser socket is detached rather than closed: it belongs
    * to the caller, outlives this call, and closing it would end the agent's shift.
    */
   destroy(): void {

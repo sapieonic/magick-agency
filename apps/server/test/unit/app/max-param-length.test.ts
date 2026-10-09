@@ -2,8 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
 /**
- * NEW (magick-agency, Phase 8 delta review 6): the public app carries master's
- * `maxParamLength: 200` (master `src/index.ts:330`). A 150-character id reaches the ROUTE, which
+ * The public app carries `maxParamLength: 200`. A 150-character id reaches the ROUTE, which
  * gives its own answer (each family's malformed-id 404 body), rather than find-my-way's route-not-found 404 at the
  * default 100. Mutation-checked: removing `routerOptions.maxParamLength` reds both cases.
  */

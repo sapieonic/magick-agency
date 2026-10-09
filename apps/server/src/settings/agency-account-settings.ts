@@ -9,25 +9,21 @@ import type {
 } from '@magick-agency/contracts/api/platform/settings';
 
 /**
- * NEW (magick-agency, plan §3.2): the per-account settings row as the wire sees
- * it — EFFECTIVE values, so every field is non-null
+ * The per-account settings row as the wire sees it — EFFECTIVE values, so every field is non-null
  * (`@magick-agency/contracts/api/platform/settings`, "Values are EFFECTIVE
  * values").
  *
  * ── What `null` in the row resolves to, and why ────────────────────────────
- *  - `allow_recording` → `false`. The field is the successor of governance
- *    `agency.recording`, whose default was `false` (`docs/reference/magickvoice-platform/agency.md` §7.2: "default
- *    false throughout … this dials real people at volume"). The per-field
- *    campaign-write assert reads this value, so the null case must be the safe
- *    direction. NOTE: the baseline column comment says core's call-start default
- *    for a NULL is `true`; that is the bridge's (lane C) concern at call time, and
- *    a campaign can only ask for recording when this resolves `true`.
- *  - `analyze_calls` → `false`. Successor of governance `agency.analytics`
- *    (default `false`) for the same reason.
- *  - `max_concurrent_calls` → the row's value, or 5 when there is no row — core's
- *    `DEFAULT_MAX_CONCURRENT_CALLS` and the column default.
- *  - `webrtc_max_duration_seconds` → 1800, core's flag default
- *    (`registry.ts:235`), valid range 60..14400.
+ *  - `allow_recording` → `false`. Off by default, because this dials real people
+ *    at volume. The per-field campaign-write assert reads this value, so the null
+ *    case must be the safe direction. NOTE: the baseline column comment says the
+ *    call-start default for a NULL is `true`; that is the WebRTC bridge's concern
+ *    at call time, and a campaign can only ask for recording when this resolves
+ *    `true`.
+ *  - `analyze_calls` → `false`, for the same reason.
+ *  - `max_concurrent_calls` → the row's value, or 5 when there is no row — the
+ *    column default.
+ *  - `webrtc_max_duration_seconds` → 1800, valid range 60..14400.
  *  - `updated_at` → the row's, or the account's own `updated_at` when the account
  *    has never had a settings row (nothing about its settings has changed since).
  */
@@ -35,7 +31,7 @@ export const DEFAULT_ALLOW_RECORDING = false;
 export const DEFAULT_ANALYZE_CALLS = false;
 export const DEFAULT_MAX_CONCURRENT_CALLS = 5;
 export const DEFAULT_WEBRTC_MAX_DURATION_SECONDS = 1800;
-/** core `registry.ts:104` `isWebrtcMaxDuration` bounds (`WEBRTC_MAX_DURATION_SECONDS = 14_400`). */
+/** The valid range of `webrtc_max_duration_seconds`. */
 export const WEBRTC_MAX_DURATION_MIN_SECONDS = 60;
 export const WEBRTC_MAX_DURATION_MAX_SECONDS = 14_400;
 

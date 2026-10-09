@@ -17,111 +17,50 @@ import {
 } from '../agency/agency-factories.js';
 
 /**
- * ─── THE AGENT SURFACES OVER A REAL SOCKET TO A STUB CORE ────────────────────
+ * ─── THE AGENT SURFACES THROUGH THE IN-PROCESS HOP ───────────────────────────
  *
- * **Modelled on `test/integration/api/super-admin-usage.test.ts`**, which is the
- * repo's established pattern for this: an in-process `http.createServer` on an
- * ephemeral port, `config.coreService.url` rewritten to it in `beforeAll`, a
- * swappable `coreHandler`, a `received[]` log of what actually arrived, and the
- * three-piece mirror of `src/index.ts`'s response pipeline (log context →
- * `setErrorHandler` → `onSend` masking hook) in that exact order. Every one of
- * those is reused here, including the reasoning that the pipeline mirror is not a
- * detail — see the comment on it below.
+ * `callCore` (decision B16) runs the REAL `agency-agents.routes.ts` handlers in-process on the
+ * private internal handler instance (`buildCoreHandlers`, exactly as `agencyPlugin` builds it)
+ * against real rows, with `agency_dialer_enabled` on for the tenant. `received[]` is a spy on
+ * that instance's `inject`, i.e. the request the internal handler is actually given: the URL
+ * `callCore` built with `new URLSearchParams(query)` and its headers. The handler's body is
+ * whatever it answers from the rows a case seeds.
  *
  * ── Why this cannot be a unit test, and specifically what it buys ───────────
- * Every other test of these routes mocks `proxyToCore`, which means the assertion
- * is on the ARGUMENTS master handed a function. Four claims are not about
- * arguments at all:
+ * Unit tests of these routes mock `callCore`, which means the assertion is on the ARGUMENTS the
+ * route handed a function. Four claims are not about arguments at all:
  *
  *  1. **`forwardAllowedQuery`'s output has to survive being turned into a URL.**
  *     `new URLSearchParams(req.query).toString()` is what actually happens to
  *     that record, and the array→CSV flattening, the blank-value drop and the
- *     whitelist all only matter as far as the bytes core receives. A mocked
- *     `proxyToCore` asserts the record; core reads the query string.
- *  2. **"A hostile `?agent_user_id=` never reaches core"** — now because the
- *     request is REFUSED rather than because the param is dropped. It remains a
- *     claim about a
- *     request core did or did not see. Asserting it against a mock's argument list
+ *     whitelist all only matter as far as the bytes the internal handler receives. A mocked
+ *     `callCore` asserts the record; the handler reads the query string.
+ *  2. **"A hostile `?agent_user_id=` never reaches the internal handler"** — because the
+ *     request is REFUSED rather than because the param is dropped. It is a claim about a
+ *     request the handler did or did not see. Asserting it against a mock's argument list
  *     tests the whitelist; asserting it against `received[]` tests the whole hop,
  *     including the interpolated path segment the whitelist exists to protect.
- *  3. **Error masking is a GLOBAL `onSend` hook**, so in production every body
- *     these routes return passes through it — and the hook decides forward-vs-mask
- *     by reading a per-request AsyncLocalStorage flag that only the REAL
- *     `proxyToCore` sets (`recordCoreErrorStatus`). A harness with a mocked proxy
- *     cannot observe that at all: the flag is never set, so every core 4xx looks
- *     locally generated and is never masked. That is exactly the false-confidence
- *     failure the sibling suite's comment records.
- *  4. **An empty-but-successful record vs a failed read.** Core answers 200 with
+ *  3. **Error classification.** Internal 4xx bodies pass through unchanged, and a 5xx is
+ *     masked, on a real request through the real error handler.
+ *  4. **An empty-but-successful record vs a failed read.** The handler answers 200 with
  *     zeroed totals for an agent who has done nothing. That must not be
  *     indistinguishable from a failure, and the distinction lives in the status
- *     and the body core sent — so it needs a core that can send both.
+ *     and the body the handler sent.
  *
- * ── EXECUTED, GREEN ────────────────────────────────────────────────────────
- * Written without a Docker daemon (`/var/run/docker.sock` does not exist there,
- * so `npm run test:integration` cannot bring the test stack up), and this header
- * used to say it had never run. It has since been run against a real Postgres 16
- * and Redis 7 on the ports `docker/test-docker-compose.yml` publishes, and
- * passes in full — including the `beforeAll` port rewrite noted below, which
- * works. What backs it when the stack is unavailable: it type-checks under
- * `npm run lint:test`, the non-gating report; the fake-core harness is lifted from a suite that
- * passes in CI today rather than invented; the masked message and the masked-body
- * shape are imported from the middleware instead of transcribed; and the query
- * whitelists asserted here are the same lists the mutation-verified unit cases in
- * `test/unit/agency/proxy-agency-my-surfaces.routes.test.ts` pin at the argument
- * level, so this file is checking they hold over the wire rather than discovering
- * them.
- *
- * The one piece of machinery worth knowing about is the `beforeAll` port
- * rewrite: it mutates the mocked `config.coreService.url` after the module graph
- * is loaded, which works because `proxyToCore` reads `config.coreService.url`
- * per call. If every case here ever fails with a connection error, check that
- * first.
+ * Values the internal handler really validates are real: `contact_id` is a seeded contact's
+ * id, `cursor` is one the handler minted for this agent, and the stats reads that assert a 200
+ * carry `STATS_WINDOW` (the real stats read requires `from`/`to`). There is no per-tenant API
+ * key in-process, so the header cases assert `x-api-key` is ABSENT and keep the tenancy
+ * headers the handler reads. The real zero record has `null` rates (never 0 — "we cannot
+ * say"), so the zero cases assert the handler's own answer plus the keys being present.
  *
  * ── STATUS ASSERTIONS CARRY THE BODY ───────────────────────────────────────
- * Every status is asserted through `seen(res)` from the integration harness —
+ * Every status is asserted through `seen(res)` —
  * `expect(seen(res)).toMatchObject({ status: 200 })` — which asserts the status
  * exactly and puts the response BODY in the failure diff. The reason is
- * measured, not stylistic: the sibling suite `agency-performance-access.test.ts`
- * came back with 26 failures reading `expected 200, received 403` and nothing
- * else, on routes where five separate layers answer 403 with five different
- * messages. Identifying the layer took a source-reading pass that the body would
- * have answered outright. Keep new assertions in this shape.
- */
-
-/*
- * PORT NOTE (magick-agency): ported from master
- * `test/integration/api/agency-performance-forwarding.test.ts`@a1f0756a, on agency's test
- * database (Postgres 5436). Master's header above is the record of what the file is for; the
- * hop it describes is collapsed (decision B16), so:
- *
- *  - **There is no socket and no stub core.** `callCore` runs core's REAL
- *    `agency-agents.routes.ts` handlers in-process on the private core instance
- *    (`buildCoreHandlers`, exactly as `agencyPlugin` builds it) against real rows, with
- *    `agency_dialer_enabled` on for the tenant. `received[]` — master's log of what arrived at
- *    the fake core — is now a spy on that instance's `inject`, i.e. the request core's handler
- *    is actually given: the URL `callCore` built with `new URLSearchParams(query)` (claim 1 of
- *    the header holds byte for byte) and its headers. `coreHandler` / `jsonCoreHandler` are
- *    gone: core's body is whatever core's handler answers from the rows a case seeds.
- *  - **Values core now really validates are real.** The fake core accepted any string; core's
- *    handler refuses a non-UUID `contact_id` and a cursor it did not mint (400), and its stats
- *    read requires `from`/`to`. So `contact_id` is a seeded contact's id, `cursor` is one core
- *    minted for this agent, and the stats reads that assert a 200 carry `STATS_WINDOW`.
- *  - **Section 4 (headers):** there is no per-tenant core API key; the two cases that
- *    asserted `x-api-key` assert its ABSENCE and keep the tenancy headers core reads.
- *  - **Section 5 (error masking):** master's `errorMaskHook` and the ALS status recording are
- *    not ported (plan §1, one error union). DELETED: "MASKS a core 5xx — no upstream detail
- *    reaches the client", "MASKS a bare core 4xx that carries no field feedback" (mask-only)
- *    and "PASSES THROUGH a 429, because pacing is an authored signal" (no 429 producer exists
- *    behind `callCore`: core's rate limiter is not on the private instance). "FORWARDS a
- *    structured 4xx with its `details` intact" is re-expressed on core's REAL 400 (an unknown
- *    `outcome`); "passes through MASTER's own 4xx unchanged" is kept as is.
- *  - **Section 6:** core's real zero record has `null` rates (never 0 — "we cannot say"), so
- *    the zero cases assert core's own answer verbatim plus the keys being present; the failed
- *    read is a real repository fault inside core's handler (core's error handler answers 500)
- *    rather than a stubbed 503; the name enrichment reads the real `users` row, with only the
- *    failure case stubbing `resolveAgentNames`.
- *  - `src/db/connection.js` mock → `initDbPool`; `config`, governance and `proxy.utils` mocks
- *    are gone (no core URL, no governance, no key). `seen` is master's helper, verbatim.
+ * measured, not stylistic: `agency-performance-access.test.ts` once came back with 26
+ * failures reading `expected 200, received 403` and nothing else, on routes where five
+ * separate layers answer 403 with five different messages. Keep new assertions in this shape.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -135,8 +74,8 @@ const mocks = vi.hoisted(() => ({
 
 initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
 
-// The in-process seam (decision B16): spied under master's name, delegating to the real
-// `callCore`, so a case can read the request master's handler built AND core's real answer.
+// The in-process seam (decision B16): a spy delegating to the real `callCore`, so a case can
+// read the request the route built AND the internal handler's real answer.
 vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/api/core-dispatch.js')>();
   mocks.realCallCore = actual.callCore as (...args: unknown[]) => Promise<unknown>;
@@ -145,12 +84,12 @@ vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) => {
 
 /**
  * Identity enrichment is stubbed at its narrowest seam — the name lookup — so the
- * real `enrichAgentStatsIdentity`/`enrichAttemptAgentNames` still run over core's
- * real response body. Mocking the enrichers themselves would hide whether they
+ * real `enrichAgentStatsIdentity`/`enrichAttemptAgentNames` still run over the internal
+ * handler's real response body. Mocking the enrichers themselves would hide whether they
  * preserve what came over the wire, which several cases below assert.
  *
- * PORT NOTE (magick-agency): the seam defaults to the REAL lookup (master defaulted it to an
- * empty map), so the name a case asserts is read from the `users` table.
+ * The seam defaults to the REAL lookup, so the name a case asserts is read from the `users`
+ * table.
  */
 vi.mock('../../../src/agency/agency-agent-identity.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/agency/agency-agent-identity.js')>();
@@ -212,7 +151,7 @@ const { setCoreHandlers } = await import('../../../src/api/core-dispatch.js');
 const { getFeatureFlagService } = await import('../../../src/feature-flags/index.js');
 const { agencyAgentStatsRepository } = await import('../../../src/db/repositories/agency.repository.js');
 
-// ── What core's handler was given (master: the fake core's request log) ────────
+// ── What the internal handler was given ───────────────────────────────────────
 
 interface ReceivedRequest {
   method: string;
@@ -228,13 +167,13 @@ let core: FastifyInstance;
 let injectSpy: { mock: { calls: unknown[][] } } | null = null;
 
 /**
- * Every request `callCore` handed core's private instance during this case, decoded the way
- * master's fake core decoded what arrived on its socket (`new URL(...)`, `getAll` per key).
+ * Every request `callCore` handed the private handler instance during this case, decoded
+ * with `new URL(...)` and `getAll` per key.
  */
 function received(): ReceivedRequest[] {
   return (injectSpy?.mock.calls ?? []).map(([opts]) => {
     const o = opts as { method: string; url: string; headers: Record<string, string | undefined> };
-    const url = new URL(o.url, 'http://core.in-process');
+    const url = new URL(o.url, 'http://handler.in-process');
     const query: Record<string, string[]> = {};
     for (const key of new Set(url.searchParams.keys())) {
       query[key] = url.searchParams.getAll(key);
@@ -243,13 +182,13 @@ function received(): ReceivedRequest[] {
   });
 }
 
-/** Core's own answer to the Nth `callCore` of this case (the spy delegates to the real one). */
+/** The internal handler's own answer to the Nth `callCore` of this case (the spy delegates to the real one). */
 async function coreAnswer(n = 0): Promise<{ status: number; body: unknown }> {
   return (await mocks.proxyToCore.mock.results[n]!.value) as { status: number; body: unknown };
 }
 
 const PREFIX = '/proxy/agency';
-/** Core's real stats read requires a window; master's fake core did not. */
+/** The real stats read requires a window. */
 const STATS_WINDOW = 'from=2026-08-01T00:00:00.000Z&to=2026-08-23T00:00:00.000Z';
 const DIALED = new Date('2026-08-15T09:00:00Z');
 
@@ -259,7 +198,7 @@ interface SeenResponse {
   body: unknown;
 }
 
-/** master `test/integration/setup/test-utils.ts` `seen`, verbatim. */
+/** A response's status and parsed body, so assertions carry the body. */
 function seen(res: { statusCode: number; body: string }): SeenResponse {
   return { status: res.statusCode, body: parseBody(res.body) };
 }
@@ -273,7 +212,7 @@ function parseBody(body: string): unknown {
   }
 }
 
-describe('agency agent surfaces through the in-process core hop (integration)', () => {
+describe('agency agent surfaces through the in-process internal hop (integration)', () => {
   let app: FastifyInstance;
   let tenant: { id: string };
   let account: { id: string };
@@ -323,11 +262,7 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
     await getFeatureFlagService().invalidate({ tenantId: tenant.id });
 
     app = Fastify({ logger: false });
-    /**
-     * PORT NOTE (magick-agency): master mirrored `src/index.ts`'s response pipeline here
-     * (log context → `setErrorHandler(errorHandler)` → `onSend` `errorMaskHook`). The log
-     * context and the mask are not ported (plan §1); the error handler is, and is kept.
-     */
+    // The response pipeline is the error handler alone (no mask hook here).
     app.setErrorHandler(errorHandler);
 
     await app.register(proxyAgencyPerformanceRoutes, { prefix: PREFIX });
@@ -357,7 +292,7 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
 
   /**
    * Real attempts by `agent`, one per phone, on one campaign and one session — the rows
-   * core's `listForAgent` joins (`reserved_agent_id` → the session that owns the agent).
+   * the `listForAgent` read joins (`reserved_agent_id` → the session that owns the agent).
    */
   async function seedAttempts(phones: readonly string[]) {
     const campaign = await insertAgencyCampaign({
@@ -386,27 +321,27 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
 
   // ═══ 1. The whitelisted filters actually arrive ═══════════════════════════
 
-  describe('the attempt filters reach core as query bytes', () => {
+  describe('the attempt filters reach the internal handler as query bytes', () => {
     it('forwards `phone` and `contact_id` — the two that were silently dropped', async () => {
       /**
        * ── Why these two specifically ──────────────────────────────────────────
-       * Core APPLIES both on this endpoint: `parseAgentAttemptFilters` delegates
+       * The internal handler APPLIES both on this endpoint: `parseAgentAttemptFilters` delegates
        * to the campaign spine's `parseAttemptFilters` ("the vocabulary is IMPORTED,
        * not forked") and `listForAgent` puts both into the statement.
        *
-       * Omitting them from master's whitelist did not REFUSE the filter, which
+       * Omitting them from the whitelist did not REFUSE the filter, which
        * would at least be visible — it made `forwardAllowedQuery` drop the key silently,
        * so a `?phone=` search answered **200 with the agent's whole unfiltered
        * history**: a search control that looks like it matched everything rather
        * than one that failed. The console sends `phone`, so this is what makes
        * that control real.
        *
-       * Asserted on what core RECEIVED, not on what master passed to a mock,
-       * because the failure was a key going missing between the two.
+       * Asserted on what the internal handler RECEIVED, not on what the route passed to a
+       * mock, because the failure was a key going missing between the two.
        *
-       * PORT NOTE (magick-agency): `contact_id` is a real contact's id (core's handler
-       * refuses master's `c-42`), and the case now also asserts the EFFECT: of the agent's
-       * two attempts, core's real statement returns only the one both filters name.
+       * `contact_id` is a real contact's id (the handler refuses a non-UUID), and the case
+       * also asserts the EFFECT: of the agent's two attempts, the real statement returns only
+       * the one both filters name.
        */
       const [wanted] = await seedAttempts(['+919812345678', '+919811111111']);
 
@@ -430,10 +365,10 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
       // Every key on `AGENT_ATTEMPT_QUERY_PARAMS`, so a deletion from that list
       // shows up here as a missing filter rather than as a silent full-history read.
       //
-      // PORT NOTE (magick-agency): `campaign_id` / `contact_id` are seeded rows and `cursor`
-      // is one core minted for this agent (a first page of one), because core's handler now
-      // really parses all three; and the read is asserted to be ANSWERED (200), which only a
-      // real parser accepting every value can show.
+      // `campaign_id` / `contact_id` are seeded rows and `cursor` is one the handler minted
+      // for this agent (a first page of one), because the handler really parses all three;
+      // and the read is asserted to be ANSWERED (200), which only a real parser accepting
+      // every value can show.
       const rows = await seedAttempts(['+14155550101', '+14155550102']);
       const first = await app.inject({
         method: 'GET', url: `${PREFIX}/my-attempts?limit=1`, headers: headers(agent.id),
@@ -483,20 +418,20 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
 
       const arrived = received()[0]!.query;
       expect(Object.keys(arrived).sort()).toEqual(['bucket', 'campaign_id', 'from', 'to']);
-      // PORT NOTE (magick-agency): added — core's real handler answered the read.
+      // The real handler answered the read.
       expect(seen(res)).toMatchObject({ status: 200 });
     });
 
     /**
-     * An unrecognised param is REFUSED, and core is never called at all.
+     * An unrecognised param is REFUSED, and the internal handler is never called at all.
      *
      * This used to assert the opposite — that the key was silently dropped and the
      * request succeeded. That was the defect, not the protection: for a FILTER, a
-     * dropped key means core answers 200 over an unfiltered population and the
+     * dropped key means the handler answers 200 over an unfiltered population and the
      * console presents it as the rows matching the search. Refusing is the same
-     * protection (the param still cannot reach core) plus a signal.
+     * protection (the param still cannot reach the handler) plus a signal.
      */
-    it('refuses an unrecognised param outright and never calls core', async () => {
+    it('refuses an unrecognised param outright and never calls the internal handler', async () => {
       const res = await app.inject({
         method: 'GET',
         url: `${PREFIX}/my-stats?from=2026-08-01T00:00:00.000Z&to=2026-08-23T00:00:00.000Z`
@@ -507,7 +442,7 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
       expect(seen(res)).toMatchObject({ status: 400 });
       expect(res.json()).toMatchObject({ code: 'unknown_query_params' });
       expect(res.json().details.unknown.sort()).toEqual(['include_secret_totals', 'tenant_id']);
-      // The whole point: the hostile params never reached core.
+      // The whole point: the hostile params never reached the internal handler.
       expect(received()).toHaveLength(0);
     });
   });
@@ -521,12 +456,11 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
        * Fastify parses `?outcome=a&outcome=b` into an ARRAY, so without that
        * branch the value handed to `URLSearchParams` would stringify as
        * `"a,b"` anyway on some paths and as `[object Object]`-ish garbage on
-       * others — and core's filter parsers accept the comma form (the activity
+       * others — and the filter parsers accept the comma form (the activity
        * route documents `action` as "repeatable or comma-separated").
        *
-       * The assertion is that core receives ONE `outcome` key with the joined
-       * value, not two keys — which is the shape core's parser expects and the
-       * shape only the wire can confirm.
+       * The assertion is that the internal handler receives ONE `outcome` key with the joined
+       * value, not two keys — which is the shape its parser expects.
        */
       const res = await app.inject({
         method: 'GET',
@@ -537,14 +471,14 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
       expect(received()[0]!.query['outcome']).toEqual(['connected,no_answer,busy']);
       // One key, one value — the repetition did not survive as repetition.
       expect(received()[0]!.rawQuery).toContain('outcome=connected%2Cno_answer%2Cbusy');
-      // PORT NOTE (magick-agency): added — core's REAL parser accepts the joined form.
+      // The REAL parser accepts the joined form.
       expect(seen(res)).toMatchObject({ status: 200 });
     });
 
     it('drops a BLANK value rather than forwarding an empty filter', async () => {
       /**
        * `if (flat.trim().length === 0) continue`. A browser that renders an empty
-       * select as `?disposition_code=` would otherwise ask core to filter on the
+       * select as `?disposition_code=` would otherwise ask the handler to filter on the
        * empty string — which matches nothing, so the agent's history comes back
        * empty and looks like "you have made no calls" rather than "your filter is
        * blank".
@@ -565,20 +499,16 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
       expect(arrived['outcome']).toEqual(['connected']);
     });
 
-    it('core sees an EMPTY query when nothing survives the whitelist', async () => {
+    it('the internal handler sees an EMPTY query when nothing survives the whitelist', async () => {
       /**
        * Precisely, because the mechanism is worth stating rather than guessing at:
-       * `forwardAllowedQuery` returns `{}`, and `{}` is TRUTHY — so `proxyToCore`'s
+       * `forwardAllowedQuery` returns `{}`, and `{}` is TRUTHY — so `callCore`'s
        * `req.query ? '?' + … : ''` does append a bare `?`. Node's `URL` then
-       * normalises `…/stats?` to an empty `search`, which is what core observes and
+       * normalises `…/stats?` to an empty `search`, which is what the handler observes and
        * what this asserts.
        *
-       * So the claim is "core sees no parameters", not "master emits no `?`". Said
-       * that way because a future reader comparing this to `proxyToCore` would
-       * otherwise conclude one of the two is wrong.
-       *
-       * PORT NOTE (magick-agency): `callCore` keeps the same `req.query ? '?' + … : ''`
-       * rule; the URL decoded here is the one it handed core's instance.
+       * So the claim is "the handler sees no parameters", not "no `?` is emitted". Said
+       * that way because a future reader would otherwise conclude one of the two is wrong.
        */
 
       // A request with no params at all. This used to send `?nothing_valid=1` and
@@ -608,16 +538,16 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
 
   // ═══ 3. The hostile agent_user_id ════════════════════════════════════════
 
-  describe('a caller-supplied agent id NEVER reaches core on a my-* route', () => {
+  describe('a caller-supplied agent id NEVER reaches the internal handler on a my-* route', () => {
     /**
-     * ── The security property, stated as bytes on a socket ───────────────────
-     * The subject of a `my-*` read is decided by the path segment master builds
+     * ── The security property, stated as the request the handler receives ───────────────────
+     * The subject of a `my-*` read is decided by the path segment the route builds
      * from `request.user.id`. `agent_user_id` is absent from BOTH whitelists on
      * purpose, and its absence IS the property rather than the documentation of
      * one: a route that honoured such a param would be a full read of any
      * colleague's history while passing every floor assertion in the suite.
      *
-     * So the assertion is made where it cannot be fudged — on the request core
+     * So the assertion is made where it cannot be fudged — on the request the internal handler
      * received: the path segment is the CALLER's id, and the string the caller
      * supplied appears nowhere in the URL.
      */
@@ -625,14 +555,14 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
 
     /**
      * The hostile param is now REFUSED rather than dropped, so the strongest form
-     * of the property is that core is never called at all: the hostile id cannot
+     * of the property is that the internal handler is never called at all: the hostile id cannot
      * appear in a request line that does not exist.
      *
      * This case used to assert a 200 with the param dropped. Refusal is the same
      * protection plus a signal — see the whitelist section above for why silence
      * was the wrong answer for a filter.
      */
-    it.each(['my-stats', 'my-attempts'] as const)('%s: refuses it, and core is never called', async (route) => {
+    it.each(['my-stats', 'my-attempts'] as const)('%s: refuses it, and the internal handler is never called', async (route) => {
       const res = await app.inject({
         method: 'GET',
         url: `${PREFIX}/${route}?agent_user_id=${hostile}&user_id=${hostile}`,
@@ -647,10 +577,8 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
     /**
      * And the subject still comes from the session on a clean request — the half
      * of the property the refusal above cannot show, because it never reaches
-     * core. The path segment is the CALLER's id whatever the caller asked for.
-     *
-     * PORT NOTE (magick-agency): `my-stats` carries `STATS_WINDOW` so core's real handler
-     * answers the 200 master asserted.
+     * the internal handler. The path segment is the CALLER's id whatever the caller asked
+     * for. `my-stats` carries `STATS_WINDOW` so the real handler answers 200.
      */
     it.each(['my-stats', 'my-attempts'] as const)('%s: the path segment is the CALLER', async (route) => {
       const res = await app.inject({
@@ -713,19 +641,17 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
     });
   });
 
-  // ═══ 4. The tenancy headers master adds ══════════════════════════════════
+  // ═══ 4. The tenancy headers added to the internal request ════════════════
 
-  describe('the headers master attaches on the way out', () => {
-    it('sends the per-tenant core API key and the tenancy ids', async () => {
+  describe('the headers the route attaches to the internal request', () => {
+    it('sends the tenancy ids and no API key', async () => {
       /**
-       * Core requires `X-API-Key` plus tenant and account. This is the hop where
-       * the Firebase session becomes a core credential, and it is invisible to any
-       * test that mocks `proxyToCore` — the mock never builds a header.
+       * The internal handler reads tenant and account from headers. This hop is invisible to
+       * any test that mocks `callCore` — the mock never builds a header.
        *
-       * PORT NOTE (magick-agency): there is no core credential in-process (the hop is a
-       * function call behind master's own session chain), so `x-api-key` is asserted ABSENT;
-       * the tenancy ids core's handler reads (`getTenantId` / `getAccountId`) are asserted as
-       * master did. Title kept as master's for traceability.
+       * There is no credential in-process (the hop is a function call behind the public
+       * session chain), so `x-api-key` is asserted ABSENT; the tenancy ids the handler reads
+       * (`getTenantId` / `getAccountId`) are asserted present.
        */
       await app.inject({
         method: 'GET', url: `${PREFIX}/my-stats`, headers: headers(agent.id),
@@ -737,10 +663,9 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
       expect(sent['x-mgkvc-account']).toBe(account.id);
     });
 
-    it('never forwards the caller’s own session headers to core', async () => {
+    it('never forwards the caller’s own session headers to the internal handler', async () => {
       // `x-user-id` is this harness's stand-in for a Firebase bearer token, and
-      // core must not see either: the credential core trusts is the tenant's API
-      // key, and the actor travels in the PATH, not in a header core could read.
+      // the handler must not see either: the actor travels in the PATH, not in a header.
       await app.inject({
         method: 'GET', url: `${PREFIX}/my-stats`, headers: headers(agent.id),
       });
@@ -749,16 +674,14 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
       expect(received()[0]!.headers['authorization']).toBeUndefined();
     });
 
-    it('sends exactly the headers master is responsible for, and no more', async () => {
+    it('sends exactly the headers the route is responsible for, and no more', async () => {
       /**
        * The whole outgoing set, so a header ADDED to this hop is noticed. Bounded
        * to the `x-mgkvc-*`/`x-api-key` family because the rest are Node's own
-       * (`host`, `connection`, `accept`) and are not master's decision.
+       * (`host`, `connection`, `accept`) and are not the route's decision.
        *
-       * PORT NOTE (magick-agency): `x-api-key` is gone from the expected set (no core key);
-       * the filter still includes it so a key reappearing on the hop reds here. Master's note
-       * on `traceparent` concerned the HTTP client's propagation, which has no in-process
-       * counterpart.
+       * `x-api-key` is not in the expected set (there is no key); the filter still includes it
+       * so a key appearing on the hop reds here.
        */
       await app.inject({
         method: 'GET', url: `${PREFIX}/my-stats`, headers: headers(agent.id),
@@ -775,26 +698,23 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
     });
   });
 
-  // ═══ 5. Core's refusals, as the client receives them ═══════════════════════
+  // ═══ 5. The internal handler's refusals, as the client receives them ═══════
   //
-  // PORT NOTE (magick-agency): master's describe is "error masking, with the real proxy
-  // recording core's status". DELETED (mask not ported, plan §1; no in-process producer):
-  //  - "MASKS a core 5xx — no upstream detail reaches the client"
-  //  - "MASKS a bare core 4xx that carries no field feedback"
-  //  - "PASSES THROUGH a 429, because pacing is an authored signal"
+  // There is no error-mask hook on this app instance and no in-process producer of a 429, so
+  // masking and rate-limit pass-through are not covered here.
 
-  describe('core’s refusals and master’s own, as the client receives them', () => {
+  describe('the internal handler’s refusals and the route’s own, as the client receives them', () => {
     it('FORWARDS a structured 4xx with its `details` intact', async () => {
       /**
        * The other half of the policy, and the reason the allow-list exists: a 4xx
-       * forwarded from core is masked UNLESS it carries field-level validation
+       * forwarded from the internal handler carries field-level validation
        * feedback. `details` is what makes this one forwardable, and it has to
        * arrive whole — a masked validation error tells the user to contact support
        * about a value they could have fixed themselves.
        *
-       * PORT NOTE (magick-agency): re-expressed on core's REAL refusal — an outcome outside
-       * `ATTEMPT_OUTCOMES` is core's `400 Validation failed` with `details` — and asserted
-       * byte-identical to what core's handler answered.
+       * The refusal is real: an outcome outside `ATTEMPT_OUTCOMES` is the handler's
+       * `400 Validation failed` with `details`, asserted byte-identical to what the handler
+       * answered.
        */
       const res = await app.inject({
         method: 'GET', url: `${PREFIX}/my-attempts?outcome=vibes`, headers: headers(agent.id),
@@ -810,14 +730,14 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
       });
     });
 
-    it('passes through MASTER’s own 4xx unchanged — it is not core’s', async () => {
+    it('passes through the route’s own 4xx unchanged — it is not the internal handler’s', async () => {
       /**
-       * The seam's whole purpose: telling a core-forwarded error from one master
-       * raised. This 404 is `assertAgentInTenant`'s, returned BEFORE any core call,
-       * so nothing recorded a core status and the hook leaves it alone.
+       * Telling an error forwarded from the internal handler from one the route itself
+       * raised. This 404 is `assertAgentInTenant`'s, returned BEFORE any internal call,
+       * so it is left alone.
        *
        * The invariant it relies on — "a route's own client errors are returned
-       * before any core call that records its status" — is exactly what this case
+       * before any internal call" — is exactly what this case
        * checks holds on this surface.
        */
       const stranger = await insertUser();
@@ -847,23 +767,22 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
      * screen". Only the first two are correct, and an interface that renders them
      * the same way turns a real outage into "I suppose I have made no calls".
      *
-     * Master reshapes nothing here, which is precisely what preserves the
-     * distinction: core answers 200 with every counter present and zero, and a
+     * The route reshapes nothing here, which is precisely what preserves the
+     * distinction: the internal handler answers 200 with every counter present and zero, and a
      * failure is a masked non-2xx. The cases below assert that the two are
      * different at the status, at the body, and — for the client that only reads
      * `totals` — in whether `totals` exists at all.
      */
     it('a zero scorecard is a 200 with every counter present', async () => {
-      // PORT NOTE (magick-agency): core's REAL zero record (no rows seeded for this agent).
-      // Its rates are `null`, not master's fixture's 0 ("we cannot say" — core
-      // `agent-record-tenant-isolation`), so presence is asserted with `in`.
+      // The REAL zero record (no rows seeded for this agent). Its rates are `null`, not 0
+      // ("we cannot say"), so presence is asserted with `in`.
       const res = await app.inject({
         method: 'GET', url: `${PREFIX}/my-stats?${STATS_WINDOW}`, headers: headers(agent.id),
       });
 
       expect(seen(res)).toMatchObject({ status: 200 });
       const body = res.json();
-      // Verbatim: master owns none of this arithmetic, and a second definition of
+      // Unchanged: the route owns none of this arithmetic, and a second definition of
       // "connect rate" in this hop is one that drifts from the supervisor's.
       expect(body).toEqual((await coreAnswer()).body);
       // The keys a console reads are PRESENT and zero, not absent.
@@ -882,7 +801,7 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
       });
 
       expect(seen(res)).toMatchObject({ status: 200 });
-      // PORT NOTE (magick-agency): core's real page; `limit` is core's default.
+      // The real page; `limit` is the handler's default.
       expect(res.json()).toEqual({ rows: [], next_cursor: null, limit: expect.any(Number) });
     });
 
@@ -892,9 +811,8 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
        * comparison rather than as two independent facts, because "distinguishable"
        * is a relation.
        *
-       * PORT NOTE (magick-agency): the failure is a real fault inside core's handler (its
-       * stats repository rejects, as a pool timeout would), answered by core's error handler
-       * — master's fake core sent a 503 body instead.
+       * The failure is a real fault inside the internal handler (its stats repository
+       * rejects, as a pool timeout would), answered by its error handler.
        */
       const ok = await app.inject({
         method: 'GET', url: `${PREFIX}/my-stats?${STATS_WINDOW}`, headers: headers(agent.id),
@@ -917,11 +835,9 @@ describe('agency agent surfaces through the in-process core hop (integration)', 
       /**
        * The enrichment must not be conditional on there being activity: a
        * supervisor comparing two agents needs the name of the one who has done
-       * nothing most of all. The real `enrichAgentStatsIdentity` runs over core's
-       * real response here — only the name LOOKUP is stubbed.
-       *
-       * PORT NOTE (magick-agency): not even the lookup is stubbed — the name is the agent's
-       * real `users.display_name` and the body is core's real zero record.
+       * nothing most of all. The real `enrichAgentStatsIdentity` runs over the
+       * handler's real response here, and not even the lookup is stubbed — the name is the
+       * agent's real `users.display_name` and the body is the real zero record.
        */
       const res = await app.inject({
         method: 'GET',

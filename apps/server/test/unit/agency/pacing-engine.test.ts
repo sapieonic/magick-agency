@@ -1,9 +1,5 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core test/unit/agency/pacing-engine.test.ts@4850d1d9 (62 + 1 it.each (5 rows) → 67).
-// Verbatim. Import/mock paths only (logger → `@magick-agency/observability`, account settings →
-// `@magick-agency/db/repositories/account-settings.repository`). The suite has no attempt-batcher
-// case, so none is deleted; its DNC double is an untyped `{ check }` stub, so the scope argument needs
-// no change here (the scope is asserted in `pacing-engine-gates.test.ts`). No case deleted or
-// modified.
+// The DNC double is an untyped `{ check }` stub, so the scope argument is not asserted here
+// (it is asserted in `pacing-engine-gates.test.ts`).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
@@ -11,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //
 //   idle     = agents in `available` on this campaign  (busy agents excluded)
 //   occupied = ALL non-terminal attempts  (a bridged call still holds a slot)
-//   to_dial  = MAX(0, MIN(account max_concurrent_calls - occupied, idle))   -- D9
+//   to_dial  = MAX(0, MIN(account max_concurrent_calls - occupied, idle))
 //
 // The two terms bound different quantities: the account limit caps total
 // concurrency (so `occupied` counts against it), `idle` caps how many NEW dials
@@ -37,7 +33,7 @@ const { repos, settings } = vi.hoisted(() => ({
     },
     contact: { claimDialable: vi.fn().mockResolvedValue([]), unclaim: vi.fn().mockResolvedValue(undefined) },
     attempt: { countLive: vi.fn().mockResolvedValue(0), create: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
-    // `setState` mirrors the winning reservation durably (`AD-P4-C-01`) — the
+    // `setState` mirrors the winning reservation durably — the
     // supervisor's agents-by-state breakdown cannot see `reserved` otherwise.
     session: {
       findLiveForCampaign: vi.fn().mockResolvedValue([]),
@@ -72,7 +68,7 @@ vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: audit }));
 
 import { PacingEngine } from '../../../src/agency/pacing-engine.js';
 
-// The window is deliberately ALL DAY, EVERY DAY (`AD-P3-C-06` added a pre-dial
+// The window is deliberately ALL DAY, EVERY DAY (the pre-dial
 // calling-hours gate). These tests are about the tick's arithmetic, and a fixture
 // carrying the column defaults — 09:00–20:00, Mon–Fri — would make every dialing
 // assertion here depend on what time the suite happened to run and on what day of
@@ -83,7 +79,7 @@ const CAMPAIGN = {
   status: 'running', caller_ids: ['+14155550100', '+14155550101'],
   calling_window_start: '00:00:00', calling_window_end: '24:00:00',
   calling_days: [1, 2, 3, 4, 5, 6, 7], default_timezone: 'UTC',
-  // Migration 089. A running campaign carries no pause metadata, and the fixture
+  // A running campaign carries no pause metadata, and the fixture
   // has to say so: the tick now reads `pause_reason` to tell a supervisor pause
   // from the abandonment guardrail's, and an absent key would make every
   // `{...CAMPAIGN, status: 'paused'}` in this file an unattributed pause that no
@@ -375,12 +371,12 @@ describe('PacingEngine reserve-before-dial', () => {
     await e.tickOnce('camp-1');
 
     // The agent is committed before the carrier is ever contacted — which is what
-    // makes "answered call with no agent" unreachable under D1.
+    // makes "answered call with no agent" unreachable (AMD is out of scope).
     expect(order).toEqual(['reserve', 'create-attempt', 'dispatch']);
   });
 
   it('NEVER consumes a contact when every agent is lost to another tick', async () => {
-    // AD-P2-C-01 (b). Agents are reserved before any contact is claimed, so a lost
+    // Agents are reserved before any contact is claimed, so a lost
     // CAS costs one Redis call and touches nothing durable.
     //
     // This assertion used to be `unclaim('c1', …)` — correct for the old order,
@@ -432,8 +428,8 @@ describe('PacingEngine reserve-before-dial', () => {
   });
 
   it('reserves the longest-idle agent first, and does not let the pool order decide', async () => {
-    // AD-P2-C-01 (c). `findLiveForCampaign` returns a database order — stable
-    // across ticks and unrelated to who has been waiting — so taking it verbatim
+    // `findLiveForCampaign` returns a database order — stable
+    // across ticks and unrelated to who has been waiting — so taking it as-is
     // hands the early rows most of the calls and lets a late row idle forever on a
     // pool larger than the concurrency ceiling. Deliberately fed in the WRONG
     // order, with the longest-idle agent last, so a test that merely echoed the
@@ -520,7 +516,7 @@ describe('PacingEngine reserve-before-dial', () => {
     //
     // Two further costs made it worse than wasted queries: every agent's
     // `availableSince` was restamped each tick, collapsing the longest-idle fairness
-    // ordering AD-P2-C-01(c) depends on; and an unthrottled `log.error` per tick is
+    // ordering the idle-first pick depends on; and an unthrottled `log.error` per tick is
     // ~345k lines/day.
     //
     // So the guard belongs BEFORE `planTick`, and the assertion is that the tick is
@@ -684,7 +680,7 @@ describe('PacingEngine finalization', () => {
 
     // No fourth argument. The lifecycle stamps (`ended_at`, and its legacy twin
     // `completed_at`) are derived from the TARGET STATUS inside `transitionStatus`
-    // since migration 108, so the leader carries no patch — which is the point of
+    // by the repository, so the leader carries no patch — which is the point of
     // moving them: a call site cannot get them wrong by omission when there is
     // nothing to omit. Asserted as an EXACT three-argument call rather than with a
     // trailing `expect.anything()`, so a patch quietly reappearing here is a
@@ -697,7 +693,7 @@ describe('PacingEngine finalization', () => {
     expect(frame.reason).toBe('list_exhausted');
     expect(frame.dialing).toBe(false);
     expect(frame.message).toBeTruthy();
-    // MAG-157: the leader-written terminal row is the record that the campaign
+    // The leader-written terminal row is the record that the campaign
     // actually ended. Assert on payload, not on "a log happened" — a missing
     // call produces `[]`/`0` and would satisfy a count assertion.
     expect(audit.log).toHaveBeenCalledWith({
@@ -730,7 +726,7 @@ describe('PacingEngine finalization', () => {
 
     // No fourth argument. The lifecycle stamps (`ended_at`, and its legacy twin
     // `completed_at`) are derived from the TARGET STATUS inside `transitionStatus`
-    // since migration 108, so the leader carries no patch — which is the point of
+    // by the repository, so the leader carries no patch — which is the point of
     // moving them: a call site cannot get them wrong by omission when there is
     // nothing to omit. Asserted as an EXACT three-argument call rather than with a
     // trailing `expect.anything()`, so a patch quietly reappearing here is a
@@ -768,7 +764,7 @@ describe('PacingEngine finalization', () => {
 
     // No fourth argument. The lifecycle stamps (`ended_at`, and its legacy twin
     // `completed_at`) are derived from the TARGET STATUS inside `transitionStatus`
-    // since migration 108, so the leader carries no patch — which is the point of
+    // by the repository, so the leader carries no patch — which is the point of
     // moving them: a call site cannot get them wrong by omission when there is
     // nothing to omit. Asserted as an EXACT three-argument call rather than with a
     // trailing `expect.anything()`, so a patch quietly reappearing here is a
@@ -838,7 +834,7 @@ describe('PacingEngine finalization', () => {
   });
 
   it('announces the ABANDONMENT guardrail as an auto-pause, not a supervisor pause', async () => {
-    // `AD-P4-C-02` pauses out-of-band, from the abandonment refresh, and announces
+    // The abandonment guardrail pauses out-of-band, from the abandonment refresh, and announces
     // nothing itself — this tick is the only thing that reaches the floor. Reading
     // the status alone told every agent on a campaign stopped for a REGULATORY
     // reason that their supervisor had done it, which is a different instruction:
@@ -1173,7 +1169,7 @@ describe('PacingEngine leadership', () => {
 
 describe('PacingEngine candidate fairness over a run', () => {
   it('does not let any agent idle diverge over a 200-call run', async () => {
-    // AD-P2-C-01 (c), asserted as the acceptance states it: over a long run, not
+    // Asserted as a long-run property: over a long run, not
     // on a single pick. A single-pick test passes on any rule that happens to
     // choose the right agent once — including "always pick index 0" if the pool
     // order flatters it — so the property that actually matters is what the
@@ -1220,7 +1216,7 @@ describe('PacingEngine candidate fairness over a run', () => {
 });
 
 describe('PacingEngine excludes non-available agents', () => {
-  // AD-P2-C-02 (d), asserted here rather than in the wrap-up suite because THIS is
+  // Asserted here rather than in the wrap-up suite because THIS is
   // where the question is actually answered — the tick reads Redis, and a test in
   // the wrap-up file could only prove that file's own mock.
   it.each(['wrapup', 'break', 'on_call', 'reserved', 'offline'])(
@@ -1423,9 +1419,9 @@ describe('a resume frame can never claim dialing the engine will not do', () => 
   });
 });
 
-// ─── AD-P4-C-01: the reservation mirror that deliberately is not there ──────
+// ─── the reservation mirror that deliberately is not there ──────
 
-describe('AD-P4-C-01: `reserved` is NOT mirrored to the durable row', () => {
+describe('`reserved` is NOT mirrored to the durable row', () => {
   it('does not write the reservation to agency_agent_sessions', async () => {
     const states: Record<string, string> = { s1: 'available' };
     const agents = makeAgents(states);
@@ -1443,7 +1439,7 @@ describe('AD-P4-C-01: `reserved` is NOT mirrored to the durable row', () => {
     // showed them stuck at `reserved` indefinitely.
     //
     // Two further costs: `setState` restamps `state_since = now()`, which is the
-    // anchor §C.4's risk ordering sorts on, and it is an awaited round trip per
+    // anchor the risk ordering sorts on, and it is an awaited round trip per
     // reserved agent per tick on the dial path. `reserved` is a sub-second-to-15s
     // transient Redis owns; `on_call` IS mirrored, because `releaseAgent` mirrors
     // the return.

@@ -1,20 +1,20 @@
 /**
- * ─── WHAT "ABANDONED" MEANS, AS DATA (`AD-P2-C-06`) ─────────────────────────
+ * ─── WHAT "ABANDONED" MEANS, AS DATA ──────────────────────────────────
  *
  * Deliberately a leaf module: no repository, no metrics registry, no imports at
  * all. Both the SQL that reads the window and the code that publishes it need
  * these definitions, and if they lived with either one the other would have to
- * import through it — which is how the "independent audit" half of this ticket
+ * import through it — which is how the independent audit half of the compliance metric
  * would quietly acquire a dependency on the thing it audits.
  */
 
 /**
- * `N` from test-plan §10: how long after the carrier answers a bridge may still
+ * How long after the carrier answers a bridge may still
  * arrive before the call counts as abandoned.
  *
- * 1000ms, per §10's recommendation and the interval its SQL is written with. It
+ * 1000ms, the interval the SQL below is written with. It
  * is a **business threshold**, so it lives here as a named constant and is
- * interpolated into the predicate — never expressed as a key TTL (§6.1).
+ * interpolated into the predicate — never expressed as a key TTL.
  */
 export const ABANDONMENT_BRIDGE_GRACE_MS = 1000;
 
@@ -30,16 +30,14 @@ export const ABANDONMENT_WINDOW_HOURS = 24;
  * no cache and no in-process state, which is what makes it usable as an
  * independent audit of `agency_abandoned_total`.
  *
- * ⚠️ **This adds `state = 'ended'` to §10's predicate as written, and that needs
- * QA's agreement rather than my say-so.** §10's version has no terminal filter, so
- * its `bridged_at IS NULL` arm is true of an attempt that is answered and *still
+ * ⚠️ **The predicate includes `state = 'ended'`, and any independent cross-check
+ * query must include it too.** Without a terminal filter, the `bridged_at IS NULL` arm is true of an attempt that is answered and *still
  * being bridged*, and of one mid-apology on the abandoned path. Without the
  * filter, live traffic inflates the compliance rate in real time and the
- * `AD-P4-C-02` auto-pause would fire on a healthy campaign at concurrency —
+ * auto-pause guardrail would fire on a healthy campaign at concurrency —
  * pausing a campaign for calls that were about to connect. Abandonment is a
- * property of a call that is OVER, so only terminal attempts are counted. Flagged
- * because QA's cross-check query must match this or the two disagree for a reason
- * that is not a bug.
+ * property of a call that is OVER, so only terminal attempts are counted. A cross-check
+ * query that omits it would disagree for a reason that is not a bug.
  */
 export const ABANDONED_ATTEMPT_PREDICATE_SQL = `
   state = 'ended'
@@ -94,7 +92,7 @@ export interface AbandonedAttemptFacts {
  * owning replica's `ended` handler and blind to any attempt settled by a path with
  * no in-process record — the reaper's orphan sweep after a crash, most of all.
  * That residue is irreducible for a process-local counter and is the reason the
- * SQL window gauge, not this, is what `AD-P4-C-02`'s auto-pause reads.
+ * SQL window gauge, not this, is what the auto-pause guardrail reads.
  */
 export function isAbandonedAttempt(facts: AbandonedAttemptFacts): boolean {
   // No carrier answer ⇒ nothing was abandoned. This is the arm that keeps a call
@@ -114,7 +112,7 @@ export interface AbandonmentWindowRow {
 }
 
 /**
- * A window row joined to the campaign it belongs to (`AD-P4-C-02`).
+ * A window row joined to the campaign it belongs to.
  *
  * The guardrail needs two campaign facts the attempts table cannot supply — is
  * the campaign still `running`, and what is ITS ceiling — and it must read them

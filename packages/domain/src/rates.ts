@@ -24,7 +24,7 @@
  * explicitly, which is the point.
  *
  * The rule is not new. `abandonmentRatePct` in `abandonment-predicate.ts` has
- * carried it since `AD-P2-C-06`, and the doc comment there says the same thing at
+ * carried it since it was introduced, and the doc comment there says the same thing at
  * length. This function is the general form, extracted when a second and third
  * rate needed it — the campaign's `success_rate_pct` and the agent record's
  * `connect_rate_pct` / `success_rate_pct` — because three inline

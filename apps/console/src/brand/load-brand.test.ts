@@ -67,8 +67,7 @@ afterAll(() => {
 });
 
 describe('loadBrandConfig — default brand', () => {
-  // PORT NOTE (magick-agency, decision B17): the shipped default brand is
-  // `magick-agency` (cusui: `magickvoice`). Same three cases.
+  // Decision B17: the shipped default brand is `magick-agency`.
   it('loads the shipped magick-agency brand', () => {
     const b = loadBrandConfig(REAL_BRANDS, 'magick-agency');
     expect(b.name).toBe('Magick Agency');
@@ -146,10 +145,8 @@ describe('loadBrandConfig — optional fields', () => {
     expect(b.colors.accentLightHover).toBeUndefined();
   });
 
-  // PORT NOTE (magick-agency, decision B17): cusui's three `promotions` cases
-  // (default false, explicit-true only, the default brand enables it) are
-  // replaced by this one — the flag gated the parent product's promotional UI
-  // and is no longer read from the file at all.
+  // Decision B17: there is no `promotions` flag, so nothing about promotions is
+  // read from the brand file at all.
   it('does not carry a promotions flag, even when the file sets one', () => {
     const b = loadBrandConfig(TMP_BRANDS, 'promotions-on');
     expect('promotions' in b).toBe(false);
@@ -196,7 +193,7 @@ describe('injectBrandName', () => {
   });
 
   it('treats a name containing $ patterns literally (no regex substitution)', () => {
-    // Both `&` escape to `&amp;`; the `$1` and `$` of `$&` must survive verbatim
+    // Both `&` escape to `&amp;`; the `$1` and `$` of `$&` must survive unchanged
     // (a function replacer prevents regex `$`-substitution).
     expect(injectBrandName('%BRAND_NAME%', 'A$1 & B$&')).toBe('A$1 &amp; B$&amp;');
   });

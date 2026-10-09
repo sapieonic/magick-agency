@@ -16,14 +16,14 @@ describe('package surface', () => {
   });
 
   it('does not export the removed billing shapes at the root', () => {
-    // Type-only in core, so absence is asserted by `pnpm lint` (they are not
+    // Type-only in the dialer runtime, so absence is asserted by `pnpm lint` (they are not
     // declared); the runtime surface must not have grown a stand-in either.
     for (const name of ['AgencyAttemptBatchSettlementPayload', 'AGENCY_CORE_STALL_CODES']) {
       expect(Root).not.toHaveProperty(name);
     }
   });
 
-  it('keeps core’s runtime rosters intact', () => {
+  it('keeps the runtime rosters intact', () => {
     expect(AGENCY_ABANDON_REASONS).toHaveLength(5);
     for (const field of AGENCY_STATS_ROUTE_FIELDS) {
       expect(AGENCY_CAMPAIGN_STATS_FIELDS[field]).toBe(true);

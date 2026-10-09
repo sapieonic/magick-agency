@@ -4,7 +4,7 @@ import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import type { AgencyKeysetPage, AgencyRosterContact } from '../../types/agency-spine';
 
 /**
- * The campaign roster (MAG-159).
+ * The campaign roster.
  *
  * This URL used to render an upload form — its own heading read "Add contacts"
  * — so the one page in the product that named the contacts was the one place
@@ -109,7 +109,7 @@ beforeEach(() => {
     name: 'Q3 Renewals',
     status: 'stopped',
     // The disposition filter's vocabulary is the campaign's own catalog ∪ the
-    // built-ins, which is core's rule for `last_disposition` exactly.
+    // built-ins, which is the server's rule for `last_disposition` exactly.
     disposition_catalog: [{ code: 'not_interested', label: 'Not interested' }],
   });
   mocks.getCampaignContacts.mockResolvedValue(page([COMPLETED, SUPPRESSED, OUR_FAULT]));
@@ -247,7 +247,7 @@ describe('export', () => {
 });
 
 /**
- * ── This screen is a section of the campaign workspace (`MAG-166`) ──────────
+ * ── This screen is a section of the campaign workspace ──────────
  *
  * The bar is what makes it one, and it is rendered by each page rather than by
  * a shared route layout — so without an assertion here it could be deleted
@@ -270,7 +270,7 @@ describe('the campaign section bar', () => {
  * ── The filters live in the URL (retry campaigns, slice S4) ────────────────
  *
  * They used to be component state and could not leave the tab. Putting them in
- * the query string is what makes retry design DR-3 literally true rather than a
+ * the query string is what makes the selector rule literally true rather than a
  * coincidence of two representations: "the supervisor narrows the Contacts tab
  * until it shows the rows they mean, presses Retry these contacts, and the
  * query string they were already looking at becomes the selector."
@@ -379,7 +379,7 @@ describe('Retry these contacts', () => {
   });
 
   it('strips phone before building the selector, and says it did', async () => {
-    // `phone` is a lookup, not a cohort, and core answers 400 on the WHOLE
+    // `phone` is a lookup, not a cohort, and the server answers 400 on the WHOLE
     // request for any key it does not recognise — so a leaked filter is not a
     // widened cohort, it is a refused retry. Silently narrowing or silently
     // widening are both worse than saying so.
@@ -408,7 +408,7 @@ describe('Retry these contacts', () => {
   });
 
   it('is hidden from a role that cannot create a campaign', async () => {
-    // Master names BOTH permissions on the create. `operator` holds neither, and
+    // The server names BOTH permissions on the create. `operator` holds neither, and
     // a button that renders and then 403s is worse than no button.
     mocks.useTenant.mockReturnValue({
       tenantId: 'tenant-1', accountId: 'account-1', role: 'operator',

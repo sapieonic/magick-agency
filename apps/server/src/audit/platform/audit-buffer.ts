@@ -2,10 +2,8 @@ import { auditRepository } from '@magick-agency/db/repositories/platform/audit.r
 import { createChildLogger } from '@magick-agency/observability';
 import type { PlatformCreateAuditLogInput as CreateAuditLogInput } from './audit-logger.js';
 
-// PORT NOTE (magick-agency): ported from master `src/audit/audit-buffer.ts`
-// (v3.24.0). Only the imports changed: the repository is the platform one
-// (`platform_audit_log`), and `CreateAuditLogInput` is the catalog-bound input
-// type declared beside the logger (see `audit-logger.ts`).
+// Buffers `platform_audit_log` writes. `CreateAuditLogInput` is the catalog-bound
+// input type declared beside the logger (see `audit-logger.ts`).
 
 const log = createChildLogger({ component: 'audit-buffer' });
 

@@ -4,14 +4,9 @@ import { resolveAgencyActor } from '../../../src/agency/agency-actor.js';
 import { PERMISSION_MATRIX, ROLE_HIERARCHY } from '@magick-agency/contracts/rbac';
 
 /*
- * PORT NOTE (magick-agency): ported from master test/unit/agency/agency-actor.test.ts@a1f0756a
- * (13 cases). DELETED (no platform API keys, decision #5): the whole
- * `isPlatformApiKeyCaller` describe (5 cases), "refuses a system key with core's own
- * missing_actor code" and "refuses a CREATOR-BACKED key" (the key branch is gone). "refuses a
- * request with neither a key nor a user" stays and now also asserts the `missing_actor` code.
- * Kept: 6.
+ * No platform API keys (decision #5): the actor is always the signed-in user, and a
+ * request with no user is refused with `missing_actor`.
  */
-
 /**
  * `src/agency/agency-actor.ts` — the two predicates every agency WRITE action
  * attributes itself through, tested directly rather than only through a route.
@@ -41,7 +36,7 @@ import { PERMISSION_MATRIX, ROLE_HIERARCHY } from '@magick-agency/contracts/rbac
  * `if (!request.user?.id)` waved it through. On this surface that meant a key
  * holder **dispositioning a customer in the key creator's name**, and, because
  * `created_by` is frequently an `account_admin`, with `on_behalf: true` attached
- * — core's rule 3, which bypasses the reserved-agent check outright.
+ * — the internal handler's rule 3, which bypasses the reserved-agent check outright.
  *
  * Only a NULL-`created_by` system key was ever refused, which is the one shape
  * the tests happened to model. So the cases below deliberately model the OTHER
@@ -69,7 +64,7 @@ function req(fields: {
 
 describe('resolveAgencyActor — refusing an unattributable caller', () => {
   it('refuses a request with neither a key nor a user', () => {
-    // Nothing to attribute, and `agent_user_id: undefined` on the wire is core's
+    // Nothing to attribute, and `agent_user_id: undefined` on the wire is the internal handler's
     // 400 spent a round trip later.
     expect(resolveAgencyActor(req({}))).toMatchObject({ ok: false, code: 'missing_actor' });
   });
@@ -78,9 +73,9 @@ describe('resolveAgencyActor — refusing an unattributable caller', () => {
 describe('resolveAgencyActor — on_behalf is decided on the capability alone', () => {
   it('omits on_behalf entirely for an agent, rather than sending false', () => {
     /**
-     * Omitted, not `false`. Core's contract is "master sets this only when the
-     * caller holds `agency.supervise`", and an explicit `false` is a different
-     * wire shape for the same fact — one core's schema is under no obligation to
+     * Omitted, not `false`. The internal handler's contract is "the public API layer sets this
+     * only when the caller holds `agency.supervise`", and an explicit `false` is a different
+     * wire shape for the same fact — one that the internal handler's schema is under no obligation to
      * keep accepting.
      */
     const result = resolveAgencyActor(req({ user: { id: USER }, membership: { role: 'agent' } }));
@@ -101,7 +96,7 @@ describe('resolveAgencyActor — on_behalf is decided on the capability alone', 
      * the same discipline `proxy-agency-my-surfaces.routes.test.ts` uses for its
      * four route floors.
      *
-     * `agent` (5) being BELOW `viewer` (10) is design D6 and is why the split
+     * `agent` (5) being BELOW `viewer` (10) is deliberate and is why the split
      * cannot be spelled "above agent": `operator` is above `agent` and still must
      * not cause `on_behalf`.
      */
@@ -133,7 +128,7 @@ describe('resolveAgencyActor — on_behalf is decided on the capability alone', 
      * that accident happens to be safe. What is NOT safe is anyone deciding the
      * ternary is redundant and replacing it with a truthy default.
      *
-     * `on_behalf` is not cosmetic: it is core's rule 3, and it means "let this act
+     * `on_behalf` is not cosmetic: it is the internal handler's rule 3, and it means "let this act
      * on an attempt reserved by somebody else". Granting it to a request whose
      * role could not be established would hand the strongest form of this action
      * to the least-known caller.

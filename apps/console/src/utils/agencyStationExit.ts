@@ -1,12 +1,12 @@
 import type { AgencyAgentState } from '../types/agency';
 
 /**
- * The two ways out of the station (§A.1, §A.13.3) — and why they are two.
+ * The two ways out of the station — and why they are two.
  *
  * Until now there was **no** way out: the console is full-viewport with no nav
  * by design (an escape route beside a live call is a misclick that hangs up on a
  * customer), and the two controls the spec named were never built. So an agent
- * closed the tab, which is the one exit that tells core nothing until the
+ * closed the tab, which is the one exit that tells the server nothing until the
  * heartbeat grace expires.
  *
  * ── They are different acts, so they are different controls ──────────────────
@@ -25,7 +25,7 @@ import type { AgencyAgentState } from '../types/agency';
  *
  * Sharing a label would be the worst of both: an agent pressing the one that
  * reads like "get me out of here" and keeping a live session, or a supervisor
- * pressing it and silently ending one. §A.13.3 says the same thing, and this
+ * pressing it and silently ending one. The design says the same thing, and this
  * module is where the copy lives so the two can be asserted side by side.
  */
 
@@ -47,14 +47,14 @@ const LIVE_AGENT_STATES: ReadonlySet<AgencyAgentState> = new Set<AgencyAgentStat
  * ── `available` blocks EXIT and not LEAVE. Do not tidy this into symmetry ────
  *
  * Exit closes the station socket (the hook's unmount cleanup) and deliberately
- * leaves the **session** live. Core's `AGENT_LEASE_MS.available` is **45
+ * leaves the **session** live. The server's `AGENT_LEASE_MS.available` is **45
  * seconds** and is renewed *only* by that socket's heartbeat — a 10s ping with
  * three misses tolerated — and the pacing engine reserves off Redis, never off
  * the DB mirror. So for up to 45 seconds after an Exit the agent is still in the
  * dialable pool **with no console attached**; a reservation landing in that
  * window bridges a customer to nobody.
  *
- * That is exactly the "answered call with no agent" D1 architects against, which
+ * That is exactly the "answered call with no agent" the design rules out, which
  * is meant to be unreachable except by an agent physically disappearing — and a
  * button that manufactures it is worse than no button at all.
  *
@@ -123,7 +123,7 @@ export const LEAVE_LABEL = 'Leave station';
 export const EXIT_LABEL = 'Exit station';
 
 export const LEAVE_CONFIRM_TITLE = 'Leave this station?';
-/** §A.13.3, verbatim — states both consequences, because they are both news. */
+/** States both consequences, because they are both news. */
 export const LEAVE_CONFIRM_MESSAGE =
   'You’ll stop receiving calls and your station will close.';
 export const LEAVE_CONFIRM_ACTION = 'Leave station';
@@ -162,7 +162,7 @@ export const EXIT_WHILE_LEAVING_COPY = 'Wait for your leave request to finish.';
  *
  * ── Why these are the ONE exception to "no links out of the console" ───────
  * The rule above is not softened. Navigating away closes the station socket, and
- * for up to 45 seconds core still has the agent in the dialable pool with no
+ * for up to 45 seconds the server still has the agent in the dialable pool with no
  * screen attached, so a reservation landing in that window bridges a customer to
  * nobody — which is why `Exit station` refuses while `available` at all.
  *

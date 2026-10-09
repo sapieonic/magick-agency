@@ -1,66 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// PORT NOTE (magick-agency): ported from core test/unit/scenarios/stale-call-sweep-lifecycle-scenarios.test.ts@4850d1d9
-// (13 cases, `it.each` rows expanded → 4): ONLY the WebRTC cases. The unit under test was
-// `CallManager`; here it is `TelephonyGuardHost` (apps/server/src/core/telephony-guard-host.ts),
-// which carries core's self-heal sweep with the WebRTC source only and no settlement (plan §4/S6).
-// Harness: only the modules the guard host loads are mocked — logger → @magick-agency/observability
-// (with the real `Traced` decorator, which the guards import from it), utils/metrics.js →
-// @magick-agency/observability/metrics/voice, webrtc-call repository → @magick-agency/db
-// agency-call repository (`agencyCallRepository`, with the `webrtcCallRepository` alias), the
-// provider-concurrency and account-settings repositories at their @magick-agency/db paths, config
-// and audit. The AI/static/IVR stores, repositories, SQS coordinator, IVR engine, settlement
-// fan-out and every AI-pipeline mock are gone with the cases that used them.
+// Stale-call sweep lifecycle for the WebRTC calls. The unit under test is
+// `TelephonyGuardHost` (apps/server/src/core/telephony-guard-host.ts), which runs
+// the self-heal sweep over WebRTC rows only and settles nothing (decision S6).
+// Only the modules the guard host loads are mocked: the logger
+// (@magick-agency/observability, with the real `Traced` decorator, which the
+// guards import from it), the voice metrics, the agency-call repository
+// (`agencyCallRepository`, with the `webrtcCallRepository` alias), the
+// provider-concurrency and account-settings repositories, config and audit.
 //
-// DELETED (9) — non-WebRTC (call types, queues or settlement fan-out the guard host does not carry):
-//  - 'exact incident: a 3-hour queued static call is dequeued, gets a fresh initiation clock, and
-//    survives sweeps immediately and 9 seconds after answer' (static + SQS coordinator)
-//  - 'AI voice dequeue also resets hours of queue residency before the 9-second sweep',
-//    'IVR dequeue also resets hours of queue residency before the 9-second sweep' (`it.each` rows;
-//    AI/IVR + SQS coordinator)
-//  - 'fails an actually stale active call whose initiation clock is beyond the configured window'
-//    (static sweep + settlement + batch completion)
-//  - 'inbound IVR answer stamps a null initiation clock, so a sweep 9 seconds later cannot fall
-//    back to the 3-hour-old creation time' (IVR engine)
-//  - 'floors the AI-voice sweep at the call ceiling too, so raising CALL_TIMEOUT_SECONDS cannot
-//    double-settle a live call' (AI-voice sweep)
-//  - 'floors the static sweep at the WS-static pickup window, so a short generic window cannot
-//    sweep a lead still queued at the carrier' (static sweep)
-//  - 'keeps the configured window for direct-dial rows and floors only the queued-dial cohort'
-//    (static + AI sweeps)
-//  - 'bounds the generic stale sweep rather than firing one webhook per stale row' (static sweep +
-//    settlement fan-out)
-//
-// MODIFIED (4):
-//  - 'uses product-duration floors: a 45-minute IVR and 3-hour WebRTC call survive a generic
-//    30-minute sweep' — the IVR half (row + `ivrFailStale` cutoff assertion) is removed (no IVR
-//    sweep); the WebRTC half is verbatim. "No settlement" → no stuck-call audit event (the host
-//    audits each row it fails, and dispatches no settlement).
-//  - 'bounds the WebRTC stale sweep too — the FIFTH copy of the loop' — the host dispatches no
-//    settlement, so there is no fan-out to bound and the gated-settlement / drain / batch-completion
-//    assertions are removed. Kept: the above-cap fixture (3 × core's default fan-out cap of 10,
-//    written as the literal 30 since `webhook-fanout.config` is not carried), and every stale row is
-//    still recovered — failed, and audited once as `STUCK_ACTIVE_CALL` / `webrtc_call`.
-//  - 'shutdown waits for an in-flight poll, and a poll re-armed mid-sweep cannot cancel that wait'
-//    — run against `TelephonyGuardHost.gracefulShutdown()` (no drain-timeout argument; core passed
-//    `CallManager.gracefulShutdown(0)`), wedging the WebRTC store's `failStaleActive` instead of the
-//    static sweep (30 stale WebRTC rows in place of 30 static rows). The host has no settlement
-//    fan-out, so the gated settlement and `pendingSettlementFanoutCount` / `drainSettlementFanout`
-//    assertions are removed; "what the wait bought" is now that the sweep finished before shutdown
-//    returned — every row failed and audited.
-//  - 'bounds that wait, so a wedged sweep cannot hold the whole shutdown open' — same host and
-//    wedge. Core's "giving up is not an all-clear" half (`noteUnfinishedFanoutProducer`, observed as
-//    `drainSettlementFanout` → `drained: false`) has no fan-out to land on, so it is replaced by the
-//    host's error log line (`{ waitMs: 15_000 }`). Stricter than core: shutdown is advanced by
-//    exactly the 15s budget (core advanced 60s, deliberately past it) and asserted to have resolved
-//    by then, so the case pins the constant as well as the bound (inline PORT NOTE).
-//  The child logger mock now returns ONE shared spy (`logSpy`) so that log line is observable.
+// Because the host dispatches no settlement, "nothing swept" is observed as no
+// stuck-call audit event, and an above-cap sweep is checked by every stale row
+// being failed and audited exactly once. The child logger mock returns ONE shared
+// spy (`logSpy`) so the host's shutdown log line is observable.
 
-// High-altitude lifecycle scenarios for the stale-call incident. The real queue
-// coordinator owns dequeue ordering, the real IVR engine owns the inbound-answer
-// transition, and the real CallManager owns sweep cutoffs/settlement. Persistence,
-// SQS, and provider calls are mutable in-memory boundaries so all three layers see
-// the same rows (and therefore reproduce the production race).
+// High-altitude lifecycle scenarios for the stale-call incident. The real guard
+// host owns sweep cutoffs; persistence and provider calls are mutable in-memory
+// boundaries, so the sweep sees the same rows as in production (and therefore
+// reproduces the production race).
 
 type Row = Record<string, any>;
 
@@ -104,7 +61,7 @@ const mocks = vi.hoisted(() => ({
   auditLog: vi.fn(),
 }));
 
-// PORT NOTE: one shared child-logger spy, so the host's shutdown log line is observable.
+// One shared child-logger spy, so the host's shutdown log line is observable.
 const { logSpy } = vi.hoisted(() => ({
   logSpy: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -115,8 +72,7 @@ vi.mock('@magick-agency/db/repositories/provider-concurrency.repository', () => 
   },
 }));
 
-// PORT NOTE: the guards import `Traced` from the logger's package; the real decorator is
-// forwarded (core mocked `utils/tracing.js` separately).
+// The guards import `Traced` from the logger's package; the real decorator is forwarded.
 vi.mock('@magick-agency/observability', async () => ({
   Traced: (await import('@magick-agency/observability/tracing')).Traced,
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -207,7 +163,7 @@ describe('stale-call sweep lifecycle — dequeue, answer, and recovery', () => {
     vi.setSystemTime(NOW);
     vi.clearAllMocks();
     stores.webrtc.clear();
-    // PORT NOTE: `clearAllMocks` keeps implementations, so undo a previous case's wedge.
+    // `clearAllMocks` keeps implementations, so undo a previous case's wedge.
     mocks.webrtcFailStale.mockImplementation(async (olderThan: Date, excludeIds: string[] = []) =>
       stores.failRows(stores.webrtc, olderThan, excludeIds, 'created'));
   });
@@ -217,8 +173,7 @@ describe('stale-call sweep lifecycle — dequeue, answer, and recovery', () => {
   });
 
   it('uses product-duration floors: a 45-minute IVR and 3-hour WebRTC call survive a generic 30-minute sweep', async () => {
-    // PORT NOTE: the IVR half of this case is removed (the guard host has no IVR sweep).
-    const webrtc: Row = { // PORT NOTE: `: Row` (type-only; this tsconfig typechecks tests)
+    const webrtc: Row = {
       ...baseRow('webrtc-legitimate-long', 180),
       batch_id: null,
       status: 'in_progress',
@@ -239,8 +194,7 @@ describe('stale-call sweep lifecycle — dequeue, answer, and recovery', () => {
       new Date(NOW.getTime() - 245 * 60_000),
       [],
     );
-    // PORT NOTE: core asserted no settlement; the host settles nothing, so "nothing swept"
-    // is observed as no stuck-call audit event.
+    // The host settles nothing, so "nothing swept" is observed as no stuck-call audit event.
     expect(mocks.auditLog).not.toHaveBeenCalled();
   });
 
@@ -250,11 +204,10 @@ describe('stale-call sweep lifecycle — dequeue, answer, and recovery', () => {
     // `sweepStaleRows`), which is precisely why the file-level source assertion
     // in `settlement-fanout-wiring.test.ts` could not see it: `call-manager.ts`
     // already contained the bounded calls further down.
-    // PORT NOTE: core's `DEFAULT_WEBHOOK_FANOUT_CONCURRENCY * 3` (cap 10); the fan-out is not
-    // carried, so the above-cap row count is written out.
+    // Three times the default fan-out cap of 10, written out as the literal 30.
     const rowCount = 30;
     for (let i = 0; i < rowCount; i += 1) {
-      const row: Row = { // PORT NOTE: `: Row` (type-only)
+      const row: Row = {
         ...baseRow(`webrtc-stale-${i}`, 300),
         batch_id: null,
         status: 'in_progress',
@@ -271,9 +224,8 @@ describe('stale-call sweep lifecycle — dequeue, answer, and recovery', () => {
     const manager = new TelephonyGuardHost(null);
     await expect(manager.sweepStaleActiveCalls('startup')).resolves.toBe(true);
 
-    // PORT NOTE: core asserted the settlement fan-out stayed under its cap and then drained
-    // every release. The host dispatches no settlement; what remains of the point is that an
-    // above-cap sweep still recovers every stale row — each failed and audited exactly once.
+    // The host dispatches no settlement; the point is that an above-cap sweep still
+    // recovers every stale row — each failed and audited exactly once.
     for (const row of stores.webrtc.values()) {
       expect(row.status).toBe('failed');
       expect(row.error_code).toBe('STUCK_ACTIVE_CALL');
@@ -285,7 +237,7 @@ describe('stale-call sweep lifecycle — dequeue, answer, and recovery', () => {
     }));
   });
 
-  // ── The in-flight poll and shutdown (`86d41v0n0`) ────────────────────────
+  // ── The in-flight poll and shutdown ──────────────────────────────────────
   //
   // `runSelfHealPoll` nulls its own timer at entry and detaches, so
   // `gracefulShutdown`'s `clearTimeout` cannot stop a sweep that has already
@@ -296,7 +248,7 @@ describe('stale-call sweep lifecycle — dequeue, answer, and recovery', () => {
   // `webhook_fanout_abandoned_total` reading zero over all of it.
 
   /** Hold `webrtcFailStale` open, so a sweep can be parked mid-flight. */
-  // PORT NOTE: core wedged `staticFailStale`; the host's only sweep is the WebRTC one.
+  // The host's only sweep is the WebRTC one.
   function wedgeWebrtcSweep() {
     const real = mocks.webrtcFailStale.getMockImplementation()!;
     let open!: () => void;
@@ -309,17 +261,17 @@ describe('stale-call sweep lifecycle — dequeue, answer, and recovery', () => {
   }
 
   it('shutdown waits for an in-flight poll, and a poll re-armed mid-sweep cannot cancel that wait', async () => {
-    // The C1 half: `selfHealInFlight` was assigned unconditionally, so a timer
+    // First half: `selfHealInFlight` was assigned unconditionally, so a timer
     // re-armed by ordinary call activity could fire DURING a sweep and replace
     // the running poll's promise with its own. The second body returns almost
     // immediately (`runSelfHealSweep` refuses re-entry via `selfHealing`), and
     // its `.finally` then nulled the field — so shutdown awaited nothing while
     // the real sweep was still going. Both halves are needed for this to bite,
     // which is why the test drives both.
-    // PORT NOTE: core's `DEFAULT_WEBHOOK_FANOUT_CONCURRENCY * 3` (cap 10), as stale WebRTC rows.
+    // Three times the default fan-out cap of 10, as stale WebRTC rows.
     const rowCount = 30;
     for (let i = 0; i < rowCount; i += 1) {
-      const row: Row = { // PORT NOTE: `: Row` (type-only)
+      const row: Row = {
         ...baseRow(`webrtc-poll-${i}`, 300),
         batch_id: null,
         status: 'in_progress',
@@ -357,9 +309,8 @@ describe('stale-call sweep lifecycle — dequeue, answer, and recovery', () => {
     await shutdown;
     expect(shutdownDone).toBe(true);
 
-    // PORT NOTE: core then showed the sweep's settlement fan-out reaching a later
-    // `drainSettlementFanout`. The host settles nothing; what the wait bought here is that
-    // the sweep finished before shutdown returned — every stale row failed and audited.
+    // The host settles nothing; what the wait bought is that the sweep finished
+    // before shutdown returned — every stale row failed and audited.
     for (const row of stores.webrtc.values()) {
       expect(row.status).toBe('failed');
     }
@@ -371,23 +322,17 @@ describe('stale-call sweep lifecycle — dequeue, answer, and recovery', () => {
   });
 
   it('bounds that wait, so a wedged sweep cannot hold the whole shutdown open', async () => {
-    // The C2 half. The wait sits in FRONT of the 60s call drain, the fan-out
+    // Second half. The wait sits in FRONT of the 60s call drain, the fan-out
     // drain and `closePool()`, and the sweep's own work is `UPDATE ... LIMIT
     // 1000` against a pool with no `statement_timeout`. Unbounded, one stuck row
     // lock meant shutdown never reached the drain at all and was SIGKILLed with
     // the whole queue in memory — strictly worse than the loss the wait exists
     // to prevent.
     //
-    // Deliberately advanced well past the budget rather than by exactly
-    // `SELF_HEAL_SHUTDOWN_WAIT_MS`: the property being pinned is that the wait
-    // is bounded at all, and a test that restates the constant only pins the
-    // constant.
-    // PORT NOTE: the paragraph above describes core's version (advance 60s, assert only that
-    // shutdown resolved). This port is deliberately STRICTER and the paragraph no longer
-    // describes it: it advances by exactly the budget (`SELF_HEAL_SHUTDOWN_WAIT_MS`, 15s),
-    // asserts shutdown has resolved by then, and asserts the give-up log carries
-    // `waitMs: 15_000` — so it pins the constant as well as the bound. A change to the budget
-    // is meant to red here and be re-decided.
+    // Deliberately advanced by exactly the budget (`SELF_HEAL_SHUTDOWN_WAIT_MS`, 15s),
+    // asserting shutdown has resolved by then and that the give-up log carries
+    // `waitMs: 15_000` — so it pins the constant as well as the bound. A change to
+    // the budget is meant to red here and be re-decided.
     const wedge = wedgeWebrtcSweep();
 
     const manager = new TelephonyGuardHost(null);
@@ -406,7 +351,7 @@ describe('stale-call sweep lifecycle — dequeue, answer, and recovery', () => {
     // Giving up is not an all-clear: the sweep is still running and may yet
     // enqueue settlements nothing will drain, so the fan-out refuses to report
     // a clean drain over an empty queue afterwards.
-    // PORT NOTE: there is no fan-out here; the host's record of giving up is its error line.
+    // The host's record of giving up is its error line.
     expect(logSpy.error).toHaveBeenCalledWith(
       { waitMs: 15_000 },
       'Self-heal sweep did not finish within the shutdown budget — proceeding without it',

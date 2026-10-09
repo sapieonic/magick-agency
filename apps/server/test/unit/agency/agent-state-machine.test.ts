@@ -1,10 +1,7 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core test/unit/agency/agent-state-machine.test.ts@4850d1d9 (15 → 15).
-// Verbatim. Import paths only: logger → `@magick-agency/observability`, `timers` → `@magick-
-// agency/domain/timers`. No case deleted or modified.
 import { describe, it, expect, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// The §6.1 lease lifecycle and the CAS reservation.
+// The lease lifecycle and the CAS reservation.
 //
 // The invariant every test here defends: **a key TTL expires only when the thing
 // renewing it is gone.** A lease is a liveness detector, never a business timer —
@@ -116,7 +113,7 @@ describe('AgentStateMachine reservation CAS', () => {
   });
 });
 
-describe('AgentStateMachine lease lifecycle (§6.1)', () => {
+describe('AgentStateMachine lease lifecycle ', () => {
   it('splits the reserved lease so it cannot expire mid-ring', () => {
     // The bug this prevents: one 20s lease covering the whole dial expires during
     // a 25s ring, the agent flips back to available, the next tick reserves them
@@ -177,7 +174,7 @@ describe('AgentStateMachine lease lifecycle (§6.1)', () => {
 
   it('holds exactly the six agent states plus the renew interval, and nothing else', () => {
     // The enumeration above can pass while a seventh, business-flavoured entry
-    // sits in the table unasserted — which is exactly the pressure Phase 2 puts on
+    // sits in the table unasserted — which is exactly the pressure on
     // this file, since wrap-up length and the deferred-hangup window are both
     // real numbers in milliseconds that a reader could mistake for leases. The key
     // set is therefore pinned, not just the values: a new key is a deliberate
@@ -189,12 +186,12 @@ describe('AgentStateMachine lease lifecycle (§6.1)', () => {
   });
 
   it('keeps the deferred-hangup window out of the lease table entirely', () => {
-    // AD-P2-C-07 acceptance (e): the deferred-hangup window is an in-process timer,
+    // Acceptance: the deferred-hangup window is an in-process timer,
     // never a Redis TTL. Living in this table is how it would accidentally become
     // one, since every value here is passed to PEXPIRE by construction.
     expect(Object.values(AGENT_LEASE_MS)).not.toContain(DEFERRED_HANGUP_MS);
     // And it must not merely differ by coincidence — wrapup's lease is the flat
-    // heartbeat lease, identical to available's, per the §6.1 correction.
+    // heartbeat lease, identical to available's.
     expect(AGENT_LEASE_MS.wrapup).toBe(AGENT_LEASE_MS.on_call);
     expect(AGENT_LEASE_MS.available).toBe(AGENT_LEASE_MS.break);
   });

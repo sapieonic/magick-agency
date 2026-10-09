@@ -3,7 +3,7 @@ import { createChildLogger, logger, SERVICE_NAME, APP_VERSION } from '../src/ind
 import { maskPhone } from '../src/crypto.js';
 
 describe('observability', () => {
-  it('exposes the core logger API', () => {
+  it('exposes the logger API', () => {
     expect(typeof logger.info).toBe('function');
     expect(typeof createChildLogger({ component: 'x' }).warn).toBe('function');
   });
@@ -16,7 +16,7 @@ describe('observability', () => {
     expect(APP_VERSION).toBe('0.0.0');
   });
 
-  it('carries core PII masking', () => {
+  it('carries PII masking', () => {
     expect(maskPhone('+919876543210')).not.toContain('98765');
   });
 });

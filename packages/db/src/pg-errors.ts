@@ -1,8 +1,7 @@
 /**
  * Postgres error-code predicates, in one place.
  *
- * A deliberately IMPORT-FREE leaf module, like `usage-status-values.ts` and
- * `agency-s2s-contract` beside it: a repository catch arm must be able to ask
+ * A deliberately IMPORT-FREE leaf module: a repository catch arm must be able to ask
  * "was this a unique violation?" without pulling `db/connection` — and through
  * it `src/config`, whose module body can `process.exit(1)` — into the graph of
  * every test that exercises the failure path.

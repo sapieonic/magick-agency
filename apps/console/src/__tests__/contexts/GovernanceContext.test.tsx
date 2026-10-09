@@ -5,14 +5,12 @@ import type { AgencyAccountSettings } from '@magick-agency/contracts/api/platfor
 /**
  * GovernanceContext — the end-user gating source.
  *
- * PORT NOTE (magick-agency): cusui's suite drove `GET /governance/effective`
- * (refetch on switch, fail-open on an endpoint error). Agency has no governance
- * read: the map is derived from the session's per-account settings
- * (`useAuth().settings[accountId]`, plan §3.2), so the four cases are MODIFIED to
- * the same four properties over that source — re-gating on an account switch
+ * There is no governance read: the map is derived from the session's
+ * per-account settings (`useAuth().settings[accountId]`). Four properties are
+ * pinned over that source — re-gating on an account switch
  * without re-login, fail-open on an absent key, fail-open when the source is
- * missing (no settings row, where cusui had a failed fetch), an explicit false
- * hides — and two NEW cases pin what the derivation adds: the section-level
+ * missing (no settings row), an explicit false
+ * hides — and two further cases pin what the derivation adds: the section-level
  * `agency` gate is always on, and `loading` is the session's.
  */
 const mocks = vi.hoisted(() => ({
@@ -96,7 +94,7 @@ describe('GovernanceContext', () => {
     expect(screen.getByTestId('recording').textContent).toBe('true');
   });
 
-  it('NEW: the section-level `agency` gate is always on — even with every per-field toggle off, or no row', () => {
+  it('the section-level `agency` gate is always on — even with every per-field toggle off, or no row', () => {
     mocks.useAuth.mockReturnValue(
       auth({ a1: row('a1', { allow_recording: false, analyze_calls: false }) }),
     );
@@ -109,7 +107,7 @@ describe('GovernanceContext', () => {
     expect(screen.getByTestId('agency').textContent).toBe('true');
   });
 
-  it('NEW: `loading` is the session’s own, so a guard waits for sign-in rather than for a fetch', () => {
+  it('`loading` is the session’s own, so a guard waits for sign-in rather than for a fetch', () => {
     mocks.useAuth.mockReturnValue(auth({}, true));
     mocks.useTenant.mockReturnValue({ tenantId: null, accountId: null });
     render(<GovernanceProvider><Probe /></GovernanceProvider>);

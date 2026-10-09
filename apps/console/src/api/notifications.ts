@@ -8,10 +8,10 @@ import type {
 /**
  * Per-user notification subscriptions.
  *
- * Every call is about the SIGNED-IN user and takes no subject — master reads
+ * Every call is about the SIGNED-IN user and takes no subject — the server reads
  * the caller from the session, and there is no `user_id` to pass. The tenant is
  * threaded through because a person can belong to several and wants a different
- * answer in each; the account is deliberately NOT, since master scopes a digest
+ * answer in each; the account is deliberately NOT, since the server scopes a digest
  * from the caller's own membership rather than from `X-Account-Id` (an
  * account-scoped member could otherwise preview a sibling account's spend by
  * omitting the header).
@@ -41,6 +41,5 @@ export function updateNotificationPreferences(
   );
 }
 
-// PORT NOTE (magick-agency): cusui's `previewDigest` (`POST
-// /notifications/digests/preview`, master's credits usage digest) is removed —
-// see `pages/settings/NotificationSettingsPage.tsx`.
+// There is no `previewDigest` (`POST /notifications/digests/preview`, a credits
+// usage digest) — see `pages/settings/NotificationSettingsPage.tsx`.

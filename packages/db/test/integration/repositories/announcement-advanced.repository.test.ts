@@ -1,13 +1,6 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/integration/repositories/announcement-advanced.repository.test.ts@4850d1d9.
-// Changed: connection/repository paths (packages/db layout); tenant/account labels wrapped in
-// `uuidFor` (UUID columns); factories come from ../setup/clip-factories.js (audio-type default).
-// Decision 4 (uploaded clip only — tts_text/tts_voice/tts_language dropped, type CHECKed to 'audio'):
-//  - deleted 'creates a TTS announcement with all fields' and 'sets default voice and language when
-//    not provided';
-//  - 'creates an audio announcement with audio_file_id': dropped `expect(record.tts_text).toBeNull()`
-//    (the column no longer exists);
-//  - 'updates multiple fields at once': the two remaining updatable fields (name + audio_file_id)
-//    replace name + tts_text + tts_voice, so the multi-column SET is still exercised.
+// Tenant/account labels are wrapped in `uuidFor` (UUID columns); factories come from ../setup/clip-factories.js (audio-type default).
+// Announcements are uploaded clips only (type CHECKed to 'audio'; there are no tts_text/tts_voice/tts_language columns),
+// so 'updates multiple fields at once' exercises the multi-column SET with name + audio_file_id.
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { vi } from 'vitest';
 import { getTestPool, closeTestPool, truncateAll } from '../setup/test-utils.js';

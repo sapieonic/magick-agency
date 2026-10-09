@@ -8,8 +8,7 @@ export interface UserRecord {
   status: 'active' | 'inactive' | 'deleted';
   /**
    * An identity was bound to this row without proving its email address —
-   * today only `POST /invites/:token/claim` with an unverified Firebase token
-   * (migration 073).
+   * today only `POST /invites/:token/claim` with an unverified Firebase token.
    *
    * The row is a perfectly ordinary signed-in account; what it must NOT be is
    * REUSED BY ADDRESS, because `users.email` is the lookup key for three paths

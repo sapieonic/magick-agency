@@ -1,10 +1,9 @@
-// Shared CSV export downloader for the calls / static-calls export endpoints.
+// CSV download naming.
 //
-// PORT NOTE (magick-agency): only `outcomeReportFilename` is ported — the three
-// agency outcome reports (activity, attempts, roster) name their downloads with
-// it. The downloader itself (`downloadExportCsv`, `ExportFieldsError`,
-// `ValidExportField`, `filenameFromContentDisposition`) served the AI calls /
-// static-calls export endpoints, which are not ported.
+// Only `outcomeReportFilename` exists — the three agency outcome reports
+// (activity, attempts, roster) name their downloads with it. There is no
+// generic export downloader: the console has no calls / static-calls export
+// endpoints.
 
 /**
  * Build a safe `.csv` download name from a campaign / job name.

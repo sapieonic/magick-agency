@@ -1,9 +1,6 @@
 /*
- * PORT NOTE (magick-agency): ported from core `src/core/dialer-analysis-worker.ts`
- * (v1.123.2). The settle step (`settlePending`, `settleOne`, the settlement
- * constants and the oldest-pending-settlement gauge) is removed (plan §4); the
- * promote -> expire -> claim -> recover loop is core's, verbatim. `recordingHosts`
- * is threaded to the runner (new, see the runner).
+ * The promote -> expire -> claim -> recover loop. There is no settle step (no
+ * billing in v1, decision S6). `recordingHosts` is threaded to the runner.
  */
 import type { Transcriber } from '../transcription/types.js';
 import type { PostCallAnalysisService } from '../analysis/index.js';
@@ -31,15 +28,14 @@ export interface DialerAnalysisWorkerOptions {
 }
 
 /**
- * Demand-driven, self-dormant background worker for dialer-call analysis. Mirrors
- * `KbIngestRecovery` exactly: `wake()` arms an `unref()`'d poll and resets the
- * empty-sweep counter; the poll disarms after N consecutive fully-idle sweeps so
- * no timer ticks on a quiet replica; `sweepOnce` is reentrancy-guarded and never
- * throws. It registers itself through the pre-existing worker handle so the retry
- * route + recording webhook can wake it.
+ * Demand-driven, self-dormant background worker for dialer-call analysis:
+ * `wake()` arms an `unref()`'d poll and resets the empty-sweep counter; the poll
+ * disarms after N consecutive fully-idle sweeps so no timer ticks on a quiet
+ * replica; `sweepOnce` is reentrancy-guarded and never throws. It registers itself
+ * through the worker handle so the bridge's analysis hooks can wake it.
  *
- * Each tick, IN ORDER (§7): (1) promote awaiting→queued where the recording now
- * exists (B1 — before expiry, so a lost-wake job is rescued rather than expired);
+ * Each tick, IN ORDER: (1) promote awaiting→queued where the recording now
+ * exists (before expiry, so a lost-wake job is rescued rather than expired);
  * (2) expire awaiting rows older than the wait window; (3) claim + run up to
  * `concurrency` runnable jobs; (4) recover stale in-flight jobs (crashed owner). A sweep
  * that promotes/expires/claims/recovers nothing AND finds an empty queue
@@ -132,14 +128,14 @@ export class DialerAnalysisWorker implements DialerAnalysisWorkerHandle {
    */
   async sweepOnce(): Promise<boolean> {
     // A scheduled tick that overlaps a long Gemini request means "busy", not
-    // "idle". Returning false here used to count two long-running overlaps as two
+    // "idle". Returning false here would count two long-running overlaps as two
     // empty sweeps, disarm the timer, and strand any retry queued by the active run.
     if (this.sweeping) return true;
     this.sweeping = true;
     let acted = false;
     let queueNonEmpty = false;
     try {
-      // 1. Promote awaiting → queued where the recording now exists (B1). BEFORE expiry.
+      // 1. Promote awaiting → queued where the recording now exists. BEFORE expiry.
       acted = (await this.step('promote', () => dialerAnalysisJobRepository.promoteRecordingReady(this.cfg.settleSeconds))) > 0 || acted;
 
       // 2. Expire awaiting rows the carrier never delivered a recording for.
@@ -149,7 +145,7 @@ export class DialerAnalysisWorker implements DialerAnalysisWorkerHandle {
       // 3. Claim + run up to `concurrency` runnable jobs.
       acted = (await this.step('claim', () => this.claimAndRun())) > 0 || acted;
 
-      // 4. Recover stale in-flight jobs (owning process died) — M7 (doesn't burn an attempt).
+      // 4. Recover stale in-flight jobs (owning process died); doesn't burn an attempt.
       acted = (await this.step('recover', () => this.recoverStale())) > 0 || acted;
 
       // Feed the gauges + decide whether the queue still has backlog (keeps the poll armed).
@@ -188,7 +184,7 @@ export class DialerAnalysisWorker implements DialerAnalysisWorkerHandle {
   private async recoverStale(): Promise<number> {
     // A healthy job heartbeats every window; a genuinely dead one goes silent. The
     // staleness threshold must comfortably exceed one window's timeout so a slow-but-
-    // -alive window isn't torn from under a live runner (M9).
+    // -alive window isn't torn from under a live runner.
     const staleThresholdMs = Math.max(this.cfg.transcribeTimeoutMs * 3, 5 * 60_000);
     const staleBefore = new Date(Date.now() - staleThresholdMs);
     const recovered = await dialerAnalysisJobRepository.recoverStale(staleBefore, this.cfg.maxAttemptsTotal);

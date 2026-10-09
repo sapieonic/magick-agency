@@ -1,38 +1,35 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 /**
- * NEW (magick-agency, Phase 6): the runtime end to end — the one test that owns the seam
- * between lane C (the voice engine), lane B1 (the agency repository and domain), lane D
- * (analysis, via seam §3.2) and Phase 6 (the runtime). No source twin: core never had a
- * single process holding all four.
+ * the runtime end to end — the one test that owns the seam
+ * between the voice engine, the agency repository and domain, analysis (via its
+ * seam) and the runtime: a single process holding all four.
  *
  * Everything is real except the carrier:
  *   - the app is `buildApp` with a real context, listening on loopback, so the agent's
  *     station socket is a REAL WebSocket upgrade through `@fastify/websocket` into
  *     `agencyPlugin` → `registerStationSocket` → `handleStationSocket`;
- *   - the process background work is booted the way `src/index.ts` does it: lane C's
+ *   - the process background work is booted the way `src/index.ts` does it: the
  *     `startVoice` (the bridge's startup self-heal) THEN `bootstrap/agency.ts`'s
  *     `startAgency`, so the startup reaper, the pacing supervisor (2s) and its 250ms tick
  *     run on their own timers; teardown runs the stops in reverse (agency, then voice —
  *     the order itself is pinned by `runtime-boot-order.test.ts`);
- *   - the bridge is lane C's real `WebRtcBridgeManager` and guard host over real Redis
+ *   - the bridge is the real `WebRtcBridgeManager` and guard host over real Redis
  *     (6383, this worktree's db) and real Postgres (5436);
- *   - analysis is lane D's real worker and `createBridgeAnalysisHooks()`, registered on the
+ *   - analysis is the real worker and `createBridgeAnalysisHooks()`, registered on the
  *     seam by `bootstrap/analysis.ts`'s `startAnalysis`, booted after `startAgency` as
  *     `src/index.ts` does;
  *   - ONLY the carrier is faked: `TelephonyProviderRegistry` returns a stub VoiceLink
- *     adapter (lane C's `integration/core/voice-engine.test.ts` pattern), and the PSTN
+ *     adapter (as `integration/core/voice-engine.test.ts` does), and the PSTN
  *     leg / carrier webhook are driven through the bridge's own entry points
  *     (`attachPstnLeg` + VoiceLink `start`, `handleVoicelinkStatus` `call.ended`).
  *
- * PORT NOTE (Phase 8): the station socket is now at the console's path,
- * `/proxy/agency/station/:sessionId` (master's route, collapsed); the two upgrades below use it
- * (2 URL edits, no other change).
+ * The station socket is at the console's path, `/proxy/agency/station/:sessionId`; the two
+ * upgrades below use it.
  *
- * The two steps whose HTTP routes are Phase 8 (`POST /sessions/:id/available`,
+ * The two steps with HTTP routes (`POST /sessions/:id/available`,
  * `POST /attempts/:id/disposition`) are driven through exactly the runtime and repository
- * calls core's handlers make (`agency.routes.ts:400-422`, `:786-945` @4850d1d9), so the
- * runtime is exercised the way those routes will exercise it.
+ * calls the handlers make, so the runtime is exercised the way those routes exercise it.
  */
 
 // A real meter provider, installed before any product module creates its instruments,
@@ -197,7 +194,7 @@ describe('agency runtime end to end — real app, real bridge, fake carrier (int
     expect(getVoiceEngine()).toBe(engine);
 
     // ── 1. Session → ready, over the real station socket. ────────────────────────
-    // `joinOrRehydrate` is what `POST /sessions` calls (core `agency.routes.ts:191`).
+    // `joinOrRehydrate` is what `POST /sessions` calls.
     const join = await agencyAgentSessionRepository.joinOrRehydrate({
       tenantId: TENANT, accountId: ACCOUNT, campaignId: campaign.id,
       agentUserId: AGENT_USER, replicaId: runtime.replicaId,
@@ -215,11 +212,11 @@ describe('agency runtime end to end — real app, real bridge, fake carrier (int
     station = new WebSocket(`ws://127.0.0.1:${port}/proxy/agency/station/${sessionId}?token=${token}`);
     station.on('message', (raw) => frames.push(JSON.parse(raw.toString()) as Record<string, unknown>));
     const ready = await waitFor('ready', () => frames.find((f) => f['event'] === 'ready'));
-    // No live lease ⇒ `break`, never `available` (D2, `rehydrateAgent`).
+    // No live lease ⇒ `break`, never `available` (`rehydrateAgent`).
     expect(ready['state']).toBe('break');
     expect(runtime.stations.isLocallyOwned(sessionId)).toBe(true);
 
-    // The agent goes available — core's `/sessions/:id/available` handler body.
+    // The agent goes available — the `/sessions/:id/available` handler body.
     runtime.wrapup.cancel(sessionId, 'agent_returned');
     await runtime.agents.set(sessionId, 'available', { leaseMs: AGENT_LEASE_MS.available });
     await agencyAgentSessionRepository.setState(sessionId, 'available');
@@ -276,7 +273,7 @@ describe('agency runtime end to end — real app, real bridge, fake carrier (int
     expect(ended!.outcome).toBe('connected');
     expect(ended!.wrapup_started_at).not.toBeNull();
 
-    // Core's `/attempts/:id/disposition` handler body (`agency.routes.ts:786-945`).
+    // The `/attempts/:id/disposition` handler body.
     const resolved = resolveDisposition(campaign.disposition_catalog, 'interested');
     if (!resolved.ok) throw new Error('catalog did not resolve');
     const fields = validateDispositionFields(resolved.entry, {}, new Date());
@@ -309,13 +306,13 @@ describe('agency runtime end to end — real app, real bridge, fake carrier (int
     expect(final.bridged_at!.getTime()).toBeGreaterThanOrEqual(final.answered_at!.getTime());
     expect(final.webrtc_call_id).toBe(callId);
 
-    // ── 6. Analysis was enqueued through seam §3.2 for this call. ───────────────
+    // ── 6. Analysis was enqueued through seam for this call. ───────────────
     const job = await waitFor('analysis job', async () => {
       const { rows } = await getTestPool().query<{ status: string; tenant_id: string }>(
         'SELECT status, tenant_id FROM dialer_analysis_jobs WHERE call_id = $1', [callId]);
       return rows[0] ?? null;
     });
-    // No recording URL has landed yet, so the job waits for it (lane D, B1 status rule).
+    // No recording URL has landed yet, so the job waits for it (the analysis status rule).
     expect(job.status).toBe('awaiting_recording');
     expect(job.tenant_id).toBe(TENANT);
     const { rows: [call] } = await getTestPool().query<{ campaign_id: string; agency_attempt_id: string; recording_requested: boolean }>(
@@ -333,7 +330,7 @@ describe('agency runtime end to end — real app, real bridge, fake carrier (int
     await waitFor('list_exhausted frame', () =>
       frames.find((f) => f['event'] === 'campaign_state' && f['reason'] === 'list_exhausted'));
 
-    // ── The supervisors' completion notice ran (§6.3 row 4) — and has SETTLED, so the
+    // ── The supervisors' completion notice ran — and has SETTLED, so the
     //    fire-and-forget is drained before teardown closes the pool. One series for this
     //    tenant, counted once (the leader's won transition is the single writer). ────
     const notices = await waitFor('completion notice counted', async () => {

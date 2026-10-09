@@ -1,5 +1,5 @@
 /**
- * The words the attempt-spine views use (MAG-159).
+ * The words the attempt-spine views use.
  *
  * A LEAF module — pure functions over data, no React. Copy lives here rather
  * than inline because the same sentences appear on the attempts view, the
@@ -26,8 +26,8 @@ import type { AgencyCampaign, AgencyDispositionEntry } from '../types/agency-cam
  * campaign showed `ptp` as their last disposition.
  *
  * **Falls back to the code, never to a dash.** Four ways to miss:
- * an older master that does not send the catalog, a campaign that has not loaded
- * yet, a code retired from the catalog since the call was filed, or a code core
+ * an older API that does not send the catalog, a campaign that has not loaded
+ * yet, a code retired from the catalog since the call was filed, or a code the server
  * wrote that the catalog never held. In all four the code is what we know, and
  * a historical call filed under a retired code is exactly the row an audit is
  * about — the same reasoning `activityActionLabel` uses for an unrecognised
@@ -57,7 +57,7 @@ export function dispositionLabel(
  * The first version said "there is no audio behind any of these rows", which
  * reads the current flag as a history. It is not one. `record_calls` is
  * PATCHable at any point in a campaign's life, and
- * `agencyCampaignRecording.ts` is built around exactly that case — master
+ * `agencyCampaignRecording.ts` is built around exactly that case — the API
  * deliberately permits the on→off write even to a tenant that has lost
  * `agency.recording`, so a campaign that recorded four hundred calls and was
  * then switched off is a supported state, not a hypothetical. On that campaign
@@ -68,7 +68,7 @@ export function dispositionLabel(
  * leaves the rows to the per-row copy that can actually see them
  * ({@link recordingCellCopy}, and the drill-down's own line).
  *
- * **Only a literal `false` claims it.** `undefined` is an older master that does
+ * **Only a literal `false` claims it.** `undefined` is an older API that does
  * not send the flag, and the module's standing rule is that an absent field is
  * not a measurement — announcing "no calls are recorded" off a field that never
  * arrived would be a confident claim about a campaign we know nothing about.
@@ -110,12 +110,11 @@ export function formatTalkTime(seconds: number | null): string {
  * `null` on `agent_user_id` is the single most misreadable field on this view:
  * it looks like data we failed to load, and it is not — it is the defining
  * property of the rows this page exists to surface. An attempt that never
- * reached an agent is exactly what `/app/calls/softphone/history` structurally
- * cannot show.
+ * reached an agent is exactly what a call list structurally cannot show.
  */
 export function agentCellCopy(attempt: AgencyAttempt): { text: string; muted: boolean } {
-  // The NAME when master could resolve it. Falling back to the id is not
-  // cosmetic — master user ids are UUIDs, so an unresolved cell is 36 characters
+  // The NAME when the API could resolve it. Falling back to the id is not
+  // cosmetic — the API user ids are UUIDs, so an unresolved cell is 36 characters
   // a supervisor can neither read nor recognise. It is still shown, because the
   // id is a real answer and hiding it would say "no agent", which is false.
   if (attempt.agent_name) return { text: attempt.agent_name, muted: false };
@@ -135,7 +134,7 @@ export function agentCellCopy(attempt: AgencyAttempt): { text: string; muted: bo
  *  - **no id at all**, which is not an error — an abandoned or failed attempt
  *    never produced a media leg, so there is nothing to have kept;
  *  - an id whose call has since been purged, which the link discovers on
- *    arrival. Core keeps `webrtc_call_id` deliberately un-FK'd so the attempt
+ *    arrival. The server keeps `webrtc_call_id` deliberately un-FK'd so the attempt
  *    row outlives the call, so this is a designed outcome rather than a
  *    dangling reference — the destination page must say "no longer available"
  *    rather than 404.

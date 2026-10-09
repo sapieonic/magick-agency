@@ -2,7 +2,7 @@ import { formatDuration } from './agencyClock';
 import type { AgencyCampaignStats } from '../types/agency-campaign';
 
 /**
- * §C.3's derived figures — connect rate, conversion, handle time, wrap-up, the
+ * The derived figures — connect rate, conversion, handle time, wrap-up, the
  * human/machine/unclassified split, and what one handled call costs — as pure
  * functions.
  *
@@ -10,22 +10,22 @@ import type { AgencyCampaignStats } from '../types/agency-campaign';
  * the campaign derived from the payload, and a derivation is a place to be
  * confidently wrong. They are tested rather than eyeballed.
  *
- * ── Which figure is the headline (MAG-151 acceptance (2)) ───────────────────
+ * ── Which figure is the headline ───────────────────
  * **The human connect rate is the headline, and the split is its drill-down.**
  *
- * The choice is not this console's to make and is not being made here — core
+ * The choice is not this console's to make and is not being made here — the server
  * made it on the wire. `connect_rate_pct` is `human_connects / attempts_total`,
  * with voicemails and never-written-up calls both outside the numerator. This
  * module renders that number as the headline and puts all three buckets
- * underneath it, so the figure a supervisor quotes is the one core computed and
+ * underneath it, so the figure a supervisor quotes is the one the server computed and
  * the buckets explain what it excluded. Re-deriving a blended rate here — even
  * as a "total connects" convenience — would produce a second, different connect
- * rate for the same campaign, which is the state D1 exists to prevent.
+ * rate for the same campaign, which is the state the split exists to prevent.
  *
  * ── Three ways a number can be absent, and they read differently ────────────
  * 1. **`undefined`** — the payload did not carry the field. An em dash and
  *    "didn't load". Never 0.
- * 2. **`null`** — core carried it and has nothing to measure. "No data" and a
+ * 2. **`null`** — the server carried it and has nothing to measure. "No data" and a
  *    sentence naming what has not happened yet.
  * 3. **A real `0`** — rendered as `0`. This is the only case that is a claim
  *    about the campaign, and it is the case the other two must not be confused
@@ -33,13 +33,13 @@ import type { AgencyCampaignStats } from '../types/agency-campaign';
  *    `0`, `null` and `undefined` into one `'--'`.
  *
  * There is now a fourth, and it is the only one that is a decision of this
- * console's rather than a reading of core's: see {@link RATE_MIN_ATTEMPTS}.
+ * console's rather than a reading of the server's: see {@link RATE_MIN_ATTEMPTS}.
  *
  * ── The caveat that outranks the number ─────────────────────────────────────
  * `machine_connects_available === false` means this campaign's disposition
  * catalog has no `voicemail` code. An agent cannot submit a code they are not
  * offered, so `machine_connects` is structurally 0 — and, less obviously, every
- * voicemail is then sitting inside the handle-time average, because core
+ * voicemail is then sitting inside the handle-time average, because the server
  * excludes calls *labelled* voicemail rather than calls that *were* voicemail.
  * Both figures need saying out loud, or the console reports a clean campaign
  * with a fast AHT when what it has is a campaign that is not asking.
@@ -65,7 +65,7 @@ import type { AgencyCampaignStats } from '../types/agency-campaign';
  * reasons that have nothing to do with the campaign.
  *
  * Withholding is therefore not caution about our arithmetic — the arithmetic is
- * core's and it is exact. It is a refusal to present a figure with the settled
+ * the server's and it is exact. It is a refusal to present a figure with the settled
  * air of a measurement when the next call can still move it several points.
  *
  * Applied to the two RATES only. Handle time and wrap-up are averages over
@@ -182,12 +182,12 @@ function clampPercent(value: number): number {
 /**
  * Whether voicemail is measurable **going forward**.
  *
- * Core computes this against the campaign's *current* `disposition_catalog`, so
+ * The server computes this against the campaign's *current* `disposition_catalog`, so
  * it describes what an agent can submit from now on — not what the history
  * contains. See {@link voicemailWithdrawn}, which is the case that distinction
  * creates.
  *
- * `undefined` is treated as measurable — it means an older core that did not
+ * `undefined` is treated as measurable — it means an older the server that did not
  * send the flag, and asserting "voicemail is not being recorded" on a payload
  * that never spoke to the question would be inventing the more alarming of two
  * readings. The flag's job is to suppress a false zero, not to manufacture a
@@ -200,9 +200,9 @@ function voicemailMeasured(stats: AgencyCampaignStats | null): boolean {
 /**
  * Voicemail **used to be** recordable on this campaign and no longer is.
  *
- * `disposition_catalog` is patchable on a live campaign (core's
+ * `disposition_catalog` is patchable on a live campaign (the server's
  * `agencyCampaignRepository.update` allows it, and `PATCH /agency-campaigns/:id`
- * forwards it), and core's counts read the *historical* `disposition_code` on
+ * forwards it), and the server's counts read the *historical* `disposition_code` on
  * each attempt while the availability flag reads the *current* catalog. Remove
  * the code from a campaign that has already recorded voicemails and the two
  * disagree: `machine_connects` stays truthfully non-zero, `aht_seconds` still
@@ -261,7 +261,7 @@ function volumeWithheldReadout(dials: number): PerformanceReadout {
 }
 
 /**
- * The connect rate (§C.3) — human answers over every call placed.
+ * The connect rate — human answers over every call placed.
  *
  * The denominator is `attempts_total`, not bridged calls, which is why this is
  * low on a cold list and why it is the right number: a supervisor asking "is
@@ -303,7 +303,7 @@ export function connectRateReadout(stats: AgencyCampaignStats | null): Performan
       known: false,
     };
   }
-  // Core's null is "no attempts placed", which is not a 0% connect rate. A
+  // The server's null is "no attempts placed", which is not a 0% connect rate. A
   // campaign that has not dialed anyone has not failed to reach anyone.
   if (rate === null) {
     return {
@@ -316,7 +316,7 @@ export function connectRateReadout(stats: AgencyCampaignStats | null): Performan
     };
   }
   // Checked after the two absences and before anything is formatted: "the read
-  // failed" and "core has nothing to measure" are facts about the payload and
+  // failed" and "the server has nothing to measure" are facts about the payload and
   // outrank a policy of ours about how much evidence is enough.
   const dials = dialsPlaced(stats);
   if (dials !== null && dials < RATE_MIN_ATTEMPTS) return volumeWithheldReadout(dials);
@@ -461,19 +461,19 @@ export function conversionRateReadout(stats: AgencyCampaignStats | null): Perfor
 }
 
 /**
- * Average handle time (§C.3, D1) — the agent's leg, voicemail excluded.
+ * Average handle time — the agent's leg, voicemail excluded.
  *
  * ── Why this card has no percentage meter ──────────────────────────────────
  * There is nothing for a duration to be a percentage OF. A bar filled to some
  * share of a five-minute maximum nobody configured is a scale that does not
  * exist, drawn with the same confidence as the two rates beside it. What this
  * figure does have is a sibling — the same average with voicemail put back in —
- * and the delta between them is the whole point of D1's split. So the scale here
+ * and the delta between them is the whole point of the outcome split. So the scale here
  * is the pair against each other, which is a comparison the payload can support.
  *
  * The gate on the second bar is the INEQUALITY, not the availability flag. If
  * nothing was ever labelled voicemail the two averages are the same number by
- * construction — core's exclusion predicate matches no rows — so the comparison
+ * construction — the server's exclusion predicate matches no rows — so the comparison
  * drops out on its own and showing it would imply a comparison had been made.
  * But a campaign whose catalog *used to* carry the code has a real, non-zero
  * delta, and gating on the flag would hide exactly that: the number that says
@@ -545,7 +545,7 @@ export function handleTimeReadout(stats: AgencyCampaignStats | null): Performanc
     */
     denominator:
       voicemailMeasured(stats)
-        ? { lead: null, rest: 'Voicemail excluded — core’s own figure' }
+        ? { lead: null, rest: 'Voicemail excluded — the dialer’s own figure' }
         : null,
     scale: { kind: 'compare', bars },
     known: true,
@@ -553,7 +553,7 @@ export function handleTimeReadout(stats: AgencyCampaignStats | null): Performanc
 }
 
 /**
- * Average wrap-up (§C.3) — the tuning input for the campaign's own window.
+ * Average wrap-up — the tuning input for the campaign's own window.
  *
  * Rendered against `wrapup_seconds` because the average alone is not
  * actionable: 40 seconds is comfortable in a 90-second window and is agents
@@ -664,9 +664,9 @@ export interface ConnectsBreakdown {
 }
 
 /**
- * D1's split (§C.3) — where the connected calls actually went.
+ * the connected — where the connected calls actually went.
  *
- * Core sends all three counts together or not at all, so a partial payload is a
+ * The server sends all three counts together or not at all, so a partial payload is a
  * producer bug rather than a state to render half of; the whole breakdown drops
  * out rather than showing two buckets that do not sum to the third.
  */

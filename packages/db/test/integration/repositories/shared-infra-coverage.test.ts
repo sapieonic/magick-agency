@@ -4,21 +4,21 @@ import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js'
 import { insertAccount, insertAccountSettings, insertTenant, insertUser } from '../setup/factories.js';
 
 /**
- * NEW (magick-agency, no source): every shared-infrastructure repository method
- * that the ported suites exercise only through a MOCKED pool, run at least once
+ * Every shared-infrastructure repository method that other suites exercise
+ * only through a MOCKED pool, run at least once
  * against the real baseline on Postgres 5436. A mocked pool hides SQL drift — a
  * renamed column, a dropped one, a UUID column handed a free-form id — because
  * the fixture supplies the keys the query never reads.
  *
- * Covered here (everything else is covered by a ported real-Postgres suite):
+ * Covered here (everything else is covered by a real-Postgres suite):
  *  - featureFlagRepository: upsert (each scope), findGlobal, findByTenant,
- *    findOne, findByFlag, delete, upsertMany — core tests it only with a mock.
+ *    findOne, findByFlag, delete, upsertMany — otherwise tested only with a mock.
  *  - platform auditRepository (`platform_audit_log`): insertBatch (human and
- *    system actors), find (filters, offset, keyset, withTotal) — master tests it
+ *    system actors), find (filters, offset, keyset, withTotal) — otherwise tested
  *    only with a mock.
  *  - accountSettingsRepository.listByTenant and .getWebrtcMaxDurationSeconds.
- *  - agencyCampaignAgentRepository.listAllForUser and .closeAllForUser (lane A's
- *    revoke path) — master's integration suite does not reach either.
+ *  - agencyCampaignAgentRepository.listAllForUser and .closeAllForUser (the
+ *    revoke path) — no other integration suite reaches either.
  */
 
 vi.mock('../../../src/connection.js', () => ({

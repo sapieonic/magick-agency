@@ -1,5 +1,3 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/integration/flows/tts-cache-sweep-scale.test.ts@4850d1d9.
-// Verbatim.
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,7 +12,7 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
  * version actually failed under. It covers three things unit tests structurally
  * cannot:
  *
- *  1. **Event-loop delay under a full-size sweep** — the ticket's own acceptance
+ *  1. **Event-loop delay under a full-size sweep** — the acceptance
  *     criterion. The old implementation issued one `statSync` per entry with no
  *     yield point, so at this scale nothing else in the process could run.
  *  2. **The sweeper racing a live writer** on one directory. `writeTtsFile`'s

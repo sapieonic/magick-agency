@@ -29,7 +29,7 @@ return 1
  *
  * The security model, stated once because it is the whole design: a browser
  * `WebSocket` cannot set an `Authorization` header, so the Firebase bearer is
- * unavailable on the upgrade and master cannot authenticate it. This token is the
+ * unavailable on the upgrade and the server cannot authenticate it. This token is the
  * only authority on that connection. It is therefore made worth as little as
  * possible — **single-use and ~2 minutes** — and the *session* is authenticated by
  * the bound socket thereafter, not by anything replayable in a URL.

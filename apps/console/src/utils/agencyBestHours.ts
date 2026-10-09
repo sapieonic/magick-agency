@@ -83,7 +83,7 @@ export const BEST_HOURS_CELLS = BEST_HOURS_DAYS * BEST_HOURS_HOURS;
  *
  * A constant rather than `Intl`'s locale weekdays, and deliberately: the wire
  * carries a NUMBER because naming a day is a formatting decision that belongs in
- * the console (D3), and 0 = Sunday is the value `EXTRACT(DOW)` produces. Deriving
+ * the console, and 0 = Sunday is the value `EXTRACT(DOW)` produces. Deriving
  * the names from a locale would make the row order depend on the reader's
  * first-day-of-week and re-introduce exactly the off-by-one against ISO's 1 = Monday
  * that the numeric wire value exists to avoid.
@@ -127,7 +127,7 @@ function weekdayName(day: number): string {
  * The two gates degrade in OPPOSITE directions, and that asymmetry is deliberate:
  * see `successRateReportable` below. Falling back to `rates_reportable` for the
  * conversion view paints a 20-dial/1-connect/1-conversion cell as 100% and as the
- * ramp's upper endpoint, which is E5's own failure; the connect rate has no such
+ * ramp's upper endpoint, which is the failure a thin cell on the ramp produces; the connect rate has no such
  * second denominator to be wrong about.
  *
  * Connect rate is the default because it is the "best hours to call" question.
@@ -170,13 +170,13 @@ export const BEST_HOURS_VIEW_HINTS: Record<BestHoursView, string> = {
   conversion_rate: 'of connects',
 };
 
-// ─── The zone (E3) ───────────────────────────────────────────────────────────
+// ─── The zone ───────────────────────────────────────────────────────────
 
 /**
  * The zone the buckets were ACTUALLY cut in, or `null`.
  *
  * ── Read through a `typeof` guard, and the direction of the fallback matters ─
- * `resolved_timezone` is additive and merge order is core → master → cusui, so this
+ * `resolved_timezone` is additive and ships server-side first, then in this console, so this
  * console can meet a service that predates it. The fallback is **silence**, not a
  * guess: `undefined` (the field never arrived) and `null` (a read with no zoned
  * dimension) are two different arrivals and both mean "this surface may not name a
@@ -188,7 +188,7 @@ export const BEST_HOURS_VIEW_HINTS: Record<BestHoursView, string> = {
  * `Intl.DateTimeFormat().resolvedOptions().timeZone`, and that is correct for its
  * own caption — the window bounds really are cut from a local `Date` — and wrong for
  * this axis. Two zones can legitimately sit on this screen; mixing them is the
- * defect E3 exists to prevent, so nothing in this module reaches for the browser's
+ * defect the axis rule exists to prevent, so nothing in this module reaches for the browser's
  * default and every function that needs a zone takes it as an argument.
  */
 export function bestHoursZone(page: AgencyGroupPage): string | null {
@@ -209,11 +209,11 @@ export function bestHoursZone(page: AgencyGroupPage): string | null {
 
     Validating through `zoneFormatter` — the same construction, so the same
     RangeError — makes the three surfaces answer from one predicate. A name this
-    build cannot resolve is therefore "no zone", which is the honest reading: E3's
+    build cannot resolve is therefore "no zone", which is the honest reading: the
     rule is that the axis names the zone the buckets were cut in **or nothing**, and
     a name that resolves to nothing is not a name.
 
-    Note what this does NOT claim: core's buckets are still correct — it cut them
+    Note what this does NOT claim: The server's buckets are still correct — it cut them
     with the value Postgres accepted. This console just cannot say which zone that
     was, which is the same position an absent field leaves it in, and it degrades the
     same way.
@@ -236,9 +236,9 @@ export function bestHoursHourAxisLabel(zone: string | null): string | null {
  * Said on the surface when {@link bestHoursZone} could not name a zone.
  *
  * It names the consequence rather than the cause, and that is deliberate now that
- * there are two causes: the field did not arrive (a core that predates it), or it
+ * there are two causes: the field did not arrive (a the server that predates it), or it
  * arrived carrying a name this build cannot resolve. **Both leave the reader in
- * exactly the same position** — the columns are true, because core cut them in
+ * exactly the same position** — the columns are true, because the server cut them in
  * whatever zone Postgres accepted, but this console cannot say which zone that was,
  * and a reader who assumes their own would be five and a half hours out on a
  * campaign in another one. One sentence for both, because a reader cannot act
@@ -266,7 +266,7 @@ export function bestHoursCellCoordinates(day: number, hour: number, zone: string
   return zone === null ? stem : `${stem} · ${zone}`;
 }
 
-// ─── Coverage: which cells were ASKED about (E4) ─────────────────────────────
+// ─── Coverage: which cells were ASKED about ─────────────────────────────
 
 /**
  * Which weekday-hour cells the window actually covers.
@@ -286,12 +286,12 @@ export function bestHoursCellCoordinates(day: number, hour: number, zone: string
  * which is the same class of error as labelling the axis from the wrong zone. When
  * the zone is absent this function therefore answers **`known: false`** rather than
  * falling back: with no zone there is no honest way to tell the two facts apart, and
- * the surface says so instead of picking one. That interaction between E3 and E4 is
- * not something either ruling states, and silence is the only answer that does not
+ * the surface says so instead of picking one. That interaction between the axis-zone rule and the coverage rule is
+ * not something either states, and silence is the only answer that does not
  * invent a finding.
  *
- * ── `Intl` with an EXPLICIT zone is not the thing E3 forbids ───────────────
- * E3 forbids reaching for `Intl.DateTimeFormat().resolvedOptions().timeZone` — the
+ * ── `Intl` with an EXPLICIT zone is not the thing the axis rule forbids ────
+ * The axis rule forbids reaching for `Intl.DateTimeFormat().resolvedOptions().timeZone` — the
  * BROWSER's zone — to name this axis. Formatting a known instant *into* a zone this
  * function was handed is the only way to answer the question at all, and it is the
  * opposite operation: the zone is an input here, never a default.
@@ -346,9 +346,9 @@ interface ZonedParts {
  * A formatter for one named zone, or `null` when the name is not one.
  *
  * `Intl.DateTimeFormat` throws a `RangeError` on an unknown `timeZone`, and this is
- * exactly the input that can be one: core's zone comes out of `COALESCE(z.name,
+ * exactly the input that can be one: The server's zone comes out of `COALESCE(z.name,
  * 'UTC')` and is therefore always a real IANA name today, but the value reaching
- * this client crossed two services and a hand-mirrored type. A caught `RangeError`
+ * this client crossed the API boundary and a hand-mirrored type. A caught `RangeError`
  * degrades to "coverage unknown"; an uncaught one takes the section down.
  */
 function zoneFormatter(zone: string): Intl.DateTimeFormat | null {
@@ -439,8 +439,8 @@ export function weekdayCoverage(
     `15:45Z - 45min = 15:00Z`, which in that zone is **01:30** on the old +10:30
     offset — an hour the window never contained. Hour 1 was then marked covered, so
     a cell nobody was asked about rendered `no_dials`: a printed ZERO, in the row a
-    supervisor reads as "stop staffing this slot". That is precisely the lie E4
-    exists to prevent, produced by E4's own implementation.
+    supervisor reads as "stop staffing this slot". That is precisely the lie the coverage
+    rule exists to prevent, produced by its own implementation.
 
     Seeding from `first` — which is already IN the zone, resolved by `Intl` rather
     than by offset arithmetic — and only ever stepping FORWARD removes the class of
@@ -489,7 +489,7 @@ export function weekdayCoverage(
  *
  *  - **`measured`** — a real figure, on the ramp. Includes a real `0`.
  *  - **`withheld`** — the server served a number and said it is not reportable.
- *    Off the ramp entirely and out of the scale's domain (E5), showing its DIAL
+ *    Off the ramp entirely and out of the scale's domain, showing its DIAL
  *    COUNT instead, because "we barely called then" is itself the answer to a
  *    rostering question.
  *  - **`unmeasured`** — dials, but no denominator for THIS view's rate (an hour
@@ -547,7 +547,7 @@ export interface BestHoursDomain {
 export interface BestHoursMatrix {
   view: BestHoursView;
   rows: readonly BestHoursRow[];
-  /** Measured cells only (E5). A thin cell left in compresses every honest one. */
+  /** Measured cells only. A thin cell left in compresses every honest one. */
   domain: BestHoursDomain | null;
   /** Cells carrying a row — i.e. cells with at least one dial. */
   dialled: number;
@@ -568,7 +568,7 @@ export interface BestHoursMatrix {
  *
  * The contribution screen's `contributionRatesReportable`, on the same payload and
  * with the same permissive fallback for the same reason: an absent flag must not
- * withhold every rate on the screen the moment this console runs ahead of core. On
+ * withhold every rate on the screen the moment this console runs ahead of the server. On
  * a heatmap the permissive fallback is also the only one that degrades sensibly —
  * `false` would hatch all 168 cells and leave a map with no map on it.
  *
@@ -599,17 +599,17 @@ function ratesReportable(row: AgencyGroupRow): boolean {
  *     it — and its served `success_rate_pct` is `100`. On a ramp whose honest
  *     values top out near a floor median of ~30% that cell is not merely quoted,
  *     it is the DARKEST square on the map and it sets the domain's upper end,
- *     compressing every trustworthy cell into the bottom third. That is E5's exact
- *     failure, and E5 is a ruling about this grid.
+ *     compressing every trustworthy cell into the bottom third. That is exactly the
+ *     failure this grid must avoid.
  *  2. **Colour reads as authority in a way a table cell does not.** A withheld
  *     roster cell is a phrase a reader can weigh; a dark square is a finding
  *     already made. The roster's "absent means do not withhold" precedent is a
  *     judgement about a column of words, and it does not carry to a colour ramp.
  *
- * The cost is bounded and visible: on a core that predates the field the CONVERSION
+ * The cost is bounded and visible: on a the server that predates the field the CONVERSION
  * view hatches every cell, `bestHoursWithheldReadout` says how many and advises a
  * longer window, and the other two views — including `volume`, which is always
- * reportable by construction (E6) — are untouched. A map that says "I cannot rate
+ * reportable by construction — are untouched. A map that says "I cannot rate
  * these" is recoverable; a map that paints one answered call as the best hour of
  * the week is not.
  */
@@ -787,7 +787,7 @@ export function bestHoursMatrix(
         continue;
       }
       /*
-        No row, so no dial landed in this cell — and the whole of E4 is that this
+        No row, so no dial landed in this cell — and the whole point of the coverage rule is that this
         says two different things. With no zone there is no honest way to tell them
         apart, so the third state is the answer rather than a guess.
       */

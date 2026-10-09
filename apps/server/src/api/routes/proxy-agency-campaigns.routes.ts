@@ -19,9 +19,9 @@ import {
   issuesToDetails,
 } from '../../agency/agency-campaign-config.js';
 import type { ConfigIssue } from '../../agency/agency-campaign-config.js';
-// PORT NOTE (magick-agency): master's `getFileBuffer` is core's `getFile` here — one S3 module
-// (decision B14, lane C's port of core's `storage/s3.ts`): the same `GetObjectCommand` on the
-// same bucket, returning the whole object as a Buffer. Aliased so the call site stays master's.
+// `getFileBuffer` is `storage/s3.ts`'s `getFile`, the one S3 module (decision B14): a
+// `GetObjectCommand` on the agency bucket, returning the whole object as a Buffer. The alias
+// names what the call sites want back.
 import { uploadFile, getFileStream, getFile as getFileBuffer } from '../../storage/s3.js';
 import {
   analyzeAgencyCsvColumns,
@@ -90,15 +90,12 @@ import {
 import { rejectPathEscapingParams } from './helpers/path-params.js';
 
 /**
- * The ownership probe's outcome. Core REFUSING is forwarded verbatim and returns
- * `null` instead.
+ * The ownership probe's outcome. The internal handler REFUSING is forwarded as-is and
+ * returns `null` instead.
  *
- * PORT NOTE (magick-agency): master's second arm, `{ verified: false, coreAccountId:
- * null, name: null }`, was core being UNREACHABLE over HTTP. In-process the probe is
- * core's handler body (`callCore`), which answers or throws; there is no "could not
- * ask" outcome to carry, and lane B2 deleted the `unverifiedAccountScope` read it fed
- * (PORTING lane B2, "Activity service"). `coreAccountId` is renamed `accountId`: it is
- * the campaign row's own account, which `ActivityQuery.accountId` now takes.
+ * There is no "could not ask" outcome: the probe runs the internal handler in-process
+ * (`callCore`), which answers or throws. `accountId` is the campaign row's own account,
+ * which `ActivityQuery.accountId` takes.
  */
 type OwnedCampaign = { accountId: string; name: string | null };
 import { config } from '../../config/index.js';
@@ -113,7 +110,7 @@ const log = createChildLogger({ component: 'proxy-agency-campaigns' });
  */
 const AUDIT_FILTER_VALUE_MAX_CHARS = 200;
 
-/** Selector dimensions kept on the audit row. Core's vocabulary has seven. */
+/** Selector dimensions kept on the audit row. The dialer runtime's vocabulary has seven. */
 const AUDIT_SELECTOR_MAX_KEYS = 20;
 
 /** Values kept per array dimension, e.g. `last_outcome: [...]`. */
@@ -129,7 +126,7 @@ const AUDIT_SELECTOR_MAX_ARRAY_ITEMS = 50;
  *
  * This file already paid for exactly that once: `boundedFilters` and
  * `AUDIT_FILTER_VALUE_MAX_CHARS` exist because a 200KB filter value landed
- * verbatim, repeatably, on the one trail a compliance reader depends on. The
+ * unclipped, repeatably, on the one trail a compliance reader depends on. The
  * retry row is worse in one respect: it is written on every successful create,
  * it must survive the child being deleted, and `platform_audit_log` partitions
  * drop only by age — nothing purges a wide row early.
@@ -139,7 +136,7 @@ const AUDIT_SELECTOR_MAX_ARRAY_ITEMS = 50;
  * truncation is MARKED rather than silently cut, so a reader can never mistake a
  * clipped list for the whole selection. A nested object is replaced by its type
  * rather than walked: the legal vocabulary is strings, arrays of strings,
- * numbers and booleans, so anything else is already not a selector master needs
+ * numbers and booleans, so anything else is already not a selector the trail needs
  * to reproduce.
  */
 function boundedSelector(selector: Record<string, unknown>): Record<string, unknown> {
@@ -171,18 +168,16 @@ function boundedSelector(selector: Record<string, unknown>): Record<string, unkn
 }
 
 /**
- * Core refused a page mid-export.
+ * The internal handler refused a page mid-export.
  *
  * Thrown rather than returned so the drain loop stops where it is and the
- * caller forwards core's own status verbatim — a 404 for a campaign the caller
- * does not own, a 400 for a filter core rejected. The half-written file is
- * discarded: a short CSV sent under a 200 is the one outcome an export must
- * never produce, because nothing about it says it is short.
+ * caller forwards the handler's own status unchanged — a 404 for a campaign the
+ * caller does not own, a 400 for a filter the handler rejected. The half-written
+ * file is discarded: a short CSV sent under a 200 is the one outcome an export
+ * must never produce, because nothing about it says it is short.
  *
- * PORT NOTE (magick-agency): master's `isAbortError` (which sat between this
- * docstring and the class) is deleted. It recognised the `AbortSignal.timeout()`
- * that `proxyToCore` installed for one export page; `callCore` has no socket and
- * installs no signal, so nothing can raise it. See `drainSpineExport`.
+ * `callCore` runs in-process with no socket and no abort signal, so there is no
+ * per-page timeout error to recognise here. See `drainSpineExport`.
  */
 class SpineExportRefused extends Error {
   constructor(readonly status: number, readonly body: unknown) {
@@ -194,51 +189,42 @@ class SpineExportRefused extends Error {
 /**
  * Campaign CRUD and roster ingest.
  *
- * ── The ownership split, and why master keeps no campaign table ────────────
- * Core owns `agency_campaigns` — name, caller IDs, calling windows, disposition
- * catalog, `context_display`, status (its migration 072). Master does NOT keep a
- * second copy: campaign CRUD here is a thin proxy, because two writable copies
- * of one business object is how they drift, and core's pacing engine has to read
- * the authoritative version on every tick anyway.
+ * ── The ownership split, and why this layer keeps no campaign table ────────
+ * The dialer runtime owns `agency_campaigns` — name, caller IDs, calling
+ * windows, disposition catalog, `context_display`, status. The public API layer
+ * does NOT keep a second copy: campaign CRUD here is a thin pass-through to the
+ * internal handler instance, because two writable copies of one business object
+ * is how they drift, and the pacing engine has to read the authoritative version
+ * on every tick anyway.
  *
- * What master genuinely owns is the FILE and the act of turning it into a
+ * What this layer genuinely owns is the FILE and the act of turning it into a
  * roster — the S3 object, the operator's column mapping, and the streamed
- * hand-off (§2.2: "master remains the source of truth for the file; core for
- * the roster"). That is `agency_ingest_jobs` and the routes below it.
+ * hand-off. The file is the source of truth here; the roster is the dialer
+ * runtime's. That is `agency_ingest_jobs` and the routes below it.
  *
- * ── D10: there is no concurrency setter here, and that is deliberate ───────
+ * ── There is no concurrency setter here, and that is deliberate ────────────
  * `account_settings.max_concurrent_calls` is reachable only through the
  * super-admin tree. No `/proxy/account-settings` route exists and none is being
  * added: concurrency is a commercial lever, and an account that can raise its
  * own limit can raise its own carrier spend. The supervisor dashboard renders
  * the limit read-only. If a "set concurrency" field ever appears in an AGENCY
- * campaign payload, it is a bug — core owns the campaign schema and has no such
- * column.
- *
- * One documented exception, and it does not weaken the lever (ClickUp
- * 14ygtkj9pgr, design D7/Q1): BROADCASTS (AI voice, voice message, IVR — not
- * agency campaigns) now expose the account's limit READ-ONLY through
- * `GET /proxy/calls/concurrency-limits`, a narrow projection with no version or
- * revision fields, and accept a per-broadcast `max_concurrency` that can only
- * LOWER concurrency: it is validated against that same allocation, and core
- * enforces `min(cap, account, provider, global)` on top. Nothing on the tenant
- * surface can raise an account's limit; changing a running broadcast's cap is
- * super-admin only.
+ * campaign payload, it is a bug — the dialer runtime owns the campaign schema
+ * and has no such column.
  */
 
 /**
- * Best-effort extraction of the resulting campaign status for the audit trail
- * (`MAG-70`). Core's response body on a lifecycle action IS the updated
- * campaign, but master keeps no campaign schema (see the ownership-split
+ * Best-effort extraction of the resulting campaign status for the audit trail.
+ * The internal handler's response body on a lifecycle action IS the updated
+ * campaign, but this layer keeps no campaign schema (see the ownership-split
  * comment above), so the body is untyped here and this narrows defensively
- * rather than trusting its shape — a malformed/unexpected core response must
+ * rather than trusting its shape — a malformed/unexpected handler response must
  * never throw out of an audit call and take the request down with it.
  */
 function extractCampaignStatus(body: unknown): string | undefined {
   return extractCampaignField(body, 'status') ?? undefined;
 }
 
-/** The same defensive narrowing, for any string field of core's campaign body. */
+/** The same defensive narrowing, for any string field of the handler's campaign body. */
 function extractCampaignField(body: unknown, field: string): string | null {
   if (body && typeof body === 'object' && field in body) {
     const value = (body as Record<string, unknown>)[field];
@@ -253,10 +239,11 @@ function extractCampaignField(body: unknown, field: string): string | null {
  * otherwise filter on the literal string `"a,b"` and get an empty trail it would
  * read as "nothing happened".
  *
- * The same list goes to both stores. Their vocabularies overlap but are not
- * equal — core alone writes `agency_campaign.auto_paused`, master alone writes
- * `agency_disposition.created` — so each simply returns what it has, and no
- * mapping table has to be kept in step across two repositories.
+ * The same list goes to both tables. Their vocabularies overlap but are not
+ * equal — only the dialer runtime writes `agency_campaign.auto_paused` (to
+ * `audit_logs`), only this layer writes `agency_disposition.created` (to
+ * `platform_audit_log`) — so each simply returns what it has, and no mapping
+ * table has to be kept in step between them.
  */
 const actionFilterSchema = z
   .union([z.string(), z.array(z.string())])
@@ -279,19 +266,11 @@ const activityPeriodSchema = {
 /**
  * An inverted range is the CALLER's mistake and must read as one.
  *
- * Core validates it too (422 `Invalid Period`), but master maps any core
- * `>= 400` to `partial: 'core_error'` — so without this the supervisor is told
- * "the voice service returned an error, this trail is missing the campaign's
- * status changes", and on the CSV route gets a 424 "try again shortly" that
- * never comes right. A user input error dressed as a dependency outage sends
- * them to the wrong remedy, and to support.
+ * This is the only check on it: `audit_logs` is queried directly, so without
+ * this refusal an inverted range returns an empty Dialer half rather than an
+ * error, and an empty trail reads as "nothing happened". `from > to` is
+ * refused; `from === to` is allowed (the list routes' `to` is inclusive).
  */
-//
-// PORT NOTE (magick-agency): kept verbatim, and it now carries more weight (lane B2
-// carry-forward). Core's 422 `Invalid Period` is gone with the S2S read (`audit_logs` is
-// queried directly), so without this refusal an inverted range returns an empty Dialer
-// half rather than an error. Same rule as master: `from > to` is refused, `from === to`
-// is allowed (the list routes' `to` is inclusive).
 const orderedPeriod = (q: { from?: string; to?: string }): boolean =>
   !(q.from && q.to) || new Date(q.from) <= new Date(q.to);
 
@@ -332,7 +311,7 @@ const activityExportQuerySchema = z.object({
   .refine(orderedPeriod, ORDERED_PERIOD_ISSUE);
 
 /**
- * `?from=&to=&bucket=` on the campaign stats SERIES read (`86d45k0bk`).
+ * `?from=&to=&bucket=` on the campaign stats SERIES read.
  *
  * ── Half-open `[from, to)`, and the neighbour above is the other convention ──
  * `from` is inclusive, `to` is EXCLUSIVE. That is the convention of the agent
@@ -346,19 +325,19 @@ const activityExportQuerySchema = z.object({
  * rather than assumed — and it is why this schema does not reuse
  * `activityPeriodSchema`.
  *
- * Both bounds are REQUIRED, matching core's `parseAgentStatsQuery`: this read
+ * Both bounds are REQUIRED, matching `parseAgentStatsQuery`: this read
  * aggregates and has no page, so an absent bound means "every day of this
  * campaign in one payload", and a defaulted window is worse than a refusal
  * because the caller cannot tell from the response which window they got. It is
  * also what makes the day cap enforceable at all.
  *
- * `bucket` is optional and NOT defaulted here — core defaults it to `day` and
- * echoes it back, so there is no way for a caller to be wrong about which
- * grouping they got. Validated against the enum regardless, because an unknown
- * bucket is a caller error that should not cost a core round trip.
+ * `bucket` is optional and NOT defaulted here — the internal handler defaults
+ * it to `day` and echoes it back, so there is no way for a caller to be wrong
+ * about which grouping they got. Validated against the enum regardless, because
+ * an unknown bucket is a caller error that should not cost a handler call.
  *
  * Refusals are `{ error: 'Validation Error', details }` like every other query
- * schema on this plugin: master's own 4xx precedes any core call, so
+ * schema on this plugin: this layer's own 4xx precedes any `callCore`, so
  * `errorMaskHook` leaves it alone, and `details` carries the offending param to
  * the client either way.
  */
@@ -392,7 +371,7 @@ const campaignSeriesQuerySchema = z
       return;
     }
     if (to.getTime() - from.getTime() > CAMPAIGN_SERIES_MAX_WINDOW_DAYS * MS_PER_DAY) {
-      // The cap NAMES itself, the way core's does: a caller who wants more needs
+      // The cap NAMES itself, as the agent series cap does: a caller who wants more needs
       // to know to page by quarter rather than to discover an empty answer.
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -403,56 +382,52 @@ const campaignSeriesQuerySchema = z
   });
 
 /*
- * ─── MAG-138: the two `behavioral` capabilities, actually enforced ───────────
+ * ─── The two `behavioral` capabilities, actually enforced ────────────────────
  *
- * PORT NOTE (magick-agency): master defined `assertBehavioralCapabilitiesForConfig`,
- * `assertCampaignBehavioralCapabilities` and `resolveInheritedBehavioralConfig` HERE
- * (master `proxy-agency-campaigns.routes.ts:411-599`@a1f0756a). Lane A moved them into
- * `apps/server/src/agency/campaign-behavioral-settings.ts` (PORTING lane A, A.3), which
- * carries master's rationale, and this file imports them. The two interface changes
- * recorded there apply at every call site below:
+ * `assertBehavioralCapabilitiesForConfig` and `resolveInheritedBehavioralConfig`
+ * live in `apps/server/src/agency/campaign-behavioral-settings.ts`, which carries
+ * the full rationale. Two rules from there apply at every call site below:
  *  1. `agency.recording` / `agency.analytics` are the per-account settings row
- *     (`allow_recording` / `analyze_calls`, plan §3.2), judged for the account that
- *     OWNS the campaign — the `target` argument — never the request's header alone;
- *  2. there is no raw-`request.body` convenience: master's
- *     `assertCampaignBehavioralCapabilities(request, reply)` is gone, and each route
- *     passes the exact object it forwards to core.
- * Same 403 body, `{ error: 'capability_disabled', capability }`; a missing row or a
- * NULL column is "off", and a failed read fails closed.
- *
- * The section's `requireCapability('agency')` preHandler master kept alongside the
- * gate is deleted (no governance; the app is agency).
+ *     (`allow_recording` / `analyze_calls`), judged for the account that OWNS the
+ *     campaign — the `target` argument — never the request's header alone;
+ *  2. there is no raw-`request.body` convenience: each route passes the exact
+ *     object it forwards to the internal handler.
+ * The 403 body is `{ error: 'capability_disabled', capability }`; a missing row or
+ * a NULL column is "off", and a failed read fails closed.
  */
 
 /**
  * The calling window a retry would actually run on: the parent's two columns
  * with `config_overrides` applied on top, for the ONE cross-field rule that
- * cannot be decided from the overrides alone (wire contract §6, obligation 2).
+ * cannot be decided from the overrides alone.
  *
  * ── Why the override-only check is not enough ─────────────────────────────
  * `validateAgencyCampaignConfig` refuses `calling_window_start ===
- * calling_window_end`, because core reads that as PERMANENTLY CLOSED —
- * `nextOpenAt` returns null — so the campaign is saveable and can never place a
- * call, a support ticket whose cause is invisible on every screen.
+ * calling_window_end`, because the dialer runtime reads that as PERMANENTLY
+ * CLOSED — `nextOpenAt` returns null — so the campaign is saveable and can never
+ * place a call, a support ticket whose cause is invisible on every screen.
  * `POST /campaigns` cannot produce one: both sides are in the same body and the
  * validator sees the pair.
  *
  * A retry can. `config_overrides: { calling_window_end: '09:00' }` against a
  * `09:00–17:00` parent names only `end`, so the override-only pass has nothing
- * to compare it to; core then merges it onto the parent and the child never
- * dials. Same hole the other way, overriding `start` to match the stored `end`.
+ * to compare it to; the internal handler then merges it onto the parent and the
+ * child never dials. Same hole the other way, overriding `start` to match the
+ * stored `end`.
  *
  * This is NOT re-litigating a parent that predates a rule — the parent's window
  * is valid, and it is the OVERRIDE that makes the merged pair invalid. So only
  * the two window fields are merged; catalog, retry policy and everything else
- * stay override-only, for exactly the reason obligation 2's comment gives.
+ * stay override-only, because a parent whose stored config predates a rule must
+ * stay retryable and the retry dialog offers no way to fix it.
  *
  * Key presence wins, matching `resolveInheritedBehavioralConfig`, and
  * `Object.hasOwn` for the same untrusted-object reason.
  *
- * Returns `[]` when the merged pair cannot be formed (a parent master could not
+ * Returns `[]` when the merged pair cannot be formed (a parent that could not be
  * read, a non-string column), because a rule that cannot be evaluated is not a
- * rule that failed — core validates on the merged config regardless.
+ * rule that failed — the internal handler validates on the merged config
+ * regardless.
  */
 function mergedCallingWindowIssues(
   parentCampaign: unknown,
@@ -472,7 +447,7 @@ function mergedCallingWindowIssues(
     }
   }
   // Nothing was overridden ⇒ the merged window IS the parent's, and the parent's
-  // stored config is not master's to re-litigate. Returning issues here would
+  // stored config is not this route's to re-litigate. Returning issues here would
   // make a campaign authored before the rule unretryable, with no affordance in
   // the retry dialog to clear it.
   if (!overridden) return [];
@@ -495,16 +470,16 @@ const columnMappingSchema = z.object({
  * The compare-and-swap that every destructive roster operation carries.
  *
  * Shared by the replace mode and the clear endpoint because it is one idea: the
- * caller states the roster size it believes it is destroying, and core refuses
- * under the campaign row lock if reality has moved. A colleague's top-up between
- * the operator seeing the screen and pressing the button is exactly the case
- * where "retire everything" is not what anyone meant, and it is invisible to
- * every other check.
+ * caller states the roster size it believes it is destroying, and the dialer
+ * runtime refuses under the campaign row lock if reality has moved. A
+ * colleague's top-up between the operator seeing the screen and pressing the
+ * button is exactly the case where "retire everything" is not what anyone meant,
+ * and it is invisible to every other check.
  *
- * Master cannot enforce it — it holds no contact table, and a count it fetched
- * would be stale by the time it acted on it, which is the same argument the
- * PATCH handler makes about campaign status. So master's job is to REQUIRE it
- * and forward it verbatim.
+ * This layer cannot enforce it: a count it fetched would be stale by the time it
+ * acted on it, which is the same argument the PATCH handler makes about campaign
+ * status. Only the check under the row lock is honest. So this layer's job is to
+ * REQUIRE it and forward it unchanged.
  *
  * Zero is a legitimate value (clearing an empty roster is a no-op the UI may
  * still issue), so the field is `nonnegative`, not `positive`.
@@ -520,25 +495,19 @@ const startIngestSchema = columnMappingSchema.extend({
    * What this import does to the roster the campaign already has.
    *
    * **Optional, defaulting to `append`, and that default is a deliberate
-   * decision rather than an omission.** The instinct after core's 083 is to
-   * require the caller to state a mode, on the grounds that an unversioned
-   * implicit default is what produced this class of bug. The instinct is right
-   * about the diagnosis and wrong about the remedy:
+   * decision rather than an omission.** The instinct, once a destructive mode
+   * exists, is to require the caller to state a mode, on the grounds that an
+   * unversioned implicit default is what produces this class of bug. The
+   * instinct is right about the diagnosis and wrong about the remedy:
    *
-   *  - What was actually missing was not a required field. It was any CONCEPT of
-   *    intent at all — no field, no record on the job row, no way for an
-   *    operator or a support engineer to ask afterwards which semantics ran.
-   *    That is fixed by the field existing, being persisted (migration 057) and
-   *    being echoed back on the job payload, not by making it mandatory.
-   *  - `append` is the non-destructive value and today's behaviour, so a caller
-   *    that says nothing gets exactly what it got yesterday. A missing mode can
-   *    never mean `replace`; the dangerous value is unreachable without saying
-   *    it.
-   *  - Requiring it would break every roster upload from the currently deployed
-   *    cusui for the whole window between master's deploy and cusui's, and
-   *    platform deploy order is core → master → cusui. Trading a guaranteed
-   *    outage for a property the fail-safe default already provides is a bad
-   *    trade.
+   *  - What a mode needs is not a required field. It is a CONCEPT of intent —
+   *    a field, a record on the job row, a way for an operator or a support
+   *    engineer to ask afterwards which semantics ran. That comes from the field
+   *    existing, being persisted (`agency_ingest_jobs.mode`) and being echoed
+   *    back on the job payload, not from making it mandatory.
+   *  - `append` is the non-destructive value, so a caller that says nothing
+   *    gets the safe behaviour. A missing mode can never mean `replace`; the
+   *    dangerous value is unreachable without saying it.
    *
    * What IS required is everything on the destructive branch: `mode: 'replace'`
    * must be stated explicitly, must carry `expected_contacts_total`, must name a
@@ -559,15 +528,16 @@ const analyzeSchema = z.object({
 });
 
 /**
- * Core's ceiling on the actor NAME it stores beside a retry (wire contract §2).
+ * The ceiling on the actor NAME stored beside a retry.
  *
- * Master truncates rather than refusing, and rather than leaving it to core:
- * the name is a label on an audit fact, so a long display name must never be the
- * reason a supervisor's retry does not happen. Note the deliberate difference
- * from the four lifecycle transitions on this same plugin, which implement no
- * ceiling at all ({@link AgencyCampaignTransitionRequest}) — there core does the
- * truncating and master's job is only to send what it knows. Here the contract
- * puts the ceiling on master's side of the seam, so master applies it.
+ * This route truncates rather than refusing, and rather than leaving it to the
+ * internal handler: the name is a label on an audit fact, so a long display name
+ * must never be the reason a supervisor's retry does not happen. Note the
+ * deliberate difference from the four lifecycle transitions on this same plugin,
+ * which implement no ceiling at all ({@link AgencyCampaignTransitionRequest}) —
+ * there the internal handler does the truncating and this layer only sends what
+ * it knows. For a retry the ceiling sits on this side of the call, so this route
+ * applies it.
  */
 const RETRY_ACTOR_NAME_MAX_CHARS = 255;
 
@@ -575,56 +545,56 @@ const RETRY_ACTOR_NAME_MAX_CHARS = 255;
  * `POST /campaigns/:id/retry` — the body a BROWSER may send.
  *
  * ── `.strict()`, and the attribution fields are why ────────────────────────
- * Core's request carries `agent_user_id` and `actor_name` as well (wire contract
- * §2), and both are **master's facts, taken from the authenticated session** —
- * the `sessionCreate` seam's rule in `agency-s2s-contract.fixture.json`, which
- * states the consequence plainly: a browser that could name the actor could act
- * as a colleague. Zod's default `.strip()` would silently drop a body-supplied
- * `agent_user_id`, which is *safe* but says nothing; a client sending one is
- * either confused or probing, and both are worth an answer. `.strict()` makes it
- * a 400 naming the field.
+ * The internal handler's request carries `agent_user_id` and `actor_name` as
+ * well, and both are **this layer's facts, taken from the authenticated
+ * session** — the same rule session create follows, for the same reason: a
+ * browser that could name the actor could act as a colleague. Zod's default
+ * `.strip()` would silently drop a body-supplied `agent_user_id`, which is
+ * *safe* but says nothing; a client sending one is either confused or probing,
+ * and both are worth an answer. `.strict()` makes it a 400 naming the field.
  *
- * That refusal is master's own and precedes any core call, so `errorMaskHook`
- * leaves it alone and the field name survives to the client — the ordering
- * invariant that hook's docstring states, and the reason the parent read below
- * happens after every schema check rather than before.
+ * That refusal is this layer's own and precedes any `callCore`, so
+ * `errorMaskHook` leaves it alone and the field name survives to the client —
+ * the ordering invariant that hook's docstring states, and the reason the parent
+ * read below happens after every schema check rather than before.
  *
  * The cost of strictness, stated: a future console field lands as a 400 until
- * master learns it. That is the same trade `forwardAllowedQuery` takes for the
- * spine's query params and it is right for the same reason — one first-party
- * console, hand-written calls, and a silently dropped field on a *create* is a
- * campaign authored differently from the one the operator described.
+ * this schema learns it. That is the same trade `forwardAllowedQuery` takes for
+ * the spine's query params and it is right for the same reason — one
+ * first-party console, hand-written calls, and a silently dropped field on a
+ * *create* is a campaign authored differently from the one the operator
+ * described.
  *
  * ── `selector` and `config_overrides` are opaque records on purpose ────────
- * The selector's vocabulary is core's (`spine-filters.ts`, DR-3) and it is
- * validated against the PARENT campaign's disposition catalog, which master does
- * not hold; the refusals are core's 400s carrying field-level `details`, so they
- * survive the mask intact. Mirroring that vocabulary here would be the parallel
- * filter language DR-3 exists to refuse, and master's copy would be the one that
- * drifts. `config_overrides` is different: it goes through
- * `validateAgencyCampaignConfig` at the handler, which is master's existing
- * campaign-config validator, not a new one.
+ * The selector's vocabulary is the dialer runtime's (`spine-filters.ts`) and it
+ * is validated against the PARENT campaign's disposition catalog; the refusals
+ * are the internal handler's 400s carrying field-level `details`, so they
+ * survive the mask intact. Mirroring that vocabulary here would be a parallel
+ * filter language, and this copy would be the one that drifts.
+ * `config_overrides` is different: it goes through
+ * `validateAgencyCampaignConfig` at the handler, the existing campaign-config
+ * validator, not a new one.
  */
 const retryCreateSchema = z.object({
   selector: z.record(z.unknown()),
-  // No maximum: core owns the campaign schema and its `name` column's ceiling,
-  // exactly as on `POST /campaigns`, which validates the field not at all. The
-  // `min(1)` is the one thing an ABSENT name already handles better — core
-  // defaults it to `<parent> — Retry <n>` — so an empty string can only be a
+  // No maximum: the dialer runtime owns the campaign schema and its `name`
+  // column's ceiling, exactly as on `POST /campaigns`, which validates the field
+  // not at all. The `min(1)` is the one thing an ABSENT name already handles
+  // better — the internal handler defaults it to `<parent> — Retry <n>` — so an empty string can only be a
   // client bug, and it would produce a campaign with no name in the picker.
   name: z.string().min(1).optional(),
   config_overrides: z.record(z.unknown()).optional(),
   /*
-   * Forwarded VERBATIM, and never invented — the exact opposite rule to
+   * Forwarded UNCHANGED, and never invented — the exact opposite rule to
    * `agent_user_id` two fields up, for the opposite reason. The actor must come
    * from the session because the body cannot be trusted to say who is acting;
    * the key must come from the body because only the client holds the intent it
    * identifies. A key minted here would be a fresh value on the client's second
    * attempt and would protect nothing, which is the whole trap the field exists
-   * to avoid (wire contract §2, obligation 3a).
+   * to avoid. An absent key is a legal unkeyed create.
    *
-   * `z.string()` and nothing more. Core owns the shape — 16..64 characters of a
-   * bounded alphabet, answered as a 400 with field-level `details` that survive
+   * `z.string()` and nothing more. The internal handler owns the shape —
+   * 16..64 characters of a bounded alphabet, answered as a 400 with field-level `details` that survive
    * the error mask — and a second copy of those bounds here is a second thing to
    * keep in step, on a field whose failure mode is silent duplication.
    */
@@ -646,39 +616,28 @@ const LOOKUP_TIMED_OUT = Symbol('agency-transition-actor-lookup-timeout');
 export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', sessionMiddleware);
   app.addHook('preHandler', tenantContextMiddleware);
-  // PORT NOTE (magick-agency): master's `requireCapability('agency')` is deleted — there is
-  // no governance, and the section-level `agency` gate is always on because the app IS
-  // agency (plan §3.2; lane A's `campaign-behavioral-settings.ts` header).
-  //
-  // PORT NOTE (magick-agency): every `proxyToCore({...})` below is `callCore({...})`
-  // (`../core-dispatch.ts`, decision B16): core's handler body runs in-process on the
-  // private core instance with the same method, path, query, body and tenant/account
-  // headers, minus the tenant API key (`resolveCoreApiKey` is gone). `metricPath` is still
-  // passed for call-site fidelity and ignored (its series belonged to the proxy).
-  //
-  // PORT NOTE (magick-agency): RBAC renames (`@magick-agency/contracts/rbac`, floors
-  // unchanged): `proxy.contact_lists.read` → `agency.campaigns.read`,
-  // `proxy.contact_lists.write` → `agency.campaigns.write`. The comments below keep master's
-  // names where they explain a floor.
+  // Every `callCore({...})` below (`../core-dispatch.ts`, decision B16) runs the internal
+  // handler in-process with the given method, path, query, body and tenant/account headers.
+  // `metricPath` is accepted and ignored.
   /*
    * ─── A PARAM MUST NOT ADD PATH SEGMENTS ──────────────────────────────────
    *
-   * Every route here interpolates `:id` / `:contactId` straight into a core path,
-   * and find-my-way hands the handler a percent-DECODED param — so `%2F` arrives
-   * as a real `/`.
+   * Every route here interpolates `:id` / `:contactId` straight into an internal
+   * handler path, and find-my-way hands the handler a percent-DECODED param — so
+   * `%2F` arrives as a real `/`.
    *
-   * The classic `..` traversal is NOT what this closes. `proxyToCore` already
+   * The classic `..` traversal is NOT what this closes. `callCore` already
    * refuses any path that does not survive a WHATWG parse unchanged
-   * (`src/proxy/safe-core-path.ts`), which covers `..`, `%2e%2e`, `.%2e`, `#` and
-   * `\` — strictly more than a character check could. What it deliberately does
-   * not refuse is a BARE EXTRA SLASH, because a path with no dot segments is an
-   * ordinary core path and has to be allowed.
+   * (`isUnsafeCorePath`, `src/proxy/safe-core-path.ts`), which covers `..`,
+   * `%2e%2e`, `.%2e`, `#` and `\` — strictly more than a character check could.
+   * What it deliberately does not refuse is a BARE EXTRA SLASH, because a path
+   * with no dot segments is an ordinary handler path and has to be allowed.
    *
    * On this plugin that is a live privilege escalation, because its routes do not
-   * share one floor. `GET /campaigns/:id` is `proxy.contact_lists.read`
-   * (**viewer**, 10) and interpolates `:id` as the LAST segment of its core path,
-   * while the attempt read is `agency.supervise` (**account_admin**, 30) and its
-   * media additionally needs the `agency.recording` capability. So:
+   * share one floor. `GET /campaigns/:id` is `agency.campaigns.read`
+   * (**viewer**, 10) and interpolates `:id` as the LAST segment of its handler
+   * path, while the attempt read is `agency.supervise` (**account_admin**, 30) and
+   * its media additionally needs the `agency.recording` capability. So:
    *
    *   GET /proxy/agency/campaigns/campaign-1%2Fattempts%2Fattempt-1
    *     → /agency-campaigns/campaign-1/attempts/attempt-1     (a viewer, reading
@@ -687,17 +646,17 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    *   GET /proxy/agency/campaigns/campaign-1%2Fattempts%2Fa%2Frecording
    *     → the recording BYTES, with no `agency.recording` in the request at all
    *
-   * That second one is the C2 finding this whole surface was built to close —
-   * "the capability gated *enabling* recording, not *hearing* it" — reopened by a
-   * slash. Same-tenant (core scopes by the tenant's key), so it is a governance
-   * bypass rather than a data-isolation break, but capabilities and role floors
-   * are what the customer is entitled and billed by.
+   * That second one is the hole this whole surface was built to close — "the
+   * capability gated *enabling* recording, not *hearing* it" — reopened by a
+   * slash. Same-tenant (the internal handler scopes by `x-mgkvc-tenant`), so it
+   * is a capability bypass rather than a data-isolation break, but capabilities
+   * and role floors are what the customer is entitled and billed by.
    *
    * ── A plugin hook, and the character class rather than a uuid check ────────
    *
-   * A hook because the defect is a hand-written route missing a guard the shared
-   * `passthrough` helper applies, and a per-handler check can be missed again; the
-   * next route registered here inherits this one.
+   * A hook because the defect is a hand-written route missing a guard, and a
+   * per-handler check can be missed again; the next route registered here
+   * inherits this one.
    *
    * The character class because these ids are uuids only by convention — nothing
    * in this plugin says so and its own suites use short opaque ids (`c1`,
@@ -707,15 +666,16 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    */
   app.addHook('preHandler', rejectPathEscapingParams());
 
-  // ─── Campaign CRUD — thin proxy, core owns the schema ──────────────────────
+  // ─── Campaign CRUD — thin pass-through, the dialer runtime owns the schema ──
 
   app.post('/campaigns', {
     preHandler: requirePermission('agency.campaigns.write'),
   }, async (request, reply) => {
-    // Config validation only. The body is still forwarded verbatim and core still
-    // owns the schema — master keeps no campaign copy (see the ingest-jobs
-    // migration on why two writable copies drift). What this catches is the set of
-    // shapes core stores happily and then behaves wrongly on; see
+    // Config validation only. The body is still forwarded as-is and the dialer
+    // runtime still owns the schema — this layer keeps no campaign copy (see the
+    // ownership-split comment at the top of this file on why two writable copies
+    // drift). What this catches is the set of shapes the dialer runtime stores
+    // happily and then behaves wrongly on; see
     // `agency-campaign-config.ts` for why it is a good error message rather than
     // enforcement.
     const configIssues = validateAgencyCampaignConfig(request.body);
@@ -726,27 +686,28 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     }
 
     // Defaults are applied on CREATE only. `disposition_catalog` has a `'[]'`
-    // column default that nothing ever seeded, so disposition was inert on every
-    // campaign the platform has made. A default here fixes that without deleting
+    // column default that nothing seeds, so disposition would be inert on every
+    // campaign created without one. A default here fixes that without deleting
     // the empty-catalog configuration, because an explicit `[]` is an opinion and
     // is left alone — see `withCampaignConfigDefaults`.
     const body = withCampaignConfigDefaults(request.body);
 
-    // MAG-138. After the shape check (a malformed body earns its 400 either way)
-    // and before anything is forwarded — the whole point is that core never sees
-    // a body that enables a capability this tenant does not have.
+    // The behavioral capabilities. After the shape check (a malformed body earns
+    // its 400 either way) and before anything is forwarded — the whole point is
+    // that the internal handler never sees a body that enables a capability this
+    // account does not have.
     //
-    // PORT NOTE (magick-agency): asserted on `body`, the exact object forwarded to
-    // core below, not on `request.body` (lane A's interface change 2). Master asserted
-    // before computing the defaults; `withCampaignConfigDefaults` is pure and adds only
-    // `disposition_catalog`, so moving the line below it changes no outcome and makes the
-    // asserted object the forwarded one. The target is the request's tenant and account:
-    // core stamps the new row with exactly those (`x-mgkvc-tenant` / `x-mgkvc-account`),
-    // so the account judged is the account that will own the campaign.
-    // PORT NOTE (magick-agency, Phase 8 review): with no account context lane A's settings read
-    // has no row to judge (`campaign-behavioral-settings.ts` answers 403 `capability_disabled`).
-    // Master's capability resolved at tenant level and forwarded, and core's `authMiddleware`
-    // answered 400 for the missing `x-mgkvc-account` — that observed answer is kept.
+    // Asserted on `body`, the exact object forwarded below, not on `request.body`.
+    // `withCampaignConfigDefaults` is pure and adds only `disposition_catalog`, so
+    // asserting after it changes no outcome and makes the asserted object the
+    // forwarded one. The target is the request's tenant and account: the internal
+    // handler stamps the new row with exactly those (`x-mgkvc-tenant` /
+    // `x-mgkvc-account`), so the account judged is the account that will own the
+    // campaign.
+    // With no account context the settings read has no row to judge
+    // (`campaign-behavioral-settings.ts` would answer 403 `capability_disabled`),
+    // so a missing account is answered first, as the 400 the internal handler's
+    // `authMiddleware` gives for a missing `x-mgkvc-account`.
     if (!request.accountId) return reply.code(400).send(missingAccountBody());
     if (!(await assertBehavioralCapabilitiesForConfig(request, reply, body, {
       tenantId: request.tenantId,
@@ -797,35 +758,34 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     // would leave every rule reachable one PATCH later.
     //
     // Cross-field rules see only what THIS body carries — a patch sending
-    // `calling_window_start` alone cannot be checked against a stored `end` master
-    // does not hold. That is the cost of not keeping a copy, and it is the right
-    // trade: the alternative is a second writable campaign in master.
+    // `calling_window_start` alone cannot be checked against a stored `end` this
+    // layer does not hold. That is the cost of not keeping a copy, and it is the
+    // right trade: the alternative is a second writable campaign here.
     //
-    // ── Editing a RUNNING campaign — the documented rule (`AD-P3-M-04` (d)) ────
-    // **Allowed, and master adds no campaign-status gate.** Pausing to change a
+    // ── Editing a RUNNING campaign — the documented rule ────────────────────────
+    // **Allowed, and this layer adds no campaign-status gate.** Pausing to change a
     // calling window is the opposite of what a compliance edit needs: the window is
     // most often wrong *while* the campaign is dialing outside it, and forcing a
     // pause there means either dialing on for the length of the round trip or
     // stopping a compliant campaign to fix a non-compliant one.
     //
-    // Master could not enforce such a gate honestly in any case — it holds no
+    // This layer could not enforce such a gate honestly in any case — it holds no
     // campaign copy, so it would have to GET the campaign first and act on a status
-    // that can change between the two calls. Core is where a status rule belongs,
-    // and core deliberately has none on PATCH (only `status` itself is unpatchable,
-    // so lifecycle stays with /start, /pause, /resume, /stop and a config edit can
-    // never race the pacing leader's own writes).
+    // that can change between the two calls. The internal handler is where a status
+    // rule belongs, and it deliberately has none on PATCH (only `status` itself is
+    // unpatchable, so lifecycle stays with /start, /pause, /resume, /stop and a
+    // config edit can never race the pacing leader's own writes).
     //
-    // **When the edit takes effect, stated precisely — the delivery plan's
-    // "applies to future attempts only" is close but not exact, and the difference
-    // is the kind rule 3 is about.** Core's pacing loop re-reads the campaign every
+    // **When the edit takes effect, stated precisely — "applies to future attempts
+    // only" is close but not exact.** The pacing loop re-reads the campaign every
     // tick (`findActive()` / `findById()`, no cache), so:
     //  - a contact NOT yet dialed is planned against the new config from the next
-    //    tick — the ordinary case, and the one the plan describes;
+    //    tick — the ordinary case;
     //  - an attempt ALREADY dispatched carries the campaign snapshot taken when it
     //    was dialed (`cmd.campaign`), so its own retry decision uses the OLD policy;
     //  - EXCEPT down the reaper's path, which joins `c.retry_policy` live
-    //    (`agency.repository.ts:835`) and therefore resolves against the NEW policy
-    //    for an attempt dialed before the edit.
+    //    (`findLapsedWrapups` in `agency.repository.ts`) and therefore resolves
+    //    against the NEW policy for an attempt dialed before the edit.
     // So "future attempts only" holds for the dial path and not for the reaper.
     // Nothing in flight is retro-actively re-planned either way, which is the
     // property that makes editing a live campaign safe to offer.
@@ -836,31 +796,31 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
         .send({ error: 'Validation Error', details: issuesToDetails(configIssues) });
     }
 
-    // MAG-138, and it has to be here as well as on create for the same reason the
-    // config validation is: a rule enforced only on POST is a rule one PATCH away
-    // from being bypassed. A campaign created with recording off can otherwise be
-    // patched to `record_calls: true` by a tenant that never had the capability.
+    // The behavioral capabilities, and they have to be checked here as well as on
+    // create for the same reason the config validation is: a rule enforced only on
+    // POST is a rule one PATCH away from being bypassed. A campaign created with
+    // recording off can otherwise be patched to `record_calls: true` by an account
+    // that never had the capability.
     //
-    // PORT NOTE (magick-agency): the forwarded body is bound ONCE and that same object is
-    // both asserted and forwarded (lane A's interface change 2). The target is the request's
-    // tenant and account, and it cannot differ from the campaign's owner: core's PATCH
-    // handler runs `requireOwned`, which answers 404 unless the campaign's `tenant_id` AND
-    // `account_id` equal the `x-mgkvc-tenant` / `x-mgkvc-account` headers `callCore` sets from
-    // these same two values. So a body asserted against account Y's settings can only ever
-    // write a campaign that account Y owns; reading the row first to learn its account
-    // would be a second read that can only agree.
+    // The forwarded body is bound ONCE and that same object is both asserted and
+    // forwarded. The target is the request's tenant and account, and it cannot
+    // differ from the campaign's owner: the internal PATCH handler runs
+    // `requireOwned`, which answers 404 unless the campaign's `tenant_id` AND
+    // `account_id` equal the `x-mgkvc-tenant` / `x-mgkvc-account` headers
+    // `callCore` sets from these same two values. So a body asserted against
+    // account Y's settings can only ever write a campaign that account Y owns;
+    // reading the row first to learn its account would be a second read that can
+    // only agree.
     //
-    // PORT NOTE (magick-agency, Phase 8 review): `request.body` is master's own line (master
-    // `:995`), kept. The brief's "pass the schema-PARSED config, never `request.body`" is met
-    // because it is ONE reference: the object `validateAgencyCampaignConfig` checked above is
-    // the object asserted here and the object forwarded below (core parses it again). A body
-    // that enables a capability this account lacks is refused and nothing reaches core
-    // (`proxy-agency-campaign-behavioral-capabilities.routes.test.ts`, the PATCH twin cases).
+    // `request.body` is safe to use here because it is ONE reference: the object
+    // `validateAgencyCampaignConfig` checked above is the object asserted here and
+    // the object forwarded below (the internal handler parses it again). A body
+    // that enables a capability this account lacks is refused and nothing is
+    // forwarded (`proxy-agency-campaign-behavioral-capabilities.routes.test.ts`,
+    // the PATCH twin cases).
     const patchBody: unknown = request.body;
-    // PORT NOTE (magick-agency, Phase 8 review): with no account context lane A's settings read
-    // has no row to judge (`campaign-behavioral-settings.ts` answers 403 `capability_disabled`).
-    // Master's capability resolved at tenant level and forwarded, and core's `authMiddleware`
-    // answered 400 for the missing `x-mgkvc-account` — that observed answer is kept.
+    // No account context: answered as the internal handler's `authMiddleware` 400 for a
+    // missing `x-mgkvc-account`, before the settings read (which has no row to judge).
     if (!request.accountId) return reply.code(400).send(missingAccountBody());
     if (!(await assertBehavioralCapabilitiesForConfig(request, reply, patchBody, {
       tenantId: request.tenantId,
@@ -868,11 +828,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     }))) return;
 
     const result = await callCore({
-      // PATCH, per design §8 and confirmed with core. The proxy client's method
-      // union and its body-serialisation gate were both widened for this — the
-      // gate is the one that matters, because a method missing from it sends
-      // the request with NO body and core answers 200 to a write that did
-      // nothing.
+      // PATCH, and the body must travel with it: a PATCH sent with NO body is a
+      // write that does nothing and still reads as a success.
       method: 'PATCH',
       path: `/agency-campaigns/${request.params.id}`,
       body: patchBody,
@@ -884,19 +841,16 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   });
 
   /**
-   * The one route on this plugin that is NOT a verbatim passthrough, and the
-   * only place it could be (MAG-148 + MAG-141).
+   * The one route on this plugin that is NOT a plain pass-through.
    *
-   * Core's stats payload declares two members core states it cannot produce —
-   * `agents[].agent_name` (identity; core has no user table, D3) and the
-   * `credits_low` stall arm (`AGENCY_CORE_STALL_CODES` filters it out in
-   * executable form). Both were dead on the wire because nothing filled them.
-   * This hop is the only service that holds either fact.
+   * The internal handler's stats payload declares `agents[].agent_name` and
+   * leaves it unfilled: it reads the dialer tables, and an agent's display name
+   * is a user-directory fact. This route fills it.
    *
-   * `enrichAgencyCampaignStats` is a spread over core's body, never a
-   * reconstruction, so everything else — including fields core adds later —
-   * arrives byte-identical. It also never throws: a failed lookup degrades the
-   * enrichment, because cusui polls this every 5 seconds.
+   * `enrichAgencyCampaignStats` is a spread over the handler's body, never a
+   * reconstruction, so everything else — including fields the handler adds
+   * later — arrives byte-identical. It also never throws: a failed lookup
+   * degrades the enrichment, because the console polls this every 5 seconds.
    */
   app.get<{ Params: { id: string } }>('/campaigns/:id/stats', {
     preHandler: requirePermission('agency.campaigns.read'),
@@ -911,28 +865,25 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     const body = await enrichAgencyCampaignStats(result.body, {
       tenantId: request.tenantId!,
       status: result.status,
-      // PORT NOTE (magick-agency): `creditsLowConnectsThreshold` is deleted with the
-      // `credits_low` overlay (plan §2, billing removed; lane B2 "Stats enrichment").
-      // `agents[].agent_name` is the only enrichment left. `agents_peak` (declared on
-      // master's wire) has no producer here or in core and stays unserved, as in master.
+      // `agents[].agent_name` is the only enrichment. `agents_peak` has no producer
+      // and stays unserved (see `agency-campaign-wire.ts`).
     });
     return reply.code(result.status).send(body);
   });
 
   /**
-   * GET /proxy/agency/campaigns/:id/stats/series — the campaign's own trend
-   * (`86d45k0bk`).
+   * GET /proxy/agency/campaigns/:id/stats/series — the campaign's own trend.
    *
-   * A verbatim passthrough of core's bucketed series:
+   * A plain pass-through of the internal handler's bucketed series:
    * `{ campaign_id, bucket, timezone, buckets: [{ bucket_start, attempts,
    * connected, successes, talk_seconds, wrapup_seconds }] }`. See
    * {@link AgencyCampaignStatsSeries} for what each member means and, more
-   * importantly, for the two things this hop must NOT do to it — normalise
+   * importantly, for the two things this route must NOT do to it — normalise
    * `bucket_start` (a `YYYY-MM-DD` calendar day, not an instant) and add rates.
    *
    * ── The floor is `agency.supervise`, and the sibling above is not ──────────
-   * `GET /campaigns/:id/stats` next door floors at `proxy.contact_lists.read`
-   * (`viewer`, 10) — deliberately, and MAG-136 pinned that boundary against
+   * `GET /campaigns/:id/stats` next door floors at `agency.campaigns.read`
+   * (`viewer`, 10) — deliberately, and a test pins that boundary against
    * exactly the "tidy up and make them match" change this route looks like an
    * argument for. So the difference has to be stated rather than inferred:
    *
@@ -947,16 +898,16 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    *    loaded.
    *
    * `agency.supervise` already exists and already carries this meaning, so there
-   * is no new permission and no governance catalog entry: a second gate to keep
-   * aligned is a second gate to drift (MAG-157's reasoning, declining a
-   * permission for the activity trail). The floor is asserted twice — from the
+   * is no new permission: a second gate to keep aligned is a second gate to
+   * drift (the same reasoning that declined a new permission for the activity
+   * trail). The floor is asserted twice — from the
    * source in `proxy-agency-campaigns.routes.test.ts`, and **by execution** in
    * `proxy-agency-campaign-series.routes.test.ts`, because a source-text table
    * cannot see a `requirePermission` that was deleted along with its own row.
    *
    * ── The `:id` here is not the escape hatch it looks like ──────────────────
-   * This route interpolates `:id` in the MIDDLE of core's path, so it cannot be
-   * lengthened into another core collection. The direction that matters is the
+   * This route interpolates `:id` in the MIDDLE of the handler path, so it cannot
+   * be lengthened into another collection. The direction that matters is the
    * other one: `GET /campaigns/:id` is floored at `viewer` and interpolates its
    * `:id` LAST, so `:id = c%2Fstats%2Fseries` would reach this read two role
    * levels below its own floor. That is closed by the plugin-level
@@ -964,57 +915,42 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    * which is precisely the escalation `helpers/path-params.ts` documents, now
    * with one more route on the high side of it.
    *
-   * ── Master validates the window; core remains the authority ───────────────
+   * ── This route validates the window; the internal handler is the authority ─
    * See {@link CAMPAIGN_SERIES_MAX_WINDOW_DAYS} and {@link parseSeriesInstant}
-   * for why master carries a copy of core's rules and why it must never be the
-   * stricter of the two, and {@link resolveSeriesQuery} for the two ways it was
-   * stricter until that function existed.
+   * for why this layer carries a copy of the handler's rules and why it must
+   * never be the stricter of the two, and {@link resolveSeriesQuery} for the two
+   * ways it would otherwise be stricter.
    *
-   * ── A 404 here has TWO causes, and master deliberately merges them ─────────
-   * Written down because the client cannot tell them apart and does not need to:
+   * ── A 404 here ────────────────────────────────────────────────────────────
+   * The internal handler's own refusal, `{ code: 'campaign_not_found' }`: the
+   * campaign is in another tenant or does not exist. `errorMaskHook` passes every
+   * 4xx through untouched (it masks only 5xx bodies), so the body arrives intact,
+   * and the hook never rewrites `reply.statusCode` in any case.
    *
-   *  - **core's own refusal.** `{ code: 'campaign_not_found' }` — the campaign is
-   *    in another tenant or does not exist. That code is in
-   *    `FORWARDABLE_ERROR_CODES` and `isStructuredClientError` forwards on an
-   *    allow-listed `code` independently of `details`, so the body arrives intact.
-   *  - **core does not serve this route yet.** Master deployed ahead of core, or
-   *    core rolled back: core's Fastify answers its own `{ error: 'Not Found' }`
-   *    with no `code` and no `details`. `'Not Found'` is not in
-   *    `FORWARDABLE_ERROR_LABELS` (which holds only `'Feature Not Enabled'`), so
-   *    `errorMaskHook` replaces the body with the generic support-ticket one.
-   *    **The 404 STATUS survives** — the hook rewrites payloads and never
-   *    `reply.statusCode`.
-   *
-   * So the client contract on this route is the STATUS, not a code: any 404 means
+   * The client contract on this route is still the STATUS, not a code: any 404 means
    * "there is no series to draw", and the console hides the panel rather than
-   * rendering an error. Both alternatives were considered and are worse. Adding
-   * `'Not Found'` to the forwardable LABELS unmasks 404s on every one of master's
-   * ~95 proxied routes to spare one chart a panel. Authoring a master-side code
-   * for the bare 404 invents cross-service vocabulary for a window that policy
-   * says should not exist — deploy order is core → master → cusui, so core
-   * carries this route before master is asked for it, and the chart that reads it
-   * ships after master — and it leaves this route matching on core's 404 body
-   * shape forever, for a caller that never existed.
+   * rendering an error.
    */
   app.get<{ Params: { id: string } }>('/campaigns/:id/stats/series', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    // Refused before the core call, so the 400 is ours and not masked as a proxy
+    // Refused before `callCore`, so the 400 is ours and not masked as a handler
     // error, and so an unknown param is a signal rather than a silent drop.
     // Used for THAT gate only — the values it resolves are discarded below.
     const forwarded = forwardAllowedQuery(request.query, CAMPAIGN_SERIES_QUERY_PARAMS);
     if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
 
-    // Read core's way, not `forwardAllowedQuery`'s: it joins a repeated param with
-    // a comma (right for the spine's multi-value filters, wrong for these three)
-    // and forwards a padded value untrimmed, and either one made master refuse a
-    // request core answers. `resolveSeriesQuery` is the mirror of core's
-    // `singleParam` — first of a repeat, trimmed, blank means absent — and its
-    // docstring carries the two cases and why master may not be stricter.
+    // Read the internal handler's way, not `forwardAllowedQuery`'s: it joins a
+    // repeated param with a comma (right for the spine's multi-value filters,
+    // wrong for these three) and forwards a padded value untrimmed, and either one
+    // would make this route refuse a request the handler answers.
+    // `resolveSeriesQuery` mirrors the handler's `singleParam` — first of a
+    // repeat, trimmed, blank means absent — and its docstring carries the two
+    // cases and why this layer may not be stricter.
     const query = resolveSeriesQuery(request.query);
 
     // Validated against the RESOLVED query rather than `request.query`, so the
-    // string the schema measures is the string core will re-read.
+    // string the schema measures is the string the handler will re-read.
     const parsed = campaignSeriesQuerySchema.safeParse(query);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
@@ -1023,9 +959,9 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     const result = await callCore({
       method: 'GET',
       path: `/agency-campaigns/${request.params.id}/stats/series`,
-      // The resolved params, NOT `parsed.data`: master validated them and has no
-      // opinion about them. In particular `bucket` is forwarded absent when the
-      // caller omitted it, so `day` stays CORE's default and is echoed on the
+      // The resolved params, NOT `parsed.data`: this route validated them and has
+      // no opinion about them. In particular `bucket` is forwarded absent when the
+      // caller omitted it, so `day` stays the HANDLER's default and is echoed on the
       // response — injecting it here would be a second declaration of the
       // default, and the one that drifts is the one no query exercises.
       query,
@@ -1033,11 +969,11 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       accountId: request.accountId,
       metricPath: '/agency-campaigns/:id/stats/series',
     });
-    // Verbatim, and deliberately NOT through `enrichAgencyCampaignStats`: master
-    // owns nothing on this payload. There is no agent row to name and no stall to
-    // diagnose — a series is a record of what happened, not a live diagnosis — so
-    // the enrichment would be a database read per poll that adds no field. A core
-    // error reaches the error mask exactly as core wrote it.
+    // Unchanged, and deliberately NOT through `enrichAgencyCampaignStats`: this
+    // layer adds nothing to this payload. There is no agent row to name and no
+    // stall to diagnose — a series is a record of what happened, not a live
+    // diagnosis — so the enrichment would be a database read per poll that adds no
+    // field. A handler error reaches the error mask exactly as the handler wrote it.
     return reply.code(result.status).send(result.body);
   });
 
@@ -1052,42 +988,36 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    * could pass another tenant's campaign id and enumerate its audit rows — the
    * exact shape of the cross-tenant defects two reviews already found.
    *
-   * The check is a proxy read of the campaign, because master keeps no campaign
-   * table (see the ownership-split comment at the top of this file). Core's
-   * `requireOwned` answers 404 for a campaign in another tenant or account, and
-   * that status is forwarded verbatim — a cross-tenant id and a nonexistent one
-   * must stay indistinguishable, or the response is a campaign-id oracle.
+   * The check is the internal handler's campaign read, because this layer keeps
+   * no campaign copy (see the ownership-split comment at the top of this file).
+   * The handler's `requireOwned` answers 404 for a campaign in another tenant or
+   * account, and that status is forwarded unchanged — a cross-tenant id and a
+   * nonexistent one must stay indistinguishable, or the response is a
+   * campaign-id oracle.
    *
-   * It also returns the account CORE stamped on the campaign, which is what
-   * core's audit rows carry.
+   * It also returns the account stamped on the campaign row, which is what the
+   * dialer runtime's `audit_logs` rows carry.
    *
-   * PORT NOTE (magick-agency): the probe is still core's `GET /agency-campaigns/:id`,
-   * now run in-process through `callCore`, rather than `agencyCampaignRepository.findById`
-   * plus a copy of `requireOwned`'s rule here. Reasons: (1) it IS core's rule — the
-   * handler runs core's `gate` (the `agency_dialer_enabled` flag, so a flag-off account
-   * is refused here exactly as master's probe was) and core's `requireOwned` (tenant AND
-   * account), and answers core's own 404 body; a second copy of that rule in this file is
-   * a second thing to keep in step; (2) master's code shape is kept, so the suites'
-   * `callCore` assertions stay master's. The account it returns is the formatted row's
-   * `account_id` (`formatAgencyCampaignResponse` spreads the row), i.e. the campaign row's
-   * account, read in-process AFTER the ownership proof — the value lane B2's
-   * `ActivityQuery.accountId` requires (B2 Phase 8 carry-forward).
+   * The probe is `GET /agency-campaigns/:id` through `callCore`, rather than
+   * `agencyCampaignRepository.findById` plus a copy of `requireOwned`'s rule
+   * here, because the handler already applies the whole rule: its `gate` (the
+   * `agency_dialer_enabled` flag, so a flag-off account is refused here too) and
+   * its `requireOwned` (tenant AND account), answering its own 404 body. A second
+   * copy of that rule in this file would be a second thing to keep in step. The
+   * account it returns is the formatted row's `account_id`
+   * (`formatAgencyCampaignResponse` spreads the row), read AFTER the ownership
+   * proof — the value `ActivityQuery.accountId` requires.
    *
-   * Deleted with the hop, each with its reason:
-   *  - the try/catch and its `{ verified: false }` "core unreachable" outcome, plus the
-   *    `unverifiedAccountScope` read it fed: `callCore` throws only when the handler table
-   *    was never built (a wiring defect), so there is no outage to degrade around, and B2
-   *    deleted the unverified scoping from `fetchActivityPage`. A throw now propagates (a
-   *    500), the posture master already took for its own database;
-   *  - `timeoutMs: ACTIVITY_OWNERSHIP_PROBE_TIMEOUT_MS` and master's paragraph on "its own
-   *    timeout": it bounded the undici socket (300s header timeout). `callCore` installs no
-   *    signal, and the in-process read has nothing to fall back to on expiry — the
-   *    unverified path that a timeout used to land on is gone;
-   *  - the `?? request.accountId ?? 'default'` fallbacks: core's `'default'` was its
-   *    `VARCHAR(100)` column's literal; agency's `account_id` is a NOT NULL `uuid`, and a
-   *    probe that reached 200 passed `requireOwned`, which matched that column. A body
-   *    without it is a defect, refused rather than guessed (a guess would be a `22P02` or
-   *    the wrong account's trail).
+   * Failure posture:
+   *  - `callCore` throws only when the handler table was never built (a wiring
+   *    defect), so there is no outage to degrade around: a throw propagates as a
+   *    500;
+   *  - no timeout: `callCore` installs no signal, and there is no degraded path a
+   *    timeout could fall back to;
+   *  - no fallback for a missing `account_id`: the column is a NOT NULL `uuid`,
+   *    and a probe that reached 200 passed `requireOwned`, which matched it. A
+   *    body without it is a defect, refused rather than guessed (a guess would be
+   *    a `22P02` or the wrong account's trail).
    */
   const requireOwnedCampaign = async (
     request: FastifyRequest<{ Params: { id: string } }>,
@@ -1101,14 +1031,14 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       metricPath: '/agency-campaigns/:id',
     });
     if (result.status >= 400) {
-      // A REFUSAL is core's answer and is forwarded verbatim — a cross-tenant id
+      // A REFUSAL is the handler's answer and is forwarded unchanged — a cross-tenant id
       // and a nonexistent one must stay indistinguishable.
       await reply.code(result.status).send(result.body);
       return null;
     }
     const accountId = extractCampaignField(result.body, 'account_id');
     if (!accountId) {
-      throw new Error('agency campaign ownership probe: core answered without the campaign\'s account_id');
+      throw new Error('agency campaign ownership probe: the internal handler answered without the campaign\'s account_id');
     }
     return {
       accountId,
@@ -1119,16 +1049,17 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   /**
    * GET /proxy/agency/campaigns/:id/activity — one merged, time-ordered trail.
    *
-   * `audit.read`, settled on MAG-157 (option 2): the floor dropped to
-   * `account_admin`, the same floor as `agency.supervise`, so the supervisor who
-   * controls a campaign can read its trail. No new permission and no governance
-   * catalog key — a second gate to keep aligned is a second gate to drift.
+   * `audit.read`, floored at `account_admin`, the same floor as
+   * `agency.supervise`, so the supervisor who controls a campaign can read its
+   * trail. No new permission — a second gate to keep aligned is a second gate to
+   * drift.
    *
-   * ── Both stores write some of the same action names, and that is right ─────
-   * `agency_campaign.paused` appears from master (a supervisor pressed Pause)
-   * and from core (the campaign actually transitioned). Neither is redundant and
-   * `source` is what tells them apart. The rows only core has — the auto-pause
-   * with its measured rate — are what a compliance reviewer came for.
+   * ── Both tables hold some of the same action names, and that is right ─────
+   * `agency_campaign.paused` appears in `platform_audit_log` (a supervisor
+   * pressed Pause) and in `audit_logs` (the campaign actually transitioned).
+   * Neither is redundant and `source` is what tells them apart. The rows only
+   * the dialer runtime writes — the auto-pause with its measured rate — are what
+   * a compliance reviewer came for.
    */
   app.get<{ Params: { id: string } }>('/campaigns/:id/activity', {
     preHandler: requirePermission('audit.read'),
@@ -1160,9 +1091,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     const page = await fetchActivityPage({
       tenantId: request.tenantId!,
       campaignId: request.params.id,
-      // PORT NOTE (magick-agency): the campaign row's own account, proven above (B2
-      // carry-forward). Master's `owned.verified ? coreAccountId : unverifiedAccountScope`
-      // branch is gone with the unverified outcome (see `requireOwnedCampaign`).
+      // The campaign row's own account, proven above (see `requireOwnedCampaign`).
       accountId: owned.accountId,
       ...(query.action ? { actions: query.action } : {}),
       ...(query.from ? { from: new Date(query.from) } : {}),
@@ -1182,13 +1111,11 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       partial_reason: page.partial_reason,
       retention: page.retention,
       // The vocabulary the `?action=` filter can be built from, served with the
-      // data it filters. Master is the only process that knows both stores'
+      // data it filters. The server is the only side that knows both tables'
       // action names, so a client keeping its own copy is keeping a copy of
       // something it cannot check — see `agency-activity-actions.ts`.
       //
-      // On every response, including a degraded one: the list is static and
-      // does not depend on core, and a filter that disappeared whenever core
-      // did would take away the control a supervisor needs precisely then.
+      // On every response: the list is static and depends on neither read.
       available_actions: CAMPAIGN_ACTIVITY_ACTIONS,
     });
   });
@@ -1199,27 +1126,19 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    * CSV because that is the format a compliance request actually arrives asking
    * for, and the merge is already assembled here.
    *
-   * ── This one REFUSES when core is degraded, where the JSON route degrades ──
-   * The screen can carry a banner saying the trail is incomplete; a file that
-   * leaves the building cannot. An export that silently omitted core's half —
+   * ── The file is whole or the request fails ────────────────────────────────
+   * The screen could carry a banner saying the trail is incomplete; a file that
+   * leaves the building cannot. An export that silently omitted the Dialer half —
    * every status transition and every auto-pause — would be indistinguishable
    * from a complete one to whoever opens it next, possibly months later and in
-   * another organisation. So the refusal is the honest answer, and it names the
-   * reason so the operator knows to retry rather than to conclude there is
-   * nothing to export.
-   *
-   * The refusal is **424, not 503**, and the status is load-bearing rather than
-   * pedantic: `errorMaskHook` masks every 5xx unconditionally, so a 503 would
-   * reach the operator as "contact support and quote this request id" — status
-   * intact, remedy destroyed. A 424 is master's own 4xx (no core call records
-   * that status; the audit read passes `recordCoreErrors: false` precisely so it
-   * cannot), so the sentence that explains what to do survives.
+   * another organisation. `fetchActivityPage` returns a whole page or throws
+   * (`partial` is always `false`), so a failed read fails the export.
    *
    * ── Two ways to stop early, and both must say so ──────────────────────────
    * The row ceiling is a runaway guard, not a routine limit (a campaign's
    * control trail is tens to low hundreds of rows); the wall-clock budget bounds
-   * the case the ceiling cannot, a core that answers slowly rather than failing,
-   * where the loop stays legal and simply never ends. Either way the file that
+   * the case the ceiling cannot, a database that answers slowly rather than
+   * failing, where the loop stays legal and simply runs long. Either way the file that
    * results is short, and a short compliance export handed over as a complete
    * one is the failure this whole surface exists to prevent — so both set
    * `X-Activity-Truncated`, which is the header an already-shipped client
@@ -1231,17 +1150,9 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    * row-ceiling path alone: on a deadline the ceiling is not what stopped the
    * export, and reporting it would tell the operator the file holds 5000 rows
    * when it may hold 300. The two need different remedies too — "narrow the date
-   * range" fixes a ceiling hit and does nothing for a slow dependency.
+   * range" fixes a ceiling hit and does nothing for a slow database.
    *
-   * PORT NOTE (magick-agency): the 424 `partial_trail_unavailable` refusal and the
-   * mid-page `core_deadline` truncation are deleted. Both read a degraded page
-   * (`page.partial` / `partial_reason`) that `fetchActivityPage` can no longer
-   * return: lane B2 collapsed the core half into a direct `audit_logs` read, so a page
-   * is whole or the read throws (always `partial: false`, `partial_reason: null`).
-   * The per-page `coreTimeoutMs` (and `ACTIVITY_EXPORT_MIN_PAGE_TIMEOUT_MS`) bounded
-   * the S2S socket and is gone with it. KEPT: the row ceiling and the wall-clock
-   * budget checked between pages — a slow database still makes a long drain, and the
-   * `time_limit` truncation headers still describe that honestly.
+   * The budget is checked between pages only; there is no per-page timeout.
    */
   app.get<{ Params: { id: string } }>('/campaigns/:id/activity.csv', {
     preHandler: requirePermission('audit.read'),
@@ -1264,9 +1175,9 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       ...(query.from ? { from: new Date(query.from) } : {}),
       ...(query.to ? { to: new Date(query.to) } : {}),
       // Not the interactive page size: this loop is draining a trail, not
-      // rendering one, and each page is a master SELECT plus an S2S round trip
-      // plus an identity lookup, in series. At 99 a full 5000-row export was ~51
-      // of those; at 500 it is ~10.
+      // rendering one, and each page is two audit SELECTs plus an identity
+      // lookup. At 99 a full 5000-row export would be ~51 of those; at 500 it
+      // is ~10.
       limit: ACTIVITY_EXPORT_PAGE_SIZE,
       // Nothing here reads `total`, and asking for it costs a `COUNT(*)` over a
       // partitioned table on BOTH sides of the merge, once per page.
@@ -1284,12 +1195,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     const deadline = Date.now() + ACTIVITY_EXPORT_TIME_BUDGET_MS;
 
     while (cursor) {
-      // PORT NOTE (magick-agency): master handed the remaining budget DOWN to the page
-      // (`coreTimeoutMs`, floored for the first page) because one slow S2S response
-      // could otherwise run to undici's 300s header timeout; and it then branched on the
-      // page's `core_deadline` (truncate) and `partial` (424). All three were about the
-      // HTTP hop and are deleted (see the route's docstring). The between-pages deadline
-      // check at the bottom of the loop is kept.
+      // No per-page budget: the deadline is checked between pages, at the bottom
+      // of the loop.
       const page = await fetchActivityPage({ ...filters, cursor });
 
       retention = page.retention;
@@ -1327,9 +1234,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
         campaignId: request.params.id,
         campaignName: owned.name,
         tenantId: request.tenantId!,
-        // PORT NOTE (magick-agency): master's `owned.coreAccountId ?? 'unverified'`
-        // fallback is gone with the unverified probe outcome; the account is the
-        // campaign row's, always present.
+        // The campaign row's account, always present (see `requireOwnedCampaign`).
         accountId: owned.accountId,
         actions: query.action ?? null,
         from: query.from ?? null,
@@ -1358,13 +1263,13 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   });
 
 
-  // ── The attempt spine: what the campaign did, and to whom (MAG-159) ────────
+  // ── The attempt spine: what the campaign did, and to whom ────────────────────
   //
-  // Thin proxies. Unlike `/activity` above there is no second store to merge and
-  // no aggregation — core owns `agency_call_attempts` and `agency_contacts`
-  // outright, and its own `requireOwned` answers 404 for a campaign in another
-  // tenant or account, which is forwarded verbatim so a cross-tenant id and a
-  // nonexistent one stay indistinguishable.
+  // Thin pass-throughs. Unlike `/activity` above there is no second table to
+  // merge and no aggregation — the dialer runtime owns `agency_call_attempts` and
+  // `agency_contacts` outright, and the internal handler's `requireOwned` answers
+  // 404 for a campaign in another tenant or account, which is forwarded unchanged
+  // so a cross-tenant id and a nonexistent one stay indistinguishable.
   //
   // ── Gated on `agency.supervise`, not on `audit.read` ───────────────────────
   // The two are the same ROLE floor (`account_admin`), so this is not about who
@@ -1376,18 +1281,19 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   //
   // ── The three privacy decisions, made here rather than left to the render ──
   //
-  // 1. `context` — the contact's verbatim CSV columns — is NOT reachable through
-  //    either list or either export. Core serves it only on the single-contact
-  //    drill-down, so the exclusion is structural rather than a column somebody
-  //    remembered to leave out. Columns an operator marked `Ignore` at ingest
-  //    never reach the stored JSONB at all (`agency-csv-ingest.ts` drops them
-  //    before the row is written), so the UX spec's §E.3 warning — "a field in
-  //    `context` is a field on an agent's screen the moment anyone changes the
-  //    render rules" — is enforced where it should be. `context_display.hidden`
-  //    remains a render rule and the console honours it on the drill-down.
+  // 1. `context` — the contact's raw CSV columns — is NOT reachable through
+  //    either list or either export. The internal handler serves it only on the
+  //    single-contact drill-down, so the exclusion is structural rather than a
+  //    column somebody remembered to leave out. Columns an operator marked
+  //    `Ignore` at ingest never reach the stored JSONB at all
+  //    (`agency-csv-ingest.ts` drops them before the row is written), so the
+  //    rule that "a field in `context` is a field on an agent's screen the
+  //    moment anyone changes the render rules" is enforced where it should be.
+  //    `context_display.hidden` remains a render rule and the console honours it
+  //    on the drill-down.
   //
   // 2. **Phone numbers are served in full, and the export needs no extra gate.**
-  //    §C.4's masking is not implemented anywhere yet; inventing a second
+  //    Phone masking is not implemented anywhere yet; inventing a second
   //    masking rule for this one surface — one the agent floor would not share —
   //    is how two rules drift. The `agency.supervise` floor is `account_admin`,
   //    which is also the floor for the DNC list and the roster upload, so the
@@ -1395,8 +1301,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   //    that is answered with **attribution rather than a second permission**:
   //    every export writes an audit row naming the actor, the filters and the
   //    row count. A second gate to keep aligned with the first is a second gate
-  //    to drift — the same reasoning MAG-157 used when it declined to mint a
-  //    permission for the activity trail.
+  //    to drift — the same reasoning that declined to mint a permission for the
+  //    activity trail.
   //
   // 3. `notes` — agent-typed free text — ARE included, on the list and in the
   //    export. They are deliberately excluded from the AUDIT trail (an audit row
@@ -1408,7 +1314,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   app.get<{ Params: { id: string } }>('/campaigns/:id/attempts', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    // Refused before the core call, so the 400 is not masked as a proxy error.
+    // Refused before `callCore`, so the 400 is not masked as a handler error.
     const forwarded = forwardAllowedQuery(request.query, [...ATTEMPT_QUERY_PARAMS, ...PAGING_QUERY_PARAMS]);
     if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
 
@@ -1420,11 +1326,11 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       accountId: request.accountId,
       metricPath: '/agency-campaigns/:id/attempts',
     });
-    // Core can only serve the agent's USER id — it has no user table (D3).
-    // Master is the only service that can turn that into a name, and a column
-    // of UUIDs is not a column a supervisor can read or filter by.
+    // The internal handler serves only the agent's USER id; names come from the
+    // user directory, resolved here, and a column of UUIDs is not a column a
+    // supervisor can read or filter by.
     // Non-2xx bodies pass through untouched so an error reaches the error mask
-    // exactly as core wrote it.
+    // exactly as the handler wrote it.
     const body = result.status >= 200 && result.status < 300
       ? await enrichAttemptAgentNames(result.body, request.tenantId!, resolveAgentNames, (err) => {
         log.warn(
@@ -1437,13 +1343,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   });
 
   /**
-   * The roster.
-   *
-   * Note the path already exists on core as an S2S **POST** (roster ingest, on a
-   * different plugin behind `INTERNAL_S2S_TOKEN`). They do not collide, and the
-   * shared shape is deliberate: this is the read of what that write produced —
-   * which is the point of the whole ticket, since `/agency/campaigns/:id/contacts`
-   * in the console has until now been an upload form despite its name.
+   * The roster: the read of what roster ingest (`sendRosterChunk`) wrote.
    */
   app.get<{ Params: { id: string } }>('/campaigns/:id/contacts', {
     preHandler: requirePermission('agency.supervise'),
@@ -1497,8 +1397,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   /**
    * Cap what a caller can write into the audit row through a filter value.
    *
-   * Not a validation step — the filter itself was already forwarded to core,
-   * which accepted or refused it on its own terms. This bounds the AUDIT
+   * Not a validation step — the filter itself was already forwarded to the
+   * internal handler, which accepted or refused it on its own terms. This bounds the AUDIT
    * record, which is append-only, retained, and read by people investigating
    * something else.
    */
@@ -1517,19 +1417,16 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   // ── The exports ───────────────────────────────────────────────────────────
 
   /**
-   * Drain one of core's keyset-paginated lists into a CSV.
+   * Drain one of the internal handler's keyset-paginated lists into a CSV.
    *
    * Shared by both exports because everything that is hard here — the deadline
-   * handed *down* to each page rather than merely consulted between them, the
-   * row ceiling, discarding rather than appending an aborted page — is identical
-   * for the two, and a second copy is a second place for the budget arithmetic
-   * to be subtly wrong.
+   * consulted between pages, the row ceiling, discarding rather than appending a
+   * refused page — is identical for the two, and a second copy is a second place
+   * for the budget arithmetic to be subtly wrong.
    *
-   * Unlike the activity export this **never 424s**. That route refuses because a
-   * file missing core's half of a merged trail is indistinguishable from a
-   * complete one to whoever opens it next. There is no merge here: core is the
-   * only source, so a core that fails produces no file at all — an error, which
-   * is already unambiguous — rather than a quietly half-populated one.
+   * There is no merge here: the internal handler is the only source, so a page
+   * it refuses produces no file at all — an error, which is already unambiguous
+   * — rather than a quietly half-populated one.
    */
   async function drainSpineExport<TRow>(params: {
     request: FastifyRequest<{ Params: { id: string } }>;
@@ -1552,15 +1449,10 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     const deadline = Date.now() + SPINE_EXPORT_TIME_BUDGET_MS;
 
     for (;;) {
-      // PORT NOTE (magick-agency): master handed the remaining budget DOWN to each page
-      // (`timeoutMs`, floored at `SPINE_EXPORT_MIN_PAGE_TIMEOUT_MS`) and caught the
-      // resulting `AbortError` as a mid-page `truncated: 'deadline'`. Both bounded the
-      // undici socket of one `proxyToCore` request; `callCore` has no socket and installs
-      // no signal, so the hand-down, the floor, the `isAbortError` branch and the
-      // try/catch around the call are deleted (a throw from `callCore` is a wiring defect
-      // and propagates, as master's non-abort errors did). KEPT: the between-pages
-      // deadline check below — a slow database still makes a long drain — and the row
-      // ceiling.
+      // No per-page budget: `callCore` runs in-process with no socket and no abort
+      // signal, and a throw from it is a wiring defect that propagates. The
+      // between-pages deadline check below bounds a slow drain, and the row ceiling
+      // bounds a large one.
       const query: Record<string, string> = {
         ...params.filters,
         limit: String(SPINE_EXPORT_PAGE_SIZE),
@@ -1575,9 +1467,9 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
         metricPath: params.metricPath,
       });
       if (result.status >= 400) {
-        // Core's refusal is the answer — a 404 for a campaign the caller does
-        // not own, a 400 for a filter it rejected. Thrown rather than returned
-        // so the caller forwards the status verbatim; a half-written file must
+        // The handler's refusal is the answer — a 404 for a campaign the caller
+        // does not own, a 400 for a filter it rejected. Thrown rather than returned
+        // so the caller forwards the status unchanged; a half-written file must
         // never be sent under a 200.
         throw new SpineExportRefused(result.status, result.body);
       }
@@ -1629,9 +1521,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    *
    * ── The audit row is what stands in for a second permission ────────────────
    * A bulk export of every number on a campaign is a materially larger exposure
-   * than one number in one drawer, and the decision recorded in the MAG-159 PR
-   * is that it is answered with attribution rather than with a gate nobody would
-   * know to grant. Written only on the success path, after the row count is
+   * than one number in one drawer, and the decision is that it is answered with
+   * attribution rather than with a gate nobody would know to grant. Written only on the success path, after the row count is
    * known, so it records what actually left the building — including that it was
    * truncated, since "50,000 rows of 1,000,000" is a different disclosure from
    * "the whole campaign" and a reviewer must be able to tell them apart.
@@ -1684,11 +1575,11 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
         // a bare number.
         //
         // ⚠️ Only the KEYS are whitelisted — `forwardAllowedQuery` validates
-        // no value, and `disposition_code` is deliberately un-vocabularied in core
-        // (catalogs are per campaign). So the values ARE caller-controlled and
-        // are truncated before they reach the audit store: a 200KB filter value
-        // landed here verbatim, repeatable, on the one trail a compliance
-        // reader depends on.
+        // no value, and `disposition_code` is deliberately un-vocabularied in the
+        // dialer runtime (catalogs are per campaign). So the values ARE
+        // caller-controlled and are truncated before they reach the audit store:
+        // a 200KB filter value landed here unclipped, repeatable, on the one trail
+        // a compliance reader depends on.
         filters: boundedFilters(input.filters),
         ...(input.truncated ? { truncated: input.truncated } : {}),
       },
@@ -1714,14 +1605,14 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
     // `preamble` is consumed here (`wantsPreamble` below) and deliberately never
-    // forwarded to core, so it must not read as an unknown param.
+    // forwarded to the internal handler, so it must not read as an unknown param.
     const forwarded = forwardAllowedQuery(request.query, ATTEMPT_QUERY_PARAMS, PREAMBLE_QUERY_PARAMS);
     if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
     const filters = forwarded.query;
 
     // Resolved for the preamble's chain-of-custody block and the filename.
-    // Not an authorisation step — core refuses an unowned campaign on the very
-    // first page of the drain below, which is where the 404 comes from.
+    // Not an authorisation step — the internal handler refuses an unowned
+    // campaign on the very first page of the drain below too.
     const owned = await requireOwnedCampaign(request, reply);
     if (!owned) return reply;
 
@@ -1747,9 +1638,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
         preamble: wantsPreamble(request.query),
         filters,
         campaignName: owned.name,
-        // PORT NOTE (magick-agency): the campaign row's account (`requireOwnedCampaign`);
-        // master's `?? request.accountId ?? 'default'` fallbacks are gone with the probe's
-        // unverified outcome.
+        // The campaign row's account (`requireOwnedCampaign`), always present.
         coreAccountId: owned.accountId,
       });
     } catch (err: unknown) {
@@ -1783,9 +1672,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
         preamble: wantsPreamble(request.query),
         filters,
         campaignName: owned.name,
-        // PORT NOTE (magick-agency): the campaign row's account (`requireOwnedCampaign`);
-        // master's `?? request.accountId ?? 'default'` fallbacks are gone with the probe's
-        // unverified outcome.
+        // The campaign row's account (`requireOwnedCampaign`), always present.
         coreAccountId: owned.accountId,
       });
     } catch (err: unknown) {
@@ -1797,18 +1684,16 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   /**
-   * Who pressed the control, for core's optional transition body (`86d45k0bk`).
+   * Who pressed the control, for the internal handler's optional transition body.
    *
-   * ── The gap this closes ───────────────────────────────────────────────────
-   * Core stores `last_transition_by: { user_id, name } | null` on the campaign row
-   * and reads it from an OPTIONAL request body. These four proxies sent no body,
-   * so core stored `null` on every supervisor-initiated transition — and `null` is
-   * the same value core writes for a genuinely automatic one (the abandonment
-   * auto-pause, the leader's finalization). Left alone, the field would have
-   * shipped meaning "master did not say" and never "nobody did it", which is
-   * precisely the ambiguity core's contract note names as the price of the body
-   * being optional. Master is the only hop that can close it: core has no user
-   * table (design D3), so it stores the name it is handed.
+   * ── Why the body is sent ──────────────────────────────────────────────────
+   * The dialer runtime stores `last_transition_by: { user_id, name } | null` on
+   * the campaign row and reads it from an OPTIONAL request body. With no body it
+   * stores `null` — the same value it writes for a genuinely automatic transition
+   * (the abandonment auto-pause, the leader's finalization). So a
+   * supervisor-initiated transition must send one, or the field would mean "the
+   * caller did not say" rather than "nobody did it". The handler resolves no
+   * names itself; it stores the name it is handed.
    *
    * ── The identity comes from the SESSION. Never from the body. ─────────────
    * `request.user.id`, populated by `sessionMiddleware`. There is no param, query
@@ -1817,86 +1702,24 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    * is an ATTRIBUTION field on an audit surface, so a caller-supplied actor is a
    * forged one — a supervisor could stop a campaign in a colleague's name. The
    * inbound body is not forwarded at all (these routes never read it), so the
-   * refusal needs no filtering step: the body core receives is built here from
-   * facts master authenticated.
+   * refusal needs no filtering step: the body the handler receives is built here
+   * from facts the session authenticated.
    *
-   * ── EVERY platform API key sends no actor, whoever minted it ──────────────
-   * On `isPlatformApiKeyCaller`, not on a missing `request.user`, and the
-   * distinction is the one this repo has now made four times:
-   * `sessionMiddleware`'s key branch loads `platform_api_keys.created_by` into
-   * `request.user`, so a key minted by a person authenticates CARRYING that
-   * person. Attributing the transition to them is the exact defect
-   * `resolveAgencyActor` was corrected for — there, "a creator-backed key
-   * dispositioned a customer in the creator's name". `created_by` is provenance of
-   * the credential, not the identity of whoever holds it now. A credential that
-   * names nobody must write "nobody", so a key-authenticated transition is
-   * UNATTRIBUTED — which is honest — rather than attributed to a person who was
-   * not there.
+   * The platform audit row for each of the four handlers below states its actor
+   * through `requestAuditActor`, like every other audited call site, so the two
+   * trails agree on who performed the transition.
    *
-   * (This paragraph used to add "and `platform_audit_log` has no `api_key_id`
-   * column to tell the two apart", as a second reason. Migration 067 added one,
-   * so the clause is gone rather than restated — the argument above never needed
-   * it, and leaving it standing contradicted the next paragraph.)
-   *
-   * ── The platform audit row now agrees, and no longer by omission ──────────
-   * It used to disagree. The `auditLogger.log` call in each of the four handlers
-   * below stamped `user_id: request.user.id`, which for a creator-backed key is
-   * the very person this function refuses to name to core — so master's own trail
-   * said "Alice started it" while `last_transition_by` said nobody. The local fix
-   * (drop `user_id` here) was declined at the time for two reasons that were both
-   * about the trail as a whole rather than about these routes: it would have made
-   * these four the only audited sites that behaved differently, and with no
-   * `api_key_id` column to fall back on it would have traded a misleading
-   * principal for no principal at all.
-   *
-   * 86d45t7rm did the platform-wide repair instead, and it is what makes the two
-   * trails agree. `platform_audit_log` now carries `actor_type` and `api_key_id`
-   * (migration 067); every audited call site in the service states its actor
-   * through `requestAuditActor`, which is a REQUIRED field of
-   * `CreateAuditLogInput` so none of them can be missed; and a key-authenticated
-   * row names the CREDENTIAL rather than its creator. The key's creator is not
-   * lost — it is `platform_api_keys.created_by`, one join away, which is where a
-   * fact about the credential belongs.
-   *
-   * So the asymmetry this docstring used to defend is gone: master records
-   * "api_key <id> started it" and core records `last_transition_by: null`, and
-   * those are the same statement about who performed the transition. Nothing
-   * below needs a special case — the four handlers spread `requestAuditActor`
-   * exactly like the other twenty-five.
-   *
-   * ── Core's `last_transition_by` still carries the three-way ambiguity ─────
-   * 86d45t7rm asked whether the same discriminator belongs there too, and the
-   * answer is yes but not here. A NULL in `agency_campaigns.last_transition_by_*`
-   * means one of three things — genuinely automatic (`running → completed` when
-   * the list drains, the abandonment auto-pause), key-authenticated (this
-   * function), or written before 86d45k0bk deployed — and core cannot tell them
-   * apart because master never tells it which. `system` and `unattributed` are
-   * opposite conclusions for an incident, which is exactly the distinction
-   * `platform_audit_log.actor_type` now draws on master's side.
-   *
-   * Closing it is a genuine cross-repo change, not an extension of this one:
-   * a core migration adding a transition-source column, a new optional field on
-   * the transition body (`AgencyCampaignTransitionRequest` here,
-   * `readTransitionActor` there), `formatAgencyCampaignResponse` folding it into
-   * the served `last_transition_by`, and cusui rendering it — merge order core →
-   * master → cusui. It does NOT touch `agency-s2s-contract.fixture.json`: that
-   * fixture covers the attempt actions, DNC and settlement, and the campaign
-   * transition body is not in it. Ticketed separately rather than smuggled in
-   * behind an audit-column change, because a wire contract deserves its own
-   * review.
-   *
-   * Note this deliberately does NOT refuse the transition, unlike the agency
-   * `my-*` routes' 400 `missing_actor`: a key may legitimately stop a campaign
-   * (these routes are not on `denyPlatformApiKey`), and refusing the off button
-   * for want of attribution is the mistake core's own contract warns against.
+   * Note this deliberately does NOT refuse the transition when there is no
+   * actor, unlike the agency `my-*` routes' 400 `missing_actor`: refusing the off
+   * button for want of attribution is the wrong trade.
    *
    * ── Absent beats a placeholder, and a name is best-effort ─────────────────
-   * With no id there is no body: core then stores `null`. Nothing here may spell
-   * that as `'system'`, `''` or `'unknown'` — core reads all three as a real
-   * actor, and `''` is worse still because `readTransitionActor` trims it back to
-   * `null` after the id has already been accepted. The NAME is separate: a lookup
-   * that fails yields an id-only actor (`actor_name` omitted, which core stores as
-   * `name: null`) rather than failing the transition. Same rule as every other
+   * With no id there is no body: the handler then stores `null`. Nothing here may
+   * spell that as `'system'`, `''` or `'unknown'` — the handler reads all three
+   * as a real actor, and `''` is worse still because `readTransitionActor` trims
+   * it back to `null` after the id has already been accepted. The NAME is
+   * separate: a lookup that fails yields an id-only actor (`actor_name` omitted,
+   * which the handler stores as `name: null`) rather than failing the transition. Same rule as every other
    * enrichment on this feature — a name is an improvement on the id, never a
    * precondition — and it matters more here, because the alternative is losing
    * the off button to a database blip.
@@ -1911,23 +1734,21 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    * `resolveAgentNames`, the binding this file's spine reads already use. Its
    * docstring calls itself "the only declaration of the lookup in the
    * repository" after a byte-identical local copy was left behind once, so a
-   * second one here would re-open exactly that. It also keeps the name master
-   * SENDS core in step with the name the campaign activity trail DISPLAYS for the
-   * same person: the trail's own `resolveDisplayNames` goes through a different
+   * second one here would re-open exactly that. It also keeps the name this route
+   * SENDS the handler in step with the name the campaign activity trail DISPLAYS
+   * for the same person: the trail's own `resolveDisplayNames` goes through a different
    * repository method (`findIdentitiesInTenant`, which it also needs the role
    * from) but folds it by the same rule — trimmed `display_name`, else the email.
    *
-   * Core truncates an over-long name and drops an over-long id; master implements
-   * neither ceiling on purpose — see {@link AgencyCampaignTransitionRequest}.
+   * The internal handler truncates an over-long name and drops an over-long id;
+   * this route implements neither ceiling on purpose — see
+   * {@link AgencyCampaignTransitionRequest}.
    */
   const resolveTransitionActor = async (
     request: FastifyRequest,
   ): Promise<AgencyCampaignTransitionRequest | undefined> => {
-    // PORT NOTE (magick-agency): master checked `isPlatformApiKeyCaller` FIRST here (a
-    // creator-backed key carried its creator as `request.user`). Platform API keys are
-    // deleted (decision #5): lane A's `sessionMiddleware` has no key branch, so
-    // `request.user` is always the Firebase-verified person and the check has nothing
-    // left to tell apart. The docstring's key paragraphs above describe master.
+    // `sessionMiddleware` has no API-key branch, so `request.user` is always the
+    // Firebase-verified person.
     const userId = request.user?.id;
     if (!userId) return undefined;
 
@@ -2021,16 +1842,15 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   app.post<{ Params: { id: string } }>('/campaigns/:id/start', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    // Resolved BEFORE the core call, and its failure never reaches the caller:
-    // `undefined` means the transition goes out unattributed, exactly as it did
-    // before this body existed.
+    // Resolved BEFORE `callCore`, and its failure never reaches the caller:
+    // `undefined` means the transition goes out unattributed.
     const actor = await resolveTransitionActor(request);
     const result = await callCore({
       method: 'POST',
       path: `/agency-campaigns/${request.params.id}/start`,
       // Spread, so a request with no resolvable actor carries NO body at all
-      // rather than an empty object — byte-identical to what these routes have
-      // always sent, and the shape core's `actorPatch` already answers with `{}`.
+      // rather than an empty object — the shape the handler's `actorPatch`
+      // answers with `{}`.
       ...(actor ? { body: actor } : {}),
       tenantId: request.tenantId!,
       accountId: request.accountId,
@@ -2054,16 +1874,15 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   app.post<{ Params: { id: string } }>('/campaigns/:id/pause', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    // Resolved BEFORE the core call, and its failure never reaches the caller:
-    // `undefined` means the transition goes out unattributed, exactly as it did
-    // before this body existed.
+    // Resolved BEFORE `callCore`, and its failure never reaches the caller:
+    // `undefined` means the transition goes out unattributed.
     const actor = await resolveTransitionActor(request);
     const result = await callCore({
       method: 'POST',
       path: `/agency-campaigns/${request.params.id}/pause`,
       // Spread, so a request with no resolvable actor carries NO body at all
-      // rather than an empty object — byte-identical to what these routes have
-      // always sent, and the shape core's `actorPatch` already answers with `{}`.
+      // rather than an empty object — the shape the handler's `actorPatch`
+      // answers with `{}`.
       ...(actor ? { body: actor } : {}),
       tenantId: request.tenantId!,
       accountId: request.accountId,
@@ -2087,16 +1906,15 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   app.post<{ Params: { id: string } }>('/campaigns/:id/resume', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    // Resolved BEFORE the core call, and its failure never reaches the caller:
-    // `undefined` means the transition goes out unattributed, exactly as it did
-    // before this body existed.
+    // Resolved BEFORE `callCore`, and its failure never reaches the caller:
+    // `undefined` means the transition goes out unattributed.
     const actor = await resolveTransitionActor(request);
     const result = await callCore({
       method: 'POST',
       path: `/agency-campaigns/${request.params.id}/resume`,
       // Spread, so a request with no resolvable actor carries NO body at all
-      // rather than an empty object — byte-identical to what these routes have
-      // always sent, and the shape core's `actorPatch` already answers with `{}`.
+      // rather than an empty object — the shape the handler's `actorPatch`
+      // answers with `{}`.
       ...(actor ? { body: actor } : {}),
       tenantId: request.tenantId!,
       accountId: request.accountId,
@@ -2133,23 +1951,22 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   app.post<{ Params: { id: string } }>('/campaigns/:id/stop', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    // Resolved BEFORE the core call, and its failure never reaches the caller:
-    // `undefined` means the transition goes out unattributed, exactly as it did
-    // before this body existed.
+    // Resolved BEFORE `callCore`, and its failure never reaches the caller:
+    // `undefined` means the transition goes out unattributed.
     const actor = await resolveTransitionActor(request);
     const result = await callCore({
       method: 'POST',
       path: `/agency-campaigns/${request.params.id}/stop`,
       // Spread, so a request with no resolvable actor carries NO body at all
-      // rather than an empty object — byte-identical to what these routes have
-      // always sent, and the shape core's `actorPatch` already answers with `{}`.
+      // rather than an empty object — the shape the handler's `actorPatch`
+      // answers with `{}`.
       ...(actor ? { body: actor } : {}),
       tenantId: request.tenantId!,
       accountId: request.accountId,
     });
     if (result.status < 400) {
       // A 200 here means "accepted and draining" (see the doc comment above),
-      // not "stopped" — `status` in `details` is therefore whatever core
+      // not "stopped" — `status` in `details` is therefore whatever the handler
       // returned at this instant (typically still `running`/`stopping`), not a
       // fabricated terminal state.
       const status = extractCampaignStatus(result.body);
@@ -2169,48 +1986,38 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
 
   // ─── Retry campaigns ──────────────────────────────────────────────────────
   //
-  // The frozen wire contract these obligations are numbered against was a
-  // MagickVoice superproject document. PORT NOTE (magick-agency): a verbatim copy
-  // now lives in this repository:
-  // `docs/reference/magickvoice-platform/docs/agency-campaign-retry-wire-contract.md`.
-  //
-  // It is a cross-service document — three repos implemented it independently and
-  // none of them owned it — and its companion design is beside it,
-  // `docs/reference/magickvoice-platform/docs/agency-campaign-retry-design.md`.
-  // Every `§n` in this file and in the retry tests refers to the wire contract.
-  //
-  // A retry campaign is an ORDINARY campaign in every respect (DR-1): its own
-  // roster, its own pacing leader, its own settlement, its own lifecycle. Three
-  // columns and where its contacts came from are the only things that make it a
-  // retry. So there is nothing special for this hop to do about pacing, billing
-  // or lifecycle — and everything below is either a proxy or one of the four
-  // obligations §6 puts on master, which core structurally cannot discharge:
-  // governance lives in master's database (MAG-135), the actor lives in master's
-  // session, and the platform audit log is master's store.
+  // A retry campaign is an ORDINARY campaign in every respect: its own roster,
+  // its own pacing leader, its own lifecycle. Three columns and where its
+  // contacts came from are the only things that make it a retry. So there is
+  // nothing special for this route to do about pacing or lifecycle — and
+  // everything below is either a pass-through or one of four duties on the
+  // create that belong to this layer: the behavioral-capability assert (the
+  // account's settings row), the config validation, the actor (the
+  // authenticated session), and the platform audit row.
 
   /**
-   * Flatten a retry-selector query for the core hop — forwarding EVERY key,
+   * Flatten a retry-selector query for `callCore` — forwarding EVERY key,
    * which is the deliberate opposite of what the spine reads do.
    *
    * ── Why no allow-list here, when `forwardAllowedQuery` refuses unknowns ────
-   * The selector's vocabulary is CORE's (`spine-filters.ts`, DR-3) and its
-   * refusals are core's: "`X` is not a retry selector dimension", and — for
-   * `last_disposition` — a 400 that echoes the PARENT campaign's disposition
-   * catalog, which master does not hold and cannot echo. Naming the dimensions
-   * here would be a second copy of a vocabulary that already exists once, in the
-   * repo that owns the data it filters, and master's copy would be the one that
-   * drifts: a dimension core adds would be refused by master with a message
-   * about master's list rather than forwarded.
+   * The selector's vocabulary is the dialer runtime's (`spine-filters.ts`) and
+   * its refusals are the internal handler's: "`X` is not a retry selector
+   * dimension", and — for `last_disposition` — a 400 that echoes the PARENT
+   * campaign's disposition catalog, which this route has not read. Naming the
+   * dimensions here would be a second copy of a vocabulary that already exists
+   * once, beside the data it filters, and this copy would be the one that
+   * drifts: a dimension the runtime adds would be refused here with a message
+   * about this list rather than forwarded.
    *
    * The security argument that makes the spine's allow-list right does not
    * reach: nothing in this query can widen scope. The campaign is the `:id` in
-   * the path, the tenant and account are headers master sets from the
-   * authenticated session, and every refusal core makes carries field-level
-   * `details` so it survives `errorMaskHook` intact.
+   * the path, the tenant and account are headers set from the authenticated
+   * session, and every refusal the handler makes carries field-level `details`
+   * so it survives `errorMaskHook` intact.
    *
    * Repeats (`?state=a&state=b`) arrive as an array and are comma-joined, which
-   * is core's other accepted spelling for the same thing (wire contract §1), so
-   * a client may use either form. A blank value is dropped rather than
+   * is the handler's other accepted spelling for the same thing, so a client
+   * may use either form. A blank value is dropped rather than
    * forwarded, for the reason `forwardAllowedQuery` gives: `?last_outcome=` is
    * what a cleared form control posts, and forwarding it would turn an empty
    * filter into one that matches nothing.
@@ -2229,22 +2036,22 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
 
   /**
    * GET /proxy/agency/campaigns/:id/retry/preview — "how many contacts does this
-   * selector match, and what were they?" Writes nothing (DR-8).
+   * selector match, and what were they?" Writes nothing.
    *
    * `agency.supervise` (`account_admin`), the same floor as the attempt spine
-   * and the campaign controls next door and NOT the `proxy.contact_lists.read`
-   * (`viewer`) that `GET /campaigns/:id` carries. The distinction is the one
-   * `docs/reference/magickvoice-platform/agency.md` §7.1 draws about that permission being different in kind rather
-   * than in floor: this read is a breakdown of how a campaign's calls WENT —
+   * and the campaign controls next door and NOT the `agency.campaigns.read`
+   * (`viewer`) that `GET /campaigns/:id` carries. `agency.supervise` is
+   * different in kind rather than in floor: this read is a breakdown of how a
+   * campaign's calls WENT —
    * outcomes and dispositions per cohort — which is the supervisory record, not
    * the campaign's configuration. It is also the first half of an action, and
    * splitting the preview's floor from the create's would let someone size a
    * cohort they cannot author.
    *
-   * A verbatim passthrough otherwise. `excluded` (the DNC and invalid rows DR-4
-   * removed from the match) must reach the client untouched: a supervisor who
-   * selects "everything suppressed" and is shown 40 instead of 300 without being
-   * told why reports it as a bug, which is the whole reason core computes it.
+   * A plain pass-through otherwise. `excluded` (the DNC and invalid rows removed
+   * from the match) must reach the client untouched: a supervisor who selects
+   * "everything suppressed" and is shown 40 instead of 300 without being told
+   * why reports it as a bug, which is the whole reason the handler computes it.
    */
   app.get<{ Params: { id: string } }>('/campaigns/:id/retry/preview', {
     preHandler: requirePermission('agency.supervise'),
@@ -2265,35 +2072,34 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    * cohort of this one's contacts.
    *
    * ── TWO permissions, and it is not belt-and-braces ────────────────────────
-   * The act is *creating a campaign* (`proxy.contact_lists.write`) **and**
+   * The act is *creating a campaign* (`agency.campaigns.write`) **and**
    * *acting on another campaign's call results* (`agency.supervise`). Both floor
    * at `account_admin` today, so naming both changes nothing about who gets in —
    * which is exactly why it has to be written down rather than simplified to
-   * one. `docs/reference/magickvoice-platform/agency.md` §7.1 records `agency.supervise` as different in KIND, not
-   * just in floor; the day either floor moves, this route is still correct, and
-   * a tenant narrowing an API key's scopes can narrow one without silently
-   * losing the other. Ordered supervise-first so the 403 a non-supervisor sees
+   * one. `agency.supervise` is different in KIND, not just in floor; the day
+   * either floor moves, this route is still correct. Ordered supervise-first so
+   * the 403 a non-supervisor sees
    * names the supervisory permission, which is the one they are actually
    * missing on a results-scoped action.
    *
    * ── The order of the checks below is load-bearing ─────────────────────────
-   * Every one of master's own 4xx comes BEFORE the first core call, which is the
-   * invariant `errorMaskHook` states: the hook decides by whether a core call
-   * returned THIS status this request, so a master-authored 400 raised after a
-   * core 400 would be rewritten into a support-ticket message. Hence: schema,
-   * then config, then actor (all master's), then the parent read, then the
-   * capability assert — which can only run 403 after a core call that returned
-   * 200, a status the hook does not consider.
+   * Every one of this route's own 4xx comes BEFORE the first `callCore`, which
+   * is the invariant `errorMaskHook` states: the hook decides by whether a
+   * handler call returned THIS status this request, so a route-authored 400
+   * raised after a handler 400 would be rewritten into a support-ticket message.
+   * Hence: schema, then config, then actor (all this route's), then the parent
+   * read, then the capability assert — which can only run 403 after a handler
+   * call that returned 200, a status the hook does not consider.
    *
-   * ── What master does NOT do here ──────────────────────────────────────────
-   * It does not validate the selector (core's vocabulary, DR-3), does not
-   * compute or check the match size (core's `RETRY_MAX_SEED_ROWS`, and a count
-   * master fetched would be stale by the time it acted on it — the same argument
-   * the PATCH handler makes about campaign status), does not enforce the
-   * generation ceiling, and does not seed anything. Seeding from master was
-   * considered and rejected in the design: it turns one transaction into N HTTP
-   * round trips with partial-failure states, and a half-seeded retry campaign
-   * looks startable and dials a subset nobody chose.
+   * ── What this route does NOT do ───────────────────────────────────────────
+   * It does not validate the selector (the dialer runtime's vocabulary), does
+   * not compute or check the match size (`RETRY_MAX_SEED_ROWS`, enforced by the
+   * handler, and a count fetched here would be stale by the time it was acted
+   * on — the same argument the PATCH handler makes about campaign status), does
+   * not enforce the generation ceiling, and does not seed anything. Seeding is
+   * one transaction in the handler: seeding from here would split it into many
+   * calls with partial-failure states, and a half-seeded retry campaign looks
+   * startable and dials a subset nobody chose.
    */
   app.post<{ Params: { id: string } }>('/campaigns/:id/retry', {
     preHandler: [
@@ -2308,11 +2114,11 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
         .send({ error: 'Validation Error', details: parsed.error.flatten() });
     }
 
-    // Obligation 2. The overrides are the create route's config fields by
+    // Config validation. The overrides are the create route's config fields by
     // another name, so they go through the create route's validator — an
-    // override must not be able to reach core in a shape `POST /campaigns` would
-    // have refused. Note it is the OVERRIDES that are validated and not the
-    // merged result: core's own copy of the parent's columns is not master's to
+    // override must not be able to reach the handler in a shape `POST /campaigns`
+    // would have refused. Note it is the OVERRIDES that are validated and not the
+    // merged result: the parent's stored columns are not this route's to
     // re-litigate, and a parent whose stored config predates a validation rule
     // must still be retryable.
     const configIssues = validateAgencyCampaignConfig(parsed.data.config_overrides);
@@ -2323,35 +2129,26 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     }
 
     /*
-     * Obligation 3 — the actor is master's fact.
+     * The actor — this layer's fact, from the session.
      *
-     * The `sessionCreate` seam in `agency-s2s-contract.fixture.json` states the
-     * rule and the reason: `agent_user_id` is taken from the authenticated
-     * session, because a browser that could name the actor could act as a
+     * `agent_user_id` is taken from the authenticated session, as on session
+     * create, because a browser that could name the actor could act as a
      * colleague. Here that is a retry campaign authored in someone else's name,
      * on the one row that records who chose to re-dial 812 customers.
      *
-     * ── A platform API key is REFUSED, unlike on start/pause/resume/stop ──────
+     * ── No actor is REFUSED, unlike on start/pause/resume/stop ───────────────
      * Those four deliberately proceed unattributed, on the argument that
      * refusing the off button for want of attribution is worse than an
      * unattributed stop. Nothing about that argument survives here. Authoring a
-     * campaign is not an emergency control, core's request requires the actor
-     * (wire contract §2), and a key proves a TENANT and names nobody — so the
-     * alternatives are a 400 now or core's 400 one round trip later.
-     * `missing_actor` is master's established spelling for it (the agency
-     * `my-*` routes), so a console has one shape to key off.
+     * campaign is not an emergency control and the handler's retry request
+     * requires the actor, so the alternatives are a 400 now or the handler's 400
+     * a moment later. `missing_actor` is the established spelling for it (the
+     * agency `my-*` routes), so a console has one shape to key off.
      *
-     * `isPlatformApiKeyCaller` and NOT `!request.user?.id`: `sessionMiddleware`
-     * loads a key's `created_by` into `request.user`, so the shorter spelling
-     * would attribute the retry to whoever minted the credential, possibly years
-     * ago. That is the defect `resolveAgencyActor` was corrected for.
+     * `request.user` is always the signed-in person (`sessionMiddleware` has no
+     * API-key branch); the session middleware refuses a request with no user
+     * first in practice, so this is a backstop.
      */
-    //
-    // PORT NOTE (magick-agency): no platform API keys (decision #5), so the
-    // `isPlatformApiKeyCaller(request) ? undefined :` arm is deleted and `request.user`
-    // is always the signed-in person. `missing_actor` stays for a request with no user
-    // (the session middleware refuses one first in practice). Its message no longer
-    // names keys, as lane B2 did for `agency-actor.ts`.
     const actorUserId = request.user?.id;
     if (!actorUserId) {
       return reply.code(400).send({
@@ -2368,24 +2165,19 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
      *
      *  1. OWNERSHIP. `requirePermission` proves the caller's role and never
      *     looks at the target row, so without this a supervisor could pass
-     *     another tenant's campaign id. Core's `requireOwned` answers 404 for a
-     *     campaign in another tenant or account and that status is forwarded
-     *     verbatim — a cross-tenant id and a nonexistent one must stay
+     *     another tenant's campaign id. The handler's `requireOwned` answers 404
+     *     for a campaign in another tenant or account and that status is
+     *     forwarded unchanged — a cross-tenant id and a nonexistent one must stay
      *     indistinguishable, or the response is a campaign-id oracle.
-     *  2. The INHERITED CONFIG for obligation 1 below.
+     *  2. The INHERITED CONFIG for the capability assert below.
      *
-     * ── A transport failure must NOT degrade to "proceed" ────────────────────
-     * `requireOwnedCampaign` above answers a core outage by serving master's
-     * half of the audit trail marked `partial`, because a read can honestly
-     * degrade. This cannot: proceeding without the parent's config means
-     * creating a campaign whose recording and analysis settings were never
-     * checked against this tenant's capabilities, which is precisely the thing
-     * obligation 1 exists to prevent. So `proxyToCore`'s throw is left to
+     * ── A failure must NOT degrade to "proceed" ──────────────────────────────
+     * Proceeding without the parent's config would mean creating a campaign
+     * whose recording and analysis settings were never checked against this
+     * account's settings, which is precisely what the capability assert exists
+     * to prevent. So a throw from `callCore` (only a wiring defect) is left to
      * propagate — the error mask turns it into a 500 with a request id and a
      * full log line, and nothing was created.
-     *
-     * PORT NOTE (magick-agency): in-process (`callCore`) the only throw is a wiring
-     * defect; it still propagates (a 500, nothing created).
      */
     const parent = await callCore({
       method: 'GET',
@@ -2396,33 +2188,33 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     });
     if (parent.status >= 400) return reply.code(parent.status).send(parent.body);
 
-    // Obligation 1 — MAG-138 re-fought on a route that sends no config. See
-    // `resolveInheritedBehavioralConfig` for why the merged parent config is the
-    // only input on which this gate can fail, and why asserting against the
+    // The behavioral capabilities, on a route that sends no config of its own.
+    // See `resolveInheritedBehavioralConfig` for why the merged parent config is
+    // the only input on which this gate can fail, and why asserting against the
     // request body here would be a check that passes by construction.
     const effectiveConfig = resolveInheritedBehavioralConfig(
       parent.body,
       parsed.data.config_overrides,
     );
     //
-    // PORT NOTE (magick-agency): the target is the PARENT campaign's own `tenant_id` /
-    // `account_id`, read off the parent row core just returned (lane A's interface
-    // change 1): the child is created in the parent's account, so that account's
-    // settings row is the one that decides. Read defensively like every other field of
-    // core's body; a missing id reaches lane A's gate as a missing target and fails
-    // closed. The object asserted is the effective inherited config core will create the
-    // child with (the parent's values with exactly `parsed.data.config_overrides`, the
-    // object forwarded below, on top).
+    // The target is the PARENT campaign's own `tenant_id` / `account_id`, read off
+    // the parent row just returned: the child is created in the parent's account,
+    // so that account's settings row is the one that decides. Read defensively
+    // like every other field of the handler's body; a missing id reaches the gate
+    // as a missing target and fails closed. The object asserted is the effective
+    // inherited config the handler will create the child with (the parent's values
+    // with exactly `parsed.data.config_overrides`, the object forwarded below, on
+    // top).
     if (!(await assertBehavioralCapabilitiesForConfig(request, reply, effectiveConfig, {
       tenantId: extractCampaignField(parent.body, 'tenant_id'),
       accountId: extractCampaignField(parent.body, 'account_id'),
     }))) return;
 
-    // Obligation 2, second half — the one cross-field rule that needs the parent.
-    // See `mergedCallingWindowIssues`. Safe to raise a master 400 here even
-    // though it follows a core call: `errorMaskHook` rewrites a status only when
-    // a core call returned THAT status this request, and the parent read
-    // returned 200.
+    // Config validation, second half — the one cross-field rule that needs the
+    // parent. See `mergedCallingWindowIssues`. Safe to raise this route's 400 here
+    // even though it follows a handler call: `errorMaskHook` rewrites a status
+    // only when a handler call returned THAT status this request, and the parent
+    // read returned 200.
     const windowIssues = mergedCallingWindowIssues(parent.body, parsed.data.config_overrides);
     if (windowIssues.length > 0) {
       return reply
@@ -2436,24 +2228,24 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     const actorName = await resolveActorDisplayName(request, actorUserId);
 
     /*
-     * The body core receives is BUILT here from validated fields plus facts
-     * master authenticated — never `request.body` spread and patched. `.strict()`
+     * The body the handler receives is BUILT here from validated fields plus
+     * facts the session authenticated — never `request.body` spread and patched. `.strict()`
      * on the schema already refuses a client-supplied `agent_user_id`, so this is
      * the second of two independent reasons the actor cannot be forged; the
      * rebuild is the one that would still hold if the schema were ever loosened.
      *
      * `actor_name` is OMITTED rather than sent empty when there is no name —
-     * core reads `''`, `'system'` and `'unknown'` as real actors — and truncated
-     * to core's ceiling rather than refused, because a long display name must
-     * never be why a retry does not happen.
+     * the handler reads `''`, `'system'` and `'unknown'` as real actors — and
+     * truncated to the ceiling rather than refused, because a long display name
+     * must never be why a retry does not happen.
      *
      * Note the field is `agent_user_id`, not the `actor_user_id` the four
      * lifecycle transitions on this same plugin send. Two spellings for one idea
-     * on one plugin is unfortunate and it is the CONTRACT's, not a choice made
-     * here: core's retry handler and its `sessionCreate` seam both read
-     * `agent_user_id`. Do not "tidy" this to match its neighbours — the field is
-     * dropped by core's schema if it is misspelled, which is MAG-118 exactly, and
-     * the failure is a 400 with no clue in it.
+     * on one plugin is unfortunate and it is the handler's, not a choice made
+     * here: the retry handler and session create both read `agent_user_id`. Do
+     * not "tidy" this to match its neighbours — the field is dropped by the
+     * handler's schema if it is misspelled, and the failure is a 400 with no clue
+     * in it.
      */
     const result = await callCore({
       method: 'POST',
@@ -2469,19 +2261,19 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
           ? { actor_name: actorName.slice(0, RETRY_ACTOR_NAME_MAX_CHARS) }
           : {}),
         // Absent stays absent: an unkeyed create is legal, and sending `null`
-        // where the client sent nothing would be master having an opinion about
-        // a field it deliberately does not own.
+        // where the client sent nothing would be this route having an opinion
+        // about a field it deliberately does not own.
         //
         // PRESENCE, not truthiness. `z.string().optional()` accepts `""`, and
-        // `""` is falsy — so a truthiness check drops it and core sees an
+        // `""` is falsy — so a truthiness check drops it and the handler sees an
         // UNKEYED create. A client that sends `idempotency_key: ""` (an empty
         // form field, a defaulted string, a retry of a failed parse) would then
         // get a legal create, and repeating the request would build a SECOND
         // campaign over the same cohort and dial it again. That is precisely
         // the failure this field exists to prevent, wearing the shape of
         // protection. `undefined` is the only absent value; `null` is already a
-        // 400 here (the field is not `.nullable()`), and `""` belongs to core,
-        // which answers 400 with `details.idempotency_key` — a shape that
+        // 400 here (the field is not `.nullable()`), and `""` belongs to the
+        // handler, which answers 400 with `details.idempotency_key` — a shape that
         // survives the error mask.
         ...(parsed.data.idempotency_key !== undefined
           ? { idempotency_key: parsed.data.idempotency_key }
@@ -2495,7 +2287,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     /*
      * ── A REPLAY files no activity row ──────────────────────────────────────
      *
-     * Core answers `200` with `idempotent_replay: true` when the key had already
+     * The handler answers `200` with `idempotent_replay: true` when the key had already
      * created a campaign: nothing was created by this request. A second
      * `agency_campaign.retry_created` on the parent's trail would assert that a
      * cohort was selected and re-dialled twice — precisely the thing the key
@@ -2503,20 +2295,19 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
      * reviewer opens to establish that it did not. The response still carries the
      * campaign, so the console is unaffected.
      *
-     * Read defensively off an unknown body, like every other field here: an older
-     * core does not send the flag at all, and its absence must read as "this was a
-     * create", which is what it was.
+     * Read defensively off an unknown body, like every other field here: an
+     * absent flag reads as "this was a create".
      */
     const replayed = (result.body as { idempotent_replay?: unknown } | null)
       ?.idempotent_replay === true;
 
     if (result.status < 400 && !replayed) {
       /*
-       * Obligation 4 — the activity row.
+       * The activity row.
        *
        * ── Filed against the PARENT, and that is the decision worth stating ───
        * A row carries one `campaign_id`, so it appears on one campaign's trail.
-       * The child's creation is already recorded on the child, by core, as
+       * The child's creation is already recorded on the child, by the handler, as
        * `agency_campaign.created`; what nothing else records is that a cohort of
        * THIS campaign's results was selected and re-dialled, which is a fact
        * about this campaign and belongs on the trail a compliance reviewer opens
@@ -2524,15 +2315,15 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
        * the detail is the link across, and the child row's own
        * `parent_campaign_id` is the link back.
        *
-       * The selector is recorded here as well as frozen on the child row (DR-5)
+       * The selector is recorded here as well as frozen on the child row
        * because they answer different questions: the child's copy explains its
        * roster, and this one explains the operator's intent at the moment they
        * had it, on a store the child's deletion cannot take with it.
        *
-       * Every field core supplies is narrowed defensively before it is read —
-       * master keeps no campaign schema, and a malformed core response must
+       * Every field the handler supplies is narrowed defensively before it is
+       * read — this layer keeps no campaign schema, and a malformed response must
        * never throw out of an audit call and take a successful create down with
-       * it (`MAG-70`'s rule, and `extractCampaignField`'s).
+       * it (`extractCampaignField`'s rule).
        */
       const body = (result.body && typeof result.body === 'object' && !Array.isArray(result.body))
         ? (result.body as Record<string, unknown>)
@@ -2560,7 +2351,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
           ...(typeof collapsed === 'number' && collapsed > 0
             ? { duplicates_collapsed: collapsed }
             : {}),
-          // Bounded, not verbatim — see `boundedSelector`. The intent is what
+          // Bounded, not copied whole — see `boundedSelector`. The intent is what
           // this row is for; an unbounded caller-controlled value on a trail
           // nothing purges is what the export path already had to fix.
           selector: boundedSelector(parsed.data.selector),
@@ -2573,7 +2364,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   /**
    * GET /proxy/agency/campaigns/:id/lineage — the whole chain, root first.
    *
-   * `proxy.contact_lists.read` (`viewer`), the same floor as `GET /campaigns/:id`
+   * `agency.campaigns.read` (`viewer`), the same floor as `GET /campaigns/:id`
    * and deliberately NOT the `agency.supervise` its two retry siblings above
    * carry. Lineage is NAVIGATION, not results: names, statuses, generations and
    * contact totals — every field of which a `viewer` can already read one at a
@@ -2582,7 +2373,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    * missing data rather than as a permission boundary.
    *
    * A campaign in no chain answers with itself as the only entry, not a 404 —
-   * core's rule, and the reason the console can render the strip unconditionally.
+   * the handler's rule, and the reason the console can render the strip unconditionally.
    */
   app.get<{ Params: { id: string } }>('/campaigns/:id/lineage', {
     preHandler: requirePermission('agency.campaigns.read'),
@@ -2619,7 +2410,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    * Upload the CSV. Stored raw; parsing happens in the ingest job.
    *
    * Multipart lives in its own sub-plugin so the parser is scoped to this one
-   * route, matching `contact-lists.routes.ts` — registering it at the plugin
+   * route — registering it at the plugin
    * root would put a body parser in front of every JSON route here. Hooks are
    * re-added because a sub-plugin does not inherit the parent's.
    */
@@ -2629,7 +2420,6 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     });
     sub.addHook('preHandler', sessionMiddleware);
     sub.addHook('preHandler', tenantContextMiddleware);
-    // PORT NOTE (magick-agency): `requireCapability('agency')` deleted, as on the parent.
 
     sub.post('/ingest/upload', {
       preHandler: requirePermission('agency.campaigns.write'),
@@ -2699,7 +2489,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    * the wizard polls the job rather than holding a request open.
    *
    * `dry_run: true` runs the whole parse and reports the summary WITHOUT
-   * sending anything to core, which is what lets the wizard say "95% of your
+   * writing any roster rows, which is what lets the wizard say "95% of your
    * rows are valid" before the operator commits.
    */
   app.post('/ingest/jobs', {
@@ -2758,29 +2548,28 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
 
     // Membership first, header as the fallback for a tenant-wide caller who
     // names one — the `GET /phone-numbers` rule. An account-scoped caller who
-    // omits `X-Account-Id` used to stamp NULL here, which the account-scoped
+    // omits `X-Account-Id` would otherwise stamp NULL here, which the account-scoped
     // lookups below would then refuse to show back to its own creator. Never
     // a widening: when both are present `tenantContextMiddleware` has already
     // refused a header that disagrees with an account-scoped membership.
     const jobAccountId = ingestJobAccountScope(request) ?? request.accountId ?? null;
 
     // Any named campaign must be one the caller owns — a dry run's included. A
-    // run that writes sends its rows to that campaign over S2S (see the probe's
-    // docstring); a dry run sends nothing, but it still READS through the id:
+    // run that writes hands its rows to that campaign (see the probe's
+    // docstring); a dry run writes nothing, but it still READS through the id:
     // `dropSuppressed` applies that campaign's campaign-scoped DNC entries, so
-    // an unprobed dry run naming a sibling's campaign reported which of the
-    // caller's numbers that campaign suppresses, and stored the unverified id
-    // on the job row. A dry run WITHOUT a campaign is not probed, and so stays
-    // reachable with core down.
+    // an unprobed dry run naming a sibling's campaign would report which of the
+    // caller's numbers that campaign suppresses, and store the unverified id
+    // on the job row. A dry run WITHOUT a campaign is not probed.
     //
-    // PORT NOTE (magick-agency): the probe now returns the PROVEN owner's account (the
-    // campaign row's `account_id`), and that is what the job is stamped with whenever a
-    // campaign is named (lane B2 carry-forward: `agency_ingest_jobs.account_id` is set
-    // from the proven owner, because the in-process roster hand-off compares it to the
-    // campaign's account and fails a mismatched or NULL one `core_rejected_chunk`).
-    // Core's `requireOwned` matched that column to `jobAccountId`, so the two are equal;
-    // the row's value is used so the invariant is stated where it is written. A dry run
-    // with no campaign keeps master's `jobAccountId` (no roster is written).
+    // The probe returns the PROVEN owner's account (the campaign row's
+    // `account_id`), and that is what the job is stamped with whenever a
+    // campaign is named: the roster hand-off compares `agency_ingest_jobs.account_id`
+    // to the campaign's account and fails a mismatched or NULL one
+    // `core_rejected_chunk`. The handler's `requireOwned` matched that column to
+    // `jobAccountId`, so the two are equal; the row's value is used so the
+    // invariant is stated where it is written. A dry run with no campaign keeps
+    // `jobAccountId` (no roster is written).
     let ownerAccountId: string | null = jobAccountId;
     if (input.campaign_id) {
       const proven = await proveCampaignOwnedForWrite(request, reply, input.campaign_id, jobAccountId);
@@ -2803,17 +2592,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       dedupe_phones: input.dedupe_phones ?? true,
       dry_run: input.dry_run ?? false,
       ...(input.mode ? { mode: input.mode } : {}),
-      // A person, or nobody. A platform API key authenticates carrying its
-      // CREATOR as `request.user`, and `created_by` is provenance of the
-      // credential, not the identity of whoever holds it now — the correction
-      // `requestAuditActor` and `resolveAgencyActor` already make. Stamping the
-      // creator would record them as having run an import they did not run.
-      // The column has no key-id twin, so NULL ("not a person") is the honest
-      // value; the credential is one join away in the request log.
-      //
-      // PORT NOTE (magick-agency): no platform API keys (decision #5), so the
-      // `isPlatformApiKeyCaller(request) ? null :` arm is deleted; `request.user` is
-      // always the person who ran the import.
+      // A person, or nobody. `sessionMiddleware` has no API-key branch, so
+      // `request.user` is always the person who ran the import.
       created_by: request.user?.id ?? null,
     });
 
@@ -2895,18 +2675,15 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   /**
    * ─── Clear a campaign's roster ────────────────────────────────────────────
    *
-   * **Registered only when `AGENCY_ROSTER_REPLACE_ENABLED` is set**, following
-   * this platform's established shape — an entire subsystem registers only if
-   * its config says so, and docs/reference/magickvoice-platform/CLAUDE.md's rule of thumb that a missing route
-   * in a running service usually means an unset env var. A destructive surface
+   * **Registered only when `AGENCY_ROSTER_REPLACE_ENABLED` is set** — an
+   * entire subsystem registers only if its config says so, so a missing route
+   * in a running server usually means an unset env var. A destructive surface
    * that is visible but always fails is worse than one that is not there.
    *
    * ── Why this exists at all ────────────────────────────────────────────────
-   * There has never been a way to clear an agency roster — no route in master,
-   * no endpoint in core — while cusui's own summary copy tells operators, in
-   * two places, that they can "clear and re-upload". The product's advice was
-   * impossible to follow, and after core's 083 the workaround operators reached
-   * for instead (re-upload the corrected file) silently MERGES.
+   * Without it there is no way to clear an agency roster, and the workaround
+   * an operator reaches for instead (re-upload the corrected file) silently
+   * MERGES, because `append` is the default ingest mode.
    *
    * ── Why a route of its own rather than falling out of replace ─────────────
    * The two share one primitive (`supersedeRoster`) and deliberately so, because
@@ -2921,26 +2698,25 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
    * what it is — a lifecycle action on the campaign, like `/start` and `/pause`
    * above.
    *
-   * `proxy.contact_lists.write` (account_admin and up) is the same permission
+   * `agency.campaigns.write` (account_admin and up) is the same permission
    * that loads a roster, which is the right pairing: whoever can put a list in
    * front of the dialer can take it away.
    *
    * ── Three outcomes, and the middle one is the point ───────────────────────
-   *   200 `roster_state: 'cleared'`     — `cleared` is the count core retired.
+   *   200 `roster_state: 'cleared'`     — `cleared` is the count the dialer runtime retired.
    *   202 `roster_state: 'unconfirmed'` — the request may or may not have been
    *       applied; `cleared`/`contacts_total` are null and the operator must
    *       re-read the campaign's count. See the branch below for why 202.
-   *   409 / 404                         — core refused on a single attempt, so
+   *   409 / 404                         — refused on a single attempt, so
    *       nothing was cleared, or the campaign does not exist.
    */
   //
-  // PORT NOTE (magick-agency, decision B15): registered under exactly master's flag
-  // (`config.agency.rosterReplaceEnabled`, `AGENCY_ROSTER_REPLACE_ENABLED`, default off).
-  // When it is on, the route still refuses: lane B2's in-process `supersedeRoster` throws
-  // `RosterSupersedeError(..., 'unsupported', attempts 1)` and writes nothing — the outcome
-  // production had, because core @ 4850d1d9 never served the supersede endpoint — and the
-  // `unsupported` arm falls through to the 500 below, as in master. The ingest's
-  // `mode: 'replace'` likewise ends `replace_unsupported`.
+  // Decision B15: registered under `config.agency.rosterReplaceEnabled`
+  // (`AGENCY_ROSTER_REPLACE_ENABLED`, default off). When it is on, the route still
+  // refuses: `supersedeRoster` throws `RosterSupersedeError(..., 'unsupported', attempts 1)`
+  // and writes nothing, because replace/clear is not implemented, and the
+  // `unsupported` arm falls through to the 500 below. The ingest's `mode: 'replace'`
+  // likewise ends `replace_unsupported`.
   if (config.agency.rosterReplaceEnabled) {
     app.post<{ Params: { id: string } }>('/campaigns/:id/roster/clear', {
       preHandler: requirePermission('agency.campaigns.write'),
@@ -2950,11 +2726,10 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
         return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
       }
 
-      // Same ownership proof as the ingest: the supersede is an S2S write that
-      // core's `requireOwned` never sees. Membership account first, never the
-      // header alone — an account-scoped caller who omits it used to send no
-      // account at all.
-      // PORT NOTE (magick-agency): as on the ingest, the supersede is addressed to the
+      // Same ownership proof as the ingest: the supersede is a roster write the
+      // handler's `requireOwned` never sees. Membership account first, never the
+      // header alone — an account-scoped caller who omits it would otherwise send
+      // no account at all. As on the ingest, the supersede is addressed to the
       // proven owner's account (the probe's return), not the caller's scope.
       const callerAccountId = ingestJobAccountScope(request) ?? request.accountId ?? null;
       const clearAccountId = await proveCampaignOwnedForWrite(request, reply, request.params.id, callerAccountId);
@@ -2965,8 +2740,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       try {
         // No `ingestJobId`: nothing is being loaded, so nothing is exempt and
         // every live contact is retired. Idempotent for the same reason the
-        // replace path is — core's predicate only ever touches rows that are
-        // still live, so a second clear finds nothing to do and says so.
+        // replace path is — the supersede predicate only ever touches rows that
+        // are still live, so a second clear finds nothing to do and says so.
         const result = await supersedeRoster({
           campaignId: request.params.id,
           tenantId: request.tenantId!,
@@ -3005,16 +2780,15 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
         if (err instanceof RosterSupersedeError) {
           if (err.code === 'campaign_not_found') {
             // Checked ahead of the attempt count below, and it is the one code
-            // that may be: a campaign core cannot find has no roster for the
+            // that may be: a campaign that cannot be found has no roster for the
             // operator to go and check, so "we could not confirm your contacts"
             // would be an alarm about nothing.
             //
             // `code` is carried explicitly, and it is not decoration.
-            // `campaign_not_found` is already allow-listed in `errorMaskHook`,
-            // but the allow-list reads the BODY — and this body used to be
-            // `{ error, message }`, so core's recorded 404 masked the response
-            // into "contact support and quote this request id" for a campaign
-            // that simply does not exist.
+            // `campaign_not_found` is allow-listed in `errorMaskHook`, but the
+            // allow-list reads the BODY — a bare `{ error, message }` would be
+            // masked into "contact support and quote this request id" for a
+            // campaign that simply does not exist.
             return reply.code(404).send({
               error: 'Not Found',
               code: 'campaign_not_found',
@@ -3024,12 +2798,13 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
           /**
            * ── The roster may already be empty, and no final code says so ──────
            *
-           * `supersedeRoster` makes up to FOUR attempts (`withRetry` loops
-           * `attempt <= maxRetries`), so attempt 1 can retire 5,000 contacts and
-           * commit, lose its response to the 30s timeout, and attempt 2 be
-           * answered `409 contacts_total_mismatch` by core's compare-and-swap
-           * against a roster that is already 0. Answering the browser 409 there
-           * tells the operator their clear failed while their contacts are gone.
+           * Not reached today: `supersedeRoster` refuses `unsupported` on its
+           * first attempt (decision B15). The branch is for an implementation
+           * that retries, where attempt 1 can retire 5,000 contacts and commit,
+           * lose its response, and attempt 2 be answered
+           * `409 contacts_total_mismatch` by the compare-and-swap against a
+           * roster that is already 0. Answering the browser 409 there would tell
+           * the operator their clear failed while their contacts are gone.
            *
            * So `attempts > 1` is the discriminator — the same one the ingest
            * replace path uses, and coarse in the same safe direction: a 409 on
@@ -3041,14 +2816,14 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
            * the record, and it has to be one an operator can act on. A 4xx says
            * "your request did not happen", which is exactly the untruth being
            * fixed, and it would additionally be swallowed by `errorMaskHook`
-           * (core answered 4xx this request, and this body carries no `details`
-           * and no allow-listed `code`), replacing the one sentence that matters
+           * (this body carries no `details` and no allow-listed `code`),
+           * replacing the one sentence that matters
            * with a support-ticket message. A 200 asserts the opposite untruth.
            * 202 is the honest shape: the request was accepted, the outcome is not
            * knowable here, read it from the campaign.
            *
            * The recovery is the SAME action the `contacts_total_mismatch`
-           * guidance already gives cusui — re-fetch the campaign's contact count
+           * guidance already gives the console — re-fetch the campaign's contact count
            * and confirm again with what you see — never a bare retry, which
            * re-asserts a count that is now certainly wrong.
            */
@@ -3067,15 +2842,15 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
             return reply.code(202).send({
               campaign_id: request.params.id,
               roster_state: 'unconfirmed',
-              // Null, never 0: master has no count, and a zero here would read
+              // Null, never 0: there is no count, and a zero here would read
               // as "we cleared nothing" on the one response where that is the
               // claim it cannot make.
               cleared: null,
               contacts_total: null,
               code: 'roster_state_unconfirmed',
-              // Core's own refusal reason where it gave one, for the log trail
-              // and for a console that wants to say which check failed. Absent
-              // when the attempts never reached core.
+              // The roster write's own refusal reason where it gave one, for the
+              // log trail and for a console that wants to say which check
+              // failed. Absent when no attempt got a refusal back.
               ...(err.coreCode ? { core_code: err.coreCode } : {}),
               attempts: err.attempts,
               message:
@@ -3084,7 +2859,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
             });
           }
           if (err.code === 'refused') {
-            // Core's own refusal, forwarded with its machine code: the campaign
+            // The roster write's own refusal, forwarded with its machine code: the campaign
             // is dialing, an attempt is live, or the roster changed size since
             // the operator looked. Each is actionable and none is a bug — and
             // reachable here only on a single attempt, so "nothing was cleared"
@@ -3097,8 +2872,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
           }
         }
         // `unsupported` and `failed` fall through on purpose. Both mean this
-        // deployment is wired wrong — the flag above is on while core cannot
-        // serve the hop — which is a server fault, and the error mask's job is
+        // deployment is wired wrong — the flag above is on while the supersede
+        // is not implemented — which is a server fault, and the error mask's job is
         // to turn a server fault into a request id plus a full log line rather
         // than an operator-facing explanation of our deployment.
         throw err;
@@ -3139,13 +2914,11 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
 }
 
 /**
- * The caller's own account scope for an ingest-job lookup (ClickUp
- * `14ygtkj8rvv`): the MEMBERSHIP's `account_id`, never `request.accountId` —
- * `X-Account-Id` is an unauthenticated, optional header, so an account-scoped
- * caller who omits it would otherwise read as tenant-wide. `null` for a
- * tenant-wide membership (or none — the shape an unrestricted platform key
- * resolves to, which `requirePermission` has already refused if it names no
- * creator), which leaves every job in the tenant reachable, by design.
+ * The caller's own account scope for an ingest-job lookup: the MEMBERSHIP's
+ * `account_id`, never `request.accountId` — `X-Account-Id` is an
+ * unauthenticated, optional header, so an account-scoped caller who omits it
+ * would otherwise read as tenant-wide. `null` for a tenant-wide membership,
+ * which leaves every job in the tenant reachable, by design.
  *
  * Every route that takes a job id threads this through — poll, cancel AND the
  * rejected-rows export: a guard on one of them is not a guard on the others.
@@ -3155,7 +2928,7 @@ function ingestJobAccountScope(request: FastifyRequest): string | null {
 }
 
 /**
- * An ingest job id is master's own UUID primary key. Anything else reached
+ * An ingest job id is the `agency_ingest_jobs` UUID primary key. Anything else reached
  * Postgres as `22P02 invalid_text_representation`, which the error handler
  * serves as a masked 500 — on poll, cancel and the rejected-rows download alike.
  * Checked in the handler rather than as a route `preHandler` because the RBAC
@@ -3174,42 +2947,31 @@ function replyImportNotFound(reply: FastifyReply): FastifyReply {
 }
 
 /**
- * Prove the caller owns `campaignId` BEFORE master writes to its roster over S2S
+ * Prove the caller owns `campaignId` BEFORE this route writes to its roster
  * (or, on a dry run, reads that campaign's DNC scope into a preview).
  *
- * ── Why this exists (ClickUp `14ygtkj8rvv`, found in review) ────────────────
+ * ── Why this exists ─────────────────────────────────────────────────────────
  * The roster writes — the ingest's chunks (`sendRosterChunk`) and the
- * replace/clear supersede — go to core's `/internal/agency-campaigns/:id/…`
- * with `coreInternalRequest`, which skips core's `authMiddleware` and its
- * `requireOwned`. Core's internal contacts handler resolves the campaign by id
- * ALONE and writes under the campaign's own `tenant_id`/`account_id`; the
- * `tenant_id`/`account_id` master sends in the body are not compared to it. So a
- * `campaign_id` taken straight from the request body was the only thing naming
- * the target: an `account_admin` who knew a sibling account's campaign id — or
- * ANOTHER TENANT's — could load contacts into it, and those contacts get dialled.
+ * replace/clear supersede — are named by a `campaign_id` taken from the request
+ * body. Without a proof, an `account_admin` who knew a sibling account's
+ * campaign id — or ANOTHER TENANT's — could load contacts into it, and those
+ * contacts get dialled.
  *
- * The proof is a proxied read of the campaign, the `requireOwnedCampaign` shape:
- * core's public route 404s unless the campaign's tenant AND account both match
- * the headers, so the account sent here is the one the job will be stamped with
- * — the caller's membership account first, the header only for a tenant-wide
- * caller. Unlike the activity trail's probe it FAILS CLOSED: a transport failure
- * propagates (a masked 500) rather than degrading, because the thing it
- * authorises is a write that cannot be taken back.
+ * The proof is the internal handler's campaign read, the `requireOwnedCampaign`
+ * shape and for the same reasons (its own `gate` + `requireOwned`, its own 404
+ * body): the route 404s unless the campaign's tenant AND account both match the
+ * headers, so the account sent here is the one the job will be stamped with —
+ * the caller's membership account first, the header only for a tenant-wide
+ * caller. It FAILS CLOSED: a throw propagates (a masked 500), because the thing
+ * it authorises is a write that cannot be taken back. The roster hand-off
+ * (`agency-roster.client.ts`) re-checks tenant AND account itself
+ * (`ingestCallerOwnsCampaign`), so this proof is the first of two.
  *
- * Returns true when the caller may proceed; otherwise it has already replied.
- *
- * PORT NOTE (magick-agency):
- *  - The read is core's `GET /agency-campaigns/:id` handler in-process (`callCore`),
- *    for the reasons `requireOwnedCampaign` gives (core's own `gate` + `requireOwned`,
- *    core's 404 body). The roster hand-off it protects is in-process too
- *    (`agency-roster.client.ts`, lane B2), and it re-checks tenant AND account itself
- *    (`ingestCallerOwnsCampaign`), so this proof is now the first of two.
- *  - It returns the PROVEN owner's account — the campaign row's `account_id` off core's
- *    body — instead of `true`, or `null` when it has replied. Callers stamp the job and
- *    address the supersede with it (lane B2 carry-forward). A 200 without the field is a
- *    defect and is refused (500) rather than guessed.
- *  - `timeoutMs: ACTIVITY_OWNERSHIP_PROBE_TIMEOUT_MS` is deleted: it bounded the
- *    undici socket of the HTTP probe; `callCore` has none (see `requireOwnedCampaign`).
+ * Returns the PROVEN owner's account — the campaign row's `account_id` off the
+ * handler's body — or `null` when it has already replied. Callers stamp the job
+ * and address the supersede with it. A 200 without the field is a defect and is
+ * refused (500) rather than guessed. There is no timeout: `callCore` installs
+ * no signal (see `requireOwnedCampaign`).
  */
 async function proveCampaignOwnedForWrite(
   request: FastifyRequest,
@@ -3218,10 +2980,10 @@ async function proveCampaignOwnedForWrite(
   accountId: string | null,
 ): Promise<string | null> {
   if (!accountId) {
-    // Core's `requireOwned` compares the campaign's account to the account
-    // header; with none there is nothing to compare, and core would 400 on the
-    // missing header anyway. Refused here so the caller gets a named reason
-    // rather than a masked core complaint.
+    // The handler's `requireOwned` compares the campaign's account to the
+    // account header; with none there is nothing to compare, and the handler
+    // would 400 on the missing header anyway. Refused here so the caller gets a
+    // named reason rather than a masked handler complaint.
     await reply.code(400).send({
       error: 'Bad Request',
       code: 'account_scope_required',
@@ -3237,14 +2999,14 @@ async function proveCampaignOwnedForWrite(
     metricPath: '/agency-campaigns/:id',
   });
   if (result.status >= 400) {
-    // Forwarded verbatim: a sibling account's campaign, another tenant's and a
-    // nonexistent one are all core's 404, and must stay indistinguishable.
+    // Forwarded unchanged: a sibling account's campaign, another tenant's and a
+    // nonexistent one are all the handler's 404, and must stay indistinguishable.
     await reply.code(result.status).send(result.body);
     return null;
   }
   const ownerAccountId = extractCampaignField(result.body, 'account_id');
   if (!ownerAccountId) {
-    throw new Error('agency campaign ownership probe: core answered without the campaign\'s account_id');
+    throw new Error('agency campaign ownership probe: the internal handler answered without the campaign\'s account_id');
   }
   return ownerAccountId;
 }
@@ -3257,7 +3019,7 @@ async function proveCampaignOwnedForWrite(
  * could name a sibling account's rejected-rows export (keyed by nothing but the
  * job id) and read that back the same way. See `agency-ingest-keys.ts`.
  */
-/** Core's `authMiddleware` 400 for a request with no account (core `auth.middleware.ts:38-43`). */
+/** The internal handler's `authMiddleware` 400 for a request with no account. */
 function missingAccountBody(): { error: string; message: string } {
   return { error: 'Bad Request', message: `Missing required header: ${ACCOUNT_HEADER}` };
 }
@@ -3297,10 +3059,9 @@ function toJobResponse(job: Awaited<ReturnType<typeof agencyIngestJobRepository.
     campaign_id: job.campaign_id,
     status: job.status,
     dry_run: job.dry_run,
-    // `?? 'append'` covers the pre-057 ordering window, where `SELECT *` returns
-    // a row with no such key at all. Append is both the historical truth and the
-    // fail-safe reading — a client must never infer "this was a replace" from an
-    // absence.
+    // `?? 'append'` covers a row read before the `mode` column exists, where
+    // `SELECT *` returns no such key at all. Append is the fail-safe reading — a
+    // client must never infer "this was a replace" from an absence.
     mode: job.mode ?? 'append',
     /**
      * For a replace: how many contacts were retired before this import began.
@@ -3326,11 +3087,12 @@ function toJobResponse(job: Awaited<ReturnType<typeof agencyIngestJobRepository.
      *   (NULL, false) nothing was retired — the campaign is as it was
      *   (NULL, true)  the roster MAY be gone and the count is unknown
      *
-     * The third state exists because `supersedeRoster` makes up to four attempts,
-     * so one can commit and a later one can be refused by core's compare-and-swap.
+     * The third state exists for a supersede that retries: one attempt can
+     * commit and a later one be refused by the compare-and-swap. (Today
+     * `supersedeRoster` refuses on its first attempt, decision B15.)
      * **Render the third state at least as loudly as the second** — "we could not
      * confirm" is the sentence that gets an operator to look, and the wording
-     * cusui shows must not soften it into "probably fine".
+     * the console shows must not soften it into "probably fine".
      */
     replace_superseded_uncertain: Boolean(job.replace_superseded_uncertain ?? false),
     file_name: job.file_name,
@@ -3356,16 +3118,15 @@ function toJobResponse(job: Awaited<ReturnType<typeof agencyIngestJobRepository.
     has_rejected_export: Boolean(job.rejected_s3_key),
     rejected_row_count: job.rejected_row_count,
     rejected_truncated: job.rejected_truncated,
-    // Independent of accepted/rejected above (migration 055): those count what
-    // master decided to SEND; this counts what core's roster actually REFUSED
-    // on arrival because it already held the row (a re-upload into a populated
-    // campaign, not a retry). A non-zero value here means the operator's
-    // `accepted` count overstates what core actually wrote — surface it
-    // prominently rather than let a "5,000 accepted" summary imply success.
+    // Independent of accepted/rejected above: those count what the ingest
+    // decided to SEND; this counts what the roster actually REFUSED on arrival
+    // because it already held the row (a re-upload into a populated campaign,
+    // not a retry). A non-zero value here means the operator's `accepted` count
+    // overstates what was actually written — surface it prominently rather than
+    // let a "5,000 accepted" summary imply success.
     //
-    // `?? 0` / `?? []`, not a bare read: a row written before migration 055
-    // landed (or read back during the pre-migration ordering window the
-    // repository's write-path fallback tolerates — see
+    // `?? 0` / `?? []`, not a bare read: a row read while the columns do not
+    // exist (the window the repository's write-path fallback tolerates — see
     // `agency-ingest-job.repository.ts`) has no key at all for either column,
     // so `job.core_rejected_duplicate_rows` is `undefined` and
     // `Number(undefined)` is `NaN` — which `JSON.stringify` silently rewrites
@@ -3373,10 +3134,10 @@ function toJobResponse(job: Awaited<ReturnType<typeof agencyIngestJobRepository.
     // documented as `number`.
     core_rejected_duplicate_rows: Number(job.core_rejected_duplicate_rows ?? 0),
     core_duplicate_source_rows: job.core_duplicate_source_rows ?? [],
-    // Whether the count above is EXACT or a LOWER BOUND (migration 056). A count
-    // that may be an undercount is a materially different thing to render than an
-    // exact one: "core refused nothing" and "core cannot tell us what it refused"
-    // are the same zero on the wire without this bit, and the first is a clean
+    // Whether the count above is EXACT or a LOWER BOUND. A count that may be an
+    // undercount is a materially different thing to render than an exact one:
+    // "the roster refused nothing" and "we cannot tell what it refused" are the
+    // same zero on the wire without this bit, and the first is a clean
     // import while the second means the operator should not trust the summary to
     // prove one.
     //
@@ -3384,25 +3145,23 @@ function toJobResponse(job: Awaited<ReturnType<typeof agencyIngestJobRepository.
      * **An ABSENT column reads `true`, not `false`, and the direction is the whole
      * point of the field.**
      *
-     * `?? false` was wrong here, and wrong in exactly the way migration 056
-     * exists to prevent. The key is missing from a `SELECT *` only while the column
-     * itself does not exist — i.e. while 056 has not been applied — and in that
-     * window the repository's `42703` fallback has ALSO been unable to write the
-     * count. So the row reads `{ core_rejected_duplicate_rows: 0,
-     * may_undercount: false }`: "core refused nothing, exactly", stated
-     * confidently about a number master never managed to record. That is a
-     * confident wrong zero, which is the failure mode this pair of fields was
-     * added to end.
+     * `?? false` would be wrong here, in exactly the way this field exists to
+     * prevent. The key is missing from a `SELECT *` only while the column itself
+     * does not exist, and in that window the repository's `42703` fallback has
+     * ALSO been unable to write the count. So the row would read
+     * `{ core_rejected_duplicate_rows: 0, may_undercount: false }`: "the roster
+     * refused nothing, exactly", stated confidently about a number that was never
+     * recorded. That is a confident wrong zero, which is the failure mode this
+     * pair of fields exists to end.
      *
-     * `?? true` is the honest reading: while the column is absent master cannot
-     * vouch for the count, so it says so. Once 056 lands every row carries a real
-     * boolean — historical rows get the column default `false`, which is correct
-     * for them, because their counts WERE recorded by 055. The uncertainty is
-     * therefore confined to the migration window rather than smeared over history.
+     * `?? true` is the honest reading: while the column is absent the count
+     * cannot be vouched for, so the response says so. Once the column exists
+     * every row carries a real boolean (column default `false`), so the
+     * uncertainty is confined to that window.
      *
      * `Boolean(... ?? true)` rather than a bare read so the wire value is always a
      * real boolean; `undefined` would be dropped by `JSON.stringify` and leave
-     * cusui with a missing field for something documented as `boolean`.
+     * the console with a missing field for something documented as `boolean`.
      */
     core_rejected_duplicate_rows_may_undercount: Boolean(
       job.core_rejected_duplicate_rows_may_undercount ?? true,

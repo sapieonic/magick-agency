@@ -21,7 +21,7 @@ import {
 import type { DiagnosticEntry } from './useAgencyStation';
 
 /**
- * The connect cue, wired to a real speaker (`MAG-39`).
+ * The connect cue, wired to a real speaker.
  *
  * `CueDispatcher` and `WebAudioCueSink` were built, unit-tested and left with
  * **no production caller** — `useAgencyConsole` never passed `cues`, so an agent
@@ -64,7 +64,7 @@ import type { DiagnosticEntry } from './useAgencyStation';
 /**
  * The cue the console is currently showing **visually**, and which one it is.
  *
- * `cue` is the whole point (`AD-P2-U-07`). The escalation used to carry an attempt
+ * `cue` is the whole point. The escalation used to carry an attempt
  * id alone and fire on connect only, so the console had one thing to draw and an
  * agent who could not hear had no way to tell a ring from a connect from a
  * hang-up. The treatment is looked up in `VISUAL_CUE_SPECS`, never invented here.

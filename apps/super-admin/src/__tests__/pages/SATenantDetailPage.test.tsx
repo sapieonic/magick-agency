@@ -368,8 +368,8 @@ describe('SATenantDetailPage — provider concurrency', () => {
     ));
   });
   /*
-   * PORT NOTE (magick-agency): cusui got the catalog inside the concurrency detail;
-   * here it comes from `GET /telephony-providers`. Same seeding: active providers at 0,
+   * The catalog comes from `GET /telephony-providers`, not the concurrency
+   * detail. Seeding: active providers at 0,
    * the allocation's own rows laid over them, inactive providers only when allocated.
    */
   it('seeds a row per ACTIVE provider at 0 and overlays the allocation, keeping an allocated inactive provider', async () => {

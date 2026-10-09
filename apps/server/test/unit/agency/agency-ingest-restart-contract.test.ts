@@ -21,43 +21,43 @@ import {
 } from '../../../src/agency/agency-csv-ingest.js';
 
 /**
- * AD-P2-X-02 arm (c) — MASTER'S half of the cross-service restart contract,
- * asserted on master's side.
+ * The ingest service's half of the restart contract,
+ * asserted on the ingest side.
  *
  * ── Why this file exists ─────────────────────────────────────────────────────
- * `magic-voice-core/test/integration/agency/agency-ingest-idempotency.test.ts`
- * proves core does not duplicate a re-uploaded roster. But its restart arm is
- * built on three facts about MASTER, and every one of them lives in that file's
- * own prose header rather than in an assertion anywhere:
+ * `test/integration/agency/agency-ingest-idempotency.test.ts` proves the roster
+ * chunk handler does not duplicate a re-uploaded roster. But its restart arm is
+ * built on three facts about the INGEST SERVICE, and every one of them lives in
+ * that file's own prose header rather than in an assertion anywhere:
  *
- *   1. master never reuses a job id across a restart;
+ *   1. the ingest never reuses a job id across a restart;
  *   2. `POST /ingest/jobs` always creates a fresh row;
- *   3. master derives `source_row_number` from the FILE LINE (`startLine`).
+ *   3. the ingest derives `source_row_number` from the FILE LINE (`startLine`).
  *
- * Core's test synthesises all three itself — `randomUUID()` supplies the "new job
+ * That test synthesises all three itself — `randomUUID()` supplies the "new job
  * id", and its own helper supplies row numbers identical across both runs. So if
- * master resumed a job id, re-chunked at a different size, or numbered rows by
- * accepted-count instead of file line, **core's test stays green and the roster
+ * the ingest resumed a job id, re-chunked at a different size, or numbered rows by
+ * accepted-count instead of file line, **that test stays green and the roster
  * duplicates in production.** That is a test writing both sides of a contract.
  *
- * This file asserts master's three obligations against master's real code, so
- * core's comment stops being the only place they live.
+ * This file asserts the ingest service's three obligations against its real
+ * code, so that comment stops being the only place they live.
  *
- * ── A correction to core's header, found while writing this ───────────────────
- * Core's header states that "`reapStaleJobs()` fails every live job at boot".
+ * ── A correction to that header, found while writing this ─────────────────────
+ * It states that "`reapStaleJobs()` fails every live job at boot".
  * **It does not, and it must not.** The statement is gated on a heartbeat
  * staleness window (`updated_at < NOW() - AGENCY_INGEST_JOB_STALE_MINUTES`), and
- * that gate is load-bearing: master's ingest runs in-process per replica, so an
+ * that gate is load-bearing: the ingest runs in-process per replica, so an
  * unconditional reap would fail another replica's still-progressing job every
  * time any replica restarts — which a rolling deploy does routinely.
  *
- * That correction does NOT weaken core's conclusion, and the distinction is worth
+ * That correction does NOT weaken the conclusion, and the distinction is worth
  * being precise about because it relocates the guarantee. The fresh job id does
  * not come from the reap at all — it comes from `create()` being an
- * unconditional INSERT whose id is assigned by the DATABASE (§"a fresh job row"
+ * unconditional INSERT whose id is assigned by the DATABASE ("a fresh job row"
  * below). The reap only stops the wizard polling an orphan forever. So a
  * re-upload gets a new id whether or not the old job was reaped, which is a
- * stronger position than core's header claims — and it is the reason arm (c) is
+ * stronger position than that header claims — and it is the reason arm (c) is
  * asserted here as two independent properties rather than one chained one.
  */
 
@@ -88,7 +88,7 @@ const CREATE_INPUT = {
   phone_column: 'Mobile',
 } as const;
 
-describe('master’s restart contract (AD-P2-X-02 arm c)', () => {
+describe('the ingest service’s restart contract ', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -97,12 +97,12 @@ describe('master’s restart contract (AD-P2-X-02 arm c)', () => {
 
   describe('a fresh job row, and therefore a fresh job id', () => {
     it('mints a new job id on every create — the id comes from the DATABASE, never from the input', async () => {
-      // This is the property core's restart arm actually depends on, and the one
-      // its `randomUUID()` fabricates. If `create` were ever made to resume — an
+      // This is the property the idempotency test's restart arm actually depends on,
+      // and the one its `randomUUID()` fabricates. If `create` were ever made to resume — an
       // upsert keyed on `(campaign_id, s3_key)` is the obvious "optimisation",
       // and it would look like deduplicating redundant uploads — then run 2 would
-      // reuse run 1's id, master's chunk keys would collide with the ones core
-      // already holds, and core's chunk-key layer would refuse the WHOLE chunk
+      // reuse run 1's id, the ingest's chunk keys would collide with the ones the dialer
+      // already holds, and its chunk-key layer would refuse the WHOLE chunk
       // rather than letting the row-level index adjudicate row by row. The
       // roster would silently short by every chunk run 1 had committed.
       let issued = 0;
@@ -162,7 +162,7 @@ describe('master’s restart contract (AD-P2-X-02 arm c)', () => {
 
       // The comment-stripping is itself load-bearing here, and this asserts it
       // rather than trusting it: the RAW file DOES contain the words "ON
-      // CONFLICT" — in prose, describing the index on CORE's side — so the
+      // CONFLICT" — in prose, describing the index on the dialer's side — so the
       // check below run over `raw` would be satisfied by that comment and would
       // pass against an upsert. (An earlier draft of this test used a proximity
       // regex instead and silently failed to catch the mutation; measured.)
@@ -193,7 +193,7 @@ describe('master’s restart contract (AD-P2-X-02 arm c)', () => {
 
   describe('reapStaleJobs — what it really guarantees', () => {
     it('drives a stale job to a TERMINAL status, so nothing can poll or resume it', async () => {
-      // Core's header leans on the reap "failing" the old job. The load-bearing
+      // The idempotency test's header leans on the reap "failing" the old job. The load-bearing
       // part is that `failed` is terminal and `finished_at` is stamped — an
       // interrupted job left `running` would keep the wizard polling forever and
       // would leave an operator believing an import is still progressing.
@@ -210,10 +210,10 @@ describe('master’s restart contract (AD-P2-X-02 arm c)', () => {
     });
 
     it('is gated on a heartbeat window — it does NOT fail every live job at boot', async () => {
-      // Explicitly contradicting the sentence in core's test header, so the two
-      // repos cannot keep disagreeing silently.
+      // Explicitly contradicting the sentence in the idempotency test's header, so
+      // the two cannot keep disagreeing silently.
       //
-      // The gate is what makes master's ingest safe under a rolling deploy: the
+      // The gate is what makes the ingest safe under a rolling deploy: the
       // work runs in-process per replica, so an unconditional
       // `WHERE status IN ('pending','running')` would fail a SIBLING replica's
       // still-progressing import the instant this one boots. A live job
@@ -292,25 +292,25 @@ describe('master’s restart contract (AD-P2-X-02 arm c)', () => {
       // The discriminator. Accepted-count numbering would be [1,2,3] and would
       // satisfy every "the numbers are stable" assertion below just as well —
       // while making a re-upload's rows collide with DIFFERENT rows of the
-      // original, which is the failure core cannot see from its side.
+      // original, which is the failure the dialer side cannot see.
       expect(accepted.map((c) => c.source_row_number)).not.toEqual([1, 2, 3]);
 
       // The rejected row is reported against its own file line, so the operator's
-      // error list and core's collision report share one coordinate system.
+      // error list and the dialer's collision report share one coordinate system.
       expect(rejections.map((r) => r.row_number)).toEqual([3]);
     });
 
     it('produces IDENTICAL row numbers on a second run of the same file — the restart case', async () => {
-      // Run 1 is killed after core commits; run 2 streams the same file from the
-      // beginning. Core's row-level index can only recognise run 2's rows as
-      // replays if run 2 numbers them the same way — and, since 083, only if the
+      // Run 1 is killed after the dialer commits; run 2 streams the same file from the
+      // beginning. The dialer's row-level index can only recognise run 2's rows as
+      // replays if run 2 numbers them the same way — and only if the
       // CONTENT is identical too, which is asserted alongside.
       const runOne = await runIngest(500);
       const runTwo = await runIngest(500);
 
       expect(runTwo.accepted.map((c) => c.source_row_number))
         .toEqual(runOne.accepted.map((c) => c.source_row_number));
-      // Content parity, not just number parity: since migration 083 core keys
+      // Content parity, not just number parity: the dialer keys
       // row identity on md5(phone + context + timezone), so a re-upload that
       // renumbered identically but reshaped `context` would still duplicate.
       expect(runTwo.accepted).toEqual(runOne.accepted);
@@ -318,7 +318,7 @@ describe('master’s restart contract (AD-P2-X-02 arm c)', () => {
     });
 
     it('re-chunking at a different batch size does not change any row number', async () => {
-      // The third of core's three prose claims. Master picks `batchSize`, and a
+      // The third of the three prose claims. The ingest picks `batchSize`, and a
       // restart under different config (or a future adaptive size) must not
       // renumber anything — the row number is a property of the FILE, never of
       // the chunk it happened to travel in.
@@ -335,15 +335,15 @@ describe('master’s restart contract (AD-P2-X-02 arm c)', () => {
     });
 
     it('declares source_row_number as REQUIRED on the wire type', () => {
-      // Core's route types the field `source_row_number?: number` and its
-      // repository writes `?? null`, so a payload without it is accepted and — by
-      // way of migration 085 — stored with the CSV line NULL. Nothing duplicates
-      // (core keys on the content fingerprint, asserted in
-      // `magic-voice-core/test/integration/agency/agency-ingest-route-seam.test.ts`),
-      // but master's collision REPORT loses the ability to name which rows
+      // The roster route types the field `source_row_number?: number` and its
+      // repository writes `?? null`, so a payload without it is accepted and
+      // stored with the CSV line NULL. Nothing duplicates
+      // (the dialer keys on the content fingerprint, asserted in
+      // `test/integration/agency/agency-ingest-route-seam.test.ts`),
+      // but the ingest's collision REPORT loses the ability to name which rows
       // collided.
       //
-      // So master's required field is what keeps that report meaningful, and it
+      // So the ingest's required field is what keeps that report meaningful, and it
       // is a TypeScript property on one side of an HTTP boundary that
       // `npm run lint` never checks in test files. Pinned as text over
       // comment-stripped source: the optional marker is one character, and the

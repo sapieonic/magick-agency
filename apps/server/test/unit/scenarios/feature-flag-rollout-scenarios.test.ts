@@ -1,15 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-// ─── The authoritative rollout through-line (Quinn's IE sequence) ────────────
+// ─── The authoritative rollout through-line ──────────────────────────────────
 //
-// Anchored at CORE's authoritative path: the REAL FeatureFlagService driving the
-// REAL resolution + cache + invalidation, over a MOCKED repository whose override
-// rows are an in-memory set we mutate between steps. This is the cross-service
-// *logic* through-line — the master proxy and cusui render layers are already
-// covered per-layer (master super-admin route tests, cusui FeatureFlagsContext
-// tests); here we prove service → cache → invalidate → resolve → GATE for real,
-// since that gate (connection-create + dispatch) is what whatsapp_personal hangs
-// on regardless of the UI.
+// The REAL FeatureFlagService driving the REAL resolution + cache +
+// invalidation, over a MOCKED repository whose override rows are an in-memory
+// set we mutate between steps. This is the *logic* through-line — the route and
+// console render layers are covered per-layer; here we prove
+// service → cache → invalidate → resolve → GATE for real, since that gate
+// (connection-create + dispatch) is what whatsapp_personal hangs on regardless
+// of the UI.
 
 vi.mock('@magick-agency/observability', () => ({
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -33,13 +32,10 @@ import { FeatureFlagService } from '../../../src/feature-flags/feature-flag.serv
 import type { FeatureFlagOverrideRecord } from '@magick-agency/db/models/feature-flag.model';
 import { FIXTURE_FLAGS } from '../../helpers/fixture-flags.js';
 
-// PORT NOTE (magick-agency): ported from core
-// test/unit/scenarios/feature-flag-rollout-scenarios.test.ts@4850d1d9. The
-// through-line under test (service → cache → invalidate → resolve → gate) is the
-// service's; the flag is an UNREGISTERED copy of core's `whatsapp_personal`
-// (`test/helpers/fixture-flags.ts`) because agency's registry does not carry it
-// and `isEnabled` resolves the definition it is handed. Mocks target agency
-// module specifiers. Otherwise verbatim.
+// The through-line under test (service → cache → invalidate → resolve → gate) is
+// the service's; the flag is an UNREGISTERED fixture copy of `whatsapp_personal`
+// (`test/helpers/fixture-flags.ts`) because the registry does not carry it
+// and `isEnabled` resolves the definition it is handed.
 const PREFIX = 'mvc:';
 const WA = FIXTURE_FLAGS.whatsapp_personal;
 
@@ -65,7 +61,7 @@ function row(partial: Partial<FeatureFlagOverrideRecord>): FeatureFlagOverrideRe
   };
 }
 
-/** Simulate an S2S upsert: replace any same-scope row, then invalidate the cache. */
+/** Simulate an upsert: replace any same-scope row, then invalidate the cache. */
 async function upsert(svc: FeatureFlagService, r: FeatureFlagOverrideRecord) {
   store = store.filter(
     (o) => !(o.flag_key === r.flag_key && o.scope_type === r.scope_type &&
@@ -96,7 +92,7 @@ describe('whatsapp_personal rollout through-line (service → cache → invalida
     svc = new FeatureFlagService(null, PREFIX);
   });
 
-  it('IE1–IE4: default-off → enable A → isolation → bulk → global flip with D1 keystone', async () => {
+  it('IE1–IE4: default-off → enable A → isolation → bulk → global flip with explicit-false keystone', async () => {
     // ── IE1. Default off: no override, env unset → resolve false AND the gate denies.
     expect(await svc.isEnabled(WA, { tenantId: 'A' })).toBe(false);
     expect(await gatePermits(svc, 'A')).toBe(false);
@@ -121,7 +117,7 @@ describe('whatsapp_personal rollout through-line (service → cache → invalida
     await upsert(svc, row({ scope_type: 'global', tenant_id: null, value: true }));
     expect(await svc.isEnabled(WA, { tenantId: 'D' })).toBe(true);
 
-    // …but the D1 keystone: a tenant with an explicit FALSE override STILL resolves
+    // …but the keystone: a tenant with an explicit FALSE override STILL resolves
     // false despite the global true (most-specific-wins), and the gate denies it.
     await upsert(svc, row({ scope_type: 'tenant', tenant_id: 'E', value: false }));
     expect(await svc.isEnabled(WA, { tenantId: 'E' })).toBe(false);

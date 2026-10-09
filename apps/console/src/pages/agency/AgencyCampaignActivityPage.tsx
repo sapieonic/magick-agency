@@ -53,14 +53,14 @@ const PAGE_SIZE = 50;
 
 /**
  * The server's `partial_reason` (`src/types/agency-activity.ts`) is typed as a
- * bare `string`, but the two values master actually sends today are the exact
+ * bare `string`, but the two values the server actually sends today are the exact
  * tokens `'core_unreachable'` and `'core_error'` (see `partialNotice` in
  * `agencyActivityCopy.ts`, and the fixtures in `AgencyCampaignActivityPage.
  * test.tsx`/`agencyActivityCopy.test.ts`) — never free-form prose. This is the
  * client-side allow-list: an EXACT match on either known token collapses to
  * the one bucketed reason a dashboard can chart; an unrecognised value (a
- * future reason master adds, or anything else) is `'other'` rather than
- * fabricating a match, so a wording change on master's side can never flip
+ * future reason the server adds, or anything else) is `'other'` rather than
+ * fabricating a match, so a wording change on the server's side can never flip
  * this into the wrong bucket. No reason at all is `null`.
  */
 function mapPartialReason(reason: string | null): 'core_unavailable' | 'other' | null {
@@ -69,7 +69,7 @@ function mapPartialReason(reason: string | null): 'core_unavailable' | 'other' |
 }
 
 /**
- * The 424 case (master refusing to write a file missing the dialer's half) is
+ * The 424 case (the server refusing to write a file missing the dialer's half) is
  * the one failure this page already treats as an answer rather than a
  * transport error — see `onExport`'s catch comment — so it gets its own
  * `ExportFailureReason` rather than falling into `unknown_error`. Everything
@@ -293,7 +293,7 @@ export function AgencyCampaignActivityPage() {
         truncated: result.truncated,
       });
     } catch (err: unknown) {
-      // Master's 424 is an answer — it refused to write a file missing the
+      // The server's 424 is an answer — it refused to write a file missing the
       // dialer's half — so its message is shown rather than a generic failure.
       showErrorToast(err, 'Could not export this trail.');
       trackExportEvent('csv_export_failed', {
@@ -343,8 +343,8 @@ export function AgencyCampaignActivityPage() {
    * The filter's options and the table's labels both come from the response.
    *
    * This client used to keep its own copy of the action names, and it could not
-   * be checked against anything — master and core are separate repositories,
-   * neither a dependency of this one. Master knows both stores' vocabularies, so
+   * be checked against anything — the server's audit store and the dialer runtime's are separate
+   * stores, neither a dependency of this console. The server knows both stores' vocabularies, so
    * it serves them and nothing here is transcribed.
    */
   const actionGroups = useMemo(() => groupActivityActions(page?.available_actions), [page]);
@@ -357,7 +357,7 @@ export function AgencyCampaignActivityPage() {
    * A fallback copy is exactly the mirror this replaced: it would go stale
    * silently, and every stale entry is a checkbox that returns an empty trail,
    * which reads as "this never happened". Hiding it costs a supervisor the
-   * action filter against an older master and keeps the dates, which are the
+   * action filter against an older server and keeps the dates, which are the
    * filter that matters on a finished campaign, working untouched.
    */
   const actionFilterUnavailable = page !== null && actionGroups.length === 0;
@@ -369,7 +369,7 @@ export function AgencyCampaignActivityPage() {
   const retentionLine = page ? retentionNotice(page.retention) : null;
 
   // The dates are the filter that matters on a finished campaign, so an
-  // inverted range is caught here rather than sent to the server. Master
+  // inverted range is caught here rather than sent to the server. The server
   // refuses it too (400), but telling the supervisor before they press Apply is
   // the difference between a correction and a support ticket.
   const invertedRange = Boolean(draftFrom && draftTo && draftFrom > draftTo);
@@ -388,7 +388,7 @@ export function AgencyCampaignActivityPage() {
 
       {/*
         The campaign workspace's section bar, in the same slot on every one of
-        its screens (`MAG-166`). These four sections used to be reachable only
+        its screens. These four sections used to be reachable only
         as secondary buttons on the detail page's header row — the same row
         that carries Stop — so getting from Contacts to Call attempts meant
         going back through the campaign first.
@@ -663,7 +663,7 @@ export function AgencyCampaignActivityPage() {
                       ) : actorKind(row) === 'api_key' ? (
                         /*
                          * A platform API key, named as the CREDENTIAL and never
-                         * as the person who minted it (86d45t7rm). Master used
+                         * as the person who minted it. The server used
                          * to stamp that person here and now does not — so
                          * `user_id` is null on these rows, and the pre-existing
                          * `system` branch above would have rendered them
@@ -672,10 +672,10 @@ export function AgencyCampaignActivityPage() {
                          * `actor.system` is false for a key; this branch is what
                          * gives the row somewhere correct to go.
                          *
-                         * `display` is the key's own NAME, resolved by master
+                         * `display` is the key's own NAME, resolved by the server
                          * ("Nightly sync"), which is the thing a supervisor acts
                          * on — the follow-up is to find and revoke that key. It
-                         * falls back to master's own bare label rather than to a
+                         * falls back to the server's own bare label rather than to a
                          * uuid, so the id stays in the tooltip where it is
                          * looked up rather than in the cell where it identifies
                          * nobody.
@@ -688,7 +688,7 @@ export function AgencyCampaignActivityPage() {
                             * The marker is APPENDED to a resolved name, never
                             * wrapped around the fallback — `{display ?? 'API
                             * key'} (API key)` printed "API key (API key)" on
-                            * every row master could not name, which is the
+                            * every row the server could not name, which is the
                             * common case for a revoked key.
                             */}
                           {row.actor.display ? `${row.actor.display} (API key)` : 'API key'}
@@ -801,7 +801,7 @@ export function AgencyCampaignActivityPage() {
  * Keyed on {@link activityActorKind} rather than re-deriving, so the cell and
  * its styling cannot disagree about which of the four a row is — and so the
  * `system` branch keeps reading `actor.system` (the rendering flag) rather than
- * `actor.type`, which on a pre-067 row says `'unknown'`. See `ActivityActor`.
+ * `actor.type`, which on a row with no recorded actor type says `'unknown'`. See `ActivityActor`.
  */
 function actorClassName(row: ActivityRow): string | undefined {
   switch (activityActorKind(row)) {

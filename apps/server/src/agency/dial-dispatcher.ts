@@ -29,7 +29,7 @@ export interface DialCommand {
  * A dial command that has been through the pre-dial compliance gates.
  *
  * **The reason this type exists rather than a comment saying "check DNC first".**
- * §4.2 puts the gates in the pacing tick, which means a future dial path that does
+ * The gates run in the pacing tick, which means a future dial path that does
  * not come through `dialUpTo` would place calls no gate ever saw — the exact
  * failure the DNC gate exists to prevent, arriving through a door nobody guarded.
  * `dispatch` therefore takes this type instead of a bare `DialCommand`, and
@@ -39,14 +39,14 @@ export interface DialCommand {
  * Deliberately a SUBTYPE rather than a field on `DialCommand`: `executeDial` and
  * every test that drives the dialer directly keep taking the plain command, so the
  * guard costs one call site instead of nine files. The choke point is dispatch,
- * which is where the design already routes every dial (§3 steps 3–4).
+ * which is where the design already routes every dial.
  */
 export interface ClearedDialCommand extends DialCommand {
   clearance: PreDialClearance;
 }
 
 /**
- * Routes a dial to the replica that owns the agent's station socket (§3).
+ * Routes a dial to the replica that owns the agent's station socket.
  *
  * The seam exists because the bridge session, the agent's socket and the carrier
  * socket must end up in one process — the invariant the existing bridge already
@@ -56,8 +56,8 @@ export interface ClearedDialCommand extends DialCommand {
  * opened first and the dial is initiated later by a pacing loop on an arbitrary
  * replica.
  *
- * Per D2 there is exactly one implementation in v1 — {@link LocalDialDispatcher},
- * a direct in-process call. Going multi-replica means writing a
+ * The server runs as a single replica, so there is exactly one implementation in
+ * v1 — {@link LocalDialDispatcher}, a direct in-process call. Going multi-replica means writing a
  * `PubSubDialDispatcher` against this interface and threading an advertised host
  * into the bridge's webhook URLs; it does not mean touching the dial path.
  */
@@ -68,7 +68,7 @@ export interface DialDispatcher {
 /**
  * Single-replica implementation: the owner is always us, so dispatch is a call.
  *
- * It still *checks* ownership rather than assuming it. Under D2 that check can
+ * It still *checks* ownership rather than assuming it. With one replica that check can
  * only fail if the agent's socket died between reservation and dial — which is
  * precisely the case that must not become a dial, because there would be no one
  * to bridge the answer to.
@@ -99,7 +99,7 @@ export class LocalDialDispatcher implements DialDispatcher {
     }
 
     if (cmd.ownerReplica !== this.replicaId) {
-      // Unreachable while core is single-replica, and deliberately loud rather
+      // Unreachable while the server is single-replica, and deliberately loud rather
       // than silently dialing anyway — if this ever fires, the ownership model
       // has drifted and dialing would produce abandoned calls.
       log.error(

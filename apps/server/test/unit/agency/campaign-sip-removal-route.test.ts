@@ -2,18 +2,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 
 /*
- * NEW (magick-agency, Phase 8), no source twin: the equivalence tests for the two
- * SIP-deletion changes in `src/api/routes/agency-campaigns.routes.ts` (plan §2: SIP is
+ * Tests for the two
+ * SIP-deletion changes in `src/api/routes/agency-campaigns.routes.ts` (SIP is
  * deleted, and with it `sip_connection_id`, which the baseline, `AgencyCampaignRecord`
  * and the repository's INSERT no longer carry).
  *
  *  1. `POST /` no longer passes `sip_connection_id` to `agencyCampaignRepository.create`
- *     (core `agency-campaigns.routes.ts:451`@4850d1d9). Everything else it passed is
+ *     Everything else it passes is
  *     unchanged.
  *  2. The retry create reads its config keys from `RETRY_CONFIG_KEYS`, the shared
- *     `RETRY_INHERITED_CONFIG_KEYS` (lane B1's verbatim leaf, which still names
+ *     `RETRY_INHERITED_CONFIG_KEYS` (which still names
  *     `sip_connection_id`) minus that one key. So the child inherits exactly every other
- *     key core's did, and an override naming `sip_connection_id` is refused with the 400
+ *     config key, and an override naming `sip_connection_id` is refused with the 400
  *     any other non-config key gets — not accepted and then dropped by the repository.
  *
  * Mocks are `campaign-retry-route.test.ts`'s.
@@ -102,7 +102,7 @@ beforeEach(() => {
 });
 
 describe('POST / no longer hands sip_connection_id to the repository', () => {
-  it('omits the key even when the body sends one, and passes every other field as core did', async () => {
+  it('omits the key even when the body sends one, and passes every other field through', async () => {
     const app = await makeApp();
     const res = await app.inject({
       method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS,
@@ -112,7 +112,7 @@ describe('POST / no longer hands sip_connection_id to the repository', () => {
     expect(res.statusCode).toBe(201);
     const input = campaigns.create.mock.calls[0]![0] as Record<string, unknown>;
     expect(input).not.toHaveProperty('sip_connection_id');
-    // Core's create input, key for key, minus `sip_connection_id`.
+    // The create input, key for key, minus `sip_connection_id`.
     expect(Object.keys(input).sort()).toEqual([
       'abandon_announcement_id', 'abandonment_ceiling_pct', 'account_id', 'analysis_profile_id',
       'caller_ids', 'calling_days', 'calling_window_end', 'calling_window_start', 'context_display',

@@ -2,18 +2,15 @@
  * The agency error vocabularies, each as a closed union plus an `as const` list.
  *
  * ── Why this file exists ────────────────────────────────────────────────────
- * In MagickVoice these vocabularies were hand-mirrored across three repos and
- * pinned by a byte-identical S2S fixture (`docs/reference/magickvoice-platform/agency.md` §6.1–§6.4): core's
- * `AgencyActionErrorCode` union, master's `AGENCY_ACTION_ERROR_CODES` mirror and
- * error-mask allow-list, and cusui's own copy. A code added in one place and not
- * the others was rewritten by master's error mask into "contact support and
+ * Each vocabulary is declared exactly once, here. Separate copies (the
+ * dialer runtime's union, the public API layer's mirror and error-mask
+ * allow-list, the console's own copy) would drift: a code added in one place and
+ * not the others would be rewritten by the error mask into "contact support and
  * quote this request id" — status intact, explanation destroyed, nothing red
- * anywhere. Magick Agency is one application, so every one of those copies
- * collapses into this file, and the S2S fixture retires.
+ * anywhere. One application, one file.
  *
  * ── The two-sided exhaustiveness trick ──────────────────────────────────────
- * Ported from `magick-master/src/agency/agency-action-errors.ts:87-94` (master
- * v3.24.0, a1f0756a58a63bf8a19baf74298a702f9fe7b430). For every vocabulary:
+ * For every vocabulary:
  *
  *   1. `as const satisfies readonly Union[]` proves every LISTED value is a
  *      member of the union;
@@ -22,7 +19,7 @@
  *
  * Either direction drifting is a `tsc --noEmit` failure, i.e. `pnpm lint`.
  *
- * Where `./agency` (the verbatim core port) already declares a union, it is
+ * Where `./agency` (`./agency`, the frozen contract) already declares a union, it is
  * RE-EXPORTED here, never re-declared — a second declaration is exactly the
  * drift this file exists to end.
  */
@@ -34,17 +31,14 @@ export type { AgencyActionErrorCode, AgencyStationErrorCode } from './agency';
 // ─── 1. Agent action-route refusals ─────────────────────────────────────────
 
 /**
- * Runtime list of {@link AgencyActionErrorCode} — core's union (authority:
- * `magic-voice-core/src/agency/contracts.ts`, ported as `./agency`), cross-checked
- * against `actionErrorCodes.codes` in core's `agency-s2s-contract.fixture.json`.
+ * Runtime list of {@link AgencyActionErrorCode} (the union in `./agency` is the
+ * authority).
  *
- * ⚠️ **18 members, not 16.** `docs/reference/magickvoice-platform/agency.md` §6.2 (and the brief this package was
- * built from) say 16; that count predates `session_on_other_campaign` and
- * `agent_on_live_call`. Core's union, core's fixture, master's mirror and cusui's
- * mirror all carry 18 at the pinned SHAs, and `test/errors.test.ts` snapshots the
- * fixture's list verbatim.
+ * ⚠️ **18 members, not 16** — any older note saying 16 predates
+ * `session_on_other_campaign` and `agent_on_live_call`. `test/errors.test.ts`
+ * snapshots the list.
  *
- * Order is the fixture's order, which is also core's declaration order.
+ * Order is the declaration order of the union.
  */
 export const AGENCY_ACTION_ERROR_CODES = [
   'missing_actor',
@@ -78,25 +72,21 @@ void _allCodesListed;
 
 // ─── 2. Roster refusal codes ────────────────────────────────────────────────
 //
-// Ported verbatim from `magick-master/src/agency/agency-roster-errors.ts`
-// (master v3.24.0). Master's header explains the codes in terms of master's
-// error mask and core's not-yet-shipped supersede hop
-// (`POST /internal/agency-campaigns/:id/roster/supersede`,
-// `AGENCY_ROSTER_REPLACE_ENABLED`); in Magick Agency the destructive roster
-// change is in-process and these are simply the refusals it answers with.
+// The destructive roster change is in-process, and these are simply the refusals
+// it answers with (see `AGENCY_ROSTER_REPLACE_ENABLED`).
 
 /**
  * Why a destructive roster change was refused.
  *
  * Deliberately NOT members of {@link AgencyActionErrorCode}: these are
  * campaign-lifecycle refusals raised by the roster-replace path, and folding them
- * into the action union would make it claim members core's runtime does not raise
+ * into the action union would make it claim members the dialer runtime's runtime does not raise
  * there.
  */
 export type AgencyRosterRefusalCode =
   /** The campaign can dial right now, so retiring its roster is refused. */
   | 'campaign_dialing'
-  /** A dial attempt is live; core refuses until it settles. */
+  /** A dial attempt is live; the dialer runtime refuses until it settles. */
   | 'attempts_live'
   /**
    * The compare-and-swap failed: the roster is not the size the operator was
@@ -132,18 +122,13 @@ void _allRosterCodesListed;
 
 // ─── 3. Campaign-lifecycle codes ────────────────────────────────────────────
 //
-// In MagickVoice these were never a union anywhere: master allow-listed them
-// one string at a time in `FORWARDABLE_ERROR_CODES`
-// (`magick-master/src/api/middleware/error-mask.middleware.ts`, master v3.24.0 —
-// lines 139-141, 163-164, 220, 247; the brief's `:106-160` is `docs/reference/magickvoice-platform/agency.md` §6.4's
-// older line range), deliberately OUTSIDE `AGENCY_ACTION_ERROR_CODES` because
-// they are not members of core's action union. The member set is exactly the
-// seven `docs/reference/magickvoice-platform/agency.md` §6.4 names as "Campaign-lifecycle codes". Each comment below
-// condenses master's allow-list comment for that code.
+// These are deliberately OUTSIDE `AGENCY_ACTION_ERROR_CODES` because they are not
+// members of the action union; the error mask forwards them by allow-list. The
+// member set is exactly the seven campaign-lifecycle codes below.
 
 export type AgencyCampaignLifecycleErrorCode =
   /**
-   * D9's one-running-campaign-per-account rule surfacing as a 409 instead of a
+   * The one-running-campaign-per-account rule surfacing as a 409 instead of a
    * raw unique violation. The remedy is "pause the other campaign first".
    */
   | 'another_campaign_running'
@@ -161,7 +146,7 @@ export type AgencyCampaignLifecycleErrorCode =
   | 'announcement_not_found'
   /**
    * `analysis_profile_id` names a profile this account does not own, or one that
-   * no longer exists (core `analysis/profile-preflight.ts`, MAG-149).
+   * no longer exists (the dialer runtime `analysis/profile-preflight.ts`).
    */
   | 'analysis_profile_not_found';
 
@@ -188,13 +173,13 @@ void _allLifecycleCodesListed;
 
 /**
  * Runtime list of {@link AgencyStationErrorCode} — the `code` on an
- * `AgencyStationErrorFrame` (authority: core's union, ported as `./agency`).
+ * `AgencyStationErrorFrame` (authority: the union in `./agency`).
  *
  * `not_your_attempt` and `campaign_not_running` are ALSO members of
  * {@link AgencyActionErrorCode}; the two vocabularies overlap by design (one is a
  * socket frame, one an HTTP body), and each list states its own union whole.
- * `session_ended` is NOT a station frame code — `docs/reference/magickvoice-platform/agency.md` §6.4 lists it beside
- * these only because master allow-listed it via the action list.
+ * `session_ended` is NOT a station frame code — it is listed beside
+ * these only because the error mask allow-lists it via the action list.
  */
 export const AGENCY_STATION_ERROR_CODES = [
   'unauthorized',

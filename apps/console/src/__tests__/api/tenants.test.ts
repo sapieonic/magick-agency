@@ -40,7 +40,7 @@ vi.mock('../../api/client', () => ({
 
 import { listTenantMembers } from '../../api/tenants';
 
-/** One wire row, as master sends it: flat, with `user` nested and everything else top-level. */
+/** One wire row, as the server sends it: flat, with `user` nested and everything else top-level. */
 function rawMember(overrides: Record<string, unknown> = {}) {
   return {
     id: 'mem-1',
@@ -96,7 +96,7 @@ describe('listTenantMembers', () => {
   );
 
   it('carries invite_state even when the row has no user (the fabricated-user branch)', async () => {
-    // Master answers `user: null` for a membership whose user row it could not
+    // The server answers `user: null` for a membership whose user row it could not
     // join. That arm builds a user from scratch instead of spreading one, so it
     // is the half of the reshape that can be edited on its own.
     respondWith([rawMember({ user: null, invite_state: 'pending' })]);
@@ -109,7 +109,7 @@ describe('listTenantMembers', () => {
   });
 
   it('leaves an absent invite_state absent rather than defaulting it', async () => {
-    // An older master sends no such key. `'invite_state' in membership` rather
+    // An older server sends no such key. `'invite_state' in membership` rather
     // than a `toBeUndefined()`, because a defaulted `undefined` written into
     // the object would pass the latter and is a different thing from the field
     // never having arrived.

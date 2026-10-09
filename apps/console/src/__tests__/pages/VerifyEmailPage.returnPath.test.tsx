@@ -16,7 +16,7 @@ import { MemoryRouter } from 'react-router-dom';
  *     agent was rescued by `AgentLanding`; a supervisor is not a dedicated agent.)
  *  2. **After signing out.** `logout()` clears `pendingEmailVerification`, which
  *     fires the guard, which went to `/` — `RequireAuth` with no user, i.e.
- *     `/login?next=%2F`: the primary app's page with its Sign Up tab, handed to
+ *     `/login?next=%2F`: the generic door, not the agency one, handed to
  *     exactly the person the agency door exists to keep off it. That one matters
  *     most, because signing up there is what puts an invited agent in a stray
  *     tenant while their real membership goes unclaimed.
@@ -86,10 +86,9 @@ describe('where verification sends somebody afterwards', () => {
   });
 
   it('sends a new session to the carried destination too — there is no onboarding', async () => {
-    // PORT NOTE (magick-agency): cusui's case was "sends a genuinely new user to
-    // onboarding regardless". Agency has no `/onboarding` and no sign-up (path 4
-    // of `/auth/session` refuses with `no_membership`), so the `is_new` branch is
-    // deleted and even an `is_new: true` payload goes to `returnTo`.
+    // Agency has no `/onboarding` and no sign-up (path 4
+    // of `/auth/session` refuses with `no_membership`), so even an
+    // `is_new: true` payload goes to `returnTo`.
     mocks.completeEmailVerification.mockResolvedValue({ is_new: true });
     renderAt('/verify-email?next=%2Fstation');
     fireEvent.click(screen.getByRole('button', { name: /verified my email/i }));

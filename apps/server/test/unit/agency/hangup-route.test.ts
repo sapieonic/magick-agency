@@ -1,21 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): ported from core test/unit/agency/hangup-route.test.ts@4850d1d9
- * (source 10 → ported 10). Harness changes only: the logger mock is re-pointed from
- * `src/utils/logger.js` to a partial `@magick-agency/observability` mock. Every other mock
- * path (`config`, `auth.middleware`, `feature-flags`, `agency.repository`) and every case is
- * verbatim. No case DELETED, MODIFIED or NEW. The `config` mock's VoBiz block is inert
- * here (nothing reads it) and is left as core had it.
- */
-
 // ---------------------------------------------------------------------------
-// MAG-112 — `POST /attempts/:id/hangup`.
+// `POST /attempts/:id/hangup`.
 //
-// ── Why this file did not exist, which is the whole finding ─────────────────
+// ── Why this file exists, which is the whole finding ────────────────────────
 //
-// The route did not either. Master proxied to it and got a 404; cusui called it
+// The route once did not exist either. The public API layer proxied to it and got a 404; the console called it
 // and swallowed the rejection; and the station socket's `hangup` control frame —
 // the documented alternative — was read by neither of the two `message`
 // listeners on that socket (`agency.routes.ts` acts only on `ping`,
@@ -46,7 +37,7 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: { vobiz: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/vobiz' } },
+    telephony: { vobiz: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/vobiz' } },
   },
 }));
 
@@ -167,8 +158,8 @@ beforeEach(async () => {
 
 describe('the route exists at all', () => {
   it('is registered, and ends the attempt named in the path', async () => {
-    // FALSIFIED by construction: before this ticket the same request returned
-    // 404, which is what master's proxy had been getting all along.
+    // FALSIFIED by construction: before the route existed the same request returned
+    // 404, which is what the proxy had been getting all along.
     const res = await hangup();
 
     expect(res.statusCode).toBe(200);
@@ -176,8 +167,7 @@ describe('the route exists at all', () => {
   });
 
   it('appears in the router alongside the other two attempt-scoped actions', () => {
-    // Enumerated from the router, not grepped for. The absence that caused this
-    // ticket is invisible to a grep for a route that is not there, and
+    // Enumerated from the router, not grepped for. The absence that caused the original defect is invisible to a grep for a route that is not there, and
     // `app.post<{...}>(` defeats the obvious pattern anyway.
     const routes = app.printRoutes({ commonPrefix: false });
     for (const action of ['hangup', 'disposition', 'dnc', 'notes']) {
@@ -188,7 +178,7 @@ describe('the route exists at all', () => {
 
 describe('ownership — the check the contract promised and could not run', () => {
   it('refuses an unattributed hangup, and hangs nothing up', async () => {
-    // Master proxied this route with **no body at all**, so `agent_user_id`
+    // The route was once proxied with **no body at all**, so `agent_user_id`
     // never arrived and the "is the reserved agent" rule could never be applied.
     const res = await hangup({});
 
@@ -208,7 +198,7 @@ describe('ownership — the check the contract promised and could not run', () =
   });
 
   it('allows a supervisor who asserted on_behalf', async () => {
-    // Master vouches for `agency.supervise`; core cannot evaluate master's RBAC,
+    // The public API layer vouches for `agency.supervise`; the internal handlers cannot evaluate its RBAC,
     // which is exactly why the flag is trusted rather than inferred.
     const res = await hangup({ agent_user_id: 'u-supervisor', on_behalf: true });
 
@@ -243,7 +233,7 @@ describe('the two ways an attempt can not be live', () => {
     });
   });
 
-  it('refuses by name when the row is live but core is not bridging it', async () => {
+  it('refuses by name when the row is live but this server is not bridging it', async () => {
     // The bridging replica restarted. Returning 200 would tell the agent the
     // call was ended when nothing hung anything up — and they are the one person
     // who can hear that it is still open.

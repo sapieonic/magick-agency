@@ -5,7 +5,7 @@
     "jsx": "react-jsx",
     "useDefineForClassFields": true,
     "moduleDetection": "force",
-    // No `types` allow-list, as in cusui's tsconfig: every visible `@types/*`
+    // No `types` allow-list: every visible `@types/*`
     // (react, and the root's node) is included. `src/brand/load-brand.ts` and
     // `vite.config.ts` read the brand pack with `node:fs` at build time.
     "allowImportingTsExtensions": true

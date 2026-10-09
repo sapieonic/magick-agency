@@ -3,12 +3,9 @@ import { describe, expect, it } from 'vitest';
 import type { DialerAnalysisJobStatus, DialerAnalysisJobRecord } from '../../../src/models/dialer-analysis-job.model.js';
 
 /*
- * PORT NOTE (magick-agency): the job-status case of core
- * test/unit/db/dialer-analysis-models.test.ts@4850d1d9, left for lane D by Phase 2b
- * (which ported the call-model case into dialer-analysis-models.test.ts). Read from the
- * baseline instead of core's migration 059. The third case (settlement status vs
- * `ck_dialer_analysis_settlement`) is deleted with settlement (plan §4). New: the job
- * record carries no settlement field, pinned against the baseline's column list.
+ * The job-status case (the call-model case lives in dialer-analysis-models.test.ts),
+ * read from the baseline. There is no settlement status; the job record carries no
+ * settlement field, pinned against the baseline's column list.
  */
 const migration = readFileSync(new URL('../../../migrations/0001_baseline.sql', import.meta.url), 'utf8');
 

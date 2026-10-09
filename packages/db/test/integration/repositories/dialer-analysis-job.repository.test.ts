@@ -3,15 +3,12 @@ import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js'
 import { insertWebrtcCall } from '../setup/factories.js';
 
 /*
- * PORT NOTE (magick-agency): ported from core test/integration/repositories/dialer-analysis-job.repository.test.ts
- * @4850d1d9 (6 cases -> 9), real Postgres 5436. `webrtc_calls` -> `agency_calls`; ids come from
- * the UUID factories. Settlement is removed (plan §4): the persist/complete case no longer
- * checks `settlement_status` / `settlement_pending_since` and instead asserts
- * `analysis_audio_seconds` is RECORDED (Phase 7 exit gate) and that the job table has no
- * settlement column; the final case (settlement claim/send/age) becomes queue depth and
- * the completed-job-is-not-reclaimed check. New: every mirrored `analysis_status`
- * transition end to end, `recoverStale` failing at the lifetime ceiling, `gracefulRequeue`,
- * `requeueRateLimited` and `list`, which core exercised only through mocked SQL.
+ * Real Postgres. Rows live in `agency_calls`; ids come from the UUID factories.
+ * There is no settlement: the persist/complete case asserts `analysis_audio_seconds`
+ * is RECORDED and that the job table has no settlement column; the final case
+ * covers queue depth and that a completed job is not reclaimed. Also covered end
+ * to end: every mirrored `analysis_status` transition, `recoverStale` failing at
+ * the lifetime ceiling, `gracefulRequeue`, `requeueRateLimited` and `list`.
  */
 vi.mock('../../../src/connection.js', () => ({ getPool: () => getTestPool() }));
 const { dialerAnalysisJobRepository: repo } = await import('../../../src/repositories/dialer-analysis-job.repository.js');
@@ -103,7 +100,7 @@ describe('dialerAnalysisJobRepository (integration)', () => {
     expect(await repo.markAnalyzing(job.id, claimed!.claim_generation)).toBe(true);
     expect(await repo.completeWithAnalysis(job.id, call.id, claimed!.claim_generation, { call_analysis: ANALYSIS as never, analysis_audio_seconds: 80 })).toBe(true);
     const complete = await repo.findById(job.id);
-    // Phase 7 exit gate: analysis_audio_seconds is recorded (kept for metering, plan §3.3).
+    // analysis_audio_seconds is recorded (kept for metering).
     expect(complete).toMatchObject({ status: 'completed', analysis_audio_seconds: 80, error_code: null });
     expect(complete).not.toHaveProperty('settlement_status');
     const row = (await getTestPool().query(`SELECT analysis_status, conversation_log, call_analysis FROM agency_calls WHERE id = $1`, [call.id])).rows[0]!;

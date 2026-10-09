@@ -1,6 +1,5 @@
-// PORT NOTE (magick-agency): ported from core `src/db/models/dialer-analysis-job.model.ts`
-// (v1.123.2). Settlement removed (plan §4): `DialerAnalysisSettlementStatus` and the
-// `settlement_*` fields are gone, as the baseline dropped the columns.
+// There is no settlement step: the job record carries no settlement status or
+// `settlement_*` fields, and the baseline has no such columns.
 
 // ─── Dialer Analysis Jobs ───────────────────────────────────────────────
 //

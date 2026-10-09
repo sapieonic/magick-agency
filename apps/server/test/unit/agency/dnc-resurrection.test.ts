@@ -69,7 +69,7 @@ beforeEach(() => {
 
 describe('the retry decisions that resurrect a contact', () => {
   it('an agent_disconnected under its cap resolves to pending, on the DEFAULT policy', () => {
-    // `null` is the ordinary case, not an edge one: master never sends
+    // `null` is the ordinary case, not an edge one: the public API layer never sends
     // `retry_policy`, so every campaign in the field runs `DEFAULT_RETRY_POLICY`.
     const decision = resolveRetryDecision(null, 'agent_disconnected', new Date(), 1);
     expect(decision.contactState, 'DEFAULT_RETRY_POLICY.agent_disconnected is 5min ×3').toBe('pending');
@@ -107,7 +107,7 @@ describe('markState refuses to move a DNC suppression', () => {
    * So: the STATE and the retry instant are frozen; every record-keeping column
    * still lands.
    */
-  it('T-RES1: the agent_disconnected outcome path cannot write pending over a dnc row', async () => {
+  it('the agent_disconnected outcome path cannot write pending over a dnc row', async () => {
     const decision = resolveRetryDecision(null, 'agent_disconnected', new Date(), 1);
     // Exactly the call `agency-dialer.ts`'s outcome branch makes.
     await new AgencyContactRepository().markState('c-dnc', decision.contactState, {
@@ -123,7 +123,7 @@ describe('markState refuses to move a DNC suppression', () => {
     expect(sql).toContain("state = CASE WHEN suppressed_reason = 'dnc' THEN 'suppressed' ELSE $2 END");
   });
 
-  it("T-RES2: and cannot leave a future retry instant on it either", async () => {
+  it("and cannot leave a future retry instant on it either", async () => {
     const decision = resolveRetryDecision(null, 'agent_disconnected', new Date(), 1);
     await new AgencyContactRepository().markState('c-dnc', decision.contactState, {
       next_attempt_at: decision.nextAttemptAt!,
@@ -140,7 +140,7 @@ describe('markState refuses to move a DNC suppression', () => {
     );
   });
 
-  it('T-RES3: the reaper\'s hardcoded orphaned requeue is the same write, so it is covered too', async () => {
+  it('the reaper\'s hardcoded orphaned requeue is the same write, so it is covered too', async () => {
     // `reaper.ts` requeues with a literal `'pending'` rather than a decision, which
     // is why the guard lives in the repository and not at the call sites: one
     // statement, every caller. Enumerated in the commit message.
@@ -150,7 +150,7 @@ describe('markState refuses to move a DNC suppression', () => {
     expect(sqlOf()).toContain("state = CASE WHEN suppressed_reason = 'dnc' THEN 'suppressed' ELSE $2 END");
   });
 
-  it('T-RES4: the record-keeping columns are deliberately NOT frozen', async () => {
+  it('the record-keeping columns are deliberately NOT frozen', async () => {
     await new AgencyContactRepository().markState('c-dnc', 'suppressed', {
       last_disposition: 'do_not_call', last_outcome: 'agent_disconnected',
     });
@@ -163,7 +163,7 @@ describe('markState refuses to move a DNC suppression', () => {
     expect(sql).toContain('last_disposition = COALESCE($5, last_disposition)');
   });
 
-  it('T-RES4b: but the dnc REASON is frozen — COALESCE($7, col) would un-key the guard', async () => {
+  it('but the dnc REASON is frozen — COALESCE($7, col) would un-key the guard', async () => {
     // The `invalid` outcome path passes `suppressed_reason: 'invalid'`
     // (`resolveRetryDecision` + `agency-dialer.ts`). A plain
     // `COALESCE($7, suppressed_reason)` would overwrite `dnc`, after which both
@@ -183,7 +183,7 @@ describe('markState refuses to move a DNC suppression', () => {
     );
   });
 
-  it('T-RES5: the refusal is logged, never silent', async () => {
+  it('the refusal is logged, never silent', async () => {
     // Postgres decided; TypeScript only reports. `RETURNING` is what makes the
     // refusal observable at all — without it the guard is a statement that
     // quietly does less than the caller believes, which is the shape of defect
@@ -200,14 +200,14 @@ describe('markState refuses to move a DNC suppression', () => {
     );
   });
 
-  it('T-RES6: an ordinary transition does not log a refusal', async () => {
+  it('an ordinary transition does not log a refusal', async () => {
     pool.query.mockResolvedValue({ rows: [{ state: 'pending', suppressed_reason: null }], rowCount: 1 });
     await new AgencyContactRepository().markState('c-ok', 'pending', { last_outcome: 'no_answer' });
 
     expect(childLog.warn).not.toHaveBeenCalled();
   });
 
-  it('T-RES7: an `invalid` suppression is NOT frozen — the guard is compliance-only', async () => {
+  it('an `invalid` suppression is NOT frozen — the guard is compliance-only', async () => {
     // The restrictive direction has its own failure mode: freeze every suppressed
     // row and a contact suppressed for a data-quality reason can never be moved
     // by anything again. The guard is keyed on the REASON precisely so `invalid`,
@@ -221,7 +221,7 @@ describe('markState refuses to move a DNC suppression', () => {
 // ─── step 4: and the claim must refuse, independently ───────────────────────
 
 describe('claimDialable will not hand out a DNC suppression', () => {
-  it('T-RES8: the predicate excludes a dnc reason', async () => {
+  it('the predicate excludes a dnc reason', async () => {
     pool.query.mockResolvedValue({ rows: [] });
     await new AgencyContactRepository().claimDialable('camp-1', 5);
     const sql = sqlOf();
@@ -235,7 +235,7 @@ describe('claimDialable will not hand out a DNC suppression', () => {
     expect(sql).toContain("suppressed_reason IS DISTINCT FROM 'dnc'");
   });
 
-  it('T-RES9: `IS DISTINCT FROM`, not `<>` — a NULL reason is the ordinary case', async () => {
+  it('`IS DISTINCT FROM`, not `<>` — a NULL reason is the ordinary case', async () => {
     pool.query.mockResolvedValue({ rows: [] });
     await new AgencyContactRepository().claimDialable('camp-1', 5);
 

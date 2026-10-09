@@ -15,8 +15,7 @@ import {
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
-// PORT NOTE (magick-agency): master mocked `src/db/connection.js` to hand back
-// the test pool. Here the repositories (server-local and `@magick-agency/db`)
+// The repositories (server-local and `@magick-agency/db`)
 // share the package's pool singleton, so the suite initialises it against the
 // agency test database instead (worker-common: `initDbPool`, not a mock).
 initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
@@ -42,15 +41,14 @@ vi.mock('../../../src/rbac/rbac.middleware.js', () => ({
 vi.mock('../../../src/cache/redis-cache.js', () => ({
   redisCache: {
     get: vi.fn(), set: vi.fn(), del: vi.fn(), delByPattern: vi.fn(),
-    // Q5 (Manas, 2026-10-09): revocation deletes forward to `del` and report success.
+    // decision Q5: revocation deletes forward to `del` and report success.
     async delForRevocation(this: { del: (...k: string[]) => unknown }, ...k: string[]) { await this.del(...k); return true; },
   },
 }));
 
-// PORT NOTE (magick-agency): master mocked `src/utils/logger.js`, which exported
-// only loggers. `@magick-agency/observability` is the whole package (the db pool
+// `@magick-agency/observability` is the whole package (the db pool
 // imports its `logger`), so the real module is spread and only
-// `createChildLogger` is replaced, as master's mock did.
+// `createChildLogger` is replaced.
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/observability')>()),
   createChildLogger: () => ({
@@ -140,7 +138,7 @@ describe('user routes (integration)', () => {
 
     it('does NOT reuse a row flagged email_unverified', async () => {
       /**
-       * The invite half of migration 073's payoff: an attacker self-invites an
+       * The invite half of the `email_unverified` flag's payoff: an attacker self-invites an
        * address, claims it with an unverified Firebase account, and the row then
        * keys under an address they do not control. This route must not hand them
        * a membership in somebody else's workspace.

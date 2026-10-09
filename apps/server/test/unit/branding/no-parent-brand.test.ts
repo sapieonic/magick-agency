@@ -10,18 +10,15 @@ import {
 import { maskedErrorBody } from '../../../src/api/middleware/error-mask.middleware.js';
 
 /**
- * The server sends nobody a MagickVoice name or link (decision B17, Manas
- * 2026-10-09: "this shouldn't have any linking present").
- *
- * NEW in Magick Agency (no master or core source). Two halves:
+ * The server sends nobody the parent product's name or link (decision B17: no
+ * linking to it). Two halves:
  *  - the surfaces a person reads — the invite mail, the claim page's product
  *    noun, the masked error body — rendered from their defaults;
  *  - a scan of every `.ts` file under `apps/server/src` and the shipped
  *    packages' `src` (contracts, db, domain, observability), comments stripped, because a CSV
  *    preamble, an error body or a log line a support engineer pastes to a
  *    customer is user-facing too, and the next one will not be in this list.
- * Comments are excluded: they carry source provenance ("master's
- * `src/...` in MagickVoice"), which is documentation, not product. The internal
+ * Comments are excluded: they are documentation, not product. The internal
  * `x-mgkvc-*` header names do not match the pattern and are out of scope.
  */
 
@@ -102,8 +99,8 @@ function parentBrandMentions(): string[] {
   });
 }
 
-describe('no MagickVoice branding in what the server sends (B17)', () => {
-  it('names MagickVoice nowhere in src or the shipped packages, outside comments', () => {
+describe('no parent-product branding in what the server sends (B17)', () => {
+  it('names the parent product nowhere in src or the shipped packages, outside comments', () => {
     expect(parentBrandMentions()).toEqual([]);
   });
 

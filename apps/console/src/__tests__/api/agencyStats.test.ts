@@ -11,9 +11,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *     to ask for somebody else's shift — so a wrapper that put an id on it, or
  *     that used the twin for "my own", would defeat the whole pairing.
  *  2. **`X-Account-Id`.** `apiFetch` takes it as the fourth argument, so omitting
- *     it is silent at every layer that could catch it and surfaces only at core as
- *     `400 Missing required header: x-mgkvc-account`, masked by master, naming
- *     nothing in cusui. That is how the entire agency surface once shipped
+ *     it is silent at every layer that could catch it and surfaces only at the server as
+ *     `400 Missing required header: x-mgkvc-account`, masked by the server, naming
+ *     nothing in the console. That is how the entire agency surface once shipped
  *     non-functional, so it is asserted per function rather than once.
  */
 
@@ -58,7 +58,7 @@ describe('getMyStats', () => {
   it('hits the subject-less my- route', async () => {
     await getMyStats(QUERY, TENANT, ACCOUNT);
     expect(url()).toContain('/proxy/agency/my-stats?');
-    // No agent id anywhere: master scopes it to the caller. A client that could
+    // No agent id anywhere: the server scopes it to the caller. A client that could
     // name the subject of its own stats read is a client that can ask for
     // somebody else's.
     expect(url()).not.toContain('agent_user_id');
@@ -107,10 +107,10 @@ describe('getMyAttempts and getAgentAttempts', () => {
   it('sends multi-value filters as REPEATED params', async () => {
     /**
      * Matching `agencySpine.ts`, because one convention across the two spines is
-     * worth having and both services accept this one.
+     * worth having and the server accepts this one.
      *
-     * NOT because it makes a comma survive: master's `forwardAllowedQuery` joins
-     * the repeats with a comma and core's `multiParam` splits on one, so a
+     * NOT because it makes a comma survive: the server's `forwardAllowedQuery` joins
+     * the repeats with a comma and the server's `multiParam` splits on one, so a
      * disposition code containing a comma is unfilterable however this client
      * spells it. See `attemptQuery`'s docstring.
      */
@@ -141,18 +141,18 @@ describe('getMyAttempts and getAgentAttempts', () => {
 });
 
 describe('getMyCampaigns', () => {
-  it('accepts the bare array master’s contract states', async () => {
+  it('accepts the bare array the server’s contract states', async () => {
     mocks.apiFetch.mockResolvedValue([{ campaign_id: 'camp-1', active: true }]);
     const out = await getMyCampaigns(TENANT, ACCOUNT);
     expect(out).toHaveLength(1);
   });
 
-  it('reads the `assignments` key master actually sends', async () => {
+  it('reads the `assignments` key the server actually sends', async () => {
     /**
      * The regression this pins, and it is worth stating plainly because the
      * previous version of this test asserted the BUG.
      *
-     * Master returns `{ assignments: [...] }` — the same envelope its sibling
+     * The server returns `{ assignments: [...] }` — the same envelope its sibling
      * `/my-assignments` uses on the same prefix. This client read `.campaigns`,
      * which type-checked, found `undefined`, fell through the `?? []` below and
      * rendered every agent's staffing history as "you have never been staffed on
@@ -172,7 +172,7 @@ describe('getMyCampaigns', () => {
 
   it('does not silently swallow an unrecognised envelope', async () => {
     /* The `?? []` is a guard against `.map` of undefined in a render, not a licence
-       for any shape to mean "no assignments". Pinned so that if master ever renames
+       for any shape to mean "no assignments". Pinned so that if the server ever renames
        the key again, a test fails here rather than the product quietly claiming
        nobody has ever been staffed. */
     mocks.apiFetch.mockResolvedValue({ campaigns: [{ campaign_id: 'camp-1' }] });
@@ -200,8 +200,8 @@ describe('getAgencyRoster', () => {
    * one whose path is a PREFIX of its sibling's: `/agents/stats` against
    * `/agents/:userId/stats`. A wrapper that reached the second by mistake would send
    * the literal string "stats" as a user id and get a plausible-looking 404 or an
-   * empty page — and the phase-01 contract's own route-precedence warning is about
-   * exactly this pair, with MAG-106 named as the incident where an assertion passed
+   * empty page — and the contract's own route-precedence warning is about
+   * exactly this pair, with an earlier incident where an assertion passed
    * because the route did not exist.
    */
   const ROSTER = {
@@ -228,7 +228,7 @@ describe('getAgencyRoster', () => {
 
   it('omits every optional parameter it was not given', async () => {
     /**
-     * Master whitelists this route's params and answers an unknown or malformed one
+     * The server whitelists this route's params and answers an unknown or malformed one
      * with a 400 rather than dropping it silently. So a blank `campaign_id` is a
      * validation error about a filter nobody asked for, and an explicit
      * `include_inactive=false` is one more thing for the whitelist to agree about for
@@ -260,7 +260,7 @@ describe('getAgencyRoster', () => {
     expect(query).toContain('sort=success_rate_pct');
     expect(query).toContain('order=asc');
     expect(query).toContain('limit=200');
-    // `true` literally, which is what R2 accepts. Anything else is a 400 rather than
+    // `true` literally, which is what the server accepts. Anything else is a 400 rather than
     // a coercion — coercion would hide departed agents while `inactive_omitted`
     // claimed the omission was requested.
     expect(query).toContain('include_inactive=true');
@@ -277,7 +277,7 @@ describe('getAgencyRoster', () => {
       tenant-wide roster is a different question and must not be reachable by
       omitting a parameter. `apiFetch` sends `X-Account-Id` only when it is given
       one, so an omission is silent at every layer that could catch it and surfaces
-      at core as a 400 about a header this client never sent.
+      at the server as a 400 about a header this client never sent.
     */
     await getAgencyRoster(ROSTER, TENANT, ACCOUNT);
     expect(headers()).toEqual([TENANT, ACCOUNT]);
@@ -300,7 +300,7 @@ describe('getAgencyGroupedStats', () => {
   };
 
   it('sends the dimensions as ONE comma-separated param', async () => {
-    // What both services parse. The tuple type on the query is what keeps it to one
+    // What the server parses. The tuple type on the query is what keeps it to one
     // or two entries — upstream answers a third with a 400, because the row count is
     // the product of the dimensions' cardinalities.
     await getAgencyGroupedStats(GROUPED, TENANT, ACCOUNT);
@@ -316,7 +316,7 @@ describe('getAgencyGroupedStats', () => {
 
   it('omits every optional parameter it was not given', async () => {
     /**
-     * Master whitelists this route's params and answers an unknown or malformed one
+     * The server whitelists this route's params and answers an unknown or malformed one
      * with a 400, so a blank `campaign_id` would be a validation error about a
      * filter nobody asked for — and an explicit `include_inactive=false` is one more
      * thing for the whitelist to agree about for no gain.
@@ -351,16 +351,16 @@ describe('getAgencyGroupedStats', () => {
   });
 
   it('carries no agent id, on any call', async () => {
-    // Not an accepted filter on either service: core has no user table, so it
-    // cannot validate tenancy on a caller-supplied id, and master's memberships is
+    // Not an accepted filter: the server has no user table, so it
+    // cannot validate tenancy on a caller-supplied id, and the server's memberships is
     // the only place that boundary can exist.
     await getAgencyGroupedStats(GROUPED, TENANT, ACCOUNT);
     expect(url()).not.toContain('agent_user_id');
   });
 
   it('threads tenant and account through', async () => {
-    // The account is a REQUIRED predicate on this route, not a filter: master
-    // answers `400 account_scope_required` before it resolves the tenant's core key.
+    // The account is a REQUIRED predicate on this route, not a filter: the server
+    // answers `400 account_scope_required` before it resolves the tenant's API key.
     await getAgencyGroupedStats(GROUPED, TENANT, ACCOUNT);
     expect(headers()).toEqual([TENANT, ACCOUNT]);
   });
@@ -428,7 +428,7 @@ describe('the routes come from the ENDPOINTS catalog', () => {
 
   it('encodes a user id that would otherwise break the path', async () => {
     /**
-     * `userId` is master's id, opaque to this client. A segment built by
+     * `userId` is the server's id, opaque to this client. A segment built by
      * concatenation is the one that breaks quietly — and it is the segment that
      * decides WHOSE shift is being read, so a mangled one is a 404 at best.
      */

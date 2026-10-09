@@ -5,13 +5,13 @@ import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js'
 import { insertAccount, insertTenant } from '../setup/factories.js';
 
 /**
- * ─── MAG-102 · THE PER-NUMBER DNC LOOKUP USES THE PLAIN INDEX ────────────────
+ * ─── THE PER-NUMBER DNC LOOKUP USES THE PLAIN INDEX ──────────────────────────
  *
  * `dnc.repository.ts`'s `findSuppressed` carries a doc comment asserting that it
  * is "**one query per batch, served by `idx_dnc_entries_tenant_phone`**", and
  * that "the `COALESCE` unique index cannot answer this — it is prefixed on the
  * scope expressions, so a per-number probe would seq-scan". That claim is the
- * entire justification for design §2.3 requiring a second, plain index on a table
+ * entire justification for requiring a second, plain index on a table
  * that already has a unique one. Until this file, **nothing checked it.** It was
  * a comment.
  *
@@ -222,7 +222,7 @@ async function probeMatchCount(phones: string[]): Promise<number> {
   return Number(rows[0]!.n);
 }
 
-describe('MAG-102 · the per-number DNC lookup is served by the plain (tenant_id, phone_e164) index', () => {
+describe('the per-number DNC lookup is served by the plain (tenant_id, phone_e164) index', () => {
   beforeAll(async () => {
     await truncateAll();
     tenantIds = [];

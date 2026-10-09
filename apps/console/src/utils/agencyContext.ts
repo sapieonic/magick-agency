@@ -2,10 +2,10 @@ import type { AgencyContextDisplay } from '../types/agency';
 
 /**
  * Resolves which of a contact's arbitrary CSV columns to show, and in what
- * order (UX §A.6, contract `AgencyContextDisplay`).
+ * order (contract `AgencyContextDisplay`).
  *
  * Pure and separate from the component because the resolution rules are a
- * **cross-client contract**: core's contract states them so "two clients
+ * **cross-client contract**: The server's contract states them so "two clients
  * agree", and a rule buried in JSX cannot be tested against that wording.
  *
  * The rules, in precedence order:
@@ -25,7 +25,7 @@ import type { AgencyContextDisplay } from '../types/agency';
 const PLACEHOLDER_VALUES = new Set(['-', '--', 'n/a', 'na', 'null', 'none', '']);
 
 export interface ResolvedContextField {
-  /** Original header text, verbatim, as uploaded. */
+  /** Original header text, unchanged, as uploaded. */
   label: string;
   /** Stringified value. Always rendered as TEXT, never as markup. */
   value: string;

@@ -2,7 +2,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Pinned on the MAIN thread (see magick-comms-cusui/vite.config.ts): a TZ set
+// Pinned on the MAIN thread (as in the console's vite config): a TZ set
 // inside a worker changes process.env and nothing about new Date().
 if (process.env['VITEST']) process.env['TZ'] = 'UTC';
 

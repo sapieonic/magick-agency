@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { resolveContextFields, heroesWereConfigured } from '../../utils/agencyContext';
 
 /**
- * The resolution rules are a CROSS-CLIENT contract — core's `AgencyContextDisplay`
+ * The resolution rules are a CROSS-CLIENT contract — the API's `AgencyContextDisplay`
  * states them so "two clients agree". These tests are written against that
  * wording rather than against the implementation.
  */

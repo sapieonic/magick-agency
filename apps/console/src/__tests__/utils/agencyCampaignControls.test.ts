@@ -8,7 +8,7 @@ import {
 
 /**
  * Which lifecycle controls a state offers, and why it refuses the rest
- * (`MAG-134`).
+ *.
  */
 
 describe('agencyCampaignControls', () => {
@@ -40,14 +40,14 @@ describe('agencyCampaignControls', () => {
 
   it('offers nothing on a terminal campaign', () => {
     // Four disabled buttons under a finished campaign is noise pretending to be
-    // information, and core has no transition out of either state.
+    // information, and the API has no transition out of either state.
     expect(agencyCampaignControls('stopped')).toEqual([]);
     expect(agencyCampaignControls('completed')).toEqual([]);
   });
 
   it('offers nothing for a status this build has never heard of', () => {
     // A state whose transitions we cannot know is one where every button is a
-    // guess that fails at the API — the exact outcome MAG-134 is about.
+    // guess that fails at the API — the exact outcome this guards against.
     expect(agencyCampaignControls('quiescing')).toEqual([]);
   });
 

@@ -3,25 +3,17 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { closeTestPool } from '../setup/test-utils.js';
 
 /*
- * PORT NOTE (magick-agency, Phase 8): ported from master
- * test/integration/api/agency-session-conflict-forward.test.ts@a1f0756a (13 cases → 13).
- * Master stubbed only the NETWORK (`globalThis.fetch` answering as core would) and ran its real
- * `proxyToCore`. Here the network is gone (decision B16): the stub is the private core instance
- * `callCore` dispatches into (`setCoreHandlers` with a Fastify that answers as core's handler
- * would), and `callCore`, the route and the mask are production code, wired as `app.ts` wires
- * them (`setErrorHandler(agencyErrorHandler)` + `onSend` `errorMaskHook`).
+ * Only the private internal handler instance that `callCore` dispatches into is stubbed
+ * (`setCoreHandlers` with a Fastify that answers as the internal handler would); `callCore`,
+ * the route and the mask are production code, wired as `app.ts` wires them
+ * (`setErrorHandler(agencyErrorHandler)` + `onSend` `errorMaskHook`).
  *
- * Lead ruling (Phase 8): the mask's core-forwarded 4xx branch is dropped — every 4xx passes, only
- * 5xx is masked. So:
- *  - kept (9): the six-field forward cases (5), the leave sentence, "a core 5xx is masked on the
- *    same route", master's own 400, a 200 untouched;
- *  - MODIFIED (4): the "unrecognised code IS masked" controls (join, leave, bare 409, the
- *    "Conflict" label) now assert the body passes through unchanged — the control that made the
- *    allow-list load-bearing has no allow-list left to guard; the 5xx case is the control that
- *    the remaining branch still masks;
- *  - harness: `requestIdMiddleware` / `enterLogContext` hooks (the ALS core-status seam) are gone
- *    with the branch; the core-API-key and config/connection mocks are gone; the logger mock
- *    targets `@magick-agency/observability`; governance (`requireCapability`) is deleted.
+ * Every 4xx from the internal handler passes through unchanged; only 5xx is masked. So:
+ *  - the six-field forward cases (5), the leave sentence, "an internal 5xx is masked on the
+ *    same route", the public layer's own 400, and a 200 untouched;
+ *  - the "unrecognised code" controls (join, leave, bare 409, the "Conflict" label) assert
+ *    the body passes through unchanged: there is no allow-list, and the 5xx case is the control
+ *    that the remaining branch still masks.
  */
 
 /**
@@ -30,28 +22,19 @@ import { closeTestPool } from '../setup/test-utils.js';
  * `test/unit/api/middleware/error-mask.session-conflict.test.ts` calls
  * `errorMaskHook` directly with a hand-built reply object. That proves the hook's
  * policy and nothing about the pipeline the body actually travels: the route, the
- * real `proxyToCore`, the JSON round trip through `fetch` and back out through
- * Fastify's serializer, and the `onSend` hook installed the way `src/index.ts`
- * installs it. Every step in that chain is a place a body can be reshaped, and a
- * unit test that never runs one of them cannot see it.
+ * `callCore` dispatch, the JSON round trip through Fastify's serializer, and the
+ * `onSend` hook installed the way `app.ts` installs it. Every step in that chain is a
+ * place a body can be reshaped, and a unit test that never runs one of them cannot see it.
  *
- * That gap is not hypothetical. `sawCoreErrorStatus` — the seam that tells the
- * mask an error came from core at all — is written by `proxyToCore` into
- * AsyncLocalStorage established by an `onRequest` hook. A unit test calls
- * `recordCoreErrorStatus` by hand, so it would pass even if the real proxy never
- * recorded anything, in which case the mask would classify these 409s as
- * master's own and pass them through *for the wrong reason* — leaving the
- * allow-list entry dead and every other core 4xx on the route un-masked.
- *
- * So the ONLY thing stubbed here is the network: `globalThis.fetch` answers as
- * core would. Everything from the route inwards is production code, wired as
+ * So the ONLY thing stubbed here is the internal handler instance, which answers as the
+ * real handler would. Everything from the route inwards is production code, wired as
  * production wires it.
  *
  * ── The two properties, asserted separately because they fail differently ───
  *  1. the body is FORWARDED rather than masked;
  *  2. it is forwarded BYTE-IDENTICALLY rather than normalised down to the
  *     canonical `{ error, message, statusCode, requestId }`. A rebuild would keep
- *     the status, the code and even a `message` — core's floor sentence names the
+ *     the status, the code and even a `message` — the floor sentence names the
  *     campaign — while dropping `campaign_name` and `state`, the two facts the
  *     console reads to decide whether leaving the station is safe right now.
  *
@@ -59,7 +42,7 @@ import { closeTestPool } from '../setup/test-utils.js';
  * "The body came through" is also satisfied by a mask that has stopped masking,
  * which is a security regression rather than a fix. Every forwarding assertion is
  * therefore paired with the same body carrying an unrecognised code, on the same
- * app instance, shown to be masked.
+ * app instance, shown to pass through unchanged (and the 5xx case shown to be masked).
  */
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
@@ -67,7 +50,7 @@ const CAMPAIGN = '3f1b9c22-6d4e-4a11-9f23-9c1a77b0e401';
 const AGENT = '55555555-5555-4555-8555-555555555555';
 const SESSION = '77777777-7777-4777-8777-777777777777';
 
-/** Core's `AgencySessionCampaignConflict`, verbatim — all six fields. */
+/** The `AgencySessionCampaignConflict` body — all six fields. */
 const SESSION_CONFLICT = {
   error: 'Conflict',
   code: 'session_on_other_campaign',
@@ -79,7 +62,7 @@ const SESSION_CONFLICT = {
   state: 'on_call',
 };
 
-/** Core's refusal of a leave while the agent still has a live attempt. */
+/** The refusal of a leave while the agent still has a live attempt. */
 const LIVE_CALL_CONFLICT = {
   error: 'Conflict',
   code: 'agent_on_live_call',
@@ -129,10 +112,10 @@ const { errorMaskHook, MASKED_ERROR_MESSAGE } = await import(
 const { agencyErrorHandler } = await import('../../../src/api/middleware/agency-error-handler.js');
 const { setCoreHandlers } = await import('../../../src/api/core-dispatch.js');
 
-/** The private core instance, answering as core's handler would (the "network" stub). */
+/** The private internal handler instance, answering as the real handler would. */
 let core: FastifyInstance;
 
-describe('a core 409 reaches the agent intact, through the real route and the real mask', () => {
+describe('an internal-handler 409 reaches the agent intact, through the real route and the real mask', () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
@@ -146,7 +129,7 @@ describe('a core 409 reaches the agent intact, through the real route and the re
     setCoreHandlers(core);
 
     app = Fastify({ logger: false });
-    // Exactly the wiring `app.ts` uses: master's error handler and the mask as a single
+    // Exactly the wiring `app.ts` uses: the error handler and the mask as a single
     // global `onSend`.
     app.setErrorHandler(agencyErrorHandler);
     app.addHook('onSend', errorMaskHook);
@@ -185,8 +168,8 @@ describe('a core 409 reaches the agent intact, through the real route and the re
 
       expect(res.statusCode).toBe(409);
       // Byte-identity, not field equality: the mask's `!mask` branch returns the
-      // payload REFERENCE unchanged, which is what makes an unknown field core
-      // adds later survive too. A rebuild from a field list would pass a deep
+      // payload REFERENCE unchanged, which is what makes an unknown field
+      // added later survive too. A rebuild from a field list would pass a deep
       // comparison and fail this.
       expect(res.body).toBe(JSON.stringify(SESSION_CONFLICT));
       expect(isMasked(res.json())).toBe(false);
@@ -197,7 +180,7 @@ describe('a core 409 reaches the agent intact, through the real route and the re
 
       expect(body.error).toBe('Conflict');
       expect(body.code).toBe('session_on_other_campaign');
-      // `message` is core's floor — written to stand on its own for a generic
+      // `message` is the floor — written to stand on its own for a generic
       // handler that reads only that field.
       expect(body.message).toBe(SESSION_CONFLICT.message);
       // The two the console needs and a normalised body would lose: WHICH
@@ -214,7 +197,7 @@ describe('a core 409 reaches the agent intact, through the real route and the re
       expect(keys).toEqual(['campaign_id', 'campaign_name', 'code', 'error', 'message', 'state']);
     });
 
-    it('an unknown field core adds later survives the hop', async () => {
+    it('an unknown field added later survives the hop', async () => {
       const extended = { ...SESSION_CONFLICT, joined_at: '2026-08-16T09:00:00.000Z' };
       mocks.coreBody = JSON.stringify(extended);
 
@@ -239,7 +222,7 @@ describe('a core 409 reaches the agent intact, through the real route and the re
   // ══ agent_on_live_call ════════════════════════════════════════════════════
 
   describe('POST /sessions/:id/leave → agent_on_live_call', () => {
-    it('forwards core’s sentence, which is the entire remedy', async () => {
+    it('forwards the handler’s sentence, which is the entire remedy', async () => {
       // Unlike its sibling this body carries no extra fields, so the `message`
       // is all the agent gets. Masked, an agent who is ON A CALL is told to
       // contact support about a refusal they could clear in seconds.
@@ -256,17 +239,17 @@ describe('a core 409 reaches the agent intact, through the real route and the re
 
   // ══ The controls — the allow-list entry is load-bearing ═══════════════════
 
-  describe('the same shape with an unrecognised code is NOT masked (the core-4xx branch is dropped)', () => {
+  describe('the same shape with an unrecognised code is NOT masked (every 4xx passes through)', () => {
     it('on the join route', async () => {
       // Without this the forwarding cases above would also pass against a mask
-      // that had stopped masking core 4xx altogether — which is a security
+      // that had stopped masking altogether — which is a security
       // regression, not a fix. It also proves the entry is what rescues the
       // body: nothing else in this shape does (there is no `details`).
       mocks.coreBody = JSON.stringify({ ...SESSION_CONFLICT, code: 'session_on_some_other_thing' });
 
       const res = await join();
 
-      // PORT NOTE (magick-agency): MODIFIED — passed through as written (lead ruling).
+      // Passed through as written.
       expect(res.statusCode).toBe(409);
       expect(isMasked(res.json())).toBe(false);
       expect(res.body).toBe(mocks.coreBody);
@@ -277,34 +260,34 @@ describe('a core 409 reaches the agent intact, through the real route and the re
 
       const res = await leave();
 
-      // PORT NOTE (magick-agency): MODIFIED — passed through as written (lead ruling).
+      // Passed through as written.
       expect(res.statusCode).toBe(409);
       expect(isMasked(res.json())).toBe(false);
       expect(res.body).toBe(mocks.coreBody);
     });
 
-    it('a bare { error, message } 409 from core passes through — every 4xx is first-party here', async () => {
+    it('a bare { error, message } 409 from the internal handler passes through — every 4xx is first-party here', async () => {
       mocks.coreBody = JSON.stringify({ error: 'Conflict', message: 'upstream said no' });
 
       const res = await join();
 
-      // PORT NOTE (magick-agency): MODIFIED (lead ruling) — core's body is in-process code.
+      // The body comes from in-process code.
       expect(isMasked(res.json())).toBe(false);
       expect(res.body).toContain('upstream said no');
     });
 
     it('“Conflict” as a LABEL changes nothing — a 4xx passes either way', async () => {
-      // Allow-listing the label would forward every core 409 on all ~95 proxied
+      // Allow-listing the label would forward every internal 409 on all ~95 proxied
       // routes, which is the blanket widening the list exists to avoid. The two
       // cases above already depend on this; asserted here so a future "simpler"
       // fix that adds the label reds somewhere that says why.
       mocks.coreBody = JSON.stringify({ error: 'Conflict', message: 'provider detail leaks here' });
-      // PORT NOTE (magick-agency): MODIFIED (lead ruling) — no label or code list exists; a 4xx
+      // No label or code list exists; a 4xx
       // passes. The 5xx case below is the branch that still masks.
       expect(isMasked((await join()).json())).toBe(false);
     });
 
-    it('a core 5xx is masked on the same route', async () => {
+    it('an internal 5xx is masked on the same route', async () => {
       mocks.coreStatus = 500;
       mocks.coreBody = JSON.stringify({ error: 'Internal', message: 'stack trace shaped thing' });
 
@@ -318,12 +301,10 @@ describe('a core 409 reaches the agent intact, through the real route and the re
 
   // ══ The seam the unit test cannot exercise ════════════════════════════════
 
-  describe('the real proxy is what tells the mask the error came from core', () => {
-    it("master's OWN 400 on the same route is passed through, not masked", async () => {
-      // The other side of the classification. If `proxyToCore` never recorded
-      // core's status, the mask would treat a forwarded 409 as master's own and
-      // pass it through for the wrong reason — indistinguishable from a pass in
-      // every assertion above except this one, which shows the two classes are
+  describe('the real dispatch is what tells the mask where the error came from', () => {
+    it("the public layer's OWN 400 on the same route is passed through, not masked", async () => {
+      // The other side of the classification: a validation error raised by the public
+      // layer itself is passed through, which shows the two classes are
       // actually being told apart on a live request.
       const res = await app.inject({
         method: 'POST',
@@ -336,7 +317,7 @@ describe('a core 409 reaches the agent intact, through the real route and the re
       expect(isMasked(res.json())).toBe(false);
     });
 
-    it('a 200 from core is untouched', async () => {
+    it('a 200 from the internal handler is untouched', async () => {
       mocks.coreStatus = 200;
       mocks.coreBody = JSON.stringify({ session_id: SESSION, agent_state: 'idle' });
 

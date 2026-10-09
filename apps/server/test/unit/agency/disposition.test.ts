@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// AD-P2-C-04 — the disposition submit rules.
+// The disposition submit rules.
 //
 // The pure half: the catalog, the ownership rule, and the field validation the
 // catalog drives. The route's ordering and the idempotent write are exercised in
@@ -58,7 +58,7 @@ describe('resolveDisposition', () => {
 
   it('degrades a malformed catalog to "no valid codes" rather than throwing', () => {
     // The column is CHECKed to be a JSON array; nothing constrains its elements.
-    // A 500 here would read to the agent as core being broken, on the one
+    // A 500 here would read to the agent as the server being broken, on the one
     // interaction whose purpose is recording what was said to a customer.
     for (const bad of [null, undefined, {}, 'sale', [null, 3, { label: 'no code' }]] as unknown[]) {
       const res = resolveDisposition(bad as AgencyDisposition[], 'sale');
@@ -112,7 +112,7 @@ describe('checkActor — the ownership rule, steps 1 to 4', () => {
   });
 
   it('4: only a literal `true` asserts on_behalf', () => {
-    // Master sets a boolean. A truthy string arriving from a hand-rolled client
+    // The public API layer sets a boolean. A truthy string arriving from a hand-rolled client
     // must not be enough to reach another agent's attempt — this is the one check
     // standing between "any role above agent" and someone else's call record.
     for (const flag of ['true', 1, {}, 'yes'] as unknown[]) {

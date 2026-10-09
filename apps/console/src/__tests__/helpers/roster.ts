@@ -19,16 +19,16 @@ import {
  * The specific trap on this surface is `rates_reportable`. A fixture that
  * defaulted it to `false` (or left it undefined, which is falsy) would make every
  * row in every test render "not enough calls" — and the assertion that a THIN row
- * does so would pass vacuously, which is precisely the failure mode the phase-01
- * contract names as MAG-106. So the default row is deliberately fat and
+ * does so would pass vacuously, which is precisely the vacuous-pass failure
+ * mode. So the default row is deliberately fat and
  * reportable, and thinness is opted into.
  *
  * ── `success_rate_reportable` is DERIVED, because the server derives it ────
  * It is `rates_reportable` AND `connected >= 20`, so hardcoding it would let an
- * override produce a row core cannot emit — `rates_reportable: false` beside a
+ * override produce a row the server cannot emit — `rates_reportable: false` beside a
  * quotable conversion rate — and a test would then pin behaviour on a payload that
  * does not exist. It is computed from whatever the override left behind, exactly as
- * core computes it, and an EXPLICIT value still wins: the boundary and legacy cases
+ * the server computes it, and an EXPLICIT value still wins: the boundary and legacy cases
  * pass it by hand, so they assert the console's use of the server's answer rather
  * than this file's arithmetic.
  */
@@ -130,7 +130,7 @@ export function rosterBenchmark(over: Partial<AgencyRosterBenchmark> = {}): Agen
     talk_seconds: 54_000,
     wrapup_seconds: 6_400,
     /**
-     * The pooled shift and the break inside it — phase 02a's D10, and present by
+     * The pooled shift and the break inside it — and present by
      * default for the same reason `rates_reportable` defaults to `true` above.
      *
      * A fixture that omitted them would make every team-row assertion pass against

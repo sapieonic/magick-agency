@@ -4,17 +4,13 @@ import { dncRepository } from '../dnc/dnc.repository.js';
 const log = createChildLogger({ component: 'agency-dnc-registry' });
 
 /**
- * ─── AGENCY DIALER — DO NOT CALL, AND WHY IT FAILS CLOSED (§2.3) ─────────────
+ * ─── AGENCY DIALER — DO NOT CALL, AND WHY IT FAILS CLOSED ─────────────
  *
- * PORT NOTE (magick-agency, decision B8 — the DNC collapse). Core kept the
- * dial-time answer in a versioned Redis set that master published into, and this
- * header used to spend two screens on why that set was only authoritative when it
- * carried a version and why an empty read was not "clear". None of that machinery
- * exists here any more: there is ONE table, `dnc_entries`, and the dial-time check
- * is an indexed read of it (`idx_dnc_entries_tenant_phone`) through the same
+ * Decision B8: there is ONE table, `dnc_entries`, and the dial-time check is an
+ * indexed read of it (`idx_dnc_entries_tenant_phone`) through the same
  * `DncRepository.findSuppressed` predicate the roster ingest uses. A mark commits
- * to the table the check reads, so there is no publish step, no version, no
- * "unsynced tenant" state and no resync. What survives, unchanged, is the rule:
+ * to the table the check reads (`markDnc`, `dnc-mark.ts`), so there is no publish
+ * step, no version and no resync. The rule:
  *
  * DNC is checked twice, at two different times, for two different reasons. At
  * **ingest** suppressed numbers never enter the roster — that is the bulk check and
@@ -28,19 +24,17 @@ const log = createChildLogger({ component: 'agency-dnc-registry' });
  * reaper's, where failing closed means treating an agent as live and reaping
  * nothing. The rule both obey is *fail toward not acting on the customer*.
  *
- * What "unavailable" now means: **the database read threw** (pool down, timeout,
- * a statement error, a pool that was never initialised). There is no
- * `unavailable` for "the set is empty" any more, and there must never be a
- * `clear` for a read that did not complete: every arm that is not a successful
- * answer is `unavailable`, and `pre-dial-gates` turns that into a `halt` that
- * aborts the whole claimed batch.
+ * What "unavailable" means: **the database read threw** (pool down, timeout, a
+ * statement error, a pool that was never initialised). An empty answer is
+ * `clear`, and there must never be a `clear` for a read that did not complete:
+ * every arm that is not a successful answer is `unavailable`, and
+ * `pre-dial-gates` turns that into a `halt` that aborts the whole claimed batch.
  *
  * ── The scopes ───────────────────────────────────────────────────────────────
  *
- * Core's flat set could express only tenant-wide entries (`account_id IS NULL AND
- * campaign_id IS NULL`); account- and campaign-scoped rows were enforced at ingest
- * alone. The table can express all three, so when the caller names the dial's
- * account and campaign the check widens exactly as master's `findSuppressed` does:
+ * The table holds tenant-wide (`account_id IS NULL AND campaign_id IS NULL`),
+ * account-wide and campaign-scoped rows, so when the caller names the dial's
+ * account and campaign the check widens exactly as `findSuppressed` does at ingest:
  * a tenant-wide row, an account-wide row for that account, or a campaign row for
  * that campaign suppresses (the predicate widens, never narrows, so naming a scope
  * can only turn a `clear` into a `suppressed`). The scope is a REQUIRED argument
@@ -54,11 +48,10 @@ const log = createChildLogger({ component: 'agency-dnc-registry' });
  * - `clear` — checked, not on the list. Dial.
  * - `suppressed` — on the list. Suppress the contact, never dial.
  * - `unverifiable` — THIS phone number cannot be checked at all (it is not E.164,
- *   so no comparison against the set is meaningful). A per-contact data problem,
+ *   so no comparison against the list is meaningful). A per-contact data problem,
  *   and it must not halt the campaign: one malformed row would otherwise stop
  *   dialing for everybody. The contact is suppressed `invalid`.
- * - `unavailable` — the REGISTRY cannot answer: the `dnc_entries` read failed
- *   (core: no Redis, an unsynced tenant, or an error — see the port note above).
+ * - `unavailable` — the REGISTRY cannot answer: the `dnc_entries` read failed.
  *   Campaign-wide, so dialing halts.
  */
 export type DncCheck = 'clear' | 'suppressed' | 'unverifiable' | 'unavailable';
@@ -67,7 +60,7 @@ export type DncCheck = 'clear' | 'suppressed' | 'unverifiable' | 'unavailable';
  * The scope the dial is for. **Both fields are REQUIRED** (`null` = "do not check
  * that tier"), so a caller that forgets the scope fails to compile instead of
  * silently checking tenant-wide rows only and skipping account- and
- * campaign-scoped entries (an agent's own campaign mark among them). Phase 6's
+ * campaign-scoped entries (an agent's own campaign mark among them).
  * `pre-dial-gates` passes the campaign's `account_id` and `id`.
  */
 export interface DncCheckScope {
@@ -79,7 +72,7 @@ export interface DncCheckScope {
  * Normalize to the exact form the roster stores.
  *
  * A mismatch here is a silent fail-open — `+14155550100` and `14155550100` are
- * different set members, and a check against the wrong form returns "clear" for a
+ * different values, and a check against the wrong form returns "clear" for a
  * number that is on the list. So both sides of the comparison go through this one
  * function, and anything it cannot normalize is refused rather than compared.
  */
@@ -95,13 +88,11 @@ export function normalizeE164(raw: string | null | undefined): string | null {
 export class DncRegistry {
   /**
    * @param repo Injected for tests; defaults to the shared `dnc_entries` repository.
-   *   Replaces core's `(redis, keyPrefix, onUnsynced)` constructor — there is no
-   *   Redis set, no key prefix and no baseline to request.
    */
   constructor(private readonly repo: Pick<typeof dncRepository, 'findSuppressed'> = dncRepository) {}
 
   /**
-   * The pre-dial check. Immediately before the dial, per §2.3.
+   * The pre-dial check, made immediately before the dial.
    *
    * Never throws and never answers `clear` for a read that did not complete: a
    * rejected query (including a pool that does not exist) is `unavailable`.

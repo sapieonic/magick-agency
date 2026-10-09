@@ -1,7 +1,3 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/src/tts/tts-file-cache.ts@4850d1d9.
-// Only change: the logger import specifier (now @magick-agency/observability). The
-// `../utils/concurrency.js` import is kept as-is; that module is owned by lane A.
-
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -66,8 +62,9 @@ const SWEEP_CONCURRENCY = 8;
 /**
  * Bound on the liveness lookup {@link sweepTtsCache} makes before evicting.
  *
- * The startup sweep is **awaited before `drainQueue()`** in `src/index.ts`, so an
- * unbounded query here would turn a wedged database connection into a hung boot.
+ * The startup sweep is **awaited before the first dial is admitted** (`startVoice`
+ * in `bootstrap/voice.ts`), so an unbounded query here would turn a wedged
+ * database connection into a hung boot.
  * Ten seconds is twice the pool's own `connectionTimeoutMillis` (5 s), so a
  * genuinely-unavailable pool fails on its own timer first and this only fires for
  * a query that connected and then stalled. Exceeding it is treated exactly like a
@@ -77,15 +74,14 @@ const LIVENESS_TIMEOUT_MS = 10_000;
 
 /**
  * Narrows a candidate hash set down to the hashes that are safe to unlink —
- * i.e. those **no non-terminal call still needs**. Same direction and semantics
- * as `StaticCallRepository.filterDeletableTtsHashes`, which is what production
- * registers; anything it does not return is retained.
+ * i.e. those **no non-terminal call still needs**; anything it does not return
+ * is retained. None is registered today (`bootstrap/voice.ts` says why).
  */
 export type EvictableClipFilter = (hashes: string[]) => Promise<string[]>;
 
 /**
  * Registered liveness guard, or `null` when nothing is wired (the sweeper then
- * behaves exactly as it did before the guard existed). See
+ * evicts unguarded). See
  * {@link setEvictableClipFilter}.
  */
 let evictableClipFilter: EvictableClipFilter | null = null;
@@ -93,17 +89,15 @@ let evictableClipFilter: EvictableClipFilter | null = null;
 /**
  * Inject the reference-count guard the sweeper consults before unlinking.
  *
- * **A registration seam, not an import, and deliberately so.** The only useful
- * implementation is `staticCallRepository.filterDeletableTtsHashes`, and
- * importing that here would pull `src/db/connection.js` — and with it `pg` and a
- * reference to `src/config/index.js`, whose module body can `process.exit(1)` —
- * into every module that touches the clip cache: `call-manager.ts`,
- * `ws-static-call-session.ts`, `webrtc-bridge-manager.ts`, `ivr/engine.ts`, and
- * the four suites that exercise the *real* cache module rather than a mock. Same
- * rationale as `setTelephonyReleaseObserver` and `credential-seam.ts`.
+ * **A registration seam, not an import, and deliberately so.** Any useful
+ * implementation is a repository query, and importing one here would pull the
+ * database pool — and with it `pg` — into every module that touches the clip
+ * cache (`webrtc-bridge-manager.ts`, `audio/ensure-pcm-clip.ts`) and into the
+ * suites that exercise the *real* cache module rather than a mock. Same
+ * rationale as `setTelephonyReleaseObserver`.
  *
- * Wired once in `src/index.ts`, before the startup sweep. Left unset (tests,
- * scripts) the sweeper evicts unguarded, which is the pre-existing behaviour.
+ * Register it once at boot, before the startup sweep. Left unset — as it is
+ * today, and in tests and scripts — the sweeper evicts unguarded.
  */
 export function setEvictableClipFilter(fn: EvictableClipFilter | null): void {
   evictableClipFilter = fn;
@@ -112,12 +106,11 @@ export function setEvictableClipFilter(fn: EvictableClipFilter | null): void {
 /**
  * What one completed sweep measured, as {@link setTtsCacheSweepObserver} sees it.
  *
- * Cache-LEVEL, not request-level, and that distinction is the whole reason this
- * exists. A static-call request is capped at 100 phones, so no single request
- * can approach the cache cap; what overflows is this node's directory across
- * many requests — a 3,477-contact campaign arrives as ~35 requests, each of
- * which writes a modest number of content-addressed clips while the node's total
- * climbs past `cacheMaxBytes`. Only the sweeper ever sees that total.
+ * Cache-LEVEL, not write-level, and that distinction is the whole reason this
+ * exists. No single write approaches the cache cap; what overflows is this
+ * node's directory across many writes, each adding a modest content-addressed
+ * clip while the node's total climbs past `cacheMaxBytes`. Only the sweeper ever
+ * sees that total.
  */
 export interface TtsCacheSweepStats {
   /** `.wav` clip bytes remaining on disk AFTER this sweep's evictions. */
@@ -140,15 +133,13 @@ let sweepObserver: TtsCacheSweepObserver | null = null;
  * Inject the metrics sink for {@link sweepTtsCache}'s measurements.
  *
  * **A registration seam, not an import**, for exactly the reason
- * {@link setEvictableClipFilter} is one: importing `src/utils/metrics.ts` here
- * would put it in the module graph of every consumer of the clip cache —
- * `call-manager.ts`, `ws-static-call-session.ts`, `webrtc-bridge-manager.ts`,
- * `ivr/engine.ts` — and ~175 suites stub metrics with explicit factories that
- * would then have to list these exports. Same rule as `setTelephonyReleaseObserver`
- * and `setDecodeGateStatsProvider`.
+ * {@link setEvictableClipFilter} is one: importing the metrics module here would
+ * put it in the module graph of every consumer of the clip cache, and suites that
+ * stub metrics with explicit factories would then have to list these exports.
+ * Same rule as `setTelephonyReleaseObserver` and `setDecodeGateStatsProvider`.
  *
- * Wired once in `src/index.ts`. Left unset (tests, scripts) the sweeper simply
- * publishes nothing.
+ * Wired once in `bootstrap/voice.ts`. Left unset (tests, scripts) the sweeper
+ * simply publishes nothing.
  */
 export function setTtsCacheSweepObserver(fn: TtsCacheSweepObserver | null): void {
   sweepObserver = fn;
@@ -227,33 +218,31 @@ export function ttsFileExists(hash: string): boolean {
  *
  * The bytes go to a unique scratch file in the same directory and are then
  * `rename(2)`d into place, so a concurrent reader observes either the complete
- * clip or no clip, never a prefix of one. This is not theoretical: writing
- * straight to the final path meant a truncated file (ENOSPC — `TTS_AUDIO_DIR`
- * defaults to `os.tmpdir()`, often a small tmpfs — a crash mid-write, or a reader
- * racing an in-progress write) satisfied `ttsFileExists`, and `generateTtsAudio`
- * short-circuits on that check, so the hash was poisoned **permanently**: a 20 s
- * announcement played 0.1 s of audio and the call still billed as connected.
+ * clip or no clip, never a prefix of one. Writing straight to the final path
+ * would let a truncated file (ENOSPC — `TTS_AUDIO_DIR` defaults to
+ * `os.tmpdir()`, often a small tmpfs — a crash mid-write, or a reader racing an
+ * in-progress write) satisfy `ttsFileExists`, and `ensurePcmClip` short-circuits
+ * on that check, so the hash would be poisoned **permanently**: a 20 s
+ * announcement would play 0.1 s of audio on a connected call.
  *
  * No `fsync` before the rename, deliberately. fsync buys durability across a
  * *machine* crash; the atomicity that fixes the poisoning comes from rename
  * alone, and holds against a process crash, ENOSPC, and concurrent readers
- * without it. The cost is real and lands on the wrong path — this runs during
- * batch dispatch, once per distinct clip, synchronously ahead of dialing, and an
- * fsync on a network/overlay volume is tens of milliseconds. The failure it
- * would prevent (host loses power between rename and writeback) leaves a
- * zero-length or absent file after remount, which the next `readTtsPcm` treats as
- * a miss and re-synthesizes — the cache is a cache, and every clip is
- * content-addressed and cheaply regenerable. Durability is not worth per-clip
- * latency here.
- *
- * Signature is unchanged and must stay that way — four call sites depend on it.
+ * without it. The cost is real and lands on the wrong path — this runs on the
+ * call path (an abandoned call resolving its clip), once per distinct clip,
+ * synchronously, and an fsync on a network/overlay volume is tens of
+ * milliseconds. The failure it would prevent (host loses power between rename
+ * and writeback) leaves a zero-length or absent file after remount, which the
+ * next `readTtsPcm` treats as a miss and regenerates — the cache is a cache, and
+ * every clip is content-addressed and cheaply regenerable. Durability is not
+ * worth per-clip latency here.
  *
  * @param hash - The cache key (file is named `{hash}.wav`)
  * @param pcm16 - Raw PCM16 signed-LE samples
- * @param sampleRate - Sample rate (default 16000 for Sarvam output)
+ * @param sampleRate - Sample rate (default 16000)
  * @param channels - Number of channels (default 1 = mono)
- * @throws the underlying fs error, unchanged — callers (e.g. the audio-file
- *   upload route) key their cleanup off the throw.
+ * @throws the underlying fs error, unchanged — callers key their cleanup off
+ *   the throw.
  */
 export function writeTtsFile(
   hash: string,
@@ -342,9 +331,8 @@ export function deleteTtsFiles(hashes: string[]): number {
 /**
  * Sweep the on-disk TTS clip cache by age, then by total size.
  *
- * Static-call clips are cleaned via {@link deleteTtsFiles} on batch completion,
- * but on-demand preview clips belong to no batch and would otherwise accumulate
- * forever on a persistent volume. This sweeper:
+ * Nothing else removes clips on a schedule, so without this they would
+ * accumulate forever on a persistent volume. This sweeper:
  *  1. selects every `*.wav` whose mtime age exceeds `maxAgeMs`, then
  *  2. if the remaining files still total more than `maxBytes`, selects
  *     oldest-first until under the cap, then
@@ -355,8 +343,8 @@ export function deleteTtsFiles(hashes: string[]): number {
  *  5. publishes what it measured to {@link setTtsCacheSweepObserver}.
  *
  * Step 5 is the only cache-LEVEL signal that exists. The overflow is a per-node
- * total across many requests (a static-call request is capped at 100 phones, so
- * no single one can approach the cap), and this pass is the only place that
+ * total across many writes (no single one approaches the cap), and this pass is
+ * the only place that
  * total is ever computed — which is why the observer reuses the stats collected
  * here rather than walking the directory again, and why nothing increments a
  * running counter in `writeTtsFile` (it would drift against external deletion
@@ -364,31 +352,24 @@ export function deleteTtsFiles(hashes: string[]): number {
  *
  * ── Step 3: the liveness guard ───────────────────────────────────────────────
  *
- * Eviction used to be unconditional on both paths, and that is a way to put a
- * callee on a silent, billed line. Clips are content-addressed, so a static-call
- * batch with per-contact `{{variables}}` produces one distinct clip per contact;
- * at ~281 KB per 18 s clip a 3,477-call batch needs ~1.0 GB against the 500 MB
- * default cap. Oldest-first eviction then targets exactly the clips generated
- * *earliest* — which belong to the calls still parked in the per-account
- * concurrency queue. Those either re-synthesize at dequeue (paying twice) or, if
- * already dialed, find `convertClip` returning null and fail `TTS_CLIP_UNUSABLE`
- * after the customer picked up. The age path carries the same hazard (a call
- * queued past the 6 h TTL) and it was already documented; the size path needs no
- * old clip at all and is the far easier of the two to trigger.
+ * Unconditional eviction is a way to put a callee on a silent line: oldest-first
+ * eviction targets exactly the clips generated *earliest*, which may still belong
+ * to calls that have not played them yet. The age path carries the same hazard
+ * (a call outliving the 6 h TTL); the size path needs no old clip at all and is
+ * the far easier of the two to trigger.
  *
- * The guard is the counterpart of `filterDeletableTtsHashes` — which already
- * reference-counts *batch-completion* deletes — and production registers that
- * exact query. One round-trip for the whole victim set, never per-hash, scoped
- * across ALL batches (a per-batch query would be wrong by construction, since
- * one file backs every batch sharing an announcement).
+ * The guard, when one is registered, is asked once for the whole victim set,
+ * never per-hash, and scoped across every caller (one content-addressed file
+ * backs every call that plays the same audio). None is registered today: an
+ * abandon clip that is evicted is re-decoded from S3 by `ensurePcmClip`.
  *
  * Two consequences, both accepted deliberately:
  *  - A failed or slow lookup **skips clip eviction for this cycle** rather than
  *    deleting unguarded. Retaining a clip too long is harmless — the next sweep
  *    retries — while deleting one that is live is the incident above.
  *  - The size cap is a **soft** target: if the oldest clips are all live, the
- *    cache stays over `maxBytes` until those calls end (at which point
- *    `releaseBatchTtsClips` frees them). Disk pressure is the cheaper failure.
+ *    cache stays over `maxBytes` until those calls end. Disk pressure is the
+ *    cheaper failure.
  *
  * Step 4 is deliberately *outside* the guard: a scratch file is not a clip, is
  * not content-addressed by a hash any row can reference, and is age-gated on its
@@ -405,31 +386,30 @@ export function deleteTtsFiles(hashes: string[]): number {
  * metrics (and their callers) keep exactly their current meaning.
  *
  * Safe because hashes are content-addressed: deleting an old clip only forces a
- * cheap re-synth on the next request. Fully defensive — no-ops if the dir is
+ * cheap regeneration on its next use. Fully defensive — no-ops if the dir is
  * missing, ignores files that vanish mid-sweep (ENOENT), and **never rejects**;
  * callers may treat the returned promise as infallible.
  *
  * ── Asynchronous and bounded, deliberately ───────────────────────────────────
  *
  * Every filesystem call here is `fs.promises` and every batch of them is capped
- * at {@link SWEEP_CONCURRENCY}. The previous implementation was one
- * uninterrupted synchronous loop — `readdirSync`, then a `statSync` per entry,
- * then `unlinkSync` per eviction — with no yield point anywhere in it. While it
- * ran, the process could not parse media frames, send audio, accept requests or
- * fire timers. That is ~2,500-3,000 back-to-back syscalls at the 500 MB default
- * cap with typical ~200 KB clips, once an hour, and materially worse when
- * `TTS_AUDIO_DIR` is a shared network volume where each `stat` is a round-trip.
+ * at {@link SWEEP_CONCURRENCY}. A synchronous loop — `readdirSync`, then a
+ * `statSync` per entry, then `unlinkSync` per eviction — has no yield point
+ * anywhere in it, and while it ran the process could not parse media frames,
+ * send audio, accept requests or fire timers. That is ~2,500-3,000 back-to-back
+ * syscalls at the 500 MB default cap with typical ~200 KB clips, once an hour,
+ * and materially worse when `TTS_AUDIO_DIR` is a shared network volume where
+ * each `stat` is a round-trip.
  *
  * Note this is the ONLY sweep-path concern addressed here: `writeTtsFile`,
  * `readTtsFile`/`readTtsPcm`, `ttsFileExists` and `deleteTtsFiles` remain
- * synchronous on purpose. Converting those ripples into a synchronous WebSocket
- * message handler (`WebSocketStaticCallSession.handleStart`) and into the
- * `ttsFileExists` short-circuit that guards the atomic-write contract above —
- * separate work, with separate hazards.
+ * synchronous on purpose. Converting those ripples into the bridge's synchronous
+ * clip conversion (`convertClipForCarrier`) and into the `ttsFileExists`
+ * short-circuit that guards the atomic-write contract above — separate work,
+ * with separate hazards.
  */
 export function sweepTtsCache(opts: SweepOptions = {}): Promise<SweepResult> {
-  // Single-flight. Asynchronous I/O makes overlapping sweeps possible for the
-  // first time: the sync version physically could not re-enter, but an async one
+  // Single-flight. Asynchronous I/O makes overlapping sweeps possible: a sweep
   // on a slow network volume can still be running when the next interval fires,
   // and two concurrent sweeps would double-count `deleted`/`freedBytes` and race
   // each other's unlinks into spurious ENOENT warnings. A caller arriving mid-
@@ -444,14 +424,13 @@ export function sweepTtsCache(opts: SweepOptions = {}): Promise<SweepResult> {
     // never released, and every subsequent interval tick silently no-ops for the
     // lifetime of the process — the cache then grows past `maxBytes` unbounded
     // with nothing in the logs, because the success line below only fires when
-    // something was actually deleted. The synchronous version had the same hang
-    // but wedged the whole event loop, which was impossible to miss; this one is
-    // quiet, so it has to announce itself.
+    // something was actually deleted. Because the I/O is asynchronous the hang
+    // does not wedge the event loop, so it is quiet and has to announce itself.
     //
     // Guarded, and NOT by `runSweep`'s catch — this line runs in `sweepTtsCache`
     // itself, outside the promise. A throw here would leave the function
     // throwing SYNCHRONOUSLY rather than returning a rejected promise, so the
-    // `.then(onOk, onErr)` in `src/index.ts` would never be attached and the
+    // `.then(onOk, onErr)` in `bootstrap/voice.ts` would never be attached and the
     // interval's `void sweepTts()` would become an uncaught exception that exits
     // a replica carrying live calls. The documented contract is that this
     // function returns a promise and never rejects; that has to hold on every
@@ -581,10 +560,9 @@ async function sweepOnce(opts: SweepOptions): Promise<SweepResult> {
   // Size cap: if survivors still exceed maxBytes, evict oldest-first.
   //
   // The victim set is chosen up front from the (pure, in-memory) size arithmetic
-  // and only then unlinked, rather than deciding as each delete lands. This is a
-  // deliberate, minor divergence from the synchronous original: there, an unlink
-  // that failed did not decrement the running total, so the loop evicted an
-  // extra file to compensate. Here a failed unlink simply frees less. The cap is
+  // and only then unlinked, rather than deciding as each delete lands.
+  // Deliberate: a failed unlink simply frees less, rather than the loop evicting
+  // an extra file to compensate. The cap is
   // a soft target on a cache of content-addressed, cheaply regenerable clips,
   // and the next sweep re-evaluates from real stat data — over-evicting on a
   // transient error is the worse of the two behaviours.
@@ -605,7 +583,7 @@ async function sweepOnce(opts: SweepOptions): Promise<SweepResult> {
   // the gauge is clip bytes, which is what `maxBytes` is compared against.)
   //
   // It is a measurement AS OF THE SCAN, not a live figure: a clip that a
-  // concurrent `releaseBatchTtsClips` unlinks after its `stat` but that this
+  // concurrent delete elsewhere unlinks after its `stat` but that this
   // sweep never tried to evict stays counted until the next pass. The ENOENT
   // accounting below corrects only the subset this sweep actually touched,
   // which is the only subset it can observe without a second directory walk.
@@ -614,8 +592,7 @@ async function sweepOnce(opts: SweepOptions): Promise<SweepResult> {
   let totalBytes = survivorBytes;
   if (totalBytes > maxBytes) {
     // Oldest first, then by path to break ties deterministically. The tiebreak is
-    // load-bearing now in a way it was not when this loop was synchronous:
-    // `survivors` is filled in stat-COMPLETION order (threadpool-dependent),
+    // load-bearing: `survivors` is filled in stat-COMPLETION order (threadpool-dependent),
     // not readdir order, and `sort` is stable — so without it, which of two
     // equal-mtime clips gets evicted varies run to run. Filesystems with 1 s
     // mtime granularity (common on network/overlay volumes) tie constantly.
@@ -657,9 +634,9 @@ async function sweepOnce(opts: SweepOptions): Promise<SweepResult> {
   }
 
   // Bytes counted in `scannedBytes` that are provably NOT on disk any more, but
-  // that this sweep did not free. `releaseBatchTtsClips` unlinks clips
-  // concurrently on batch completion, so an ENOENT here means "already gone",
-  // not "failed to delete". Folding it into `freedBytes` would overstate what
+  // that this sweep did not free. Something else (another replica's sweep on a
+  // shared volume, `deleteTtsFiles`) can unlink clips concurrently, so an ENOENT
+  // here means "already gone", not "failed to delete". Folding it into `freedBytes` would overstate what
   // the sweep achieved (and is reported in `SweepResult`); leaving it out
   // entirely would overstate the cache gauge until the next hourly sweep, i.e.
   // a false capacity signal on the metric added precisely to watch capacity.
@@ -724,8 +701,8 @@ export interface SweepOptions {
   /**
    * Bound on the {@link setEvictableClipFilter} lookup. Default
    * {@link LIVENESS_TIMEOUT_MS}. Exceeding it skips eviction for this cycle,
-   * exactly as a failed lookup does — the startup sweep is awaited before
-   * `drainQueue()`, so this must never be unbounded.
+   * exactly as a failed lookup does — the startup sweep is awaited before the
+   * first dial is admitted, so this must never be unbounded.
    */
   livenessTimeoutMs?: number;
 }

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-// `agent` (Agency Dialer, design D6) is accepted here so an account_admin can
+// `agent` (Agency Dialer) is accepted here so an account_admin can
 // staff a dialing floor. It sits below `viewer` in ROLE_HIERARCHY, so granting
 // it widens nothing — see `src/rbac/roles.ts`. `tenant_owner` remains
 // un-assignable through the customer surface (it is set at signup only).

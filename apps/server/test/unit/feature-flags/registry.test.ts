@@ -12,20 +12,13 @@ import {
 import { FIXTURE_FLAGS } from '../../helpers/fixture-flags.js';
 
 /*
- * PORT NOTE (magick-agency): ported from core
- * test/unit/feature-flags/registry.test.ts@4850d1d9. The registry holds only the
- * three agency flags.
- *  - KEPT verbatim: catalog integrity (2), agency_late_binding, "a flag without
- *    envVar resolves to its default".
- *  - MODIFIED: "declares …" now pins exactly the three agency flags; the
- *    whatsapp_personal / whatsapp_personal_groups shape cases pin
- *    agency_dialer_enabled / agency_call_analysis instead; defineFlag and the
- *    boolean resolveEnvDefault cases use agency_dialer_enabled (FF_AGENCY_DIALER);
- *    the number resolveEnvDefault case uses an unregistered copy of core's
+ * The registry holds only the three agency flags.
+ *  - "declares …" pins exactly the three agency flags; the shape cases pin
+ *    agency_dialer_enabled / agency_call_analysis; defineFlag and the boolean
+ *    resolveEnvDefault cases use agency_dialer_enabled (FF_AGENCY_DIALER); the number
+ *    resolveEnvDefault case uses an unregistered fixture copy of
  *    prewarm_ring_delay_ms (resolveEnvDefault takes a definition); the
  *    clientExposedFlags case asserts the agency split.
- *  - DELETED: "prewarm flags are NOT client-exposed", the three gold_ii cases and
- *    the prewarm_ring_delay_ms validator case (AI flags, not in this registry).
  */
 
 describe('feature-flag registry', () => {
@@ -83,7 +76,7 @@ describe('feature-flag registry', () => {
       // fleet-wide default.
       expect(f.default).toBe(false);
       expect(f.scopes).toEqual(expect.arrayContaining(['global', 'tenant', 'account']));
-      // Deliberately invisible to cusui: the console receives the same frames in
+      // Deliberately invisible to the console: the console receives the same frames in
       // the same order, just later, so there is nothing for it to branch on — and
       // a flag the client can read is a flag the client will eventually branch on.
       expect(f.clientExposed).not.toBe(true);

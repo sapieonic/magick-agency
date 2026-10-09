@@ -1,5 +1,5 @@
 /**
- * The attempt spine — what the campaign did, and to whom (MAG-159).
+ * The attempt spine — what the campaign did, and to whom.
  *
  * Deliberately NOT the audit trail (`agency-activity.ts`). That one answers
  * *who did what to the campaign*: Manas stopped it at 14:22. This one answers
@@ -10,7 +10,7 @@
  * ── Where the numbers come from, and what is deliberately absent ────────────
  *
  * `context` — the contact's uploaded CSV columns — appears on
- * {@link AgencyContactDetail} and nowhere else. Master serves it only on the
+ * {@link AgencyContactDetail} and nowhere else. The public API layer serves it only on the
  * single-contact route, so a list and an export cannot carry it by
  * construction. When rendering it, apply `AgencyContextDisplay.hidden` exactly
  * as the agent console does (`resolveContextFields`): the operator marked those
@@ -21,7 +21,7 @@
 import type { AgencyAttemptOutcome, AgencyAttemptState } from './agency';
 
 /**
- * Contact lifecycle, mirrored from core's `AgencyContactState` (migration 073).
+ * Contact lifecycle, mirrored from dialer runtime's `AgencyContactState`.
  *
  * Declared here rather than in `types/agency.ts` because this is the first
  * surface that renders it: the station socket deals in attempts, not roster
@@ -67,13 +67,13 @@ export interface AgencyAttempt {
    */
   agent_user_id: string | null;
   /**
-   * The agent's display name, resolved by MASTER — core has no user table, so
+   * The agent's display name, resolved by the public API layer — the dialer runtime has no user table, so
    * it can only ever serve the id, and a column of UUIDs is not one a
    * supervisor can read.
    *
-   * `null` means either "no agent was on this attempt" or "master could not
+   * `null` means either "no agent was on this attempt" or "the public API layer could not
    * identify that id in this tenant". `agent_user_id` separates the two, which
-   * is why both keys are always present. Optional here only because a master
+   * is why both keys are always present. Optional here only because a public API layer
    * older than this build does not send it.
    */
   agent_name?: string | null;
@@ -83,7 +83,7 @@ export interface AgencyAttempt {
   outcome: AgencyAttemptOutcome | null;
   disposition_code: string | null;
   /**
-   * Agent-typed free text. Shown deliberately — see the MAG-159 PR — because it
+   * Agent-typed free text. Shown deliberately because it
    * is frequently the answer to "why was this number called four times". Always
    * rendered as TEXT, never as markup.
    */
@@ -96,7 +96,7 @@ export interface AgencyAttempt {
   /**
    * The media leg, for the recording.
    *
-   * **A non-null id is NOT a promise the recording still exists.** Core keeps
+   * **A non-null id is NOT a promise the recording still exists.** The dialer runtime keeps
    * this un-FK'd on purpose so an attempt outlives a purged call, so the link
    * must degrade to "recording no longer available" rather than 404.
    */
@@ -165,7 +165,7 @@ export interface AgencyContactFilters {
   suppressed_reason?: string[];
   last_outcome?: string[];
   /**
-   * The disposition an agent last filed against the contact (retry design §4.2).
+   * The disposition an agent last filed against the contact.
    * The Contacts tab's third chip group ("How the agent wrote it up").
    *
    * Not a closed union: disposition codes are operator-authored per campaign
@@ -173,11 +173,11 @@ export interface AgencyContactFilters {
    * campaign's catalog ∪ the three built-in codes, and it is validated
    * server-side against the campaign — not here.
    *
-   * Master's contacts allow-list forwards this key on the JSON roster and
+   * The public API layer's contacts allow-list forwards this key on the JSON roster and
    * the CSV export (`CONTACT_QUERY_PARAMS`). An unlisted key is a 400
    * `unknown_query_params`, not a silent drop — Apply on this group 400'd
    * and left the table on the previous page until the key was listed.
-   * Do not rename it to `disposition`: core's parser reads
+   * Do not rename it to `disposition`: the dialer runtime's parser reads
    * `last_disposition` only. Attempts use `disposition_code`.
    */
   last_disposition?: string[];
@@ -187,12 +187,12 @@ export interface AgencyContactFilters {
 }
 
 /**
- * The retry-campaign selector — wire contract §1, one encoding used identically
+ * The retry-campaign selector — one encoding used identically
  * as a preview query string and as a create body.
  *
  * ── It is deliberately a NEAR-COPY of {@link AgencyContactFilters} ───────────
- * Retry design DR-3: the selectable facts already have a filter language, in
- * core's `spine-filters.ts`, with the algebra a selector needs (AND across
+ * The selectable facts already have a filter language, in
+ * the dialer runtime's `spine-filters.ts`, with the algebra a selector needs (AND across
  * keys, OR within one, an absent key constraining nothing). The supervisor
  * narrows the Contacts tab until it shows the rows they mean and the filters
  * they were already looking at *become* the selector. Inventing a second
@@ -202,7 +202,7 @@ export interface AgencyContactFilters {
  * `phone`, `from` and `to` are **not** selector dimensions and are stripped by
  * `selectorFromContactFilters` before any call. A phone filter is a lookup, not
  * a cohort; `from`/`to` filter `created_at`, which is when the row was
- * *ingested* and reads as "dialled between", which it is not. Core answers
+ * *ingested* and reads as "dialled between", which it is not. The dialer runtime answers
  * `400 <key> is not a retry selector dimension` for any of them, so sending one
  * fails the whole request rather than quietly widening the cohort.
  *
@@ -213,11 +213,11 @@ export interface AgencyContactFilters {
  *
  * `suppressed_reason` accepts only `max_attempts` and `manual` here. `dnc` and
  * `invalid` are refused with a 400 and excluded from the seed unconditionally
- * (DR-4) — a customer's recorded request not to be contacted is not an operator
+ * — a customer's recorded request not to be contacted is not an operator
  * choice, and a bad number does not become good.
  */
 /**
- * Core's `RETRY_NO_OUTCOME` — the `last_outcome` member meaning "this contact
+ * The dialer runtime's `RETRY_NO_OUTCOME` — the `last_outcome` member meaning "this contact
  * has no outcome at all", i.e. nobody ever dialled it.
  *
  * Declared here rather than imported from the selector util because the type
@@ -230,13 +230,13 @@ export interface AgencyRetrySelector {
   state?: AgencyContactState[];
   /**
    * The ten real outcomes, plus `'__none__'` for a contact that has no outcome
-   * at all — core's `RETRY_NO_OUTCOME`, and the same bucket key the preview's
+   * at all — the dialer runtime's `RETRY_NO_OUTCOME`, and the same bucket key the preview's
    * `by_last_outcome` breakdown uses for a NULL.
    *
    * It is a MEMBER of this dimension rather than a dimension of its own because
    * "we did not reach them" is a union of "rang out" and "never dialled", and
    * the selector algebra ANDs across dimensions — expressed as two keys those
-   * are mutually exclusive and match nothing. See core's
+   * are mutually exclusive and match nothing. See the dialer runtime's
    * `RETRY_OUTCOME_SELECTABLES` for the full argument.
    */
   last_outcome?: (AgencyAttemptOutcome | typeof RETRY_NO_OUTCOME)[];
@@ -251,8 +251,8 @@ export interface AgencyRetrySelector {
 
 // ─── Vocabularies ───────────────────────────────────────────────────────────
 //
-// Transcribed from core's contract, unlike the activity page's action list —
-// which master serves precisely because it is the only service that knows BOTH
+// Transcribed from dialer runtime's contract, unlike the activity page's action list —
+// which the public API layer serves precisely because it is the only service that knows BOTH
 // stores' vocabularies. There is one store here and one authority, and these
 // are frozen enumerations in a frozen cross-service contract rather than a
 // catalog that grows: `AgencyAttemptOutcome` and `AgencyContactState` are
@@ -283,7 +283,7 @@ export const ATTEMPT_OUTCOME_LABELS = {
     thing those two have in common (nothing was learned about the number) and
     why both are worth dialling again.
 
-    Mirrored word-for-word from core's `retry-summary.ts` `OUTCOME_COPY`, like
+    Worded to match `OUTCOME_COPY` in `retry-summary.ts`, like
     every other entry here.
   */
   canceled: 'Stopped by us before answer',
@@ -331,8 +331,8 @@ export function attemptOutcomeLabel(outcome: string | null): string {
  *
  * A sibling of {@link attemptOutcomeLabel} rather than a bare map lookup, and for
  * the same reason: `AgencyAttemptState` is a closed union in a cross-service
- * contract that CORE owns, so a state core adds arrives here before this file
- * knows the word. Printing it verbatim is what lets that happen without a client
+ * contract that the dialer runtime owns, so a state the dialer runtime adds arrives here before this file
+ * knows the word. Printing it unchanged is what lets that happen without a client
  * release — the property `AgencyCampaignStatusBadge` keeps for campaign status.
  */
 export function attemptStateLabel(state: string): string {

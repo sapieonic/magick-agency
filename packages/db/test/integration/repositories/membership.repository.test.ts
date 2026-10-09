@@ -1,4 +1,4 @@
-// PORT NOTE (magick-agency): ported from master test/integration/repositories/membership.repository.test.ts@a1f0756a (33 → 33) on real Postgres via the master pattern (`src/connection.js` → the test pool); import specifiers remapped plus type-only `!` non-null assertions (agency typechecks tests, B1).
+// Real Postgres: `src/connection.js` is pointed at the test pool. Type-only `!` non-null assertions because tests are typechecked (decision B1).
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { vi } from 'vitest';
 import { getTestPool, closeTestPool, truncateAll } from '../setup/test-utils.js';

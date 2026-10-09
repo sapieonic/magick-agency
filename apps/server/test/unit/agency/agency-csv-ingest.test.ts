@@ -11,11 +11,11 @@ import {
 } from '../../../src/agency/agency-csv-ingest.js';
 
 /**
- * Built against QA's fixture matrix (test-plan §11.1, cases C1–C19). The module
+ * Built against a fixture matrix (cases C1–C19). The module
  * takes a `Readable`, so every case here runs in the unit tier with no
  * infrastructure — which is exactly why it takes a `Readable`.
  *
- * Where the test plan says "assert which", the assertion here IS the decision,
+ * Where a case calls for asserting WHICH outcome occurs, the assertion here IS the decision,
  * and the comment says why.
  */
 
@@ -53,12 +53,12 @@ async function run(
 describe('C1 — arbitrary headers, phone column by mapping', () => {
   const csv = 'Mobile,First Name,Policy #,Renewal Dt\n9876543210,Asha,POL-1,2026-09-01\n';
 
-  it('accepts the mapped column and keeps every other header verbatim', async () => {
+  it('accepts the mapped column and keeps every other header as-is', async () => {
     const { summary, contacts } = await run(csv, { phoneColumn: 'Mobile' });
 
     expect(summary.accepted).toBe(1);
     expect(contacts[0]!.phone_e164).toBe('+919876543210');
-    // Headers verbatim — the space in "First Name" and the "#" in "Policy #"
+    // Headers kept as-is — the space in "First Name" and the "#" in "Policy #"
     // survive, because the agent screen renders these keys as-is.
     expect(contacts[0]!.context).toEqual({
       'First Name': 'Asha',
@@ -141,7 +141,7 @@ describe('C6 — above the column cap', () => {
   });
 
   it('publishes the cap as a constant so the limit shown to the admin is the real one', () => {
-    // UX §B.2: the number in the UI must come from metadata, not a copy.
+    // The number in the UI must come from metadata, not a copy.
     expect(AGENCY_MAX_COLUMNS).toBe(100);
     expect(AGENCY_MAX_COLUMNS).toBeGreaterThan(43); // C5 must fit
   });
@@ -177,7 +177,7 @@ describe('C7 — empty and placeholder values', () => {
   });
 });
 
-// ─── C8 — oversized cell (test plan says "assert which") ────────────────────
+// ─── C8 — oversized cell (assert which) ──────────────────────────────────────
 
 describe('C8 — an oversized cell', () => {
   it('REJECTS the row with `value_too_large` and does not blow the buffer', async () => {
@@ -229,7 +229,7 @@ describe('C9 — duplicates across E.164, local and spaced forms', () => {
   it('can be switched off, keeping both people behind a shared number', async () => {
     // Two people on one household/switchboard number is legitimate and common
     // in this market. With dedupe on, the second is dropped and it looks like
-    // dedupe working correctly — which is why it is an option, and why core's
+    // dedupe working correctly — which is why it is an option, and why the
     // idempotency constraint is on source_row_number rather than phone_e164.
     const csv = 'Mobile,Name\n+919876543210,Asha\n+919876543210,Ravi\n';
 
@@ -246,7 +246,7 @@ describe('C9 — duplicates across E.164, local and spaced forms', () => {
   });
 
   it('counts duplicates inside `rejected` so the four numbers reconcile', async () => {
-    // UX §B.4: accepted + rejected + duplicates must visibly reconcile to
+    // Accepted + rejected + duplicates must visibly reconcile to
     // rows_read. Duplicates are a KIND of rejection, so rows_read == accepted +
     // rejected, and `duplicates` is the subset callers surface separately.
     const csv = 'Mobile\n+919876543210\n+919876543210\nnotaphone\n';
@@ -304,7 +304,7 @@ describe('C11 — mixed E.164 and local formats', () => {
     '+91 98765 43210,Spaced',
   ].join('\n');
 
-  it('preserves E.164 verbatim and applies the campaign country code to local forms', async () => {
+  it('preserves E.164 as-is and applies the campaign country code to local forms', async () => {
     const { summary, contacts } = await run(csv, {
       phoneColumn: 'Mobile',
       defaultCountryCode: '91',
@@ -315,8 +315,8 @@ describe('C11 — mixed E.164 and local formats', () => {
     expect(summary.duplicates).toBe(2);
   });
 
-  it('honours a DIFFERENT campaign country code — this is the §13.4 fix', async () => {
-    // The blocker QA raised: with only a platform-wide default, a US campaign's
+  it('honours a DIFFERENT campaign country code', async () => {
+    // With only a platform-wide default, a US campaign's
     // local numbers silently become +91 and get dialed. The country code is a
     // per-call option here, and the campaign supplies it.
     const { contacts } = await run('Mobile\n4155550123\n', {
@@ -327,7 +327,7 @@ describe('C11 — mixed E.164 and local formats', () => {
   });
 
   it('does not read the country code from the environment', async () => {
-    // Test-plan §12.6: vary it through the option, never through process.env,
+    // Vary it through the option, never through process.env,
     // or the result is import-order dependent.
     const a = await run('Mobile\n4155550123\n', { phoneColumn: 'Mobile', defaultCountryCode: '1' });
     const b = await run('Mobile\n9876543210\n', { phoneColumn: 'Mobile', defaultCountryCode: '91' });
@@ -388,7 +388,7 @@ describe('C14 — non-UTF-8 bytes (latin1 accents)', () => {
 
   it('ACCEPTS a value with invalid bytes, replacing them with U+FFFD EXACTLY', async () => {
     // "Tolerated" needs a DEFINED result, not just "does not fail". This value
-    // lands in `agency_contacts.context` and is rendered verbatim on the
+    // lands in `agency_contacts.context` and is rendered as-is on the
     // agent's screen mid-call, so the exact output is contract: each invalid
     // byte becomes one U+FFFD replacement character, and nothing is dropped.
     // Pinned so a dependency bump cannot silently change it to a dropped byte
@@ -463,7 +463,7 @@ describe('C17 — embedded newlines', () => {
   });
 });
 
-// ─── C18 — ragged rows (test plan says "assert which") ──────────────────────
+// ─── C18 — ragged rows (assert which) ────────────────────────────────────────
 
 describe('C18 — ragged rows', () => {
   it('PADS a short row and accepts it', async () => {
@@ -520,7 +520,7 @@ describe('C19 — empty, header-only and blank-line files', () => {
   });
 });
 
-// ─── Duplicate headers (UX §E.17 / §A.6.4) ─────────────────────────────────
+// ─── Duplicate headers ─────────────────────────────────
 
 describe('duplicate CSV headers', () => {
   it('suffixes repeats (2), (3) with the first occurrence unchanged', () => {
@@ -542,7 +542,7 @@ describe('duplicate CSV headers', () => {
   });
 });
 
-// ─── Ignored columns (UX §E.18) ────────────────────────────────────────────
+// ─── Ignored columns ────────────────────────────────────────────
 
 describe('ignored columns', () => {
   it('excludes them from context ENTIRELY, not just from the render', async () => {
@@ -568,9 +568,9 @@ describe('ignored columns', () => {
   });
 });
 
-// ─── Timezone mapping (D4) ─────────────────────────────────────────────────
+// ─── Timezone mapping ─────────────────────────────────────────────────
 
-describe('timezone column (D4)', () => {
+describe('timezone column', () => {
   it('carries a mapped timezone through and leaves it undefined when blank', async () => {
     const csv = 'Mobile,TZ\n9876543210,Asia/Kolkata\n9123456780,\n';
     const { contacts } = await run(csv, { phoneColumn: 'Mobile', timezoneColumn: 'TZ' });
@@ -696,7 +696,7 @@ describe('batching', () => {
       }
     }
 
-    it('rethrows an onBatch error verbatim, so instanceof survives the boundary', async () => {
+    it('rethrows an onBatch error unchanged, so instanceof survives the boundary', async () => {
       /**
        * The final `catch` re-labels anything that is not an `AgencyIngestError` as
        * `malformed_csv`. That is right for parser and stream failures and wrong for
@@ -704,7 +704,7 @@ describe('batching', () => {
        * path — the file is fine.
        *
        * Two live consequences before the fix, and the second is the instructive
-       * one: `AD-P3-M-02`'s fail-closed DNC halt arrived at its caller as "Could
+       * one: the fail-closed DNC halt arrived at its caller as "Could
        * not read the CSV", and `agency-ingest.service.ts`'s
        * `err instanceof IngestCancelled` arm had **never** been reachable —
        * cancellation worked only via a separate boolean flag. Two mechanisms, one
@@ -723,7 +723,7 @@ describe('batching', () => {
       ).rejects.toBe(thrown);
     });
 
-    it('rethrows an onRejected error verbatim too', async () => {
+    it('rethrows an onRejected error unchanged too', async () => {
       const thrown = new CallerHalt();
 
       await expect(

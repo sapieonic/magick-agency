@@ -6,8 +6,8 @@ import { analysisConfigSchema } from './blocks/analysis.js';
 import type { z } from 'zod';
 
 /**
- * Each lane owns one block. `.merge` lets a later block silently REPLACE an
- * earlier block's key, so two lanes declaring the same top-level key would
+ * Each area owns one block (decision B4). `.merge` lets a later block silently REPLACE an
+ * earlier block's key, so two blocks declaring the same top-level key would
  * leave one of them reading the other's config with no error anywhere. The
  * blocks must be disjoint; this is checked at module load (so boot fails) and
  * pinned by test/unit/config/blocks-disjoint.test.ts.

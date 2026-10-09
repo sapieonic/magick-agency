@@ -6,25 +6,25 @@ import type {
 
 /**
  * This browser's knowledge of the agent's live station, so a second join can
- * be refused locally instead of charging core with a 409 it will only warn on.
+ * be refused locally instead of charging the server with a 409 it will only warn on.
  *
  * ── Why this exists ──────────────────────────────────────────────────────────
- * Core enforces one live session per agent per tenant. The console already
+ * The server enforces one live session per agent per tenant. The console already
  * renders that refusal (`session_on_other_campaign`) — *after* `POST /sessions`
- * has gone out and core has logged "Agency join refused — agent already live
- * on another campaign". In chitboss UAT that was two warnings from one tester
+ * has gone out and the server has logged "Agency join refused — agent already live
+ * on another campaign". In real use that was two warnings from one tester
  * opening a second campaign while still joined to the first, plus a StrictMode
  * double-mount that fired the same POST twice on a single visit.
  *
  * `agencyCampaignControls` already refuses a *supervisor* click the state
  * forbids, so the click never becomes a 409. The join path had no equivalent:
- * the only way to learn "you are live elsewhere" was to ask core. Once this
+ * the only way to learn "you are live elsewhere" was to ask the server. Once this
  * browser has been told — a successful join, or a 409 that named the other
  * campaign — asking again is log noise. The conflict screen is shown from the
  * cache and `POST /sessions` is not issued.
  *
  * ── What this is not ─────────────────────────────────────────────────────────
- * It is not a source of truth. Core still owns the session. A cache miss
+ * It is not a source of truth. The server still owns the session. A cache miss
  * (another device, a reaped session, a first visit) still POSTs, and a genuine
  * race still 409s — the join effect then *writes* the cache from that body so
  * a retry in this browser does not. `confirmSwitch` still POSTs to the campaign
@@ -52,7 +52,7 @@ const STORAGE_KEY_PREFIX = 'mv:agency-live-session:';
 /**
  * How long a remembered station is enough to refuse a join locally.
  *
- * Core's heartbeat lease is 45s; this is a small buffer so Exit → open
+ * The server's heartbeat lease is 45s; this is a small buffer so Exit → open
  * another campaign while the session is still live still refuses, and a
  * crashed tab older than that is allowed to POST.
  */
@@ -249,7 +249,7 @@ export function clearAllLiveSessions(): void {
 }
 
 /**
- * The local equivalent of core's `session_on_other_campaign` 409.
+ * The local equivalent of the server's `session_on_other_campaign` 409.
  *
  * `null` when we have no cache, when the cache is older than
  * {@link LIVE_SESSION_MAX_AGE_MS}, or when the cache IS the campaign being
@@ -278,7 +278,7 @@ export function localJoinConflict(
  * One in-flight `POST /sessions` per campaign, so React StrictMode's
  * mount → cleanup → remount does not issue two joins (and two 409s) for one
  * visit. Settled promises are not reused: a later attempt (Leave & join,
- * a real retry) must be allowed to talk to core again.
+ * a real retry) must be allowed to talk to the server again.
  */
 export function coalesceJoin<T>(key: string, start: () => Promise<T>): Promise<T> {
   if (inflight?.key === key) return inflight.promise as Promise<T>;

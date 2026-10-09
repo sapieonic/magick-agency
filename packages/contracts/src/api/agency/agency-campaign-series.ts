@@ -14,7 +14,7 @@ import type { AgencyAgentStatsBucket, AgencyStatsBucketWidth } from './agency-st
  *
  * ── The bucket is REUSED, not re-declared ──────────────────────────────────
  * `buckets[]` is {@link AgencyAgentStatsBucket} field-for-field, which is
- * master's contract rather than a coincidence this file is exploiting. That is
+ * the public API layer's contract rather than a coincidence this file is exploiting. That is
  * what lets `bucketSeries` / `bucketDay` — and every off-by-one those two have
  * already been fixed for — serve this series unchanged. A parallel
  * `AgencyCampaignStatsBucket` with the same five fields would be a second copy

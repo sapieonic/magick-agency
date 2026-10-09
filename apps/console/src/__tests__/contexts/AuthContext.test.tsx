@@ -4,17 +4,14 @@ import type { ReactNode } from 'react';
 import type { SessionResponse, MeResponse } from '../../types/auth';
 
 /*
- * PORT NOTE (magick-agency), against cusui's suite @ ee5beb44:
- *  - fixtures carry `settings` (the per-account settings map) where cusui's
- *    carried `governance`;
- *  - DELETED: `signUpEmail` (2 cases — no self-serve sign-up, session path 4 is
- *    refused) and "sign-out clears the concurrency-limits cache" (2 cases — the
- *    cache fed the AI broadcast composer and is not ported);
- *  - MODIFIED: "reads pending phone from localStorage…" now pins that the
- *    listener does NOT read the path-4 phone stash; `logout` and
- *    `completeEmailVerification` no longer seed or clear it, and the latter syncs
+ * Notes on the shape of this suite:
+ *  - fixtures carry `settings` (the per-account settings map);
+ *  - there is no self-serve sign-up: session path 4 is refused, so there is no
+ *    `signUpEmail` case;
+ *  - the auth listener does NOT read the path-4 phone stash; `logout` and
+ *    `completeEmailVerification` neither seed nor clear it, and the latter syncs
  *    with the fresh token alone;
- *  - NEW (at the end): the 403 refusal is recorded as `sessionRefusal`, and
+ *  - at the end: the 403 refusal is recorded as `sessionRefusal`, and
  *    `settings` is adopted from the session and refreshed from `/auth/me`.
  */
 
@@ -492,11 +489,11 @@ describe('resendVerificationEmail', () => {
  * `POST /auth/session`.**
  *
  * ── Why that is the whole game ────────────────────────────────────────────
- * Master provisions a BRAND-NEW TENANT for an address it does not recognise
+ * The server provisions a BRAND-NEW TENANT for an address it does not recognise
  * (`auth.routes.ts`, path 4). The provider's own `onAuthStateChanged` listener
  * syncs any credential it sees, and a Google user is always `emailVerified`, so
  * the listener firing on an invite credential is not a race with a cosmetic
- * outcome — it silently creates a private empty workspace, credits and a core API
+ * outcome — it silently creates a private empty workspace, credits and an API
  * key for somebody who was invited to an existing one, leaves the real membership
  * unclaimed, and permanently binds their Google uid to the new row so the real
  * claim afterwards fails with `identity_in_use` forever. That is the exact defect
@@ -692,7 +689,7 @@ describe('the invite claim', () => {
  *
  * ── What is being guarded, and against what ───────────────────────────────
  * A Firebase credential established for an invite claim must never reach `POST
- * /auth/session` (master's path 4 provisions a tenant for it, binds the uid, and
+ * /auth/session` (the server's path 4 provisions a tenant for it, binds the uid, and
  * the real claim then fails `identity_in_use` forever) — and it must not be
  * DESTROYED while a page is still going to claim with it, because that answers a
  * visitor who did nothing wrong with "No authenticated user" on a token they
@@ -950,7 +947,7 @@ describe('the invite guard', () => {
   });
 });
 
-// ─── NEW (magick-agency): the session refusal and the settings map ──────────
+// ─── the session refusal and the settings map ──────────
 
 const SETTINGS = {
   a1: {
@@ -972,7 +969,7 @@ function noMembership() {
   });
 }
 
-describe('session path 4 is refused, and the refusal is kept (magick-agency)', () => {
+describe('session path 4 is refused, and the refusal is kept', () => {
   it('records `no_membership` when the LISTENER’s sync is refused — the reload path', async () => {
     vi.mocked(createSession).mockRejectedValue(noMembership());
     const { result } = renderHook(() => useAuth(), { wrapper });
@@ -1034,7 +1031,7 @@ describe('session path 4 is refused, and the refusal is kept (magick-agency)', (
   });
 });
 
-describe('the settings map (magick-agency)', () => {
+describe('the settings map', () => {
   it('is adopted from the session payload', async () => {
     vi.mocked(createSession).mockResolvedValue({ ...SESSION, settings: SETTINGS });
     const { result } = renderHook(() => useAuth(), { wrapper });

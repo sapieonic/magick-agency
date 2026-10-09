@@ -31,7 +31,7 @@ import type { MembershipRole } from '@magick-agency/db/models/membership.model';
 const log = createChildLogger({ component: 'invite-routes' });
 
 /**
- * `/invites` — the token-bound invitation claim flow (migration 069).
+ * `/invites` — the token-bound invitation claim flow.
  *
  * ── The two GET/POST routes are PUBLIC, and that is the entire point ────────
  * There is no `sessionMiddleware` and no `tenantContextMiddleware` on this
@@ -56,18 +56,17 @@ const log = createChildLogger({ component: 'invite-routes' });
  * revoke/mint rule two files away from the claim rule it has to agree with.
  *
  * ── Registered at `/invites`, with NO `/api` prefix ────────────────────────
- * Master has no global prefix (see `src/index.ts`), so cusui composes these as
- * `${API_BASE}/invites/...`. The join link the email carries points at CUSUI's
- * `/agency/join/:token` page, which is a different origin and a different path —
- * the page then calls these endpoints. Confusing the two produces a link that
- * 404s in a browser and an endpoint nothing reaches.
+ * There is no global prefix, so the console composes these as
+ * `${API_BASE}/invites/...`. The join link the email carries points at the
+ * console's `/agency/join/:token` page, which is a page and not these endpoints —
+ * the page then calls them. Confusing the two produces a link that 404s in a
+ * browser and an endpoint nothing reaches.
  *
  * ── Why a claim can never provision anything ───────────────────────────────
- * `POST /auth/session` path 4 creates a tenant, an account, a `tenant_owner`
- * membership, a credit balance with a signup bonus, and a core API key, for any
- * Firebase identity it does not recognise. That path is the hazard this whole
- * feature removes: an invited agent who reached it landed in a private empty
- * tenant of their own while the membership somebody made for them sat unclaimed.
+ * `POST /auth/session` path 4 refuses an identity it does not recognise rather
+ * than provisioning one, and a claim must not become a second way in that does:
+ * an invited agent who landed in a private empty tenant of their own would leave
+ * the membership somebody made for them sitting unclaimed.
  *
  * The claim route below therefore resolves its user through
  * `invite.membership_id → memberships.user_id` and calls NOTHING that
@@ -97,27 +96,17 @@ const log = createChildLogger({ component: 'invite-routes' });
  * 20/minute per IP is deliberately generous for a human (the claim page makes
  * one GET and one POST) and deliberately useless for enumeration. It is applied
  * per-route through `@fastify/rate-limit`'s route `config`, the same mechanism
- * `POST /contact` and `POST /super-admin/login` use — the two other
- * unauthenticated surfaces in this service, and the precedent for the shape.
+ * `POST /super-admin/login` uses.
  *
  * Note it is NOT applied to `POST /invites/resend`: that route is authenticated,
  * RBAC-gated at `user.invite`, and tenant-scoped, so the global bucket plus
  * those three gates is the same posture every other authenticated write has.
  *
- * ── This bucket is INERT when `RATE_LIMIT_ENABLED=false` ───────────────────
- * `registerRateLimit` returns before registering `@fastify/rate-limit` when the
- * flag is off, so this `config` block is then read by nothing — no error, no log
- * line, no 429s. The flag is a documented incident lever and keeps its
- * semantics, so what stands in for a fix is that the consequence is written down
- * where an operator reaching for it will see it: the flag's own docstring in
- * `src/config/schema.ts` and the `.env.example` entry. Worth knowing here too,
- * because "rate limits are the only abuse control" above is conditional on a
- * switch this file cannot see.
- *
- * PORT NOTE (magick-agency, Phase 8 review N6): the paragraph above is master's. Agency has no
- * `RATE_LIMIT_ENABLED` switch: `registerRateLimit` (core's, hoisted to `app.ts`) is always
- * registered, so this bucket is always live. The limiter is app-wide, and these route configs
- * inherit its IP `keyGenerator` (`rate-limit.app-scope.test.ts` pins 20/minute per IP).
+ * ── Always live ────────────────────────────────────────────────────────────
+ * There is no switch that turns rate limiting off: `registerRateLimit` is always
+ * registered, at app scope in `app.ts`, so this bucket is always live. These route
+ * configs inherit the limiter's IP `keyGenerator` (`rate-limit.app-scope.test.ts`
+ * pins 20/minute per IP).
  */
 const PUBLIC_INVITE_RATE_LIMIT = {
   rateLimit: {
@@ -240,7 +229,7 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
   /**
    * GET /invites/:token — what is this invitation? (PUBLIC)
    *
-   * Rendered by cusui's `/agency/join/:token` page before any sign-in, so the
+   * Rendered by the console's `/agency/join/:token` page before any sign-in, so the
    * recipient can see who invited them and to what before they hand over an
    * identity. That is not decoration: an invitation that asks somebody to
    * authenticate without first saying what they are joining is indistinguishable
@@ -363,17 +352,17 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
    * (PUBLIC)
    *
    * Answers **exactly** the body `POST /auth/session` returns on success —
-   * `{ user, tenants, memberships, governance, is_new: false }`, built by the
-   * shared `buildSessionPayload` — so the SPA reuses its existing
-   * `SessionResponse` type verbatim and the claimed agent is simply signed in.
+   * `{ user, tenants, memberships, settings, is_new: false }`, built by the
+   * shared `buildSessionPayload` — so the console reuses its existing
+   * `SessionResponse` type as it is and the claimed agent is simply signed in.
    * A second response type for this one screen is a second thing to keep in step
    * with a login flow that will keep changing.
    *
    * ── The user is resolved by MEMBERSHIP, never by email ─────────────────────
    * `invite.membership_id → memberships.user_id`. `users.email` carries only a
-   * non-unique index (`001_initial_schema.sql:60`), so an email lookup is not
+   * non-unique index, so an email lookup is not
    * even a unique operation — the by-address lookups have to pick one of
-   * several possible rows, and since migration 073 they each do so by an
+   * several possible rows, and they each do so by an
    * explicit rule (`findByEmail` orders the unflagged row first,
    * `findByProvenEmail` refuses flagged rows) rather than taking whichever row
    * Postgres hands back. Matching on the address is precisely the mechanism
@@ -399,7 +388,7 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
    * So an unverified claim adopts NO address and marks the row
    * `users.email_unverified`, which bars it from being reused by address while
    * leaving it an ordinary account. See `AdoptIdentityOptions.adoptEmail`,
-   * `userRepository.findByProvenEmail` and migration 073.
+   * `userRepository.findByProvenEmail`.
    *
    * ── A DIFFERENT address still binds, and the mismatch is AUDITED ───────────
    * When the addresses differ, the claim proceeds: the token is the authority,
@@ -416,9 +405,9 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
    * bookkeeping — it is the compensating control that makes accepting the
    * mismatch safe.
    *
-   * ── It can never reach `/auth/session` path 4 ─────────────────────────────
-   * Nothing on this path creates a tenant, an account, a membership, a credit
-   * balance or a core API key. See the module header.
+   * ── It never provisions ───────────────────────────────────────────────────
+   * Nothing on this path creates a tenant, an account or a membership. See the
+   * module header.
    */
   app.post<{ Params: { token: string } }>('/:token/claim', {
     config: PUBLIC_INVITE_RATE_LIMIT,
@@ -564,14 +553,13 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
        * A `POST /invites/resend` revoked this token between the read at the top
        * of this handler and the write just above.
        *
-       * Reported as `revoked` rather than folded into the arm above, which is
-       * what it used to be: the repository could not say which half of
-       * `claimed_at IS NULL AND revoked_at IS NULL` had failed, so a superseded
-       * link was answered *"This invitation has already been used. Sign in to
-       * continue"* — advice that is wrong twice over for somebody who has no
-       * account yet and a working link already in their inbox. `InviteStatus`
-       * carries four values because these remedies differ; this is the race
-       * that made the third one unreachable.
+       * Reported as `revoked` rather than folded into the arm above: the
+       * repository says which half of `claimed_at IS NULL AND revoked_at IS NULL`
+       * failed, so a superseded link is not answered *"This invitation has
+       * already been used. Sign in to continue"* — advice that would be wrong
+       * twice over for somebody who has no account yet and a working link
+       * already in their inbox. `InviteStatus` carries four values because these
+       * remedies differ; this race is the one that reaches the third.
        */
       countClaim('revoked');
       return reply.code(409).send({
@@ -592,10 +580,9 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
        * An invitee who already has a login here and claims with THAT identity
        * does not arrive here at all: the bind predicate admits a row already
        * carrying the incoming uid, spends the invitation and signs them in. Only
-       * a claim against somebody ELSE's identity lands on this arm — which used
-       * to include the ordinary "add an agent who already has a MagickVoice
-       * login" invite, answered with the sentence below to the very person the
-       * mail was addressed to.
+       * a claim against somebody ELSE's identity lands on this arm. The ordinary
+       * "add an agent who already has a login" invite does not, so this sentence
+       * never reaches the very person the mail was addressed to.
        *
        * Two situations still arrive here and the response cannot tell them
        * apart, so the message speaks only to the honest one:
@@ -811,22 +798,15 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
    * Full chain as per-route `preHandler`s, because this plugin has no
    * plugin-wide auth hooks (it cannot — see the module header) and this route
    * must not inherit their absence. `sessionMiddleware` → `tenantContextMiddleware`
-   * → `denyPlatformApiKey` → `requirePermission('user.invite')`, which is the
-   * same chain `POST /users/invite` runs, because it is the same act: it mints a
-   * credential that binds an identity to a membership.
-   *
-   * `denyPlatformApiKey` for the reason `user.routes.ts` denies keys plugin-wide:
-   * *"every route in this plugin writes who someone IS, which is not a thing a
-   * shared machine credential should decide."* A key that can re-mint an
-   * invitation can mail a fresh binding credential for any membership in its
-   * tenant to an address that is already on the row.
+   * → `requirePermission('user.invite')`, which is the same chain
+   * `POST /users/invite` runs, because it is the same act: it mints a credential
+   * that binds an identity to a membership.
    *
    * ── Tenant-scoped in the STATEMENT, not in an `if` ────────────────────────
    * `membership_id` is caller-supplied. The membership is fetched through a
    * tenant-scoped lookup, so a membership in another tenant and a nonexistent
    * one are one `null` and one 404 — indistinguishable, by construction rather
-   * than by a convention somebody has to maintain. docs/reference/magick-master/CLAUDE.md's RBAC rule 1 and
-   * rule 3.
+   * than by a convention somebody has to maintain.
    *
    * ── Role-gated on the TARGET membership's role ────────────────────────────
    * `canManageRole`, mirroring `POST /users/invite`'s check on the role it is
@@ -835,14 +815,14 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
    * answers 403 where the two lookups above answer 404.
    *
    * ── Revoke, THEN mint — in ONE transaction, one layer down ────────────────
-   * Both halves now happen inside
+   * Both halves happen inside
    * `membershipInviteRepository.createSupersedingOutstanding`, reached through
-   * `issueInvite`. This route used to revoke on its own connection and then call
-   * `issueInvite` to insert, and two concurrent resends could both revoke before
-   * either inserted — leaving two live links, which is the one thing a resend
-   * exists to prevent. Migration 069's partial unique index is the half that
-   * holds when the transaction alone cannot (see the repository method), and its
-   * refusal reaches this route as `LiveInviteConflictError`.
+   * `issueInvite`. Revoking on its own connection and then inserting would let
+   * two concurrent resends both revoke before either inserted — leaving two live
+   * links, which is the one thing a resend exists to prevent. The
+   * partial unique index is the half that holds when the transaction alone
+   * cannot (see the repository method), and its refusal reaches this route as
+   * `LiveInviteConflictError`.
    *
    * A recipient holding the superseded mail gets `revoked` from
    * `GET /invites/:token` — "a newer invitation was sent" — rather than a link
@@ -852,7 +832,6 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
     preHandler: [
       sessionMiddleware,
       tenantContextMiddleware,
-      // PORT NOTE (magick-agency): master's `denyPlatformApiKey(...)` is removed — no platform API keys (decision #5).
       requirePermission('user.invite'),
     ],
   }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -890,11 +869,10 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
      * Without it, any holder of `user.invite` could resend for any membership in
      * their tenant and receive a fresh identity-binding link in the response
      * body — minting a credential for a role they could not have handed out.
-     * Since `AdoptIdentityOptions.onlyUnclaimedStub` that link can no longer
+     * Because of `AdoptIdentityOptions.onlyUnclaimedStub` that link cannot
      * rebind a row somebody already signs in as, so this is a privilege gap
      * rather than a takeover; it is closed here because "I can re-issue the
-     * credential" and "I can create the membership" should be the same authority,
-     * and today they differ only because one route checked and the other did not.
+     * credential" and "I can create the membership" should be the same authority.
      *
      * ── `canManageRole`, not `canManageExistingRole` ─────────────────────────
      * The strictly-higher comparison, not the one `PUT /:id/role` and
@@ -916,8 +894,8 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
      * conceal, and a 403 is the answer that tells a supervisor to ask someone
      * senior rather than to go hunting for a mistyped id.
      */
-    // PORT NOTE (magick-agency): hardening — fails closed without a membership; master
-    // (`request.membership && !…`) relied on requirePermission running first.
+    // Fails closed without a membership rather than relying on
+    // `requirePermission` having run first.
     if (!request.membership || !canManageRole(request.membership.role, membership.role)) {
       return reply.code(403).send({
         error: 'Forbidden',

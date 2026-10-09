@@ -1,20 +1,12 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/src/core/webrtc-bridge-manager.ts@4850d1d9.
-// Every change is marked with an inline `PORT NOTE` and listed in PORTING.md (Lane C):
-//   - constructor takes `TelephonyGuardHost` (extracted from CallManager) instead of
-//     `CallManager`; `triggerDequeue` (AI SQS queue) removed (docs/seams.md §3.1);
-//   - deleted: `createCall` + `attachBrowserLeg` + `forceEndByUser` (softphone),
-//     `handleVobizAnswer` / `handleVobizStatus` and every VoBiz media/clip branch,
-//     BYOC credential pinning (`resolveCredentialIdForCallerId`, `getForCredentialId`),
-//     `resolveSipDial` and `sipConnectionId` (SIP), `dispatchSettlement` (billing);
-//   - `maybeEnqueueAnalysis` / `notifyDialerAnalysisRecordingReady` moved behind the
-//     analysis seam (`getBridgeAnalysisHooks()`, docs/seams.md §3.2, lane D);
-//   - max duration from `account_settings.webrtc_max_duration_seconds` (plan §3.2);
-//   - default provider `voicelink`.
-// The §3.1 members (onLifecycle, createBridgedCall, createUnboundBridgedCall,
-// bindBorrowedBrowserLeg, reattachBorrowedBrowserLeg, forceEndWithOutcome,
-// playClipToCarrierThenHangUp, getActiveCallIds, gracefulShutdown) and the exported
-// types keep core's signatures. Comments are core's, VoBiz vocabulary included, so a
-// later core fix ports with `git format-patch` / `git am`.
+// The WebRTC bridge: VoiceLink PSTN leg ⇄ the agent's browser (station) socket, no AI
+// pipeline. The constructor takes `TelephonyGuardHost` for capacity; analysis is reached
+// only through the analysis seam (`getBridgeAnalysisHooks()`, docs/seams.md). Max
+// duration comes from `account_settings.webrtc_max_duration_seconds`, and the default
+// provider is `voicelink`. The members the dialer runtime calls (onLifecycle,
+// createBridgedCall, createUnboundBridgedCall, bindBorrowedBrowserLeg,
+// reattachBorrowedBrowserLeg, forceEndWithOutcome, playClipToCarrierThenHangUp,
+// getActiveCallIds, gracefulShutdown) and the exported types are a fixed seam, pinned by
+// `test/unit/core/webrtc-bridge-seam-contract.test.ts`.
 import crypto from 'node:crypto';
 import { acquireTelephonyConcurrency } from './telephony-concurrency.js';
 import { releaseTelephonyLease } from './telephony-release.js';
@@ -79,7 +71,7 @@ export type WebRtcRejectReason =
   // Bridged (borrowed-socket) calls only: the caller's socket was not open at
   // dial time. Deliberately absent from the PostHog `WebrtcCallRejectionReason`
   // union — that is a published analytics contract with dashboards behind it, and
-  // this reason belongs to the agency funnel, not the browser dialer's.
+  // this reason belongs to the agency funnel.
   | 'station_socket_unavailable';
 
 export class WebRtcCallError extends Error {
@@ -109,9 +101,9 @@ export interface WebRtcOutboundParams {
 }
 
 /**
- * {@link WebRtcOutboundParams} plus the borrowed-socket contract (§7): the caller
+ * {@link WebRtcOutboundParams} plus the borrowed-socket contract: the caller
  * supplies an already-open media socket it continues to own, and the campaign /
- * attempt this leg belongs to (persisted as back-references on `webrtc_calls` so
+ * attempt this leg belongs to (persisted as back-references on `agency_calls` so
  * the bridge itself stays free of agency concepts).
  */
 export interface WebRtcBridgedCallParams extends WebRtcOutboundParams {
@@ -125,14 +117,13 @@ export interface WebRtcBridgedCallParams extends WebRtcOutboundParams {
   /**
    * How long to hold the call open after the borrowed socket closes, waiting for
    * {@link WebRtcBridgeManager.reattachBorrowedBrowserLeg}. Omitted or 0 ⇒ a
-   * close hangs up immediately, exactly as it did before this option existed.
+   * close hangs up immediately.
    *
    * **The value is the caller's, deliberately.** A wifi blip is survivable and a
    * genuine departure is not, and where that line falls is a property of the
    * caller's product — how long its customer will hold on hearing silence —
-   * never of the bridge. Naming a default here would put an agency trade-off
-   * inside the bridge and hand the same window to the browser dialer, which does
-   * not want one.
+   * never of the bridge. Naming a default here would put a dialer trade-off
+   * inside the bridge.
    */
   browserCloseGraceMs?: number;
 }
@@ -142,7 +133,7 @@ export interface WebRtcBridgedCallParams extends WebRtcOutboundParams {
  *
  * Deliberately GENERIC. The agency dialer consumes it, but nothing here knows
  * that: the rule is that the agency module depends on the bridge and the bridge
- * never depends on the agency module (§7), so this is a plain observation hook
+ * never depends on the agency module, so this is a plain observation hook
  * any subsystem may subscribe to, carrying only bridge vocabulary.
  */
 export interface WebRtcLifecycleEvent {
@@ -163,14 +154,13 @@ export interface WebRtcLifecycleEvent {
    * `answered` strictly precedes `bridged`. A listener must not treat "not
    * `bridged`" as "`ended`" — switch on the value.
    *
-   * `bridged` being at-most-once is a **change**, not a long-standing property:
-   * it used to be re-emitted whenever a completing condition was re-observed,
-   * which meant a mid-call PSTN re-connect announced a second bridge, and — once
-   * late binding made the bind run re-entrantly inside the `answered` listener —
-   * a VoiceLink `start` frame announced two in one synchronous turn. Both write a
-   * later `bridged_at` over the real one, and `bridged_at` is half of the SQL
-   * abandonment predicate (`MAG-137`: a late `bridged` write resurrects an ended
-   * attempt and the reaper then rewrites its outcome). The latch lives on the
+   * `bridged` is latched because re-emitting it whenever a completing condition
+   * is re-observed would announce a second bridge on a mid-call PSTN re-connect,
+   * and — with late binding running the bind re-entrantly inside the `answered`
+   * listener — two in one synchronous turn on a VoiceLink `start` frame. Both
+   * write a later `bridged_at` over the real one, and `bridged_at` is half of the
+   * SQL abandonment predicate (a late `bridged` write resurrects an ended attempt
+   * and the reaper then rewrites its outcome). The latch lives on the
    * session (`WebRtcBridgeSession.markBridged`), the sibling of `markAnswered`.
    * The browser's `in_progress` status frame is NOT latched — see
    * {@link WebRtcBridgeManager.emitBridgedIfLive}.
@@ -204,10 +194,9 @@ const WS_TOKEN_MIN_TTL_SECONDS = 120;
  * ends. VoiceLink keeps posting to `/webrtc-status/:callId` after our teardown — the
  * carrier's own terminal report lands at dial+45–75s and carries the recording URL that
  * `persistLateVoicelinkTerminal` saves for playback and analysis (which waits up to
- * `DIALER_ANALYSIS_RECORDING_WAIT_MINUTES`, default 30). Core DELETED the token at teardown
- * and those posts were accepted only through the missing-key fallback; now that a missing
- * key is refused, the token is kept for this window instead (a 122-bit secret held in
- * Redis two more hours, not an open door). Two hours is four times the default recording
+ * `DIALER_ANALYSIS_RECORDING_WAIT_MINUTES`, default 30). A missing key is refused, so the
+ * token is kept for this window instead of being deleted at teardown (a 122-bit secret
+ * held in Redis two more hours, not an open door). Two hours is four times the default recording
  * wait.
  *
  * DEPLOYMENT INVARIANT (Q6): Redis must keep these keys for their TTL — persistence on
@@ -223,18 +212,17 @@ const PROVIDER_START_TIMEOUT_SECONDS = 30;
  * How long to wait for the carrier's `call.ended` after a local hangup of an
  * **answered** call before finalizing anyway.
  *
- * 45s, up from 20s, and the two numbers bracket a measurement rather than a
- * preference: VoiceLink reports terminal state at dial+45–75s (the same figure
- * the WS-static reconcile window is sized against), so a 20s bound retired
- * essentially every answered VoiceLink teardown on our own clock and threw the
- * carrier's disposition away. What the wait buys is the carrier's own view of a
- * leg that was **billable** — talk time, hangup cause, recording URL.
+ * 45s, sized against a measurement rather than a preference: VoiceLink reports
+ * terminal state at dial+45–75s, so a 20s bound would retire essentially every
+ * answered VoiceLink teardown on our own clock and throw the carrier's
+ * disposition away. What the wait buys is the carrier's own view of a leg that
+ * **connected** — talk time, hangup cause, recording URL.
  *
  * An **unanswered** call gets no wait at all (the other half of this split, in
- * {@link WebRtcBridgeManager.localHangup}): nothing is billable, so there is
- * nothing to confirm, and the 20s of `ending` limbo it used to sit in held a
- * concurrency slot for a call that had already been given up on. Zero is the
- * honest number there, not a shorter timeout.
+ * {@link WebRtcBridgeManager.localHangup}): nothing connected, so there is
+ * nothing to confirm, and an `ending` limbo would hold a concurrency slot for a
+ * call that has already been given up on. Zero is the honest number there, not a
+ * shorter timeout.
  */
 const CARRIER_END_CONFIRM_TIMEOUT_SECONDS = 45;
 /** Max accepted decoded media frame bytes (~1s of PCM16 16k) — abusive frames are dropped. */
@@ -250,12 +238,11 @@ const CLIP_TAIL_GRACE_MS = 500;
 /**
  * Wire frame size for clip playback, in ms of audio.
  *
- * 20ms because that is what a telephony media socket expects and what every other
- * clip producer here already uses (`WS_STATIC_FRAME_MS`). It is not a free
+ * 20ms because that is what a telephony media socket expects. It is not a free
  * parameter: {@link PacedAudioStreamer}'s own header records that dumping a clip
  * faster than real time overruns the carrier's jitter buffer and the audio is
  * dropped or garbled — which for this caller means the apology is *sent* and not
- * *heard*, the one failure the acceptance criterion cannot see from our side.
+ * *heard*, the one failure we cannot see from our side.
  */
 const CLIP_FRAME_MS = 20;
 /**
@@ -268,31 +255,27 @@ const CLIP_FRAME_MS = 20;
  */
 const CLIP_STREAM_GRACE_MS = 2000;
 /**
- * PORT NOTE: the default of core's `webrtc_max_duration_seconds` flag
- * (`feature-flags/registry.ts:238`, "30 min hard cap on a bridged human call").
- * Agency reads the per-account value from `account_settings` (plan §3.2) and falls
- * back to this, exactly where core fell back to the flag's default.
+ * Max duration of a bridged human call (30 min hard cap) when the account's
+ * `account_settings.webrtc_max_duration_seconds` is NULL or cannot be read.
  */
 const DEFAULT_WEBRTC_MAX_DURATION_SECONDS = 1800;
 
 /**
- * Orchestrates WebRTC human-bridge calls: browser leg ⇄ core ⇄ VoBiz PSTN leg,
- * no AI pipeline. See docs/reference/magic-voice-core/docs/webrtc-human-calling-design.md.
+ * Orchestrates WebRTC human-bridge calls: browser leg ⇄ this service ⇄ VoiceLink
+ * PSTN leg, no AI pipeline.
  *
- * Concurrency is **shared** with AI voice calls — this manager reuses
- * CallManager's public guards + triggerDequeue() rather than its own pool, so a
- * tenant's `account_settings.max_concurrent_calls` covers both call types on one
- * atomic Redis counter. Everything else (media bridging, lifecycle, settlement)
- * is isolated here so the AI CallManager media path stays untouched.
+ * Concurrency goes through `TelephonyGuardHost`'s guards, so a tenant's
+ * `account_settings.max_concurrent_calls` is enforced on one atomic Redis
+ * counter. Media bridging and the call lifecycle live here.
  */
 export class WebRtcBridgeManager {
   private readonly sessions = new Map<string, WebRtcBridgeSession>();
   /**
    * Q6 (Manas, 2026-10-09): tokens this process MINTED but could not store (Redis errored
    * on the SET), keyed `${purpose}:${callId}` → expiry (epoch ms). `verifyWsToken` refuses a
-   * missing key only when it knows the key should exist; for these it cannot, so it keeps
-   * core's accept (never hard-fail a live call over an outage). Process-local, which is
-   * enough: one replica (D2) and a bridged call does not survive a restart.
+   * missing key only when it knows the key should exist; for these it cannot, so it
+   * accepts (never hard-fail a live call over an outage). Process-local, which is
+   * enough: one replica and a bridged call does not survive a restart.
    */
   private readonly unstoredWsTokens = new Map<string, number>();
   private readonly telephonyRegistry: TelephonyProviderRegistry;
@@ -301,10 +284,8 @@ export class WebRtcBridgeManager {
   private readonly startTimeoutSeconds = PROVIDER_START_TIMEOUT_SECONDS;
 
   /**
-   * PORT NOTE: core took `(callManager: CallManager, redis)` and used CallManager only
-   * for the concurrency guard (`acquireTelephonyConcurrency`, `releaseTelephonyLease`,
-   * `wakeSelfHeal`) plus `triggerDequeue` (AI SQS queue, removed). The guard host is
-   * exactly those parts, extracted (docs/seams.md §3.1).
+   * The guard host supplies the concurrency guards (`acquireTelephonyConcurrency`,
+   * `releaseTelephonyLease`, `wakeSelfHeal`).
    */
   constructor(
     private readonly guardHost: TelephonyGuardHost,
@@ -321,7 +302,7 @@ export class WebRtcBridgeManager {
    *
    * Listeners are called synchronously and their throws are swallowed — a
    * subscriber must never be able to break call teardown, which is the one path
-   * that releases concurrency slots and settles credit.
+   * that releases concurrency slots.
    */
   onLifecycle(listener: WebRtcLifecycleListener): () => void {
     this.lifecycleListeners.add(listener);
@@ -333,10 +314,10 @@ export class WebRtcBridgeManager {
    *
    * Every `session.markAnswered()` call site in this class goes through here, so
    * the observation cannot drift from the anchor. It fires **only** on the write
-   * that actually anchored — several sites anchor on one call (answer webhook,
+   * that actually anchored — several sites anchor on one call (answer event,
    * stream start, socket backstop) and each would otherwise emit.
    *
-   * Bridge vocabulary only; nothing here knows what a subscriber does with it (§7).
+   * Bridge vocabulary only; nothing here knows what a subscriber does with it.
    */
   private anchorAnswer(session: WebRtcBridgeSession): void {
     if (!session.markAnswered()) return;
@@ -360,8 +341,7 @@ export class WebRtcBridgeManager {
    * carrier's `start` frame negotiating media last ({@link handleProviderStart} —
    * where `providerMediaReady` was set true on the line above, so that half of
    * the condition is implied), and the browser leg being bound last
-   * ({@link bindBorrowedBrowserLeg}, i.e. late binding). It was copied at the
-   * first two before the third existed.
+   * ({@link bindBorrowedBrowserLeg}, i.e. late binding).
    *
    * **The lifecycle event is latched to once per call** (`markBridged`), and the
    * browser notification deliberately is NOT. They are different promises: a
@@ -376,7 +356,7 @@ export class WebRtcBridgeManager {
    * anchors the answer — whose listener binds the station socket synchronously,
    * which lands here and announces the bridge — and then reaches its own call to
    * this method with both legs live and media ready. Two announcements, one
-   * bridge, and the second rewrites `bridged_at` later than the truth (`MAG-137`).
+   * bridge, and the second rewrites `bridged_at` later than the truth.
    * See {@link reattachBorrowedBrowserLeg} for the same corruption arriving
    * through the other door; keeping that path out of here remains the primary
    * guard, with this latch behind it.
@@ -418,10 +398,11 @@ export class WebRtcBridgeManager {
   }
 
   /**
-   * End every active bridge call on shutdown: hang up the carrier leg, settle
-   * (release credit), and release the shared slots. Without this a deploy during
-   * a live call would strand the VoBiz leg (up to maxDuration of live audio),
-   * skip settlement, and leak a concurrency slot until its Redis lock TTL expires.
+   * End every active bridge call on shutdown: hang up the carrier leg, persist the
+   * terminal row, and release the shared slots. Without this a deploy during a
+   * live call would strand the carrier leg (up to maxDuration of live audio),
+   * leave the row non-terminal, and leak a concurrency slot until its Redis lock
+   * TTL expires.
    * Call from the process SIGTERM handler before closing Redis/the DB pool.
    */
   async gracefulShutdown(): Promise<void> {
@@ -446,10 +427,10 @@ export class WebRtcBridgeManager {
    * Place an outbound leg that bridges to a **borrowed** media socket — one the
    * caller already has open and will keep open after this call ends.
    *
-   * This is the agency dialer's entry point (docs/reference/magickvoice-platform/docs/agency-dialer-design.md §7). The
-   * agent's station socket is opened once at shift start and reused across
-   * hundreds of attempts, so the bridge **attaches and detaches it per attempt and
-   * never closes it**. Concretely, and in contrast to {@link createCall}:
+   * This is the dialer runtime's entry point. The agent's station socket is
+   * opened once at shift start and reused across hundreds of attempts, so the
+   * bridge **attaches and detaches it per attempt and never closes it**.
+   * Concretely:
    *
    *  - no browser WS token is minted (there is no socket for the caller to open);
    *  - the socket is attached BEFORE the dial, so no early carrier event is missed;
@@ -486,15 +467,14 @@ export class WebRtcBridgeManager {
 
   /**
    * Place an outbound leg whose **borrowed** media socket is supplied later —
-   * at the carrier answer — instead of before the dial. The third creation mode,
-   * and the bridge half of late binding (`FF_AGENCY_LATE_BINDING`).
+   * at the carrier answer — instead of before the dial. The bridge half of late
+   * binding (`FF_AGENCY_LATE_BINDING`).
    *
-   * The other two, for contrast: {@link createCall} owns a socket minted per
-   * call, and {@link createBridgedCall} borrows one that is already open and
-   * attaches it before the dial. This one dials with **no browser leg at all**
+   * For contrast, {@link createBridgedCall} borrows a socket that is already open
+   * and attaches it before the dial. This one dials with **no browser leg at all**
    * and waits for {@link bindBorrowedBrowserLeg}.
    *
-   * Why the caller wants that is not the bridge's business (§7), but the shape it
+   * Why the caller wants that is not the bridge's business, but the shape it
    * forces on this method is: with no socket at dial time there is
    *
    *  - **no pre-flight socket check.** `createBridgedCall` refuses a dead station
@@ -502,17 +482,15 @@ export class WebRtcBridgeManager {
    *    check, so re-checking the agent at the bind is the caller's job and the
    *    bind is the only place it can be done. The bind refuses a closed socket.
    *  - **no browser token**, exactly as for a bound borrowed socket: there is no
-   *    `/browser-stream` connect to gate, and `attachBrowserLeg` refuses such a
-   *    call outright rather than falling through to `verifyWsToken`'s
-   *    accept-on-missing-key path. The leg is marked borrowed-unbound at dial
-   *    time to make that refusal true during the ring window too — see
-   *    `WebRtcBridgeSession.markBorrowedUnbound`.
+   *    browser-stream route to gate. The leg is marked borrowed-unbound at dial
+   *    time so the ownership guards treat it as borrowed during the ring window
+   *    too — see `WebRtcBridgeSession.markBorrowedUnbound`.
    *  - **no `bridged` event at the answer.** Both legs are never live until the
    *    bind, so the emission sites simply do not fire; the bind emits it.
    *
    * Everything else — concurrency, persistence, the agency back-references,
-   * recording, the max-duration guard, settlement, analysis — is the shared
-   * {@link placeOutboundLeg} path, identical to the other two modes.
+   * recording, the max-duration guard, analysis — is the shared
+   * {@link placeOutboundLeg} path, identical to {@link createBridgedCall}.
    */
   async createUnboundBridgedCall(params: Omit<WebRtcBridgedCallParams, 'browserSocket'>): Promise<WebRtcCallRecord> {
     const { record } = await this.placeOutboundLeg({
@@ -529,9 +507,9 @@ export class WebRtcBridgeManager {
    * arm the max-duration guard, attach a borrowed socket if one was supplied, mint
    * the per-call credentials, and place the outbound leg.
    *
-   * Returns the browser WS token only when the browser leg is ours to mint —
-   * a borrowed socket needs none, and deliberately gets none (see
-   * {@link attachBrowserLeg}, which refuses to attach a second leg to such a call).
+   * Returns the browser WS token only when the browser leg is ours to mint — a
+   * borrowed socket needs none, and deliberately gets none. Both entry points
+   * borrow, so in practice it is always null.
    */
   private async placeOutboundLeg(params: WebRtcOutboundParams & {
     campaignId?: string | null;
@@ -544,9 +522,8 @@ export class WebRtcBridgeManager {
      *
      * Separate from `browserSocket` because late binding has no socket at dial
      * time and must still mint no token — keying the token decision on the
-     * socket's presence (as it was) hands a browser token to an unbound call,
-     * i.e. opens the token-gated `/browser-stream` route onto an agent's audio
-     * for the whole ring window.
+     * socket's presence would hand a browser token to an unbound call for the
+     * whole ring window.
      */
     borrowedBrowserLeg?: boolean;
     /** Terminal outcome recorded when the browser leg closes mid-call. */
@@ -554,17 +531,17 @@ export class WebRtcBridgeManager {
     /** Borrowed sockets only: re-attach window on close. 0/absent ⇒ hang up now. */
     browserCloseGraceMs?: number;
   }): Promise<{ record: WebRtcCallRecord; session: WebRtcBridgeSession; browserToken: string | null }> {
-    // PORT NOTE: core defaulted to 'vobiz'; VoiceLink is agency's only carrier.
+    // VoiceLink is the only carrier.
     const provider = params.provider || 'voicelink';
     // Per-account recording ceiling: an account with allow_recording=false cannot
-    // record a human-bridge call even if record:true was requested — mirrors the
-    // AI-call ceiling in call-manager. NULL column ⇒ inherit the default (true).
-    // Dumb account_settings column read; core knows nothing of why it's false.
+    // record a human-bridge call even if record:true was requested. NULL column ⇒
+    // inherit the default (true). A plain account_settings column read; the voice
+    // engine knows nothing of why it's false.
     const allowRecording =
       (await accountSettingsRepository.getAllowRecording(params.tenantId, params.accountId)) ?? true;
     const recordEnabled = params.record === true && allowRecording;
     // Concurrency key — unique per call, used purely as the Redis lock id (the
-    // DB row id isn't known until after insert; like AI calls' external_ref_id).
+    // DB row id isn't known until after insert).
     const concurrencyKey = crypto.randomUUID();
 
     // Resolve the max duration up front (reused for the slot TTL, the session
@@ -608,13 +585,9 @@ export class WebRtcBridgeManager {
       );
     }
 
-    // 2. Persist the call (status initiating).
-    //
-    // PORT NOTE: core resolved the BYOC carrier credential from the caller ID here
-    // (`resolveCredentialIdForCallerId`) and pinned it on the row, plus the customer
-    // SIP connection. Both are deleted (plan §5); agency dials only on its own
-    // VoiceLink account (plan §9). The INSERT stays inside the same try so a failure
-    // still releases the slots it just took.
+    // 2. Persist the call (status initiating). Every call dials on the service's own
+    // VoiceLink account. The INSERT stays inside the same try so a failure still
+    // releases the slots it just took.
     let record: WebRtcCallRecord;
     try {
       record = await webrtcCallRepository.create({
@@ -627,13 +600,13 @@ export class WebRtcBridgeManager {
         metadata: params.metadata ?? {},
         recording_requested: recordEnabled,
         // Immutable analysis intake fields. Stamp consent_at now when consent was
-        // given so the durable record is captured at dial time (§14.4).
+        // given so the durable record is captured at dial time.
         analysis_profile_id: params.analysisProfileId ?? null,
         analysis_language: params.analysisLanguage ?? null,
         analysis_consent: params.analysisConsent ?? null,
         analysis_consent_at: params.analysisConsent === true ? new Date() : null,
-        // Agency back-references (migration 076). Null for the browser dialer, and
-        // the only thing on this row that knows the agency dialer exists.
+        // Agency back-references: the only thing on this row that knows the dialer
+        // runtime exists.
         campaign_id: params.campaignId ?? null,
         agency_attempt_id: params.agencyAttemptId ?? null,
       });
@@ -655,14 +628,12 @@ export class WebRtcBridgeManager {
     session.slotsHeld = true;
     session.recordEnabled = recordEnabled;
     session.correlationId = params.agencyAttemptId ?? null;
-    // Read back off the persisted row, not off `params`, so the value that settles is
-    // the one that was durably recorded (migration 076). See the session fields' note:
-    // `campaignId`'s presence is what selects the flat agency rate at settlement.
+    // Read back off the persisted row, not off `params`, so the value handed on at
+    // finalize is the one that was durably recorded.
     session.campaignId = record.campaign_id ?? null;
     session.agencyAttemptId = record.agency_attempt_id ?? null;
     // VoiceLink negotiates the media stream via a `start` frame — hold relay until
-    // a valid `start` (correct codec/rate) arrives. VoBiz streams immediately once
-    // the answer-XML <Stream> connects, so it stays ready.
+    // a valid `start` (correct codec/rate) arrives.
     if (provider === 'voicelink') session.providerMediaReady = false;
     this.sessions.set(record.id, session);
 
@@ -672,8 +643,7 @@ export class WebRtcBridgeManager {
       // Answer-anchored, matching every other teardown path here (browser-close,
       // shutdown): a call that hit the ceiling mid-conversation is `completed`,
       // but one that was never answered never connected, so it settles `canceled`.
-      // Hardcoding `completed` recorded an unanswered call as a success — the same
-      // defect fixed on the AI-call timeout path (ClickUp 86d3u9dyd).
+      // Hardcoding `completed` would record an unanswered call as a success.
       this.localHangup(record.id, {
         status: session.answeredAt ? 'completed' : 'canceled',
         outcome: 'max_duration_reached',
@@ -689,23 +659,20 @@ export class WebRtcBridgeManager {
       );
     } else if (params.borrowedBrowserLeg) {
       // Late binding: no socket yet. Record the borrowed contract now anyway —
-      // the outcome and grace window the bind will need, and the `browserWsOwned
-      // = false` that makes attachBrowserLeg's refusal true during the ring.
+      // the outcome and grace window the bind will need, and `browserWsOwned =
+      // false`, so the ownership guards treat it as borrowed during the ring.
       session.markBorrowedUnbound(params.browserHangupOutcome, params.browserCloseGraceMs ?? 0);
     }
 
-    // 5. Issue the browser WS token (best-effort; verified on connect). A borrowed
-    // leg has no `/browser-stream` connect to gate, so no token is minted — and
-    // `attachBrowserLeg` refuses such a call outright rather than degrading to
-    // verifyWsToken's accept-on-missing-key fallback. Read from the flag AND the
-    // socket, so a caller that supplies a socket without the flag still cannot
-    // mint one.
+    // 5. Issue the browser WS token (best-effort). A borrowed leg has no browser
+    // connect to gate, so no token is minted. Read from the flag AND the socket,
+    // so a caller that supplies a socket without the flag still cannot mint one.
     const borrowedBrowserLeg = params.borrowedBrowserLeg === true || params.browserSocket !== undefined;
     const token = borrowedBrowserLeg ? null : crypto.randomUUID();
     if (token) await this.storeWsToken(record.id, token, maxDuration + 60);
     // VoiceLink connects the provider WS + posts webhooks itself, so those two
     // legs get their own purpose-bound tokens (embedded only in the URLs we send
-    // VoiceLink). VoBiz's legs are gated by the answer-XML flow, so no extra token.
+    // VoiceLink).
     const tokenTtl = maxDuration + 60;
     let providerToken: string | undefined;
     let webhookToken: string | undefined;
@@ -730,25 +697,20 @@ export class WebRtcBridgeManager {
 
     // 6. Place the outbound telephony leg.
     try {
-      // `base` is the provider's own webhook namespace (…/webhooks/vobiz vs
-      // …/webhooks/voicelink), so `${base}/webrtc-status/${id}` resolves to the
-      // right per-provider route automatically.
+      // `base` is the provider's own webhook namespace (…/webhooks/voicelink), so
+      // `${base}/webrtc-status/${id}` resolves to the per-provider route.
       const base = this.webhookUrls.baseUrl(provider);
-      // Platform calls keep the existing synchronous lookup untouched; only a BYOC
-      // call pays for the per-credential adapter.
-      // PORT NOTE: core resolved a BYOC adapter for a pinned credential and a SIP
-      // trunk (`resolveSipDial`); both are deleted. Platform (agency) account only.
+      // The service's own carrier account only: the synchronous registry lookup.
       const adapter = this.telephonyRegistry.get(provider);
       // VoiceLink has no answer XML — it dials OUT to a stream URL baked into the
-      // dial request, so hand it the bridge's dedicated PSTN leg explicitly. VoBiz
-      // ignores mediaStreamUrl (it gets the stream URL via answer XML).
+      // dial request, so hand it the bridge's dedicated PSTN leg explicitly.
       const mediaStreamUrl =
         provider === 'voicelink'
           ? `wss://${new URL(base).host}/api/v1/webrtc-call/${record.id}/pstn-stream?token=${providerToken}`
           : undefined;
       // For VoiceLink, embed the webhook token so forged lifecycle events (which
-      // drive status/settlement/concurrency) are rejected. VoBiz's webrtc-status
-      // route is gated by the answer-XML flow, so leave its URL untokenized.
+      // drive status/concurrency) are rejected. Another provider would get an
+      // untokenized URL.
       const statusCallbackUrl =
         provider === 'voicelink'
           ? `${base}/webrtc-status/${record.id}?token=${webhookToken}`
@@ -761,8 +723,8 @@ export class WebRtcBridgeManager {
         statusCallbackUrl,
         mediaStreamUrl,
         maxDuration,
-        // VoBiz records via the answer XML's <Record> (see handleVobizAnswer), so
-        // this flag is a no-op for VoBiz; kept consistent for clarity / other providers.
+        // The VoiceLink adapter does not send this flag; the carrier's recording URL
+        // arrives on its terminal webhook.
         enableRecording: recordEnabled,
         machineDetection: false,
       });
@@ -775,8 +737,7 @@ export class WebRtcBridgeManager {
       // squarely inside this window) claimed the terminal state, found no carrier
       // handle, and left the leg dialling with nothing left to hang it up. The
       // session is already destroyed and out of the map at that point; we still
-      // hold the reference, and it still carries the pinned credential the hangup
-      // must go out on.
+      // hold the reference, which is all the hangup needs.
       if (session.endHandled) {
         log.warn(
           { callId: record.id, providerCallId: session.providerCallId },
@@ -787,7 +748,7 @@ export class WebRtcBridgeManager {
       await webrtcCallRepository.update(record.id, { provider_call_id: session.providerCallId });
     } catch (err) {
       // (rejection of telephony init is reported as a completed `failed` call via
-      // endCall below, mirroring the AI funnel — not a pre-flight rejection.)
+      // endCall below — not a pre-flight rejection.)
       log.error({ err, callId: record.id }, 'WebRTC outbound initiation failed');
       await this.endCall(record.id, {
         status: 'failed',
@@ -809,18 +770,18 @@ export class WebRtcBridgeManager {
 
   // ─── Browser leg ───────────────────────────────────────────────────────────
   //
-  // PORT NOTE: core's `attachBrowserLeg` (the softphone's owned, token-gated
-  // `/browser-stream` leg) is deleted with `createCall`. Every agency leg is
-  // borrowed; the refusals below that read `browserWsOwned` are kept verbatim.
+  // Every leg is borrowed: the caller's station socket. The refusals below that
+  // read `browserWsOwned` turn away a session that was not dialled through a
+  // borrowed entry point (the session default is owned).
 
   /**
-   * Attach a **borrowed** browser socket for one attempt (§7). Unlike
-   * {@link attachBrowserLeg} there is no token to verify — the caller handed us a
-   * socket it already authenticated and already owns — and the listener teardown
-   * is *kept*, so `session.destroy()` can detach cleanly instead of closing.
+   * Attach a **borrowed** browser socket for one attempt. There is no token to
+   * verify — the caller handed us a socket it already authenticated and already
+   * owns — and the listener teardown is *kept*, so `session.destroy()` can detach
+   * cleanly instead of closing.
    *
-   * Nagle is disabled here as on the owned path. It is idempotent per socket, so
-   * doing it once per attempt on a shift-long socket is harmless.
+   * Nagle is disabled here. It is idempotent per socket, so doing it once per
+   * attempt on a shift-long socket is harmless.
    */
   private attachBorrowedBrowserLeg(
     session: WebRtcBridgeSession,
@@ -844,7 +805,8 @@ export class WebRtcBridgeManager {
    * Bind the caller's media socket to a call dialled by
    * {@link createUnboundBridgedCall} — the answer-time half of late binding.
    * Returns false when the call cannot take it, in which case the customer is on
-   * the line with no agent and the caller must deal with that (`AD-P2-C-05`).
+   * the line with no agent and the caller must deal with that (the abandoned-call
+   * path).
    *
    * **Synchronous, deliberately and non-negotiably.** The abandonment predicate
    * gives the whole bind path a 1000ms budget (`ABANDONMENT_BRIDGE_GRACE_MS`),
@@ -862,9 +824,9 @@ export class WebRtcBridgeManager {
    * The refusals, and what each one prevents:
    *  - `endHandled`/`ending`: the call is over or settling; a socket bound now
    *    would relay onto a session about to be destroyed.
-   *  - an OWNED leg: that socket's lifetime is the call's and `attachBrowserLeg`
-   *    (which verifies a token) is its only legitimate route. Reaching this with
-   *    an owned leg means the call was not dialled unbound.
+   *  - an OWNED leg (`browserWsOwned`, the session default): no entry point here
+   *    creates one, so reaching this with one means the call was not dialled
+   *    unbound.
    *  - a leg that **has ever been bound** (`session.browserLegBound`): a second
    *    bind would silently displace a live agent mid-conversation —
    *    `adoptBorrowedBrowserLeg` drops the previous reference without closing or
@@ -908,7 +870,7 @@ export class WebRtcBridgeManager {
 
   /**
    * Re-attach a **borrowed** media socket to a call whose previous socket dropped
-   * — the wifi-blip path (`AD-P2-C-07`). Disarms the deferred hangup and resumes
+   * — the wifi-blip path. Disarms the deferred hangup and resumes
    * relay onto the new socket; returns false when there is nothing to resume onto.
    *
    * Keyed on the caller's own `correlationId`, not the call id, for the same
@@ -920,9 +882,8 @@ export class WebRtcBridgeManager {
    *
    * A `false` return is not an error and must be treated as "the call is over":
    * either the window lapsed and the call already settled, or the id names no
-   * live call. Deliberately refuses an OWNED browser leg — that socket's lifetime
-   * is the call's, and `attachBrowserLeg` (which verifies a token) is its only
-   * legitimate route.
+   * live call. Deliberately refuses an OWNED browser leg — no borrowed entry point
+   * creates one, so there is nothing of the caller's to resume.
    *
    * **This path deliberately does NOT emit `bridged`, and
    * {@link bindBorrowedBrowserLeg} deliberately does.** They look alike — both
@@ -941,8 +902,8 @@ export class WebRtcBridgeManager {
    * `browserWsOwned === false`, `endHandled === false` and `ending === false`,
    * so every other refusal above passes and a reconnecting station socket would
    * be joined to a call that is still RINGING — defeating late binding and
-   * putting the ringing panel back on the console, which is the popup this whole
-   * change exists to remove. `session.browserLegBound` is the test rather than
+   * putting the ringing panel back on the console, which is the popup late binding
+   * exists to remove. `session.browserLegBound` is the test rather than
    * `session.browserWs`, because the close handler arms the grace window without
    * clearing the reference: a dropped socket and a never-bound one are
    * indistinguishable through it and need opposite answers.
@@ -1002,14 +963,15 @@ export class WebRtcBridgeManager {
   }
 
   /**
-   * Play a cached clip to the **carrier** leg, then hang up (`AD-P2-C-05`).
+   * Play a cached clip to the **carrier** leg, then hang up.
    *
    * The abandoned-call path needs this: a customer has answered and there is no
    * agent, so they must hear an apology rather than silence or a dead line. It
    * lives here because it is entirely bridge vocabulary — a clip hash, a wire
    * format and a terminal outcome — and the bridge stays ignorant of *why* a
-   * caller wants it (§7). The clip hash comes from the shared content-addressed
-   * TTS cache, so the caller resolves it however it likes.
+   * caller wants it. The clip hash comes from the shared content-addressed
+   * clip cache (`tts/tts-file-cache.ts`), so the caller resolves it however it
+   * likes.
    *
    * **The first frame goes out before the first await**, because the whole
    * requirement is that the customer hears nothing longer than the clip's own
@@ -1017,8 +979,7 @@ export class WebRtcBridgeManager {
    * only then sleeps to the schedule.
    *
    * **Playback is paced at real time, not blasted.** The clip is streamed in 20ms
-   * frames against a monotonic schedule, exactly as WebSocket announcements are:
-   * a carrier's jitter buffer discards audio pushed faster than it plays, so a
+   * frames against a monotonic schedule: a carrier's jitter buffer discards audio pushed faster than it plays, so a
    * burst-then-sleep would satisfy "we sent the whole apology" while the customer
    * heard a fragment of it. Pacing also means the hangup lands naturally after the
    * audio rather than being timed against it — the only wait left is
@@ -1084,10 +1045,7 @@ export class WebRtcBridgeManager {
   /**
    * Convert a cached 8 kHz clip to this session's carrier wire format.
    *
-   * Mirrors `CallManager.convertCachedClip`'s two live branches for the two
-   * providers the bridge supports, deliberately rather than sharing it: that one
-   * is typed on `CallSession`, which carries the AI pipeline the bridge is
-   * explicitly split from (`webrtc-bridge-session.ts` exists for that reason).
+   * Only VoiceLink has a carrier format here.
    */
   private convertClipForCarrier(
     session: WebRtcBridgeSession,
@@ -1102,8 +1060,8 @@ export class WebRtcBridgeManager {
       return alaw.length > 0 ? { buffer: alaw, byteRate: 8000 } : null;
     }
 
-    // PORT NOTE: core's VoBiz branch (L16 at the relay rate) is deleted; a session
-    // on any other provider has no carrier format here, so there is nothing to play.
+    // A session on any other provider has no carrier format here, so there is
+    // nothing to play.
     return null;
   }
 
@@ -1127,7 +1085,6 @@ export class WebRtcBridgeManager {
           this.send(session.pstnWs, { event: 'media', media: { payload: payloadBase64 } });
           return;
         }
-        // PORT NOTE: core's VoBiz `playAudio` (audio/x-l16) frame is deleted.
       },
     };
   }
@@ -1183,8 +1140,7 @@ export class WebRtcBridgeManager {
       // **This guard is NOT the grace window** and never was. It resolves which of
       // two *simultaneously open* sockets owns the call; it says nothing about a
       // socket that is simply gone, which is every real network drop. Conflating
-      // them is how "the bridge already has a re-attach window" survived as long as
-      // it did — the branch below is the window.
+      // them hides where the window actually is: the branch below.
       if (session.browserWs !== ws) return;
 
       // A caller that supplied a grace window gets the call held open rather than
@@ -1192,7 +1148,7 @@ export class WebRtcBridgeManager {
       // re-acquire lands well inside it and the customer is still on the line.
       // Nothing is written anywhere for this — it is a `setTimeout` and nothing
       // else, and it cannot become a Redis TTL even in principle, because what it
-      // defers is resuming media onto this in-memory session (§6.1).
+      // defers is resuming media onto this in-memory session.
       if (graceMs > 0 && !session.browserWsOwned && !session.endHandled && !session.ending) {
         log.info({ callId, graceMs, outcome: hangupOutcome }, 'Borrowed browser leg closed — holding for re-attach');
         session.armBrowserLegGrace(graceMs, hangUpForBrowserClose);
@@ -1215,17 +1171,14 @@ export class WebRtcBridgeManager {
     };
   }
 
-  // ─── PSTN leg (VoBiz media stream) ──────────────────────────────────────────
+  // ─── PSTN leg (carrier media stream) ────────────────────────────────────────
 
   /**
-   * Verify the provider-WSS token (VoiceLink) then attach the PSTN leg. VoBiz
-   * stores no provider token, so verifyWsToken returns true on the missing key and
-   * this degrades to the existing unguessable-call-id guard for VoBiz.
+   * Verify the provider-WSS token (VoiceLink) then attach the PSTN leg.
    *
-   * PORT NOTE (Q6, Manas 2026-10-09): VoBiz is deleted, so the check runs for every
-   * live session (all VoiceLink), and a missing provider key is now refused unless its
-   * SET failed (`verifyWsToken`). An unknown call id skips the check and is refused by
-   * `attachPstnLeg` itself.
+   * Q6 (Manas, 2026-10-09): the check runs for every live session (all VoiceLink),
+   * and a missing provider key is refused unless its SET failed (`verifyWsToken`).
+   * An unknown call id skips the check and is refused by `attachPstnLeg` itself.
    */
   async attachPstnLegVerified(callId: string, ws: WebSocket, token: string | undefined): Promise<boolean> {
     const session = this.sessions.get(callId);
@@ -1240,7 +1193,7 @@ export class WebRtcBridgeManager {
     return this.attachPstnLeg(callId, ws);
   }
 
-  /** Attach the provider media WebSocket (VoBiz <Stream>, or VoiceLink lead WS). */
+  /** Attach the provider media WebSocket (the VoiceLink lead WS). */
   attachPstnLeg(callId: string, ws: WebSocket): boolean {
     const session = this.sessions.get(callId);
     if (!session) {
@@ -1252,21 +1205,17 @@ export class WebRtcBridgeManager {
     // ── The terminal flags, not just the map ─────────────────────────────────
     //
     // `endCall` claims the call terminal (`endHandled = true`) and only removes it
-    // from `this.sessions` ~100 lines later, AFTER awaiting `hangupProviderLeg` (a
-    // credential resolve plus a carrier HTTP round trip) and the repository write.
-    // Under ordinary loaded-Postgres latency that window is wide, and a session
-    // inside it is still `this.sessions.get`-able — so `!session` alone accepts a
-    // carrier leg for a call we have already settled.
+    // from `this.sessions` ~100 lines later, AFTER awaiting `hangupProviderLeg` and
+    // the repository write. Under ordinary loaded-Postgres latency that window is
+    // wide, and a session inside it is still `this.sessions.get`-able — so
+    // `!session` alone accepts a carrier leg for a call we have already finalized.
     //
-    // The ring-cancel fix makes that window MATTER rather than creating it. Before
-    // it, an unanswered VoiceLink cancel deferred 20s and the carrier's connect
-    // landed long before the terminal claim; now we finalize immediately, so the
-    // claim lands exactly when the carrier is bringing the leg up. Accepting there
-    // re-manufactures the defect this change exists to remove: the relay opens onto
-    // a dismissed console, `answered` lands a phantom entry in the compliance
-    // DENOMINATOR, and the `ended` arm sees `bridged: true` and classifies
-    // `connected` — which is `max_attempts: 0`, permanently retiring a contact
-    // nobody ever spoke to.
+    // The window matters because an unanswered VoiceLink cancel finalizes
+    // immediately, so the terminal claim can land exactly when the carrier is
+    // bringing the leg up. Accepting there would open the relay onto a dismissed
+    // console, land a phantom `answered` entry in the compliance DENOMINATOR, and
+    // let the `ended` arm see `bridged: true` and classify `connected` — which is
+    // `max_attempts: 0`, permanently retiring a contact nobody ever spoke to.
     //
     // `ending` is refused alongside it: that flag is entered only on the ANSWERED
     // VoiceLink teardown, where we have deliberately closed `pstnWs` and are
@@ -1289,16 +1238,17 @@ export class WebRtcBridgeManager {
     session.pstnWs = ws;
     this.disableNagle(ws, callId);
     if (session.providerMediaReady) {
-      // VoBiz: the <Stream> connecting IS the media-ready signal. Media flowing ⇒
-      // the call is live — backstop the answer anchor in case the answer webhook
-      // was dropped, so we never bill 0 / misclassify a talked call as no_answer.
-      // First-write-wins, so a prior webhook anchor is preserved.
+      // Media already negotiated (a provider that streams immediately, or a
+      // mid-call re-connect): the socket connecting IS the media-ready signal.
+      // Media flowing ⇒ the call is live — backstop the answer anchor in case the
+      // answer event was dropped, so we never record 0 talk time / misclassify a
+      // talked call as no_answer. First-write-wins, so a prior anchor is preserved.
       this.anchorAnswer(session);
     } else {
       // VoiceLink: the socket opens BEFORE the carrier `start` frame. Do NOT anchor
       // answer here (an open-but-silent WS is not a connected call) — wait for a
       // valid `start` (handled in onPstnMessage). Arm a timeout so a WS that never
-      // sends `start` is torn down instead of hanging as answered/billable.
+      // sends `start` is torn down instead of hanging as answered.
       session.setEndConfirmationTimer(this.startTimeoutSeconds, () => {
         if (!session.providerMediaReady && !session.endHandled) {
           log.warn({ callId }, 'VoiceLink WS never sent a valid start — ending');
@@ -1360,18 +1310,17 @@ export class WebRtcBridgeManager {
       // Guard the decode/transcode: Buffer.from(payload,'base64') throws on a
       // non-string payload, and this runs in a ws 'message' listener — an uncaught
       // throw here would crash the replica (there is no global uncaughtException
-      // handler). Drop the bad frame instead. Mirrors CallManager's media handler.
+      // handler). Drop the bad frame instead.
       try {
         if (session.provider === 'voicelink' && session.transcoder) {
           // Browser PCM16 16kHz → VoiceLink G.711 A-law 8kHz (stateful transcode).
           // VoiceLink uses the plain {event:'media',media:{payload}} frame (no
-          // contentType/sampleRate/stream_sid) — mirrors sendAudioToTelephony.
+          // contentType/sampleRate/stream_sid).
           const pcm = Buffer.from(data.media.payload, 'base64');
           const alaw = session.transcoder.pcm16kToAlaw(pcm);
           this.send(session.pstnWs, { event: 'media', media: { payload: alaw.toString('base64') } });
           this.recordRelayFrame(session, 'b2p', t0);
         }
-        // PORT NOTE: core's VoBiz `else` (L16 16kHz `playAudio`, verbatim payload) is deleted.
       } catch (err) {
         log.warn({ err, callId: session.callId }, 'Dropped malformed browser media frame');
       }
@@ -1391,12 +1340,9 @@ export class WebRtcBridgeManager {
       // VoiceLink negotiates the media stream via `start`: validate the format,
       // capture the real carrier ids + stream id, then open the relay.
       //
-      // VoBiz ALSO emits a `start` frame on its media WS, but it's already
-      // media-ready (`providerMediaReady` defaults true) and relays L16 verbatim
-      // with no stream_sid needed for outbound `playAudio`. Routing a VoBiz start
-      // into handleProviderStart would fail its A-law-8kHz format check and tear
-      // down a working call — so only VoiceLink negotiates here; VoBiz start is a
-      // no-op.
+      // Only VoiceLink negotiates here. A `start` on another provider's socket is
+      // a no-op: it would fail handleProviderStart's A-law-8kHz format check and
+      // tear down a working call.
       if (session.provider === 'voicelink') this.handleProviderStart(session, data);
       return;
     }
@@ -1416,7 +1362,6 @@ export class WebRtcBridgeManager {
           this.send(session.browserWs, { event: 'media', media: { payload: pcm.toString('base64') } });
           this.recordRelayFrame(session, 'p2b', t0);
         }
-        // PORT NOTE: core's VoBiz `else` (L16 16kHz passthrough) is deleted.
       } catch (err) {
         log.warn({ err, callId: session.callId }, 'Dropped malformed PSTN media frame');
       }
@@ -1440,8 +1385,8 @@ export class WebRtcBridgeManager {
   private handleProviderStart(session: WebRtcBridgeSession, data: any): void {
     // A media `start` on a call we have already torn down. Reachable on a leg that
     // was attached BEFORE the terminal claim (`attachPstnLeg`'s own guard only
-    // refuses new connects), and it is the exact sequence that re-manufactured the
-    // pilot defect: anchor the answer, mark media ready, `emitBridgedIfLive` — so
+    // refuses new connects), and it is the exact sequence behind the pilot
+    // defect: anchor the answer, mark media ready, `emitBridgedIfLive` — so
     // `answered` lands a phantom entry in the compliance denominator and `bridged`
     // classifies the attempt `connected`, which is `max_attempts: 0` and retires
     // the contact. `ending` is included because it implies the call was answered
@@ -1496,16 +1441,13 @@ export class WebRtcBridgeManager {
 
 
   // ─── VoiceLink webhooks ──────────────────────────────────────────────────
-  //
-  // PORT NOTE: core's `handleVobizAnswer` / `handleVobizStatus` (and their routes)
-  // are deleted with VoBiz (plan §5).
 
   /**
-   * VoiceLink status webhook. Unlike VoBiz, VoiceLink has no answer XML — the
-   * PSTN leg is established when VoiceLink dials into the pstn-stream WS (URL
-   * baked into the dial request), so `answer` arrives here as a status event and
-   * anchors talk-time (no XML returned). Terminal events use a VoiceLink-specific
-   * classifier (no_answer/busy/canceled/failed) rather than VoBiz's generic
+   * VoiceLink status webhook. VoiceLink has no answer XML — the PSTN leg is
+   * established when VoiceLink dials into the pstn-stream WS (URL baked into the
+   * dial request), so `answer` arrives here as a status event and anchors
+   * talk-time (no XML returned). Terminal events use a VoiceLink-specific
+   * classifier (no_answer/busy/canceled/failed) rather than a generic
    * telephony_error, and are handled even when the live session is already gone
    * (late `call.completed` / carrier confirmation of a local hangup).
    */
@@ -1538,16 +1480,15 @@ export class WebRtcBridgeManager {
     // carrier hangup and a repository write in between, so the session is still
     // `sessions.get`-able for that whole window.
     //
-    // This is the same window `attachPstnLeg` and `handleVobizAnswer` refuse, and
-    // it is the one that matters MOST here, because VoiceLink has no answer XML:
-    // `case 'answer'` IS the answer path on the carrier late binding ships to
-    // first. Left unguarded it did three things to a cancelled dial the customer
-    // then picked up: `anchorAnswer` emitted `answered`, which lands a phantom
-    // entry in the compliance DENOMINATOR and (with the bind refused) drives
-    // `abandonAnsweredCall`; the `in_progress` write landed on top of a terminal
-    // row; and `endCall`'s own `ended` then read `answered: true`, so the
-    // classifier's `canceled` arm recorded `abandoned` — against the 3% ceiling —
-    // for a dial nobody had reached.
+    // This is the same window `attachPstnLeg` refuses, and it is the one that
+    // matters MOST here, because VoiceLink has no answer XML: `case 'answer'` IS
+    // the answer path for this carrier. Left unguarded it would do three things to
+    // a cancelled dial the customer then picked up: `anchorAnswer` emits
+    // `answered`, which lands a phantom entry in the compliance DENOMINATOR and
+    // (with the bind refused) drives `abandonAnsweredCall`; the `in_progress` write
+    // lands on top of a terminal row; and `endCall`'s own `ended` then reads
+    // `answered: true`, so the classifier's `canceled` arm records `abandoned` —
+    // against the 3% ceiling — for a dial nobody had reached.
     //
     // Terminal events are deliberately NOT guarded here: `hangup`/`error` during
     // `ending` are the carrier confirmation `finalizeEnding` is waiting for, and
@@ -1620,8 +1561,8 @@ export class WebRtcBridgeManager {
    * Persist final data from a terminal VoiceLink event that arrived with no live
    * session (late `call.completed`, or a carrier confirmation after teardown).
    * Idempotent: only fills recording/provider-id and, if the row wasn't already
-   * terminal, records the classified outcome. Never settles twice (settlement
-   * happened at teardown).
+   * terminal, records the classified outcome. Never runs teardown a second time
+   * (it already ran).
    */
   private async persistLateVoicelinkTerminal(
     callId: string,
@@ -1641,9 +1582,7 @@ export class WebRtcBridgeManager {
         await webrtcCallRepository.update(callId, patch);
         log.info({ callId, patch: Object.keys(patch) }, 'Persisted late VoiceLink completion data');
       }
-      // A late recording_url may satisfy a dialer-analysis job still awaiting one (B1).
-      // PORT NOTE: core called `this.notifyDialerAnalysisRecordingReady(callId)`;
-      // its body moved behind the analysis seam (docs/seams.md §3.2, lane D).
+      // A late recording_url may satisfy a dialer-analysis job still awaiting one.
       if (patch.recording_url) await getBridgeAnalysisHooks().onRecordingReady(callId);
     } catch (err) {
       log.error({ err, callId }, 'Failed to persist late VoiceLink terminal data');
@@ -1655,27 +1594,27 @@ export class WebRtcBridgeManager {
   /**
    * A locally-initiated hangup (user, max-duration, browser close, an agency
    * agent dismissing a ringing dial). For a provider whose carrier leg is torn
-   * down by an API call (VoBiz), this finalizes immediately. For a provider whose
-   * ONLY teardown is closing our WS (VoiceLink), an **answered** call must NOT
-   * settle before the carrier confirms `call.ended` — otherwise we'd settle while
-   * the PSTN leg may still be billable. So we enter an `ending` state: close the
+   * down by an API call, this finalizes immediately. For a provider whose ONLY
+   * teardown is closing our WS (VoiceLink), an **answered** call must NOT
+   * finalize before the carrier confirms `call.ended` — otherwise we'd finalize
+   * while the PSTN leg may still be live. So we enter an `ending` state: close the
    * provider WS, notify the browser, and wait for `call.ended` (or
    * {@link CARRIER_END_CONFIRM_TIMEOUT_SECONDS}) before the real `endCall`.
    * Idempotent.
    *
-   * **An UNANSWERED call never enters `ending`, and that is the ring-cancel fix**
-   * (pilot 2026-09-08, callId `064836f1-8915-49f8-9c5a-c741f3cdd2af`). Two things
-   * were wrong with deferring it. The cheap one: nothing is billable and the
-   * carrier has nothing to confirm, so the call sat in limbo for the whole
-   * confirm window holding a concurrency slot. The one that reached customers:
-   * `ending` keeps the session in `this.sessions`, so when the carrier answered
-   * *after* the agent had dismissed the dial, the PSTN leg's `pstn-stream` connect
-   * found a live session and {@link attachPstnLeg} bridged it — into a console
-   * nobody was watching, for 16 seconds, billed. Finalizing now drops the session
-   * from the map, so that same connect hits `attachPstnLeg`'s unknown-call branch
-   * and is closed, the relay never opens, and the late `call.answered`/`call.ended`
-   * land in {@link persistLateVoicelinkTerminal} where they belong. The fix is
-   * the *removal from the map*, not the status we write.
+   * **An UNANSWERED call never enters `ending`** (the ring-cancel case; pilot
+   * 2026-09-08, callId `064836f1-8915-49f8-9c5a-c741f3cdd2af`). Deferring it is
+   * wrong twice. The cheap way: nothing connected and the carrier has nothing to
+   * confirm, so the call would sit in limbo for the whole confirm window holding
+   * a concurrency slot. The way that reaches customers: `ending` keeps the
+   * session in `this.sessions`, so when the carrier answers *after* the agent has
+   * dismissed the dial, the PSTN leg's `pstn-stream` connect finds a live session
+   * and {@link attachPstnLeg} bridges it — into a console nobody is watching (16
+   * seconds in the pilot). Finalizing now drops the session from the map, so that
+   * same connect hits `attachPstnLeg`'s unknown-call branch and is closed, the
+   * relay never opens, and the late `call.answered`/`call.ended` land in
+   * {@link persistLateVoicelinkTerminal} where they belong. The point is the
+   * *removal from the map*, not the status we write.
    */
   private async localHangup(
     callId: string,
@@ -1684,7 +1623,7 @@ export class WebRtcBridgeManager {
     const session = this.sessions.get(callId);
     if (!session || session.endHandled) return;
 
-    // VoBiz (or any provider with a real hangup API) → finalize now.
+    // A provider with a real hangup API → finalize now.
     if (session.provider !== 'voicelink') {
       await this.endCall(callId, { ...intent, hangupProvider: true });
       return;
@@ -1711,8 +1650,8 @@ export class WebRtcBridgeManager {
     } catch (err) {
       log.warn({ err, callId }, 'Error closing VoiceLink PSTN WS on local hangup');
     }
-    // Tell the browser the call is ending (audio stops now); the row settles on
-    // carrier confirmation. The browser leg is closed at finalize.
+    // Tell the browser the call is ending (audio stops now); the row is finalized
+    // on carrier confirmation. The browser leg is closed at finalize.
     this.notifyBrowser(session, { event: 'status', status: 'ending' });
     // Bounded fallback: finalize even if `call.ended` never arrives.
     session.setEndConfirmationTimer(CARRIER_END_CONFIRM_TIMEOUT_SECONDS, () => {
@@ -1748,15 +1687,11 @@ export class WebRtcBridgeManager {
   /**
    * Hang up the carrier leg, best effort. Never throws — every caller is on a
    * teardown path, and a carrier that will not answer must not be able to skip
-   * settlement or slot release.
+   * terminal persistence or slot release.
    *
-   * Extracted from {@link endCall} because a second caller needs it: the dial
-   * race in {@link placeOutboundLeg}. What must not be lost in the move is the
-   * **pinned credential** rule: the PINNED credential, never a fresh resolve. A
-   * call must tear down on the account it was PLACED on: re-resolving would issue
-   * the hangup against the new credential after a rotation, or against the
-   * platform account after a revoke, and the carrier would answer 404 for a call
-   * it has never heard of while the real leg stayed up.
+   * Its own method because two callers need it: {@link endCall} and the dial race
+   * in {@link placeOutboundLeg}. A call tears down on the carrier account it was
+   * PLACED on — the service's own VoiceLink account, the only one there is.
    *
    * The adapter is resolved even when there is no `providerCallId` to hang up,
    * because that combination — a teardown with no carrier handle — is exactly the
@@ -1765,13 +1700,12 @@ export class WebRtcBridgeManager {
   private async hangupProviderLeg(session: WebRtcBridgeSession): Promise<void> {
     const callId = session.callId;
     try {
-      // PORT NOTE: core resolved the PINNED BYOC credential here; BYOC is deleted.
       const hangupAdapter = this.telephonyRegistry.get(session.provider);
 
       // A teardown while the far end is still RINGING, against a carrier whose
       // `endCall` cannot recall such a leg. WARN rather than a metric because
-      // this file deliberately imports no metrics (~187 suites mock that module
-      // with explicit factories); this is the line an operator greps in Loki when
+      // this file deliberately imports no metrics (suites mock that module with
+      // explicit factories); this is the line an operator greps in Loki when
       // a customer reports a call from nobody. `canCancelRinging` fails closed, so
       // an adapter that has not declared the capability lands here too.
       if (session.answeredAt === null && !canCancelRinging(hangupAdapter)) {
@@ -1790,8 +1724,8 @@ export class WebRtcBridgeManager {
   }
 
   /**
-   * Idempotent teardown: persist the terminal row, settle (release credit),
-   * close both legs, release the shared slots, and let any SQS-queued AI call in.
+   * Idempotent teardown: persist the terminal row, close both legs, and release
+   * the shared slots.
    */
   private async endCall(
     callId: string,
@@ -1847,15 +1781,12 @@ export class WebRtcBridgeManager {
       endedBy: webrtcEndedBy(opts),
     });
 
-    // PORT NOTE: core dispatched the settlement webhook to master here
-    // (`dispatchSettlement`, call_type `webrtc_call`, with the agency discriminator).
-    // Agency never charges or writes to master's ledger in v1 (plan §9, S6); the
-    // terminal row above carries the usage facts for metering later.
+    // No settlement step: there is no billing in v1 (decision S6); the terminal row
+    // above carries the usage facts for metering later.
 
-    // Post-call analysis enqueue (dialer_call_analysis). Fire-and-forget after
-    // settlement so a gate/enqueue failure can never affect billing or teardown.
-    // PORT NOTE: core called `this.maybeEnqueueAnalysis(session, callId)`; its body
-    // moved behind the analysis seam (docs/seams.md §3.2) with the facts it read.
+    // Post-call analysis enqueue (agency_call_analysis), through the analysis seam
+    // with the facts read off the session. Fire-and-forget so a gate/enqueue failure
+    // can never affect teardown.
     void getBridgeAnalysisHooks().onCallFinalized({
       callId,
       tenantId: session.tenantId,
@@ -1878,7 +1809,7 @@ export class WebRtcBridgeManager {
 
     // Observers (e.g. the agency dialer) see the terminal moment BEFORE teardown,
     // while the session is still readable. Listener throws are swallowed — nothing
-    // a subscriber does may interrupt slot release or settlement below.
+    // a subscriber does may interrupt slot release below.
     this.emitLifecycle({
       callId,
       correlationId: session.correlationId,
@@ -1897,8 +1828,7 @@ export class WebRtcBridgeManager {
     session.destroy();
     this.sessions.delete(callId);
 
-    // Release the shared slots and admit any AI call queued behind the limit.
-    // PORT NOTE: core then called `this.callManager.triggerDequeue()` (AI SQS queue).
+    // Release the shared slots.
     await this.releaseSlots(session);
     // Slot accounting changed — keep the self-heal poll armed so any drift left by
     // a partial release (or a lock that expired mid-call) is caught before dormancy.
@@ -1913,7 +1843,7 @@ export class WebRtcBridgeManager {
     }, 'WebRTC call ended');
   }
 
-  // ─── Concurrency (shared with CallManager) ──────────────────────────────────
+  // ─── Concurrency ─────────────────────────────────────────────────────────────
   private async releaseSlots(session: WebRtcBridgeSession): Promise<void> {
     if (!session.slotsHeld || !session.concurrencyKey) return;
     session.slotsHeld = false;
@@ -1927,15 +1857,14 @@ export class WebRtcBridgeManager {
   }
 
   /**
-   * A bridge holds the same three shared telephony scopes an AI call does, so it
-   * hands them back the same way: one Redis transaction where that is safe, per
-   * scope otherwise. The shared helper keeps its failure isolation (a throw on one
-   * scope cannot skip another) and reports the outcome as
+   * A bridge holds three telephony scopes (global, account, provider) and hands
+   * them back through the shared helper: one Redis transaction where that is
+   * safe, per scope otherwise. The helper keeps its failure isolation (a throw on
+   * one scope cannot skip another) and reports the outcome as
    * `telephony_lease_release_total{source="webrtc"}`.
    *
    * Does not wake the self-heal sweep. `releaseSlots` (end-of-call) wakes it
-   * unconditionally right after; the dial-rollback caller below never has, and
-   * that is unchanged here.
+   * unconditionally right after; the dial-rollback caller does not wake it.
    */
   private async releaseSlotsByKey(
     key: string,
@@ -1955,11 +1884,8 @@ export class WebRtcBridgeManager {
   // ─── Helpers ─────────────────────────────────────────────────────────────
 
   /**
-   * PORT NOTE: core read `getFeatureFlagService().getValue(FLAGS.webrtc_max_duration_seconds,
-   * { tenantId, accountId })` and fell back to the flag's default (1800) on a throw.
-   * Plan §3.2 moved the value onto the per-account settings row
-   * (`account_settings.webrtc_max_duration_seconds`, NULL = the process default), so
-   * the same read is the account row with the same default on NULL or on a throw.
+   * The per-account max duration (`account_settings.webrtc_max_duration_seconds`),
+   * or {@link DEFAULT_WEBRTC_MAX_DURATION_SECONDS} on NULL or on a throw.
    */
   private async resolveMaxDuration(tenantId: string, accountId: string): Promise<number> {
     try {
@@ -2005,14 +1931,12 @@ export class WebRtcBridgeManager {
     if (session.browserWs) this.send(session.browserWs, payload);
   }
 
-  // Browser WS token: random nonce in Redis (replica-safe). When Redis is
-  // unavailable we fall back to accepting the unguessable callId alone — the
-  // same trust model the media-stream WS already uses.
   // ── Purpose-bound per-call credentials ─────────────────────────────────────
-  // Three separate high-entropy tokens per call keep the browser, provider-WSS,
-  // and webhook trust domains distinct: only the browser token is handed to
-  // CUSUI; the provider + webhook tokens live only in the URLs we send VoiceLink.
-  // A leaked browser token therefore can't forge a provider socket or a webhook.
+  // Random nonces in Redis (replica-safe). Separate high-entropy tokens per purpose
+  // keep the browser, provider-WSS and webhook trust domains distinct: the provider +
+  // webhook tokens live only in the URLs we send VoiceLink, so a leaked browser token
+  // can't forge a provider socket or a webhook. (A borrowed leg mints no browser
+  // token; see `verifyWsToken`.)
   private wsTokenKey(callId: string, purpose: 'browser' | 'provider' | 'webhook' = 'browser'): string {
     return `${this.keyPrefix}webrtc:ws-token:${purpose}:${callId}`;
   }
@@ -2069,20 +1993,19 @@ export class WebRtcBridgeManager {
     token: string | undefined,
     purpose: 'browser' | 'provider' | 'webhook' = 'browser',
   ): Promise<boolean> {
-    // Q6 (Manas, 2026-10-09) — the middle option. Core accepted on Redis absent, on a Redis
-    // error AND on a missing key; only a present-but-wrong token was refused. A missing key
-    // while Redis ANSWERS is now refused, because every token this bridge verifies is
+    // Q6 (Manas, 2026-10-09) — the middle option. A present-but-wrong token is refused, and
+    // so is a missing key while Redis ANSWERS, because every token this bridge verifies is
     // minted and stored before the leg it guards can exist:
     //  - `provider` / `webhook`: stored in `placeOutboundLeg` (step 5) BEFORE the dial
     //    (step 6) that hands them to VoiceLink, for the whole call (maxDuration + 60s), and
     //    the webhook token is kept WEBHOOK_TOKEN_POST_END_GRACE_SECONDS past the end
     //    (`clearWsToken`) for the carrier's late terminal posts;
-    //  - `browser`: no caller verifies it any more (the softphone's owned leg was deleted;
-    //    agency's borrowed legs never mint or check one), so refusing changes nothing live.
+    //  - `browser`: no caller verifies it (borrowed legs never mint or check one), so
+    //    refusing changes nothing live.
     // A key can still be missing legitimately when its SET failed (Redis errored at dial
-    // time and recovered since): that is remembered in `unstoredWsTokens` and keeps core's
-    // accept. Redis absent or erroring here still accepts — never hard-fail a live call on
-    // an outage; the unguessable callId is then the guard, as in core.
+    // time and recovered since): that is remembered in `unstoredWsTokens` and still
+    // accepted. Redis absent or erroring here still accepts — never hard-fail a live call
+    // on an outage; the unguessable callId is then the guard.
     if (!this.redis) return true; // degraded — unguessable callId is the guard
     try {
       const stored = await this.redis.get(this.wsTokenKey(callId, purpose));
@@ -2111,7 +2034,7 @@ export class WebRtcBridgeManager {
   private async clearWsToken(callId: string): Promise<void> {
     // Q6: the media legs' tokens die with the call; the WEBHOOK token (and a remembered
     // unstored one) outlives it by the grace window, because the carrier's terminal report
-    // and recording URL arrive after teardown and a missing key is now refused.
+    // and recording URL arrive after teardown and a missing key is refused.
     this.unstoredWsTokens.delete(this.unstoredWsTokenKey(callId, 'browser'));
     this.unstoredWsTokens.delete(this.unstoredWsTokenKey(callId, 'provider'));
     if (this.unstoredWsTokens.has(this.unstoredWsTokenKey(callId, 'webhook'))) {
@@ -2122,8 +2045,8 @@ export class WebRtcBridgeManager {
       await Promise.all([
         this.redis.del(this.wsTokenKey(callId, 'browser')),
         this.redis.del(this.wsTokenKey(callId, 'provider')),
-        // PORT NOTE (Q6): core DEL'd this key too. `EXPIRE` on a missing key is a no-op, so
-        // a call that never stored one gains nothing here.
+        // Q6: kept for the post-end grace rather than deleted. `EXPIRE` on a missing key is
+        // a no-op, so a call that never stored one gains nothing here.
         this.redis.expire(this.wsTokenKey(callId, 'webhook'), WEBHOOK_TOKEN_POST_END_GRACE_SECONDS),
       ]);
     } catch {

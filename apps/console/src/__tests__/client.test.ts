@@ -289,7 +289,7 @@ describe('apiFetch — non-401 errors', () => {
   });
 });
 
-// ─── masked errors + request id (ClickUp 86d3fh88c) ──────────────────────────
+// ─── masked errors + request id ──────────────────────────
 
 describe('apiFetch — masked errors & request id', () => {
   it('captures the x-request-id header and embeds it in masked 5xx messages', async () => {
@@ -339,8 +339,8 @@ describe('apiFetch — masked errors & request id', () => {
     expect(err.requestId).toBe('req_should_not_show');
   });
 
-  it('decodes master’s `issues` array, the shape every automation write is refused with', async () => {
-    // Master's automation routes reply `{ error: 'Bad Request', issues: [...] }`
+  it('decodes the server’s `issues` array, the shape every automation write is refused with', async () => {
+    // The server's automation routes reply `{ error: 'Bad Request', issues: [...] }`
     // — the same Zod issues as `details`, under a different key. Undecoded, the
     // first thing every route author does (add a route, save it before filling
     // an option) surfaced as the bare words "Bad Request".
@@ -379,7 +379,7 @@ describe('apiFetch — masked errors & request id', () => {
   });
 
   it('prefers the field-level `details` over a generic `message` too', async () => {
-    // Core's key for the same array. Both had to move ahead of `message`, or
+    // The server's key for the same array. Both had to move ahead of `message`, or
     // fixing one shape left the other behind it.
     const body = {
       statusCode: 400,

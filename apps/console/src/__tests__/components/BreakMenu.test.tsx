@@ -4,7 +4,7 @@ import { BreakMenu, BREAK_UNCONFIGURED_COPY, BREAK_REJECTED_COPY } from '../../c
 import type { AgencyBreakReason } from '../../types/agency';
 
 /**
- * `BreakMenu` (§A.13.4, §A.13.8, §A.13.9).
+ * `BreakMenu`.
  *
  * The two properties most worth holding here are both *negative*: the menu binds
  * no number keys, and it never renders an empty list. Neither is visible in a
@@ -12,9 +12,9 @@ import type { AgencyBreakReason } from '../../types/agency';
  */
 
 /**
- * Core's six built-ins (`DEFAULT_BREAK_REASONS`, `break-manager.ts` @ `41e102c`),
+ * The server's six built-ins (`DEFAULT_BREAK_REASONS`),
  * which is what bootstrap actually advertises when a campaign configures none.
- * Note `is_paid` is absent from every one — deliberately, per core: it is a
+ * Note `is_paid` is absent from every one — deliberately, per the server: it is a
  * payroll question no default can answer, and the console does not branch on it.
  */
 const BUILT_INS: AgencyBreakReason[] = [
@@ -39,11 +39,10 @@ const items = () => screen.queryAllByRole('menuitem');
 const openMenu = () => fireEvent.click(trigger());
 
 describe('what bootstrap advertises is what renders', () => {
-  it('offers all six built-in reasons core serves for an unconfigured campaign', () => {
-    // §A.13.4 still says the empty catalog is "today's actual behaviour" and that
-    // every break request is rejected. That paragraph is STALE — core's
+  it('offers all six built-in reasons the server serves for an unconfigured campaign', () => {
+    // An empty catalog is not a rejection of every break request: the server's
     // `resolveBreakReasons` serves these six when the column is `'[]'`. Built to
-    // the code, not the prose.
+    // the code, not to a spec's prose.
     setup();
     openMenu();
     expect(items().map((i) => i.textContent)).toEqual([
@@ -100,7 +99,7 @@ describe('the empty catalog — a defensive path, not the expected one', () => {
 
 describe('number keys are the disposition pad’s alone', () => {
   it('does nothing on 1–9 with the menu open', () => {
-    // §A.13.4: reassigning number keys by context destroys muscle memory. An
+    // reassigning number keys by context destroys muscle memory. An
     // agent who has learned "3 = voicemail" must not find `3` means "Meeting"
     // whenever a popover happens to be open.
     const { onSelect } = setup();
@@ -211,7 +210,7 @@ describe('keyboard navigation — arrows, typeahead, Enter', () => {
   });
 
   it('traps Tab inside the popover', () => {
-    // §A.13.4: focus is trapped while open. Tabbing out would leave an open
+    // focus is trapped while open. Tabbing out would leave an open
     // popover behind with focus somewhere else on the screen.
     setup();
     openMenu();
@@ -255,7 +254,7 @@ describe('focus returns to the control that opened the surface', () => {
 
 describe('the confirmation rides the focused control, not a third live region', () => {
   it('renames Break to "Break queued — Lunch" when a break is pending', () => {
-    // §A.11 caps this screen at exactly two live regions and the pill is neither.
+    // The spec caps this screen at exactly two live regions and the pill is neither.
     // A screen reader announces the focused control's new name, so the
     // confirmation is delivered by the focus that is already there.
     const { rerender } = setup();
@@ -320,7 +319,7 @@ describe('busy is aria-disabled, never disabled — mechanism (b)', () => {
   });
 
   it('uses real disabled for a genuinely unavailable control, so Tab skips it', () => {
-    // The other half of the distinction: §A.13.9's tab order requires inactive
+    // The other half of the distinction: the spec's tab order requires inactive
     // controls to be `disabled` and skipped rather than reordered. That state
     // does not begin while the control holds focus, so it is safe.
     setup({ reasons: [] });

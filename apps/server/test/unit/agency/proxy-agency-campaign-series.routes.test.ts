@@ -4,15 +4,14 @@ import type { MembershipRole } from '@magick-agency/contracts/rbac';
 
 /**
  * **`GET /proxy/agency/campaigns/:id/stats/series` — the campaign's bucketed
- * trend (`86d45k0bk`).**
+ * trend.**
  *
  * Three properties, and they fail in three different ways:
  *
  *  1. **The floor is `agency.supervise`**, asserted BY EXECUTION. The sibling
  *     table in `proxy-agency-campaigns.routes.test.ts` reads the permission
  *     STRING out of the source, which cannot see a `requirePermission` deleted
- *     together with its own row in that table — measured on the lifecycle routes
- *     (MAG-96): the whole suite stayed green. So `src/rbac/rbac.middleware.js` and
+ *     together with its own row in that table — the whole suite stays green. So `src/rbac/rbac.middleware.js` and
  *     `src/config/index.js` are deliberately NOT mocked here and the real
  *     `PERMISSION_MATRIX` decides, exactly as
  *     `proxy-agency-campaign-lifecycle-rbac.routes.test.ts` does for start/pause.
@@ -21,11 +20,10 @@ import type { MembershipRole } from '@magick-agency/contracts/rbac';
  *     with no guard at all, and one pinned only from above passes for a route
  *     floored at `tenant_owner`.
  *
- *  2. **The window rules are master's fast refusal**, and they must be MASTER's
- *     400 rather than core's: every case below also asserts `proxyToCore` was
- *     never called, because the whole benefit of validating here is not spending
- *     an AES key decryption and an S2S round trip on a request that cannot
- *     succeed. The half-open `[from, to)` convention is the one thing about this
+ *  2. **The window rules are the public API layer's fast refusal**, and they must be the public API
+ *     layer's 400 rather than internal handler's: every case below also asserts
+ *     `proxyToCore` was never called, because the whole benefit of validating here
+ *     is not spending a handler call on a request that cannot succeed. The half-open `[from, to)` convention is the one thing about this
  *     route most likely to be "fixed" into the inclusive `to` its neighbouring
  *     LIST routes use, so `from === to` is pinned as a refusal.
  *
@@ -52,8 +50,6 @@ vi.mock('../../../src/auth/session.middleware.js', () => ({ sessionMiddleware: a
 vi.mock('../../../src/api/middleware/tenant-context.middleware.js', () => ({
   tenantContextMiddleware: async () => {},
 }));
-// PORT NOTE (magick-agency): master's `require-capability` mock is gone with governance
-// (the route registers no `requireCapability('agency')`; plan §3.2).
 // Deliberately NOT mocked: `src/rbac/rbac.middleware.js`, `src/config/index.js`.
 // See property 1 in the file header.
 
@@ -63,10 +59,6 @@ import {
   MS_PER_DAY,
   type AgencyCampaignStatsSeries,
 } from '../../../src/agency/agency-campaign-wire.js';
-// PORT NOTE (magick-agency): master imported `FORWARDABLE_ERROR_CODES` /
-// `FORWARDABLE_ERROR_LABELS` from `error-mask.middleware.js`. The error mask is not ported
-// (plan §1, one union; lane B2 "Not ported"), so the two assertions on those sets are
-// deleted from the two 404 cases below; their status/body assertions are kept.
 
 const PREFIX = '/proxy/agency';
 const TENANT = 'tenant-1';
@@ -83,9 +75,9 @@ function seriesUrl(query: Record<string, string> = {}): string {
 }
 
 /**
- * Core's series body.
+ * The internal handler's series body.
  *
- * Typed against master's declared wire shape, so a field renamed or mistyped in
+ * Typed against the public API layer's declared wire shape, so a field renamed or mistyped in
  * `agency-campaign-wire.ts` reds `npm run lint:test` here rather than passing as
  * an unchecked record key. The middle bucket is all zeros ON PURPOSE — see the
  * case that names it.
@@ -119,12 +111,12 @@ async function buildApp(role: MembershipRole): Promise<FastifyInstance> {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // A CLONE, not the fixture itself. A route that mutated core's body in place —
+  // A CLONE, not the fixture itself. A route that mutated the internal handler's body in place —
   // which is how a `bucket_start` normalisation would most naturally be written —
   // would otherwise mutate the very object the byte-identity case compares
   // against, and that case would pass while the client got the wrong dates.
   // Measured: without the clone, exactly that mutation left
-  // "sends core's body byte-identically" green.
+  // "sends the internal handler's body byte-identically" green.
   mocks.proxyToCore.mockResolvedValue({
     status: 200,
     body: structuredClone(CORE_SERIES),
@@ -135,24 +127,22 @@ beforeEach(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe('the series read floors at agency.supervise (account_admin)', () => {
   it.each<MembershipRole>(['agent', 'viewer', 'operator'])(
-    'a %s gets 403 and the core proxy is never called',
+    'a %s gets 403 and the proxy is never called',
     async (role) => {
       const app = await buildApp(role);
 
       const res = await app.inject({ method: 'GET', url: seriesUrl() });
 
       expect(res.statusCode).toBe(403);
-      // Not merely "not 200": a 403 that still spent the core round trip has
+      // Not merely "not 200": a 403 that still spent the internal handler round trip has
       // leaked the read it refused.
       expect(mocks.proxyToCore).not.toHaveBeenCalled();
-      // PORT NOTE (magick-agency): master's `resolveCoreApiKey` not-called assertion is
-      // deleted with the key (in-process `callCore` takes none).
       await app.close();
     },
   );
 
   it.each<MembershipRole>(['account_admin', 'tenant_admin', 'tenant_owner'])(
-    'a %s gets through and the core proxy is called',
+    'a %s gets through and the proxy is called',
     async (role) => {
       const app = await buildApp(role);
 
@@ -166,8 +156,8 @@ describe('the series read floors at agency.supervise (account_admin)', () => {
 
   it('is a HIGHER floor than the live /stats strip beside it, deliberately', async () => {
     /**
-     * The pair that must not be "tidied up" into agreement. MAG-136 already pins
-     * `/stats` at `viewer`; this asserts the DIFFERENCE from one place, so a
+     * The pair that must not be "tidied up" into agreement. The lifecycle suite already
+     * pins `/stats` at `viewer`; this asserts the DIFFERENCE from one place, so a
      * change that aligns them reds with both halves visible in one failure rather
      * than in two files.
      */
@@ -183,8 +173,8 @@ describe('the series read floors at agency.supervise (account_admin)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('the window and bucket are validated before core is called', () => {
-  /** Every refusal here must be MASTER's, so none of them may reach core. */
+describe('the window and bucket are validated before the internal handler is called', () => {
+  /** Every refusal here must come from the public API layer, so none of them may reach the internal handler. */
   async function refuse(url: string): Promise<{ status: number; body: Record<string, unknown> }> {
     const app = await buildApp('account_admin');
     const res = await app.inject({ method: 'GET', url });
@@ -214,9 +204,9 @@ describe('the window and bucket are validated before core is called', () => {
     await app.close();
   });
 
-  it('does NOT inject a default bucket — `day` stays core\'s default', async () => {
-    // Master defaulting it would be a second declaration of the same default, and
-    // core echoes `bucket` on the response so nothing is ambiguous without it.
+  it('does NOT inject a default bucket — `day` stays the internal handler\'s default', async () => {
+    // The public API layer defaulting it would be a second declaration of the same default, and
+    // the internal handler echoes `bucket` on the response so nothing is ambiguous without it.
     const app = await buildApp('account_admin');
 
     await app.inject({ method: 'GET', url: seriesUrl() });
@@ -264,7 +254,7 @@ describe('the window and bucket are validated before core is called', () => {
     });
     expect(ok.statusCode).toBe(200);
     await app.close();
-    // The at-cap half above legitimately reached core; `refuse` asserts nothing
+    // The at-cap half above legitimately reached the internal handler; `refuse` asserts nothing
     // did, so the counter has to be reset between the two.
     vi.clearAllMocks();
 
@@ -288,7 +278,7 @@ describe('the window and bucket are validated before core is called', () => {
 
   it('400s a zone-less date-time rather than reading it in the server\'s zone', async () => {
     // Which container answered is not a fact about the caller's window. Mirrors
-    // core's `parseFilterDate` exactly — master must refuse only what core refuses.
+    // the internal handler's `parseFilterDate` exactly — the public API layer must refuse only what the internal handler refuses.
     const { status } = await refuse(
       `${PREFIX}/campaigns/${CAMPAIGN}/stats/series?from=2026-08-11T00:00:00&to=${TO}`,
     );
@@ -296,7 +286,7 @@ describe('the window and bucket are validated before core is called', () => {
     expect(status).toBe(400);
   });
 
-  it('accepts the date-only spelling core accepts, so master is never the stricter hop', async () => {
+  it('accepts the date-only spelling the internal handler accepts, so the public API layer is never the stricter hop', async () => {
     const app = await buildApp('account_admin');
 
     const res = await app.inject({
@@ -305,8 +295,8 @@ describe('the window and bucket are validated before core is called', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    // Forwarded verbatim: core re-reads it as UTC midnight, the same instant
-    // master measured the window against.
+    // Forwarded unchanged: the internal handler re-reads it as UTC midnight, the same instant
+    // the public API layer measured the window against.
     expect(mocks.proxyToCore.mock.calls[0]![0].query)
       .toEqual({ from: '2026-08-11', to: '2026-08-14' });
     await app.close();
@@ -332,19 +322,19 @@ describe('the window and bucket are validated before core is called', () => {
     expect((body['details'] as { unknown: string[] }).unknown).toEqual(['campaign_id']);
   });
 
-  it('reads a REPEATED bucket the way core does — the first, not a refusal', async () => {
+  it('reads a REPEATED bucket the way the internal handler does — the first, not a refusal', async () => {
     /**
      * This used to assert a 400, on the reasoning that there is no defensible
      * pick between two contradictory instructions. The reasoning is fine and the
-     * refusal was still wrong, because it was MASTER's alone: core reads `bucket`
+     * refusal was still wrong, because it was the public API layer's alone: the internal handler reads `bucket`
      * through `singleParam`, which takes `raw[0]`, so the same URL answers 200
-     * with `bucket: day` one hop down. Master refusing what core answers is the
+     * with `bucket: day` one layer down. The public API layer refusing what the internal handler answers is the
      * one thing this route's validation may not do — the supervisor sees a chart
      * that will not load and no cause they can act on.
      *
      * Pinned as the RESOLVED value rather than just the status: a 200 that
-     * forwarded `day,week` would fail at core instead, and a 200 that forwarded
-     * `week` would answer a different question from the one core's own parser
+     * forwarded `day,week` would fail at the internal handler instead, and a 200 that forwarded
+     * `week` would answer a different question from the one the internal handler's own parser
      * answers for the identical URL.
      */
     const app = await buildApp('account_admin');
@@ -362,8 +352,8 @@ describe('the window and bucket are validated before core is called', () => {
 
   it('reads a REPEATED bound the same way, and measures the window against it', async () => {
     // Same `singleParam` rule on `from`/`to`. The second spelling here is a
-    // 400-worthy window on its own (inverted), so a master that joined or
-    // preferred it would refuse a request core answers.
+    // 400-worthy window on its own (inverted), so a public API layer that joined or
+    // preferred it would refuse a request the internal handler answers.
     const app = await buildApp('account_admin');
 
     const res = await app.inject({
@@ -378,11 +368,11 @@ describe('the window and bucket are validated before core is called', () => {
 
   it('accepts a PADDED bound and forwards it trimmed', async () => {
     /**
-     * `?from=2026-08-11%20`. Core's `parseFilterDate` opens with `singleParam`,
-     * which trims, so core answers 200 — while master measured the padded string
+     * `?from=2026-08-11%20`. The internal handler's `parseFilterDate` opens with `singleParam`,
+     * which trims, so the internal handler answers 200 — while the public API layer measured the padded string
      * against the ISO regexes and answered 400. The second half matters as much
-     * as the status: the trimmed value is what goes on the wire, so core re-reads
-     * the exact string master measured the window and the day cap against.
+     * as the status: the trimmed value is what goes on the wire, so the internal handler re-reads
+     * the exact string the public API layer measured the window and the day cap against.
      */
     const app = await buildApp('account_admin');
 
@@ -400,9 +390,9 @@ describe('the window and bucket are validated before core is called', () => {
   });
 
   it('still refuses a padded value that is not a date once trimmed', async () => {
-    // Trimming is core's reading of the value, not a licence to accept anything:
+    // Trimming is the internal handler's reading of the value, not a licence to accept anything:
     // the vocabulary and the ISO rules still decide, and they still decide before
-    // the core round trip.
+    // the internal handler round trip.
     const bucket = await refuse(seriesUrl({ bucket: ' hour ' }));
     expect(bucket.status).toBe(400);
 
@@ -417,7 +407,7 @@ describe('the window and bucket are validated before core is called', () => {
   it('treats a WHITESPACE-ONLY bound as absent, and then as missing', async () => {
     // `singleParam` folds a blank to absent — `?from=` is what a cleared control
     // posts — and both bounds are required on this route, at both hops. So the
-    // 400 is "is required", not "is not a date", and it is still master's.
+    // 400 is "is required", not "is not a date", and it is still the public API layer's.
     const { status } = await refuse(
       `${PREFIX}/campaigns/${CAMPAIGN}/stats/series?from=${encodeURIComponent('   ')}&to=${TO}`,
     );
@@ -427,8 +417,8 @@ describe('the window and bucket are validated before core is called', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('core\'s series payload is forwarded untouched', () => {
-  it('sends core\'s body byte-identically, key order included', async () => {
+describe('the internal handler\'s series payload is forwarded untouched', () => {
+  it('sends the internal handler\'s body byte-identically, key order included', async () => {
     const app = await buildApp('account_admin');
 
     const res = await app.inject({ method: 'GET', url: seriesUrl() });
@@ -448,11 +438,10 @@ describe('core\'s series payload is forwarded untouched', () => {
     // A route template, never the interpolated path: the metrics SDK would otherwise
     // retain one permanent series per campaign id.
     expect(call.metricPath).toBe('/agency-campaigns/:id/stats/series');
-    // Tenancy goes through the proxy helper's own arguments — master never
-    // hand-rolls the `x-mgkvc-*` headers or the core API key.
+    // Tenancy goes through the proxy helper's own arguments — the public API layer never
+    // hand-rolls the `x-mgkvc-*` headers.
     expect(call.tenantId).toBe(TENANT);
     expect(call.accountId).toBe(ACCOUNT);
-    // PORT NOTE (magick-agency): `coreApiKey` assertion deleted — `callCore` takes no key.
     await app.close();
   });
 
@@ -482,7 +471,7 @@ describe('core\'s series payload is forwarded untouched', () => {
   });
 
   it('keeps the all-zero bucket — a quiet day is not an empty one', async () => {
-    // Core emits every bucket in `[from, to)`, zeros included. Filtering a zero
+    // The internal handler emits every bucket in `[from, to)`, zeros included. Filtering a zero
     // row out as "empty" turns a trough into a gap, and a gap is a different
     // claim: "we were open and nobody dialled" stops being sayable.
     const app = await buildApp('account_admin');
@@ -533,7 +522,7 @@ describe('core\'s series payload is forwarded untouched', () => {
   });
 
   it('does NOT enrich the series the way the live strip is enriched', async () => {
-    // `enrichAgencyCampaignStats` fills two fields master owns on the LIVE strip —
+    // `enrichAgencyCampaignStats` fills two fields the public API layer owns on the LIVE strip —
     // `agents[].agent_name` and the `credits_low` stall arm. A series has neither
     // an agent row to name nor a live diagnosis to make, so running it here would
     // be a database read per poll that adds no field. Pinned because "the stats
@@ -551,15 +540,15 @@ describe('core\'s series payload is forwarded untouched', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('master fails closed on core, through the shared error path', () => {
-  it.each([400, 404, 409, 500, 503])('forwards core\'s %i status verbatim', async (status) => {
-    // No status invention and no new error-mapping helper: core's refusal IS the
+describe('the public API layer fails closed on the internal handler, through the shared error path', () => {
+  it.each([400, 404, 409, 500, 503])('forwards the internal handler\'s %i status unchanged', async (status) => {
+    // No status invention and no new error-mapping helper: the internal handler's refusal IS the
     // answer (a 404 for a campaign in another tenant is what keeps a campaign id
     // from being an oracle), and `errorMaskHook` decides what of the body reaches
     // the client.
     mocks.proxyToCore.mockResolvedValue({
       status,
-      body: { error: 'core said no', details: [{ param: 'from', message: 'too wide' }] },
+      body: { error: 'the handler said no', details: [{ param: 'from', message: 'too wide' }] },
       headers: new Headers(),
     });
     const app = await buildApp('account_admin');
@@ -570,16 +559,16 @@ describe('master fails closed on core, through the shared error path', () => {
     await app.close();
   });
 
-  it('keeps the 404 STATUS when core has no such route yet', async () => {
+  it('keeps the 404 STATUS when the internal handler has no such route yet', async () => {
     /**
-     * The master-new / core-old window: core's own Fastify answers
+     * A bare 404: the internal handler's own Fastify answers
      * `{ error: 'Not Found' }` with no `code` and no `details`, so `errorMaskHook`
      * replaces the BODY with the generic support message — `'Not Found'` is
-     * deliberately not in `FORWARDABLE_ERROR_LABELS`, because adding it there
-     * would unmask 404s on every proxied route in master.
+     * deliberately not in `FORWARDABLE_ERROR_LABELS`, because adding it there would
+     * unmask 404s on every proxied route in the public API layer.
      *
      * What the client is entitled to is therefore the status, and this pins it:
-     * master neither invents a status nor fabricates a series. See the route's
+     * the public API layer neither invents a status nor fabricates a series. See the route's
      * own docstring for why the two causes of a 404 here are merged on purpose.
      */
     mocks.proxyToCore.mockResolvedValue({
@@ -595,14 +584,12 @@ describe('master fails closed on core, through the shared error path', () => {
     // The half that would actually hurt: an empty series drawn as a flat line
     // reads as a campaign that dialled nobody.
     expect(res.json()).not.toHaveProperty('buckets');
-    // PORT NOTE (magick-agency): master's `FORWARDABLE_ERROR_LABELS.has('Not Found')`
-    // assertion is deleted with the error mask. (In one process core's handler table is
-    // always the same build, so "core has no such route yet" cannot occur either; the case
-    // stays as the status contract for any core 404.)
+    // The case is the status contract for any internal handler 404, including a route
+    // the handler table does not have.
     await app.close();
   });
 
-  it('forwards core\u2019s OWN 404 with its code intact', async () => {
+  it('forwards the internal handler\u2019s OWN 404 with its code intact', async () => {
     // The other cause: a campaign in another tenant or none at all.
     // `campaign_not_found` is allow-listed, and `isStructuredClientError`
     // forwards on the code alone, so this body is not masked — the console can
@@ -615,8 +602,7 @@ describe('master fails closed on core, through the shared error path', () => {
 
     expect(res.statusCode).toBe(404);
     expect(res.json()).toEqual(body);
-    // PORT NOTE (magick-agency): `FORWARDABLE_ERROR_CODES` assertion deleted with the mask;
-    // there is no mask, so core's body reaches the client as written.
+    // The internal handler's body reaches the client as written.
     await app.close();
   });
 
@@ -643,7 +629,7 @@ describe('the plugin-level path guard covers the new route', () => {
      * which is the point — a per-handler check is one a new route can forget.
      * What matters for THIS route is the direction the guard runs in.
      * `GET /campaigns/:id` is floored at `viewer` and interpolates its `:id` as
-     * the LAST segment of core's path, so without the hook a `viewer` sending
+     * the LAST segment of the internal handler's path, so without the hook a `viewer` sending
      * `:id = campaign-1/stats/series` would reach this `account_admin` read.
      */
     const app = await buildApp('viewer');

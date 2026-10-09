@@ -2,9 +2,8 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { insertWebrtcCall } from '../setup/factories.js';
 /*
- * PORT NOTE (magick-agency): ported from core test/integration/flows/dialer-analysis-failure-paths.test.ts@4850d1d9
- * (2 cases -> 2), real Postgres 5436. `webrtc_calls` -> `agency_calls`; ids from the UUID
- * factories. The `settlement_status: not_due` / `claimPendingSettlements` assertions are dropped with settlement.
+ * Real Postgres. Rows live in `agency_calls`; ids come from the UUID factories.
+ * There is no settlement, so no `settlement_status` / `claimPendingSettlements` assertions.
  */
 vi.mock('../../../src/connection.js', () => ({ getPool: () => getTestPool() }));
 const { dialerAnalysisJobRepository: jobs } = await import('../../../src/repositories/dialer-analysis-job.repository.js');

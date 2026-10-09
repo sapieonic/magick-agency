@@ -3,10 +3,9 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { MembershipRole } from '@magick-agency/contracts/rbac';
 
 /**
- * NEW (magick-agency, Phase 8): `platformProfileRouteAuth`, the `ProfileRouteAuth` lane D's
- * call-analysis profile routes run behind at `/proxy/call-analysis-profiles` — master's
- * `proxy-call-analysis-profiles.routes.ts` chain collapsed (session → tenant-context →
- * `agency.analytics` capability → `agency.analysis_profiles.read|write` → core's account
+ * `platformProfileRouteAuth`, the `ProfileRouteAuth` the call-analysis profile routes run
+ * behind at `/proxy/call-analysis-profiles` (session → tenant-context →
+ * `agency.analytics` capability → `agency.analysis_profiles.read|write` → the account
  * requirement). The real `requirePermission` runs over the contract's matrix; the session and
  * tenant-context middlewares and the settings repository are stubbed.
  */
@@ -88,7 +87,7 @@ describe('platformProfileRouteAuth', () => {
     expect(seen).toEqual([]);
   });
 
-  it("answers core's 400 when there is no account (core's authMiddleware required one)", async () => {
+  it("answers 400 when there is no account (the profile routes require one)", async () => {
     asMember('account_admin', null);
     const { app, seen } = await build();
     const res = await app.inject({ method: 'GET', url: '/p' });
@@ -102,7 +101,7 @@ describe('platformProfileRouteAuth', () => {
     ['the column is false', { analyze_calls: false }],
     ['the column is NULL (the documented default is off)', { analyze_calls: null }],
     ['there is no settings row', null],
-  ])('refuses with master capability_disabled body when %s', async (_label, row) => {
+  ])('refuses with the capability_disabled body when %s', async (_label, row) => {
     asMember('tenant_owner');
     mocks.findSettings.mockResolvedValue(row);
     const { app, seen } = await build();
@@ -122,7 +121,7 @@ describe('platformProfileRouteAuth', () => {
     expect(res.json()).toEqual({ error: 'capability_disabled', capability: 'agency.analytics' });
   });
 
-  it('checks the capability BEFORE the permission, in master order', async () => {
+  it('checks the capability BEFORE the permission', async () => {
     asMember('agent');
     mocks.findSettings.mockResolvedValue({ analyze_calls: false });
     const { app } = await build();

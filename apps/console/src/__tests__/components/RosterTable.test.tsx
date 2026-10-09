@@ -193,7 +193,7 @@ describe('RosterTable — a thin row is not rated', () => {
 describe('RosterTable — a null rate is never 0%', () => {
   it('renders an em dash and a phrase for an unmeasured utilisation', () => {
     /**
-     * `occupancy_pct: null` on a row with 320 dials is the ordinary case: core's
+     * `occupancy_pct: null` on a row with 320 dials is the ordinary case: the server's
      * agent-state event log shipped after the dialer, so a session that predates it
      * has no events. Zero and unmeasured are indistinguishable on the wire — which
      * is precisely why this must not print `0%`, because one of the two readings
@@ -216,7 +216,7 @@ describe('RosterTable — a null rate is never 0%', () => {
      * ordinary answers a supervisor needs read back to them.
      *
      * What used to be here was a `attempts: 0` row asserting "No dials in this
-     * window" in three places. **That row cannot exist** — core groups over rows
+     * window" in three places. **That row cannot exist** — the server groups over rows
      * filtered on `dialed_at IS NOT NULL`, so `attempts >= 1` always and
      * `connect_rate_pct` is never null. The copy and the tests over it are gone; see
      * `connectRateCell`.
@@ -293,7 +293,7 @@ describe('RosterTable — the pinned cohort row', () => {
   it('shows the floor’s REAL pooled utilisation, with the arithmetic behind it', () => {
     /**
      * The team row used to show the cohort MEDIAN here, labelled as such, because
-     * the benchmark carried the cohort's talk and wrap-up and no pooled shift. D10
+     * the benchmark carried the cohort's talk and wrap-up and no pooled shift. The shift-seconds contract
      * adds `shift_seconds`, so the figure is now `(talk + wrapup) / shift` over the
      * benchmark's own totals — the floor's rate rather than a typical agent
      * standing in for it.
@@ -322,11 +322,10 @@ describe('RosterTable — the pinned cohort row', () => {
 
   it('falls back to the median stand-in when the pooled shift has not shipped yet', () => {
     /**
-     * Merge order is core → master → cusui, so this console normally deploys last
-     * and the field is there. It is read through a `typeof` guard anyway: a
+     * This console normally deploys last, so the field is there. It is read through a `typeof` guard anyway: a
      * hand-mirrored type is a claim about the wire, and a reviewer already proved
      * that a `benchmark`-less page took the whole roster section down. **Every
-     * absence on this surface degrades**, so a master without D10 costs this cell
+     * absence on this surface degrades**, so a server without `shift_seconds` costs this cell
      * its pooled figure and nothing else — exactly the median it showed before the
      * field existed, labelled exactly as it was.
      */
@@ -349,7 +348,7 @@ describe('RosterTable — the pinned cohort row', () => {
 
   it('says the floor has no recorded shift rather than printing 0%', () => {
     /**
-     * `shift_seconds: 0` is a real arrival: core's agent-state event log shipped
+     * `shift_seconds: 0` is a real arrival: the server's agent-state event log shipped
      * after the dialer, so a floor whose sessions predate it has no events rather
      * than zeroed ones. A zero denominator is `null`, never `0` — "0% utilised"
      * would be a confident claim that the floor sat idle.
@@ -373,7 +372,7 @@ describe('RosterTable — the pinned cohort row', () => {
     /**
      * AHT was the one metric with a team figure and no band beside it: the
      * benchmark carried handling time only as a pooled scalar, so four minutes had
-     * nothing saying whether it was ordinary on this campaign. D10 adds the
+     * nothing saying whether it was ordinary on this campaign. The server adds the
      * percentiles, and they read in the same sentence as the two rate bands — but
      * formatted as durations, because `median 74%` for a 74-second call is the one
      * mistake this field makes available.
@@ -396,7 +395,7 @@ describe('RosterTable — the pinned cohort row', () => {
   it('renders no handle-time band at all when the block has not shipped yet', () => {
     /**
      * Silence rather than "no median yet — too few rated agents": that sentence is
-     * a claim about the FLOOR, and making it about a field master has not deployed
+     * a claim about the FLOOR, and making it about a field the server has not deployed
      * would be a false one. The pooled figure beside it is unaffected.
      */
     const benchmark = rosterBenchmark();
@@ -536,7 +535,7 @@ describe('RosterTable — drilling in, and the accessibility of doing so', () =>
   });
 
   it('names an unresolvable agent as a marked id rather than leaving a blank cell', () => {
-    // `agent_name: null` means master could not resolve them (a deleted user, an id
+    // `agent_name: null` means the server could not resolve them (a deleted user, an id
     // from outside the tenant) — never "no name". A blank cell reads as a rendering
     // bug, and "Unknown" is identical for every unresolved agent.
     renderTable(rosterPage({ rows: [rosterRow({ agent_user_id: 'abcd1234-ef', agent_name: null })] }));

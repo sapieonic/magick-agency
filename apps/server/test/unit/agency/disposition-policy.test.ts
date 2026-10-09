@@ -9,12 +9,12 @@ import { DEFAULT_RETRY_POLICY, resolveRetryDecision } from '../../../src/agency/
 import type { AgencyAttemptOutcome, AgencyDisposition } from '@magick-agency/contracts/agency';
 
 // ---------------------------------------------------------------------------
-// AD-P3-C-02 — disposition semantics. §2.4's precedence rule, and the three
+// Disposition semantics. The precedence rule, and the three
 // named codes.
 //
 // Pure module, so no harness: a clock is injected and there is no I/O to double.
 // Every expected instant is computed from the injected `now` rather than read off
-// a run (§16.6 wants exact values on anything clock-derived).
+// a run (anything clock-derived is asserted to exact values).
 // ---------------------------------------------------------------------------
 
 const NOW = new Date('2026-08-11T10:00:00.000Z');
@@ -33,12 +33,12 @@ const D = (e: AgencyDisposition, over: Partial<{ attemptsUsed: number; callbackA
 // the property under test.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P3-C-02 · suppress > terminal > callback > retry', () => {
+describe('suppress > terminal > callback > retry', () => {
   it('suppress sends the contact to `suppressed` with reason `dnc`', () => {
     const d = D(entry({ code: 'do_not_call', suppress: true }));
     expect(d.contactState).toBe('suppressed');
     expect(d.nextAttemptAt).toBeNull();
-    // Migration 073's column comment enumerates `dnc | invalid | max_attempts |
+    // The column comment enumerates `dnc | invalid | max_attempts |
     // manual`. `dnc`, not `manual`: an agent recording `do_not_call` on a live call
     // IS the DNC path's entry point, and `invalid` means the number does not work.
     expect(d.suppressedReason).toBe('dnc');
@@ -93,12 +93,11 @@ describe('AD-P3-C-02 · suppress > terminal > callback > retry', () => {
 // The callback arm's two deliberate choices.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P3-C-02 · the callback arm', () => {
+describe('the callback arm', () => {
   it('is keyed on a datetime being PRESENT, not on the code being `callback`', () => {
     // An operator code carrying `requires_datetime` means the same thing as the
     // built-in. Hardcoding the string would make the built-in a special case the
-    // rest of the catalog could not express — and, per the grep that killed §2.4's
-    // "depends on one of them existing" claim, nothing else keys on the string.
+    // rest of the catalog could not express — and nothing else keys on the string.
     const at = plus(120);
     const operatorCode = D(entry({ code: 'ring_me_back', requires_datetime: true }), { callbackAt: at });
     expect(operatorCode.contactState).toBe('pending');
@@ -118,7 +117,7 @@ describe('AD-P3-C-02 · the callback arm', () => {
   it('honours a callback even when the attempt budget is spent', () => {
     // Deliberate, and the direction is the argument: a customer who named a time is
     // owed that call even with the budget gone. Dropping it would have the agent
-    // promise a call that never comes — the exact failure `AD-P3-C-03` exists to
+    // promise a call that never comes — the exact failure the callback-budget rule exists to
     // prevent one step later, so it would be incoherent to defeat it here.
     const at = plus(4320);
     const d = D(entry({ code: 'callback', requires_datetime: true, retry: { max_attempts: 1 } }), {
@@ -133,7 +132,7 @@ describe('AD-P3-C-02 · the callback arm', () => {
 // The retry arm — voicemail's mechanism, and the attempts boundary.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P3-C-02 · the disposition retry arm', () => {
+describe('the disposition retry arm', () => {
   it('schedules at now + delay_minutes, exactly', () => {
     const d = D(entry({ retry: { delay_minutes: 240, max_attempts: 2 } }), { attemptsUsed: 1 });
     expect(d.contactState).toBe('pending');
@@ -144,13 +143,13 @@ describe('AD-P3-C-02 · the disposition retry arm', () => {
   it('treats a missing delay as 0, not as a fabricated default', () => {
     const d = D(entry({ retry: { max_attempts: 3 } }), { attemptsUsed: 1 });
     // `claimDialable` gates on `next_attempt_at <= now()`, so this is re-claimable
-    // on the very next tick — §4.2's stated behaviour for a retry with no delay.
+    // on the very next tick — the intended behaviour for a retry with no delay.
     expect(d.nextAttemptAt).toEqual(NOW);
     expect(d.reason).toBe('disposition_retry_scheduled');
   });
 
   it('ON the attempts boundary the contact is `exhausted`, one below it retries', () => {
-    // The boundary pair §16.6's clock/threshold rule demands: a max tested only at 0
+    // The boundary pair a threshold needs: a max tested only at 0
     // and 99 can be off by one and never show it. `attemptsUsed` INCLUDES the
     // attempt just dispositioned, so used === max means the budget is spent.
     const rule = { delay_minutes: 30, max_attempts: 2 };
@@ -195,7 +194,7 @@ describe('AD-P3-C-02 · the disposition retry arm', () => {
 // The plain arm, and the convergence that makes it hard to test honestly.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P3-C-02 · a plain label ends the contact, and `reason` is the only proof', () => {
+describe('a plain label ends the contact, and `reason` is the only proof', () => {
   it('sends a flagless disposition to `completed`', () => {
     const d = D(entry({ code: 'not_interested', label: 'Not interested' }));
     expect(d.contactState).toBe('completed');
@@ -208,7 +207,7 @@ describe('AD-P3-C-02 · a plain label ends the contact, and `reason` is the only
     // person: a dispositioned attempt's outcome is `connected`, whose default
     // policy is `max_attempts: 0` ⇒ `completed`. So both paths agree on this arm,
     // and an assertion on `contactState` cannot tell "the disposition decided" from
-    // "the outcome policy decided" — which is exactly the §16.6 question-1 shape.
+    // "the outcome policy decided" — a conflation the assertion on `contactState` alone would hide.
     // `reason` is the field that can, which is why it is returned and not just logged.
     const viaDisposition = D(entry({ code: 'not_interested' }));
     const viaOutcome = resolveRetryDecision(null, 'connected', NOW, 1);
@@ -224,8 +223,8 @@ describe('AD-P3-C-02 · a plain label ends the contact, and `reason` is the only
 // The three named codes. NOT a fallback — see the module header.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P3-C-02 · the built-in codes carry §2.4 semantics', () => {
-  it('names exactly the three codes §2.4 lists', () => {
+describe('the built-in codes carry their built-in semantics', () => {
+  it('names exactly the three built-in codes', () => {
     expect([...BUILT_IN_DISPOSITION_CODES].sort()).toEqual(['callback', 'do_not_call', 'voicemail']);
   });
 
@@ -258,7 +257,7 @@ describe('AD-P3-C-02 · the built-in codes carry §2.4 semantics', () => {
     for (const d of BUILT_IN_DISPOSITIONS) expect(Object.isFrozen(d)).toBe(true);
   });
 
-  it('voicemail is retry-driven, because D1 makes an outcome rule impossible', () => {
+  it('voicemail is retry-driven, because AMD being out of scope makes an outcome rule impossible', () => {
     // With AMD off the carrier reports `connected` for a voicemail pickup, so there
     // is no `machine` outcome for a policy to key on — asserted here so the absence
     // is a pinned property rather than an omission someone "fixes".
@@ -271,7 +270,7 @@ describe('AD-P3-C-02 · the built-in codes carry §2.4 semantics', () => {
 // The hazard created by "nothing keys on the code string".
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P3-C-02 · a built-in name with no flag behind it is detectable', () => {
+describe('a built-in name with no flag behind it is detectable', () => {
   it('reports a `do_not_call` that does not suppress', () => {
     // The live hazard: since every mechanism keys on a FLAG and nothing on the
     // code string, this entry is a button labelled "Do not call" that does not
@@ -280,7 +279,7 @@ describe('AD-P3-C-02 · a built-in name with no flag behind it is detectable', (
     const catalog = [entry({ code: 'do_not_call', label: 'Do not call' })];
     expect(builtInSemanticMismatches(catalog)).toEqual([{ code: 'do_not_call', missing: 'suppress' }]);
     // And the resolver confirms the consequence rather than the report only
-    // claiming it — §16.6 question 2, at the consumer.
+    // claiming it — checked at the consumer.
     expect(D(catalog[0]!).contactState).toBe('completed');
     expect(D(catalog[0]!).suppressedReason).toBeNull();
   });
@@ -317,7 +316,7 @@ describe('AD-P3-C-02 · a built-in name with no flag behind it is detectable', (
   });
 
   it('is ADVISORY — an empty catalog is a legitimate configuration', () => {
-    // Pinned because it was nearly built the other way. §2.4 claims these three
+    // Pinned because it was nearly built the other way. One could claim these three
     // "cannot be removed from a catalog … because the retry engine, the scheduler
     // and the DNC path each depend on one of them existing", and a grep for
     // consumers shows that justification is false: every mechanism keys on a flag,
@@ -341,10 +340,10 @@ describe('AD-P3-C-02 · a built-in name with no flag behind it is detectable', (
 //    is (1) pinning all 63 cells as an executable specification, and (2) the
 //    census below, which proves the two halves genuinely DISAGREE on real cells
 //    — without that, "the disposition wins" is an agreement check on data that
-//    cannot disagree, which is §16.6's fourth pattern and proves nothing.
+//    cannot disagree, which proves nothing.
 //  - Precedence WHERE IT IS CONSUMED is a different assertion and lives in
 //    `disposition-route.test.ts`, because the route is the only place both
-//    policies exist. §16.6's second question; neither file covers the other.
+//    policies exist. Neither file covers the other.
 //
 // If anyone ever merges the two policies — the change this ticket's design most
 // explicitly rules out — the merged function must take an outcome, and every
@@ -409,7 +408,7 @@ const ARMS: Array<{
   },
 ];
 
-describe('AD-P3-C-02 (d) · every outcome × every disposition', () => {
+describe('every outcome × every disposition', () => {
   for (const outcome of ALL_OUTCOMES) {
     for (const row of ARMS) {
       it(`${outcome} × ${row.arm} → ${row.expected.contactState}`, () => {
@@ -429,13 +428,13 @@ describe('AD-P3-C-02 (d) · every outcome × every disposition', () => {
   }
 
   it('the two halves DISAGREE on real cells, so the precedence is not vacuous', () => {
-    // §16.6's fourth pattern, applied before the fact rather than after. If the
+    // Applied before the fact rather than after. If the
     // outcome policy and the disposition policy happened to agree everywhere, every
     // row above would pass under an implementation that consulted the WRONG one,
     // and "the disposition wins" would be untested while looking covered.
     //
     // `null` policy on the outcome side deliberately: that is the ordinary
-    // production case (`retry_policy` defaults to `'{}'` and master never sends the
+    // production case (`retry_policy` defaults to `'{}'` and the public API layer never sends the
     // field), so the comparison is against `DEFAULT_RETRY_POLICY`, which is what
     // real campaigns actually run.
     const disagreements: string[] = [];
@@ -453,7 +452,7 @@ describe('AD-P3-C-02 (d) · every outcome × every disposition', () => {
     //
     // ── 40 → 42, and the +2 was enumerated cell by cell, not absorbed ────────
     //
-    // `AD-P3-C-09` gave `agent_disconnected` and `orphaned` entries in
+    // The our-fault ledger gave `agent_disconnected` and `orphaned` entries in
     // `DEFAULT_RETRY_POLICY`. Both used to answer `completed` for every arm (via
     // `no_policy_for_outcome`); both now answer `pending` at `attemptsUsed < 3`.
     // Per outcome that LOSES 2 disagreements and GAINS 3:
@@ -472,14 +471,14 @@ describe('AD-P3-C-02 (d) · every outcome × every disposition', () => {
     // count change cannot quietly drop one of them.
     //
     // (a): `connected` is `max_attempts: 0` ⇒ `completed` by outcome, while a
-    // `voicemail` disposition schedules a retry. The exact cell D1 forces to exist.
+    // `voicemail` disposition schedules a retry. The exact cell that AMD being out of scope forces to exist.
     expect(disagreements).toContain('connected × retry — budget left');
     // The DNC arm on an outcome that would otherwise have retried.
     expect(disagreements).toContain('no_answer × suppress');
     // `invalid` suppresses by outcome; a plain label completes.
     expect(disagreements).toContain('invalid × plain label');
-    // `AD-P3-C-09`'s two new cells, named so the +2 above cannot later be
-    // "corrected" back to 40 by deleting the defaults that fix MAG-97. A
+    // The our-fault ledger's two new cells, named so the +2 above cannot later be
+    // "corrected" back to 40 by deleting the defaults that fix the retry defaults. A
     // `terminal` disposition retires the contact; the outcome half now retries,
     // which is the whole point — our own fault must not be the thing that ends it.
     expect(disagreements).toContain('agent_disconnected × terminal');
@@ -490,7 +489,7 @@ describe('AD-P3-C-02 (d) · every outcome × every disposition', () => {
     // The guard that makes "every outcome" true rather than aspirational: a value
     // added to `AgencyAttemptOutcome` without being added here would leave the
     // table silently partial. `machine` is in the union and deliberately absent
-    // from the retry policy (D1), so it is exactly the kind of member that gets
+    // from the retry policy (AMD is out of scope), so it is exactly the kind of member that gets
     // forgotten.
     expect(ALL_OUTCOMES).toHaveLength(9);
     expect(new Set(ALL_OUTCOMES).size).toBe(ALL_OUTCOMES.length);

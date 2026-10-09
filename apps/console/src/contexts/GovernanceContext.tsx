@@ -4,32 +4,28 @@ import { useTenant } from './TenantContext';
 import type { AgencyAccountSettings } from '@magick-agency/contracts/api/platform/settings';
 
 /**
- * PORT NOTE (magick-agency): cusui's `GovernanceContext` @ ee5beb44 fetched
- * `GET /governance/effective` for the active `(tenant, account)` and exposed
- * master's capability map. Magick Agency has no governance (extraction plan
- * §3.2): the facts that map carried for the agency product are ONE per-account
- * settings row, and the session payload already carries every reachable
- * account's row, keyed by account id (`SessionResponse.settings`). So the map is
- * now DERIVED from `useAuth().settings[accountId]` — no request — and the
- * context keeps its name and its value shape so every ported reader
+ * Magick Agency has no governance endpoint: the capability map is built from ONE per-account settings row, and
+ * the session payload already carries every reachable account's row, keyed by
+ * account id (`SessionResponse.settings`). So the map is DERIVED from
+ * `useAuth().settings[accountId]` — no request. Readers
  * (`RequireCapability`, `AgentLanding`, `HomeRedirect`, the campaign builder's
  * per-field checks, `TeamPage`) is unchanged.
  *
  * The derivation, capability by capability (`capabilityMapFromSettings`):
  *  - `agency` — always `true`. The section-level gate is always on, because the
- *    app IS agency (plan §3.2).
+ *    app IS agency.
  *  - `agency.recording` — the active account's `allow_recording`.
  *  - `agency.analytics` — the active account's `analyze_calls`.
- * Every other key is absent, so `isEnabled` answers `true` for it — cusui's
- * fail-OPEN rule, unchanged: this is L1 (UX) gating and the server's 403 is the
+ * Every other key is absent, so `isEnabled` answers `true` for it — the
+ * fail-OPEN rule: this is L1 (UX) gating and the server's 403 is the
  * real enforcement. That includes `calls.dialer.analytics`, the capability
- * master gated the profile LIST behind: agency gates that read on the
+ * an earlier gate on the profile LIST: agency gates that read on the
  * `agency.analysis_profiles.read` permission alone.
  *
  * An account with no settings row in the session (the payload is resolved at
  * sign-in; an account created after it, or no active account) leaves both
  * per-field keys absent — fail-open, as a missing governance map did. The
- * server's per-field check on campaign writes (MAG-138) refuses regardless.
+ * server's per-field check on campaign writes refuses regardless.
  */
 interface GovernanceContextValue {
   /** Effective capability map for the ACTIVE (tenant, account). */
@@ -38,7 +34,7 @@ interface GovernanceContextValue {
   /**
    * Fail-OPEN: unknown/missing key ⇒ enabled. Only an explicit `false` hides a
    * capability. This is L1 (UX) gating — the server's 403 is the real
-   * enforcement, so a missing map must never blank the app (design §2.3).
+   * enforcement, so a missing map must never blank the app (design).
    */
   isEnabled: (capability: string) => boolean;
   /** Re-reads the session (`GET /auth/me`), which carries the settings map. */
@@ -47,7 +43,7 @@ interface GovernanceContextValue {
 
 const GovernanceContext = createContext<GovernanceContextValue | null>(null);
 
-/** The capability map one account's settings row stands for. See the PORT NOTE above. */
+/** The capability map one account's settings row stands for. See the note above. */
 export function capabilityMapFromSettings(
   settings: AgencyAccountSettings | undefined,
 ): Record<string, boolean> {

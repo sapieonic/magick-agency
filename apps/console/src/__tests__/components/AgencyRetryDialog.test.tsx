@@ -9,7 +9,7 @@ import type { AgencyRetrySelector } from '../../types/agency-spine';
  *
  * ── What is worth pinning here ─────────────────────────────────────────────
  * `POST .../retry` creates a campaign and seeds its roster in one transaction,
- * and there is no campaign delete route in either service. So everything below
+ * and there is no campaign delete route in the API. So everything below
  * is about what the supervisor is told BEFORE the button, and the two facts
  * that are most often missing when the number looks wrong:
  *
@@ -63,7 +63,7 @@ const PARENT: AgencyCampaign = {
  *
  * ⚠️ This used to be `{last_outcome: ['no_answer','busy'], never_attempted:
  * true}`, which is the encoding the default was rewritten to STOP using: two
- * dimensions, ANDed by core, and a contact with no attempts has a NULL outcome
+ * dimensions, ANDed by the server, and a contact with no attempts has a NULL outcome
  * — so it matches zero rows on every campaign. The suite stayed green because
  * the dialog forwards whatever it is handed, but anything copied out of here
  * reintroduced the dead default.
@@ -73,7 +73,7 @@ const SELECTOR: AgencyRetrySelector = DEFAULT_RETRY_SELECTOR;
 function preview(over: Partial<AgencyRetryPreview> = {}): AgencyRetryPreview {
   return {
     matched: 812,
-    // `__none__` is present on purpose: it is core's bucket key for a NULL
+    // `__none__` is present on purpose: it is the server's bucket key for a NULL
     // outcome, a member of the default selector, and therefore in the breakdown
     // of essentially every Retry opened from the campaign header. Without it in
     // the fixture, the breakdown test cannot assert that the raw key never
@@ -233,7 +233,7 @@ describe('the preview', () => {
     const byDisposition = screen.getByTestId('retry-by-disposition');
     // The catalog's own label, never the code.
     expect(byDisposition.textContent).toContain('Voicemail');
-    // `__none__` is core's bucket key for a contact nobody wrote up. It is a
+    // `__none__` is the server's bucket key for a contact nobody wrote up. It is a
     // key, not a code, and must never render as one.
     expect(byDisposition.textContent).toContain('Never written up');
     expect(byDisposition.textContent).not.toContain('__none__');
@@ -301,7 +301,7 @@ describe('the filters that were left behind', () => {
 });
 
 describe('the name and the overrides', () => {
-  it('offers core’s own default name, editable', async () => {
+  it('offers the server’s own default name, editable', async () => {
     renderDialog();
     const input = (await screen.findByLabelText('Campaign name')) as HTMLInputElement;
     expect(input.value).toBe('Q3 Winback — Retry 1');
@@ -360,7 +360,7 @@ describe('the three refusals', () => {
     const error = await screen.findByTestId('retry-submit-error');
     expect(error.textContent).toMatch(/no campaign was created/i);
     expect(error.textContent).toContain('Do Not Call');
-    // Core's own sentence is not what a supervisor acts on here.
+    // The server's own sentence is not what a supervisor acts on here.
     expect(error.textContent).not.toContain('no rows');
   });
 
@@ -468,7 +468,7 @@ describe('the idempotency key — at-most-once, minted per OPENING', () => {
     await confirmCreate();
 
     await waitFor(() => expect(mocks.createRetry).toHaveBeenCalled());
-    // Shape, not value: core enforces 16..64 of a bounded alphabet, and a key
+    // Shape, not value: the server enforces 16..64 of a bounded alphabet, and a key
     // that fails it is a 400 on the one request that must not be retried blind.
     expect(key()).toMatch(/^[A-Za-z0-9_.:-]{16,64}$/);
   });
@@ -477,7 +477,7 @@ describe('the idempotency key — at-most-once, minted per OPENING', () => {
     /**
      * The case the whole field exists for, and the one a per-request key gets
      * wrong. A refusal and a lost success are indistinguishable from the
-     * browser — so pressing again must either create (core rolls a refusal back
+     * browser — so pressing again must either create (the server rolls a refusal back
      * before writing the key) or REPLAY the campaign that was really made. A
      * fresh key on the second press can only do the first, which on a lost
      * success is a second campaign over the same cohort.
@@ -554,7 +554,7 @@ describe('the idempotency key — at-most-once, minted per OPENING', () => {
   });
 
   it('hands a REPLAY back as an ordinary success', async () => {
-    // Core answers 200 + `idempotent_replay: true`; the campaign is the one this
+    // The server answers 200 + `idempotent_replay: true`; the campaign is the one this
     // supervisor already made, and the console's job is to take them to it. A
     // dialog that treated it as an error would leave them believing nothing
     // exists, over a campaign that does.
@@ -579,7 +579,7 @@ describe('the outcome breakdown never shows a raw bucket key', () => {
   it('renders __none__ as words, the way the disposition breakdown already does', async () => {
     // `attemptOutcomeLabel` falls through to the raw string for anything it does
     // not know, so this rendered literally `__none__` on screen. Not a rare
-    // shape: it is core's `by_last_outcome` key for a NULL outcome, a member of
+    // shape: it is the server's `by_last_outcome` key for a NULL outcome, a member of
     // `DEFAULT_RETRY_SELECTOR`, and therefore in the breakdown of essentially
     // every Retry opened from the campaign header.
     renderDialog();
@@ -598,7 +598,7 @@ describe('the outcome breakdown never shows a raw bucket key', () => {
 describe('filter values that can never be retried are named, not silently sent', () => {
   it('tells the supervisor that DNC contacts were left behind', async () => {
     // The roster offers `dnc` as a chip — arguably the reason that tab exists —
-    // and core answers a 400 on the whole request for it. Without this the
+    // and the server answers a 400 on the whole request for it. Without this the
     // supervisor lands on a refused preview about a field they did type.
     renderDialog({ droppedValues: ['dnc'] });
     const note = await screen.findByTestId('retry-refused-values');

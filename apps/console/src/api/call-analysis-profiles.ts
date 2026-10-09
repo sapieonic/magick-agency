@@ -8,7 +8,7 @@ import type {
 } from '../types/call-analysis-profile';
 
 /**
- * Call-analysis profiles CRUD, proxied through master
+ * Call-analysis profiles CRUD, proxied through the server
  * (`/proxy/call-analysis-profiles`, capability `calls.dialer.analytics`).
  *
  * Note `PUT` is copy-on-write upstream: it returns a NEW row with a new `id` and

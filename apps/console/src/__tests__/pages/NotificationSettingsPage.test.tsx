@@ -16,7 +16,7 @@ import type { NotificationEventPreference } from '../../types/notifications';
  *
  *  1. **The catalog is SERVED.** Nothing about the events is written in this
  *     repo, so the page must render a category, a cadence and a label it has
- *     never heard of. A build of master with a new event has to light it up
+ *     never heard of. A build of the API with a new event has to light it up
  *     here with no frontend change — the rule the audit log's
  *     `available_actions` established.
  *  2. **A default is a SUBSCRIPTION, not an absence.** `is_default: true` with
@@ -24,24 +24,18 @@ import type { NotificationEventPreference } from '../../types/notifications';
  *     as off would invite them to turn on something already on.
  *  3. **The save is a PATCH.** Only what changed is sent, so a client built
  *     against an older catalog cannot reset an event it has never heard of.
- *  4. **A frequency goes only where it means something.** Master REFUSES a
+ *  4. **A frequency goes only where it means something.** The API REFUSES a
  *     frequency on an immediate event rather than ignoring it, so sending one
  *     would 400 the whole save over a field the person never touched.
  *  5. **An empty catalog is a finding, not a failure.** The page must say so
  *     rather than render blank. Note it is a genuinely empty catalog, NOT "a
- *     dialer `agent` has no subscriptions" as this used to claim — master shows
+ *     dialer `agent` has no subscriptions" as this used to claim — the API shows
  *     every role the two `explicit`-audience `campaign.*` events, so an agent
  *     has real toggles to manage.
- *  6. **The modal must agree with the mail, figure for figure.** Its whole
- *     promise is "exactly what would be sent", so a caption, a rounding or an
- *     omitted row that differs from master's template breaks it quietly.
  *
- * PORT NOTE (magick-agency): property 6 goes with the digest preview it was
- * about — master's credits usage digest is not ported (plan §3.3, §3.5). DELETED:
- * `preview` (3), `the preview modal matches the mail` (6), "reports a failed
- * preview through showErrorToast" (1) and `the preview credits figure` (6
- * `it.each` rows + 1). Every other case is verbatim; the catalog fixture still
- * carries a digest-cadence event, so the cadence controls stay covered.
+ * There is no credits usage digest in this product, so there is no digest
+ * preview to test; the catalog fixture still carries a digest-cadence event, so
+ * the cadence controls stay covered.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -129,7 +123,7 @@ describe('NotificationSettingsPage', () => {
   });
 
   it('renders a category this build has never heard of', async () => {
-    // The catalog is master's. A category whitelist here would silently drop
+    // The catalog is the API's. A category whitelist here would silently drop
     // every event in a grouping added after this build shipped — the events
     // would simply not appear, with nothing to say why.
     mocks.getNotificationPreferences.mockResolvedValue({
@@ -152,7 +146,7 @@ describe('NotificationSettingsPage', () => {
     renderPage();
     await screen.findByText('Usage digest');
     // Two radios for the digest, and none for the immediate campaign event —
-    // master 400s a frequency sent on one.
+    // the API 400s a frequency sent on one.
     expect(screen.getAllByRole('radio')).toHaveLength(2);
   });
 
@@ -170,7 +164,7 @@ describe('NotificationSettingsPage', () => {
     });
 
     it('omits the frequency on an immediate event', async () => {
-      // Master REFUSES it rather than ignoring it, so including it would 400 the
+      // The API REFUSES it rather than ignoring it, so including it would 400 the
       // whole save over a field the person never touched.
       renderPage();
       fireEvent.click(await screen.findByLabelText('Campaign finished enabled'));

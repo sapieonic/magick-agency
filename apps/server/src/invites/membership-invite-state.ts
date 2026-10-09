@@ -28,8 +28,8 @@ export interface MembershipInviteStateInput {
    * `users.firebase_uid` for the member, or `null` when the user row is missing.
    *
    * NEVER put this on the wire. It is an input to the decision and nothing else:
-   * a `pending_<uuid>` stub names a row whose owner has never signed in, and the
-   * ticket is explicit that neither it nor the real uid may reach the browser.
+   * a `pending_<uuid>` stub names a row whose owner has never signed in, and
+   * neither it nor the real uid may reach the browser.
    */
   firebaseUid: string | null;
 }
@@ -41,7 +41,7 @@ export interface MembershipInviteStateInput {
  * The question this answers is **"has this person completed Firebase sign-in"**
  * — a fact about the USER, rendered once per membership row because that is the
  * shape the Team page renders. `POST /users/invite` mints a stub `users` row
- * with `firebase_uid = pending_<uuid>` for an address master has never seen, and
+ * with `firebase_uid = pending_<uuid>` for an address this server has never seen, and
  * the only things that ever replace that stub are the two adoption paths in
  * `adoptFirebaseIdentity` — so the prefix is a complete and exact record of
  * "nobody has signed in as this row yet".
@@ -57,11 +57,9 @@ export interface MembershipInviteStateInput {
  * reachable cases, because in each of them a real, signed-in person holds an
  * `agent` membership that no claim will ever be recorded against:
  *
- *  1. **Every `agent` membership predating migration 069** (2026-09-07). The
- *     role itself arrived in migration 051, so this is a real population, and
- *     069 ships no backfill. There is no invite row to claim and none will
- *     appear, so the feature's first deploy would have relabelled all of them
- *     `pending` at once and left them there.
+ *  1. **Every `agent` membership with no invite row** (one that was not created
+ *     through an invite). There is no invite row to claim and none will
+ *     appear, so all of them would be labelled `pending` and left there.
  *  2. **`PUT /users/:id/role` re-roles an existing member to `agent`**
  *     (`user.validator.ts` accepts it). No invite is issued on that path, so a
  *     colleague of six months would flip to `pending` the moment their role
@@ -82,12 +80,12 @@ export interface MembershipInviteStateInput {
  * stub. Every case the claim arm got right, the stub check already got right —
  * it only added the four ways above to get it wrong.
  *
- * ── The remaining limitation, which is the ticket's own definition ─────────
+ * ── The remaining limitation, which is the field's own definition ──────────
  * `POST /users/invite` reuses the existing `users` row when the address is
- * already known, so inviting somebody who ALREADY has a MagickVoice login reads
- * `active` from the moment the membership is written — before they have opened
- * this workspace. Under the ticket's wording ("pending vs signed up") that is
- * the correct answer, not a defect: they have signed up. What this field does
+ * already known, so inviting somebody who ALREADY has a login reads `active`
+ * from the moment the membership is written — before they have opened this
+ * workspace. Under the field's meaning ("pending vs signed up") that is the
+ * correct answer, not a defect: they have signed up. What this field does
  * NOT tell a supervisor is whether that person has ever opened, accepted, or
  * used THIS workspace. It is an identity fact, not an engagement fact, and no
  * amount of reading `membership_invites` would make it an engagement fact
@@ -97,7 +95,7 @@ export interface MembershipInviteStateInput {
  * ── No user row ⇒ `pending` ────────────────────────────────────────────────
  * **Not reachable today, and the arm is still here on purpose.**
  * `memberships.user_id` is `NOT NULL REFERENCES users(id) ON DELETE CASCADE`
- * (migration 001), so a membership cannot outlive its user — hard-deleting the
+ * so a membership cannot outlive its user — hard-deleting the
  * user takes the membership with it. The read that feeds this is a LEFT JOIN
  * rather than an inner one specifically so a relaxed FK would surface a member
  * with no identity instead of silently dropping them from their own tenant's

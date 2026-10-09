@@ -25,10 +25,10 @@ vi.mock('../../api/super-admin', () => ({
 import { TenantFeatureFlags } from '../../components/super-admin/TenantFeatureFlags';
 
 /**
- * `env_default` is core's `resolveEnvDefault(f)`, which returns the registry
+ * `env_default` is the server's `resolveEnvDefault(f)`, which returns the registry
  * `default` when the flag's env var is unset — and no flag has a null default.
  * It is therefore NEVER null on the wire; keep fixtures mirroring `default`
- * rather than nulling the field, which tests a response core cannot produce.
+ * rather than nulling the field, which tests a response the server cannot produce.
  */
 const CATALOG: FeatureFlagCatalogResponse = {
   flags: [
@@ -76,7 +76,7 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
-describe('TenantFeatureFlags — #19b source-driven inherited sub-line', () => {
+describe('TenantFeatureFlags — source-driven inherited sub-line', () => {
   const cases: Array<[FlagResolutionSource, boolean, RegExp]> = [
     ['global', true, /set globally/i],
     ['env', true, /from env/i],
@@ -99,7 +99,7 @@ describe('TenantFeatureFlags — #19b source-driven inherited sub-line', () => {
   });
 });
 
-describe('TenantFeatureFlags — #18 confirm-gate on destructive Off', () => {
+describe('TenantFeatureFlags — confirm-gate on destructive Off', () => {
   it('turning OFF a currently-enabled flag shows a confirm dialog (does not write yet)', async () => {
     // Currently On via a tenant override.
     mocks.resolve.mockResolvedValue(makeResolve(true, 'tenant', [tenantOverride(true)]));
@@ -171,7 +171,7 @@ describe('TenantFeatureFlags — #18 confirm-gate on destructive Off', () => {
 describe('TenantFeatureFlags — account scope', () => {
   it('selecting an account re-resolves and writes scope_type=account with account_id', async () => {
     // The shared CATALOG fixture is `scopes: ['global', 'tenant']` (mirroring
-    // core's real `agency_dialer_enabled`), which the scope gate now correctly locks
+    // the server's real `agency_dialer_enabled`), which the scope gate now correctly locks
     // at account scope. Widen it for this test — the flow under test is the
     // account-scope request body, not the gate.
     mocks.getCatalog.mockResolvedValue({
@@ -266,7 +266,7 @@ describe('TenantFeatureFlags — override row affordances', () => {
     mocks.getCatalog.mockResolvedValue({
       flags: [{
         key: 'max_threads_label', type: 'string', default: 'auto', env_default: 'auto',
-        scopes: ['global', 'tenant'], client_exposed: false, owner: 'core',
+        scopes: ['global', 'tenant'], client_exposed: false, owner: 'dialer',
         description: 'worker threads label', global_override: null,
       }],
     });
@@ -588,7 +588,7 @@ describe('TenantFeatureFlags — scope revert', () => {
 });
 
 // ── Defect 1: the boolean tri-state needs the numeric cell's scope gate here
-// too. `prewarm_enabled` is `scopes: ['tenant']` in core's registry, so at
+// too. `prewarm_enabled` is `scopes: ['tenant']` in the server's registry, so at
 // ACCOUNT scope the tri-state offered a write that always 422s.
 describe('TenantFeatureFlags — boolean scope gating', () => {
   const PREWARM_CATALOG: FeatureFlagCatalogResponse = {
@@ -636,8 +636,8 @@ describe('TenantFeatureFlags — boolean scope gating', () => {
   });
 });
 
-// ClickUp 14ygtkjaf5a: bot transcripts in Loki. Tenant/account scopes only,
-// with master's `policy` driving the warning — nothing keyed on the flag here.
+// Bot transcripts in Loki. Tenant/account scopes only,
+// with the server's `policy` driving the warning — nothing keyed on the flag here.
 describe('TenantFeatureFlags — ai_turn_transcript_logging (policy flag)', () => {
   const WARNING = "Writes the bot's spoken transcript into server logs (Loki). Personal data — enable for test accounts only, and turn it off when done.";
   const TRANSCRIPT_FLAG = {

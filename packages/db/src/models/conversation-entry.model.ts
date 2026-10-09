@@ -1,9 +1,6 @@
-// PORT NOTE (magick-agency): a SUBSET of core `src/db/models/call.model.ts`
-// (v1.123.2, lines 154-196), verbatim: `ConversationEntry` and its provenance
-// type, which the analysis service and prompt builder take as input. Core keeps
-// them in `call.model.ts`; that file here is lead-owned (shared infrastructure,
-// holds only the analysis RESULT subset), so lane D carries these in a sibling
-// file instead of editing it.
+// `ConversationEntry` and its provenance type, which the analysis service and
+// prompt builder take as input. They live in their own file rather than in
+// `call.model.ts`, which holds only the analysis RESULT shape.
 
 /**
  * Where an assistant entry in `conversation_log` came from.
@@ -12,7 +9,7 @@
  *                      same thing: rows written before this field existed, and
  *                      every model turn written since, carry no `source` at all,
  *                      so a reader must treat a missing value as `model`
- *                      (`conversationEntrySource` in `core/transcript-quality.ts`).
+ *                      (`conversationEntrySource` in `apps/server/src/core/transcript-quality.ts`).
  *   `intro_clip`     — the pre-recorded intro the platform played before the AI
  *                      spoke. `content` is the operator's `intro_transcript`, or a
  *                      fixed placeholder — never the audio file's name.

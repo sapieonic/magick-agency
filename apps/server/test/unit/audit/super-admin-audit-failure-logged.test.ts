@@ -3,9 +3,9 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 /**
- * NEW (magick-agency), Manas 2026-10-09: super-admin audit writes stay fire-and-forget
- * (master's behaviour) but a failed write is logged at ERROR with the action, actor and
- * target instead of vanishing into master's `.catch(() => {})`. Mutation-checked: replacing
+ * Super-admin audit writes stay fire-and-forget, but a failed write is logged at ERROR
+ * with the action, actor and target instead of vanishing into a bare `.catch(() => {})`.
+ * Mutation-checked: replacing
  * the helper's `onError` body with nothing reds cases 1 and 2.
  */
 const mocks = vi.hoisted(() => ({

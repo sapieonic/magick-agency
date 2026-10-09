@@ -4,10 +4,9 @@ import { getTestPool, closeTestPool, truncateAll } from '../setup/test-utils.js'
 import { uuidFor } from '../setup/factories.js';
 
 /*
- * NEW (magick-agency, lane A, authorised by the lead): real-Postgres coverage of
- * `accountSettingsRepository.setRecordingAnalysisToggles`, the toggles-only writer
- * the super-admin settings route uses instead of core's read-concurrency-then-
- * `upsert`. No core source.
+ * Real-Postgres coverage of `accountSettingsRepository.setRecordingAnalysisToggles`,
+ * the toggles-only writer the super-admin settings route uses instead of a
+ * read-concurrency-then-`upsert`.
  *
  * The first case is the race itself, on the real `upsert` SQL: the old pattern
  * reverts a concurrency write that lands between its read and its write. The rest
@@ -52,7 +51,7 @@ describe('accountSettingsRepository.setRecordingAnalysisToggles (integration)', 
     });
     expect(await row()).toMatchObject({ max_concurrent_calls: 20, concurrency_allocation_version: 2 });
 
-    // Core's pattern, which the route no longer uses.
+    // The upsert-everything pattern, which the route no longer uses.
     await accountSettingsRepository.upsert({ tenant_id: T, account_id: A, max_concurrent_calls: read, allow_recording: true });
 
     expect(await row()).toMatchObject({ max_concurrent_calls: 5, concurrency_allocation_version: 3 });

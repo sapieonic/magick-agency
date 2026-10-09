@@ -15,8 +15,8 @@ export interface AccountSettingsRecord {
   allow_recording: boolean | null;
   /**
    * Per-account cap on a bridged call's length, in seconds. Null = the process
-   * default applies. PORT NOTE (magick-agency): added — plan §3.2 moves core's
-   * `webrtc_max_duration_seconds` flag here.
+   * default applies. This replaces the former global
+   * `webrtc_max_duration_seconds` feature flag.
    */
   webrtc_max_duration_seconds: number | null;
   created_at: Date;

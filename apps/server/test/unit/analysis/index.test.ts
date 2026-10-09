@@ -1,8 +1,6 @@
 /*
- * PORT NOTE (magick-agency): ported from core test/unit/analysis/index.test.ts
- * @4850d1d9 (10 cases -> 7). Deleted: the three "falls back to pipeline ... key"
- * cases. Core fell back to the live pipelines' keys inside the factory; there are no
- * live pipelines here, so the fallback moved to the env reader (OPENAI_API_KEY /
+ * The factory has no fallback to a live pipeline's key (there are no live pipelines);
+ * the fallback lives in the env reader (OPENAI_API_KEY /
  * GEMINI_API_KEY -> `postCallAnalysis.apiKey`) and is tested in
  * test/unit/config/analysis-config.test.ts. "returns null when no API key" now just
  * omits the key.

@@ -6,33 +6,23 @@ import { handleStationSocket } from '../../agency/station-socket.js';
 import type { AgencyRuntime } from '../../agency/runtime.js';
 
 /*
- * PORT NOTE (magick-agency, Phase 8): master `src/api/routes/proxy-agency-station.routes.ts`
- * @a1f0756a, with the hop collapsed in-process (decision B16).
+ * The console's station WebSocket, served at `/proxy/agency/station/:sessionId`
+ * (decision B16: one process, one socket).
  *
- * In MagickVoice the console's station socket ended at master, which refused a tokenless
- * upgrade (4401) and a path-escaping session id (1008), then opened a SECOND socket to core's
- * `/api/v1/agency/station/:sessionId?token=` and relayed frames and close codes between the
- * two legs. Core verified the token and ran `handleStationSocket`. Here there is one process
- * and one socket: after master's two refusals, the console's socket IS the station socket —
- * handed to core's `handleStationSocket` (Phase 6's verbatim port, `agency/station-socket.ts`),
- * which verifies and consumes the token first, exactly as it did behind master. The bridge
- * borrows this same socket for media, as it borrowed core's leg.
+ * This route makes two refusals, in this order: a tokenless upgrade (4401) and a
+ * path-escaping session id (1008). Past those, the console's socket IS the station
+ * socket: it is handed to `handleStationSocket` (`agency/station-socket.ts`), which
+ * verifies and consumes the single-use token before anything else. The WebRTC bridge
+ * borrows this same socket for media. With no runtime (an app built without a context)
+ * the socket is closed 1011.
  *
- * Kept: the route shape and path (`/:sessionId` under `/proxy/agency/station`, master
- * `src/index.ts:564`), the 4401 / 1008 refusals and their order, `disableNagle` on the agent's
- * socket, the log lines' meaning, `rewriteStationWsUrl` (the agent routes still rewrite core's
- * `station_ws_url` onto this path). Deleted with the second leg, each because there is no
- * upstream socket: `STATION_CLOSE_CODES.UPSTREAM_UNAVAILABLE` (4502), the pending-frame buffer
- * for a CONNECTING core leg, the two-way relay, `closeSafely` / `isSendableCloseCode` /
- * `truncateCloseReason` / `describeUnsendableCode` / `STATION_CLOSE_REASONS` /
- * `STATION_CLOSE_DELIVERY` (they translated a close observed on one leg into one sendable on
- * the other; core's own close codes — 4401, 4404, 4409 — now reach the console directly, as
- * master relayed them), `MEDIA_WS_CLIENT_OPTIONS` and `config.coreService.url`. One addition:
- * with no runtime (an app built without a context) the socket is closed 1011, Phase 6's
- * `registerStationSocket` behaviour.
+ * The close codes `handleStationSocket` itself sends (4401, 4404, 4409) reach the
+ * console directly; there is no relay leg to translate them. `disableNagle` is applied
+ * to the agent's socket. `rewriteStationWsUrl` stays here because the agent routes use it
+ * to rewrite the `station_ws_url` minted by the internal handler instance onto this path.
  *
- * Core's own station path (`/api/v1/agency/station/:sessionId`, where Phase 6 mounted it) is
- * NOT registered: the console never called it (it called master's), and a second route to the
+ * `/api/v1/agency/station/:sessionId` (the path in that minted URL) is deliberately NOT
+ * registered as a route: the console only ever connects here, and a second route to the
  * same handler would be a second unreviewed entry point.
  */
 
@@ -41,39 +31,41 @@ const log = createChildLogger({ component: 'agency-station-proxy' });
 /**
  * WebSocket close codes this route originates.
  *
- * `MISSING_TOKEN` is 4401 to match core's `AgencyStationCloseCode` for
+ * `MISSING_TOKEN` is 4401 to match `AgencyStationCloseCode`'s meaning of
  * "token missing, expired, already used, or wrong — **re-mint and retry**".
  * That is exactly the right instruction for a tokenless upgrade, and reusing
- * core's code means the console needs one handler rather than two. Contract v2
- * made the token single-use and ~2 minutes, so re-mint-and-retry is now the
- * common path, not an edge case.
+ * the code means the console needs one handler rather than two. The token is
+ * single-use and lives ~2 minutes, so re-mint-and-retry is the common path,
+ * not an edge case.
  *
  * `INVALID_SESSION_ID` is the plain RFC 6455 policy-violation code rather than
- * one of core's 44xx: nothing about it maps onto a core state, because master
- * refused before core was contacted, and re-minting a token would not help.
+ * one of the station's 44xx codes: nothing about it maps onto a station state,
+ * because the upgrade is refused before the station handler runs, and
+ * re-minting a token would not help.
  *
- * Core also uses 4404 (re-bootstrap, do not retry) and 4409 (superseded). This
- * proxy never originates those — it relays them.
+ * `handleStationSocket` also uses 4404 (re-bootstrap, do not retry) and 4409
+ * (superseded). This route never originates those; the handler sends them on
+ * the same socket.
  */
 export const STATION_CLOSE_CODES = {
-  /** No token on the upgrade — never reached core. Re-mint and retry. */
+  /** No token on the upgrade — never reached the station handler. Re-mint and retry. */
   MISSING_TOKEN: 4401,
   /** The session id would escape `/api/v1/agency/station`. Do not retry. */
   INVALID_SESSION_ID: 1008,
-  /** PORT NOTE (magick-agency): Phase 6's close for an app built without a runtime. */
+  /** The close for an app built without a runtime. */
   RUNTIME_UNAVAILABLE: 1011,
 } as const;
 
 /**
- * Rewrite core's absolute `station_ws_url` onto master's proxy prefix,
+ * Rewrite the internal handler instance's `station_ws_url`
+ * (`/api/v1/agency/station/<id>?token=…`) onto `/proxy/agency/station`,
  * preserving the path, the session id and the query string (which carries the
  * token). Mirrors `rewriteBrowserWsUrl`, and is exported for the same reason:
  * it is the one piece of this module that is a pure function and therefore the
  * one piece that can be tested without sockets.
  *
- * Falls back to the original URL if the shape is unexpected, so an unrecognised
- * core URL degrades to "client talks to core directly" rather than to a
- * guaranteed-broken proxy path.
+ * Falls back to the original URL if the shape is unexpected, rather than
+ * producing a guaranteed-broken `/proxy/agency/station` path.
  */
 export function rewriteStationWsUrl(stationWsUrl: string): string {
   let pathAndQuery = stationWsUrl;
@@ -109,9 +101,9 @@ export async function proxyAgencyStationRoutes(
         return;
       }
 
-      // The core path the session id would have been interpolated into. Kept as master's
-      // refusal: the id is still a path segment the console controls, and nothing that
-      // escapes it should reach the token store.
+      // The station path the session id is interpolated into. Refused here because the
+      // id is a path segment the console controls, and nothing that escapes it should
+      // reach the token store.
       const corePath = `/agency/station/${encodeURIComponent(sessionId)}`;
       if (isUnsafeCorePath(corePath)) {
         log.warn({ sessionId }, 'Station proxy: upgrade refused, path-escaping session id');

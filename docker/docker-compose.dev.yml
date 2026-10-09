@@ -1,7 +1,7 @@
-# Dev AND test infrastructure for magick-agency, on ports no other MagickVoice
-# stack uses (core 5432/6379, master 5433/6380, master test 5434/6381, core
-# test 5433/6380). Never point anything here at those ports: core's integration
-# suite once flushdb'd master's dev Redis.
+# Dev AND test infrastructure for magick-agency, on ports reserved for it
+# (decision B3). Never point anything here at 5432/5433/5434/6379/6380/6381:
+# other local stacks use them, and a test suite pointed at the wrong Redis can
+# flush another stack's data.
 #
 #   Postgres 5436 — databases `magick_agency` (dev) and `magick_agency_test`
 #   Redis    6383 — db 0 dev, db 1 test (only db 1 is ever flushed, by tests)

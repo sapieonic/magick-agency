@@ -3,34 +3,32 @@ import { hasPermission, type Permission } from '../../utils/permissions';
 import type { Role } from '../../types/auth';
 
 /**
- * PORT NOTE (magick-agency): the console no longer HAS a mirror — `hasPermission`
- * is the contract's (`@magick-agency/contracts/rbac`), the one matrix the server
- * enforces with. The floors below still pin it against master's, transcribed,
- * which is now a check that the contract kept master's floors. Master's
- * `proxy.feature_flags.read` is the contract's `agency.flags.read` (same floor).
+ * The console has no permission mirror of its own — `hasPermission` is the
+ * contract's (`@magick-agency/contracts/rbac`), the one matrix the server
+ * enforces with. The floors below pin it against a transcribed copy of the
+ * server's `PERMISSION_MATRIX`, which is a check that the contract kept those
+ * floors. The feature-flag read is `agency.flags.read`.
  *
- * cusui's `Permission` mirror, pinned against master's `PERMISSION_MATRIX`.
- *
- * The union's own comment claims a 1:1 correspondence with master's `roles.ts`,
- * and that claim was **false**: `agency.dnc.read` and `agency.dnc.manage` were
- * absent, which is precisely why no component could reference the DNC routes
- * even by accident (`MAG-116`). A comment asserting a correspondence that
+ * A comment claiming a 1:1 correspondence between the `Permission` union and the
+ * server's `roles.ts` was once **false**: `agency.dnc.read` and
+ * `agency.dnc.manage` were absent, which is precisely why no component could
+ * reference the DNC routes even by accident. A comment asserting a correspondence that
  * nothing checks is how it drifted in the first place.
  *
  * ── Why the expected floors are literals rather than imported ────────────────
- * They cannot be imported. Master is a separate repository and is not a
- * dependency of this one; in CI only cusui is checked out. So this pins the
- * mirror against a transcribed copy, and the transcription is the thing a
- * reviewer must check against
- * `magick-master/src/rbac/roles.ts` → `PERMISSION_MATRIX`.
+ * They cannot be imported. The server's matrix is not a
+ * dependency of the console. So this pins the
+ * contract against a transcribed copy, and the transcription is the thing a
+ * reviewer must check against the server's `src/rbac/roles.ts` →
+ * `PERMISSION_MATRIX`.
  *
  * That is a weaker guarantee than a shared module and it is stated plainly
- * rather than dressed up: this test catches cusui drifting from the values
- * below, not the two repositories drifting from each other. What it does buy is
+ * rather than dressed up: this test catches the console drifting from the values
+ * below, not the two sides drifting from each other. What it does buy is
  * that a silent deletion — the actual failure mode here — now fails loudly.
  */
 
-/** Transcribed from master `src/rbac/roles.ts`. Seven agency permissions. */
+/** Transcribed from the API `src/rbac/roles.ts`. Seven agency permissions. */
 const MASTER_AGENCY_FLOORS: Record<string, Role> = {
   'agency.station.connect': 'agent',
   'agency.attempts.handle': 'agent',
@@ -42,7 +40,7 @@ const MASTER_AGENCY_FLOORS: Record<string, Role> = {
   /**
    * Not an `agency.*` key, and included here anyway because it is now an agency
    * gate: `GET /proxy/agency/campaigns/:id/activity` and its CSV export carry
-   * `audit.read` (MAG-158). MAG-157 settled the choice by DROPPING this floor
+   * `audit.read` The floor was deliberately DROPPED
    * from `tenant_admin` to `account_admin` — the same floor as
    * `agency.supervise` — so the supervisor who controls a campaign can read its
    * trail, rather than minting a second permission that would then have to be
@@ -60,7 +58,7 @@ const MASTER_AGENCY_FLOORS: Record<string, Role> = {
    * Agency Dialer exists at all for the role it was built for.
    *
    * `GET /proxy/feature-flags` carried `proxy.stats.read` (floor `viewer`) until
-   * MAG-181. An `agent` is level 5, so every dedicated agent 403'd on the flag
+   * it was split. An `agent` is level 5, so every dedicated agent 403'd on the flag
    * map — and `FeatureFlagsContext` is fail-safe closed, so that error resolved
    * every flag to `false` and `RequireFlag flag="agency_dialer_enabled"` refused
    * `/dialer`, `/station`, `/dialer/performance` and `/dialer/attempts` alike,
@@ -78,7 +76,7 @@ const MASTER_AGENCY_FLOORS: Record<string, Role> = {
 const ROLES: Role[] = ['agent', 'viewer', 'operator', 'account_admin', 'tenant_admin', 'tenant_owner'];
 
 describe('agency permission mirror', () => {
-  it('carries every agency permission master defines', () => {
+  it('carries every agency permission the API defines', () => {
     // Sorted so the failure message names the missing key rather than showing
     // two unordered lists to diff by eye.
     const expected = Object.keys(MASTER_AGENCY_FLOORS).sort();
@@ -112,7 +110,7 @@ describe('agency permission mirror', () => {
 
   /**
    * The four `agent`-floored agency permissions, plus the flag map, are the whole
-   * of an agent's reach — by design (D6) for the four, and by MAG-181 for the
+   * of an agent's reach — by design for the four, and by the flag-map split for the
    * fifth. An `agent` sits at level 5, below `viewer`, so a permission
    * accidentally floored at `agent` grants it to everyone — the opposite of the
    * intended restriction, and invisible unless counted.
@@ -130,8 +128,7 @@ describe('agency permission mirror', () => {
       'agency.attempts.dispose',
       'agency.attempts.handle',
       'agency.dnc.write',
-      // PORT NOTE (magick-agency): renamed from `proxy.feature_flags.read`, so it
-      // sorts here rather than last.
+      // Sorts here rather than last.
       'agency.flags.read',
       'agency.station.connect',
     ]);
@@ -144,8 +141,7 @@ describe('agency permission mirror', () => {
    */
   it('lets an agent resolve the flag map, without the stats lane it borrowed', () => {
     expect(hasPermission('agent', 'agency.flags.read')).toBe(true);
-    // PORT NOTE (magick-agency): `proxy.stats.read` does not exist in agency; the
-    // viewer-floored statistics read is `agency.campaigns.read`.
+    // The viewer-floored statistics read is `agency.campaigns.read`.
     expect(hasPermission('agent', 'agency.campaigns.read')).toBe(false);
   });
 });

@@ -8,11 +8,11 @@ import type { AgencyDisposition, AgencyPriorAttempt } from '../types/agency';
  * those decisions are worth testing without a socket.
  *
  * ── What changed, and why a flat list stopped working ───────────────────────
- * Core's prior-attempt read used to be `WHERE contact_id = $1 ORDER BY
+ * The server's prior-attempt read used to be `WHERE contact_id = $1 ORDER BY
  * attempt_number DESC`. On a retry campaign it becomes lineage-scoped —
  * `WHERE root_contact_id = $1` — and re-orders onto `ended_at DESC NULLS LAST`,
  * because **`attempt_number` is per-contact-row and resets in every retry
- * campaign** (retry design DR-2). Two passes' worth of "attempt 1, attempt 2"
+ * campaign**. Two passes' worth of "attempt 1, attempt 2"
  * interleaved by number is nonsense, so the number is no longer an ordering and
  * this file never presents it as one.
  *
@@ -24,7 +24,7 @@ import type { AgencyDisposition, AgencyPriorAttempt } from '../types/agency';
 export interface PriorAttemptGroup {
   /**
    * The campaign these attempts belong to. Empty only in the degenerate case
-   * where core sent no id at all — see {@link groupPriorAttempts}.
+   * where the server sent no id at all — see {@link groupPriorAttempts}.
    */
   campaignId: string;
   /** The heading. Never a code, never blank — see the fallback rules below. */
@@ -43,11 +43,11 @@ export interface PriorAttemptGroup {
 /**
  * Break a newest-first list of prior attempts into per-campaign groups: this
  * campaign first, then every other campaign in the order its most recent
- * attempt appears — which, on a list core already ordered newest-first, is
+ * attempt appears — which, on a list the server already ordered newest-first, is
  * newest-first.
  *
  * ── Input order is preserved and NOT re-sorted ──────────────────────────────
- * Core orders by `ended_at DESC NULLS LAST, attempt_number DESC`, which keeps a
+ * The server orders by `ended_at DESC NULLS LAST, attempt_number DESC`, which keeps a
  * never-ended attempt (reaped, orphaned) at the bottom rather than at the top
  * where a null date would otherwise sort. Re-sorting here would be a second
  * answer to that question, and the two would disagree the first time either
@@ -57,7 +57,7 @@ export interface PriorAttemptGroup {
  * ── A missing `campaign_id` means THIS campaign ─────────────────────────────
  * Not a defensive shrug: before the lineage read existed, every prior attempt
  * came from the contact's own row on the campaign the agent is joined to, so
- * "this campaign" is the only thing an older core could have meant. That is
+ * "this campaign" is the only thing an older the server could have meant. That is
  * what makes the 100% non-retry case degrade to exactly today's flat list —
  * one group, headed by the campaign the agent is already looking at — rather
  * than to a group headed by nothing.
@@ -80,7 +80,7 @@ export function groupPriorAttempts(
       group = {
         campaignId,
         /*
-          The name core sent, then the one the agent is already looking at, then
+          The name the server sent, then the one the agent is already looking at, then
           nothing dressed up: a campaign the agent has no name for is headed
           "Another campaign" rather than by a UUID. A bare id is unusable and a
           blank heading reads as a rendering fault, and both would be the FIRST

@@ -1,14 +1,3 @@
-/*
- * PORT NOTE (magick-agency): ported from core test/unit/config/schema.dialer-analysis.test.ts
- * @4850d1d9 (11 cases, unchanged count). Modified: "defaults transcript retention to thirty
- * days" reads `agencyTranscriptRetentionDays` (core's `transcriptRetentionDays`, the softphone
- * window, is not carried; Manas 2026-10-09 gave the agency window core's effective 30-day
- * default — it was unset here before); "leaves both windows unset by default" becomes "leaves
- * the ROW window unset by default" with the transcript window at 30 (core's agency transcript
- * window fell back to that same 30, so core's effective defaults are unchanged); the "does NOT floor
- * either transcript window" case drops the softphone `transcriptRetentionDays`, which
- * is not carried. The row-window floor cases are unchanged.
- */
 import { describe, expect, it } from 'vitest';
 import type { ZodObject } from 'zod';
 import { appConfigSchema } from '../../../src/config/schema.js';
@@ -53,8 +42,7 @@ describe('dialerAnalysis configuration schema', () => {
     expect(dialerSchema.safeParse({ settleSeconds: -1 }).success).toBe(false);
   });
 
-  // Manas, 2026-10-09: core's effective agency transcript window (its fallback to
-  // `transcriptRetentionDays`, `.default(30)`).
+  // The agency transcript window defaults to 30 days (`.default(30)`).
   it('defaults transcript retention to thirty days', () => {
     expect((retentionSchema.parse({}) as { agencyTranscriptRetentionDays?: number }).agencyTranscriptRetentionDays).toBe(30);
   });
@@ -98,8 +86,8 @@ describe('agency retention windows are floored by RETENTION_MIN_DAYS', () => {
     expect(retentionSchema.safeParse({ minDays: 7, agencyRetentionDays: 10 }).success).toBe(true);
   });
 
-  // Manas, 2026-10-09: the ROW window stays unset (deleting call records is not a safe
-  // default); the transcript window defaults to core's 30 and is not floored (below).
+  // The ROW window stays unset (deleting call records is not a safe default); the
+  // transcript window defaults to 30 and is not floored (below).
   it('leaves the row window unset by default, so nothing is floored into existence', () => {
     // Narrowed locally: `retentionSchema` above is cast to a loose `ZodObject`, so
     // its parse result carries no property types.
@@ -113,7 +101,7 @@ describe('agency retention windows are floored by RETENTION_MIN_DAYS', () => {
 
   /**
    * The asymmetry is deliberate, and pinned here so it reads as a decision rather
-   * than an omission. The §14.6 transcript window exists to hold the verbatim
+   * than an omission. The transcript window exists to hold the full
    * transcript for LESS time than the row that carries it, because the transcript
    * is the liability — so a small value there is the conservative direction. It
    * also mirrors `transcriptRetentionDays`, which has never been floored; flooring

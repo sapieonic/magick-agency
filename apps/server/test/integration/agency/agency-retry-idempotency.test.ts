@@ -17,11 +17,11 @@ const { agencyCampaignRepository } = await import(
  * ─── AT-MOST-ONCE ON `POST /:id/retry`, AGAINST A REAL POSTGRES ─────────────
  *
  * The side effect this guards is **phone calls to real people**, and it cannot be
- * undone from the product: there is no campaign delete route in either service.
+ * undone from the product: there is no campaign delete route.
  * A request that commits server-side but whose response is lost — a proxy
  * timeout, a pod eviction, a reset connection — leaves the supervisor looking at
  * an error over a campaign that exists and is fully dialable. The natural next
- * act is to press the button again, and without migration 115 that produced a
+ * act is to press the button again, and without `uq_agency_campaign_retry_idempotency` that produced a
  * SECOND complete retry over the same cohort. `uq_agency_campaign_running` does
  * not help: it bites at `/start`, for only one of the two, and only while the
  * other is actually running.
@@ -202,8 +202,8 @@ describe('what the key does NOT suppress', () => {
 
   it('an UNKEYED create has no replay protection, and that is deliberate', async () => {
     // NULLs are distinct in a unique index, so two unkeyed creates are two
-    // campaigns. Core's API answers a tenant API key directly, without
-    // traversing master, and such a caller must still be able to create a retry
+    // campaigns. A caller that reaches the internal handler directly, without
+    // traversing the public API layer,  must still be able to create a retry
     // — this pins that the partial index is not read as "an unkeyed create is
     // refused", which would be a serious behaviour change.
     const first = await retry({ idempotencyKey: null });

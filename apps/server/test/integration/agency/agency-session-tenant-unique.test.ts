@@ -4,7 +4,7 @@ import { insertAgencyCampaign, insertAgentSession } from './agency-factories.js'
 import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, uuidFor } from '../setup/factories.js';
 
 /**
- * ─── ONE LIVE SESSION PER AGENT PER TENANT (migration 093) ──────────────────
+ * ─── ONE LIVE SESSION PER AGENT PER TENANT ──────────────────
  *
  * The defect: `agency_agent_sessions` allowed one live session per (campaign,
  * agent), while the reservation CAS key in `src/agency/agent-state-machine.ts`
@@ -171,7 +171,7 @@ describe('agency agent sessions — one live session per tenant (integration)', 
 
   it('a different TENANT reusing the same agent id is unaffected', async () => {
     // The scope decision, pinned. Global uniqueness would also be "correct" for
-    // master's ids and would break a shared-services structure that reuses an
+    // the public API layer's ids and would break a shared-services structure that reuses an
     // operator id across tenants.
     const ours = await insertAgencyCampaign();
     const theirs = await insertAgencyCampaign({ tenant_id: OTHER_TENANT, account_id: OTHER_ACCOUNT });
@@ -227,17 +227,8 @@ describe('agency agent sessions — one live session per tenant (integration)', 
 });
 
 /*
- * PORT NOTE (magick-agency, lane B1): the source file's last six cases exercise
- * MIGRATION 093 — its dedupe UPDATE (window function over pre-093 duplicate
- * sessions), its `-- Up Migration` marker and its `down` — by reading
- * `093_agency_agent_session_tenant_unique.sql` off disk. The baseline carries the
- * END state (`uq_agency_agent_live_tenant`, no dedupe: data migrations are not
- * carried) and there is no 093 file, so those cases are DELETED, by name:
- * "the 093 dedupe keeps the `on_call` row and closes the rest", "the 093 dedupe
- * breaks a same-priority tie on the most recent `state_since`", "closes one of TWO
- * contending `on_call` rows — the case the ladder cannot save", "the 093 dedupe is
- * idempotent — a re-run against clean data changes nothing", "declares an
- * `-- Up Migration` marker, without which the up half would undo itself", "the 093
- * down really reverses the schema instead of reporting that it did". The five
- * join-path cases (the index's BEHAVIOUR) are kept.
+ * Not covered: a dedupe step, an up-marker check or a down-reversal check. The
+ * baseline carries only the index (`uq_agency_agent_live_tenant`) and there is no
+ * existing duplicate data to dedupe. The five
+ * join-path cases (the index's BEHAVIOUR) are what this file covers.
  */

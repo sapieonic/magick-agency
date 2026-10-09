@@ -1,10 +1,3 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core
-// test/unit/agency/late-binding.test.ts@4850d1d9 (30 cases → 30). Deleted: none.
-// Modified (no case changed meaning):
-//  - mock/import specifiers follow the path rule (logger → `@magick-agency/observability`;
-//    break-manager / timers / abandonment-predicate → `@magick-agency/domain/*`);
-//  - the campaign fixture drops `sip_connection_id` (SIP deleted, plan §5; the dialer
-//    no longer passes `sipConnectionId`, docs/seams.md §3.1). No assertion read it.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
@@ -42,7 +35,7 @@ vi.mock('@magick-agency/observability', () => ({
 vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: { vobiz: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/vobiz' } },
+    telephony: { vobiz: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/vobiz' } },
   },
 }));
 
@@ -55,7 +48,7 @@ vi.mock('../../../src/config/index.js', () => ({
  */
 const { flags, rows, gate } = vi.hoisted(() => ({
   /**
-   * Parks the NEXT `bridged` attempt write, so a test can stage the MAG-137 race
+   * Parks the NEXT `bridged` attempt write, so a test can stage the late-`bridged` race
    * on the statement it is actually about.
    *
    * This used to be staged by holding `agents.set` open, which worked only
@@ -84,7 +77,7 @@ vi.mock('../../../src/feature-flags/index.js', () => ({
 /**
  * `setState` over an in-memory ROW, not a bare spy.
  *
- * `MAG-137` is a question about what the row ends up holding after two writes
+ * The late-`bridged` race is a question about what the row ends up holding after two writes
  * race, so asserting on call arguments would pin the call and not the defect —
  * an `only_from` list that named the wrong states would pass such a test. This
  * reproduces the statement's semantics from `agency.repository.ts`: `state` is a
@@ -227,7 +220,7 @@ function fakeBridge(opts: { bindSucceeds?: boolean } = {}) {
 // `not_configured` without a DB read and the abandoned path hangs up bare.
 const CAMPAIGN = {
   id: 'camp-1', name: 'Q3 Renewals', tenant_id: 't1', account_id: 'a1',
-  telephony_provider: 'voicelink', record_calls: false, // PORT NOTE: `sip_connection_id` dropped (SIP deleted)
+  telephony_provider: 'voicelink', record_calls: false,
   analysis_profile_id: null, caller_ids: ['+14155550100'],
 } as any;
 
@@ -810,7 +803,7 @@ describe('late binding: a station that reconnects mid-ring', () => {
   });
 
   it('still resumes an attempt that HAS been bound', async () => {
-    // The deferred-hangup window (`AD-P2-C-07`) is untouched for a call the agent
+    // The deferred-hangup window is untouched for a call the agent
     // was actually on — the suppression is about attempts they never saw.
     const h = await harness({ lateBinding: true });
     await h.dialer.executeDial(makeCmd());
@@ -826,9 +819,9 @@ describe('late binding: a station that reconnects mid-ring', () => {
   });
 });
 
-// ─── MAG-137 ────────────────────────────────────────────────────────────────
+// ─── late `bridged` write ────────────────────────────────────────────────────────────────
 
-describe('MAG-137: a late `bridged` write cannot resurrect a settled attempt', () => {
+describe('a late `bridged` write cannot resurrect a settled attempt', () => {
   /**
    * The race, reproduced by its real mechanism rather than by event order.
    *
@@ -898,7 +891,7 @@ describe('MAG-137: a late `bridged` write cannot resurrect a settled attempt', (
     // a row lock on `agency_call_attempts` and a pool connection AHEAD of the
     // agent-state writes, which delays the durable `on_call` mirror enough that it
     // can land after a teardown has already written the agent away. Measured on
-    // the `AD-P2-X-01` chaos suite: `main` and this ordering are 3/3 green over
+    // the chaos suite: `main` and this ordering are 3/3 green over
     // three full runs, both reordered variants (awaited, and issued-then-awaited)
     // failed 3/3 — `restart-mid-bridge` reporting `expected 'on_call' to be
     // 'offline'`, i.e. an agent left durably on a call that had ended, which the
@@ -906,7 +899,7 @@ describe('MAG-137: a late `bridged` write cannot resurrect a settled attempt', (
     //
     // So the trade is a rare lost `bridged_at` on an unclean shutdown against a
     // reproducible stuck agent, and this is the safer side of it. The durability
-    // gap is real and is recorded in `docs/reference/magickvoice-platform/agency.md` §11 — closing it needs the mirror
+    // gap is real and is a known gap — closing it needs the mirror
     // write made order-safe (the agent-session mirror has no `only_from`), not a
     // reshuffle of these three statements.
     //
@@ -971,7 +964,7 @@ describe('MAG-137: a late `bridged` write cannot resurrect a settled attempt', (
   });
 
   it('holds under early binding too — the defect predates the flag', async () => {
-    // `MAG-137` is not a late-binding bug; late binding is what makes it likely.
+    // The late-`bridged` race is not a late-binding bug; late binding is what makes it likely.
     const h = await raceBridgedWriteAfterEnded(false);
 
     expect(rows.current.state).toBe('ended');
