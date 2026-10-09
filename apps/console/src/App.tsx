@@ -16,7 +16,7 @@ import { AgentLanding } from './components/agency/AgentLanding';
 
 /*
  * PORT NOTE (magick-agency): cusui's `src/App.tsx` @ ee5beb44, cut to the
- * console's scope (docs/briefs/phase-9-console.md). Kept verbatim, comments
+ * console's scope (docs/history/briefs/phase-9-console.md). Kept verbatim, comments
  * included: the agency doors (`/agency/login`, `/agency/join/:token`), the root
  * `HomeRedirect`, the four full-viewport agent routes (`/station`, `/dialer`,
  * `/dialer/performance`, `/dialer/attempts`), the whole `/agency` tree, and the

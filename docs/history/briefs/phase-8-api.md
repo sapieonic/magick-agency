@@ -6,7 +6,7 @@ You are the Phase 8 agent of the Magick Agency build. You build agency's one HTT
 
 You also merge the four surfaces into one, and close the Phase 8 carry-forwards every lane recorded.
 
-**Read `docs/briefs/ground-rules.md` first. It is binding.**
+**Read `docs/history/briefs/ground-rules.md` first. It is binding.**
 
 **Worktree:** `/Users/manasnilorout/Personal/Sapionic/magick-agency-p8`, branch `phase-8/api` (off `main`). **Test DB:** `magick_agency_test_p8`, Redis db 8.
 

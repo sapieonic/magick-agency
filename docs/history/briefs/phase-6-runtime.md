@@ -10,7 +10,7 @@ You are the Phase 6 agent of the Magick Agency build. You port core's agency run
 
 Lanes A, B1, B2, C and D are all merged on `main`. You build on them.
 
-**Read `docs/briefs/ground-rules.md` first. It is binding.**
+**Read `docs/history/briefs/ground-rules.md` first. It is binding.**
 
 **Worktree:** `/Users/manasnilorout/Personal/Sapionic/magick-agency-p6`, branch `phase-6/runtime` (off `main`). **Test DB:** `magick_agency_test_p6`, Redis db 7, set in `.test-env.local.json`.
 

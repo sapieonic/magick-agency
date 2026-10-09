@@ -16,7 +16,7 @@ Read them only via `git -C <submodule> show <sha>:<path>` (and `git -C <submodul
 2. `CLAUDE.md`.
 3. `docs/decisions.md`.
 4. `packages/db/BASELINE.md`.
-5. `docs/lead-handoff.md` §8, the build log so far.
+5. The lead's handoff log §8, the build log so far (now condensed into `docs/history/build-log.md`).
 6. The plan, `/Users/manasnilorout/Personal/Sapionic/MagickVoice-platform/docs/agency-extraction-plan.md` v4.2, at the sections your brief names.
 7. `/Users/manasnilorout/Personal/Sapionic/MagickVoice-platform/agency.md`, for domain invariants.
 8. The existing lanes' sections of `PORTING.md`: what is already ported, and every "Phase 6" / "Phase 8" / "Phase 9" carry-forward they recorded for you. **Those carry-forwards are part of your scope.**

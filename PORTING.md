@@ -1170,7 +1170,7 @@ connection. Carried forward:
 ## Phase 6 — runtime
 
 Branch `phase-6/runtime` (worktree `magick-agency-p6`). Source: core `magic-voice-core@4850d1d9` (v1.123.2)
-unless marked master (`magick-master@a1f0756a`). Brief: `docs/briefs/phase-6-runtime.md`.
+unless marked master (`magick-master@a1f0756a`). Brief: `docs/history/briefs/phase-6-runtime.md`.
 
 ### 6.1 Test plan (written before the tests were ported)
 

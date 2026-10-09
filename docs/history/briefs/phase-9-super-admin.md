@@ -10,7 +10,7 @@ You are the super-admin UI agent of the Magick Agency build. You port cusui's su
 - usage counts;
 - the super-admin list and its audit trail.
 
-**Read `docs/briefs/ground-rules.md` first. It is binding.** The SQL and Postgres rules apply only if you touch the server, which you should not.
+**Read `docs/history/briefs/ground-rules.md` first. It is binding.** The SQL and Postgres rules apply only if you touch the server, which you should not.
 
 **Worktree:** `/Users/manasnilorout/Personal/Sapionic/magick-agency-ui-sa`, branch `phase-9/super-admin` (off `main`).
 

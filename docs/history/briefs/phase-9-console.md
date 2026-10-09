@@ -7,7 +7,7 @@ You are the console agent of the Magick Agency build. You port cusui's agency su
 
 `apps/console` is a Vite + React scaffold today, with one smoke test.
 
-**Read `docs/briefs/ground-rules.md` first. It is binding.** The rules on SQL and Postgres apply only where you touch the server, which you should not.
+**Read `docs/history/briefs/ground-rules.md` first. It is binding.** The rules on SQL and Postgres apply only where you touch the server, which you should not.
 
 **Worktree:** `/Users/manasnilorout/Personal/Sapionic/magick-agency-ui-console`, branch `phase-9/console` (off `main`).
 

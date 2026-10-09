@@ -1,8 +1,9 @@
 # Magick Agency
 
 Human-agent outbound power dialing, as one self-sufficient application.
-Extracted from the MagickVoice platform (core, master, cusui); the spec is
-`MagickVoice-platform/docs/agency-extraction-plan.md` (v4.2).
+Extracted from the MagickVoice platform (core, master, cusui). Documentation starts at
+[`docs/README.md`](docs/README.md): status, the plan it was built from (v4.2), architecture and
+decisions.
 
 ## Layout
 
