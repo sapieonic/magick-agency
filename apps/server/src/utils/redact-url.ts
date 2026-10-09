@@ -31,6 +31,10 @@
  * different part of the process. One exported function is the only way those four
  * can be asserted to agree.
  *
+ * PORT NOTE (magick-agency): one import now, the log-side scrubber, from
+ * `@magick-agency/observability/url-scrub`, a leaf with no imports of its own, so the constraint
+ * below still holds. See `redactedRequestSpanAttributes`.
+ *
  * ── This module imports NOTHING, deliberately ──────────────────────────────
  * `src/instrumentation.ts` imports it, and that file runs before the rest of the
  * application: it registers the `import-in-the-middle` ESM hook and may only
@@ -39,6 +43,7 @@
  * `config/index.js` import here would drag the whole application graph — and
  * config's `process.exit(1)` — in front of the instrumentation bootstrap.
  */
+import { scrubMediaUrl } from '@magick-agency/observability/url-scrub';
 
 /** What a credential-bearing path segment is replaced with. */
 export const REDACTED_TOKEN_SEGMENT = ':token';
@@ -133,6 +138,13 @@ export function redactUrl(url: string): string {
  *    contributes only the status code and `http.route`, so no URL is re-added
  *    after this hook has run.
  *
+ * PORT NOTE (magick-agency): master redacted only the invite path segment and left the query to
+ * the instrumentation. Here the URL also goes through the log scrubber (`scrubMediaUrl`), so a
+ * `?token=` / `sig=` / `*verify_token=` value (VoiceLink's status webhook is
+ * `/webhooks/voicelink/webrtc-status/:callId?token=…`) or a media-stream path token is redacted on
+ * the span as it is in the logs, and `url.query` is overwritten when the query changed
+ * (Manas, 2026-10-09).
+ *
  * Returns an EMPTY object for every request that needs no redaction, so the
  * hook is a no-op on all traffic but the two invite routes. The alternative —
  * always returning the (unchanged) path — would make this function part of the
@@ -146,11 +158,14 @@ export function redactedRequestSpanAttributes(request: {
   const raw = request.url;
   if (!raw) return {};
 
-  const redacted = redactUrl(raw);
+  const redacted = scrubMediaUrl(redactUrl(raw));
   if (redacted === raw) return {};
 
   const queryStart = redacted.search(/[?#]/);
   const path = queryStart === -1 ? redacted : redacted.slice(0, queryStart);
+  const rawQueryStart = raw.search(/[?#]/);
+  const queryChanged = (queryStart === -1 ? '' : redacted.slice(queryStart))
+    !== (rawQueryStart === -1 ? '' : raw.slice(rawQueryStart));
 
   // `http.url` is an ABSOLUTE url, so it has to be rebuilt rather than replaced
   // with the path — a bare path there would silently change the attribute's
@@ -172,5 +187,8 @@ export function redactedRequestSpanAttributes(request: {
     // value is already correct.
     'http.target': redacted,
     'http.url': `${scheme}//${host}${redacted}`,
+    // PORT NOTE (magick-agency): unless the scrubber changed it. Stable semconv's `url.query` is
+    // the query without its `?`; set only then, so every other request keeps the shape above.
+    ...(queryChanged ? { 'url.query': redacted.slice(queryStart + 1) } : {}),
   };
 }

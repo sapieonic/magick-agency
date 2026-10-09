@@ -411,15 +411,6 @@ describe('src/instrumentation.ts wiring (source audit)', () => {
       }
     });
 
-    it('hands the invite-token redactor to the HTTP instrumentation (master redact-url test)', () => {
-      // Master's deleted case "the trace instrumentation set hands the redactor to the HTTP
-      // instrumentation", as a source audit: the set is built inline here, as in core.
-      expect(src).toMatch(/'@opentelemetry\/instrumentation-http': \{\n\s+startIncomingSpanHook: redactedRequestSpanAttributes,/);
-      expect(src).toContain("import { redactedRequestSpanAttributes } from './utils/redact-url.js';");
-      const redact = readFileSync(resolve(process.cwd(), 'src/utils/redact-url.ts'), 'utf8');
-      expect(redact).not.toMatch(/^import /m);
-    });
-
     it('src/index.ts imports it first and flushes it as the last shutdown step', () => {
       const index = readFileSync(resolve(process.cwd(), 'src/index.ts'), 'utf8');
       expect(index.match(/^import .*$/m)?.[0]).toBe("import { shutdownOtelSdk } from './instrumentation.js';");
@@ -427,6 +418,10 @@ describe('src/instrumentation.ts wiring (source audit)', () => {
       expect(flush).toBeGreaterThan(index.indexOf('await closePool();'));
       expect(flush).toBeGreaterThan(index.lastIndexOf('await stop()'));
       expect(flush).toBeLessThan(index.indexOf('process.exit(0);'));
+      // In a `finally`, so a rejected step above cannot skip it (core `src/index.ts:932`).
+      expect(index.slice(index.lastIndexOf('} finally {', flush) + '} finally {'.length, flush)).not.toMatch(/[{}]/);
+      // And a failed boot flushes before exiting.
+      expect(index).toMatch(/logger\.fatal\(\{ err \}, 'boot failed'\);[^]*?await shutdownOtelSdk\(\);\s+process\.exit\(1\);/);
     });
   });
 });

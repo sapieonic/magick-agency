@@ -2,9 +2,10 @@
  * PORT NOTE (magick-agency): ported from core `src/utils/otel-sdk-config.ts`@4850d1d9. Changed:
  * the local `:9090` scrape section (`:303-457`: `ScrapeMetricReader`, `LastExportedMetrics`,
  * `scrapeErrorComment`, `renderPrometheusScrape`, `renderLastExportScrape`) is deleted, and with
- * it `withFreshGauges`' `lastExport` argument (`:286-291`), because this app exports over OTLP
- * only (Manas, 2026-10-09; `PORTING.md` "OpenTelemetry SDK"). The default `service.name` is
- * `SERVICE_NAME` (`:120`). Everything else is verbatim, comments included: where they name
+ * it `withFreshGauges`' `lastExport` argument (`:280-292`) and the imports only that section used
+ * (`:17`, `:20`, `:22`), because this app exports over OTLP only (Manas, 2026-10-09; `PORTING.md`
+ * "OpenTelemetry SDK"). The default `service.name` is `SERVICE_NAME` (`:122`). Everything else
+ * is verbatim, comments included: where they name
  * `:9090` or `src/utils/metrics.ts` they describe core, whose metric names this app keeps.
  *
  * The pure pieces of the OTel SDK configuration in `src/instrumentation.ts`,
@@ -131,7 +132,7 @@ export function buildResourceAttributes(
   opts: { version: string; hostname: () => string },
 ): Record<string, string> {
   const attrs: Record<string, string> = {
-    // PORT NOTE (magick-agency): core `src/utils/otel-sdk-config.ts:120`@4850d1d9 defaulted to
+    // PORT NOTE (magick-agency): core `src/utils/otel-sdk-config.ts:122`@4850d1d9 defaulted to
     // 'voice-ai-orchestrator'. Same default as the logger's OTLP transport.
     [ATTR_SERVICE_NAME]: env['OTEL_SERVICE_NAME'] || SERVICE_NAME,
     [ATTR_SERVICE_VERSION]: opts.version,
@@ -291,7 +292,7 @@ export function freshGaugeTemporality(base: AggregationTemporalitySelector): Agg
  * exporter only offers the three whole-exporter presets
  * (cumulative/delta/lowmemory), none of which separates gauges.
  */
-// PORT NOTE (magick-agency): core `src/utils/otel-sdk-config.ts:280-291`@4850d1d9 also took
+// PORT NOTE (magick-agency): core `src/utils/otel-sdk-config.ts:280-292`@4850d1d9 also took
 // `lastExport` and recorded each batch for the `:9090` scrape, which is not ported.
 export function withFreshGauges(exporter: PushMetricExporter): PushMetricExporter {
   const base: AggregationTemporalitySelector = exporter.selectAggregationTemporality

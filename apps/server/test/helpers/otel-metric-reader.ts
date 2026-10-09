@@ -1,34 +1,22 @@
 import { metrics } from '@opentelemetry/api';
 import {
   AggregationTemporality,
-  InstrumentType,
   MeterProvider,
   MetricReader,
-  type AggregationTemporalitySelector,
   type MetricReaderOptions,
 } from '@opentelemetry/sdk-metrics';
 import type { MetricData } from '@opentelemetry/sdk-metrics';
+import { freshGaugeTemporality } from '../../src/utils/otel-sdk-config.js';
 
 /**
  * PORT NOTE (magick-agency, Phase 6): core `test/helpers/otel-metric-reader.ts`@4850d1d9,
  * verbatim below the inlined block. Core imported `ScrapeMetricReader` from
- * `src/utils/otel-sdk-config.ts` (the `:9090` scrape and the OTLP SDK wiring), which is
- * not ported — agency has no OTel SDK at runtime yet. The reader class and its gauge
- * temporality rule are copied here verbatim from that file (`:242-245`, `:268-272`,
- * `:320-331`) so the suites read metrics through the same SDK aggregation core's did.
- * `@opentelemetry/sdk-metrics` is an `apps/server` devDependency for this helper (core
- * declares `^2.6.0`).
+ * `src/utils/otel-sdk-config.ts`. That file is now ported without its `:9090` scrape section
+ * (OTLP export only), so `ScrapeMetricReader` is still copied here verbatim (`:320-331`) and
+ * `freshGaugeTemporality` comes from the ported file (re-exported for the suites that import it
+ * from this helper). The suites read metrics through the same SDK aggregation core's did.
  */
-const GAUGE_INSTRUMENT_TYPES: ReadonlySet<InstrumentType> = new Set([
-  InstrumentType.OBSERVABLE_GAUGE,
-  InstrumentType.GAUGE,
-]);
-
-export function freshGaugeTemporality(base: AggregationTemporalitySelector): AggregationTemporalitySelector {
-  return instrumentType => (GAUGE_INSTRUMENT_TYPES.has(instrumentType)
-    ? AggregationTemporality.DELTA
-    : base(instrumentType));
-}
+export { freshGaugeTemporality };
 
 export class ScrapeMetricReader extends MetricReader {
   constructor(options?: MetricReaderOptions) {

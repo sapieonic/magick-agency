@@ -126,6 +126,8 @@ export const baseConfigSchema = z.object({
    * variables itself, with the same lenient parsing (an unusable interval falls back to the
    * default rather than failing boot), and `test/unit/config/otel-config.test.ts` pins that the
    * two agree. `OTEL_EXPORTER_OTLP_HEADERS` carries the Grafana Cloud token and is left out.
+   * `serviceName` / `serviceInstanceIdEnabled` are what the code sets; NodeSDK still merges
+   * `OTEL_RESOURCE_ATTRIBUTES` over them, which this block does not model.
    */
   otel: z.object({
     /** Only the exact string `true`, like core. */

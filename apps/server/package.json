@@ -42,7 +42,6 @@
     "openai": "^4.104.0",
     "pg": "^8.13.1",
     "pino": "^9.9.0",
-    "pino-opentelemetry-transport": "^1.1.0",
     "pino-pretty": "^13.0.0",
     "posthog-node": "^5.55.0",
     "uuid": "^11.0.0",

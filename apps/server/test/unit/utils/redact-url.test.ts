@@ -8,6 +8,8 @@ import {
   redactUrl,
   redactedRequestSpanAttributes,
 } from '../../../src/utils/redact-url.js';
+// The logger's export, i.e. what its request serializer calls.
+import { scrubMediaUrl } from '@magick-agency/observability/logger';
 
 /**
  * `redact-url.ts` — keeping a live bearer credential out of centralised logging
@@ -160,6 +162,50 @@ describe('redactedRequestSpanAttributes', () => {
     expect(redactedRequestSpanAttributes({ url: '/users/invite', headers })).toEqual({});
     expect(redactedRequestSpanAttributes({ url: '/invites/resend', headers })).toEqual({});
     expect(redactedRequestSpanAttributes({ headers })).toEqual({});
+    // PORT NOTE (magick-agency): plus a query with no credential in it.
+    expect(redactedRequestSpanAttributes({ url: '/users?account_id=1&page=2', headers })).toEqual({});
+  });
+
+  // PORT NOTE (magick-agency): the cases below are agency's. The hook also applies the log
+  // scrubber (`scrubMediaUrl`), so query and media-stream credentials leave spans redacted too.
+  describe('credentials outside the invite path (agency)', () => {
+    const SECRET = 'SECRETTOKEN222';
+
+    it("redacts the VoiceLink status webhook's ?token= on every URL attribute", () => {
+      const url = `/api/v1/webhooks/voicelink/webrtc-status/call-1?token=${SECRET}&x=1`;
+      const attrs = redactedRequestSpanAttributes({ url, headers });
+      expect(attrs).toEqual({
+        'url.path': '/api/v1/webhooks/voicelink/webrtc-status/call-1',
+        'url.query': 'token=[REDACTED]&x=1',
+        'http.target': '/api/v1/webhooks/voicelink/webrtc-status/call-1?token=[REDACTED]&x=1',
+        'http.url': 'http://api.example.test/api/v1/webhooks/voicelink/webrtc-status/call-1?token=[REDACTED]&x=1',
+      });
+    });
+
+    it('redacts sig= and *verify_token= the way the logs do', () => {
+      for (const url of [`/api/v1/recordings/r1?sig=${SECRET}`, `/hooks/meta?hub.verify_token=${SECRET}&hub.mode=subscribe`]) {
+        const attrs = redactedRequestSpanAttributes({ url, headers });
+        expect(Object.keys(attrs).sort()).toEqual(['http.target', 'http.url', 'url.path', 'url.query']);
+        for (const value of Object.values(attrs)) expect(value).not.toContain(SECRET);
+      }
+    });
+
+    it('redacts a media-stream path token, keeping the callId', () => {
+      const attrs = redactedRequestSpanAttributes({ url: `/media-stream/static/call-9/${SECRET}`, headers });
+      expect(attrs['url.path']).toBe('/media-stream/static/call-9/[REDACTED]');
+      expect(attrs).not.toHaveProperty('url.query');
+    });
+
+    it('redacts an invite token and a query token on the same request', () => {
+      const attrs = redactedRequestSpanAttributes({ url: `/invites/${TOKEN}?token=${SECRET}`, headers });
+      expect(attrs['http.target']).toBe(`/invites/${REDACTED_TOKEN_SEGMENT}?token=[REDACTED]`);
+      expect(attrs['url.query']).toBe('token=[REDACTED]');
+    });
+
+    it('applies the SAME scrubber the request-log serializer uses', () => {
+      const raw = `/api/v1/webhooks/voicelink/webrtc-status/c?token=${SECRET}`;
+      expect(redactedRequestSpanAttributes({ url: raw, headers })['http.target']).toBe(scrubMediaUrl(raw));
+    });
   });
 });
 
@@ -185,9 +231,25 @@ describe('every sink actually redacts', () => {
     }
   });
 
-  // PORT NOTE (magick-agency): deleted "the trace instrumentation set hands the redactor to the
-  // HTTP instrumentation" — master's `utils/otel-instrumentations.ts` / `instrumentation.ts`
-  // are not ported (agency's tracing is `@magick-agency/observability`, Phase 1).
+  it('the trace instrumentation set hands the redactor to the HTTP instrumentation', () => {
+    /**
+     * PORT NOTE (magick-agency): restored with the SDK port, as a source audit. Master built the
+     * set in `utils/otel-instrumentations.ts` and also asserted on the constructed
+     * instrumentation; here the set is inline in `instrumentation.ts`, as in core, so only the
+     * source can be read.
+     *
+     * The traces half. `getNodeAutoInstrumentations` merges the hook's
+     * attributes LAST over the instrumentation's own, so this genuinely
+     * overrides `http.url`/`http.target`/`url.path` rather than adding beside
+     * them — the property the redaction depends on, verified against
+     * `instrumentation-http`'s `getIncomingRequestAttributes` and written up in
+     * `redact-url.ts`.
+     */
+    const source = SRC('instrumentation.ts');
+    expect(source).toMatch(/'@opentelemetry\/instrumentation-http': \{\n\s+startIncomingSpanHook: redactedRequestSpanAttributes,/);
+    expect(source).toContain("import { redactedRequestSpanAttributes } from './utils/redact-url.js';");
+  });
+
   it('redact-url.ts imports NOTHING, so instrumentation.ts can reach it', () => {
     /**
      * `src/instrumentation.ts` runs before the application and registers the
@@ -196,6 +258,10 @@ describe('every sink actually redacts', () => {
      * would drag the whole application graph — and config's `process.exit(1)` —
      * in front of the instrumentation bootstrap.
      */
-    expect(SRC('utils/redact-url.ts')).not.toMatch(/^\s*import\s/m);
+    // PORT NOTE (magick-agency): except the log scrubber, a leaf that itself imports nothing.
+    const imports = SRC('utils/redact-url.ts').match(/^\s*import\s.*$/gm) ?? [];
+    expect(imports).toEqual(["import { scrubMediaUrl } from '@magick-agency/observability/url-scrub';"]);
+    const leaf = readFileSync(resolve(process.cwd(), '../../packages/observability/src/url-scrub.ts'), 'utf8');
+    expect(leaf).not.toMatch(/^\s*import\s/m);
   });
 });

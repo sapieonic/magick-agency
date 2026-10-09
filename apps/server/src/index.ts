@@ -55,16 +55,21 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info({ signal }, 'shutting down');
-    await app.close().catch((err) => logger.error({ err }, 'http close failed'));
-    for (const stop of [...stops].reverse()) {
-      await stop().catch((err) => logger.error({ err }, 'stop failed'));
+    try {
+      await app.close().catch((err) => logger.error({ err }, 'http close failed'));
+      for (const stop of [...stops].reverse()) {
+        await stop().catch((err) => logger.error({ err }, 'stop failed'));
+      }
+      await redis.quit().catch(() => {});
+      await closePool();
+    } finally {
+      // Last, after everything that records a metric or a span (core `src/index.ts:952`@4850d1d9):
+      // the SDK's final forced flush carries what the stops above recorded. No-op with OTel off.
+      // In a `finally`, as core's (`:932`): a rejected `closePool()` must not skip the flush and
+      // leave the process alive with the shutdown latched.
+      await shutdownOtelSdk();
+      process.exit(0);
     }
-    await redis.quit().catch(() => {});
-    await closePool();
-    // Last, after everything that records a metric or a span (core `src/index.ts:952`@4850d1d9):
-    // the SDK's final forced flush carries what the stops above recorded. No-op with OTel off.
-    await shutdownOtelSdk();
-    process.exit(0);
   };
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
@@ -85,7 +90,10 @@ async function main(): Promise<void> {
   logger.info({ port: config.server.port, otelExport: config.otel.exporting }, 'magick-agency listening');
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   logger.fatal({ err }, 'boot failed');
+  // PORT NOTE (magick-agency): core `src/index.ts:1020-1023`@4850d1d9 exited without flushing, so
+  // with OTel on this line and the startup spans never left the process.
+  await shutdownOtelSdk();
   process.exit(1);
 });

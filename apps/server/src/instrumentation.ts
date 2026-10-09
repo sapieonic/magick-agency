@@ -5,12 +5,17 @@
  *    `config/index.ts`, which runs after it, so without this line an `OTEL_ENABLED` set in `.env`
  *    would reach the config block but not the SDK.
  *  - OTLP export only (Manas, 2026-10-09): the `:9090` scrape is not ported, so the pull-only
- *    meter provider core installed with export off (`:213-228`) and both scrape renderers
- *    (`:205`, `:227`) are deleted. With export off no provider is installed and every
- *    instrument stays the OTel API's no-op, as before this file existed.
+ *    meter provider core installed with export off (`:229-244`), both scrape renderers
+ *    (`:223`, `:243`), the `LastExportedMetrics` snapshot (`:125-129`) and their imports
+ *    (`:9`, `:12-13`, `:17-18`, `:23`) are deleted. With export off no provider is installed and
+ *    every instrument stays the OTel API's no-op, as before this file existed.
  *  - The HTTP instrumentation gets master's invite-token redaction hook
  *    (`src/utils/otel-instrumentations.ts:132-134`@a1f0756a): this app serves master's
- *    `/invites/:token` routes, which core never had.
+ *    `/invites/:token` routes, which core never had. The hook also scrubs credential query
+ *    values, which neither source did on spans (`src/utils/redact-url.ts`).
+ * Comments are otherwise core's, verbatim: the `sdkRef` story below is about core's billing
+ * counter (`webhook_fanout_abandoned_total`), which this app does not have; the ordering rule it
+ * argues for holds here unchanged.
  *  - `APP_VERSION` and `SERVICE_NAME` come from `@magick-agency/observability` subpaths, and the
  *    heap gauge's meter is named after `SERVICE_NAME` (core: 'voice-ai-orchestrator.runtime').
  * `PORTING.md` "OpenTelemetry SDK" has the row.
@@ -221,6 +226,10 @@ if (otelEnabled && otlpEndpoint) {
         },
 
         // pg: capture query text but not parameter values
+        // PORT NOTE (magick-agency): the line above is core's and is WRONG. With
+        // `enhancedDatabaseReporting` instrumentation-pg attaches every query's parameter values
+        // (`db.postgresql.values`); query text is captured without it. Kept verbatim by ruling
+        // (Manas, 2026-10-09): pg spans carry parameter values, as in core and master.
         '@opentelemetry/instrumentation-pg': {
           enhancedDatabaseReporting: true,
         },
