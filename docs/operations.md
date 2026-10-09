@@ -13,9 +13,8 @@ This repo has no production Dockerfile, compose file or deploy script; `docker/`
 dev Postgres and Redis. The server builds to `apps/server/dist/index.js` (`pnpm build`) and starts
 with `pnpm --filter @magick-agency/server start` (`node dist/index.js`); third-party dependencies
 are resolved from `apps/server/node_modules` at runtime. The UIs build to static files with Vite.
-A production image needs Node 22, ffmpeg, `mpg123` and `sndfile` for clip decoding (the plan says
-"ffmpeg in the image"; the decoder set is from the CI workflow and the decode tests; the exact
-image is unverified because none exists).
+A production image needs Node 22, ffmpeg, `mpg123` and `sndfile` for clip decoding (the decoder
+set is the one CI installs for the decode tests; the exact image is unverified because none exists).
 
 ## Configuration
 
@@ -78,15 +77,15 @@ Redis settings.
    cuts a live call's carrier leg and status webhooks; each refusal logs
    `WebRTC WS token missing while Redis answered`. If Redis is down altogether, tokens are accepted
    (a live call is never hard-failed for a Redis outage).
-2. **One replica** (plan D2). The bridge remembers tokens whose Redis `SET` failed in-process; the
+2. **One replica.** The bridge remembers tokens whose Redis `SET` failed in-process; the
    runtime, reaper, retention and partition jobs assume one process. Scaling out needs that memo
    shared or dropped, and a review of every sweep.
 3. **Reachable only through exactly `TRUST_PROXY_HOPS` proxies.** `request.ip` trusts that many
    `X-Forwarded-For` entries from the right and keys every IP rate-limit bucket. If the port is
    reachable directly, a client can set its own IP and evade the limits; if the real chain has a
    different number of proxies, set the count to match. Bind to loopback or a private interface,
-   or firewall port 3021. (Agency is on Fastify 5.12, where a numeric `trustProxy` fails closed, so
-   the count is passed as a function; master pins Fastify 5.8.4, where the number still works.)
+   or firewall port 3021. (Fastify 5.12 fails a numeric `trustProxy` closed, so the count is passed as a hop-count
+   function.)
 4. **TLS on only in production.** See "Postgres TLS" below.
 5. **Migrations before start.** See below.
 
@@ -97,8 +96,8 @@ in-flight campaign-completion mails get up to 30 s), voice (the bridge hangs up 
 releases their slots) and platform (audit buffers flushed), then closes Redis and Postgres
 (`apps/server/src/index.ts`). Docker's default stop grace is 10 s, which would cut the 30 s drain.
 Recommendation pending Manas: `stop_grace_period: 45s` in the production compose file. Open
-question: a pacing tick already parked past its `stopped` check can still finish after the drain
-(core has the same shape); awaiting in-flight ticks in `stop()` would close it.
+question: a pacing tick already parked past its `stopped` check can still finish after the drain;
+awaiting in-flight ticks in `stop()` would close it.
 
 Agents are not returned to the pool on shutdown; after a restart they come back in `break` and must
 choose to go available.

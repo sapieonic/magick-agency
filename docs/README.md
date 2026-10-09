@@ -1,35 +1,35 @@
 # Magick Agency docs: start here
 
-This is the entry point to the project's documentation: what Magick Agency is, where it stands
-on one screen, a map of every doc, and what to read first depending on why you are here. Status
-claims are as of 2026-10-09.
+The entry point to the project's documentation: what Magick Agency is, where it stands on one
+screen, a map of every doc, and what to read first depending on why you are here. Status claims
+are as of 2026-10-09.
 
 ## What Magick Agency is
 
-Magick Agency is a human-agent outbound power dialer: supervisors load campaigns, the dialer
+Magick Agency is an outbound power dialer for human agents. Supervisors load campaigns, the dialer
 paces calls to the number of available agents, and each answered call is bridged to an agent's
-browser over WebRTC and VoiceLink. It was extracted from the MagickVoice platform (core, master
-and cusui) into one self-sufficient application with its own server, database, carrier account
-and identity data, sharing only the Firebase project. The code was ported verbatim from
-MagickVoice wherever possible, with every change recorded in `PORTING.md`.
+browser over WebRTC and VoiceLink, with the contact's details already on screen. It is one
+self-contained application: a Fastify server, a Postgres database, Redis, an agent and supervisor
+console, and a super-admin console, depending only on vendors (VoiceLink, Firebase Authentication,
+Mailjet, S3, Gemini / OpenAI, PostHog).
 
 ## Status on one screen
 
-**Done.** Plan phases 1–9 on the code side: scaffold, contracts and baseline schema, platform
-(identity, tenancy, RBAC, invites, settings, super-admin, notifications, audit), domain and data,
-voice engine, runtime, analysis, the merged API, the console and super-admin UIs. Manas's
-2026-10-09 rulings on the open questions and branding are implemented. Final run: lint clean in 7
-packages; server 6350 unit / 1172 integration; console 4367; super-admin 366; builds OK. On GitHub
-as `sapieonic/magick-agency` (private).
+**Done.** Delivery phases 1–9 on the code side: scaffold, contracts and schema, the platform layer
+(identity, tenancy, RBAC, invites, settings, super-admin, notifications, audit), the dialer domain
+and data, the voice engine, the dialer runtime, call analysis, the public API, the console and the
+super-admin console. Manas's 2026-10-09 rulings on the open questions and branding are implemented.
+Last full run: lint clean in 7 packages; server 6350 unit / 1172 integration; console 4367;
+super-admin 366; builds OK.
 
-**Not done.** Phase 10 cutover (gate queries, copy scripts, DNC mirror, cusui link, Grafana
-selector). No production Dockerfile or compose file. No OpenTelemetry metrics or trace export.
-Nothing has run against a real carrier, real Firebase sign-in or production data.
+**Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
+No production Dockerfile or compose file. No OpenTelemetry metrics or trace export. Nothing has run
+against a real carrier, a real Firebase sign-in or production data.
 
-**Needs Manas.** Ratify the plan §7 defaults and Q3; `supervisor_hold`; shutdown grace (45 s
-recommended) and in-flight pacing ticks; B15 roster supersede; Phase 0 vendor setup; the gated
-items (real VoiceLink call, real recording analysed, Playwright happy path, parity diff, dark
-pilot); cutover decisions.
+**Needs Manas.** Ratify the launch defaults and Q3; `supervisor_hold`; shutdown grace (45 s
+recommended) and in-flight pacing ticks; B15 roster supersede; vendor setup; the gated checks (real
+VoiceLink call, real recording analysed, Playwright happy path, parity check, dark pilot); launch
+decisions.
 
 Details and next steps: [`status.md`](status.md).
 
@@ -37,32 +37,30 @@ Details and next steps: [`status.md`](status.md).
 
 | Doc | What it holds |
 |---|---|
-| [`status.md`](status.md) | Where it is: phase table with evidence, test counts, GitHub vs local history, what is not built, open decisions and owners, deployment invariants, pre-deploy checklist, next steps |
-| [`intent-and-plan.md`](intent-and-plan.md) | Why the extraction, why not a voice gateway, settled decisions S1–S8, scope, what the platform layer now owns, phases 0–10, invariants, out of scope |
-| [`architecture.md`](architecture.md) | How it is built: packages, server composition and start/stop order, the hop collapse, identity, runtime, voice engine, analysis, DNC, audit, UIs, observability, tests, CI |
-| [`decisions.md`](decisions.md) | Every decision by ID: settled S1–S8, plan §7, build B1–B17, rulings Q1–Q9, still open with owner |
-| [`seams.md`](seams.md) | The path rule, lane-owned files, config keys per block, and the cross-lane seams; still the module boundaries |
+| [`status.md`](status.md) | Where it is: phase table with evidence, test counts, what is not built, open decisions and owners, deployment invariants, pre-deploy checklist, next steps |
+| [`intent-and-plan.md`](intent-and-plan.md) | What it is for, the settled product decisions, why it is built this way, the delivery phases, invariants, out of scope |
+| [`architecture.md`](architecture.md) | How it is built: packages, server composition and start/stop order, the public API layer and internal handler instance, identity, dialer runtime, voice engine, analysis, DNC, audit, UIs, observability, tests, CI |
+| [`modules.md`](modules.md) | Every module and file group, what it does, and which test files cover it |
+| [`decisions.md`](decisions.md) | Every decision by ID: settled S1–S8, launch decisions, build decisions B1–B17, rulings Q1–Q9, still open with owner |
+| [`seams.md`](seams.md) | Where files go, module-area files and config keys, the cross-module seams, shared infrastructure |
 | [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count |
-| [`history/`](history/README.md) | The build record: how it was run, the frozen v4.2 plan, the build log, the agents' briefs |
-| [`reference/`](reference/README.md) | Verbatim copies of the MagickVoice design docs and agent guides that code comments cite (`agency.md`, `service-map.md`, the dialer design, the source repos' `CLAUDE.md`), each with its origin commit and how it maps here |
-| [`../README.md`](../README.md) | Dev setup (prerequisites, infra, env, migration, first super-admin, running everything) |
+| [`../README.md`](../README.md) | Dev setup: prerequisites, infra, env, migration, first super-admin, running everything |
 | [`../CLAUDE.md`](../CLAUDE.md) | Rules for agents working in this repo |
-| [`../PORTING.md`](../PORTING.md) | The port ledger: one row per ported file, source → destination, verbatim / modified / deleted, and per-file test counts |
-| `../packages/db/BASELINE.md` | The baseline schema inventory and every source migration folded into it |
+| `../packages/db/BASELINE.md` | The baseline schema inventory |
+| `../packages/contracts/src/api/agency/CONTRACT-DIFF.md` | Where the dialer contract and the console wire types differ |
 
 ## Reading order
 
 **A new engineer:** this page → [`intent-and-plan.md`](intent-and-plan.md) →
 [`architecture.md`](architecture.md) → the root [`README.md`](../README.md) to get it running →
-[`seams.md`](seams.md) before moving files or adding config → [`decisions.md`](decisions.md) when
-a comment cites an ID → [`reference/`](reference/README.md) when a comment cites a MagickVoice doc.
+[`seams.md`](seams.md) before moving files or adding config → [`modules.md`](modules.md) to find a
+module and its tests → [`decisions.md`](decisions.md) when a comment cites an ID.
 
 **A reviewer:** [`status.md`](status.md) → [`decisions.md`](decisions.md) (especially B7, B8, B15,
-B16, Q1, Q6, Q8, Q9) → [`architecture.md`](architecture.md) → `PORTING.md` for the files under
-review → [`history/build-log.md`](history/build-log.md) for how each phase was reviewed.
+B16, Q1, Q6, Q8, Q9) → [`architecture.md`](architecture.md) → [`modules.md`](modules.md) for the
+files under review.
 
-**Whoever does cutover:** [`status.md`](status.md) (not built, invariants, checklist) →
-[`operations.md`](operations.md) → the plan's Phase 10 in
-[`history/extraction-plan-v4.2.md`](history/extraction-plan-v4.2.md) →
-[`decisions.md`](decisions.md) §2 and §5 (cutover decisions still open; Q4 maps copied
-`api_key` audit rows to `system`).
+**Whoever runs the launch:** [`status.md`](status.md) (not built, invariants, checklist) →
+[`operations.md`](operations.md) → phase 10 in [`intent-and-plan.md`](intent-and-plan.md) →
+[`decisions.md`](decisions.md) §2 and §5 (launch decisions still open; Q4 maps imported `api_key`
+audit rows to `system`).
