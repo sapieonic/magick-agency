@@ -1,7 +1,6 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/src/db/repositories/announcement.repository.ts@4850d1d9.
-// Changed: `create` no longer inserts `tts_text`, `tts_voice`, `tts_language` (or their
-// 'Polly.Joanna' / 'en-US' fallbacks) — those columns are dropped by the baseline
-// (decision 4, uploaded clip only). Placeholders renumbered $1..$5. Everything else verbatim.
+// `create` inserts no `tts_text`, `tts_voice` or `tts_language` (nor any TTS voice
+// fallback): the baseline has no such columns (uploaded clip only). Placeholders
+// are $1..$5.
 import { getPool } from '../connection.js';
 import type { AnnouncementRecord, CreateAnnouncementInput, UpdateAnnouncementInput } from '../models/announcement.model.js';
 

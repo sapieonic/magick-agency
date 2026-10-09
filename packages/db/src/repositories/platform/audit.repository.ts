@@ -2,23 +2,21 @@ import { getPool } from '../../connection.js';
 import type { AuditLogRecord, CreateAuditLogInput } from '../../models/platform/audit.model.js';
 
 /*
- * PORT NOTE (magick-agency): ported from master `src/db/repositories/audit.repository.ts`
- * (v3.24.0) to `repositories/platform/` (path collision with core's
- * `audit.repository.ts`, which writes `audit_logs`). This one writes
- * `platform_audit_log`. Change: `api_key_id` is no longer inserted (the baseline
- * dropped the column; decision #5), so each row binds ten values, not eleven.
- * Exported as `auditRepository` (master's name, so the ported buffer compiles
- * unchanged) and as `platformAuditRepository`.
+ * Lives in `repositories/platform/` because `audit.repository.ts` writes the
+ * dialer's `audit_logs`; this one writes `platform_audit_log`. `api_key_id` is not
+ * inserted (the baseline has no such column), so each row binds ten values.
+ * Exported as `auditRepository` (the name the audit buffer uses) and as
+ * `platformAuditRepository`.
  */
 
 /**
  * The request ceiling.
  *
- * 1000, raised from 100 for MAG-158's CSV export. That export asks the merge for
+ * 1000, raised from 100 for the CSV export. That export asks the merge for
  * `ACTIVITY_EXPORT_PAGE_SIZE + 1` rows from each source, and a clamp BELOW what
  * it asked for is not a smaller page — it is row loss. `mergeActivityPage` reads
  * "fewer rows came back than I asked for" as "this stream is exhausted" and
- * returns a null cursor, so on a trail that is mostly master's rows (dispositions
+ * returns a null cursor, so on a trail that is mostly this stream's rows (dispositions
  * and DNC marks are master-only) the export would stop at the clamp and hand
  * over a file that looks complete. The cap must therefore sit above the largest
  * page any caller asks for, not at a number chosen for the interactive route —
@@ -71,7 +69,7 @@ export class AuditRepository {
         // Read off the actor union rather than off the event as a whole, so the
         // column can only receive the id belonging to the kind of principal the
         // call site declared. `user_id` on an `api_key` row is the misattribution
-        // this whole change exists to remove (86d45t7rm), and the narrowing here
+        // this design exists to remove, and the narrowing here
         // is what makes it unwritable rather than merely discouraged.
         event.actor_type === 'human' ? event.user_id : null,
         event.actor_type,
@@ -99,8 +97,8 @@ export class AuditRepository {
    * row in a flush shares a timestamp to the microsecond. Paging a partial
    * order serves a row twice on one page and never on the next.
    *
-   * ── `before` is a keyset, and it is what makes MAG-158's merge pageable ────
-   * The campaign activity trail interleaves this stream with core's in
+   * ── `before` is a keyset, and it is what makes the merge pageable ────
+   * The campaign activity trail interleaves this stream with the dialer's `audit_logs` in
    * application code, and two OFFSET-paginated sources cannot be merged
    * coherently: an OFFSET counts from the top of a set that keeps growing, so a
    * row written mid-pagination shifts every later page by one. A keyset names
@@ -165,11 +163,11 @@ export class AuditRepository {
     resourceId?: string;
     campaignId?: string;
     /**
-     * Filter to one kind of principal (86d45t7rm).
+     * Filter to one kind of principal.
      *
      * Rows written before migration 067 carry a NULL `actor_type` and match NO
      * value here — deliberately, and it is the same rule the module applies to an
-     * action the catalog does not know: master cannot say what kind of principal
+     * action the catalog does not know: this module cannot say what kind of principal
      * a row it never recorded one for belonged to, and folding those rows into
      * `human` (the tempting default, since most of them are) would be inventing
      * the fact this column exists because nobody captured it.
@@ -312,5 +310,5 @@ export class AuditRepository {
 }
 
 export const auditRepository = new AuditRepository();
-/** The same instance under an unambiguous name (core's `auditRepository` writes `audit_logs`). */
+/** The same instance under an unambiguous name (`auditRepository` in `../audit.repository.ts` writes `audit_logs`). */
 export const platformAuditRepository = auditRepository;

@@ -84,8 +84,8 @@ export class AudioFileRepository {
 
   // NOTE: the healing write for a legacy row (pcm_audio_hash IS NULL) or an
   // evicted clip lives in `src/audio/ensure-pcm-clip.ts`, deliberately as the
-  // SINGLE place that persists these columns post-upload — §5.6 of the contract
-  // requires one helper so upload, dispatch, and legacy paths cannot drift. A
+  // SINGLE place that persists these columns post-upload — one helper is
+  // required so upload, dispatch, and legacy paths cannot drift. A
   // second setter here would be exactly that drift.
 
   async delete(id: string): Promise<boolean> {

@@ -1,12 +1,11 @@
 // ─── WebRTC Human Calls ─────────────────────────────────────────────
 //
-// A browser→PSTN human bridge call (see docs/reference/magic-voice-core/docs/webrtc-human-calling-design.md).
+// A browser→PSTN human bridge call.
 // No AI pipeline; the browser leg and the VoBiz leg are relayed directly.
 //
-// PORT NOTE (magick-agency): ported from core `src/db/models/webrtc-call.model.ts`
-// (v1.123.2). The table is `agency_calls` (baseline rename of `webrtc_calls`);
-// the type names are kept so the bridge and the runtime import them unchanged
-// (docs/seams.md §3.1). `telephony_credential_id` (BYOC) and `sip_connection_id`
+// The table is `agency_calls` (the baseline's rename of `webrtc_calls`); the
+// WebRtc* type names are kept so the bridge and the runtime import them
+// (docs/seams.md). `telephony_credential_id` (BYOC) and `sip_connection_id`
 // (SIP) are dropped from the record and the create input, as the baseline
 // dropped the columns.
 
@@ -37,9 +36,9 @@ export const WEBRTC_NON_TERMINAL_STATUSES: readonly WebRtcCallStatus[] = [
 // them lives in dialer-analysis-job.model.ts.
 
 /**
- * Read-convenience mirror of the job status, collapsed to the vocabulary cusui
+ * Read-convenience mirror of the job status, collapsed to the vocabulary the console
  * already knows plus dialer-specific states. `deleted` is the DSAR erasure state
- * (§14.5) — the transcript/analysis have been nulled on a data-subject request.
+ * — the transcript/analysis have been nulled on a data-subject request.
  */
 export type DialerAnalysisStatus =
   | 'awaiting_recording'
@@ -126,7 +125,7 @@ export interface WebRtcCallRecord {
   /**
    * The agency campaign this media leg was placed for; NULL for an ordinary
    * browser dialer call. Correlation only — no FK, and its *presence* is what
-   * selects the agency billing rate over the per-minute `webrtc_call` one (D7).
+   * selects the agency billing rate over the per-minute `webrtc_call` one.
    */
   campaign_id: string | null;
   /** The `agency_call_attempts.id` this leg belongs to. Correlation only, no FK. */

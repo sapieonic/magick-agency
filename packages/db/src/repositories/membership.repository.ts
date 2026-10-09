@@ -161,7 +161,7 @@ export class MembershipRepository {
    * `accountRepository` keeps one, for the super-admin tree and the name
    * resolver. Nothing here needs one, and adding it would be an invitation to
    * fetch-then-check. The boundary belongs in the same statement as the lookup —
-   * docs/reference/magick-master/CLAUDE.md's RBAC rule 1, and the reason `accountRepository.findByIdInTenant`
+   * the tenancy rule (boundary and lookup in one statement), and the reason `accountRepository.findByIdInTenant`
    * exists at all: a fetch-then-compare is a read and a check that can disagree,
    * and it materialises a foreign tenant's row into this process before refusing
    * it, after which the next reader adds a log line or an error message over a
@@ -224,8 +224,8 @@ export class MembershipRepository {
    * while they are still on the roster.
    *
    * ── It is still a TENANT boundary, not an absence of one ───────────────────
-   * The `tenant_id` predicate is in the same statement as the read (rule 1 of
-   * docs/reference/magick-master/CLAUDE.md's RBAC section), so a user who was never in this tenant still
+   * The `tenant_id` predicate is in the same statement as the read (the tenancy rule),
+   * so a user who was never in this tenant still
    * resolves to nothing and the caller still answers 404. What is dropped is the
    * status filter and nothing else — the same deliberate choice, for the same
    * reason and in the same words, as `userRepository.findDisplayNamesInTenant`:
@@ -255,13 +255,13 @@ export class MembershipRepository {
    *
    * ── Why a set-shaped sibling exists at all ─────────────────────────────────
    * The supervisory ROSTER read (`GET /proxy/agency/agents/stats`) gets its rows
-   * from core, which has no user table and therefore returns **every** agent who
+   * from the dialer runtime, which has no user table and therefore returns **every** agent who
    * dialled in the window — including one whose membership has since been
-   * revoked, because it cannot know (design D3, `agency_agent_sessions.agent_user_id`
-   * has no FK). Master decides which of those rows survive, and that decision
+   * revoked, because it cannot know (`agency_agent_sessions.agent_user_id`
+   * has no FK). The public API layer decides which of those rows survive, and that decision
    * needs the status of up to `limit` (200) memberships at once. Asked through
    * {@link findAnyByUserAndTenant} it would be one query per row — the "no
-   * per-item loops over I/O" rule in docs/reference/magick-master/CLAUDE.md, and the same N+1
+   * per-item loops over I/O" rule, and the same N+1
    * `userRepository.findDisplayNamesInTenant` was introduced to avoid.
    *
    * ── Status is RETURNED, not filtered ──────────────────────────────────────
@@ -273,9 +273,8 @@ export class MembershipRepository {
    * Same reasoning as {@link findAnyByUserAndTenant}, one cardinality up.
    *
    * ── Still a tenant boundary, and non-UUIDs never reach the cast ────────────
-   * `tenant_id` is in the same statement as the read (rule 1 of docs/reference/magick-master/CLAUDE.md's RBAC
-   * section), so a user who was never in this tenant resolves to nothing here and
-   * the caller drops their row. The ids come from CORE's response body, where
+   * `tenant_id` is in the same statement as the read (the tenancy rule), so a user who was never in this tenant resolves to nothing here and
+   * the caller drops their row. The ids come from the dialer runtime's response body, where
    * `agent_user_id` is an opaque string with no FK behind it — so a malformed one
    * is reachable, and it would raise Postgres `22P02` from inside
    * `= ANY($1::uuid[])`, which `errorMaskHook` turns into "contact support". They
@@ -327,8 +326,8 @@ export class MembershipRepository {
    * ── It closes an N+1 ──────────────────────────────────────────────────────
    * The route used to do `Promise.all(memberships.map(m => userRepository
    * .findById(m.user_id)))` — one round trip per member, on a page a supervisor
-   * opens to look at their whole floor. It collapses into the join here; see
-   * docs/reference/magick-master/CLAUDE.md's "No per-item loops over I/O".
+   * opens to look at their whole floor. It collapses into the join here; see the
+   * "no per-item loops over I/O" rule.
    *
    * ── What is preserved exactly ─────────────────────────────────────────────
    * `status = 'active'` and `ORDER BY created_at DESC` are the filter and the

@@ -1,10 +1,8 @@
-// PORT NOTE (magick-agency): a SUBSET of core `src/db/models/call.model.ts`
-// (v1.123.2, lines 200-232), verbatim. Core's `calls` table (AI calls) is not
-// carried; only the post-call analysis result shape survives, because the dialer
-// analysis columns on `agency_calls` (`call_analysis`) and the analysis job reuse
-// it ("the analysis service is call-type-agnostic"). Kept at core's path so
-// `import type { CallAnalysisResult } from './call.model.js'` in ported models
-// and repositories compiles unchanged.
+// Only the post-call analysis result shape lives here: the dialer analysis
+// columns on `agency_calls` (`call_analysis`) and the analysis job use it
+// ("the analysis service is call-type-agnostic"). There is no AI-call `calls`
+// table, so models and repositories import it with
+// `import type { CallAnalysisResult } from './call.model.js'`.
 
 export interface SentimentScore {
   label: 'positive' | 'negative' | 'neutral' | 'mixed';

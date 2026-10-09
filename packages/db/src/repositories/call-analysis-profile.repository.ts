@@ -226,10 +226,9 @@ export class CallAnalysisProfileRepository {
    * own tenant/account for the successor join, AND by the CALLER's tenant/account on
    * the lookup of the dead row.
    *
-   * SECURITY DEVIATION from core (v1.123.2, which takes `id` alone): with only an id,
+   * SECURITY: this takes the caller's tenant/account, not `id` alone. With only an id,
    * a caller sending another tenant's superseded profile id got a 409 carrying that
-   * tenant's current profile id, and could tell 404 from 409. Not ported; flagged for a
-   * later core fix. See PORTING.md.
+   * tenant's current profile id, and could tell 404 from 409. Recorded in docs/decisions.md.
    */
   async findActiveSuccessor(
     id: string,

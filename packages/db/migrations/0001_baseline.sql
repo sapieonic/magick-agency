@@ -1,16 +1,11 @@
 -- 0001_baseline.sql — Magick Agency squashed baseline schema.
 --
--- The END STATE of every object Magick Agency carries from:
---   magic-voice-core v1.123.2 (4850d1d9ffc9eb9eab56d2ed482b9bd616edd103), migrations 001–138
---   magick-master    v3.24.0  (a1f0756a58a63bf8a19baf74298a702f9fe7b430), migrations 001–079
--- with every later ALTER folded into the CREATE it modifies. Each object carries a
--- `source:` line naming the migrations it was folded from. Long migration headers
--- are not repeated here — the source file named on the `source:` line is the
--- rationale; in-table comments, constraint comments and COMMENT ON text are kept
--- verbatim from the source.
+-- The complete schema, with every ALTER folded into the CREATE it modifies.
+-- In-table comments, constraint comments and COMMENT ON text carry each object's
+-- rationale.
 --
--- Every deviation from the source (UUID typing of tenant/account/user ids, dropped
--- columns, renamed objects, the one added column) is inventoried in
+-- The schema's notable choices (UUID typing of tenant/account/user ids, dropped
+-- columns, renamed objects, the one added column) are inventoried in
 -- packages/db/BASELINE.md. Read it before changing anything here.
 --
 -- This file runs as ONE node-pg-migrate SQL migration inside one transaction.
@@ -25,12 +20,11 @@
 -- 0. Extensions and shared functions
 -- ════════════════════════════════════════════════════════════════════════════
 
--- source: core 001. Needed for the uuid_generate_v4() defaults core 003 (audit_logs)
--- and core 007 (audio_files, announcements) declare. gen_random_uuid() is built in
--- (PG 13+), so master 001's pgcrypto is not carried.
+-- Needed for the uuid_generate_v4() defaults that audit_logs, audio_files and
+-- announcements declare. gen_random_uuid() is built in (PG 13+), so pgcrypto is
+-- not installed.
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- source: core 001 / master 001 (byte-identical bodies in both repos).
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -40,10 +34,9 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- ════════════════════════════════════════════════════════════════════════════
--- 1. Identity and tenancy (master)
+-- 1. Identity and tenancy
 -- ════════════════════════════════════════════════════════════════════════════
 
--- source: master 001.
 CREATE TABLE tenants (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name        TEXT NOT NULL,
@@ -58,8 +51,7 @@ CREATE TRIGGER tenants_updated_at
   BEFORE UPDATE ON tenants
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
--- source: master 001 + 025 (UNIQUE(tenant_id, slug) replaced by a partial unique
--- index over non-deleted rows).
+-- UNIQUE(tenant_id, slug) is a partial unique index over non-deleted rows (below).
 CREATE TABLE accounts (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -73,7 +65,7 @@ CREATE TABLE accounts (
 
 CREATE INDEX idx_accounts_tenant_id ON accounts(tenant_id);
 
--- master 025: allow reuse of deleted account slugs — uniqueness only among
+-- Allow reuse of deleted account slugs — uniqueness only among
 -- non-deleted rows.
 CREATE UNIQUE INDEX idx_accounts_tenant_slug_active
   ON accounts(tenant_id, slug)
@@ -83,7 +75,6 @@ CREATE TRIGGER accounts_updated_at
   BEFORE UPDATE ON accounts
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
--- source: master 001 + 008 (phone_number) + 073 (email_unverified).
 CREATE TABLE users (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   firebase_uid      TEXT NOT NULL UNIQUE,
@@ -106,10 +97,9 @@ CREATE TRIGGER users_updated_at
 COMMENT ON COLUMN users.email_unverified IS
   'TRUE when an invite claim bound an identity to this row without proving its email address. Such a row must never be reused by address (POST /users/invite, super-admin create/add-user); /auth/session clears it when the bound identity presents a verified token for the address (path 1), or when a verified sign-in adopts the row (path 2).';
 
--- source: master 001 + 051. Value ORDER is master's actual enum order: 001 created
--- the first five and 051 appended 'agent' with ALTER TYPE ... ADD VALUE (no
--- BEFORE/AFTER), so it sorts LAST. The role hierarchy (agent = 5, below viewer)
--- lives in code (src/rbac/roles.ts), never in this ordering — do not compare
+-- Value ORDER matters: the first five values were created first and 'agent' was
+-- appended with ALTER TYPE ... ADD VALUE (no BEFORE/AFTER), so it sorts LAST.
+-- The role hierarchy (agent = 5, below viewer) lives in code (src/rbac/roles.ts), never in this ordering — do not compare
 -- membership_role values with < or >.
 CREATE TYPE membership_role AS ENUM (
   'tenant_owner',
@@ -120,7 +110,7 @@ CREATE TYPE membership_role AS ENUM (
   'agent'
 );
 
--- source: master 001. Revoked rows are retained (status = 'revoked').
+-- Revoked rows are retained (status = 'revoked').
 CREATE TABLE memberships (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -148,7 +138,6 @@ CREATE TRIGGER memberships_updated_at
   BEFORE UPDATE ON memberships
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
--- source: master 069 (its header carries the full rationale).
 CREATE TABLE membership_invites (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   -- CASCADE, unlike most FKs here. An invite is meaningless without the
@@ -161,11 +150,10 @@ CREATE TABLE membership_invites (
   -- Carried, not joined. See the header.
   tenant_id           UUID NOT NULL,
   email               TEXT NOT NULL,
-  -- The Postgres ENUM from `001_initial_schema.sql`, extended with `agent` by
-  -- migration 051 -- NOT a CHECK constraint and NOT text. Typing it as the enum
-  -- means a role this platform does not have cannot be stored, and it keeps the
+  -- The Postgres ENUM `membership_role`, including `agent` -- NOT a
+  -- CHECK constraint and NOT text. Typing it as the enum means a role this platform does not have cannot be stored, and it keeps the
   -- three mirrors (this column, `src/db/models/membership.model.ts`,
-  -- `src/rbac/roles.ts`) moving together the way 051 requires.
+  -- `src/rbac/roles.ts`) moving together.
   role                membership_role NOT NULL,
   -- **The hash, never the token.** `sha256(token)` hex, 64 characters. The raw
   -- token exists exactly once, in the email; a database dump therefore cannot be
@@ -193,7 +181,7 @@ CREATE TABLE membership_invites (
   -- message and a dead end.
   revoked_at          TIMESTAMPTZ,
   -- The supervisor who issued it. Deliberately UNCONSTRAINED, matching
-  -- `memberships.invited_by` (001), whose column this mirrors: an invite record
+  -- `memberships.invited_by`, whose column this mirrors: an invite record
   -- is history, and losing the row because an admin left would destroy the
   -- attribution the record exists for.
   invited_by          UUID,
@@ -245,9 +233,8 @@ COMMENT ON COLUMN membership_invites.email IS
   'invitation as sent. It is NOT the claim key -- the claim resolves through '
   'membership_id, because users.email carries only a non-unique index (001:60).';
 
--- source: master 007 + 022 (is_system). 007's seed row (a known default password)
--- and 022's UPDATE marking it are NOT carried: super-admins are created fresh
--- (decision 6, docs/decisions.md).
+-- No default super-admin is seeded: super-admins are created fresh
+-- (docs/decisions.md).
 CREATE TABLE super_admins (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email TEXT NOT NULL UNIQUE,
@@ -261,7 +248,7 @@ CREATE TABLE super_admins (
 
 CREATE INDEX idx_super_admins_email ON super_admins (email);
 
--- source: master 008. Super admin audit log (the super-admin audit trail, plan §3.4).
+-- Super admin audit log (the super-admin audit trail).
 CREATE TABLE super_admin_audit_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   admin_id UUID NOT NULL REFERENCES super_admins(id),
@@ -277,10 +264,9 @@ CREATE INDEX idx_sa_audit_created ON super_admin_audit_log (created_at DESC);
 CREATE INDEX idx_sa_audit_admin ON super_admin_audit_log (admin_id);
 
 -- ════════════════════════════════════════════════════════════════════════════
--- 2. Phone inventory (master)
+-- 2. Phone inventory
 -- ════════════════════════════════════════════════════════════════════════════
 
--- source: master 010 (074's live_transfer_enabled NOT carried — AI escalation only).
 CREATE TABLE telephony_providers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name VARCHAR(50) UNIQUE NOT NULL,
@@ -295,15 +281,13 @@ CREATE TRIGGER trg_telephony_providers_updated
   BEFORE UPDATE ON telephony_providers
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
--- Reference row, from master 043. Agency dials on VoiceLink only (plan decision 3),
--- so 010/027/036's vobiz/twilio/plivo/exotel/telnyx/z99 rows are not seeded.
+-- Reference row. Agency dials on VoiceLink only, so no other carriers
+-- (vobiz, twilio, plivo, exotel, telnyx, z99) are seeded.
 INSERT INTO telephony_providers (name, display_name)
   VALUES ('voicelink', 'VoiceLink')
   ON CONFLICT (name) DO NOTHING;
 
--- source: master 010 + 037 (pool_eligible). 062 + 063 net to nothing (062's
--- ownership/owner_tenant_id were dropped again by 063). 010's and 037's seed
--- number and its backfill are NOT carried.
+-- No ownership / owner_tenant_id columns, and no seed number.
 CREATE TABLE phone_numbers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   phone_number VARCHAR(20) UNIQUE NOT NULL,
@@ -331,7 +315,6 @@ CREATE INDEX idx_phone_numbers_pool
   ON phone_numbers (pool_eligible)
   WHERE status = 'active' AND pool_eligible = true;
 
--- source: master 010 (012 is a backfill only — not carried).
 CREATE TABLE tenant_phone_assignments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -349,7 +332,6 @@ CREATE UNIQUE INDEX idx_tenant_phone_default
 CREATE INDEX idx_tenant_phone_tenant ON tenant_phone_assignments (tenant_id);
 CREATE INDEX idx_tenant_phone_number ON tenant_phone_assignments (phone_number_id);
 
--- source: master 010.
 CREATE TABLE phone_account_tags (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   assignment_id UUID NOT NULL REFERENCES tenant_phone_assignments(id) ON DELETE CASCADE,
@@ -368,10 +350,10 @@ CREATE INDEX idx_phone_account_tags_assignment ON phone_account_tags (assignment
 CREATE INDEX idx_phone_account_tags_account ON phone_account_tags (account_id);
 
 -- ════════════════════════════════════════════════════════════════════════════
--- 3. Notifications (master 072)
+-- 3. Notifications
 -- ════════════════════════════════════════════════════════════════════════════
 
--- source: master 072. SPARSE overrides: the catalog in code holds the default for
+-- SPARSE overrides: the catalog in code holds the default for
 -- every event, and a row here exists only where somebody has expressed a preference.
 CREATE TABLE user_notification_preferences (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -397,7 +379,7 @@ CREATE TRIGGER user_notification_preferences_updated_at
 -- for this event". The unique constraint's index leads on `user_id`, which
 -- serves `user_id = ANY($3)` directly, so no second index is created here.
 
--- source: master 072. The idempotency record that makes a scheduled send safe to re-run.
+-- The idempotency record that makes a scheduled send safe to re-run.
 CREATE TABLE notification_deliveries (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_key   TEXT NOT NULL,
@@ -432,16 +414,15 @@ CREATE INDEX idx_notification_deliveries_tenant
   ON notification_deliveries (tenant_id, created_at DESC);
 
 -- ════════════════════════════════════════════════════════════════════════════
--- 4. Audit — master's platform_audit_log ("Console") and core's audit_logs
+-- 4. Audit — platform_audit_log ("Console") and audit_logs
 --    ("Dialer"), both range-partitioned by month.
 --
 --    Partitions here cover 2026-01 through 2027-12 plus a DEFAULT safety net.
 --    Creating months beyond 2027-12 (and dropping aged months for retention) is a
---    RUNTIME job owned by lane A — this migration does not maintain partitions.
+--    RUNTIME job owned by the server — this migration does not maintain partitions.
 -- ════════════════════════════════════════════════════════════════════════════
 
--- source: master 005 + 034 (DEFAULT partition) + 061 (account_id, campaign_id) +
--- 067 (actor_type; its api_key_id column and index are NOT carried — no API keys).
+-- No api_key_id column or index (no API keys).
 CREATE TABLE platform_audit_log (
   id            UUID NOT NULL DEFAULT gen_random_uuid(),
   tenant_id     UUID NOT NULL,
@@ -461,7 +442,7 @@ CREATE TABLE platform_audit_log (
 CREATE INDEX idx_audit_log_tenant_created ON platform_audit_log(tenant_id, created_at DESC);
 CREATE INDEX idx_audit_log_action ON platform_audit_log(action);
 
--- master 061: indexes include `created_at` because it is the partition key.
+-- Indexes include `created_at` because it is the partition key.
 CREATE INDEX idx_audit_log_tenant_resource
   ON platform_audit_log (tenant_id, resource_id, created_at DESC);
 
@@ -505,11 +486,8 @@ END $$;
 -- Permanent safety net for any timestamp outside the explicit ranges.
 CREATE TABLE IF NOT EXISTS platform_audit_log_default PARTITION OF platform_audit_log DEFAULT;
 
--- source: core 003 + 014 (account_id; idx_audit_tenant rebuilt with it) + 015
--- (account_id default dropped) + 038 (DEFAULT partition) + 094 (campaign expression
--- index). Carried by lead decision B7: the campaign activity trail merges these
--- rows ("Dialer") with platform_audit_log ("Console"). `call_id` keeps core's shape
--- (no FK).
+-- The campaign activity trail merges these rows ("Dialer") with platform_audit_log
+-- ("Console") (decision B7). `call_id` has no FK.
 CREATE TABLE audit_logs (
   id              UUID DEFAULT uuid_generate_v4(),
   call_id         UUID,
@@ -533,8 +511,8 @@ CREATE INDEX idx_audit_event_type ON audit_logs (event_type, timestamp DESC);
 CREATE INDEX idx_audit_severity ON audit_logs (severity, timestamp DESC)
   WHERE severity IN ('warn', 'error');
 
--- core 094: expression index so agency audit rows are queryable by campaign. Core's
--- agency writes put the campaign id in `event_data.campaign_id`, not in a column.
+-- Expression index so agency audit rows are queryable by campaign. Agency
+-- writes put the campaign id in `event_data.campaign_id`, not in a column.
 -- Non-agency rows (no campaign_id key) store NULL in the index expression and drop
 -- out of an equality lookup.
 CREATE INDEX IF NOT EXISTS idx_audit_logs_campaign_id
@@ -546,8 +524,8 @@ DECLARE
   end_date DATE;
   partition_name TEXT;
 BEGIN
-  -- 2026-01 through 2027-12 (24 months). Core's own partitions start at 2026-02
-  -- (003); 2026-01 is added so the two audit tables share one window.
+  -- 2026-01 through 2027-12 (24 months). 2026-01 is the first month, so the
+  -- two audit tables share one window.
   FOR i IN 0..23 LOOP
     start_date := (DATE '2026-01-01' + (i || ' months')::INTERVAL)::date;
     end_date := (start_date + INTERVAL '1 month')::date;
@@ -563,10 +541,9 @@ END $$;
 CREATE TABLE IF NOT EXISTS audit_logs_default PARTITION OF audit_logs DEFAULT;
 
 -- ════════════════════════════════════════════════════════════════════════════
--- 5. DNC, ingest jobs and staffing (master agency tables)
+-- 5. DNC, ingest jobs and staffing
 -- ════════════════════════════════════════════════════════════════════════════
 
--- source: master 050.
 CREATE TABLE dnc_entries (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id    UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -580,9 +557,8 @@ CREATE TABLE dnc_entries (
   CONSTRAINT ck_dnc_entries_source CHECK (source IN ('agent', 'import', 'api', 'regulator'))
 );
 
--- `campaign_id` is a core-owned identifier (agency_campaigns lives in core's
--- database), so there is deliberately NO foreign key here — the two services do
--- not share a database.
+-- `campaign_id` deliberately has NO foreign key here: it names an
+-- `agency_campaigns` row, and DNC records must outlive the campaign.
 
 -- One row per (scope, number). NULL never equals NULL in a unique index, so the
 -- scope columns are COALESCEd to a sentinel; without that the index is vacuous
@@ -601,29 +577,25 @@ CREATE UNIQUE INDEX uq_dnc_scope
 CREATE INDEX idx_dnc_entries_tenant_phone
   ON dnc_entries (tenant_id, phone_e164);
 
--- Feeds the tenant-wide delta core subscribes to, newest first.
+-- Feeds the tenant-wide delta the dialer runtime subscribes to, newest first.
 CREATE INDEX idx_dnc_entries_tenant_created
   ON dnc_entries (tenant_id, created_at DESC);
 
--- master 054 `dnc_sync_state` is NOT carried (build decision B8): it was the
--- master->core Redis DNC sync watermark, and the DNC collapse removes that sync.
+-- There is no `dnc_sync_state` table (decision B8): the DNC collapse removes the
+-- Redis DNC sync that its watermark served.
 
--- source: master 053 + 055 (core_rejected_duplicate_rows, core_duplicate_source_rows)
--- + 056 (…_may_undercount) + 057 (mode, replace_superseded_contacts) + 058
--- (replace_superseded_uncertain). 059 is a backfill — its DML is not carried, its
--- COMMENT is (it supersedes 056's).
 CREATE TABLE agency_ingest_jobs (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id             UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   account_id            UUID REFERENCES accounts(id) ON DELETE CASCADE,
-  -- Core-owned campaign id. Deliberately no FK — separate databases.
+  -- The campaign id. Deliberately no FK.
   -- NULL while a dry run validates a file before any campaign is committed to.
   campaign_id           UUID,
   -- ── The file ──
   s3_key                TEXT NOT NULL,
   file_name             TEXT NOT NULL,
   file_size_bytes       BIGINT,
-  -- ── The operator's column mapping (§2.2.1) ──
+  -- ── The operator's column mapping ──
   phone_column          TEXT NOT NULL,
   timezone_column       TEXT,
   -- Columns marked `Ignore`: excluded from `context` entirely, never merely
@@ -631,16 +603,16 @@ CREATE TABLE agency_ingest_jobs (
   ignore_columns        TEXT[] NOT NULL DEFAULT '{}',
   -- Per-CAMPAIGN default country code for local-format numbers, NOT the
   -- platform-wide one. Without it a US campaign's local numbers silently
-  -- normalise to +91 and get dialed. It lives here rather than on core's
+  -- normalise to +91 and get dialed. It lives here rather than on the
   -- campaign row because it is an INGEST-time parameter only: once the roster
   -- holds E.164, nothing downstream needs it again.
   default_country_code  VARCHAR(4),
   -- In-file duplicate suppression. A product judgement, not an idempotency
   -- guarantee — two people can legitimately share one number, so the operator
-  -- decides. Core's idempotency is its own (campaign_id, source_row_number).
+  -- decides. Roster idempotency is separate: (campaign_id, source_row_number).
   dedupe_phones         BOOLEAN NOT NULL DEFAULT TRUE,
   -- ── Lifecycle ──
-  -- A dry run does everything except send anything to core, so the wizard can
+  -- A dry run does everything except send anything to the dialer runtime, so the wizard can
   -- say "95% of your rows are valid" before the operator commits.
   dry_run               BOOLEAN NOT NULL DEFAULT FALSE,
   status                VARCHAR(20) NOT NULL DEFAULT 'pending',
@@ -665,7 +637,7 @@ CREATE TABLE agency_ingest_jobs (
   -- exactly these columns.
   headers               TEXT[],
   context_columns       TEXT[],
-  -- ── The rejected-rows export (UX §B.4) ──
+  -- ── The rejected-rows export ──
   rejected_s3_key       TEXT,
   rejected_row_count    INTEGER NOT NULL DEFAULT 0,
   -- True when the export hit its row ceiling and does not contain every
@@ -680,15 +652,12 @@ CREATE TABLE agency_ingest_jobs (
   started_at            TIMESTAMPTZ,
   finished_at           TIMESTAMPTZ,
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  -- master 055 — core-side rejections threaded back.
+  -- Rejections reported by the dialer runtime, threaded back.
   core_rejected_duplicate_rows                BIGINT NOT NULL DEFAULT 0,
   core_duplicate_source_rows                  INTEGER[] NOT NULL DEFAULT '{}',
-  -- master 056.
   core_rejected_duplicate_rows_may_undercount BOOLEAN NOT NULL DEFAULT FALSE,
-  -- master 057.
   mode                                        VARCHAR(20) NOT NULL DEFAULT 'append',
   replace_superseded_contacts                 BIGINT,
-  -- master 058.
   replace_superseded_uncertain                BOOLEAN NOT NULL DEFAULT FALSE,
   CONSTRAINT ck_agency_ingest_job_status CHECK (status IN
     ('pending', 'running', 'completed', 'failed', 'cancelled')),
@@ -703,7 +672,7 @@ CREATE INDEX idx_agency_ingest_jobs_campaign
 CREATE INDEX idx_agency_ingest_jobs_tenant
   ON agency_ingest_jobs (tenant_id, created_at DESC);
 
--- Startup recovery: a master restart mid-ingest strands jobs in `running`, and
+-- Startup recovery: a server restart mid-ingest strands jobs in `running`, and
 -- they are invisible to the wizard's poll otherwise. Partial index because live
 -- jobs are a vanishing fraction of the table over time.
 CREATE INDEX idx_agency_ingest_jobs_live
@@ -738,7 +707,6 @@ COMMENT ON COLUMN agency_ingest_jobs.replace_superseded_uncertain IS
   'retired; (NULL, false) = nothing retired; (NULL, true) = the roster may be gone and '
   'the count is unknown. Never inferred — only set from a live core interaction.';
 
--- source: master 060 + 064 (the per-tenant unique index replaced by a per-campaign one).
 CREATE TABLE agency_campaign_agents (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id      UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -752,11 +720,11 @@ CREATE TABLE agency_campaign_agents (
   -- not exist and still do not. Two things make it unusable as an ownership
   -- check, and both are worth knowing before someone reaches for it:
   --   * it is the acting supervisor's account CONTEXT, not the campaign's owning
-  --     account — those can differ, and only core knows the second one;
+  --     account — those can differ, and only the dialer runtime knows the second one;
   --   * a tenant-level membership writes NULL here (see above), so a predicate on
   --     it would either refuse legitimate rows or match everything.
-  -- Campaign ownership is therefore established by asking core
-  -- (`assertCampaignInScope` in `proxy-agency-staffing.routes.ts`), whose
+  -- Campaign ownership is therefore established by asking the campaign
+  -- itself (`assertCampaignInScope` in `proxy-agency-staffing.routes.ts`), whose
   -- `requireOwned` compares tenant AND account. One rule, one mechanism.
   --
   -- Deliberately NOT part of the uniqueness rule either: the rule is one campaign
@@ -764,13 +732,13 @@ CREATE TABLE agency_campaign_agents (
   -- person hold two live assignments under two accounts, which is the exact shape
   -- the rule exists to forbid.
   account_id     UUID REFERENCES accounts(id) ON DELETE CASCADE,
-  -- Core-owned campaign id (core's `agency_campaigns`, its migration 072).
-  -- Deliberately no FK — separate databases, and master keeps no campaign copy.
-  -- A campaign core has since deleted leaves a row pointing at nothing; the read
+  -- The `agency_campaigns` id.
+  -- Deliberately no FK, and no campaign copy is kept here.
+  -- A campaign since deleted leaves a row pointing at nothing; the read
   -- path resolves the name through the proxy and reports what it finds rather
   -- than pretending the assignment is gone.
   campaign_id    UUID NOT NULL,
-  -- The person. FK'd, unlike `campaign_id`, because users ARE master's table —
+  -- The person. FK'd, unlike `campaign_id`, because users are this schema's own table —
   -- and CASCADE because an assignment to a deleted user is not a record worth
   -- keeping, it is a dangling pointer that would surface as a nameless row on a
   -- supervisor's screen.
@@ -787,7 +755,7 @@ CREATE TABLE agency_campaign_agents (
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- master 064: one active assignment per user per CAMPAIGN per tenant. Staffing is
+-- one active assignment per user per CAMPAIGN per tenant. Staffing is
 -- not occupancy — being live on one campaign at a time is the session index
 -- (uq_agency_agent_live_tenant), not this table.
 CREATE UNIQUE INDEX uq_agency_campaign_agent_active_campaign
@@ -823,16 +791,14 @@ COMMENT ON COLUMN agency_campaign_agents.unassigned_at IS
   'deleted so "who was staffed here in March" stays answerable.';
 
 -- ════════════════════════════════════════════════════════════════════════════
--- 6. Per-account settings, the concurrency guard's tables, feature flags (core)
+-- 6. Per-account settings, the concurrency guard's tables, feature flags
 -- ════════════════════════════════════════════════════════════════════════════
 
--- source: core 022 + 023 (re-create) + 049 (analyze_calls, allow_recording) + 070
--- (allocation mode/version). 059's analyze_dialer_calls is NOT carried (lead
--- decision Q3b: its only reader was the bridge's softphone-only gate 3). 024 is a backfill (not
--- carried); 039's default_ai_pipeline is NOT carried (AI only).
--- ADDED (no source): webrtc_max_duration_seconds — plan §3.2 consolidates the core
--- `webrtc_max_duration_seconds` flag into this per-account row. NULL = inherit the
--- process default.
+-- Per-account settings, including the concurrency allocation mode/version. There
+-- is no analyze_dialer_calls (decision Q3b: its only reader was the bridge's
+-- softphone-only gate) and no default_ai_pipeline (AI only).
+-- webrtc_max_duration_seconds is a per-account row (not a global feature flag).
+-- NULL = inherit the process default.
 CREATE TABLE account_settings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL,
@@ -840,17 +806,17 @@ CREATE TABLE account_settings (
   max_concurrent_calls INTEGER NOT NULL DEFAULT 5,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  -- core 049: dumb, pre-resolved per-account call toggles.
+  -- dumb, pre-resolved per-account call toggles.
   --   analyze_calls   NULL = inherit the POST_CALL_ANALYSIS_ENABLED default
   --   allow_recording NULL = inherit the call recording default (true)
   analyze_calls   BOOLEAN,
   allow_recording BOOLEAN,
-  -- core 070: existing accounts remain in legacy_total mode. Provider-specific rows
+  -- existing accounts remain in legacy_total mode. Provider-specific rows
   -- are authoritative only after an account is explicitly switched to
   -- provider_breakdown mode.
   concurrency_allocation_mode VARCHAR(32) NOT NULL DEFAULT 'legacy_total',
   concurrency_allocation_version INTEGER NOT NULL DEFAULT 1,
-  -- Magick Agency baseline (plan §3.2): per-account cap on a bridged call's length.
+  -- Per-account cap on a bridged call's length.
   webrtc_max_duration_seconds INTEGER,
   CONSTRAINT uq_account_settings_tenant_account UNIQUE (tenant_id, account_id),
   CONSTRAINT chk_account_settings_concurrency_allocation_mode
@@ -869,7 +835,6 @@ COMMENT ON COLUMN account_settings.webrtc_max_duration_seconds IS
   'webrtc_max_duration_seconds feature flag (Magick Agency plan §3.2). NULL = the '
   'process default applies.';
 
--- source: core 070.
 CREATE TABLE account_provider_concurrency_allocations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL,
@@ -893,8 +858,7 @@ CREATE TABLE account_provider_concurrency_allocations (
 CREATE INDEX idx_account_provider_concurrency_account
   ON account_provider_concurrency_allocations (tenant_id, account_id);
 
--- source: core 046 (its tenant_settings backfill/drop is not carried; 107's seed
--- rows are DML and not carried). Generic feature-flag subsystem — sparse
+-- Generic feature-flag subsystem — sparse
 -- per-(flag, scope) override rows; the catalog of which flags exist lives in code.
 CREATE TABLE feature_flag_overrides (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -937,12 +901,11 @@ CREATE TRIGGER set_feature_flag_overrides_updated_at
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- ════════════════════════════════════════════════════════════════════════════
--- 7. Clips — the abandon-announcement path (core 007 + 014 + 015 + 031 + 067)
---    Uploaded audio only (decision 4): no TTS columns.
+-- 7. Clips — the abandon-announcement path 
+--    Uploaded audio only: no TTS columns.
 -- ════════════════════════════════════════════════════════════════════════════
 
--- source: core 007 + 014 (account_id; unique and index rebuilt with it) + 015
--- (account_id default dropped) + 067 (decoded-PCM bookkeeping).
+-- Includes decoded-PCM bookkeeping.
 CREATE TABLE audio_files (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tenant_id UUID NOT NULL,
@@ -979,9 +942,8 @@ CREATE TRIGGER audio_files_updated_at
   BEFORE UPDATE ON audio_files
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
--- source: core 007 + 014 + 015 + 020 + 031. TTS columns (tts_text, tts_voice,
--- tts_language; 020's defaults) and announcements_tts_check are NOT carried, and
--- `type` is narrowed to 'audio' — see BASELINE.md (decision 4).
+-- No TTS columns (tts_text, tts_voice, tts_language) or announcements_tts_check,
+-- and `type` is 'audio' only — see BASELINE.md.
 CREATE TABLE announcements (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tenant_id UUID NOT NULL,
@@ -992,10 +954,10 @@ CREATE TABLE announcements (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   account_id UUID NOT NULL,
-  -- core 031: allow deleting audio files referenced by inactive announcements.
+  -- allow deleting audio files referenced by inactive announcements.
   CONSTRAINT announcements_audio_file_id_fkey
     FOREIGN KEY (audio_file_id) REFERENCES audio_files(id) ON DELETE SET NULL,
-  -- core 031: only require audio_file_id for active audio announcements.
+  -- only require audio_file_id for active audio announcements.
   CONSTRAINT announcements_audio_check
     CHECK (is_active = false OR type != 'audio' OR audio_file_id IS NOT NULL)
 );
@@ -1010,10 +972,9 @@ CREATE TRIGGER announcements_updated_at
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- ════════════════════════════════════════════════════════════════════════════
--- 8. Analysis profiles (core 059)
+-- 8. Analysis profiles
 -- ════════════════════════════════════════════════════════════════════════════
 
--- source: core 059 (no later ALTER).
 CREATE TABLE call_analysis_profiles (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id         UUID NOT NULL,
@@ -1051,15 +1012,12 @@ CREATE TRIGGER trg_analysis_profiles_updated_at
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- ════════════════════════════════════════════════════════════════════════════
--- 9. Agency execution tables (core 072–119)
+-- 9. Agency execution tables
 -- ════════════════════════════════════════════════════════════════════════════
 
--- source: core 072 + 078 (break_reasons) + 080 (abandon_announcement_id) + 089
--- (abandonment ceiling, pause fields) + 108 (ended_at, last_transition_by_*) + 111
--- (retry lineage) + 115 (retry idempotency). 109 is a backfill (not carried).
--- 072's sip_connection_id is NOT carried (SIP / BYO trunk egress).
+-- No sip_connection_id (no SIP / BYO trunk egress).
 --
--- Two columns are deliberately ABSENT (D9): there is no `concurrency` and no
+-- Two columns are deliberately ABSENT: there is no `concurrency` and no
 -- `overdial_ratio`. The dialing ceiling is the account's existing
 -- `account_settings.max_concurrent_calls`.
 CREATE TABLE agency_campaigns (
@@ -1072,7 +1030,7 @@ CREATE TABLE agency_campaigns (
   caller_ids            TEXT[] NOT NULL,          -- rotated round-robin; all one provider
   telephony_provider    VARCHAR(20) NOT NULL DEFAULT 'voicelink',
 
-  -- Windows (IANA tz; contact tz overrides where derivable — D4)
+  -- Windows (IANA tz; contact tz overrides where derivable)
   calling_window_start  TIME NOT NULL DEFAULT '09:00',
   calling_window_end    TIME NOT NULL DEFAULT '20:00',
   calling_days          SMALLINT[] NOT NULL DEFAULT '{1,2,3,4,5}',
@@ -1081,18 +1039,18 @@ CREATE TABLE agency_campaigns (
   -- Behaviour
   wrapup_seconds        INTEGER NOT NULL DEFAULT 30,   -- 0 = no wrap-up
   wrapup_auto_return    BOOLEAN NOT NULL DEFAULT true,
-  retry_policy          JSONB NOT NULL DEFAULT '{}'::jsonb,   -- keyed by outcome (§2.4)
+  retry_policy          JSONB NOT NULL DEFAULT '{}'::jsonb,   -- keyed by outcome
   -- [{code,label,is_success,requires_note,retry,terminal,suppress}] — a disposition's
-  -- retry/terminal/suppress ALWAYS overrides the outcome policy (§2.4).
+  -- retry/terminal/suppress ALWAYS overrides the outcome policy.
   disposition_catalog   JSONB NOT NULL DEFAULT '[]'::jsonb,
   record_calls          BOOLEAN NOT NULL DEFAULT false,
-  analysis_profile_id   UUID,                          -- reuses call_analysis_profiles (059)
+  analysis_profile_id   UUID,                          -- reuses call_analysis_profiles
 
   -- Which of a contact's arbitrary CSV columns matter, and in what order:
   -- {hero: [], order: [], hidden: []}. See AgencyContextDisplay in
   -- src/agency/contracts.ts for the resolution rules both clients implement.
   --
-  -- agency_contacts.context is deliberately schemaless (§2.1) — right for ingest,
+  -- agency_contacts.context is deliberately schemaless — right for ingest,
   -- useless for rendering: a 41-column export gives the agent a 41-row table with
   -- no signal about which four rows decide the call. This is the operator's
   -- answer, set at campaign build time. '{}' means "no opinion" ⇒ render every
@@ -1108,34 +1066,34 @@ CREATE TABLE agency_campaigns (
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-  -- core 078: the campaign's break-reason catalog. '[]' means "the operator has no
-  -- opinion", not "breaks are disabled" — core then serves a small built-in default
+  -- the campaign's break-reason catalog. '[]' means "the operator has no
+  -- opinion", not "breaks are disabled" — the dialer then serves a small built-in default
   -- list (see `resolveBreakReasons`).
   break_reasons         JSONB NOT NULL DEFAULT '[]'::jsonb,
 
-  -- core 080: the apology clip an abandoned call plays. NULLABLE, and null means
+  -- the apology clip an abandoned call plays. NULLABLE, and null means
   -- hang up without a clip. NO FK: a dangling id resolves to no clip and takes the
   -- same path as NULL.
   abandon_announcement_id UUID,
 
-  -- core 089: the abandonment ceiling.
+  -- the abandonment ceiling.
   abandonment_ceiling_pct    DOUBLE PRECISION NOT NULL DEFAULT 3,
   pause_reason               VARCHAR(32),
   paused_at                  TIMESTAMPTZ,
   pause_abandonment_rate_pct DOUBLE PRECISION,
 
-  -- core 108: campaign lifecycle.
+  -- campaign lifecycle.
   ended_at                   TIMESTAMPTZ,
   last_transition_by_user_id UUID,
   last_transition_by_name    VARCHAR(255),
 
-  -- core 111: retry lineage.
+  -- retry lineage.
   parent_campaign_id    UUID REFERENCES agency_campaigns(id) ON DELETE SET NULL,
   root_campaign_id      UUID,
   retry_generation      SMALLINT NOT NULL DEFAULT 0,
   retry_selector        JSONB,
 
-  -- core 115: retry idempotency.
+  -- retry idempotency.
   retry_idempotency_key VARCHAR(64),
 
   CONSTRAINT ck_agency_campaign_status CHECK (status IN
@@ -1143,9 +1101,9 @@ CREATE TABLE agency_campaigns (
   CONSTRAINT ck_agency_campaign_retry_policy CHECK (jsonb_typeof(retry_policy) = 'object'),
   CONSTRAINT ck_agency_campaign_dispositions CHECK (jsonb_typeof(disposition_catalog) = 'array'),
   CONSTRAINT ck_agency_campaign_context_display CHECK (jsonb_typeof(context_display) = 'object'),
-  -- Same guard `disposition_catalog` carries (072). Without it a `{}` or a bare
+  -- Same guard `disposition_catalog` carries. Without it a `{}` or a bare
   -- string parses as valid JSONB and every break request 500s on an array method,
-  -- which reads as a core bug rather than a bad campaign config.
+  -- which reads as a server bug rather than a bad campaign config.
   CONSTRAINT ck_agency_campaign_break_reasons CHECK (jsonb_typeof(break_reasons) = 'array'),
   CONSTRAINT ck_agency_campaign_abandonment_ceiling
     CHECK (abandonment_ceiling_pct > 0 AND abandonment_ceiling_pct <= 100),
@@ -1153,7 +1111,7 @@ CREATE TABLE agency_campaigns (
     CHECK (pause_reason IS NULL OR pause_reason IN ('supervisor', 'abandonment_ceiling'))
 );
 
--- D9: ONE running campaign per account in v1. Two campaigns sharing one
+-- ONE running campaign per account in v1. Two campaigns sharing one
 -- account's concurrency pool would need fair-share arbitration between two
 -- independent pacing leaders — real work for a case nobody has asked for. The
 -- constraint is this one index and is trivially lifted later.
@@ -1170,12 +1128,10 @@ CREATE INDEX idx_agency_campaigns_active
   ON agency_campaigns (status)
   WHERE status IN ('running','stopping');
 
--- core 111.
 CREATE INDEX idx_agency_campaigns_parent
   ON agency_campaigns (parent_campaign_id)
   WHERE parent_campaign_id IS NOT NULL;
 
--- core 115.
 CREATE UNIQUE INDEX uq_agency_campaign_retry_idempotency
   ON agency_campaigns (tenant_id, account_id, retry_idempotency_key)
   WHERE retry_idempotency_key IS NOT NULL;
@@ -1234,12 +1190,7 @@ COMMENT ON COLUMN agency_campaigns.retry_selector IS
 COMMENT ON COLUMN agency_campaigns.retry_idempotency_key IS
   'Client-minted key making POST /retry at-most-once per (tenant, account, key). Minted by the browser when the retry dialog opens and forwarded verbatim — a key generated per request protects nothing. NULL = an unkeyed create, which has no replay protection.';
 
--- source: core 073 + 082 (our_fault_attempts) + 083 (row_fingerprint and its
--- function) + 085 (csv_line_number) + 087 (digit index) + 095 (reporting + suffix
--- indexes) + 112 (lineage columns, stamping trigger) + 114 (root index). 083's and
--- 113's backfills are not carried.
-
--- core 083: one definition of row identity, used by the INSERT in
+-- One definition of row identity, used by the INSERT in
 -- `agency.repository.ts#applyIngestChunk`, so the callers cannot drift into
 -- disagreeing about which rows are the same row.
 --
@@ -1286,7 +1237,7 @@ CREATE TABLE agency_contacts (
   context           JSONB NOT NULL DEFAULT '{}'::jsonb,
   source_row_number INTEGER,
   -- Derived at ingest from a mapped column only — NEVER inferred from the area
-  -- code (D4: NANP prefixes cross timezone boundaries and portability has
+  -- code (NANP prefixes cross timezone boundaries and portability has
   -- decoupled prefix from location). NULL ⇒ the campaign default applies.
   timezone          VARCHAR(64),
 
@@ -1301,17 +1252,17 @@ CREATE TABLE agency_contacts (
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-  -- core 082: the our-fault redial ledger. No index: only ever read on a row
+  -- the our-fault redial ledger. No index: only ever read on a row
   -- already fetched by primary key or already being UPDATEd by id.
   our_fault_attempts INTEGER NOT NULL DEFAULT 0,
 
-  -- core 083: nullable on purpose — the unique index below is partial on NOT NULL.
+  -- nullable on purpose — the unique index below is partial on NOT NULL.
   row_fingerprint   VARCHAR(32),
 
-  -- core 085: provenance only, never identity. Never indexed.
+  -- provenance only, never identity. Never indexed.
   csv_line_number   INTEGER,
 
-  -- core 112: retry lineage.
+  -- retry lineage.
   source_contact_id UUID REFERENCES agency_contacts(id) ON DELETE SET NULL,
   root_contact_id   UUID,
 
@@ -1324,7 +1275,7 @@ CREATE TABLE agency_contacts (
 -- keeps it O(log n) as completed rows accumulate into the millions, and it is the
 -- reason anything not dialable RIGHT NOW must not satisfy the predicate — an
 -- unclaimed contact outside its calling window is pushed forward to the next
--- window-open instant rather than returned with next_attempt_at = now() (§4.2).
+-- window-open instant rather than returned with next_attempt_at = now().
 CREATE INDEX idx_agency_contacts_dialable
   ON agency_contacts (campaign_id, next_attempt_at)
   WHERE state = 'pending';
@@ -1333,31 +1284,30 @@ CREATE INDEX idx_agency_contacts_dialable
 CREATE INDEX idx_agency_contacts_phone
   ON agency_contacts (tenant_id, phone_e164);
 
--- core 073: roster-ingest idempotency, at the row level. LEGACY since 083/085 —
+-- Roster-ingest idempotency, at the row level. LEGACY —
 -- nothing writes source_row_number any more; dropping this index and the column is
--- core's "phase 3" step (see 083's DEPLOY ORDER block). Partial, so a non-CSV
+-- the final cleanup step. Partial, so a non-CSV
 -- insert path with a NULL row number never conflicts.
 CREATE UNIQUE INDEX uq_agency_contacts_source_row
   ON agency_contacts (campaign_id, source_row_number)
   WHERE source_row_number IS NOT NULL;
 
--- core 083: THE constraint. Partial, so the legacy ambiguous rows — and any
+-- THE constraint. Partial, so the legacy ambiguous rows — and any
 -- non-CSV insert path that writes no fingerprint — never conflict.
 --
 -- ⚠️ THE INDEX IS NOT PARTIAL ON LIVENESS, AND IT MUST BECOME SO BEFORE ANY
 -- ROSTER-REPLACE / SUPERSEDE FEATURE LANDS. A fingerprint occupies its
 -- `(campaign_id, row_fingerprint)` slot forever, whether or not the contact is
--- still live (see 083's header).
+-- still live.
 CREATE UNIQUE INDEX uq_agency_contacts_row_fingerprint
   ON agency_contacts (campaign_id, row_fingerprint)
   WHERE row_fingerprint IS NOT NULL;
 
--- core 087. Keep the spelling byte-identical to `CONTACT_PHONE_DIGITS_SQL` in
+-- Keep the spelling byte-identical to `CONTACT_PHONE_DIGITS_SQL` in
 -- `agency.repository.ts` — Postgres matches expression indexes structurally.
 CREATE INDEX idx_agency_contacts_campaign_phone_digits
   ON agency_contacts (campaign_id, regexp_replace(phone_e164, '[^0-9]', '', 'g'));
 
--- core 095.
 CREATE INDEX idx_agency_contacts_reporting
   ON agency_contacts (campaign_id, created_at DESC, id DESC);
 
@@ -1367,7 +1317,6 @@ CREATE INDEX idx_agency_contacts_phone_suffix
     reverse(regexp_replace(phone_e164, '[^0-9]', '', 'g')) text_pattern_ops
   );
 
--- core 114.
 CREATE INDEX idx_agency_contacts_root
   ON agency_contacts (root_contact_id);
 
@@ -1375,7 +1324,6 @@ CREATE TRIGGER trg_agency_contacts_updated_at
   BEFORE UPDATE ON agency_contacts
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
--- core 112.
 CREATE OR REPLACE FUNCTION agency_contact_stamp_root() RETURNS TRIGGER AS $$
 BEGIN
   IF NEW.root_contact_id IS NULL THEN
@@ -1456,28 +1404,27 @@ COMMENT ON INDEX idx_agency_contacts_root IS
   'including the note that a deployment with a large agency_contacts should build '
   'this CONCURRENTLY out of band before running migrate:up.';
 
--- source: core 074 + 093 (074's per-campaign uq_agency_agent_live replaced by the
--- per-TENANT uq_agency_agent_live_tenant; 093's dedupe UPDATE is not carried).
+-- The live-session uniqueness is per TENANT (uq_agency_agent_live_tenant).
 --
--- Liveness does NOT come from this table (§5.1). The authority is the Redis
+-- Liveness does NOT come from this table. The authority is the Redis
 -- ownership key `agency:station:{sessionId}`, renewed by the station socket's
 -- own heartbeat; `state`/`last_heartbeat` here are a durable mirror written by a
 -- sweeper, and are what a reconnecting agent is REHYDRATED from after a restart
--- (landing in `break`, never `available` — D2, so the engine cannot dial into a
+-- (landing in `break`, never `available`, so the engine cannot dial into a
 -- pool that has not demonstrably re-attached).
 CREATE TABLE agency_agent_sessions (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id       UUID NOT NULL,
   account_id      UUID NOT NULL,
   campaign_id     UUID NOT NULL REFERENCES agency_campaigns(id) ON DELETE CASCADE,
-  agent_user_id   UUID NOT NULL,   -- master's user id, opaque to core
+  agent_user_id   UUID NOT NULL,   -- the user id, opaque to the dialer runtime
 
   -- offline → available → reserved → on_call → wrapup → available | break
   state           VARCHAR(20) NOT NULL DEFAULT 'offline',
   break_reason    VARCHAR(50),
   state_since     TIMESTAMPTZ NOT NULL DEFAULT now(),
-  -- Which core replica owns this agent's media socket (§3). Written and read from
-  -- day one even though core is single-replica (D2), so the invariant "dial only
+  -- Which replica owns this agent's media socket. Written and read from
+  -- day one even though the dialer runs single-replica, so the invariant "dial only
   -- on the owning replica" is exercised continuously rather than being dead code.
   owner_replica   VARCHAR(100),
   last_heartbeat  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1491,7 +1438,7 @@ CREATE TABLE agency_agent_sessions (
     ('offline','available','reserved','on_call','wrapup','break'))
 );
 
--- core 093: one LIVE session per agent per TENANT. The reservation CAS key is per
+-- one LIVE session per agent per TENANT. The reservation CAS key is per
 -- SESSION, so two live sessions for one human are two independently reservable
 -- agents and two calls bridged into one headset. `account_id` is deliberately NOT
 -- in the key: an agent moving between two accounts of the same tenant is exactly
@@ -1517,7 +1464,6 @@ COMMENT ON COLUMN agency_agent_sessions.agent_user_id IS
 COMMENT ON INDEX uq_agency_agent_live_tenant IS
   'One live session per agent per tenant. Supersedes 074''s per-campaign uq_agency_agent_live: the reservation CAS key in agent-state-machine.ts is per SESSION, so two live sessions for one human are two independently reservable agents and one pair of ears.';
 
--- source: core 105.
 CREATE TABLE agency_agent_session_events (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -1534,7 +1480,7 @@ CREATE TABLE agency_agent_session_events (
   -- Denormalised from the session — see the header. Immutable at the source, so
   -- the copy cannot drift.
   campaign_id     UUID NOT NULL,
-  agent_user_id   UUID NOT NULL,   -- master's user id, opaque to core (D3)
+  agent_user_id   UUID NOT NULL,   -- the user id, opaque to the dialer runtime
 
   -- NULL for the first transition into a session; see the header.
   from_state      VARCHAR(20),
@@ -1565,7 +1511,7 @@ CREATE TABLE agency_agent_session_events (
 -- can be differenced with `lead(at)` without a sort. `agent_user_id` leads
 -- because the question is always about a person — a session-keyed index would make
 -- an agent's shift history N index scans instead of one range scan.
--- (`session_id` is deliberately NOT indexed — see core 105.)
+-- (`session_id` is deliberately NOT indexed.)
 CREATE INDEX idx_agency_session_events_agent
   ON agency_agent_session_events (agent_user_id, at);
 
@@ -1576,12 +1522,8 @@ COMMENT ON COLUMN agency_agent_session_events.agent_user_id IS
 COMMENT ON COLUMN agency_agent_session_events.from_state IS
   'NULL for the first transition into a session — the join upsert creates the row in break (D2) and there is no prior state to name.';
 
--- source: core 075 + 079 (disposition actor) + 081 (billing/metering index) + 088
--- (wrap-up measurement) + 090 + 095 + 104 (indexes) + 119 (abandon_reason).
---
--- One row per dial (docs/reference/magickvoice-platform/docs/agency-dialer-design.md §2.1). `webrtc_call_id` is the
--- back-reference to the media leg, now an `agency_calls.id` (column name kept so
--- ported SQL is unchanged).
+-- One row per dial. `webrtc_call_id` is the back-reference to the media leg, an
+-- `agency_calls.id` (the column keeps its older name).
 CREATE TABLE agency_call_attempts (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   campaign_id         UUID NOT NULL REFERENCES agency_campaigns(id) ON DELETE CASCADE,
@@ -1613,17 +1555,16 @@ CREATE TABLE agency_call_attempts (
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-  -- core 079: who recorded the disposition, SEPARATELY from the reserved agent.
+  -- who recorded the disposition, SEPARATELY from the reserved agent.
   dispositioned_by_user_id UUID,
   dispositioned_at         TIMESTAMPTZ,
   dispositioned_on_behalf  BOOLEAN NOT NULL DEFAULT false,
 
-  -- core 088: wrap-up measurement.
+  -- wrap-up measurement.
   wrapup_started_at   TIMESTAMPTZ,
   wrapup_ended_at     TIMESTAMPTZ,
   wrapup_resolution   VARCHAR(30),
 
-  -- core 119.
   abandon_reason      VARCHAR(30),
 
   CONSTRAINT ck_agency_attempt_state CHECK (state IN
@@ -1667,35 +1608,31 @@ CREATE INDEX idx_agency_attempts_agent
   ON agency_call_attempts (reserved_agent_id)
   WHERE state <> 'ended';
 
--- core 079: supervisor-activity review — "which write-ups on this campaign were not
+-- supervisor-activity review — "which write-ups on this campaign were not
 -- done by the agent who took the call". Partial, because it is a rare flag.
 CREATE INDEX idx_agency_attempts_on_behalf
   ON agency_call_attempts (campaign_id, dispositioned_at DESC)
   WHERE dispositioned_on_behalf;
 
--- core 081. `dialed_at` MUST lead (a time range across all campaigns). Kept under
--- plan §3.3 as the metering read, although v1 has no billing sweep.
+-- `dialed_at` MUST lead (a time range across all campaigns). Kept as the metering
+-- read, although v1 has no billing sweep.
 CREATE INDEX idx_agency_attempts_billing
   ON agency_call_attempts (dialed_at, campaign_id)
   WHERE dialed_at IS NOT NULL;
 
--- core 088.
 CREATE INDEX idx_agency_attempts_wrapup
   ON agency_call_attempts (campaign_id)
   INCLUDE (wrapup_started_at, wrapup_ended_at, wrapup_resolution)
   WHERE wrapup_ended_at IS NOT NULL;
 
--- core 090.
 CREATE INDEX idx_agency_attempts_agent_bridged
   ON agency_call_attempts (reserved_agent_id)
   INCLUDE (id)
   WHERE bridged_at IS NOT NULL;
 
--- core 095.
 CREATE INDEX idx_agency_attempts_keyset
   ON agency_call_attempts (campaign_id, created_at DESC, id DESC);
 
--- core 104.
 CREATE INDEX idx_agency_attempts_agent_dialed
   ON agency_call_attempts (reserved_agent_id, dialed_at DESC)
   WHERE dialed_at IS NOT NULL;
@@ -1725,20 +1662,19 @@ COMMENT ON INDEX idx_agency_attempts_keyset IS
 COMMENT ON INDEX idx_agency_attempts_agent_dialed IS
   'The agent stats aggregate (GET /agency-agents/:id/stats): (reserved_agent_id, dialed_at DESC) over dialled attempts only. Not used by the sibling /attempts spine, which bounds created_at and must return attempts with a NULL dialed_at. Deliberately NOT a widening of idx_agency_attempts_agent (075, live-only) or idx_agency_attempts_agent_bridged (090, no time key) — a date-ranged historical aggregate is a third shape and gets its own index.';
 
--- source: core 077 + 084 (rejection counts).
 CREATE TABLE agency_ingest_chunks (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   campaign_id     UUID NOT NULL REFERENCES agency_campaigns(id) ON DELETE CASCADE,
 
-  -- master's ingest job, stable across every retry of one upload.
+  -- The ingest job id, stable across every retry of one upload.
   ingest_job_id   VARCHAR(100) NOT NULL,
   -- 0-based, stable per chunk. (job, index) is what makes a retry recognisable.
   chunk_index     INTEGER NOT NULL,
   -- Denormalized `{ingest_job_id}-{chunk_index}`. VARCHAR(128) matches the width
-  -- used by every other idempotency key in the schema (066).
+  -- used by every other idempotency key in the schema.
   idempotency_key VARCHAR(128) NOT NULL,
-  -- Total chunks master intends to send. Lets core answer "is the roster
-  -- complete" without master having to make a separate finalize call it might
+  -- Total chunks the uploader intends to send. Lets the dialer runtime answer "is the
+  -- roster complete" without the uploader having to make a separate finalize call it might
   -- lose — a lost final chunk would otherwise leave a campaign permanently
   -- un-startable with nothing to diagnose it by.
   chunk_count     INTEGER,
@@ -1747,7 +1683,7 @@ CREATE TABLE agency_ingest_chunks (
   applied_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-  -- core 084: NULLABLE WITH NO DEFAULT — NULL means "we never recorded this".
+  -- NULLABLE WITH NO DEFAULT — NULL means "we never recorded this".
   rejected_duplicate_rows INTEGER,
   -- The CAPPED sample, never the full set. `MAX_REPORTED_DUPLICATE_ROWS` (20) in
   -- `agency.repository.ts` bounds both what we return and what we store, so a
@@ -1762,7 +1698,7 @@ CREATE UNIQUE INDEX uq_agency_ingest_chunk
   ON agency_ingest_chunks (campaign_id, idempotency_key);
 
 -- "Which chunks of this job have landed" — serves the completeness check and the
--- missing_chunks[] response that lets master re-send precisely the gap.
+-- missing_chunks[] response that lets the uploader re-send precisely the gap.
 CREATE INDEX idx_agency_ingest_chunks_job
   ON agency_ingest_chunks (campaign_id, ingest_job_id, chunk_index);
 
@@ -1779,18 +1715,17 @@ COMMENT ON COLUMN agency_ingest_chunks.duplicate_source_rows IS
   'rejected_duplicate_rows, for the same replay-fidelity reason. A sample, not the '
   'set, exactly as the API field of the same name. NULL means not recorded (pre-084).';
 
--- source: core 086 + 087 (campaign_id scope).
 CREATE TABLE agency_dnc_outbox (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id       UUID NOT NULL,
   -- Already normalized by `normalizeE164` at enqueue — the SAME function
   -- `DncRegistry.check` runs on both sides of its comparison. A row is never
-  -- written for a phone that does not normalize, because master would 400 it
+  -- written for a phone that does not normalize, because the DNC registry would 400 it
   -- identically forever and an un-landable row is not durability, it is a leak.
   phone_e164      VARCHAR(20) NOT NULL,
   reason          TEXT,
   -- The actor AS GIVEN. Nullable, and never derived: a supervisor acting on
-  -- another agent's behalf must not be recorded as that agent (MAG-107), so a
+  -- another agent's behalf must not be recorded as that agent so a
   -- missing actor stays missing rather than becoming a confidently-wrong one.
   added_by        VARCHAR(100),
   status          VARCHAR(16) NOT NULL DEFAULT 'pending',
@@ -1807,10 +1742,10 @@ CREATE TABLE agency_dnc_outbox (
   next_attempt_at TIMESTAMPTZ,
   -- Stamped ONCE at insert and never touched again. This is what the age gauge
   -- reads, NOT updated_at — the sweep re-UPDATEs every unlanded row on each
-  -- tick and the BEFORE UPDATE trigger resets updated_at, so a wedged-master row
+  -- tick and the BEFORE UPDATE trigger resets updated_at, so a wedged row
   -- would forever look one sweep old and the "unpropagated for > N minutes"
-  -- alert could never fire. Exactly the trap 059 documents on
-  -- `settlement_pending_since`.
+  -- alert could never fire. The same trap applies to any
+  -- "pending since" stamp that the sweep would otherwise reset.
   pending_since   TIMESTAMPTZ NOT NULL DEFAULT now(),
   landed_at       TIMESTAMPTZ,
   error_code      VARCHAR(48),
@@ -1818,15 +1753,15 @@ CREATE TABLE agency_dnc_outbox (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-  -- core 087: the SCOPE, as a value. NULL = tenant-wide. Never backfill this column.
+  -- the SCOPE, as a value. NULL = tenant-wide. Never backfill this column.
   -- No FK to `agency_campaigns`: the outbox outlives the campaign on purpose.
   campaign_id     UUID,
 
-  -- 'pending'   — written, not yet accepted by master. THE state that answers
+  -- 'pending'   — written, not yet accepted by the DNC registry. THE state that answers
   --               "are there customers who asked not to be called whose request
   --               has not propagated".
   -- 'sending'   — claimed by a replica, forward in flight.
-  -- 'landed'    — master reported the tenant-wide entry recorded.
+  -- 'landed'    — the DNC registry reported the tenant-wide entry recorded.
   -- 'abandoned' — the bounded retry is exhausted. Deliberately NOT a delete and
   --               deliberately NOT silent: it is the alertable state, and the row
   --               stays so a human can see what was lost and repost it.
@@ -1860,15 +1795,13 @@ COMMENT ON COLUMN agency_dnc_outbox.campaign_id IS
   'The SCOPE of this DNC record, as a value. An id = campaign-scoped: forwarded to master, which names the campaign; the row does not enter the flat dnc:{tenant} set. NULL = tenant-wide: the field is omitted on the forward, master writes the unscoped entry, it reaches the flat set and blocks the number in every campaign. NULL is never "unknown" — it is an explicit tenant-wide escalation, or a row enqueued before campaign scoping shipped, which was created tenant-wide. Never backfill this column.';
 
 -- ════════════════════════════════════════════════════════════════════════════
--- 10. agency_calls — core's webrtc_calls, renamed (the browser↔PSTN media leg)
+-- 10. agency_calls — the browser↔PSTN media leg (formerly `webrtc_calls`)
 -- ════════════════════════════════════════════════════════════════════════════
 
--- source: core 047 + 048 (recording) + 059 (analysis columns) + 076 (agency
--- back-references). NOT carried: 051 sip_connection_id (SIP), 096/102
--- telephony_credential_id (BYOC credentials; 098's index on it was already dropped
--- with the column by 099), 106 idx_webrtc_calls_tenant_dialer (softphone-only list).
--- Column names are unchanged so ported SQL changes only the table name; object
--- names that embedded `webrtc_calls` are renamed to `agency_calls` (BASELINE.md).
+-- No sip_connection_id (SIP), telephony_credential_id (BYOC credentials) or
+-- idx_webrtc_calls_tenant_dialer (softphone-only list).
+-- Column names keep their older `webrtc_` spelling where they had it; object
+-- names that embedded `webrtc_calls` are named for `agency_calls` (BASELINE.md).
 CREATE TABLE agency_calls (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id           UUID NOT NULL,
@@ -1888,7 +1821,7 @@ CREATE TABLE agency_calls (
   error_code          VARCHAR(50),
   error_message       TEXT,
 
-  -- Opaque caller/user reference from magick-master (who placed the call); optional.
+  -- Opaque caller/user reference to the user (who placed the call); optional.
   initiated_by        VARCHAR(100),
   metadata            JSONB NOT NULL DEFAULT '{}',
 
@@ -1902,12 +1835,12 @@ CREATE TABLE agency_calls (
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-  -- core 048: opt-in call recording.
+  -- opt-in call recording.
   recording_requested        BOOLEAN NOT NULL DEFAULT FALSE,
   recording_url              TEXT,
   recording_duration_seconds INTEGER,
 
-  -- core 059: analysis columns.
+  -- analysis columns.
   -- Provenance only (never re-read at run time — the job snapshots dimensions).
   -- Immutable after insert, like recording_requested / sip_connection_id.
   analysis_profile_id UUID,
@@ -1920,11 +1853,11 @@ CREATE TABLE agency_calls (
   -- Transcript provenance (incl. source_url actually consumed), so support can
   -- answer "where did this summary come from".
   transcript_meta     JSONB       DEFAULT NULL,
-  -- Durable consent record (§14.4). Immutable after insert.
+  -- Durable consent record. Immutable after insert.
   analysis_consent    BOOLEAN,
   analysis_consent_at TIMESTAMPTZ,
 
-  -- core 076: correlation ids, deliberately NO foreign keys — this table is on the
+  -- correlation ids, deliberately NO foreign keys — this table is on the
   -- retention purge and a campaign may be deleted long after its calls were purged
   -- (or vice versa); a cascade in either direction would destroy the other side's
   -- audit trail.
@@ -1967,13 +1900,11 @@ COMMENT ON COLUMN agency_calls.agency_attempt_id IS
   'agency_call_attempts.id this media leg was placed for. Correlation only — no FK, both sides purge independently.';
 
 -- ════════════════════════════════════════════════════════════════════════════
--- 11. The durable analysis job (core 059, settlement removed — plan §4)
+-- 11. The durable analysis job (no settlement step)
 -- ════════════════════════════════════════════════════════════════════════════
 
--- source: core 059. NOT carried: settlement_status, settlement_attempts,
--- settlement_pending_since, ck_dialer_analysis_settlement and
--- idx_dialer_analysis_jobs_settlement. `call_id` keeps its name and its FK
--- semantics (NOT NULL, ON DELETE CASCADE), now onto agency_calls.
+-- No settlement_* columns, constraint or index. `call_id` is NOT NULL,
+-- ON DELETE CASCADE, onto agency_calls.
 CREATE TABLE dialer_analysis_jobs (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   -- FK to the dialer call; cascade so a purged call takes its job with it. The
@@ -2003,7 +1934,7 @@ CREATE TABLE dialer_analysis_jobs (
   claimed_at      TIMESTAMPTZ,
   heartbeat_at    TIMESTAMPTZ,
   next_attempt_at TIMESTAMPTZ,
-  -- Kept for metering (plan §3.3): audio seconds the analysis consumed.
+  -- Kept for metering: audio seconds the analysis consumed.
   analysis_audio_seconds INTEGER,
   error_code      VARCHAR(48),
   error_message   TEXT,
