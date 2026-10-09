@@ -1,16 +1,4 @@
 import type { TelephonyAdmissionResult } from './provider-concurrency-guard.js';
-// PORT NOTE (magick-agency): ported from core src/core/telephony-concurrency.ts@4850d1d9.
-// Changed: the per-broadcast group-concurrency gate is stripped (agency has no
-// per-broadcast bulk concurrency). Deleted: `TelephonyGroupAdmission`, the `group`
-// parameter of `tryAcquireTelephonyConcurrency`/`acquireTelephonyConcurrency`, the
-// `group_full` refusal on the compatibility path, the "forwarded only when there is
-// one" branch, `isCapacityRefusal`, `isGroupParkRefusal`, `GroupGateAdmitter`,
-// `rollbackGate`, `admitThroughGroupGate`, and the `GroupAcquireRequest`/
-// `GroupAdmission` import. In core `isCapacityRefusal` was called only by the
-// GroupRefiller and (via `isGroupParkRefusal`) by grouped-row branches of the SQS
-// queue coordinator, bulk/static services and IVR routes. With no group the forward
-// is core's existing ungrouped call, so its arity is unchanged. Everything else is
-// verbatim (this is the pre-gate shape, core d1179938^).
 
 /** Structural contract kept deliberately small so background services and test
  * doubles can share the production admission entry point during rolling deploys. */
@@ -48,13 +36,12 @@ export async function acquireTelephonyConcurrency(
   ttlSecondsOverride?: number,
 ): Promise<TelephonyAdmissionResult> {
   if (typeof owner.tryAcquireTelephonyConcurrency === 'function') {
-    // An ungrouped call makes exactly the call it always made (arity included —
-    // tests pin it).
+    // Forwarded with exactly these five arguments (arity included — tests pin it).
     return owner.tryAcquireTelephonyConcurrency(callId, tenantId, accountId, provider, ttlSecondsOverride);
   }
 
-  // Compatibility for older embedders/test doubles. Production CallManager
-  // always provides the atomic provider-mode method above.
+  // Compatibility for test doubles. The production `TelephonyGuardHost` always
+  // provides the atomic provider-mode method above.
   const globalAcquired = ttlSecondsOverride === undefined
     ? await owner.concurrencyGuard.tryAcquire(callId)
     : await owner.concurrencyGuard.tryAcquire(callId, ttlSecondsOverride);

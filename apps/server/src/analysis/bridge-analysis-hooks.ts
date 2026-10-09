@@ -1,32 +1,23 @@
 /**
- * Lane D's implementation of the `BridgeAnalysisHooks` seam
- * (`seams/bridge-analysis-hooks.ts`, docs/seams.md §3.2).
+ * The `BridgeAnalysisHooks` seam implementation (`seams/bridge-analysis-hooks.ts`,
+ * docs/seams.md): what the WebRTC bridge calls when a call is finalised
+ * (`onCallFinalized`, fire-and-forget) and when a recording URL lands
+ * (`onRecordingReady`). The bridge hands over `BridgeCallFinalizedFacts` read off
+ * its session; the seam says implementations catch and log, so `onCallFinalized`
+ * catches the enqueue's rejection itself.
  *
- * The two method BODIES below are core's `WebRtcBridgeManager.maybeEnqueueAnalysis`
- * and `.notifyDialerAnalysisRecordingReady`
- * (magic-voice-core@4850d1d9 `src/core/webrtc-bridge-manager.ts:2190-2295`), moved
- * verbatim. Changes (PORTING.md):
- *  - gate 3 (the softphone's `analyze_dialer_calls` opt-out) is deleted, as the seam
- *    prescribes: every call here is an agency call, and core already skipped the gate
- *    for agency calls;
- *  - the `session` reads become the seam's `BridgeCallFinalizedFacts`
- *    (`session.tenantId/accountId/campaignId/answeredAt/getTalkTimeSeconds()`);
- *  - `analysisFlagFor(isAgencyCall ? 'agency' : 'dialer')` is `analysisFlagFor('agency')`
- *    (`'dialer'` is not a scope here);
- *  - the bridge's call site caught the enqueue's rejection and logged it
- *    (`.catch((err) => log.error(..., 'Dialer analysis enqueue failed'))`); the seam
- *    says implementations catch and log, so `onCallFinalized` does that itself.
- *
- * The §7 gate ladder, as it now reads:
+ * The gate ladder:
  *   1. Feature configured (config + a constructible transcriber).
  *   2. `agency_call_analysis` on for {tenant, account}.
+ *      (There is no gate 3: no per-account opt-out exists, so account settings are
+ *      never read here.)
  *   4. The call was answered.
  *   5. Talk time >= minTalkTimeSeconds.
  *   6. Consent — recording implies opt-in (the row was recorded).
  * Failing 4/5/6 writes `analysis_status='skipped'`; failing 1/2 leaves it NULL
  * (feature absent, not "we chose not to"). On pass, the profile is resolved
- * (explicit row id -> account default -> common-only), snapshotted (M1), and the job
- * enqueued (queued vs awaiting_recording derived in-SQL from recording_url, B1);
+ * (explicit row id -> account default -> common-only), snapshotted, and the job
+ * enqueued (queued vs awaiting_recording derived in-SQL from recording_url);
  * a recording already present wakes the worker immediately.
  *
  * `agency_call_analysis` is the ONLY agency off switch: it is per tenant and per
@@ -58,12 +49,10 @@ async function maybeEnqueueAnalysis(facts: BridgeCallFinalizedFacts): Promise<vo
 
   // ── Gate 2: tenant/account flag. NULL when off (feature absent). ──
   // Through `analysisFlagFor` rather than a literal here, so this gate and the
-  // two request-time preflights cannot disagree about which flag owns a product.
+  // request-time checks cannot disagree about which flag owns a product.
   const analysisFlag = analysisFlagFor('agency');
   const flagOn = await getFeatureFlagService().isEnabled(analysisFlag, { tenantId, accountId });
   if (!flagOn) return;
-
-  // (Gate 3, the softphone's account opt-out, is deleted: docs/seams.md §3.2.)
 
   // Load the persisted row: it carries the answer anchor, recording_url, and the
   // immutable analysis_profile_id / analysis_language set at intake.
@@ -92,17 +81,16 @@ async function maybeEnqueueAnalysis(facts: BridgeCallFinalizedFacts): Promise<vo
     return;
   }
 
-  // ── Resolve + snapshot the profile (M1): explicit id → account default → none. ─
+  // ── Resolve + snapshot the profile: explicit id → account default → none. ─
   let profile = null;
   if (call.analysis_profile_id) {
     profile = await callAnalysisProfileRepository.findById(call.analysis_profile_id);
-    // PORT NOTE (magick-agency, Phase 8; lane D review hardening): core read the stamped id
-    // unscoped (`webrtc-bridge-manager.ts:2254`), safe only while every campaign write runs
-    // `preflightAnalysisProfile`. The owner is checked here, so a row of another tenant or
-    // account can never be snapshotted into this call's job whatever wrote the id; it is
-    // treated as an id that no longer resolves (→ the account default). Not
-    // `findByIdScoped`: that one reads ACTIVE versions only, and a campaign's pinned profile
-    // can be a retired version (copy-on-write), which core snapshotted as-is.
+    // The owner is checked here, not only by `preflightAnalysisProfile` on campaign
+    // writes, so a row of another tenant or account can never be snapshotted into this
+    // call's job whatever wrote the id; it is treated as an id that no longer resolves
+    // (→ the account default). Not `findByIdScoped`: that one reads ACTIVE versions
+    // only, and a campaign's pinned profile can be a retired version (copy-on-write),
+    // which is snapshotted as-is.
     if (profile && (profile.tenant_id !== tenantId || profile.account_id !== accountId)) {
       log.warn(
         { callId, profileId: call.analysis_profile_id },
@@ -143,7 +131,7 @@ async function maybeEnqueueAnalysis(facts: BridgeCallFinalizedFacts): Promise<vo
 /**
  * A recording URL landed (VoiceLink late-terminal path with no live session):
  * promote a waiting dialer-analysis job → queued and wake the worker. Guarded so
- * a duplicate is a no-op (C3). No-op when dialer analysis is unconfigured.
+ * a duplicate is a no-op. No-op when dialer analysis is unconfigured.
  */
 async function notifyDialerAnalysisRecordingReady(callId: string): Promise<void> {
   if (!config.dialerAnalysis?.enabled) return;

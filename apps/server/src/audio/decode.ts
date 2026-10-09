@@ -1,7 +1,3 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/src/audio/decode.ts@4850d1d9.
-// Only change: import specifiers (logger -> @magick-agency/observability; STATIC_CALL_MAX_DURATION_SECONDS
-// -> @magick-agency/db/models/static-call.model, which carries only that constant).
-
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -33,9 +29,9 @@ export type AudioDecodeErrorCode =
 
 export class AudioDecodeError extends Error {
   readonly code: AudioDecodeErrorCode;
-  /** Decoder stderr, for logs only. MUST NOT be returned to a client verbatim. */
+  /** Decoder stderr, for logs only. MUST NOT be returned to a client as-is. */
   readonly detail?: string;
-  /** Populated for TOO_LONG so the route can name the actual duration. */
+  /** Populated for TOO_LONG so the caller can name the actual duration. */
   readonly durationSeconds?: number;
 
   constructor(code: AudioDecodeErrorCode, message: string, opts?: { detail?: string; durationSeconds?: number }) {
@@ -47,11 +43,11 @@ export class AudioDecodeError extends Error {
   }
 }
 
-// ── Toolchain routing (MEASURED — see docs/reference/magic-voice-core/docs/voicelink-audio-file-announcements-contract.md §4) ─
+// ── Toolchain routing (MEASURED) ────────────────────────────────────────
 //
-// The contract predicted `mpg123` would cover wav/ogg too ("exit 0 on both") and
-// that it should therefore be preferred everywhere for its free downmix. That is
-// WRONG, and dangerously so: `mpg123` is an *MPEG* decoder. Fed a WAV or OGG it
+// It is tempting to prefer `mpg123` everywhere for its free downmix, on the
+// theory that it covers wav/ogg too ("exit 0 on both"). That is WRONG, and
+// dangerously so: `mpg123` is an *MPEG* decoder. Fed a WAV or OGG it
 // scans for MPEG frame headers, finds none, prints "Illegal Audio-MPEG-Header"
 // / "Hit end of (available) data during resync", writes NO output file at all —
 // and still **exits 0**. Exit status alone would have reported success on a file
@@ -73,7 +69,7 @@ export class AudioDecodeError extends Error {
 //
 // So routing is by format, not by try-then-fall-back:
 //   • MP3 (`audio/mpeg`)   → mpg123, which downmixes for free (`-m`).
-//   • WAV / OGG            → sndfile-convert, then downmix in JS (§5.3) — it has
+//   • WAV / OGG            → sndfile-convert, then downmix in JS — it has
 //                            no `-mono`/`-channels` flag (confirmed: not in its
 //                            usage output).
 // A mislabelled upload still gets the other tool as a fallback, so a WAV sent as
@@ -96,16 +92,16 @@ const AUDIO_DECODE_TMP_DIR = process.env['AUDIO_DECODE_TMP_DIR'] || os.tmpdir();
 /** Prefix for the per-decode temp dir; also what the cleanup assertions look for. */
 export const DECODE_TMP_PREFIX = 'audio-decode-';
 
-// ── Truncation guard (see docs/reference/magic-voice-core/docs/voicelink-audio-file-announcements-contract.md §9.6) ─
+// ── Truncation guard ──────────────────────────────────────────────────
 //
 // A truncated-but-partially-decodable file is the ONE input class that produces a
 // silent call rather than an error: 90% off a 0.5s MP3 still decodes — to 1.1ms of
 // audio — which passes every "is it non-empty" check, persists a short
-// `duration_seconds`, dials, plays nothing audible, completes, and BILLS as a
-// connected call. A silently-wrong result is worse than a failure, because a
+// `duration_seconds`, plays nothing audible, and completes as a connected
+// call. A silently-wrong result is worse than a failure, because a
 // failure is visible.
 //
-// The platform already solved this class in dialer-analysis
+// Dialer analysis already solves this class
 // (`AUDIO_SHORTFALL_RATIO` in `src/core/dialer-analysis-runner.ts`): cross-check the
 // decoded/transcribed coverage against an INDEPENDENT expectation of the source's
 // duration and treat a large shortfall as truncation. Same name, same ratio, same
@@ -132,7 +128,7 @@ export const AUDIO_SHORTFALL_RATIO = 0.8;
  * announcement — it is a fragment of one — so rejecting is strictly better than
  * dialing it.
  *
- * 0.25s, NOT the 0.5s the ticket suggested: the committed fixtures decode to
+ * 0.25s, NOT 0.5s: the committed fixtures decode to
  * exactly 0.5000s, so a 0.5 floor would sit precisely on the boundary of input the
  * product must accept — one rounding step from rejecting legitimate audio. This is
  * a coarse net for millisecond fragments (the 90%-truncated case decodes to
@@ -146,12 +142,12 @@ export const MIN_PLAUSIBLE_CLIP_SECONDS = 0.25;
 /**
  * Hard ceiling on the decoder's OUTPUT file, enforced DURING decode.
  *
- * Only the 10 MB compressed INPUT is bounded by the route; PCM16 amplifies
+ * The compressed INPUT size does not bound the output: PCM16 amplifies
  * enormously (measured: a 7.2 MB / 2h / 8 kbps MP3 decodes to a 115 MB WAV in
- * 333 ms — ~16×), and the 120s duration cap used to be checked only AFTER the whole
- * clip was materialized to disk AND read into a Buffer. A burst of concurrent
- * uploads could therefore pin far more memory + scratch disk than the input limit
- * implies, and compete with live-call CPU on the same container.
+ * 333 ms — ~16×), and a 120s duration cap checked only AFTER the whole clip was
+ * materialized to disk AND read into a Buffer comes too late. A burst of
+ * concurrent decodes could otherwise pin far more memory + scratch disk than the
+ * input size implies, and compete with live-call CPU on the same container.
  *
  * Computed honestly from the product cap: the largest a VALID clip can be is
  * `STATIC_CALL_MAX_DURATION_SECONDS` × the maximum plausible sample rate (48 kHz)
@@ -193,7 +189,8 @@ function decoderChain(contentType: string): Decoder[] {
  * Throws {@link AudioDecodeError} for every failure mode. Never returns an empty
  * clip. Temp files are removed on every exit path, including timeout.
  *
- * The 10 MB size cap is enforced by the route BEFORE this is called.
+ * The compressed input is not size-capped here; the decoded output is
+ * ({@link MAX_DECODED_OUTPUT_BYTES}).
  *
  * `maxOutputBytes`/`onOutputTooLarge` exist so a test can drive the in-flight
  * watchdog deterministically (the production ceiling is only reachable with a
@@ -230,9 +227,8 @@ export async function decodeToPcm16(
   // ── Everything past here holds a decode permit ───────────────────────────────
   //
   // The gate is applied INSIDE this function, not at the call sites, so every
-  // caller is covered by construction — the upload route, `ensurePcmClip`'s
-  // cache-miss re-decode, and the SQS dequeue path all funnel through here, and a
-  // future caller cannot forget to opt in.
+  // caller is covered by construction — today that is `ensurePcmClip`'s decode —
+  // and a future caller cannot forget to opt in.
   //
   // WHICH CLOCK COVERS WHAT: `timeoutMs` is started by `runDecoder`, per spawned
   // child, and therefore begins only after the permit is held — it measures the
@@ -241,8 +237,7 @@ export async function decodeToPcm16(
   // its whole budget having done zero work and fail with DECODE_TIMEOUT — a
   // self-inflicted failure under exactly the load this gate exists to absorb.
   // A queued caller's total wall time is therefore unbounded by design (bounded in
-  // practice by the upstream request rate limit and the queue drain rate); only
-  // the decode itself is deadlined.
+  // practice by the queue drain rate); only the decode itself is deadlined.
   return runExclusive(() => decodeUnderPermit(input, contentType, ext, opts));
 }
 
@@ -350,7 +345,7 @@ async function decodeUnderPermit(
         );
       }
 
-      // ── Truncation cross-check (§9.6) ──────────────────────────────────────
+      // ── Truncation cross-check ──────────────────────────────────────
       //
       // Everything above proves the decode produced SOME audio. This proves it
       // produced the audio the file claims to hold. Both guards throw rather than
@@ -670,7 +665,7 @@ function runDecoder(
       killTimer = setTimeout(() => {
         child.kill('SIGKILL');
         // If even SIGKILL leaves no 'close' (impossible in practice, but the
-        // upload request must not hang forever), settle anyway.
+        // caller must not hang forever), settle anyway.
         //
         // unref'd: once the promise settles this timer is pure residue, and an
         // un-unref'd one holds the event loop open for up to a second past a
@@ -791,7 +786,7 @@ export function parseWavPcm16(
  *
  * Age-gated because this is process-wide, not per-process: sibling replicas share
  * the volume, and deleting a dir another replica is actively decoding into would
- * corrupt a live upload. `minAgeMs` defaults to comfortably beyond the decode
+ * corrupt a live decode. `minAgeMs` defaults to comfortably beyond the decode
  * timeout, so anything older than it cannot belong to a running decode anywhere.
  *
  * Synchronous-in-spirit and fully non-throwing: this runs at startup and must never

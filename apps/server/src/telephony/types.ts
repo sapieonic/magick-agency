@@ -1,16 +1,5 @@
-// PORT NOTE (magick-agency): ported from core src/telephony/types.ts@4850d1d9. Modified:
-// kept only what the VoiceLink adapter, its webhook normaliser and the WebRTC bridge
-// use. Deleted: `OutboundCallRequest.sipTrunkId`/`sipAuthUsername`/`sipAuthPassword`
-// (SIP not carried); REST recording (`StartRecordingRequest`,
-// `RestRecordingCapableProvider`, `supportsRestRecording`); live transfer
-// (`TransferTarget`, `TransferCallRequest`, `TransferResponseParams`,
-// `TransferConfirmResponseParams`, `TransferOutcomeResponseParams`,
-// `TransferCapableProvider`, `supportsTransfer`); screened queue transfer
-// (`TransferLegRequest`, `QueueEnqueueParams`, `QueueWaitParams`,
-// `QueueDequeueParams`, `ScreenedQueueTransferProvider`, `QueueDeleteResult`,
-// `TransferLegOutcomeUnknownError`, `supportsScreenedQueueTransfer`) — all AI
-// escalation, not carried. Doc comments on what is kept are verbatim (some still
-// name deleted types/providers).
+// Carrier-adapter types used by the VoiceLink adapter, its webhook normaliser and the
+// WebRTC bridge.
 export interface OutboundCallRequest {
   callId: string;
   to: string;
@@ -21,9 +10,8 @@ export interface OutboundCallRequest {
    * Explicit media-stream WebSocket URL for providers that bake the stream URL
    * into the dial request (rather than delivering it via answer XML). Set by the
    * WebRTC bridge so a VoiceLink leg streams to the bridge's dedicated
-   * `/webrtc-call/:id/pstn-stream` endpoint instead of the default AI
-   * `/media-stream/:id` route. Ignored by providers that stream via answer XML
-   * (e.g. VoBiz).
+   * `/webrtc-call/:id/pstn-stream` endpoint. Ignored by providers that stream
+   * via answer XML.
    */
   mediaStreamUrl?: string;
   maxDuration: number;
@@ -47,9 +35,8 @@ export interface OutboundCallRequest {
 export interface InitiateCallResult {
   /**
    * Carrier id for the CALL itself. Empty string when the provider cannot
-   * supply one at dial time; the first webhook backfills it (CallManager only
-   * writes `provider_call_id` while it is still unset, so an empty string here
-   * is what lets that backfill fire).
+   * supply one at dial time; the bridge backfills `provider_call_id` from the
+   * carrier's own ids once they arrive (media-stream `start` frame or webhook).
    */
   providerCallId: string;
   /**
@@ -75,8 +62,8 @@ export interface CallEvent {
   providerCallId: string;
   callId: string;
   /**
-   * The carrier that sent this event, when the parser knows it (VoBiz, Plivo,
-   * Twilio and Exotel stamp it). Optional: absent means "unknown", and readers
+   * The carrier that sent this event, when the parser knows it. Optional:
+   * absent means "unknown", and readers
    * must treat it so — it only lets a hot path skip work that cannot apply.
    */
   provider?: string;
@@ -139,12 +126,11 @@ export type IvrStepRenderParams =
 /**
  * Carrier facts a caller cannot infer from the interface, declared per adapter.
  *
- * Same posture as {@link TransferCapableProvider}: a question about what the
- * carrier can actually do belongs on the adapter that knows the answer, not in a
- * `provider === 'voicelink'` branch inside a caller. The difference is that a
- * capability here is a **property of an operation that every adapter already
+ * A question about what the carrier can actually do belongs on the adapter that
+ * knows the answer, not in a `provider === 'voicelink'` branch inside a caller.
+ * A capability here is a **property of an operation that every adapter already
  * implements**, so it cannot be expressed as an optional method — `endCall`
- * exists on all eight, and on some of them it does nothing.
+ * exists on every adapter, and for some carriers it cannot do what its name says.
  */
 export interface ProviderCapabilities {
   /**
@@ -167,8 +153,8 @@ export interface ProviderCapabilities {
    * such a call `QUEUED_DIAL_PICKUP_TIMEOUT_SECONDS` to be picked up, then run
    * their ordinary cap from answer.
    *
-   * Optional and false when absent: every other adapter's create-call request
-   * places the call, so absence keeps today's dispatch-anchored behaviour.
+   * Optional and false when absent: an adapter whose create-call request places
+   * the call keeps dispatch-anchored deadlines.
    */
   readonly queuesOutboundDials?: boolean;
 }
@@ -199,9 +185,9 @@ export interface TelephonyProvider {
    * {@link ProviderCapabilities}.
    *
    * **Optional, and that is a deliberate trade-off rather than an oversight.**
-   * 101 test files reference `TelephonyProvider`, most through hand-written stub
-   * objects, so making this required would churn every one of them and the churn
-   * would be the whole diff. The cost is that a new adapter forgetting to declare
+   * Test doubles for `TelephonyProvider` are hand-written stub objects, and
+   * making this required would churn every one of them. The cost is that a new
+   * adapter forgetting to declare
    * it compiles: the omission is caught by a test over the adapter registry
    * (`test/unit/telephony/provider-capabilities.test.ts`) instead of by `tsc`,
    * and `canCancelRinging` fails closed in the meantime.
