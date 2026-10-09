@@ -2866,3 +2866,43 @@ percent-encoded `?%74oken=` survives in a log line (spans are covered by `redact
 Fastify instrumentation in `auto-instrumentations-node` 0.81 (core has none either), so `http.route`
 is never set and server spans are named by method only. pg spans carry query parameter values, by
 ruling.
+
+## Grafana alerting (B6)
+
+Branch `feat/grafana-alerts` (from `feat/otel-sdk`). Manas, 2026-10-09: "the alerts also should
+live in agency not in platform". Everything agency-related moves here as its own Terraform root
+module with its own local state. That covers the agency rules, an agency dashboard, and agency
+copies of the platform's shared liveness, runtime and pipeline rules. The MagickVoice platform
+module keeps the stack's notification policy and contact points, which route these alerts by label,
+and the Grafana Cloud stack rules. Source: the MagickVoice superproject @`e32a5db`. Its B6 branch
+`feat/grafana-agency-selector` (commits `7c60ef4`…`0e1ac92`) first carried these rules and
+validator changes in the superproject. They now live here, and that branch reverts its copies.
+
+| Source (superproject) | Destination | Kind | Notes |
+|---|---|---|---|
+| `grafana/terraform/versions.tf`@e32a5db | `grafana/terraform/versions.tf` | verbatim | Provider `grafana/grafana ~> 4.0`, env-var auth |
+| `grafana/terraform/variables.tf`@e32a5db | `grafana/terraform/variables.tf` | modified | Kept: url/auth, `stack_id`, `allow_ui_updates`, datasource UIDs (no `usage`), `alert_eval_interval_seconds`, `grafana_public_url`. Added: `agency_service_name_regex` (default `magick-agency(-.+)?`), `folder_uid` / `folder_title` (`magick-agency-alerts` / "Magick Agency Alerts"; no MagickVoice in user-facing titles, B17). Deleted: Slack/PagerDuty/nightly-window/core/master variables (routing stays with the platform) |
+| `grafana/terraform/alert-rules.tf`@e32a5db | `grafana/terraform/alerting.tf` | modified | The `grafana_rule_group` resource, verbatim except: one folder; `service = "agency"`; `component = each.key`; no `usage` datasource; the dashboard link points at `magick-agency-overview`. `deployment_label` is byte-identical (pinned by the routing test). `local.agency` replaces `core`/`master`/`all_services` |
+| `grafana/terraform/alerting.tf`@e32a5db | `grafana/terraform/alerting.tf` | modified | One `grafana_folder` (`prevent_destroy_if_not_empty`, as the platform). Deleted: message template, contact point, mute timings, notification policy. These are platform-owned; the routing test refuses them here |
+| `grafana/terraform/alert-rules-core.tf`@e32a5db | `grafana/terraform/alert-rules.tf` | modified | `vao-agency-dnc-unavailable`, `vao-telephony-lease-release-failure`/`-fallback`, `vao-rate-limit-infra-rejected`/`-tenant-rejected` as `agy-*`: `for`, thresholds and windows verbatim; `${local.core}` → `${local.agency}`; `bucket_kind=~"tenant\|ip"` → `"ip"` (no tenant bucket, #5); descriptions rewritten for agency (DNC halt is a Postgres read, B8; no concurrency reset route; one process) |
+| `grafana/terraform/alert-rules-master.tf`@e32a5db | `grafana/terraform/alert-rules.tf` | modified | `mst-firebase-auth-rejected`, `mst-invite-email-failures`, `mst-agency-campaign-mail-failures`, `mst-invite-claim-identity-conflicts`, `mst-error-log-volume` as `agy-*`, new-series guards verbatim. Not carried: `mst-notification-send-failures` (`notification_sends_total` is never incremented here), billing (S6), DNC (B8), API keys (#5) |
+| `grafana/terraform/alert-rules-platform.tf`@e32a5db | `grafana/terraform/alert-rules.tf` | modified | `plat-service-not-reporting`, `plat-event-loop-delay-p99`, `plat-metric-cardinality-overflow` as `agy-*` on `${local.agency}` only (were `${local.all_services}`); the `service` label override is dropped (always `agency`); runbooks rewritten (no entrypoint, separate `pnpm migrate:up`, export needs `OTEL_ENABLED` + endpoint + `OTEL_SERVICE_NAME`). Not carried: the S2S rules, the Grafana Cloud stack rules |
+| `grafana/terraform/main.tf`@e32a5db | `grafana/terraform/dashboard.tf` | modified | Same app-platform resource; dashboard in the agency folder |
+| `grafana/dashboards/magickvoice-platform-overview.json`@e32a5db | `grafana/dashboards/magick-agency-overview.json` | modified | uid `magick-agency-overview`. Panels kept (ids kept): 10, 50, 67, 68, 69, 71–74, 76–84, 87. Every Prometheus selector gains `service_name=~"$service_name"`. Dropped targets: 67/B (`provider_concurrency_unsynced_accounts`), 68/A and 69/A (AI-call analysis), 72/C (`agency_attempt_batches_total`, billing). Retitled/redescribed where the text was about core or master. New panels: 100 pre-dial gate, 101 settled attempts, 102 rate-limit rejections, 103 sign-in attempts, 104 invites, 105 campaign-completion emails, 106–108 event loop and heap. Variables: environment/service from `nodejs_eventloop_utilization_ratio{service_name=~"magick-agency(-.+)?"}`, `$service_name` All = that regex, `$tenant_id` from `agency_attempt_hold_seconds_count`; no cross-service links. Every other panel reads metrics agency does not emit (`grafana/README.md`, "Known metric gaps") |
+| `scripts/metric-declarations.mjs`@e32a5db (+ B6 branch) | `grafana/scripts/metric-declarations.mjs` | modified | Agency only: core/master parsers and core's fixture deleted; `packages/observability/src/metrics/*.ts`, facade import `../metric-instruments.js`, the agency fixture over the `agency_*` rows of `metrics/agency.ts`, the stray-instrument check, `RETIRED_SERIES`. The runtime-node instrument set is read from the installed package (`apps/server/node_modules`; the superproject pinned a list). The PromQL parser is verbatim |
+| `scripts/validate-grafana-alerts.test.mjs`@e32a5db (+ B6 branch) | `grafana/scripts/validate-alerts.test.mjs` | modified | One rules file, prefix `agy-`. Kept: declared metrics/labels/OTel, placeholders, `service_name` grouping, pending-period checks, delimiters, retired series. Added: agency-selector-only, the regex selects its three deployments and none of core's/master's names (fallbacks included), and the routing contract (label set, `deployment` template text pinned to the platform's, rules may add only `nightly_window = "mute"`, no platform-only resource in the module) |
+| `scripts/validate-grafana-dashboard.test.mjs`@e32a5db (+ B6 branch) | `grafana/scripts/validate-dashboard.test.mjs` | modified | One service, so no label intersection or `label!=""` opt-in. Stricter scoping: every selector carries `$environment` and `$service_name`, `$service_name`'s All is the regex default, variables list agency's series only. Added: no MagickVoice in titles or descriptions (B17), retired series refused |
+| (new) | `package.json` `test:grafana`, `.github/workflows/ci.yml` | new | `node --test grafana/scripts/*.test.mjs`, run in the lint-test job after `pnpm test` |
+
+Tests: `pnpm test:grafana` runs 31 (alerts 16, dashboard 15). Mutation-checked (break → red → restore):
+- a metric a rule reads renamed in `metrics/agency.ts` (6 red);
+- `agency_attempt_batches_total` declared (3 red);
+- a rule selector not `${local.agency}`;
+- `deployment_label` text drifted;
+- a rule overriding `service`;
+- a `grafana_notification_policy` added;
+- the regex default loosened to `magick-.*` (2 red: it selects `magick-master`);
+- a dashboard target without `$service_name`;
+- `$service_name`'s All value set to `.*`.
+
+`terraform validate` passes offline (`init -backend=false`).

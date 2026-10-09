@@ -49,6 +49,7 @@ pnpm lint                # tsc --noEmit over src AND test, every package
 pnpm test                # unit, all packages
 pnpm test:integration    # real Postgres/Redis (needs infra:up); runs packages serially
 pnpm build
+pnpm test:grafana        # alert rules + dashboard vs metric declarations (grafana/scripts)
 ```
 
 Run a package's tests from inside its directory (dotenv resolves from cwd):
@@ -82,6 +83,8 @@ packages/contracts/  wire contract shared by server and UIs (lead-owned)
 packages/domain/     pure agency rules: leaf modules with no imports beyond contracts
 packages/db/         pg pool, shared repositories/models, the squashed baseline migration
 packages/observability/  logger, OTel tracing (`@Traced`), metric declarations per lane
+grafana/             agency's alert rules + dashboard (Terraform root module, own state; routing stays with
+                     the MagickVoice platform's notification policy — see grafana/README.md)
 ```
 
 **Four lanes in one server.** The source was three services (core, master, cusui's backend);
