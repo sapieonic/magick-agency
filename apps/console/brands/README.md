@@ -55,8 +55,8 @@ to the default look:
   gradient.
 
 These are applied at runtime in `src/brand/index.ts` alongside the accent
-family; the default brand omits `style` and reproduces the original design
-byte-for-byte.
+family; the default brand omits `style` and reproduces the default
+look exactly.
 
 **Scope note:** the brand accent drives all accent surfaces — buttons, links,
 focus rings, active states, badges, subtle accent backgrounds/glows, the

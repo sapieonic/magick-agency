@@ -13,8 +13,9 @@ This repo has no production Dockerfile, compose file or deploy script; `docker/`
 dev Postgres and Redis. The server builds to `apps/server/dist/index.js` (`pnpm build`) and starts
 with `pnpm --filter @magick-agency/server start` (`node dist/index.js`); third-party dependencies
 are resolved from `apps/server/node_modules` at runtime. The UIs build to static files with Vite.
-A production image needs Node 22, ffmpeg, `mpg123` and `sndfile` for clip decoding (the decoder
-set is the one CI installs for the decode tests; the exact image is unverified because none exists).
+A production image needs Node 22 plus `mpg123` and `sndfile-programs` for clip decoding (the
+decoders CI installs for the decode tests; the server does not use ffmpeg, so AAC/M4A clips are
+rejected). The exact image is unverified because none exists.
 
 ## Configuration
 

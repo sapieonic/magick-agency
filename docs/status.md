@@ -135,7 +135,7 @@ in [`operations.md`](operations.md).
 2. **Vendor setup**, because it has lead time: agency's VoiceLink account (ask about moving
    existing numbers and recording retention), Firebase service account and authorised domain,
    Mailjet sender and domain, S3 bucket, Gemini / OpenAI keys, domain and TLS, PostHog.
-3. **Deployment packaging:** a production Dockerfile (Node 22, ffmpeg, `mpg123`, `sndfile`) and
+3. **Deployment packaging:** a production Dockerfile (Node 22, `mpg123`, `sndfile-programs`) and
    compose file with `stop_grace_period`, Redis persistence and `noeviction`; decoder-packaging
    tests against it; the OpenTelemetry SDK and a metric destination.
 4. **Real-world checks:** one real VoiceLink sandbox call; one real recording analysed; the
