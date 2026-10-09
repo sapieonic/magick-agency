@@ -1,7 +1,7 @@
 import type { AgencyBreakReason } from '@magick-agency/contracts/agency';
 
 /**
- * Break / not-ready with reason codes (`AD-P2-C-03`).
+ * Break / not-ready with reason codes.
  *
  * Two responsibilities, both small and both about not stranding an agent:
  * resolving which reason codes a campaign actually accepts, and remembering a
@@ -75,7 +75,7 @@ const DEFERRING_STATES = new Set(['on_call', 'reserved', 'wrapup']);
 /**
  * Whether a break requested from this state has to wait.
  *
- * `on_call` is the obvious one — §5.1 is explicit that a break requested mid-call
+ * `on_call` is the obvious one — a break requested mid-call
  * is applied at the end of wrap-up, never mid-conversation. `wrapup` defers for the
  * same reason one step later: the agent still owes a disposition, and letting the
  * break jump that would drop the record of the call they just had.

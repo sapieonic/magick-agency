@@ -1,11 +1,9 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core test/unit/agency/break-manager.test.ts@4850d1d9 (18 → 18).
-// Verbatim. `break-manager.ts` is a leaf (imports only contracts), so it is
-// `packages/domain/src/break-manager.ts` (path rule); the import is the package-relative one. No case
-// deleted or modified.
+// `break-manager.ts` is a leaf (imports only contracts), so it lives in
+// `packages/domain/src/break-manager.ts`; the import is the package-relative one.
 import { describe, it, expect } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// Break / not-ready with reason codes (AD-P2-C-03).
+// Break / not-ready with reason codes.
 //
 // Acceptance: (a) a break requested mid-call does not interrupt the call and
 // applies after wrap-up, (b) an agent in `break` is never reserved, (c) the reason

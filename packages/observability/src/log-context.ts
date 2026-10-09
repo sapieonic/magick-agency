@@ -22,9 +22,9 @@ export interface LogContext {
   callId?: string;
   /** Where the request/call was originated from (`x-mgkvc-originator` header). */
   originator?: string;
-  /** Human-readable tenant name (`x-mgkvc-tenant-name` header; magick-master owns it). */
+  /** Human-readable tenant name (`x-mgkvc-tenant-name` header; set by the public API layer). */
   tenantName?: string;
-  /** Human-readable account name (`x-mgkvc-account-name` header; magick-master owns it). */
+  /** Human-readable account name (`x-mgkvc-account-name` header; set by the public API layer). */
   accountName?: string;
   [key: string]: unknown;
 }

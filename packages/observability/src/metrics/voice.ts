@@ -1,20 +1,17 @@
 /**
- * Metric declarations owned by the voice lane (lane C), ported from
- * magic-voice-core/src/utils/metrics.ts@4850d1d9 — same names, kinds,
- * descriptions and label keys. Line numbers below are core's.
+ * Metric declarations owned by the voice engine.
  *
- * PORT NOTE: core typed several `track*` parameters with unions declared in the
- * modules that call them (`TelephonyReleaseOutcome`, `RateLimitRouteClass`, …),
- * imported type-only. This package cannot import the server, so those parameters
- * are `string` here; the closed sets are still enforced at every call site,
- * which passes the server's union. Label KEYS stay a compile-time contract via
+ * Several `track*` parameters are typed `string` rather than with the unions
+ * declared in the modules that call them (`TelephonyReleaseOutcome`,
+ * `RateLimitRouteClass`, …), because this package cannot import the server; the closed sets are still
+ * enforced at every call site, which passes the server's union. Label KEYS stay a compile-time contract via
  * the facade.
  */
 import { createChildLogger } from '../logger.js';
 import { meter } from '../meter.js';
 import { counter, gauge, observableGauge } from '../metric-instruments.js';
 
-// ── core src/utils/safe-emit.ts (verbatim body; private to this file) ───────
+// ── safeEmit (private to this file) ──────────────────────────────────────────
 const safeEmitLog = createChildLogger({ component: 'safe-emit' });
 const safeEmitLogged = new Set<string>();
 /**
@@ -34,7 +31,7 @@ function safeEmit(component: string, fn: () => void): void {
   }
 }
 
-// ── :150 Provider-mode telephony admissions ─────────────────────────────────
+// ── Provider-mode telephony admissions ─────────────────────────────────
 // Tenant/account ids are deliberately excluded: this counter is on the call hot
 // path and those unbounded labels would create a series per customer.
 const providerConcurrencyAdmissionTotal = counter<
@@ -48,7 +45,7 @@ export function trackProviderConcurrencyAdmission(provider: string, result: stri
   safeEmit('provider-concurrency-admission', () => providerConcurrencyAdmissionTotal.inc({ provider, result }));
 }
 
-// ── :166 Provider counter reconciliation ────────────────────────────────────
+// ── Provider counter reconciliation ────────────────────────────────────
 const providerConcurrencyReconciliationTotal = counter<
   'result'
 >(meter, 'provider_concurrency_reconciliation_total', {
@@ -60,7 +57,7 @@ export function trackProviderConcurrencyReconciliation(result: 'clean' | 'repair
   safeEmit('provider-concurrency-reconciliation', () => providerConcurrencyReconciliationTotal.inc({ result }));
 }
 
-// ── :195 Telephony concurrency lease release ────────────────────────────────
+// ── Telephony concurrency lease release ────────────────────────────────
 // `composite` is the healthy path; `partial`/`failure` mean a lease is parked
 // until the self-heal sweep; `noop` arms the sweep but does not page. No
 // tenant/account/call ids; `source` is a fixed, code-owned set of call sites.
@@ -76,7 +73,7 @@ export function trackTelephonyLeaseRelease(outcome: string, source: string): voi
   safeEmit('telephony-lease-release', () => telephonyLeaseReleaseTotal.inc({ outcome, source }));
 }
 
-// ── :336 WebSocket connections ──────────────────────────────────────────────
+// ── WebSocket connections ──────────────────────────────────────────────
 // Counted per type, so connect/disconnect is a delta and the gauge reads the
 // running total. The single entry point for both directions.
 const _wsConnectionsByType = new Map<string, number>();
@@ -89,7 +86,7 @@ observableGauge<'type'>(meter, 'websocket_connections_active', {
   for (const [type, count] of _wsConnectionsByType) observe(count, { type });
 });
 
-// ── :459 Rate limiter rejections ────────────────────────────────────────────
+// ── Rate limiter rejections ────────────────────────────────────────────
 // `bucket_kind` comes from the same `budgetFor()` that charged the bucket;
 // `route_class` is a bounded, code-owned slug, never a URL (the 429'd routes
 // carry `:callId` and a `?token=`).
@@ -105,7 +102,7 @@ export function trackRateLimitRejected(bucketKind: string, routeClass: string): 
   safeEmit('rate-limit-rejected', () => rateLimitRejectedTotal.inc({ bucket_kind: bucketKind, route_class: routeClass }));
 }
 
-// ── :2196 Audio decode concurrency gate ─────────────────────────────────────
+// ── Audio decode concurrency gate ─────────────────────────────────────
 let _decodeGateStatsProvider: (() => { active: number; queued: number; limit: number }) | null = null;
 /** Wired at startup from `decode-gate.ts`'s `getDecodeGateStats`. */
 export function setDecodeGateStatsProvider(fn: () => { active: number; queued: number; limit: number }): void {
@@ -128,7 +125,7 @@ observableGauge(meter, 'audio_decode_gate_limit', {
   if (_decodeGateStatsProvider) observe(_decodeGateStatsProvider().limit);
 });
 
-// ── :2243 On-disk clip cache (the sweeper's view) ───────────────────────────
+// ── On-disk clip cache (the sweeper's view) ───────────────────────────
 // All three are UNLABELLED: the cache is node-scoped.
 const ttsClipCacheRetainedTotal = counter(meter, 'tts_clip_cache_retained_total', {
   description: 'Clips the liveness guard withheld from eviction',
