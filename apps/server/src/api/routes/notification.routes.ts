@@ -14,33 +14,12 @@ import {
 import {
   updateNotificationPreferencesSchema,
 } from '../validators/notification.validator.js';
-// PORT NOTE (magick-agency): master also imports `config`, `denyPlatformApiKey`,
-// `accountRepository`, `tenantRepository`, `findNotificationEvent`,
-// `formatPeriodLabel`, `resolvePeriodWindow`, `DigestFrequency`,
-// `buildUsageDigest`, `renderUsageDigestEmail` and `previewDigestSchema`. Every
-// one served the deleted `POST /digests/preview` or the deleted API-key guard.
 import { createChildLogger } from '@magick-agency/observability';
 
 const log = createChildLogger({ component: 'notification-routes' });
 
 /**
- * PORT NOTE (magick-agency): what changed from master's module.
- *  - `POST /notifications/digests/preview` is deleted. It rendered the credits
- *    usage digest (billed millicredits, campaign counts), and Magick Agency v1
- *    has no credits and no digest event (plan §3.3, §3.5).
- *  - The `denyPlatformApiKey` preHandler is deleted (decision #5: no platform API
- *    keys, so `sessionMiddleware` has no key branch and there is no machine
- *    caller to refuse).
- *  - `GET` / `PUT /preferences` are master's, unchanged, and still have NO
- *    permission floor: an `agent` must reach its own preferences (plan §9).
- *    With agency's one-event catalog, an `agent` (below the `agency.supervise`
- *    floor) is served an empty `events` list — see the last paragraph below,
- *    whose `campaign.*` events do not exist here.
- * Master's header follows, verbatim; its paragraphs on the preview and on API
- * keys describe what was deleted.
- *
- * `/notifications` — a person's own subscriptions, and a preview of what they
- * would receive.
+ * `/notifications` — a person's own subscriptions.
  *
  * ── Authenticated, tenant-scoped, and deliberately WITHOUT `requirePermission`
  *
@@ -54,55 +33,33 @@ const log = createChildLogger({ component: 'notification-routes' });
  * So the PREFERENCE routes have no permission floor: a `viewer` manages their own
  * preferences exactly as a `tenant_owner` does, and gating on any existing
  * permission would lock somebody out of their own unsubscribe. What bounds the
- * damage is that the caller can only ever address themselves.
+ * damage is that the caller can only ever address themselves. "Only ever
+ * themselves" is a bound on the SUBJECT, not on the PAYLOAD: any route added here
+ * that returns workspace data rather than a personal setting needs a permission
+ * floor of its own. The module-level absence of `requirePermission` is about
+ * self-service, not a property of the prefix.
  *
- * `POST /digests/preview` is the EXCEPTION, and the distinction is what the
- * route returns rather than whose settings it touches. "Only ever themselves" is
- * a bound on the SUBJECT, and it says nothing about the PAYLOAD: the preview
- * builds the workspace's billed usage and campaign figures, which are not the
- * caller's own data in any sense that a membership check speaks to. So it
- * carries the `usage.digest` catalog floor — see the check in the handler. Any
- * route added here that returns workspace data rather than a personal setting
- * needs the same treatment; the module-level absence of `requirePermission` is
- * about self-service, not a property of the prefix.
- *
- * ── Platform API keys are refused ─────────────────────────────────────────
- *
- * `denyPlatformApiKey`, for the reason `GET /auth/me` gives: there is no "me"
- * for a machine credential. A key minted by a person authenticates carrying that
- * person's `UserRecord` (`sessionMiddleware`'s key branch loads
- * `platform_api_keys.created_by`), so without this guard a leaked key would
- * read — and silently rewrite — its creator's personal notification settings,
- * with the audit trail naming somebody who did not make the request.
+ * There are no platform API keys in v1, so `sessionMiddleware` has no key branch
+ * and every caller here is a person.
  *
  * ── What a low-privilege role sees ────────────────────────────────────────
  *
- * `GET /preferences` serves only the events the caller could actually receive,
- * and this paragraph used to claim that happened by itself. It did not: the
- * handler mapped the whole catalog unconditionally, so the claim below was a
- * description of an intention rather than of the code — which is how it passed
- * review. The filter is now real, and lives in the handler.
- *
- * So an `agent` (level 5) sees only the two `campaign.*` events, whose audience
- * is explicitly-typed addresses that may be anybody's, including theirs. They do
- * NOT see `usage.digest` or the agency notice, both of which floor above them.
- * Refusing the whole route to such a caller would be wrong — they have real
- * subscriptions to manage — and so would offering them a toggle that cannot fire.
+ * `GET /preferences` serves only the events the caller could actually receive;
+ * the filter lives in the handler. The catalog's one event,
+ * `agency.campaign.completed`, floors at `agency.supervise`, so an `agent`
+ * (level 5) is served an empty `events` list rather than a toggle that cannot
+ * fire.
  */
 /**
  * The events this caller could actually RECEIVE, in catalog order, plus the
  * membership rows they were derived from.
  *
- * One function rather than the same `filter` inline in each handler, because the
- * two places that had it inline did not stay equal: `GET` was corrected to
- * filter and `PUT` was not, so a save handed back the whole catalog and any page
- * that hydrates from the save response got the hidden events straight back. A
- * shared helper is the only version of this that cannot drift again.
+ * One function rather than the same `filter` inline in each handler, so `GET`
+ * and `PUT` cannot drift: a save that handed back the whole catalog would give
+ * any page that hydrates from the save response the hidden events straight back.
  *
- * `memberships` is returned alongside because two callers need the raw rows for
- * something else — the digest floor check and the preview's widest-scope
- * account resolution — and re-reading them would be a second query answering a
- * question already answered.
+ * `memberships` is returned alongside the visible events; no current caller
+ * reads it.
  */
 async function addressableEventsFor(
   userId: string,
@@ -120,9 +77,6 @@ async function addressableEventsFor(
 export async function notificationRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', sessionMiddleware);
   app.addHook('preHandler', tenantContextMiddleware);
-  // PORT NOTE (magick-agency): master's third hook,
-  // `denyPlatformApiKey("manage a person's own notification settings")`, is
-  // deleted — decision #5, no platform API keys.
 
   /**
    * GET /notifications/preferences
@@ -133,8 +87,7 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
    * only the overrides would have to carry its own copy of the catalog — the
    * labels, the descriptions, which events are digests — and that copy is
    * exactly the hand-maintained mirror the audit log's `available_actions`
-   * exists to abolish. Master is not a dependency of the SPA and nothing could
-   * check the copy.
+   * exists to abolish, and nothing could check the copy.
    *
    * `is_default: true` marks a value that comes from the catalog rather than
    * from a stored row. The page needs it to render honestly: a user who has
@@ -256,8 +209,6 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  // PORT NOTE (magick-agency): master's `POST /notifications/digests/preview`
-  // (master `notification.routes.ts:253-420`) is deleted — it built and
-  // rendered the credits usage digest, which Magick Agency v1 does not have
-  // (plan §3.3, §3.5). The route answers 404 here.
+  // There is no `POST /notifications/digests/preview`: there is no usage digest
+  // in v1 (no credits), so that path answers 404.
 }

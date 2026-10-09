@@ -1,23 +1,22 @@
 import { isUsableTimezone } from './calling-hours.js';
 
 /**
- * ─── AGENCY CAMPAIGN CONFIG — CORE'S OWN BOUNDARY (`AD-P3-C-08`) ─────────────
+ * ─── AGENCY CAMPAIGN CONFIG — THE INTERNAL HANDLER'S OWN BOUNDARY ───────────
  *
- * `agency-campaigns.routes.ts` passed `retry_policy`, `disposition_catalog`,
- * `calling_window_*`, `calling_days` and `default_timezone` straight into the
- * repository behind nothing but migration 072's `jsonb_typeof` CHECKs. Master's
- * `AD-P3-M-04` validator was therefore the only validation in the platform — and
- * it is **bypassable**, because core's API answers a tenant API key without
- * traversing master.
+ * `agency-campaigns.routes.ts` would otherwise pass `retry_policy`,
+ * `disposition_catalog`, `calling_window_*`, `calling_days` and
+ * `default_timezone` straight into the repository behind nothing but the schema's
+ * `jsonb_typeof` CHECKs.
  *
- * §16.6 question 2 is the whole argument: these invariants are **consumed** in
- * core's retry engine and calling-hours gate, so they have to hold *here*.
- * Master's validator gives the campaign wizard a good error message; this is the
- * enforcement. Neither is redundant.
+ * These invariants are **consumed** in the dialer runtime's retry engine and
+ * calling-hours gate, so they have to hold *here*, at the internal handler that
+ * writes the row. The public API layer's validator (`agency-campaign-config.ts`)
+ * gives the campaign wizard a good error message; this is the enforcement.
+ * Neither is redundant.
  *
- * ── The rules are core's consumers', not master's list ──────────────────────
+ * ── The rules are the consumers', not another validator's list ─────────────
  *
- * Deliberately not a copy of `magick-master/src/agency/agency-campaign-config.ts`.
+ * Deliberately not a copy of `agency-campaign-config.ts`.
  * Every rule below was checked against the code that reads the value, and that
  * changed three of them — see {@link RETRY_POLICY_OUTCOMES}. A validator built by
  * mirroring another validator inherits its mistakes and cannot notice them.
@@ -25,12 +24,13 @@ import { isUsableTimezone } from './calling-hours.js';
  * ── What is NOT validated, and why that was checked rather than assumed ─────
  *
  * The three "built-in" disposition codes (`voicemail`, `callback`, `do_not_call`)
- * are **not** required to be present. §2.4 claims the retry engine, the scheduler
- * and the DNC path "each depend on one of them existing"; they do not. Each
+ * are **not** required to be present. The retry-policy design claims the retry
+ * engine, the scheduler and the DNC path "each depend on one of them existing";
+ * they do not. Each
  * mechanism keys on a *flag* — `entry.retry`, `entry.requires_datetime`,
  * `entry.suppress` — and the DNC path is the dedicated `attempts/:id/dnc` route,
  * which never reads the catalog. No code-string comparison for those three exists
- * in core's `src/` outside prose.
+ * in `src/` outside prose.
  *
  * So an **empty `disposition_catalog` stays legal**, and that is not a tolerance:
  * `outcome-classifier.ts`'s `requiresDisposition` reads an empty catalog as "no
@@ -45,17 +45,13 @@ export interface CampaignConfigIssue {
 }
 
 /**
- * Retry-policy keys core will accept.
+ * Retry-policy keys the internal handler will accept.
  *
- * ── This list and master's are a PAIR, and they currently agree ─────────────
+ * ── This list and the public API layer's are a PAIR, and they agree ─────────
  *
- * ⚠️ This header used to open "This list is NOT master's, and the difference is
- * the point", and said master had six entries against core's seven. That was true
- * when written and has not been true since MAG-100 closed the gap: master's
- * `RETRY_POLICY_OUTCOMES` (`magick-master/src/agency/agency-campaign-config.ts`)
- * is the same set, and `canceled` was added to both in one change. Verify
- * against that file rather than this paragraph — the invariant below is what
- * matters, not a count either side can drift.
+ * The `RETRY_POLICY_OUTCOMES` in `agency-campaign-config.ts` is the same set.
+ * Verify against that file rather than this paragraph — the invariant below is
+ * what matters, not a count either side can drift.
  *
  * `AgencyRetryPolicy` is `Partial<Record<AgencyAttemptOutcome, …>>` and
  * `AgencyAttemptOutcome` has **ten** members, of which this
@@ -67,19 +63,10 @@ export interface CampaignConfigIssue {
  *    genuinely produced (`agency-dialer.ts` and `reaper.ts` write `'orphaned'`;
  *    the WebRTC bridge and `outcome-classifier.ts` produce `'agent_disconnected'`)
  *    and both fall through to `policy?.[outcome]`. A policy key **tunes a defined
- *    default**: `AD-P3-C-09` (MAG-97) gave both entries in `DEFAULT_RETRY_POLICY`,
- *    so a contact whose attempt died of our own restart or the agent's dropped
- *    socket is retried out of the box. Master rejects both keys, which is
- *    `MAG-100`; refusing them here too would remove the only lever that tunes
- *    that behaviour, so they are accepted.
- *
- *    ⚠️ Updated after MAG-97 landed. This paragraph previously said both were
- *    ABSENT from `DEFAULT_RETRY_POLICY` and that a policy key was therefore the
- *    ONLY way to retry such a contact — true when written, and the reasoning was
- *    what motivated accepting the keys. That absence was itself the defect
- *    (`no_policy_for_outcome` → `completed` retired customers nobody spoke to),
- *    and it is fixed. The DECISION to accept both keys is unchanged and now
- *    stronger; only its rationale moved.
+ *    default**: both have entries in `DEFAULT_RETRY_POLICY`, so a contact whose
+ *    attempt died of our own restart or the agent's dropped socket is retried out
+ *    of the box. Refusing the keys would remove the only lever that tunes that
+ *    behaviour, so they are accepted.
  *
  *    Note the cap an operator sets here is the CUSTOMER's allowance and binds
  *    only an `agent_disconnected` that happened AFTER bridging. A drop before the
@@ -87,15 +74,15 @@ export interface CampaignConfigIssue {
  *    `OUR_FAULT_REDIAL_BOUND`, which is deliberately **not** reachable from this
  *    validator — a regulated repeat-dial limit config can raise is not a limit.
  *
- *  - **`machine` is refused**, agreeing with master. With AMD off (D1) nothing
+ *  - **`machine` is refused**. With AMD off nothing
  *    can ever classify an outcome as `machine` — a call answered by voicemail is
  *    `connected` — so a rule here is not a typo that gets ignored, it is a
  *    configured retry that will never once fire. Voicemail retry is
  *    disposition-driven instead.
  *
- *  - **`invalid` is REFUSED** (MAG-103). It is a real outcome, unlike `machine`,
+ *  - **`invalid` is REFUSED**. It is a real outcome, unlike `machine`,
  *    but `resolveRetryDecision` returns `suppressed` for it **before** the line
- *    that reads `policy?.[outcome]` (§5.3 routes `invalid` straight to
+ *    that reads `policy?.[outcome]` (the contact state machine routes `invalid` straight to
  *    `suppressed`, not to `exhausted`). So neither `policy.invalid` nor
  *    `DEFAULT_RETRY_POLICY.invalid` can ever be read for that outcome — the key
  *    is structurally unreachable, which is exactly the silent no-op the `machine`
@@ -106,12 +93,8 @@ export interface CampaignConfigIssue {
  *    `DEFAULT_RETRY_POLICY` says so in its own comment; making the key live would
  *    let a campaign redial a number the carrier has already told us is unreachable.
  *
- *    This paragraph previously recorded the divergence as deliberately UNFIXED,
- *    on the grounds that core must never refuse a key master accepts — a value
- *    the wizard offers and core then 400s is a broken flow. That reasoning was
- *    right, and MAG-103 is its resolution rather than its exception: master
- *    refuses the key in the same release, and cusui stops sending it, so the two
- *    validators still agree and no wizard field 400s.
+ *    The public API layer refuses the key too, and the console does not send it,
+ *    so the two validators agree and no wizard field 400s.
  *
  *  - **`canceled` is ACCEPTED**, and it is the one key on this list
  *    whose lever is a *bound* rather than a budget — which is the thing to know
@@ -131,9 +114,9 @@ export interface CampaignConfigIssue {
  *    on", which on a compliance-sensitive product is a request an operator is
  *    entitled to make.
  *
- * **Core never refuses a key master accepts.** Still true, and now load-bearing in
- * both directions: this list and master's must be changed together or a campaign
- * becomes saveable in one service and not the other.
+ * **This list never refuses a key the public API layer accepts**, and the reverse:
+ * the two must be changed together or a campaign saves from the wizard and 400s
+ * here, or the other way round.
  */
 export const RETRY_POLICY_OUTCOMES = [
   'no_answer',
@@ -169,7 +152,7 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 const MAX_TIMEZONE_LENGTH = 64;
 
 /**
- * Migration 072's column defaults, which are what an omitted field becomes.
+ * The `agency_campaigns` column defaults, which are what an omitted field becomes.
  *
  * Duplicated from SQL on purpose and kept narrow: the cross-field
  * `start !== end` rule cannot be evaluated on a body that carries only one side,
@@ -185,18 +168,12 @@ export const CAMPAIGN_CONFIG_COLUMN_DEFAULTS = {
 } as const;
 
 /**
- * The abandonment ceiling every campaign is measured against, as a percentage.
+ * The default abandonment ceiling, as a percentage: the `abandonment_ceiling_pct`
+ * column's DEFAULT, and what the repository applies when a create omits the field.
+ * The per-campaign value is validated by `validateAbandonmentCeiling` below.
  *
- * **Not yet per-campaign configurable, and that is a gap rather than a decision.**
- * There is no column for it — migration 072 stores no ceiling, no later migration
- * adds one, and no feature flag or env var carries it — so this constant is the
- * only value in core. `AD-P4-C-02` acceptance (d) requires an operator to be able
- * to set it per campaign; when that lands, the column belongs on
- * `agency_campaigns` beside the other behaviour fields and this constant becomes
- * its `DEFAULT`, exactly as `CAMPAIGN_CONFIG_COLUMN_DEFAULTS` above mirrors 072's.
- *
- * It lives here, exported, rather than beside either of its two readers — the
- * supervisor payload's `abandonment_ceiling_pct` and `AD-P4-C-02`'s auto-pause —
+ * It lives here, exported, rather than beside either of its readers — the
+ * supervisor payload's `abandonment_ceiling_pct` and the auto-pause guardrail —
  * because a compliance threshold with two copies is a compliance threshold that
  * drifts, and the dashboard drawing a gauge against one number while the
  * guardrail fires on another is the specific failure that is invisible until an
@@ -274,7 +251,7 @@ function validateDispositionCatalog(catalog: unknown): CampaignConfigIssue[] {
         field: `${at}.code`,
         // Compared byte-for-byte where it is consumed — the catalog lookup on
         // submit and the disposition precedence check — so a code differing only
-        // in case is a submission core answers `unknown_disposition_code` to.
+        // in case is a submission the internal handler answers `unknown_disposition_code` to.
         message: 'code must be 1–50 characters of lowercase letters, digits or underscores.',
       });
     } else if (seen.has(code)) {
@@ -339,7 +316,7 @@ function validateRetryPolicy(policy: unknown): CampaignConfigIssue[] {
   }
 
   // An empty policy is valid and is the ORDINARY case, not the edge one: the
-  // column defaults to `{}`, master does not send the field, and
+  // column defaults to `{}`, the create path does not set the field, and
   // `resolveRetryDecision` falls back to `DEFAULT_RETRY_POLICY` per key. `{}`
   // means "the documented defaults", never "retry nothing".
   return issues;
@@ -411,7 +388,7 @@ function validateCallingWindow(
             // undetectable by testing the default and would surface as an
             // off-by-one on Sundays months later. A caller sending `0` believes
             // `dow`, so accepting it means we and they disagree about which days
-            // the campaign runs, silently. `calling-hours.ts` pins the same rule.
+            // the campaign runs, silently. `calling-hours.ts` states the same rule.
             message: 'Days are ISO-8601: 1 = Monday … 7 = Sunday. 0 is not a valid day.',
           });
         }
@@ -439,8 +416,7 @@ function validateCallingWindow(
          * reimplemented, and that is the load-bearing choice: it is the same
          * function the dial-time gate uses, so this validator cannot come to
          * disagree with the gate it exists to protect. A local copy would be a
-         * second definition of "usable zone" in one service, which is a worse
-         * split than the core/master one this ticket is closing.
+         * second definition of "usable zone" beside the gate it is meant to agree with.
          *
          * It carries the abbreviation gate the obvious validator lacks:
          * `new Intl.DateTimeFormat(undefined, { timeZone: 'EST' })` **does not
@@ -492,9 +468,9 @@ export function validateAgencyCampaignConfig(
 }
 
 /**
- * The per-campaign abandonment ceiling (`AD-P4-C-02` acceptance (d)).
+ * The per-campaign abandonment ceiling.
  *
- * Bounds mirror migration 089's CHECK exactly. They are restated here rather
+ * Bounds mirror the `abandonment_ceiling_pct` CHECK exactly. They are restated here rather
  * than derived because the two answer different questions — this one tells an
  * operator what is wrong with their input, the constraint stops a bad row
  * reaching the table whatever wrote it — but they must agree, so a change to
@@ -516,7 +492,7 @@ function validateAbandonmentCeiling(value: unknown): CampaignConfigIssue[] {
   return [];
 }
 
-/** `{ field: message }`, the shape core's routes already send as `details`. */
+/** `{ field: message }`, the shape the internal handler's routes already send as `details`. */
 export function issuesToDetails(issues: readonly CampaignConfigIssue[]): Record<string, string> {
   const details: Record<string, string> = {};
   for (const issue of issues) {

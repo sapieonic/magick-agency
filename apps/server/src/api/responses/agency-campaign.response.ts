@@ -29,9 +29,10 @@ import type { AgencyCampaignActor } from '@magick-agency/contracts/agency';
  * ── `completed_at` still ships beside `ended_at` ────────────────────────────
  *
  * Both, on purpose, and holding the same instant. Migration 108's header has the
- * long form: `completed_at` is on a payload master and the console already read,
- * and removing a field from a shipped response is a three-repo sequencing exercise
- * rather than a migration. Nothing here computes either one — they come off the
+ * long form: `completed_at` is on a payload the public API layer and the console
+ * already read, and removing a field from a shipped response is a sequencing
+ * exercise across the contract and the console rather than a migration. Nothing
+ * here computes either one — they come off the
  * row, written by the single `CASE` in `transitionStatus`, so this function cannot
  * be the place they drift.
  *

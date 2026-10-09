@@ -5,12 +5,6 @@ import { EMAIL_UNVERIFIED_CODE, sessionLinkEmail } from '../../auth/session-emai
 import { userRepository } from '@magick-agency/db/repositories/user.repository';
 import { tenantRepository } from '@magick-agency/db/repositories/tenant.repository';
 import { membershipRepository } from '@magick-agency/db/repositories/membership.repository';
-// PORT NOTE (magick-agency): master's `accountRepository`, credit-balance and
-// credit-transaction repositories, `tenantCoreCredentialRepository`,
-// `phoneNumberRepository`, `tenantPhoneAssignmentRepository`, `createCoreApiKey`,
-// `encryptAes256Gcm`, `config` and the `signupPhoneAssignmentsTotal` metric were
-// imported only by path 4's provisioning, which is replaced by a refusal below
-// (plan §3.1). `denyPlatformApiKey` is removed with platform API keys (decision #5).
 import { sessionMiddleware, invalidateUserCache } from '../../auth/session.middleware.js';
 import { adoptFirebaseIdentity, PENDING_UID_PREFIX } from '../../auth/firebase-identity.js';
 import {
@@ -22,11 +16,9 @@ import { createChildLogger } from '@magick-agency/observability';
 import type { SessionRefusal } from '@magick-agency/contracts/api/platform/auth';
 
 const log = createChildLogger({ component: 'auth-routes' });
-// PORT NOTE (magick-agency): master's `SIGNUP_BONUS_MILLICREDITS` (100 credits)
-// is deleted — no credits in v1 (decision S6), and path 4 no longer provisions.
 
 /**
- * NEW (magick-agency, plan §3.1): the code path 4 answers with. Contract
+ * The code path 4 answers with. Contract
  * `SessionRefusalCode` (`@magick-agency/contracts/api/platform/auth`).
  */
 export const NO_MEMBERSHIP_CODE = 'no_membership' as const;
@@ -34,9 +26,8 @@ export const NO_MEMBERSHIP_MESSAGE =
   'This account has not been added to any Magick Agency workspace. Ask your workspace administrator to invite you, then sign in again.';
 
 /**
- * `resolveGovernanceSafe` (PORT NOTE (magick-agency): now `resolveSettingsSafe`,
- * the per-account settings map, plan §3.2) and the three-lookup session body both moved to
- * `src/auth/session-payload.ts`, unchanged.
+ * `resolveSettingsSafe` (the per-account settings map) and the three-lookup
+ * session body live in `src/auth/session-payload.ts`.
  *
  * They are shared with `POST /invites/:token/claim`, which has to answer
  * BYTE-IDENTICALLY to this route's success body so the SPA can reuse one
@@ -51,16 +42,14 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   /**
    * POST /auth/session
    * Accept Firebase id_token → load user → return user + tenants + memberships.
-   * PORT NOTE (magick-agency): master auto-provisioned new users here (tenant,
-   * account, membership, credits, core API key); agency refuses them (path 4).
+   * A new identity is refused (path 4), never provisioned.
    *
    * Handles these cases:
    *   1. User found by firebase_uid → return existing session
    *   2. User found by *verified* email with pending_ UID (super-admin stub) → activate stub
    *   3. User found by *verified* email with different real UID (re-registered) → adopt new UID
-   *   4. No user found → 403 `no_membership` (PORT NOTE (magick-agency): master
-   *      created a new user + auto-provisioned a tenant; plan §3.1 — agency has
-   *      no self-serve sign-up, and path 4 never creates a tenant)
+   *   4. No user found → 403 `no_membership` (there is no self-serve sign-up,
+   *      and path 4 never creates a tenant)
    *
    * Paths 2/3/4 that carry an email require `email_verified === true`. An
    * unverified email/password token on a UID miss is `403 email_unverified`
@@ -177,19 +166,17 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
        * 2. **What happens to `users.email` on a claim, which is now two
        *    different answers.** Firebase's one-account-per-email rule keys on
        *    the FIREBASE account's email; this lookup keys on the `users.email`
-       *    COLUMN, which is not unique. A mismatched invite claim used to leave
-       *    the column holding the INVITED address while `firebase_uid` held the
-       *    claimant's, so a later *verified* token for that address arrived
-       *    here and took the claimed row over. `AdoptIdentityOptions.adoptEmail`
-       *    closed that — but only for a claim that PROVES its address:
+       *    COLUMN, which is not unique. A mismatched invite claim that left the
+       *    column holding the INVITED address while `firebase_uid` held the
+       *    claimant's would let a later *verified* token for that address arrive
+       *    here and take the claimed row over. `AdoptIdentityOptions.adoptEmail`
+       *    closes that — but only for a claim that PROVES its address:
        *
        *    - **Verified claim** — the claimant's own address is written onto
        *      the row. A later sign-in with the INVITED address then finds
-       *      nothing here and falls through to path 4, provisioning a fresh
-       *      tenant for it. That is correct, and it is the outcome to preserve
-       *      if this lookup is ever widened.
-       *      (PORT NOTE (magick-agency): path 4 now refuses with
-       *      `no_membership` instead of provisioning; the lookup rule is the same.)
+   *      nothing here and falls through to path 4, which refuses it with
+   *      `no_membership`. That is correct, and it is the outcome to preserve
+   *      if this lookup is ever widened.
        *    - **Unverified claim** (migration 073, and the common shape) — the
        *      INVITED address STAYS on the row and `email_unverified` is set
        *      instead. So this lookup still finds it, and adopting is still the
@@ -228,16 +215,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     // ── Path 4: Truly new user ──────────────────────
     /*
-     * PORT NOTE (magick-agency): REFUSED (plan §3.1, §9 "session path 4 never
-     * creates a tenant"). Master (`auth.routes.ts:218-358` @a1f0756a) inserted a
-     * `users` row, a tenant (`generateSlug`), a Default account, a `tenant_owner`
-     * membership, a signup credit balance + transaction, then minted a core API key
-     * and assigned a pooled phone number, answering `201 { is_new: true, … }`.
-     * Agency has no self-serve sign-up: a person reaches agency only as a
-     * `pending_` stub a super-admin or team admin created (path 2) or by claiming
-     * an invite. This branch writes NOTHING — not even a `users` row — so a later
-     * invite or super-admin stub for this address is matched by path 2 exactly as
-     * if this sign-in had never happened.
+     * REFUSED: session path 4 never creates a tenant. There is no self-serve
+     * sign-up: a person arrives only as a `pending_` stub a super-admin or team
+     * admin created (path 2) or by claiming an invite. This branch writes NOTHING
+     * — not even a `users` row — so a later invite or super-admin stub for this
+     * address is matched by path 2 exactly as if this sign-in had never happened.
      */
     log.warn({ uid: decoded.uid }, 'Refused session: no user, stub or membership for this identity');
     const refusal: SessionRefusal = {
@@ -253,22 +235,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
    * Return current user + all tenants + memberships.
    */
   /**
-   * PORT NOTE (magick-agency): master refused platform API keys here
-   * (`denyPlatformApiKey`); there are none (decision #5), so the preHandler is
-   * `sessionMiddleware` alone. Master's reasoning, kept for the record:
-   *
-   * Refused for platform API keys, for the same reason `GET /tenants` above is
-   * scoped: this route has no `tenantContextMiddleware`, so nothing checks the
-   * key's tenant, and it answers from `request.user` — which for a key is the
-   * person who MINTED it. It was therefore returning that person's identity plus
-   * `findAllByUserId` memberships and `listByUserId` tenants, i.e. every
-   * workspace they belong to, to whoever holds the string.
-   *
-   * Refused rather than scoped (the choice `GET /tenants` made) because there is
-   * no "me" for a machine credential: any answer here would be a claim about a
-   * human the caller is not. Same posture as the agency `my-*` routes, which
-   * refuse a key rather than answer for its creator. A key that needs to know its
-   * own tenant reads `GET /tenants`.
+   * The preHandler is `sessionMiddleware` alone: there are no platform API keys
+   * in v1, so every caller here is a person and "me" is always a human.
    */
   app.get('/me', { preHandler: [sessionMiddleware] }, async (request: FastifyRequest, reply: FastifyReply) => {
     if (!request.user) {
@@ -277,9 +245,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     const memberships = await membershipRepository.findAllByUserId(request.user.id);
     const tenants = await tenantRepository.listByUserId(request.user.id);
-    // PORT NOTE (magick-agency): master resolved `governance` for
-    // `memberships[0]`; agency answers the per-account `settings` map over every
-    // account the memberships reach (plan §3.2, contract `MeResponse`).
+    // The per-account `settings` map over every account the memberships reach
+    // (contract `MeResponse`).
     const settings = await resolveSettingsSafe(memberships);
 
     return reply.send({
@@ -290,6 +257,3 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 }
-
-// PORT NOTE (magick-agency): master's `generateSlug` is deleted; its only caller
-// was path 4's tenant provisioning.

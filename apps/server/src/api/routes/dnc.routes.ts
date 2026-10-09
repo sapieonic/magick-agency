@@ -13,30 +13,22 @@ import { requestAuditActor } from '../../audit/platform/audit-actor.js';
 const log = createChildLogger({ component: 'dnc-routes' });
 
 /**
- * `/dnc` — the Do Not Call list (design §2.3, `AD-P3-M-01`).
+ * `/dnc` — the Do Not Call list.
  *
- * **Master-native, not a `/proxy/*` route.** DNC is compliance state that master
- * owns; core receives only a derived, tenant-flat Redis set for its dial-time
- * check. There is no core endpoint behind these handlers.
- *
- * PORT NOTE (magick-agency, decision B8): there is no Redis set any more — the dial-time check
- * reads `dnc_entries` directly (`DncRegistry.check`), so every scope here is enforced at dial
- * time, not only the tenant-wide rows. The paragraph above is master's record.
+ * **Served directly, not through `callCore`.** DNC is compliance state in
+ * `dnc_entries`, and the dial-time check reads that table directly
+ * (`DncRegistry.check`, decision B8), so every scope written here is enforced at
+ * dial time.
  *
  * ── Two floors, not one ─────────────────────────────────────────────────────
  * Read is `viewer`; add and delete are `account_admin` (`agency.dnc.manage`).
  * The agent-facing path is a different route entirely
  * (`POST /proxy/agency/attempts/:id/dnc`, floored at `agent`) and is
  * attempt-scoped: an agent suppresses the number on their own line, never an
- * arbitrary one, and never removes anything. See `rbac/roles.ts`.
+ * arbitrary one, and never removes anything. See `@magick-agency/contracts/rbac`.
  *
- * The `agency` capability gates all of it, so a tenant without the Agency Dialer
- * has no DNC surface — consistent with the rest of the feature, where the
- * capability, the RBAC floor and core's `agency_dialer_enabled` flag all have to
- * agree before anything is reachable.
- *
- * PORT NOTE (magick-agency, plan §3.2): there is no governance and no `agency` capability (the
- * app IS agency); the RBAC floors are the gate here. Master's paragraph above is the record.
+ * The RBAC floors are the gate here; there is no product-level capability to
+ * check, since every tenant here is an agency tenant.
  */
 
 /**
@@ -51,20 +43,18 @@ const log = createChildLogger({ component: 'dnc-routes' });
 const addSchema = z.object({
   phone_numbers: z.array(z.string().min(1).max(40)).min(1).max(DNC_ADD_MAX_NUMBERS),
   /**
-   * Omitted ⇒ tenant-wide, which is the scope core's Redis set can express.
-   *
-   * PORT NOTE (magick-agency, B8): no Redis set — every scope is enforced at dial time by the
-   * `dnc_entries` read. The nil-UUID hazard below is unchanged (it is the index's).
+   * Omitted ⇒ tenant-wide. Every scope is enforced at dial time by the
+   * `dnc_entries` read.
    *
    * BOTH scope fields use `dncScopeUuid()` rather than a bare `.uuid()`, and both
    * halves matter: `uq_dnc_scope` COALESCEs `account_id` and `campaign_id` to the
    * same sentinel, so either one spelled as the nil UUID produces an index key
    * identical to a tenant-wide row's while the row is not tenant-wide. A later
-   * genuine tenant-wide add for that number then collides, writes nothing,
-   * publishes nothing, and is reported as an idempotent success. This is the bulk
-   * path too — `phone_numbers` takes up to `DNC_ADD_MAX_NUMBERS` — so one
-   * sentinel scope on one import can bury a whole regulator list's worth of
-   * numbers in a scope nothing enforces at dial time.
+   * genuine tenant-wide add for that number then collides, writes nothing, and is
+   * reported as an idempotent success. This is the bulk path too —
+   * `phone_numbers` takes up to `DNC_ADD_MAX_NUMBERS` — so one sentinel scope on
+   * one import can bury a whole regulator list's worth of numbers in a scope
+   * nothing enforces at dial time.
    */
   account_id: dncScopeUuid().nullish(),
   campaign_id: dncScopeUuid().nullish(),
@@ -77,10 +67,8 @@ const addSchema = z.object({
  * with a NULL scope". Absent means "any scope".
  *
  * A bare `?account_id=` (empty) would otherwise be indistinguishable from absent,
- * and "show me the tenant-wide rows" is the single most useful filter here —
- * those are exactly the rows that reach core's Redis set.
- *
- * PORT NOTE (magick-agency, B8): no Redis set any more; the filter is unchanged.
+ * and "show me the tenant-wide rows" — the ones that block the number in every
+ * campaign — is the single most useful filter here.
  */
 const listSchema = z.object({
   phone: z.string().min(1).max(40).optional(),
@@ -143,9 +131,6 @@ function accountScopeAllows(request: FastifyRequest, requested: string | null | 
 export async function dncRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', sessionMiddleware);
   app.addHook('preHandler', tenantContextMiddleware);
-  // PORT NOTE (magick-agency): master's `requireCapability('agency')` is deleted — there is
-  // no governance, and the section-level `agency` gate is always on because the app IS
-  // agency (plan §3.2; lane A's `campaign-behavioral-settings.ts` header).
 
   /** GET /dnc — the list, newest first. */
   app.get('/', {
@@ -249,7 +234,7 @@ export async function dncRoutes(app: FastifyInstance): Promise<void> {
       ...(request.user?.id ? { addedBy: request.user.id } : {}),
     });
 
-    // Platform audit trail (`MAG-70`), distinct from the DNC-specific log line
+    // Platform audit trail, distinct from the DNC-specific log line
     // above. No phone numbers in `details` — `phone_numbers` is PII and
     // `summary.results` carries `phone_e164` per row; only the count and the
     // per-outcome breakdown are recorded.

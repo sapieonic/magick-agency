@@ -8,10 +8,10 @@ import type { DncRegistry } from './dnc-registry.js';
 const log = createChildLogger({ component: 'agency-pre-dial-gates' });
 
 /**
- * ─── AGENCY DIALER — THE PRE-DIAL COMPLIANCE GATES (§4.2) ────────────────────
+ * ─── AGENCY DIALER — THE PRE-DIAL COMPLIANCE GATES ────────────────────
  *
  * Everything that must be true about a *contact* before a carrier is contacted,
- * in one place, evaluated where §4.2 puts it: in the tick, between claiming the
+ * in one place, evaluated in the pacing tick, between claiming the
  * contact and creating the attempt. Two reasons for that position, both practical
  * rather than stylistic — the gate's outcomes are all writes to the contact row,
  * which is the tick's job, and suppressing before the attempt exists means there
@@ -33,7 +33,7 @@ const log = createChildLogger({ component: 'agency-pre-dial-gates' });
  *
  *  - An unusable phone is terminal, so checking it first removes the row from the
  *    roster immediately instead of deferring it nightly forever.
- *  - **Calling hours before DNC keeps a Redis outage from halting a campaign that
+ *  - **Calling hours before DNC keeps a DNC read failure from halting a campaign that
  *    is out of hours anyway.** Out-of-hours contacts defer normally and only a
  *    contact we would otherwise dial right now can trigger the halt, which is the
  *    difference between "paused because it is 3am" and "paused, cause unknown".
@@ -62,7 +62,7 @@ export interface PreDialClearance {
  * How long a clearance is good for.
  *
  * Tied to the pre-dial reservation lease rather than being an independent number,
- * and the reasoning is §6.1's read from the other end: a clearance that outlives
+ * and the reasoning is the lease rule read from the other end: a clearance that outlives
  * the reservation is meaningless, because the agent it was going to bridge to is
  * already gone. It also bounds the real hazard — an agent marking a number DNC
  * between the check and the dial — to the same window the design already accepts
@@ -80,8 +80,8 @@ export const CLEARANCE_MAX_AGE_MS = AGENT_LEASE_MS.reserved_predial;
  * roster back on its own, and long enough not to burn agent reservations
  * re-deferring the same rows four times a second.
  *
- * The real fix is upstream: master should refuse to push a campaign whose
- * `default_timezone` is not a usable IANA zone. A per-contact gate cannot pause a
+ * The real fix is at campaign config: a campaign whose `default_timezone` is not a
+ * usable IANA zone should be refused there. A per-contact gate cannot pause a
  * campaign, and should not learn how to.
  */
 export const UNRESOLVABLE_WINDOW_PARK_MS = 60 * 60 * 1000;
@@ -101,8 +101,7 @@ export type PreDialGate =
  * - `suppress` — terminal. The contact leaves the roster with a reason.
  * - `defer` — back to `pending` at `deferUntil`, which is **always strictly in the
  *   future**: returning it at `now()` re-claims it on the very next tick and a
- *   campaign whose roster is all out of hours spins at 4 claims/second all night
- *   (§4.2).
+ *   campaign whose roster is all out of hours spins at 4 claims/second all night.
  * - `halt` — campaign-wide, not about this contact. Stop the tick; do not dial the
  *   contacts already claimed alongside it either, because whatever stopped us
  *   answering for this one cannot answer for them.
@@ -114,8 +113,8 @@ export type PreDialDecision =
   | { action: 'halt'; gate: PreDialGate };
 
 export interface PreDialGateInput {
-  // PORT NOTE (magick-agency, decision B8): `account_id` added to the Pick — the DNC
-  // check below is now scoped (tenant-wide, this account, this campaign) and needs it.
+  // `account_id` is in the Pick because the DNC check below is scoped (tenant-wide,
+  // this account, this campaign; decision B8) and needs it.
   campaign: Pick<AgencyCampaignRecord,
     'id' | 'tenant_id' | 'account_id' | 'calling_window_start' | 'calling_window_end' | 'calling_days'
     | 'default_timezone'>;
@@ -139,7 +138,7 @@ export async function evaluatePreDialGates(
 
   // ── 1. Is this a number at all ────────────────────────────────────────────
   // First because it is terminal and free. A row whose phone is not E.164 can
-  // never be dialed and can never be compared against the DNC set, so it leaves
+  // never be dialed and can never be compared against the DNC list, so it leaves
   // the roster now rather than being deferred to a window it will fail again at
   // every night. Deliberately NOT a halt: one malformed row must not stop dialing
   // for everyone on the campaign.
@@ -147,12 +146,12 @@ export async function evaluatePreDialGates(
     return { action: 'suppress', gate: 'phone_invalid', suppressedReason: 'invalid' };
   }
 
-  // ── 2. Calling hours, in the contact's own timezone (D4) ──────────────────
+  // ── 2. Calling hours, in the contact's own timezone ──────────────────
   // Before DNC because it is free, and because it keeps an out-of-hours campaign
-  // deferring cleanly instead of halting when Redis is unhappy.
+  // deferring cleanly instead of halting when the DNC read fails.
   const window = resolveCallingWindow(campaign, contact);
   if (window.contactTimezoneRejected) {
-    // Not an error — the campaign default applies per D4 — but it means an ingest
+    // Not an error — the campaign default applies — but it means an ingest
     // mapping is producing junk, and the alternative symptom is calls at the
     // wrong local time for one slice of a roster and nothing to grep for.
     log.warn(
@@ -180,11 +179,10 @@ export async function evaluatePreDialGates(
     };
   }
 
-  // ── 3. Do Not Call, immediately before the dial (§2.3) ────────────────────
-  // PORT NOTE (magick-agency, decision B8): the scope is REQUIRED by the collapsed
-  // registry (core passed none — its Redis set held tenant-wide entries only). With
-  // the account and campaign named, an account- or campaign-scoped `dnc_entries` row
-  // stops this dial too, where in core only ingest and the mark's roster sweep did.
+  // ── 3. Do Not Call, immediately before the dial ────────────────────
+  // Decision B8: the scope is REQUIRED by the registry. With the account and
+  // campaign named, an account- or campaign-scoped `dnc_entries` row stops this
+  // dial as well as a tenant-wide one.
   const dnc = await deps.dnc.check(campaign.tenant_id, contact.phone_e164, {
     accountId: campaign.account_id,
     campaignId: campaign.id,
@@ -196,12 +194,12 @@ export async function evaluatePreDialGates(
     // Unreachable: gate 1 already refused anything `normalizeE164` cannot read,
     // and the registry uses the same function. Kept because the alternative is
     // falling through to `dial` if the two ever diverge, and this arm's cost is
-    // three lines. `test/unit/agency/pre-dial-gates.test.ts` pins the equivalence
+    // three lines. `test/unit/agency/pre-dial-gates.test.ts` asserts the equivalence
     // rather than trusting this paragraph.
     return { action: 'suppress', gate: 'phone_invalid', suppressedReason: 'invalid' };
   }
   if (dnc === 'unavailable') {
-    // The registry cannot answer — no Redis, an unsynced tenant, or an error.
+    // The registry cannot answer — the `dnc_entries` read failed.
     // Campaign-wide, so the campaign stops. This is the one place in the system
     // where unavailability must halt work: a wrongly-dialed DNC number is a
     // regulatory event, a paused campaign is an inconvenience.

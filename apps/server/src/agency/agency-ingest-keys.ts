@@ -7,7 +7,7 @@
  * the route suites, and the writer of a key and the checker of it must read the
  * same definition — two hand-written templates is how the gap below opened.
  *
- * ── The hole this closes (ClickUp `14ygtkj8rvv`, second door) ───────────────
+ * ── The hole this closes ─────────────────────────────────────────────────────
  * Two kinds of object live under `agency-ingest/{tenant}/`: the operator's own
  * UPLOAD (`…/{uploadId}/{file}`) and the server-written REJECTED-ROWS EXPORT
  * (`…/{jobId}/rejected-rows.csv`). The ownership check was a bare tenant-prefix

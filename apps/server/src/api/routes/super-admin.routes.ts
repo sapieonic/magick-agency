@@ -44,45 +44,29 @@ import {
 const log = createChildLogger({ component: 'super-admin-routes' });
 
 /*
- * PORT NOTE (magick-agency): master `src/api/routes/super-admin.routes.ts`
- * @a1f0756a (plan §3.4). Kept: login (5/min), `/me`, `/change-password`,
- * tenants list/create/detail, add user, users, admins (create, list, delete,
- * reactivate, reset password), audit, accounts + concurrency. Deleted, each for
- * its reason:
- *  - credits (`POST /tenants/:id/credits`, `/credits/deduct`,
- *    `/credits/reconcile`, `GET /tenants/:id/credits/transactions`,
- *    `serializeCacheInspection`, `SuperAdminRouteOptions.creditService`) — no
- *    credits in v1 (plan §3.3, Decided S6);
- *  - `PUT /tenants/:id/settings` (AI pipeline/provider service settings) and
- *    `POST /maintenance/backfill-core-default-pipelines` — AI calling is out of
- *    scope (Decided S7) and there is no core to push pipelines into;
- *  - `DELETE /tenants/:id` — not in agency's wire contract (plan §3.4 lists
- *    create, settings and accounts only);
- *  - concurrency synchronization with core: `coreInternalRequest`, the
- *    entitlement revisions (`providerConcurrencyEntitlementRepository`),
- *    `POST …/concurrency/retry-sync`, `allocationMatchesIntent`, the
- *    `provider_concurrency_unsynced_accounts` drift gauge and its timer
- *    (`CONCURRENCY_DRIFT_GAUGE_REFRESH_MS`) — agency is both the system of
- *    record and the enforcer, so there is nothing to synchronize or drift;
- *  - the telephony-provider catalog checks on a provider breakdown
- *    (`CORE_SUPPORTED_TELEPHONY_PROVIDERS`, unknown/inactive provider, the
- *    tenant's `allowed_providers`) and the catalog on the concurrency read —
- *    one carrier, and `allowed_providers` was an AI service setting;
- *  - `invalidateConcurrencyAllocation` (master's broadcast-cap cache) — no
- *    broadcast campaigns.
- * NEW: role change and revoke on a membership, `account_id` on add-user, and
- * the invite that add-user now issues.
+ * Super-admin routes, serving the super-admin console: login (5/min), `/me`,
+ * `/change-password`, tenants list/create/detail, add user (with an `account_id`,
+ * issuing an invite), users, role change and revoke on a membership, admins
+ * (create, list, delete, reactivate, reset password), audit, accounts +
+ * concurrency. Deliberately absent:
+ *  - credits — no credits in v1 (decision S6);
+ *  - AI pipeline/provider service settings — AI calling is out of scope
+ *    (decision S7);
+ *  - tenant delete — not part of the super-admin surface;
+ *  - concurrency synchronization and drift tracking — this server is both the
+ *    system of record and the enforcer, so there is nothing to synchronize or
+ *    drift;
+ *  - telephony-provider catalog checks on a provider breakdown — one carrier;
+ *  - a broadcast-cap cache invalidation — no broadcast campaigns.
  */
 
 const BCRYPT_ROUNDS = 10;
 const JWT_EXPIRY = '4h';
 
 /**
- * PORT NOTE (magick-agency): NEW. The utilization read, core
- * `GET /internal/account-concurrency/utilization` (`internal.routes.ts:325-364`)
- * collapsed in-process: live counts come from the voice engine's guards through
+ * The utilization read: live counts come from the voice engine's guards through
  * `seams/concurrency-control.ts` (`getAccountProviderCounts` per provider,
- * `getAccountCount` for the account total), exactly the two reads core made.
+ * `getAccountCount` for the account total).
  */
 async function readAccountConcurrencyUtilization(
   tenantId: string,
@@ -126,31 +110,30 @@ async function readAccountConcurrencyUtilization(
 /**
  * Is this role change one that should close the user's agency staffing?
  *
- * PORT NOTE (magick-agency): master `user.routes.ts` `isDemotionFromAgent`,
- * verbatim — the same predicate for the same reason (only a change AWAY from
- * `agent`; see that function's comment for the three directions that must not
- * touch staffing).
+ * The same predicate as `isDemotionFromAgent` in `user.routes.ts`, for the same
+ * reason (only a change AWAY from `agent`; see that function's comment for the
+ * three directions that must not touch staffing).
  */
 function isDemotionFromAgent(from: MembershipRole, to: MembershipRole): boolean {
   return from === 'agent' && to !== 'agent';
 }
 
 /**
- * PORT NOTE (magick-agency): NEW. Close a user's campaign staffing across the
- * whole tenant, as master's `closeAgencyStaffing` does for a tenant-wide caller
- * (`user.routes.ts`: `closeAllForUser(tenantId, userId)` with no account) — a
- * super admin is never account-scoped.
+ * Close a user's campaign staffing across the whole tenant, as
+ * `closeAgencyStaffing` in `user.routes.ts` does for a tenant-wide caller
+ * (`closeAllForUser(tenantId, userId)` with no account) — a super admin is never
+ * account-scoped.
  *
- * Never throws, for master's reason: the membership change it follows has
- * already committed, and a closed staffing row revokes nothing (staffing is not
- * authorization), so a failure leaves a stale navigation entry rather than a
- * stale permission. The closed rows are returned for the super-admin audit row.
+ * Never throws: the membership change it follows has already committed, and a
+ * closed staffing row revokes nothing (staffing is not authorization), so a
+ * failure leaves a stale navigation entry rather than a stale permission. The
+ * closed rows are returned for the super-admin audit row.
  *
- * NOT written: master's per-row `agency_campaign_agent.unassigned` platform
- * audit rows. Their actor is `requestAuditActor(request)` — a `users` id — and a
- * super admin is not a user; the platform actor union (`human` | `system`) has
- * no super-admin shape, and `system` means "no caller existed". The closed
- * assignment ids and campaigns go on the super-admin audit row instead.
+ * NOT written: per-row `agency_campaign_agent.unassigned` platform audit rows.
+ * Their actor is `requestAuditActor(request)` — a `users` id — and a super admin
+ * is not a user; the platform actor union (`human` | `system`) has no super-admin
+ * shape, and `system` means "no caller existed". The closed assignment ids and
+ * campaigns go on the super-admin audit row instead.
  */
 async function closeStaffingTenantWide(
   tenantId: string,
@@ -275,10 +258,7 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
 
   /**
    * GET /super-admin/tenants
-   * List all tenants with member count.
-   *
-   * PORT NOTE (magick-agency): master's `credit_balance` / `credit_reserved`
-   * columns and the `tenant_credit_balances` join are removed (no credits).
+   * List all tenants with member count. No credit columns (no credits in v1).
    */
   authApp.get('/tenants', async (_request: FastifyRequest, reply: FastifyReply) => {
     const pool = getPool();
@@ -303,13 +283,8 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
    * POST /super-admin/tenants
    * Create tenant + owner by email (stub user if email not in system).
    *
-   * PORT NOTE (magick-agency): master also wrote a zero `tenant_credit_balances`
-   * row, provisioned a per-tenant core API key (`createCoreApiKey`,
-   * `tenantCoreCredentialRepository`) and auto-assigned a default number from the
-   * signup pool (`findLeastAssigned`, `signupPhoneAssignmentsTotal`). All three
-   * are removed — no credits, no core, no pooled number (plan §3.4) — and with
-   * them `core_key_provisioned` / `phone_auto_assigned` on the response and the
-   * audit row (contract `CreateTenantResponse`).
+   * No credit balance, no per-tenant API key and no auto-assigned pooled number:
+   * none of the three exists here, so `CreateTenantResponse` carries none of them.
    */
   authApp.post('/tenants', async (request: FastifyRequest, reply: FastifyReply) => {
     const parsed = createTenantSchema.safeParse(request.body);
@@ -355,12 +330,11 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
        * been unique.
        *
        * Through the REPOSITORY, on this transaction's own client — which is
-       * what the optional client parameter exists for. This was a hand-copied
-       * statement, and a hand-copied rule is a second definition of it: a
-       * mutation test dropping `AND email_unverified = false` from either copy
-       * failed ZERO tests at any layer, because the only test that looked at
-       * this path ran its own copy of the SQL from the test body. One
-       * definition, one place to mutate, one place to pin.
+       * what the optional client parameter exists for. A hand-copied statement
+       * would be a second definition of the rule: a mutation dropping
+       * `AND email_unverified = false` from one copy passes every test that runs
+       * its own copy of the SQL. One definition, one place to mutate, one place
+       * to pin.
        */
       const owner = await userRepository.resolveByProvenEmail(owner_email, {
         client,
@@ -424,11 +398,8 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
 
   /**
    * GET /super-admin/tenants/:id
-   * Tenant detail with members.
-   *
-   * PORT NOTE (magick-agency): master's `credits` (`tenant_credit_balances`) and
-   * `credit_cache` (the Postgres-vs-Redis balance inspection) are removed with
-   * the credit ledger (contract `SuperAdminTenantDetail`).
+   * Tenant detail with members. No credit fields (no credits in v1; contract
+   * `SuperAdminTenantDetail`).
    */
   authApp.get('/tenants/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const { id } = request.params;
@@ -453,8 +424,7 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  // PORT NOTE (magick-agency): master's `DELETE /tenants/:id` (soft delete) is
-  // not ported — see the module note.
+  // No tenant delete route — see the module note.
 
   /**
    * POST /super-admin/tenants/:id/users
@@ -476,8 +446,7 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
     }
 
     /**
-     * PORT NOTE (magick-agency): NEW (plan §3.4 "add a user to a tenant or
-     * account"). The account must belong to THIS tenant: `memberships.account_id`
+     * The account must belong to THIS tenant: `memberships.account_id`
      * references `accounts(id)` with no composite FK back to the tenant, so
      * nothing in the schema would catch a sibling tenant's account. Same scoped
      * lookup, same refusal and wording as `POST /users/invite`.
@@ -539,27 +508,24 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
       }
 
       /**
-       * Memberships are soft-deleted. Offboarding sets `status = 'revoked'` and
-       * tenant delete sets `'inactive'`; unique indexes still apply, so an
-       * INSERT of the same user+tenant is 23505 rather than a 409.
+       * Memberships are soft-deleted (offboarding sets `status = 'revoked'`);
+       * unique indexes still apply, so an INSERT of the same user+tenant is
+       * 23505 rather than a 409.
        *
-       * Lock every leftover row for this user in this tenant, then:
+       * Lock every leftover row for this user in this tenant, then, without
+       * `account_id`:
        *  - any `active` row → they are already a member (409)
        *  - a tenant-level leftover (`account_id IS NULL`) → reactivate it with
        *    the requested role
        *  - otherwise INSERT a new tenant-level membership
        *
-       * Super-admin add is tenant-level only (`account_id` omitted). An
-       * account-scoped leftover is a different unique key and is left alone.
-       *
-       * PORT NOTE (magick-agency): with the NEW `account_id`, the same three
-       * rules are keyed on the ACCOUNT context instead: an `active` row for this
-       * account → 409; a leftover for this account (`UNIQUE(user_id, tenant_id,
-       * account_id)`) → reactivate with the requested role; otherwise INSERT an
-       * account-scoped membership. Rows for other contexts — including an active
-       * tenant-wide one — are left alone, as `POST /users/invite` leaves them
-       * (one membership per account is the model). Without `account_id`,
-       * master's rules are unchanged, including "ANY active row is a 409".
+       * With `account_id`, the same three rules are keyed on the ACCOUNT context
+       * instead: an `active` row for this account → 409; a leftover for this
+       * account (`UNIQUE(user_id, tenant_id, account_id)`) → reactivate with the
+       * requested role; otherwise INSERT an account-scoped membership. Rows for
+       * other contexts — including an active tenant-wide one — are left alone, as
+       * `POST /users/invite` leaves them (one membership per account is the
+       * model).
        */
       const existingMemberships = await client.query<{
         id: string;
@@ -604,13 +570,10 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
        * that same id would make an unclaimed, unexpired token claimable again,
        * and the claim binds whatever role was just written here — not the role
        * the old mail described. Same predicate `createSupersedingOutstanding`
-       * uses, minus issuing a replacement (super-admin add does not mail).
-       *
-       * PORT NOTE (magick-agency): super-admin add now DOES issue an invitation
-       * (below, after COMMIT). This revoke stays: it runs inside the membership
-       * write's transaction, so no window exists in which the old token is live
-       * against the new role, and `createSupersedingOutstanding` then finds
-       * nothing outstanding to supersede.
+       * uses. It runs inside the membership write's transaction, so no window
+       * exists in which the old token is live against the new role, and the
+       * invitation issued below (after COMMIT) through `createSupersedingOutstanding`
+       * then finds nothing outstanding to supersede.
        */
       const membershipId = membershipResult.rows[0]?.id;
       if (membershipId) {
@@ -639,19 +602,18 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
     await redisCache.del(`cache:membership:${userId}:${tenantId}`);
 
     /**
-     * PORT NOTE (magick-agency): NEW (plan §3.4 "creates a `pending_` stub plus
-     * membership, and sends an invite"). Through W2's shared `issueInvite`, so a
-     * super-admin invitation is the same artefact `POST /users/invite` produces.
-     * `roleGetsTokenInvite` is agent-only: an `agent` gets a token and the mail;
-     * every other role gets no token and is matched by session path 2 (a verified
-     * email on the `pending_` stub).
+     * Super-admin add creates a `pending_` stub plus membership and sends an
+     * invite, through the shared `issueInvite`, so a super-admin invitation is the
+     * same artefact `POST /users/invite` produces. `roleGetsTokenInvite` is
+     * agent-only: an `agent` gets a token and the mail; every other role gets no
+     * token and is matched by session path 2 (a verified email on the `pending_`
+     * stub).
      *
      * Guarded exactly as `POST /users/invite` guards it, for its reason: the
      * membership has committed, so a failure here must not turn into a 500 that
      * tells the super admin the add failed. `invitedBy` is `null` — a super admin
      * is not a `users` row (`membership_invites.invited_by` names a user, and the
-     * mail names the inviter from `users.display_name`), the same reason master's
-     * credit routes leave `created_by` unset.
+     * mail names the inviter from `users.display_name`).
      */
     let inviteEmail: InviteEmailResult;
     let inviteId: string | null = null;
@@ -679,8 +641,7 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
       action: 'add_user_to_tenant', resource_type: 'membership', resource_id: tenantId,
       details: {
         email, role, name: name || null,
-        // PORT NOTE (magick-agency): NEW fields — the account context and the
-        // invitation's outcome.
+        // The account context and the invitation's outcome.
         account_id: contextAccountId,
         membership_id: membership.id,
         invite_id: inviteId,
@@ -695,16 +656,14 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
   /**
    * PUT /super-admin/tenants/:id/memberships/:membershipId/role
    *
-   * PORT NOTE (magick-agency): NEW (plan §3.4 "change roles", contract
-   * `ChangeMembershipRole*`). Master has no super-admin route for it; this is the
-   * tenant-side `PUT /users/:id/role` (`user.routes.ts`) minus the caller-role
-   * checks (`canManageExistingRole` / `canManageRole` compare the CALLER's
-   * membership, and a super admin has none) and with the membership named by id
-   * rather than picked by `primaryMembership`. Kept from it, unchanged: the
-   * last-owner compare-and-swap (`updateRoleGuardingLastOwner`), its three
-   * refusals and their wording, the membership cache `del`, and closing staffing
-   * on a demotion out of `agent` unless the user is still an agent through
-   * another membership in the tenant.
+   * Contract `ChangeMembershipRole*`. The tenant-side `PUT /users/:id/role`
+   * (`user.routes.ts`) minus the caller-role checks (`canManageExistingRole` /
+   * `canManageRole` compare the CALLER's membership, and a super admin has none)
+   * and with the membership named by id rather than picked by
+   * `primaryMembership`. The same as it: the last-owner compare-and-swap
+   * (`updateRoleGuardingLastOwner`), its three refusals and their wording, the
+   * membership cache `del`, and closing staffing on a demotion out of `agent`
+   * unless the user is still an agent through another membership in the tenant.
    */
   authApp.put('/tenants/:id/memberships/:membershipId/role', async (
     request: FastifyRequest<{ Params: { id: string; membershipId: string } }>,
@@ -782,14 +741,13 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
   /**
    * DELETE /super-admin/tenants/:id/memberships/:membershipId
    *
-   * PORT NOTE (magick-agency): NEW (plan §3.4 "revoke memberships", contract
-   * `RevokeMembershipResponse`). The tenant-side `DELETE /users/:id/membership`
+   * Contract `RevokeMembershipResponse`. The tenant-side `DELETE /users/:id/membership`
    * (`user.routes.ts`) minus the caller checks (no self, no caller-role
    * comparison — a super admin is not a member), naming the membership by id.
-   * Kept from it: `removeGuardingLastOwner` and its refusals, the cache `del`,
-   * and the UNCONDITIONAL staffing close afterwards (plan §3.1 "revoking a
-   * membership closes the agent's campaign staffing in the same place"),
-   * tenant-wide because a super admin is never account-scoped.
+   * The same as it: `removeGuardingLastOwner` and its refusals, the cache `del`,
+   * and the UNCONDITIONAL staffing close afterwards (revoking a membership closes
+   * the agent's campaign staffing in the same place), tenant-wide because a super
+   * admin is never account-scoped.
    */
   authApp.delete('/tenants/:id/memberships/:membershipId', async (
     request: FastifyRequest<{ Params: { id: string; membershipId: string } }>,
@@ -849,8 +807,7 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ membership: after, staffing_closed: staffingClosed.length });
   });
 
-  // PORT NOTE (magick-agency): master's credits routes, `PUT /tenants/:id/settings`
-  // and `POST /maintenance/backfill-core-default-pipelines` are deleted — see the
+  // No credits, tenant service-settings or pipeline-backfill routes — see the
   // module note.
 
   /**
@@ -1055,9 +1012,10 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
     }
     const valid = await bcrypt.compare(admin_password, actor.password_hash);
     if (!valid) {
-      // 422 (not 401) is deliberate: the front-end's saFetch treats every 401 as
-      // session-expiry and force-logs-out the admin. A wrong re-auth password is a
-      // business validation failure that must surface inline in the modal — so 422.
+      // 422 (not 401) is deliberate: the super-admin console's saFetch treats every
+      // 401 as session-expiry and force-logs-out the admin. A wrong re-auth password
+      // is a business validation failure that must surface inline in the modal — so
+      // 422.
       return reply.code(422).send({ error: 'Unprocessable Entity', message: 'Your password is incorrect' });
     }
 
@@ -1076,8 +1034,8 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
 
   /**
    * GET /super-admin/audit
-   * Admin audit log — visible to all super admins. Filters are server-side:
-   * the previous page-local search only scanned the current 50 rows.
+   * Admin audit log — visible to all super admins. Filters are server-side: a
+   * page-local search would scan only the current 50 rows.
    */
   authApp.get('/audit', async (request: FastifyRequest, reply: FastifyReply) => {
     const parsed = superAdminAuditQuerySchema.safeParse(request.query);
@@ -1093,12 +1051,9 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
    * GET /super-admin/tenants/:id/accounts
    * List all accounts for a tenant with their concurrency settings.
    *
-   * PORT NOTE (magick-agency): HOP COLLAPSE. Master read each account's
-   * allocation from core (`GET /internal/account-concurrency`); it is now
-   * `providerConcurrencyRepository.getAllocation`, the read core's route made.
-   * A read failure still reports `unavailable` rather than fabricating a limit.
-   * The chunking is master's (it bounded control-plane fan-out); kept, now
-   * bounding concurrent pool checkouts instead.
+   * Each account's allocation is `providerConcurrencyRepository.getAllocation`.
+   * A read failure reports `unavailable` rather than fabricating a limit. Reads
+   * run in chunks of 10, bounding concurrent pool checkouts.
    */
   authApp.get('/tenants/:id/accounts', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const { id: tenantId } = request.params;
@@ -1169,15 +1124,11 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
   /**
    * GET /super-admin/tenants/:id/accounts/:accountId/concurrency
    *
-   * PORT NOTE (magick-agency): HOP COLLAPSE. `allocation` is core's
-   * `GET /internal/account-concurrency` body (`getAllocation`) and `utilization`
-   * core's `/utilization` body, computed in-process
-   * (`readAccountConcurrencyUtilization`). When the utilization read itself fails
+   * `allocation` is `getAllocation` and `utilization` is computed in-process by
+   * `readAccountConcurrencyUtilization`. When the utilization read itself fails
    * (the guard is unreachable or not wired) it is `null` — the contract's
-   * `AccountConcurrencyDetail.utilization: … | null` — where master substituted a
-   * partial `{ status: 'unavailable', … }` for core's non-200. Master's
-   * `providers` (telephony catalog), `entitlements` and `synchronization` are
-   * removed (module note).
+   * `AccountConcurrencyDetail.utilization: … | null`. No telephony catalog,
+   * entitlements or synchronization state (module note).
    */
   authApp.get('/tenants/:id/accounts/:accountId/concurrency', async (
     request: FastifyRequest<{ Params: { id: string; accountId: string } }>,
@@ -1208,23 +1159,17 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
   /**
    * PUT /super-admin/tenants/:id/accounts/:accountId/concurrency
    *
-   * PORT NOTE (magick-agency): HOP COLLAPSE of master's validation and audit
-   * onto core `PUT /internal/account-concurrency` (`internal.routes.ts:366-450`),
-   * which runs in-process. In order: master's two accepted bodies and its
-   * checks (duplicate provider, total 1..1000, a routed number per allocated
-   * provider); master's legacy-body translation (`version` from the current
-   * allocation, refused once the account is in provider mode); core's
-   * provider-mode migration drain check through the ACCOUNT guard's
-   * distributed count (503 when unavailable, 409 with active calls, both
-   * bypassed by `force_migration`); core's versioned write; core's three
-   * invalidations IN CORE'S ORDER (settings row cache → account guard →
-   * provider guard), the guard calls through `seams/concurrency-control.ts`;
-   * core's `concurrency.allocation.updated` audit row (actor = the super admin's
-   * email, core's `requested_by`); master's super-admin audit row. A refusal from
-   * the core half, or an unexpected throw (the 500 core would have answered),
-   * writes master's `update_account_concurrency_failed` row, as a core non-2xx did. Core repeated master's duplicate/total checks with the same
-   * messages; the repeat is unreachable here and not carried.
-   * `callManager.triggerDequeue()` has no counterpart (AI call queue).
+   * In order: the two accepted bodies and their checks (duplicate provider, total
+   * 1..1000, a routed number per allocated provider); the legacy-body translation
+   * (`version` from the current allocation, refused once the account is in
+   * provider mode); the provider-mode migration drain check through the ACCOUNT
+   * guard's distributed count (503 when unavailable, 409 with active calls, both
+   * bypassed by `force_migration`); the versioned write; three invalidations, in
+   * this order (settings row cache → account guard → provider guard), the guard
+   * calls through `seams/concurrency-control.ts`; the `concurrency.allocation.updated`
+   * audit row (actor = the super admin's email); the super-admin audit row. A drain
+   * or version refusal, or an unexpected throw (answered 500), writes the
+   * `update_account_concurrency_failed` super-admin audit row through `refuse`.
    */
   authApp.put('/tenants/:id/accounts/:accountId/concurrency', async (request: FastifyRequest<{ Params: { id: string; accountId: string } }>, reply: FastifyReply) => {
     const { id: tenantId, accountId } = request.params;
@@ -1251,10 +1196,10 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
 
     const superAdmin = request.superAdmin!;
     let before: AccountConcurrencyAllocation | null = null;
-    /** Master's `update_account_concurrency_failed` row, then the reply. */
+    /** The `update_account_concurrency_failed` super-admin audit row, then the reply. */
     const refuse = async (status: number, body: Record<string, unknown>) => {
-      // Master's awaited write and its error log, kept; the log now names the row it lost
-      // (Manas, 2026-10-09: a failed super-admin audit write must say what it was).
+      // Awaited, with an error log that names the row it lost (Manas, 2026-10-09:
+      // a failed super-admin audit write must say what it was).
       await superAdminAuditRepository.log({
         admin_id: superAdmin.id, admin_email: superAdmin.email,
         action: 'update_account_concurrency_failed', resource_type: 'account', resource_id: accountId,
@@ -1284,10 +1229,9 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
         if (new Set(names).size !== names.length) {
           return reply.code(400).send({ error: 'Bad Request', message: 'Each provider may appear only once' });
         }
-        // PORT NOTE (magick-agency): master's telephony-catalog checks (unknown,
-        // core-unsupported, inactive, not in the tenant's `allowed_providers`)
-        // are deleted (module note). The routed-number check stays: capacity on
-        // a carrier the account has no number on cannot place a call.
+        // No telephony-catalog checks (module note). The routed-number check
+        // stays: capacity on a carrier the account has no number on cannot place
+        // a call.
         const routes = await tenantPhoneAssignmentRepository.findAvailableForAccount(tenantId, accountId);
         const unrouted = allocatedNames.filter((name) => !routes.some((route) => route.provider_name === name));
         if (unrouted.length > 0) {
@@ -1316,12 +1260,12 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
         };
       }
       if (!before) {
-        // The provider-shaped body reached core's handler, whose own `before`
-        // read would have failed the request.
+        // A provider-shaped body with no readable current allocation fails the
+        // request (500, audited) rather than writing blind.
         throw new Error('Current concurrency allocation is unavailable');
       }
 
-      // ── core `PUT /internal/account-concurrency`, in-process ──────────────
+      // ── The versioned write, its invalidations and the allocation audit row ──
       let allocation: AccountConcurrencyAllocation;
       try {
         if (data.mode === 'provider_breakdown') {
@@ -1385,9 +1329,9 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
             : {}),
         },
       });
-      // ── end of core's handler ─────────────────────────────────────────────
+      // ── end of the allocation write ───────────────────────────────────────
 
-      // Master's awaited write; the error log now names the lost row (Manas, 2026-10-09).
+      // Awaited; the error log names the lost row (Manas, 2026-10-09).
       await superAdminAuditRepository.log({
         admin_id: superAdmin.id, admin_email: superAdmin.email,
         action: 'update_account_concurrency', resource_type: 'account', resource_id: accountId,
@@ -1409,16 +1353,13 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
       return reply.send(allocation);
     } catch (err) {
       log.error({ err, tenantId, accountId }, 'Failed to update account concurrency');
-      // Master wrote this row for EVERY core non-2xx, a 500 included
-      // (`super-admin.routes.ts:1522-1527`): an unexpected throw from the
-      // in-process half is that 500.
+      // An unexpected throw writes the failed row too, answered as a 500.
       return await refuse(500, { error: 'Internal Server Error', message: 'Failed to update account concurrency' });
     }
   });
 
-  // PORT NOTE (magick-agency): master's
-  // `POST /tenants/:id/accounts/:accountId/concurrency/retry-sync` is deleted —
-  // there is no second service to re-synchronize (module note).
+  // No concurrency retry-sync route: there is nothing to re-synchronize (module
+  // note).
 
   }); // end authenticatedRoutes sub-plugin
 }

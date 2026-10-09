@@ -9,8 +9,8 @@ import {
 } from './agency-csv-ingest.js';
 
 /**
- * The read that powers the column-mapping screen (UX §B.3) — "the most important
- * screen in this wizard", because the phone column will not be called `phone`
+ * The read that powers the column-mapping screen — the most important screen in
+ * the upload wizard, because the phone column will not be called `phone`
  * and picking the wrong one dials the wrong people.
  *
  * It is a separate pass from {@link ingestAgencyCsv} for one structural reason:
@@ -20,7 +20,7 @@ import {
  * column.
  *
  * ── Why scoring reads values and not just headers ──────────────────────────
- * The spec's example file has `Mobile`, `Alt Mobile` and `Ref No`. Header text
+ * A realistic file has `Mobile`, `Alt Mobile` and `Ref No`. Header text
  * alone cannot separate those, and `Ref No` may well hold ten-digit integers
  * that normalise cleanly. So each column is scored on the **proportion of
  * sampled rows whose value parses to E.164**, with header text used only as a
@@ -50,7 +50,7 @@ const PHONE_HEADER_HINT = /(phone|mobile|cell|contact|msisdn|number|tel)/i;
  *
  * That sounds like letting header text dominate, and it is worth being precise
  * about why it does not. The bonus only changes an outcome when exactly ONE
- * candidate's header looks like a phone column: in the spec's own hard case —
+ * candidate's header looks like a phone column: in the hard case —
  * `Mobile` vs `Alt Mobile`, both full of valid numbers — both match the hint,
  * the bonus cancels, and the tie stands so the operator chooses. What it does
  * resolve is `Mobile` vs `Ref No` where `Ref No` happens to hold ten-digit

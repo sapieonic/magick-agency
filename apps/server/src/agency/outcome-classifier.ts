@@ -9,60 +9,53 @@ import type {
 /**
  * Carrier/bridge terminal state → agency attempt outcome.
  *
- * Phase 1 cannot skip this even though retries are out of scope: without an
- * outcome a non-answered call never leaves `in_flight`, the contact is never
+ * Without an outcome a non-answered call never leaves `in_flight`, the contact is never
  * returned to the roster, and the campaign can never reach `completed` (which
  * requires zero outstanding contacts). Outcome classification is what makes a
  * campaign terminate at all.
  *
- * There is deliberately no path to `machine`. With AMD off (D1) the carrier
+ * There is deliberately no path to `machine`. With AMD off the carrier
  * cannot tell us a human did not answer, so a call picked up by voicemail is
  * `connected` and the only signal it was a machine is the agent's disposition.
  * Inventing a `machine` outcome here would be a lie the retry engine would act on.
  *
- * ── `answered` AND `bridged`, as two parameters (pilot 2026-09-08) ──────────
+ * ── `answered` AND `bridged`, as two parameters ─────────────────────────────
  *
- * This function used to take one `bridged` flag, and **every caller fed it the
- * carrier's `answered`** — `agency-dialer.ts`'s `ended` handler passed
- * `bridged: ev.answered` verbatim. The two are genuinely different facts (the
- * whole abandonment definition is the gap between them) and conflating them was
- * wrong in BOTH directions, which is why the 2026-09-08 pilot's "33 bridged /
- * 32% bridge rate" is unreadable rather than merely imprecise:
+ * The carrier's `answered` and the bridge's `bridged` are genuinely different
+ * facts (the whole abandonment definition is the gap between them), and
+ * conflating them is wrong in BOTH directions:
  *
- *   1. a ring the agent cancelled (`status: 'canceled'`, never answered) had
- *      `bridged: false` and fell to the `canceled` arm's `abandoned` — ~19
- *      phantom abandoned rows, calls no customer ever picked up;
+ *   1. a ring the agent cancelled (`status: 'canceled'`, never answered) would
+ *      read `bridged: false` and fall to the `canceled` arm's `abandoned` — a
+ *      phantom abandoned row for a call no customer ever picked up;
  *   2. a call the customer answered and that never reached an agent
  *      (`status: 'completed'`, `answered: true`, no bridge — the VoiceLink
- *      ring-cancel shape traced on callId `064836f1-8915-49f8-9c5a-c741f3cdd2af`)
- *      had `bridged: true` and came out `connected`, and was billed as a
+ *      ring-cancel shape) would read `bridged: true` and come out `connected`, a
  *      conversation nobody had.
  *
- * So the parameters are now separate and **both are required**: an optional
- * `answered` would let exactly the old call site compile unchanged, and the
+ * So the parameters are separate and **both are required**: an optional
+ * `answered` would let a call site that passes only one fact compile, and the
  * compiler is the only thing that can force a caller to think about which fact
  * it holds. `bridged` must come from the bridge's own `bridged_at` stamp
  * (`live.bridgedAt !== null` at the dial site), never re-derived from a status.
  *
- * ── It now AGREES with the SQL abandonment predicate ────────────────────────
+ * ── It AGREES with the SQL abandonment predicate ────────────────────────────
  *
- * `ABANDONED_ATTEMPT_PREDICATE_SQL` (`abandonment-predicate.ts:44`) is
- * `answered_at IS NOT NULL AND (… OR bridged_at IS NULL OR …)`, i.e. **answered
- * and not bridged**. Both status arms below now spell exactly that, so the label
- * in `agency_call_attempts.outcome` and the row set the compliance query selects
- * finally say the same thing about the same attempt. Previously the label
- * disagreed with the table in both directions at once.
+ * `ABANDONED_ATTEMPT_PREDICATE_SQL` (`@magick-agency/domain/abandonment-predicate`)
+ * is `answered_at IS NOT NULL AND (… OR bridged_at IS NULL OR …)`, i.e. **answered
+ * and not bridged**. Both status arms below spell exactly that, so the label in
+ * `agency_call_attempts.outcome` and the row set the compliance query selects say
+ * the same thing about the same attempt.
  *
- * ⚠️ **This moves no metric, and that is deliberate.** The compliance numerator
- * is incremented off `isAbandonedAttempt` (`abandonment-predicate.ts:100`) — the
+ * ⚠️ **No metric reads this function's answer, and that is deliberate.** The
+ * compliance numerator is incremented off `isAbandonedAttempt` (same module) — the
  * predicate itself, deliberately not routed through this module — and not off
- * this function's return value, precisely because the label was never trustworthy
- * enough to key a regulated number on (see the `ended` handler's note at its
- * `agencyAbandonedTotal.inc` site). Case 1 above was already excluded from the
- * numerator by the predicate's `answeredAt === null` arm and case 2 was already
- * included by its `bridgedAt === null` arm, so `agency_abandoned_total` reads
- * identically before and after. What changes is the *outcome string*, and with it
- * which retry rule the contact gets and which sentence the agent is shown.
+ * this function's return value, so a regulated number is never keyed on a label
+ * (see the `ended` handler's note at its `agencyAbandonedTotal.inc` site). Case 1
+ * above is excluded from the numerator by the predicate's `answeredAt === null`
+ * arm and case 2 is included by its `bridgedAt === null` arm. What this function
+ * decides is the *outcome string*, and with it which retry rule the contact gets
+ * and which sentence the agent is shown.
  */
 /**
  * Bridge outcomes that mean **this platform ended the call**, as opposed to the
@@ -117,22 +110,20 @@ export function classifyAttemptOutcome(opts: {
   if (opts.outcome === 'orphaned') return 'orphaned';
   // A teardown the SERVICE initiated is the same fact as the reaper's `orphaned`,
   // arriving under the bridge's own vocabulary instead. `webrtc-bridge-manager.ts`
-  // settles every session it owns as `service_shutdown` on SIGTERM (`:315`),
-  // `ws-static-call-manager.ts` does the same (`:1613`), and
-  // `webrtc-call.repository.ts`'s stale sweep writes `stuck_active_call` (`:305`)
-  // for a row whose owning replica died — all three sitting in the `system` arm
-  // of `webrtcEndedBy`. Without this they fell through to the status switch and came
-  // out `failed`, which is the customer's fault as far as the retry policy is
-  // concerned: `failed` gets 2 attempts on the CUSTOMER's ledger, whereas
-  // `orphaned` has an our-fault default and is routed to `resolveOurFaultRedial`
-  // by the dial site — the whole point of `AD-P3-C-09` being that our restarts
-  // must not retire contacts we never spoke to. `releaseMessageFor('orphaned')`
-  // already reads "The call was interrupted by a service restart", i.e. the copy
-  // for this case was written before the classifier could produce it.
+  // settles every session it owns as `service_shutdown` on SIGTERM, and the stale
+  // sweep (`failStaleActive`, `agency-call.repository.ts`) writes
+  // `stuck_active_call` for a row whose owning replica died — all sitting in the
+  // `system` arm of `webrtcEndedBy`. Without this they would fall through to the
+  // status switch and come out `failed`, which is the customer's fault as far as
+  // the retry policy is concerned: `failed` gets 2 attempts on the CUSTOMER's
+  // ledger, whereas `orphaned` has an our-fault default and is routed to
+  // `resolveOurFaultRedial` by the dial site, because our restarts must not
+  // retire contacts we never spoke to. `releaseMessageFor('orphaned')` reads "The
+  // call was interrupted by a service restart".
   //
   // `max_duration_reached` is deliberately NOT here even though it shares the
-  // `system` analytics dimension: that call happened, was answered and was billed
-  // — it is a conversation we cut short, not one the platform lost.
+  // `system` analytics dimension: that call happened and was answered — it is a
+  // conversation we cut short, not one the server lost.
   if (
     opts.outcome === 'service_shutdown'
     || opts.outcome === 'system_rebooted'
@@ -141,24 +132,24 @@ export function classifyAttemptOutcome(opts: {
     // ⚠️ ONLY before the bridge. A lifecycle interruption of a call that was
     // actually bridged is a CONVERSATION WE CUT SHORT, not one the platform lost
     // — the identical argument the `max_duration_reached` note directly above
-    // makes, and this arm originally contradicted it.
+    // makes.
     //
-    // What it cost: `gracefulShutdown` settles every owned session
-    // `service_shutdown`, so an ordinary deploy landing mid-conversation
-    // classified `orphaned`. `orphaned` is `{delay_minutes: 0, max_attempts: 3}`
-    // and `connected` is `{max_attempts: 0}`, so a customer we had just finished
-    // speaking to was redialled immediately — up to three times — and the
-    // disposition the agent owed was never asked for. Pre-bridge, `orphaned` is
-    // exactly right and is the whole point of `AD-P3-C-09`: our restarts must not
+    // Why it matters: `gracefulShutdown` settles every owned session
+    // `service_shutdown`, so without the `bridged` check an ordinary deploy landing
+    // mid-conversation would classify `orphaned`. `orphaned` is
+    // `{delay_minutes: 0, max_attempts: 3}` and `connected` is `{max_attempts: 0}`,
+    // so a customer we had just finished speaking to would be redialled
+    // immediately — up to three times — and the disposition the agent owed never
+    // asked for. Pre-bridge, `orphaned` is exactly right: our restarts must not
     // spend a contact's allowance on a call they never received.
     if (opts.bridged) return 'connected';
     return 'orphaned';
   }
-  // An abandoned call (`AD-P2-C-05`) MUST short-circuit here, and this line is
+  // An abandoned call MUST short-circuit here, and this line is
   // load-bearing rather than defensive. `abandonAnsweredCall` hangs the customer
   // up itself, so the teardown it produces can carry either terminal status, and
   // it is answered-but-unbridged by construction — meaning the arms below would
-  // reach the same verdict for it now that they read `answered` separately. It
+  // reach the same verdict for it, since they read `answered` separately. It
   // stays because it is the one path that KNOWS, rather than infers, that no agent
   // was there: it survives a `bridged_at` written by a bind that raced the
   // apology, and it keeps the outcome stable if either status arm is ever changed.
@@ -175,16 +166,15 @@ export function classifyAttemptOutcome(opts: {
     case 'busy':
       return 'busy';
     case 'completed':
-      // Bridged ⇒ a human (or a machine — we cannot tell, D1) was on the line.
+      // Bridged ⇒ a human (or a machine — with AMD off we cannot tell) was on the line.
       if (opts.bridged) return 'connected';
       // Answered, never bridged: a customer who spoke to nobody. This is the
-      // `064836f1` shape — a cancel that VoiceLink could not act on, so the phone
+      // ring-cancel shape — a cancel that VoiceLink could not act on, so the phone
       // kept ringing, the customer picked up, and the relay opened into a console
       // the agent had already dismissed. It ends `completed` with real talk time,
       // so status and duration both read "connected"; only the missing
       // `bridged_at` says otherwise, and it is the same fact the SQL predicate
-      // reads. Being `abandoned` is also what makes master zero-charge it
-      // (`AGENCY_NON_CONNECTED_OUTCOMES`) instead of billing the flat rate.
+      // reads.
       return opts.answered ? 'abandoned' : 'no_answer';
     case 'canceled':
       if (opts.bridged) return 'connected';
@@ -204,15 +194,16 @@ export function classifyAttemptOutcome(opts: {
       //    customer's ledger, and calling it our fault would redial a screening
       //    customer indefinitely on a bound they never consume.
       //
-      // This arm used to return `'canceled'` for both, which inverted the second
-      // case — and on VoiceLink specifically that is the more common one, because
+      // Returning `'canceled'` for both would invert the second case — and on
+      // VoiceLink specifically that is the more common one, because
       // `cancelRinging` is false there, so a local cancel often does NOT produce a
       // carrier `canceled` at all while a far-end 487 always does.
       //
       // Declines classify `no_answer`: they did not answer, it is the customer's
       // ledger, and its policy (retry later, a few times) is the right treatment
       // for a number that is screening right now. `AgencyAttemptOutcome` has no
-      // `rejected` member and adding one is a three-repo change plus the fixture.
+      // `rejected` member, and adding one is a contract change the console must
+      // follow.
       return isLocallyEndedOutcome(opts.outcome) ? 'canceled' : 'no_answer';
     case 'failed':
     default:
@@ -253,8 +244,8 @@ function isInvalidNumber(raw: string): boolean {
  * whole `released` frame when no panel was ever delivered. With the flag off, the
  * only thing that cancels a ring is the agent's own hangup, and `agent_hangup`
  * already carries copy for exactly that ("You ended the call."). A new reason
- * would therefore be a fifth mirror (`docs/reference/magickvoice-platform/agency.md` §6.2 — core's union, master's
- * mask allow-list, cusui's union, `releaseMessageFor`) bought for a frame that
+ * would therefore be one more member to carry through the `AgencyReleaseReason`
+ * union, `releaseMessageFor` and the console's copy, bought for a frame that
  * either is not sent or already reads correctly.
  *
  * The `completed` fallback covers the residual case — a supervisor stop or a
@@ -303,8 +294,8 @@ export function releaseReasonFor(
  * and block the agent's return to the pool behind it, and wrap-up would hold
  * forever on a demand that cannot be satisfied.
  *
- * The catalog argument is optional so a caller with no campaign in hand keeps the
- * pre-Phase-2 answer; pass it wherever the campaign is available.
+ * The catalog argument is optional so a caller with no campaign in hand gets the
+ * answer from the first condition alone; pass it wherever the campaign is available.
  */
 export function requiresDisposition(
   outcome: AgencyAttemptOutcome | null,
@@ -335,12 +326,12 @@ export function campaignMessageFor(reason: AgencyCampaignChangeReason): string {
  * Why a campaign that just changed status changed it, from the row alone.
  *
  * **`paused` is the whole reason this exists.** A supervisor pause and the
- * `AD-P4-C-02` abandonment guardrail both write `status = 'paused'`, and they are
+ * abandonment guardrail both write `status = 'paused'`, and they are
  * opposite messages to an agent: one is a person deciding, the other is a
  * regulatory stop the campaign will not leave until a human resumes it.
- * {@link AgencyCampaignChangeReason} was declared with both arms from the start;
- * the guardrail shipped without anything selecting between them, so every
- * compliance stop announced itself as a supervisor's doing.
+ * {@link AgencyCampaignChangeReason} has both arms; without something selecting
+ * between them, every compliance stop would announce itself as a supervisor's
+ * doing.
  *
  * Pure and total over the record, so the pacing tick — which is the only thing
  * that observes the transition — does not have to hold the vocabulary itself, and

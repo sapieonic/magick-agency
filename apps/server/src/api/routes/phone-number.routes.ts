@@ -5,25 +5,16 @@ import { requirePermission } from '../../rbac/rbac.middleware.js';
 import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/tenant-phone-assignment.repository';
 
 /*
- * PORT NOTE (magick-agency, Phase 8): master `src/api/routes/phone-number.routes.ts`@a1f0756a,
- * the `GET /` handler only (`:64-160`). What is gone, and why:
- *  - **The BYOC half.** Master merged the tenant's own-carrier numbers from core
- *    (`listByocCallerIds`, an S2S read) into the list, stamped `is_byoc` on both halves, and
- *    degraded to platform numbers when core did not answer. Bring-your-own carrier is out of
- *    scope (VoiceLink is the only carrier, plan "Decided" #3), so there is no second half to
- *    merge, and `is_byoc` is not on the row: `@magick-agency/contracts`'s
- *    `TenantPhoneAssignment` removed it for the same reason. (The console only reads it to show
- *    a badge, `CallerIdPicker.tsx:96`; absent means no badge.)
- *  - **Every other route in the file** — account tags and account defaults, the inbound
- *    config CRUD and its conflict check. They are administration (`proxy.phone_numbers.manage`,
- *    which the contracts do not carry: number assignment is the super-admin's,
- *    `super-admin-phone.routes.ts`) or AI inbound routing (out of scope). The console path
- *    inventory lists each as not served, with the reason.
- *  - `denyPlatformApiKey` went with those routes (it guarded only them), and platform API keys
- *    are gone anyway (decision #5).
- * The permission is master's `proxy.phone_numbers.read` under its agency name,
- * `agency.phone_numbers.read` (floor `viewer`, unchanged; contracts `rbac.ts`). The response
- * stays `{ phone_numbers }`.
+ * `GET /phone-numbers`, the caller-ID list, and the only route here:
+ *  - No bring-your-own-carrier numbers: VoiceLink is the only carrier, so there is
+ *    no second list to merge, and `is_byoc` is not on the row
+ *    (`@magick-agency/contracts`'s `TenantPhoneAssignment` does not carry it), and
+ *    the console's `CallerIdPicker.tsx` shows no own-carrier badge.
+ *  - No number administration (account tags, account defaults) or inbound config:
+ *    number assignment is the super-admin's (`super-admin-phone.routes.ts`), and
+ *    there is no AI inbound routing.
+ * The permission is `agency.phone_numbers.read` (floor `viewer`; contracts
+ * `rbac.ts`). The response is `{ phone_numbers }`.
  */
 
 export async function phoneNumberRoutes(app: FastifyInstance): Promise<void> {
@@ -40,14 +31,14 @@ export async function phoneNumberRoutes(app: FastifyInstance): Promise<void> {
     /**
      * `request.accountId` is the `X-Account-Id` HEADER — optional, and an
      * account-scoped caller who simply omits it (legal: `tenantContextMiddleware`
-     * falls through to their own membership) fell through here to
+     * falls through to their own membership) would otherwise fall through to
      * `findByTenantId`, returning every account's phone assignments AND
      * `findTagsForAssignment`'s per-tag `accounts.name` join for all of them.
-     * `request.membership.account_id` is the authority for the same reason it
-     * is everywhere else in this fix: when it is set, `tenantContextMiddleware`
-     * has already proven it agrees with the header whenever one was sent (a
-     * disagreeing header would 403 upstream), so preferring it never overrides
-     * an explicit, validated header — it only fills in when one was never sent.
+     * `request.membership.account_id` is the authority, as it is everywhere
+     * else: when it is set, `tenantContextMiddleware` has already proven it agrees
+     * with the header whenever one was sent (a disagreeing header would 403
+     * upstream), so preferring it never overrides an explicit, validated header —
+     * it only fills in when one was never sent.
      */
     const accountId = request.membership?.account_id ?? request.accountId;
 

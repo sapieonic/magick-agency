@@ -29,22 +29,23 @@ import { rejectedExportKey } from './agency-ingest-keys.js';
 const log = createChildLogger({ component: 'agency-ingest-service' });
 
 /**
- * How many core-side colliding `source_row_number`s to retain across the whole
- * ingest for the job row. Mirrors core's own per-chunk cap
- * (`MAX_REPORTED_DUPLICATE_ROWS` in `agency.repository.ts`) — enough for an
+ * How many colliding `source_row_number`s reported by the roster hand-off to
+ * retain across the whole ingest for the job row. Mirrors the repository's own
+ * per-chunk cap (`MAX_REPORTED_DUPLICATE_ROWS` in `agency.repository.ts`) — enough for an
  * operator to recognise the pattern without an unbounded array on a
  * million-row re-upload where every chunk collides.
  */
 const MAX_CORE_DUPLICATE_SAMPLE = 20;
 
 /**
- * Runs a roster ingest: S3 object → streaming parse → chunked hand-off to core
- * → rejected-rows export, with progress written to the job row throughout.
+ * Runs a roster ingest: S3 object → streaming parse → chunked hand-off to the
+ * dialer's contact table (`sendRosterChunk`) → rejected-rows export, with
+ * progress written to the job row throughout.
  *
  * ── Why this is a job and not a request ────────────────────────────────────
- * A 1M-row file takes minutes. §2.2 already concluded this ("it is why the
- * ingest is its own job with its own progress, not a synchronous request"), and
- * the UX spec needs a pollable status with a determinate progress bar. So the
+ * A 1M-row file takes minutes, so the ingest is its own job with its own
+ * progress, not a synchronous request, and the upload wizard needs a pollable
+ * status with a determinate progress bar. So the
  * route starts this and returns immediately; everything below runs detached.
  *
  * ── Progress is written on a byte budget, not per batch ────────────────────
@@ -77,7 +78,7 @@ export interface StartIngestOptions {
   campaignId?: string;
   /**
    * The roster size the operator was looking at when they asked for a replace,
-   * forwarded to core as a compare-and-swap. Required by the route for
+   * passed to the supersede as a compare-and-swap. Required by the route for
    * `mode: 'replace'`; meaningless otherwise.
    *
    * Deliberately NOT a column on the job row. It is an assertion about the
@@ -117,29 +118,26 @@ export class AgencyIngestService {
       chunks_sent: 0,
       // Exact, EXCEPT when the flag below says it is a lower bound — see the
       // field's docstring on `IngestProgress` (`agency-ingest-job.repository.ts`)
-      // for the retry-lost-response path core's migration 084 closed and the
-      // pre-084 replay it could not.
+      // for when it is a lower bound.
       core_rejected_duplicate_rows: 0,
       // Skewed toward the earliest chunks once the cap is hit — see the same
       // docstring's note on `core_duplicate_source_rows`.
       core_duplicate_source_rows: [],
-      // Starts false and is only ever raised by a core response that says so.
+      // Starts false and is only ever raised by a chunk response that says so.
       core_rejected_duplicate_rows_may_undercount: false,
     };
 
     /**
-     * Fold one chunk's core-reported duplicate signal into the running totals
+     * Fold one chunk's reported duplicate signal into the running totals
      * on `progress` directly — not a separate outer variable — so both fields
      * ride the same `updateProgress()` heartbeat and survive a cancel/fail
-     * together (see `updateProgress`'s docstring for why that matters: only
-     * `complete()` used to receive the sample, so a job that never reached
-     * `complete()` reported a non-zero count with an empty examples list).
+     * together (see `updateProgress`'s docstring for why that matters: if only
+     * `complete()` received the sample, a job that never reached `complete()` would
+     * report a non-zero count with an empty examples list).
      *
-     * This is the fix for the silent-zero-write bug: previously `sendRosterChunk`'s
-     * return value was never captured at either call site, so core's
-     * `rejected_duplicate_rows`/`duplicate_source_rows` — the only signal that a
-     * chunk core says "accepted" actually wrote zero rows — went straight to the
-     * garbage collector.
+     * `sendRosterChunk`'s return value is captured at both call sites because its
+     * `rejected_duplicate_rows`/`duplicate_source_rows` are the only signal that a
+     * chunk reported "accepted" actually wrote zero rows.
      */
     const foldCoreChunkResult = (chunk: {
       rejected_duplicate_rows?: number;
@@ -177,13 +175,11 @@ export class AgencyIngestService {
      * than a nullable number.
      *
      * `unknown` is the state that matters and the one a `number | null` could not
-     * express. `supersedeRoster` makes up to FOUR attempts (`withRetry`'s loop is
-     * `attempt <= maxRetries`), so attempt 1 can commit a supersede, lose its
-     * response to the 30s timeout, and have attempt 2 answer
-     * `409 contacts_total_mismatch` from core's compare-and-swap. Every signal
-     * master holds then says "core refused" while the roster is actually gone.
-     * `already_applied: true` is the same state reached differently: the work is
-     * done and master never learned the count.
+     * express: a supersede whose work is done but whose count this side never
+     * learned — `already_applied: true`, or a retried supersede whose committed
+     * attempt lost its answer while a later attempt was refused. `supersedeRoster`
+     * today makes one attempt and always refuses (decision B15); these states are
+     * the contract a real supersede has to report against.
      */
     type RosterRetirement =
       | { state: 'none' }
@@ -262,8 +258,8 @@ export class AgencyIngestService {
         {
           tenantId: job.tenant_id,
           accountId: job.account_id,
-          // Scoped rows are enforced HERE and only here (§2.3), so the campaign
-          // must be part of the lookup — core's flat Redis set cannot express it.
+          // Campaign-scoped rows must be caught here as well as at dial time, so the
+          // campaign is part of the lookup.
           campaignId: campaignId ?? null,
         },
         contacts.map((c) => c.phone_e164),
@@ -308,25 +304,22 @@ export class AgencyIngestService {
       /**
        * ── REPLACE: retire the old roster before a single new row is sent ─────
        *
-       * Ordering is forced, not chosen. Core's
+       * Ordering is forced, not chosen.
        * `uq_agency_contacts_row_fingerprint` is unique over LIVE rows, so
        * ingesting first and retiring afterwards would have every UNCHANGED
        * person in the corrected file collide with their own still-live old row,
        * be refused, and then have that old row retired underneath them — they
        * would disappear from the campaign entirely. See `supersedeRoster`.
        *
-       * What is NOT forced is doing it before the file has been proved to exist,
-       * and the comment here used to claim the opposite of what the code did: it
-       * said the roster is touched only "once everything that can fail cheaply
-       * already has" while `supersedeRoster` ran ahead of `getFileStream`, so a
-       * mistyped key or a lifecycle-expired object retired the campaign and only
-       * then failed the import — an emptied roster for a file that could never
-       * have been read.
+       * What is NOT forced is doing it before the file has been proved to exist:
+       * with `supersedeRoster` ahead of any read of the file, a mistyped key or a
+       * lifecycle-expired object would retire the campaign and only then fail the
+       * import — an emptied roster for a file that could never have been read.
        *
        * So the cheap check runs first as a HEAD, and the ordering constraint
        * above survives intact because a HEAD sends no chunk. It is deliberately
        * not `getFileStream`: opening the body here would leave a live S3 response
-       * unread across a supersede that can take four attempts of 30s, and S3 or
+       * unread across a supersede that may take a long time, and S3 or
        * any intermediary is free to close it — trading a survivable "file
        * missing" for a torn stream *after* the destructive step. The residual
        * race (the object disappearing between the HEAD and the open) is a
@@ -358,12 +351,12 @@ export class AgencyIngestService {
          * has no dialable roster of its own, and a process killed on the next line
          * must still leave the truth where the operator can see it.
          *
-         * `already_applied` is NOT a count of zero. It means core found the work
-         * already done — by a previous run, or by an attempt of this one whose
-         * response was lost — so the roster is retired and master does not know by
-         * how much. Writing `recordReplaceSuperseded(job.id, 0)` here was the bug:
-         * a job that retired 5,000 contacts rendered `0`, and the failure message
-         * went on to say "your previous 0 contacts were already retired".
+         * `already_applied` is NOT a count of zero. It means the supersede found the
+         * work already done — by a previous run, or by an attempt of this one whose
+         * response was lost — so the roster is retired and this side does not know by
+         * how much. `recordReplaceSuperseded(job.id, 0)` here would be wrong: a job
+         * that retired 5,000 contacts would render `0`, and the failure message would
+         * go on to say "your previous 0 contacts were already retired".
          */
         if (superseded.already_applied) {
           retirement = { state: 'unknown' };
@@ -406,7 +399,7 @@ export class AgencyIngestService {
 
           // BEFORE the accepted counter and before anything is sent. One query
           // per batch, served by `idx_dnc_entries_tenant_phone` — the plain index
-          // §2.3 requires precisely because the COALESCE unique index cannot
+          // the DNC design requires precisely because the COALESCE unique index cannot
           // answer a per-number lookup.
           const dialable = await dropSuppressed(contacts);
           progress.accepted += dialable.length;
@@ -428,7 +421,7 @@ export class AgencyIngestService {
             throw new IngestCancelled();
           }
 
-          // A dry run does everything except tell core about it, so the wizard
+          // A dry run does everything except hand the roster over, so the wizard
           // can report "95% of your rows are valid" before the operator
           // commits to a campaign. It DOES check DNC — a dry run that omitted the
           // check would promise a dialable count the real import cannot deliver.
@@ -438,7 +431,7 @@ export class AgencyIngestService {
           }
 
           // Every row in the batch was suppressed. Sending an empty chunk would
-          // burn a chunk index for nothing and make core's completeness check
+          // burn a chunk index for nothing and make the hand-off's completeness check
           // count a chunk that carried no contacts.
           if (dialable.length === 0) {
             await flushProgress();
@@ -477,13 +470,13 @@ export class AgencyIngestService {
       progress.bytes_read = summary.bytes_read;
       // The CSV module counted every DNC-listed row as accepted — it cannot see
       // the list. Move them across rather than adding a third addend, so
-      // `accepted + rejected = rows_read` still holds exactly (migration 053).
+      // `accepted + rejected = rows_read` still holds exactly.
       progress.accepted = summary.accepted - dncSuppressed;
       progress.rejected = summary.rejected + dncSuppressed;
       progress.duplicates = summary.duplicates;
 
       // Final chunk: an empty terminator when the row count divided evenly, so
-      // core always gets an `is_final` marker and can report completeness.
+      // the hand-off always gets an `is_final` marker and can report completeness.
       if (!job.dry_run) {
         const final = await sendRosterChunk({
           campaignId: campaignId!,
@@ -499,7 +492,7 @@ export class AgencyIngestService {
         progress.chunks_sent = chunkIndex;
 
         if (final.roster_complete === false) {
-          // Core saw a gap. Failing loudly beats a campaign that silently
+          // The hand-off saw a gap. Failing loudly beats a campaign that silently
           // dials a partial list.
           await failJob(
             'roster_incomplete',
@@ -518,13 +511,13 @@ export class AgencyIngestService {
         ) ?? job.phone_column;
 
       /**
-       * Best-effort, because core already has the roster.
+       * Best-effort, because the campaign already has the roster.
        *
-       * By this point `sendRosterChunk` has posted `is_final: true` and core has
-       * reported the roster complete — the campaign is dialable. An S3 failure
-       * while rendering the rejected-rows CSV used to fall through to the catch
-       * below and record the job `failed`/`unexpected_error`, which tells the
-       * operator their import did not happen. They re-upload, and the campaign
+       * By this point `sendRosterChunk` has applied `is_final: true` and reported
+       * the roster complete — the campaign is dialable. An S3 failure while
+       * rendering the rejected-rows CSV falling through to the catch below would
+       * record the job `failed`/`unexpected_error`, which tells the operator their
+       * import did not happen. They would re-upload, and the campaign would
        * takes those contacts twice: duplicate dials to real people, from a
        * failure that cost nothing but a diagnostic download.
        *
@@ -637,7 +630,7 @@ export class AgencyIngestService {
        *
        * The four codes are distinct because the operator's next action differs:
        * `replace_unsupported` is a deployment gap they cannot fix and must not
-       * be told to retry; `replace_refused` is core saying the campaign is
+       * be told to retry; `replace_refused` is the supersede saying the campaign is
        * dialing, has a live attempt, or has changed size since they looked —
        * each of which they CAN fix.
        */
@@ -648,12 +641,12 @@ export class AgencyIngestService {
          * The retry makes the reassurance unsafe: the attempt that could have
          * committed is not the attempt that answered. So a single-attempt failure
          * keeps the categorical wording, and anything after a retry is reported as
-         * uncertain and recorded as uncertain (migration 058), which is what puts
+         * uncertain and recorded as uncertain (`recordReplaceUncertain`), which is what puts
          * a non-null signal on the field the UI renders loudest.
          *
          * The four codes stay distinct because the operator's next action differs:
          * `replace_unsupported` is a deployment gap they cannot fix and must not be
-         * told to retry; `replace_refused` is core saying the campaign is dialing,
+         * told to retry; `replace_refused` is the supersede saying the campaign is dialing,
          * has a live attempt, or has changed size since they looked.
          */
         const provablyClean = err.attempts <= 1;
@@ -753,17 +746,12 @@ export const agencyIngestService = new AgencyIngestService();
  * exactly the original "wizard polls a job that will never move" bug, just
  * delayed past the boot instant instead of prevented.
  *
- * This mirrors core's `KbIngestRecovery` (`../magic-voice-core/src/index.ts`
- * wires `staleThresholdMs: 10 min` with `sweepIntervalMs: 2 min`) — a stale
- * threshold is only a correct recovery policy when something re-checks it
- * before the threshold's own age gate becomes the reason nothing gets swept.
- * Not copied wholesale: core's class is demand-driven/self-dormant with
- * per-item retry bookkeeping because a KB ingest may be *re-driven*
- * in-process. An ingest job here is never re-driven by the reaper — it is
- * simply marked `failed` so the operator re-uploads — so the simpler
- * always-on `setInterval` already used by `startDncReconcileSweeper`
- * (`dnc-sync.service.ts`) is the right amount of machinery, not the
- * self-dormant class.
+ * A stale threshold is only a correct recovery policy when something
+ * re-checks it before the threshold's own age gate becomes the reason nothing
+ * gets swept. An ingest job is never re-driven by the reaper — it is simply
+ * marked `failed` so the operator re-uploads — so an always-on `setInterval`
+ * is the right amount of machinery, not a demand-driven, self-dormant sweeper
+ * with per-item retry bookkeeping.
  */
 export const AGENCY_INGEST_REAP_INTERVAL_MS = 2 * 60 * 1000;
 

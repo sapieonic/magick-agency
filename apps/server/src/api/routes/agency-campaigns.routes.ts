@@ -14,7 +14,7 @@ import {
   parseContactFilters,
   parseRetrySelector,
 } from '../../agency/spine-filters.js';
-// The two cross-repo bounds this route enforces (wire contract §8). Imported from
+// The two bounds this route enforces. Imported from
 // the leaf module rather than spelled here, so the number the 409 message names and
 // the number the transaction refuses on are the same token.
 import {
@@ -44,9 +44,8 @@ import { formatAgencyCampaignResponse } from '../responses/agency-campaign.respo
 // vocabulary, the 92-day cap and the date rules are all imported there rather
 // than re-declared.
 import { parseCampaignSeriesQuery } from '../../agency/campaign-series.js';
-// The agency-native call read (design §7b). `webrtc_calls` serves both products,
-// so this plugin reads it under the `'agency'` scope while the softphone's plugin
-// reads it under `'dialer'`.
+// The agency-native call read. The `webrtc_calls` repository takes a scope, and
+// this plugin reads under `'agency'`.
 import { webrtcCallRepository } from '@magick-agency/db/repositories/agency-call.repository';
 import { formatWebRtcCallResponse } from '../responses/webrtc-call.response.js';
 import { isDirectRecordingProvider } from '../../utils/recording-url-resolver.js';
@@ -100,11 +99,10 @@ const ACTOR_NAME_MAX = 255;
 const CAMPAIGN_NAME_MAX = 255;
 
 /*
- * PORT NOTE (magick-agency): SIP is deleted (plan §2), and with it the
- * `sip_connection_id` column (absent from the baseline, from `AgencyCampaignRecord` and
- * from the repository's INSERT). The shared leaf list `RETRY_INHERITED_CONFIG_KEYS` is
- * B1's verbatim port and still names it, so the retry create reads its config keys from
- * this filtered copy: the child inherits every other key exactly as core's did, and an
+ * SIP is not supported, and there is no `sip_connection_id` column (not in the
+ * baseline schema, `AgencyCampaignRecord` or the repository's INSERT). The shared leaf
+ * list `RETRY_INHERITED_CONFIG_KEYS` still names it, so the retry create reads its
+ * config keys from this filtered copy: the child inherits every other key, and an
  * override naming `sip_connection_id` is refused as "not a campaign config field" — the
  * same 400 any other non-config key gets — instead of being accepted and silently dropped
  * by the repository.
@@ -115,23 +113,22 @@ const RETRY_CONFIG_KEYS = RETRY_INHERITED_CONFIG_KEYS.filter(
 );
 
 /**
- * Campaign CRUD + lifecycle. Core owns the campaign as an EXECUTION object and
- * magick-master proxies here thin, keeping no campaign table of its own — two
- * writable copies of one business object is how they drift.
+ * Campaign CRUD + lifecycle. The campaign is an EXECUTION object with one table,
+ * `agency_campaigns`; the public API layer's proxy routes keep no copy of their own —
+ * two writable copies of one business object is how they drift.
  *
- * **No concurrency setter appears here, by D10.** The dialing ceiling is the
+ * **No concurrency setter appears here, deliberately.** The dialing ceiling is the
  * account's `max_concurrent_calls`, which is super-admin-only; a campaign reads it
  * and never sets it. `GET /:id/stats` reports utilisation against it read-only.
  */
 /**
  * Dependencies the STATS route needs and no other route here does.
  *
- * This plugin took no second parameter until `AD-P4-C-01`'s health strip, which
- * is why the strip could not be built: §C.2's diagnoses need DNC sync state and
- * the account concurrency counter, both of which live on objects this file had no
- * access to. Injected the same way `agencyRoutes` and `agencyDncRoutes` already
- * receive theirs, rather than reaching for a module singleton — the alternative
- * makes every test in this file construct a Redis.
+ * The health strip's diagnoses need DNC availability and the account concurrency
+ * counter, both of which live on objects this file has no other access to. Injected
+ * the same way `agencyRoutes` receives its runtime, rather than reached through a
+ * module singleton — the alternative makes every test in this file construct a
+ * Redis.
  *
  * Narrowed to the two METHODS the stats strip calls, rather than to the objects
  * that own them. A test can then supply a faithful stub that type-checks on its
@@ -140,19 +137,18 @@ const RETRY_CONFIG_KEYS = RETRY_INHERITED_CONFIG_KEYS.filter(
  * anything saying so.
  */
 /*
- * PORT NOTE (magick-agency): the two `runtime` members are typed structurally rather than
- * as `Pick<AgencyRuntime[...]>` (the runtime is Phase 6's), and `callManager` is lane C's
- * guard host (seams §3.1: `CallManager` is replaced by `TelephonyGuardHost`, which owns
- * the same `accountConcurrencyGuard`). `dnc.appliedVersion` has no Redis set behind it
- * any more (decision B8): `agencyPlugin` supplies a probe of the same DNC read the
- * pre-dial gate makes, answering `null` exactly when that gate would halt — see
- * `agency/dnc-availability.ts`. The stats handler body is unchanged.
+ * The two `runtime` members are typed structurally rather than as
+ * `Pick<AgencyRuntime[...]>`, and `callManager` is the telephony guard host
+ * (`TelephonyGuardHost`, which owns `accountConcurrencyGuard`). `dnc.appliedVersion` has
+ * no Redis set behind it (decision B8): `agencyPlugin` supplies a probe of the same DNC
+ * read the pre-dial gate makes, answering `null` exactly when that gate would halt — see
+ * `agency/dnc-availability.ts`.
  */
 export interface AgencyCampaignRouteDeps {
   runtime: {
     dnc: { appliedVersion(tenantId: string): Promise<number | null> };
     /**
-     * Agent liveness for §C.4's floor (`MAG-148`).
+     * Agent liveness for the supervisor floor's connected column.
      *
      * One method and no more, for the reason this whole interface is written in
      * methods: a test supplies a two-line stub that type-checks on its own terms
@@ -178,7 +174,7 @@ export interface AgencyCampaignRouteDeps {
  * registered without a wrapper closure), a getter that throws, a non-function
  * `appliedVersion` — escapes before any promise exists, so no `.catch()` is ever
  * attached and the whole route 500s. That is the one failure mode the strip's
- * best-effort contract exists to survive, and it was the only one not covered.
+ * best-effort contract exists to survive.
  *
  * Invoking the read INSIDE the chain lands both failure shapes on the same
  * fallback. Degraded still means a 200 with a `null`/`0` field the assembler has a
@@ -196,7 +192,7 @@ function bestEffort<T>(dependency: string, read: () => T | Promise<T>, fallback:
 }
 
 /**
- * Which pending contacts are shut out of their calling window right now (§C.2.5).
+ * Which pending contacts are shut out of their calling window right now.
  *
  * Evaluates the REAL rule (`callingWindowState`) once per distinct timezone
  * rather than re-expressing it in SQL. A roster has a handful of distinct
@@ -238,29 +234,28 @@ export async function agencyCampaignRoutes(
    *
    * ── Why `/stop` and `/pause` are not gated ──────────────────────────────────
    *
-   * `agency_dialer_enabled` is the kill switch, and the pacing engine now honours
-   * it (a running campaign is dropped within one supervise pass). But a kill switch
+   * `agency_dialer_enabled` is the kill switch, and the pacing engine honours it
+   * (a running campaign is dropped within one supervise pass). But a kill switch
    * that also removes the off button is not a kill switch: with every lifecycle
-   * route gated, turning the flag off left the campaign row stuck in `running`
-   * forever, its supervisor unable to stop it, and the only way to reach the Stop
-   * button being to re-enable the dialer for the whole account — i.e. to turn
-   * dialing back on in order to turn it off.
+   * route gated, turning the flag off would leave the campaign row stuck in
+   * `running` forever, its supervisor unable to stop it, and the only way to reach
+   * the Stop button being to re-enable the dialer for the whole account — i.e. to
+   * turn dialing back on in order to turn it off.
    *
    * The line is **what a control does to dialing volume**, not what it is — but
    * "reduces dialing" is necessary and NOT sufficient. A control may be ungated
    * only if it also leaves the campaign in a state that reaches its own end without
    * the flag coming back, and **that half is the engine's to deliver, not this
-   * file's.** Two rounds of fixes tried to deliver it by narrowing the status list
-   * below, and both were wrong in the same way: what stranded a stopped campaign
-   * was never the status it came from, it was that the pacing supervisor dropped
-   * flag-gated campaigns wholesale, so nothing was left to run `maybeFinalize`.
-   * `PacingEngine` now leads a `stopping` campaign regardless of the flag (dialing
+   * file's.** Narrowing the status list below cannot deliver it: what would strand
+   * a stopped campaign is not the status it came from but a pacing supervisor that
+   * dropped flag-gated campaigns wholesale, leaving nothing to run `maybeFinalize`.
+   * `PacingEngine` leads a `stopping` campaign regardless of the flag (dialing
    * refused at the dial site, not merely absent) and drains it on live attempts
    * rather than on the roster, so `stopping → stopped` completes on its own.
    *   - `/stop` from `running`/`paused` — reduces dialing, and the drain finishes
    *     without the flag. Ungated.
-   *   - `/stop` from `draft` — REFUSED (409), see the route. Not for safety any
-   *     more: a draft has nothing to stop, and the operator wants delete.
+   *   - `/stop` from `draft` — REFUSED (409), see the route. Not for safety: a
+   *     draft has nothing to stop, and the operator wants delete.
    *   - `/pause` — only reachable from `running`, reduces dialing, and `paused` is
    *     fully recoverable. Ungated.
    *   - `/start`, `/resume` — begin dialing for a tenant the platform believes has
@@ -285,17 +280,14 @@ export async function agencyCampaignRoutes(
   /**
    * The caller-ID pool must be a non-empty array of non-blank strings.
    *
-   * **Length was never the real check.** `caller_ids: ['']` satisfied "at least one"
-   * on both create and PATCH, and `pickCallerId` then returns `''` — falsy, so the
-   * pacing engine takes its no-caller-IDs halt and reports "has no caller IDs"
-   * about a campaign that has one, which is a genuinely confusing thing to hand an
-   * operator. `caller_ids: [123]` was stored verbatim and reached the dial.
+   * **Length is not the real check.** `caller_ids: ['']` satisfies "at least one",
+   * and `pickCallerId` then returns `''` — falsy, so the pacing engine takes its
+   * no-caller-IDs halt and reports "has no caller IDs" about a campaign that has
+   * one, which is a genuinely confusing thing to hand an operator. `caller_ids:
+   * [123]` would be stored as-is and reach the dial.
    *
    * Deliberately shape-only. Ownership against the tenant's own numbers is NOT
-   * validated here: the S2S precedent (`webrtc-call.routes.ts`) fails closed with a
-   * 503 when `MASTER_SERVICE_URL`/`MASTER_S2S_TOKEN` are unset, and those are
-   * optional config — mirroring it would make campaign creation fail on an optional
-   * dependency. Recorded rather than silently skipped.
+   * validated here. Recorded rather than silently skipped.
    *
    * Returns the reason it is bad, or null when it is fine.
    */
@@ -322,14 +314,12 @@ export async function agencyCampaignRoutes(
   }
 
   /**
-   * Refuse a config that would be stored happily and then behave wrongly
-   * (`AD-P3-C-08`).
+   * Refuse a config that would be stored happily and then behave wrongly.
    *
-   * **This is enforcement, not a nicety.** Master's `AD-P3-M-04` validator runs on
-   * the proxy path only, and core's API answers a tenant API key directly — so
-   * every rule master applies was bypassable until this ran here. The invariants
-   * are consumed by core's retry engine and calling-hours gate, which is where
-   * §16.6 question 2 says they have to hold.
+   * **This is enforcement, not a nicety.** The public API layer's own validator
+   * (`agency/agency-campaign-config.ts`) runs on its proxy path only; this one runs
+   * at the write, whatever reached it. The invariants are consumed by the retry
+   * engine and the calling-hours gate, so this is where they have to hold.
    *
    * Returns false only when it has already replied.
    */
@@ -345,7 +335,7 @@ export async function agencyCampaignRoutes(
   }
 
   /**
-   * Validate `abandon_announcement_id` at CONFIG time (`AD-P2-C-05`).
+   * Validate `abandon_announcement_id` at CONFIG time.
    *
    * The resolver deliberately fails quiet at dial time — a customer has already
    * answered by then, so "not found" and "not configured" take the same path and
@@ -387,20 +377,15 @@ export async function agencyCampaignRoutes(
   }
 
   /**
-   * `AD-P4-C-03` (b). Refuse an `analysis_profile_id` the browser dialer would
-   * also refuse — same helper, so the two writers of `webrtc_calls.
-   * analysis_profile_id` cannot drift.
+   * Refuse an `analysis_profile_id` that is not this account's active profile,
+   * through the shared `preflightAnalysisProfile`, so the rule has one definition.
    *
-   * The campaign is the SECOND writer of that column: `agency-dialer` passes
-   * `campaign.analysis_profile_id` into `createBridgedCall`, which stamps it onto
-   * the leg exactly as `POST /api/v1/webrtc-call` stamps a per-call id. The
-   * end-of-call gate then resolves it with the UNSCOPED
-   * `callAnalysisProfileRepository.findById`, treating the stored id as already
-   * validated — true for the dialer, which preflights, and false here, which did
-   * not. An unowned id therefore reached that lookup and snapshotted another
-   * tenant's `context` and `custom_dimensions` into this campaign's analysis job;
-   * a deactivated one resurrected a retired profile the dialer can no longer
-   * select. Neither job is "identical in shape to a dialer call's".
+   * The campaign is the writer of that column for its legs: `agency-dialer`
+   * passes `campaign.analysis_profile_id` into `createBridgedCall`, which stamps
+   * it onto the leg. The end-of-call gate resolves it with the unscoped
+   * `callAnalysisProfileRepository.findById` and checks the owner itself, but
+   * there a foreign id is silently replaced by the account default and a
+   * deactivated one is snapshotted as-is. Only a refusal here tells the operator.
    *
    * Deliberately not enforced at dial time as well: by then a customer is on the
    * line, and the honest answer to a misconfiguration is a status code the
@@ -408,10 +393,10 @@ export async function agencyCampaignRoutes(
    *
    * Scoped `'agency'`, which is what makes this the same check the campaign's own
    * calls will get: the preflight asks `agency_call_analysis`, exactly as their
-   * end-of-call gate will. It asked `dialer_call_analysis` before the flags split,
-   * so an agency-only tenant — the one the split exists to serve — could have
-   * agency analysis running while every campaign edit that named a profile 403'd
-   * with "Dialer call analysis is not enabled for this account."
+   * end-of-call gate will. Asking `dialer_call_analysis` instead would let an
+   * agency-only tenant have agency analysis running while every campaign edit that
+   * named a profile 403'd with "Dialer call analysis is not enabled for this
+   * account."
    */
   async function analysisProfileRejected(
     request: FastifyRequest,
@@ -483,7 +468,7 @@ export async function agencyCampaignRoutes(
       record_calls: body?.record_calls as boolean | undefined,
       analysis_profile_id: (body?.analysis_profile_id as string | null) ?? null,
       abandon_announcement_id: (body?.abandon_announcement_id as string | null) ?? null,
-      // `AD-P4-C-02` (d). Omitted ⇒ the repository applies
+      // Omitted ⇒ the repository applies
       // `DEFAULT_ABANDONMENT_CEILING_PCT`, which is also the column's DEFAULT.
       abandonment_ceiling_pct: body?.abandonment_ceiling_pct as number | undefined,
       created_by: getOriginator(request) ?? null,
@@ -525,10 +510,9 @@ export async function agencyCampaignRoutes(
    * Partial update of campaign configuration.
    *
    * PATCH only. Every field is optional and this is a partial update, which PUT
-   * misdescribes. A PUT alias existed briefly while master's proxy client's method
-   * union caught up; it is gone deliberately, because an alias that master
-   * actually calls is not a transition, it is the real interface — and it would
-   * have reached customer-facing docs as one.
+   * misdescribes, so there is deliberately no PUT alias: an alias the proxy layer
+   * calls would be the real interface, not a transition, and would reach
+   * customer-facing docs as one.
    *
    * `status` is deliberately NOT patchable: lifecycle goes through the four
    * transition routes, so a config edit can never race the pacing leader's
@@ -551,13 +535,12 @@ export async function agencyCampaignRoutes(
     // exists, so a create-only validator guards the least likely path.
     //
     // The base is the STORED campaign, so the cross-field window rule is evaluated
-    // on the effective result. Core can do this and master cannot — master keeps
-    // no campaign table by design — which is exactly why the enforcement belongs
-    // here rather than at the proxy.
-    // Create refuses a bad `caller_ids` and the PATCH did not, so a campaign could
-    // be broken after the fact — and `caller_ids` is not part of
+    // on the effective result, which is why the enforcement belongs here, beside
+    // the row, rather than at the proxy route.
+    // `caller_ids` is checked on PATCH as well as create, so a campaign cannot be
+    // broken after the fact — and `caller_ids` is not part of
     // `validateAgencyCampaignConfig`'s remit (that validator owns the retry/window/
-    // disposition invariants), so nothing else caught it. The pacing engine now
+    // disposition invariants), so nothing else catches it. The pacing engine
     // halts on an unusable pool instead of throwing mid-tick, but a campaign that
     // silently stops dialing on a config edit is still the wrong answer: the
     // operator finds out from a dial counter that stopped moving, and the refusal
@@ -581,7 +564,7 @@ export async function agencyCampaignRoutes(
     const updated = await agencyCampaignRepository.update(campaign.id, body);
     // `update` can only return null if the row vanished between the ownership
     // check and the write — a delete racing an edit. 404 rather than serving
-    // `null` as a campaign, which is what the un-narrowed `send(updated)` did.
+    // `null` as a campaign.
     if (!updated) {
       return reply.code(404).send({
         error: 'Not Found', code: 'campaign_not_found', message: 'Campaign not found',
@@ -638,7 +621,7 @@ export async function agencyCampaignRoutes(
           .then((r) => (r.status === 'available' ? r.count : null)),
         null,
       ),
-      // §C.4's liveness column. One `MGET` for the whole floor, and best-effort
+      // The floor's liveness column. One `MGET` for the whole floor, and best-effort
       // like every other strip dependency — but note what the fallback MEANS
       // here: an empty map leaves every agent `connected: null` ("unknown"),
       // never `false`. Manufacturing "disconnected" from a degraded Redis read
@@ -662,9 +645,9 @@ export async function agencyCampaignRoutes(
 
     const { outsideCallingHours, nextWindowOpensAt } = evaluateCallingHours(campaign, health.pendingByTimezone);
 
-    // Annotated, not inferred (`AD-P4-C-04`). This spread used to widen to whatever
-    // the repository happened to return, so the response silently omitted three
-    // fields the contract declares required and nothing anywhere objected. With the
+    // Annotated, not inferred. An un-annotated spread widens to whatever the
+    // repository happens to return, so the response could silently omit fields the
+    // contract declares required with nothing anywhere objecting. With the
     // annotation, a field NEITHER producer supplies is a compile error at the
     // seam that serves it rather than an `undefined` a consumer reads months later.
     const payload: AgencyCampaignStats = {
@@ -681,7 +664,7 @@ export async function agencyCampaignRoutes(
       })),
       // Contacts remaining and retries pending are genuinely different numbers —
       // `next_attempt_at` can be hours out, so "list exhausted" and "campaign
-      // complete" are not the same thing and the dashboard shows both (§5.3).
+      // complete" are not the same thing and the dashboard shows both.
       concurrency_limit: concurrencyLimit,
       concurrency_in_use: concurrencyInUse,
       ...campaignHealth({
@@ -708,38 +691,35 @@ export async function agencyCampaignRoutes(
    * required, capped at the same 92 days the agent roster and the grouped read
    * enforce (`ROSTER_MAX_WINDOW_DAYS`, imported — not a second 92).
    *
-   * Master proxies it at `/proxy/agency/campaigns/:campaignId/stats/series`.
+   * The public API layer serves it at `/proxy/agency/campaigns/:campaignId/stats/series`.
    *
    * ── Why this is a second route and not fields on `/:id/stats` ─────────────
    *
    * `/:id/stats` is the campaign RIGHT NOW: lifetime counters, a live floor, a
    * health strip. It is polled every few seconds by the supervisor dashboard, and
    * it cannot answer "is this getting better or worse" because every counter on it
-   * is a single lifetime total — which is exactly why the `previous_hour` block was
-   * built and removed before shipping (see the note at the end of
-   * `AgencyCampaignStats`: a lifetime figure beside one hour of it reads as a
-   * permanent collapse). A trend needs its own window parameters, so it needs its
-   * own route; bolting a `?from=&to=` onto the live payload would make the poll
-   * carry a range aggregate it does not want and make the range read carry a Redis
-   * fan-out it does not need.
+   * is a single lifetime total — which is why there is no `previous_hour` block
+   * (see the note at the end of `AgencyCampaignStats`: a lifetime figure beside one
+   * hour of it reads as a permanent collapse). A trend needs its own window
+   * parameters, so it needs its own route; bolting a `?from=&to=` onto the live
+   * payload would make the poll carry a range aggregate it does not want and make
+   * the range read carry a Redis fan-out it does not need.
    *
    * ── ROUTE PRECEDENCE, tested rather than reasoned about ───────────────────
    *
    * This path has one MORE segment than `/:id/stats`, so Fastify's radix tree
    * separates them with no ambiguity. None of that is asserted by the route
-   * existing, which is the point: MAG-106 in this repository was an assertion that
-   * passed vacuously against a route that did not exist, and a 404 and a
-   * wrong-handler 200 are both invisible to a status-code assertion on the sibling.
+   * existing, which is the point: an assertion can pass vacuously against a route
+   * that does not exist, and a 404 and a wrong-handler 200 are both invisible to a
+   * status-code assertion on the sibling.
    * `test/unit/agency/campaign-stats-series-route.test.ts` pins BOTH directions —
    * `/stats` still reaches the live payload, `/stats/series` reaches the series.
    *
    * ── AUTH AND THE FLAG, and why the plugin is the whole answer ─────────────
    *
-   * Core registers auth middleware PER ROUTE PLUGIN, not globally (see
-   * docs/reference/magic-voice-core/CLAUDE.md), and `agencyInternalRoutes` in `agency.routes.ts` carries the scar
-   * of exactly that — a roster-ingest route shipped unauthenticated because it
-   * inherited nothing from its sibling plugin (MAG-89). Being on THIS plugin gives
-   * this route the `preHandler` hook, and the two lines below give it the feature
+   * Auth middleware is registered PER ROUTE PLUGIN, not globally, so a route on a
+   * sibling plugin inherits nothing and ships unauthenticated. Being on THIS plugin
+   * gives this route the `preHandler` hook, and the two lines below give it the feature
    * gate and `requireOwned`'s tenant/account scoping. All three are asserted by
    * the route test rather than trusted to this comment.
    *
@@ -791,32 +771,28 @@ export async function agencyCampaignRoutes(
   });
 
 
-  // ── The attempt spine's read surface (MAG-159) ────────────────────────────
+  // ── The attempt spine's read surface ────────────────────────────
   //
   // `agency_call_attempts` opens migration 075 with "the audit spine. One row
-  // per dial", and until now nothing read it: this page served aggregate
-  // counters, `/agency/campaigns/:id/contacts` was an upload form despite its
-  // name, and `/app/calls/dialer/history` is a CALL list that structurally
-  // cannot show an attempt which never connected, a suppressed contact, or a
-  // disposition. A supervisor could learn "Manas stopped the campaign at 14:22"
-  // and not "we dialled this number four times and Ravi marked it Not
-  // Interested" — and the second is what a compliance request asks for.
+  // per dial", and these routes are what read it. The aggregate counters on
+  // `/stats` cannot answer per-number questions, and `/app/calls/dialer/history`
+  // is a CALL list that structurally cannot show an attempt which never
+  // connected, a suppressed contact, or a disposition. A supervisor needs not
+  // only "Manas stopped the campaign at 14:22" but "we dialled this number four
+  // times and Ravi marked it Not Interested" — and the second is what a
+  // compliance request asks for.
   //
   // ── These are TENANT-FACING routes, and they are on the right plugin ───────
   //
-  // Unlike MAG-158's core half — an S2S `/internal/audit-logs` read, because the
-  // audit trail is master's surface to gate — this is campaign data. It belongs
-  // beside `/stats`, with the same auth, the same feature gate and the same
-  // `requireOwned` scoping. Being on THIS plugin is what gives it all three:
-  // core's auth middleware is registered per-route-plugin rather than globally
-  // (docs/reference/magic-voice-core/CLAUDE.md), and `agencyInternalRoutes` in `agency.routes.ts` carries
-  // the scar of exactly that — a roster-ingest route shipped unauthenticated
-  // because it inherited nothing from its sibling plugin.
+  // This is campaign data, not the audit trail. It belongs beside `/stats`, with
+  // the same auth, the same feature gate and the same `requireOwned` scoping.
+  // Being on THIS plugin is what gives it all three: auth middleware is
+  // registered per-route-plugin rather than globally, so a route on a sibling
+  // plugin inherits nothing.
   //
   // Getting it wrong here would ship an unauthenticated endpoint serving every
-  // customer's phone number, which is the failure MAG-89 already found once.
-  // `test/unit/agency/spine-read-routes.test.ts` asserts the middleware runs on
-  // both routes rather than trusting this comment.
+  // customer's phone number. `test/unit/agency/spine-read-routes.test.ts` asserts
+  // the middleware runs on both routes rather than trusting this comment.
 
   /**
    * Parse `?cursor=` into a keyset position.
@@ -855,16 +831,12 @@ export async function agencyCampaignRoutes(
       return reply.code(400).send({ error: 'Validation failed', details: parsed.issues });
     }
     /*
-     * PORT NOTE (magick-agency): `?agent_user_id=` is shape-checked here. Core's
-     * `agency_agent_sessions.agent_user_id` was `VARCHAR(100)`, so a non-UUID value
-     * matched no session and the page came back empty; agency's baseline types the
-     * column `UUID` (lane B1), so the same value reaches `listForCampaign`'s
-     * `agent_user_id = $n` as Postgres `22P02` — a 500 on a read route, and the
-     * console's spine and CSV export both forward this filter verbatim (master
-     * `forwardAllowedQuery`). Refused with the parser's own 400 shape, the answer
-     * `parseAttemptFilters` already gives a malformed `contact_id` (`spine-filters.ts`
-     * is lane B1's; the check lives here so that file stays verbatim). Closes B1's
-     * carry-forward "the route layer validates the id as a UUID".
+     * `?agent_user_id=` is shape-checked here. `agency_agent_sessions.agent_user_id`
+     * is typed `UUID`, so a non-UUID value would reach `listForCampaign`'s
+     * `agent_user_id = $n` as Postgres `22P02` — a 500 on a read route — and the
+     * console's spine and CSV export both forward this filter as given (the public API
+     * layer's `forwardAllowedQuery`). Refused with the parser's own 400 shape, the
+     * answer `parseAttemptFilters` already gives a malformed `contact_id`.
      */
     if (parsed.filters.agentUserId !== undefined && !UUID_PARAM_RE.test(parsed.filters.agentUserId)) {
       return reply.code(400).send({
@@ -884,13 +856,12 @@ export async function agencyCampaignRoutes(
     return reply.send(page);
   });
 
-  // ── The agency-native call read (design §7b) ──────────────────────────────
+  // ── The agency-native call read ──────────────────────────────
   //
-  // This is the surface that did not exist, and whose absence is why the agency
-  // workspace linked its attempt rows into `/app/calls/dialer/history/:id` —
-  // another product's shell, gated on another product's capability, with the
-  // campaign context and the list the reader came from both gone. There was
-  // nowhere else for that link to point.
+  // Without this surface the agency workspace would have to link its attempt rows
+  // into `/app/calls/dialer/history/:id` — another product's shell, gated on
+  // another product's capability, with the campaign context and the list the
+  // reader came from both gone.
   //
   // It reaches the call through the ATTEMPT, which is the right spine for it: the
   // attempt is what the reader clicked, it is campaign-scoped (so ownership is
@@ -1005,9 +976,7 @@ export async function agencyCampaignRoutes(
   // ── GET /api/v1/agency-campaigns/:id/attempts/:attemptId/recording ────────
   //
   // Streams the recording through the authenticated proxy, so the raw auth-gated
-  // carrier URL is never handed to a client. The softphone's twin
-  // (`/webrtc-call/:id/recording`) cannot serve this: its reads are pinned to the
-  // dialer scope and 404 an agency leg by design.
+  // carrier URL is never handed to a client.
   app.get<{ Params: { id: string; attemptId: string } }>(
     '/:id/attempts/:attemptId/recording',
     async (request, reply) => {
@@ -1024,11 +993,11 @@ export async function agencyCampaignRoutes(
         });
       }
       // Dynamic import keeps the config-loading recording-proxy module out of this
-      // route module's import graph (mirrors webrtc-call.routes.ts).
+      // route module's import graph.
       const { proxyCallRecording } = await import('../../utils/recording-proxy.js');
-      // PORT NOTE (magick-agency): lane D's `proxyCallRecording` takes the recording-host
-      // allow-list as a parameter (`VOICELINK_RECORDING_ALLOWED_HOSTS`, PORTING lane D),
-      // where core's read it from config. Same dynamic-import posture for the config.
+      // `proxyCallRecording` takes the recording-host allow-list as a parameter
+      // (`config.voicelinkRecording.allowedHosts`, from `VOICELINK_RECORDING_HOSTS`).
+      // Same dynamic-import posture for the config.
       const { config } = await import('../../config/index.js');
       return proxyCallRecording(found.call, request, reply, config.voicelinkRecording.allowedHosts);
     },
@@ -1065,13 +1034,13 @@ export async function agencyCampaignRoutes(
       // Direct-recording providers (VoiceLink): signing points playback at the
       // shared proxy, whose egress is firewalled off from the provider's recording
       // host — a 502 where the browser could fetch the file itself. Hand back the
-      // raw URL, no expiry (the provider link is the durable resource). Same branch
-      // as the softphone twin and AI calls; the allowlist lives in one place.
+      // raw URL, no expiry (the provider link is the durable resource). The
+      // allowlist lives in one place, `isDirectRecordingProvider`.
       if (isDirectRecordingProvider(found.call.provider)) {
         return reply.send({ url: found.call.recording_url, expires_at: null });
       }
       // Dynamic import keeps the config-loading recording-url module out of this
-      // route module's import graph (mirrors webrtc-call.routes.ts).
+      // route module's import graph.
       const { signRecordingUrl } = await import('../../utils/recording-url.js');
       const signed = signRecordingUrl({
         callId: found.call.id,
@@ -1079,29 +1048,23 @@ export async function agencyCampaignRoutes(
         accountId: getAccountId(request),
         basePath: '/api/v1/webrtc-recordings',
       });
-      // `.toISOString()`, like the softphone twin this route mirrors
-      // (`webrtc-call.routes.ts`) and AI calls (`calls.routes.ts`) — all three
-      // minters of a signed recording URL now emit the same shape. Fastify's
-      // default serializer JSON.stringify's a Date to the same characters, so no
-      // wire shape changes here; what differed was the HANDLER's contract, and
-      // that is what breaks the moment someone adds a response schema (which
-      // would coerce or reject a Date against `type: 'string'`), asserts on the
-      // payload, or forwards the object rather than the response.
+      // `.toISOString()` explicitly. Fastify's default serializer JSON.stringify's
+      // a Date to the same characters, so the wire shape is the same either way;
+      // what differs is the HANDLER's contract, and that is what breaks the moment
+      // someone adds a response schema (which would coerce or reject a Date
+      // against `type: 'string'`), asserts on the payload, or forwards the object
+      // rather than the response.
       //
       // Formatted at the call site rather than in `signRecordingUrl`, which keeps
       // returning `expiresAt: Date`: the instant is the honest return type for a
-      // signer, and moving the formatting inside would change the shape all three
-      // callers already agree on to fix a divergence only one of them had.
+      // signer.
       return reply.send({ url: signed.path, expires_at: signed.expiresAt.toISOString() });
     },
   );
 
   // ── GET /api/v1/agency-campaigns/:id/contacts ────────────────────────────
   //
-  // GET, on a path whose POST is the S2S roster ingest — a different plugin, a
-  // different auth. They do not collide (that one is mounted under `/internal`),
-  // and the shared shape is deliberate: this is the read of what that write
-  // produced.
+  // The read of what the roster ingest writes.
   app.get<{ Params: { id: string } }>('/:id/contacts', async (request, reply) => {
     if (!(await gate(request, reply))) return reply;
     const campaign = await requireOwned(request, reply);
@@ -1162,23 +1125,21 @@ export async function agencyCampaignRoutes(
   //
   // A supervisor narrows the Contacts tab until it shows the rows they mean,
   // presses "Retry these contacts", and the filter they were already looking at
-  // becomes the selector for a NEW campaign seeded from those rows (DR-1: never a
+  // becomes the selector for a NEW campaign seeded from those rows (never a
   // mutation of the parent — that would destroy the first pass's record and merge
   // two passes' billing under one `campaign_id`).
   //
   // All three routes are on THIS plugin, which is what gives them auth, the
-  // feature gate and `requireOwned`'s tenant/account scoping. Core registers auth
-  // middleware per route plugin rather than globally (docs/reference/magic-voice-core/CLAUDE.md), and
-  // `agencyInternalRoutes` carries the scar of exactly that — a roster-ingest
-  // route shipped unauthenticated because it inherited nothing from its sibling
-  // plugin. Getting it wrong here would ship an unauthenticated endpoint that
-  // WRITES A DIALABLE ROSTER, which is strictly worse than the read MAG-89 found.
+  // feature gate and `requireOwned`'s tenant/account scoping. Auth middleware is
+  // registered per route plugin rather than globally, so a route on a sibling
+  // plugin inherits nothing. Getting it wrong here would ship an unauthenticated
+  // endpoint that WRITES A DIALABLE ROSTER.
   //
   // Gated like every other read and create here: none of the reasoning that
   // ungates `/stop` and `/pause` applies — a retry create increases dialing.
 
   /**
-   * The config columns a retry inherits from its parent (DR-10), and therefore
+   * The config columns a retry inherits from its parent, and therefore
    * exactly the keys `config_overrides` may name.
    *
    * "The same campaign again, for a subset" is the request, so the child inherits
@@ -1193,32 +1154,30 @@ export async function agencyCampaignRoutes(
    */
 
   /**
-   * Actor for the retry, from master's authenticated session.
+   * Actor for the retry, from the authenticated session the public API layer
+   * forwards.
    *
-   * The wire key is `agent_user_id`, not `actor_user_id`: that is master's own
-   * spelling on every agency hop it owns (the S2S fixture's `sessionCreate` and
-   * all four attempt actions), and the contract keeps it. The truncate/drop rule
+   * The wire key is `agent_user_id`, not `actor_user_id`: that is the spelling every
+   * agency handler uses (session create and all four attempt actions), and the
+   * contract keeps it. The truncate/drop rule
    * is `readTransitionActor`'s, unchanged and for the same reasons — a NAME is
    * read, so losing its tail is cosmetic; an ID is an identity, so a truncated one
    * would attribute the creation to a DIFFERENT human, and `null` ("we do not know
    * who") is the only answer that cannot mislead.
    *
    * **Optional, and the create is never refused for want of it.** `POST /` records
-   * no actor at all, core's API answers a tenant API key directly without
-   * traversing master, and a 400 here would make the feature unreachable for every
-   * caller that has not been upgraded — the same argument
-   * `AgencyCampaignTransitionRequest` makes at length. Master supplies it on every
-   * call regardless (its obligation 3), so the unattributed case is the direct-API
-   * one.
+   * no actor at all, and a 400 here would make the feature unreachable for any
+   * caller that sends none — the same argument `AgencyCampaignTransitionRequest`
+   * makes at length. The public API layer supplies it on every call, so an
+   * unattributed retry means a caller that did not.
    */
   function readRetryActor(body: unknown): AgencyCampaignActor | null {
     const raw = (body ?? {}) as { agent_user_id?: unknown; actor_name?: unknown };
     const userId = typeof raw.agent_user_id === 'string' ? raw.agent_user_id.trim() : '';
     if (!userId) return null;
     if (userId.length > ACTOR_USER_ID_MAX) {
-      // Length only — never the value. An actor id is a user identifier and this
-      // line would otherwise put one in the logs of a service with no business
-      // holding it.
+      // Length only — never the value. An actor id is a user identifier, and
+      // logs have no business holding one.
       log.warn(
         { length: userId.length, max: ACTOR_USER_ID_MAX },
         'Retry actor id exceeds the column width — recording the creation unattributed',
@@ -1239,13 +1198,13 @@ export async function agencyCampaignRoutes(
    * next act, on a lost response, is to press the button again. That is the exact
    * double-dial migration 115 exists to prevent, reached by way of a leniency.
    * So a key that is present and unusable refuses the whole request; only an
-   * ABSENT key means "unkeyed create", which core's own API callers legitimately
-   * are (they answer a tenant API key directly and never traverse master).
+   * ABSENT key means "unkeyed create", which is a legitimate request.
    *
-   * `null` is treated as absent rather than refused: master forwards the field
-   * verbatim and a client serialising an unset optional as `null` means the same
-   * thing as omitting it. An empty or whitespace-only string is NOT absent — the
-   * client tried to send a key and sent nothing — and is refused with the rest.
+   * `null` is treated as absent rather than refused: the public API layer forwards
+   * the field as received, and a client serialising an unset optional as `null`
+   * means the same thing as omitting it. An empty or whitespace-only string is
+   * NOT absent — the client tried to send a key and sent nothing — and is refused
+   * with the rest.
    */
   function readIdempotencyKey(
     body: Record<string, unknown>,
@@ -1383,7 +1342,7 @@ export async function agencyCampaignRoutes(
       return reply.code(400).send({ error: 'Validation failed', details: parsed.issues });
     }
 
-    // ── Config: inherit from the parent, then patch (DR-10) ─────────────────
+    // ── Config: inherit from the parent, then patch ─────────────────────────
     const rawOverrides = body['config_overrides'];
     if (rawOverrides !== undefined
       && (rawOverrides === null || typeof rawOverrides !== 'object' || Array.isArray(rawOverrides))) {
@@ -1399,7 +1358,7 @@ export async function agencyCampaignRoutes(
     // with a 201 saying it worked — and the whole point of the overrides is that
     // the retry runs on adjusted caller IDs or an adjusted window. `status` and
     // the lifecycle columns land here too, which is the right answer: they are not
-    // config, and DR-9 fixes the child at `draft`.
+    // config, and a retry child is always created at `draft`.
     const unknownKeys = Object.keys(overrides).filter(
       (key) => !(RETRY_CONFIG_KEYS as readonly string[]).includes(key),
     );
@@ -1437,10 +1396,11 @@ export async function agencyCampaignRoutes(
     // announcement was deleted, could not retry ANY campaign that names one, and
     // the retry dialog offers no affordance to clear it. The child inherits
     // exactly what the parent is already running with, and the layer that owns
-    // "should this tenant still be allowed to run that config" is master's
-    // `assertCampaignBehavioralCapabilities` over the merged result (wire contract
-    // §6, obligation 1). Guarded on PRESENCE below for the same reason `PATCH`
-    // guards: a request that does not mention the profile must not 403 over it.
+    // "should this tenant still be allowed to run that config" is the public API
+    // layer's retry route, which runs `assertBehavioralCapabilitiesForConfig` over
+    // `resolveInheritedBehavioralConfig`'s merged result. Guarded on PRESENCE below
+    // for the same reason `PATCH` guards: a request that does not mention the
+    // profile must not 403 over it.
     if (configRejected(reply, overrides, parent)) return reply;
     if ('abandon_announcement_id' in overrides
       && await abandonAnnouncementRejected(request, reply, overrides['abandon_announcement_id'])) return reply;
@@ -1467,7 +1427,7 @@ export async function agencyCampaignRoutes(
       name,
       selector: parsed.filters,
       config: { ...inherited, ...overrides } as AgencyCampaignConfigColumns,
-      // The originator header, exactly as `POST /` records it. The ACTOR — master's
+      // The originator header, exactly as `POST /` records it. The ACTOR — a
       // user id — goes on the audit row below rather than into `created_by`, which
       // holds an origination LABEL (a client hint) and not a user id on every other
       // campaign in the table.
@@ -1477,7 +1437,7 @@ export async function agencyCampaignRoutes(
 
     // Nothing was created in either refusal — the transaction rolled back before
     // the campaign INSERT. That is the point of both: a supervisor cannot delete a
-    // campaign (there is no delete route in either service), so a draft that exists
+    // campaign (there is no campaign delete route), so a draft that exists
     // only to be abandoned is a worse outcome than a 409 they can act on.
     if (result.status === 'empty') {
       return reply.code(409).send({
@@ -1528,9 +1488,9 @@ export async function agencyCampaignRoutes(
     }
 
     // Same shape as `agency_campaign.created`'s, because that is what happened: a
-    // retry is an ordinary campaign in every respect (DR-1) and belongs in the
+    // retry is an ordinary campaign in every respect and belongs in the
     // trail as a creation rather than under a second event type nothing reads.
-    // The lineage facts ride in `event_data`, alongside the actor master sent —
+    // The lineage facts ride in `event_data`, alongside the actor the caller sent —
     // which has nowhere else to go, since `created_by` holds the originator label
     // for every other campaign and would change meaning if it held a user id here.
     auditLogger.log({
@@ -1598,10 +1558,10 @@ export async function agencyCampaignRoutes(
   // `start`/`resume`/`pause` are supervisor-owned. `stop` sets `stopping` and the
   // PACING LEADER finalizes to `stopped` once in-flight attempts drain — the
   // leader is the only writer of `running → completed` and `stopping → stopped`,
-  // so there is exactly one writer and no race with these controls (§5.3).
+  // so there is exactly one writer and no race with these controls.
 
   /**
-   * Refuse to start a campaign that has nothing to dial (`AD-P3-C-08`'s sibling).
+   * Refuse to start a campaign that has nothing to dial.
    *
    * Without this, `POST /:id/start` on an empty campaign succeeds and answers
    * `running`. What follows is not a stuck campaign — it is worse to diagnose than
@@ -1642,7 +1602,7 @@ export async function agencyCampaignRoutes(
    * IS the record of who said what about a customer. A lifecycle transition is not
    * that: the transition is the fact and the actor is attribution ON it. Refusing
    * the transition for want of attribution would put a 400 in front of **the off
-   * button** for every caller that has not been upgraded yet — the same class of
+   * button** for any caller that does not send one — the same class of
    * mistake as gating `/stop` behind the dialer flag (see `gate`). So an absent,
    * blank or wrong-typed `actor_user_id` yields `null` and the campaign records an
    * unattributed transition.
@@ -1663,13 +1623,13 @@ export async function agencyCampaignRoutes(
    *   * `actor_name` is TRUNCATED. It exists to be read, so losing its tail is a
    *     cosmetic loss and the rest of the name still identifies the person.
    *   * `actor_user_id` is DROPPED — the actor becomes `null`. An id is an
-   *     IDENTITY: master resolves it back to a user, so a truncated one is not a
+   *     IDENTITY: it resolves back to a user, so a truncated one is not a
    *     shortened answer, it is a DIFFERENT (or nonexistent) user. Storing it would
    *     attribute the transition to the wrong human, which is the one failure the
    *     `null`-means-unknown contract exists to prevent. Better to record that we do
    *     not know who than to record somebody else.
    *
-   * Unreachable in practice (master's user ids are UUIDs, well inside 100), so the
+   * Unreachable in practice (user ids are UUIDs, well inside 100), so the
    * warn is the only symptom — which is why there is one: a silent drop on a field
    * whose whole job is attribution would look like a caller that simply did not
    * send it.
@@ -1679,9 +1639,8 @@ export async function agencyCampaignRoutes(
     const userId = typeof raw.actor_user_id === 'string' ? raw.actor_user_id.trim() : '';
     if (!userId) return null;
     if (userId.length > ACTOR_USER_ID_MAX) {
-      // Length only — never the value. An actor id is a user identifier, and this
-      // line would otherwise put one in the logs of a service that has no business
-      // holding it.
+      // Length only — never the value. An actor id is a user identifier, and
+      // logs have no business holding one.
       log.warn(
         { length: userId.length, max: ACTOR_USER_ID_MAX },
         'Campaign transition actor id exceeds the column width — recording the transition unattributed',
@@ -1738,7 +1697,7 @@ export async function agencyCampaignRoutes(
       });
       return reply.send(formatAgencyCampaignResponse(updated));
     } catch (err) {
-      // 23505 here is uq_agency_campaign_running: D9 permits ONE running campaign
+      // 23505 here is uq_agency_campaign_running: ONE running campaign is permitted
       // per account in v1. Surface it as something the console can explain — a raw
       // unique violation would reach a supervisor as an opaque 500.
       if ((err as { code?: string }).code === '23505') {
@@ -1753,21 +1712,18 @@ export async function agencyCampaignRoutes(
     }
   }
 
-  // ── `started_at` is no longer passed from here, and that is the fix ────────
+  // ── `started_at` is not passed from here, deliberately ─────────────────────
   //
-  // Every one of these four used to hand `transitionStatus` its own opinion about
-  // the lifecycle stamps, and `/start` and `/resume` both passed `{ started_at:
-  // new Date() }` — so a resume overwrote the original start and a campaign that
-  // began at 09:00 and resumed after lunch reported 14:05. The stamps are now
-  // derived from the TARGET STATUS inside the single UPDATE that moves a status
-  // (migration 108), which is why there is nothing to pass: the invariant cannot
-  // be reintroduced by a fifth route forgetting a parameter, because there is no
-  // parameter to forget.
+  // The lifecycle stamps are derived from the TARGET STATUS inside the single
+  // UPDATE that moves a status (migration 108), which is why there is nothing to
+  // pass. A route that passed `{ started_at: new Date() }` on `/resume` would
+  // overwrite the original start, so a campaign that began at 09:00 and resumed
+  // after lunch would report 14:05; with no parameter, a fifth route cannot
+  // reintroduce that by forgetting one.
   //
   // What IS passed is the actor, and only when the caller supplied one.
-  // Deliberately spread rather than always present, so a body-less call — every
-  // caller before master ships its half, and every `curl` — produces the exact
-  // same `{}` patch it produced before this change.
+  // Deliberately spread rather than always present, so a body-less call (a
+  // `curl`, say) produces an empty `{}` patch.
   const actorPatch = (req: FastifyRequest): { last_transition_by?: AgencyCampaignActor } => {
     const actor = readTransitionActor(req.body);
     return actor ? { last_transition_by: actor } : {};
@@ -1796,17 +1752,15 @@ export async function agencyCampaignRoutes(
     //
     // **Ungated — this is the off button** (see `gate`).
     //
-    // **`draft` is deliberately NOT a source**, but no longer for the reason the
-    // previous round gave. That round said stopping a draft bricks it, because
-    // `stopping` is left only by `maybeFinalize` and an un-started draft's whole
-    // roster counts as outstanding. The first half was right and the diagnosis was
-    // one level too shallow: the same argument condemns `running` and `paused` just
-    // as completely (a campaign stopped at row 100 of 50 000 leaves 49 900 `pending`
-    // rows behind, which nothing clears), and with the dialer flag off there was no
-    // leader to run `maybeFinalize` from any status at all. Both halves are fixed in
-    // `PacingEngine` — a `stopping` campaign is led whatever the flag says, and its
-    // drain is measured in live attempts rather than roster rows — so every source
-    // status here reaches `stopped` unaided.
+    // **`draft` is deliberately NOT a source**, and not because stopping would
+    // brick it. `stopping` is left only by `maybeFinalize`, and if the drain were
+    // measured in roster rows every status would be condemned alike (a campaign
+    // stopped at row 100 of 50 000 leaves 49 900 `pending` rows behind, which
+    // nothing clears), as would every status with the dialer flag off and no
+    // leader to run `maybeFinalize`. `PacingEngine` handles both — a `stopping`
+    // campaign is led whatever the flag says, and its drain is measured in live
+    // attempts rather than roster rows — so every source status here reaches
+    // `stopped` unaided.
     //
     // `draft` stays refused because a draft has nothing to stop: the operator wants
     // delete, or to leave it alone. They get the ordinary

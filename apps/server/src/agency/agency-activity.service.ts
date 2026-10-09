@@ -15,33 +15,23 @@ import {
 const log = createChildLogger({ component: 'agency-activity' });
 
 /*
- * PORT NOTE (magick-agency): master `src/agency/agency-activity.service.ts@a1f0756a`, with the hop
- * to core collapsed (decision B7). The trail still merges TWO tables — `platform_audit_log` (the
- * "Console" half, master's `auditRepository`, now `platform/audit.repository`) and `audit_logs`
- * (the "Dialer" half, core's) — but the second is now read directly through the shared
- * `auditRepository.findFiltered` instead of `GET /internal/audit-logs`.
+ * The campaign activity trail merges TWO tables (decision B7): `platform_audit_log` (the
+ * "Console" half, `platform/audit.repository`) and `audit_logs` (the "Dialer" half, read
+ * through the shared `auditRepository.findFiltered`).
  *
- * `readCore` is the body of that handler (core `src/api/routes/internal.routes.ts:1080-1141`@4850d1d9):
- *   - scope: `tenant_id` AND `account_id` — the campaign's owning account (`:1099-1100`);
+ * `readCore` reads the `audit_logs` half:
+ *   - scope: `tenant_id` AND `account_id` — the campaign's owning account;
  *   - filters: `event_type` list, `event_data->>'campaign_id'`, `from`, `to`, the keyset
- *     `(before_at, before_id)`, `with_total` (`:1101-1113`), all inside `findFiltered`;
+ *     `(before_at, before_id)`, `with_total`, all inside `findFiltered`;
  *   - ordering: `date_trunc('milliseconds', timestamp) DESC, id DESC` (inside `findFiltered`);
- *   - the retention horizon read in parallel (`:1114`), `getAuditRetentionHorizon()`;
- *   - the row enumeration (`:1121-1133`): id, timestamp, event_type, event_category, severity,
- *     actor, call_id, request_id, event_data. `tenant_id`/`account_id`/`ip_address`/`duration_ms`
+ *   - the retention horizon read in parallel, `getAuditRetentionHorizon()`;
+ *   - the row enumeration: id, timestamp, event_type, event_category, severity, actor,
+ *     call_id, request_id, event_data. `tenant_id`/`account_id`/`ip_address`/`duration_ms`
  *     are NOT carried onto the merged trail.
  *
- * DELETED, each because it has no meaning in one process:
- *   - the "core is down" degraded path: `ActivityPartialReason` (`core_unreachable`/`core_error`/
- *     `core_deadline`), `CORE_EMPTY`, the try/catch around the HTTP call and `isAbortFromTimeout`;
- *   - `coreTimeoutMs` (a bound on one HTTP request) and `unverifiedAccountScope` (master's own
- *     scoping for when core's ownership probe was unreachable — ownership is now a database read
- *     that either answers or throws);
- *   - `parseCoreBody`/`parseRetention` (validating an untrusted HTTP body; rows are typed here);
- *   - `resolveApiKeyNames` and the `platformApiKeyRepository` branch (decision #5, no API keys).
- * A failing read of either table now propagates: there is no partial answer to give, which is the
- * rule master already applied to its own database. `partial` stays on the wire (the contract
- * declares it) and is always `false`/`null`.
+ * Both tables are in one database, so a failing read of either propagates: there is no
+ * partial answer to give. `partial` stays on the wire (the contract declares it) and is always
+ * `false`/`null`. There are no platform API keys, so actors resolve to users only.
  */
 
 /**
@@ -63,8 +53,8 @@ export interface ActivityQuery {
   campaignId: string;
   /**
    * The campaign's OWNING account, read off the campaign row, not off the request. It scopes the
-   * `audit_logs` half (core's `account_id` predicate). The `platform_audit_log` half is scoped by
-   * tenant and campaign, as master's verified path always was.
+   * `audit_logs` half (its `account_id` predicate). The `platform_audit_log` half is scoped by
+   * tenant and campaign.
    */
   accountId: string;
   actions?: string[];
@@ -84,11 +74,11 @@ export interface ActivityPage {
   rows: ActivityRow[];
   nextCursor: ActivityCursor | null;
   /**
-   * Rows matching the filter across BOTH stores. A total that silently counted only master's
+   * Rows matching the filter across BOTH stores. A total that silently counted only one
    * half would be the same lie as a silently short list.
    *
    * `null` when the caller passed `skipTotal` — "not counted" is an absence to anyone reading
-   * the number (master's degraded-core `null` is gone with the degraded path).
+   * the number.
    */
   total: number | null;
   /** Always `false` in one process; kept because the wire contract carries it. */
@@ -105,15 +95,13 @@ export async function fetchActivityPage(query: ActivityQuery): Promise<ActivityP
 
   const [master, core] = await Promise.all([
     readMaster(query, fetchSize),
-    // PORT NOTE: master skipped this read when no verified account was available ("asking core
-    // for an unowned campaign's audit rows is exactly the read the ownership probe exists to
-    // prevent"). `accountId` is now required and comes from the campaign row the caller proved
-    // it owns, so the guard is a type, not a branch.
+    // Reading an unowned campaign's audit rows is exactly what the ownership check exists to
+    // prevent. `accountId` is required and comes from the campaign row the caller proved it
+    // owns, so the guard is a type, not a branch.
     readCore(query, fetchSize),
   ]);
 
-  // One query for the page's identities — never one per row. (Master ran this concurrently with
-  // the API-key name lookup; that lookup is deleted, decision #5.)
+  // One query for the page's identities — never one per row.
   const displayNames = await resolveDisplayNames(master.logs, query.tenantId);
 
   const merged = mergeActivityPage({
@@ -126,7 +114,7 @@ export async function fetchActivityPage(query: ActivityQuery): Promise<ActivityP
   return {
     rows: merged.rows,
     nextCursor: merged.nextCursor,
-    // Both halves or nothing. A total that silently counted only master's is
+    // Both halves or nothing. A total that silently counted only the console half is
     // the same lie as the short list this whole branch exists to avoid — and a
     // `skipTotal` read has no halves to add, so it lands on the same `null`
     // through `master.total` rather than through a second branch that could
@@ -144,8 +132,8 @@ function readMaster(query: ActivityQuery, fetchSize: number) {
     // Scoped by campaign, deliberately WITHOUT an account predicate. The caller's
     // ownership of this campaign is verified before either read, so the campaign
     // id already confines the result to their account — while an account
-    // predicate would additionally drop every row written before MAG-157 added
-    // the column, which are exactly the historical rows a reviewer is looking
+    // predicate would additionally drop every row written before the account
+    // column was populated, which are exactly the historical rows a reviewer is looking
     // for. (`GET /audit-log` is tenant-wide and does need the predicate.)
     campaignId: query.campaignId,
     ...(query.actions ? { actions: query.actions } : {}),
@@ -173,7 +161,7 @@ interface CoreReadResult {
   retention: ActivityRetention | null;
 }
 
-/** Core's `GET /internal/audit-logs` handler body, in-process. */
+/** The `audit_logs` half of the trail. */
 async function readCore(query: ActivityQuery, fetchSize: number): Promise<CoreReadResult> {
   // The horizon is annotation, never gating: `getAuditRetentionHorizon` reports `unknown` rather
   // than throwing on a failed catalog read.
@@ -190,14 +178,14 @@ async function readCore(query: ActivityQuery, fetchSize: number): Promise<CoreRe
         : {}),
       limit: fetchSize,
       // Only false when skipping; an omitted flag is the repository's default (count), which is
-      // what every pre-existing caller of core's route relied on.
+      // what every other caller relies on.
       withTotal: !query.skipTotal,
     }),
     getAuditRetentionHorizon(),
   ]);
 
   return {
-    // Enumerated, as core's handler did, so operator IPs and durations never reach the trail.
+    // Enumerated, so operator IPs and durations never reach the trail.
     rows: result.rows.map((row) => ({
       id: row.id,
       timestamp: new Date(row.timestamp).toISOString(),

@@ -13,11 +13,6 @@ import { PacingEngine } from './pacing-engine.js';
 import { AgencyReaper } from './reaper.js';
 import { refreshAbandonmentWindow, startAbandonmentMetricsRefresh } from './abandonment-metrics.js';
 import { refreshLiveConcurrency, startLiveConcurrencyRefresh } from './live-concurrency-metrics.js';
-// PORT NOTE (magick-agency): core also imported `AgencyAttemptBatcher` (billing, plan §8
-// Phase 6 "no attempt batcher"), `AgencyDncOutboxSweeper` and `createDncResyncRequester` /
-// `warnIfDncSelfHealUnavailable` (the DNC outbox and Redis-set resync, decision B8), and
-// the timers `ATTEMPT_BATCH_SWEEP_MS` / `DNC_OUTBOX_SWEEP_MS` that only they read. All
-// deleted; see PORTING.md Phase 6. The completion notice is new wiring (see its module).
 import {
   ABANDONMENT_REFRESH_MS, AGENCY_LIVE_CONCURRENCY_REFRESH_MS,
   STATION_HEARTBEAT_GRACE_MS, STATION_HEARTBEAT_SWEEP_MS,
@@ -61,15 +56,15 @@ export class AgencyRuntime {
   private stationSweepIdlePasses = 0;
   readonly tokens: StationTokenStore;
   /**
-   * The Do Not Call set (`AD-P3-C-06`). Exposed because the S2S sync route and any
-   * test that needs its tenant to be authoritative go through the same object — a
-   * test-only seeding backdoor would mean the suites prove something production
+   * The Do Not Call registry the pre-dial gate reads (decision B8). Exposed so the
+   * campaign stats' DNC probe and the tests go through the same object the pacing
+   * engine uses — a test-only path would mean the suites prove something production
    * never does.
    */
   readonly dnc: DncRegistry;
 
   constructor(bridge: WebRtcBridgeManager, redis: Redis | null, keyPrefix: string) {
-    // Stable for the life of the process. Under D2 there is one replica, but the
+    // Stable for the life of the process. There is one replica in v1, but the
     // ownership key is written and read from day one so the invariant is exercised
     // continuously rather than being dead code that rots until we scale out.
     this.replicaId = process.env.REPLICA_ID || `${process.pid}-${crypto.randomUUID().slice(0, 8)}`;
@@ -88,7 +83,7 @@ export class AgencyRuntime {
     // reaper independent of construction order, and re-reading on every sweep is
     // the point — a snapshot taken here would be empty forever.
     //
-    // Same shape as `CallManager.registerWebrtcActiveIdsProvider`: the sweeper
+    // Same shape as the telephony guard host's `registerWebrtcActiveIdsProvider`: the sweeper
     // asks what is live rather than being told, so nothing has to remember to
     // update it.
     this.reaper = new AgencyReaper({
@@ -97,32 +92,24 @@ export class AgencyRuntime {
     });
     this.tokens = new StationTokenStore(redis, keyPrefix);
 
-    // PORT NOTE (magick-agency, decision B8): core built `new DncRegistry(redis,
-    // keyPrefix, createDncResyncRequester())` — a Redis set master published into, plus
-    // the self-heal trigger (`AD-P3-C-07`) that asked master for a resync when a tenant
-    // had no baseline. Collapsed: the registry is one indexed read of `dnc_entries` and
-    // fails closed on any read fault, so there is no set, no baseline and nothing to
-    // resync. The default argument is the shared `dncRepository`.
+    // Decision B8: the registry is one indexed read of `dnc_entries` and fails closed
+    // on any read fault. The default argument is the shared `dncRepository`.
     this.dnc = new DncRegistry();
     const dispatcher = new LocalDialDispatcher(this.replicaId, (cmd) => this.dialer.executeDial(cmd));
     this.pacing = new PacingEngine(
       redis, keyPrefix, this.replicaId, this.stations, this.agents, dispatcher, this.dnc,
     );
-    // PORT NOTE (magick-agency): core registered the billing batcher here
-    // (`AD-P2-C-09`, deleted) and constructed the DNC outbox sweeper (MAG-110,
-    // deleted by B8). The engine's "something may want to know a campaign finished"
-    // seam now carries the supervisors' completion notice instead — the in-process
-    // form of master's `/webhooks/core/agency-campaign-completed`, which core never
-    // called. See `campaign-completion-notice.ts`.
+    // The engine's "something may want to know a campaign finished" seam carries the
+    // supervisors' completion notice. See `campaign-completion-notice.ts`.
     this.pacing.registerCompletionNotifier({ notifyCampaignFinished: notifyAgencyCampaignFinished });
   }
 
-  // ─── Presence resilience (`AD-P2-C-07`) ───────────────────────────────────
+  // ─── Presence resilience ──────────────────────────────────────────────────
 
   /**
    * What state a station socket's owner comes back in. **Redis, or `break`.**
    *
-   * These two lines are the whole of acceptance (c) and (d), and they live here
+   * These two lines are the whole of the rule, and they live here
    * rather than in the route because the rule is a runtime invariant that a
    * transport must not be able to get subtly wrong.
    *
@@ -135,7 +122,7 @@ export class AgencyRuntime {
    * agent who was already talking to a customer.
    *
    * A **lapsed** lease means either a genuine absence or a process restart, and
-   * both must land in `break` (D2): after a restart the reaper has written
+   * both must land in `break`: after a restart the reaper has written
    * `offline`, and before one the row may say `available`, so no row-derived rule
    * is safe. `break` is the one answer that is correct in every case — the agent
    * chooses to go available, and nothing dials into them until they do.
@@ -177,7 +164,7 @@ export class AgencyRuntime {
     if (this.dialer.hasLiveAttempt(sessionId)) return false;
     // ── BELT AND BRACES: THE SUPERSEDE GATE, RE-ASKED AT THE WRITE ──────────
     //
-    // A review flagged the close handler's own `socketFor` check as racing this
+    // The close handler's own `socketFor` check might look as though it races this
     // method's awaits — a replacement attaching mid-flight being written
     // `offline` moments after reporting `available`. **It does not race, and the
     // reason is worth writing down because it is invisible from the call site:**
@@ -196,9 +183,9 @@ export class AgencyRuntime {
     // because that construction is ONE `await` away from being false and nothing
     // else would notice. Put an await anywhere above this line — inside
     // `hasLiveAttempt`, in the close handler between its read and this call, at
-    // the top of this method — and the presence stomp of `86d44papk` is live
+    // the top of this method — and that presence stomp is live
     // again, in a window no test covers and no type checks. It is a guard against
-    // a future edit, not against a schedule, which is why the test that pins it
+    // a future edit, not against a schedule, which is why the test that holds it
     // calls this method directly: through the route it cannot be reached.
     //
     // The genuine residual is cross-replica: a replacement attaching on ANOTHER
@@ -215,7 +202,7 @@ export class AgencyRuntime {
     return true;
   }
 
-  // ─── The heartbeat grace (D8) ─────────────────────────────────────────────
+  // ─── The heartbeat grace ─────────────────────────────────────────────
 
   /**
    * Act on every station whose client heartbeat has lapsed past its grace: close it
@@ -235,7 +222,7 @@ export class AgencyRuntime {
    * Two rules decide what is safe to close, and both are about not curing a
    * diagnostic with an outage:
    *
-   * 1. **Never a socket that is mid-attempt.** This socket IS the media leg (§7),
+   * 1. **Never a socket that is mid-attempt.** This socket IS the media leg,
    *    and media frames do not renew `lastSeen` — only `ping` does — so a console
    *    whose heartbeat timer died while its audio kept flowing is exactly the shape
    *    that would be closed here. That would put a live customer on silence and arm
@@ -343,8 +330,8 @@ export class AgencyRuntime {
   /**
    * Arm the silent-station sweep. Called after every station attach.
    *
-   * Demand-driven and self-dormant, the same shape as `KbIngestRecovery.wake` and
-   * `CallManager`'s self-heal poll. The dormancy condition is a pass that closed
+   * Demand-driven and self-dormant, the same shape as the telephony guard host's
+   * self-heal poll (`telephony-guard-host.ts`). The dormancy condition is a pass that closed
    * nothing **and** found no stations at all, twice over — not merely an idle pass:
    * a healthy station can fall silent at any moment, and its attach has already
    * happened, so nothing would re-arm the timer.
@@ -384,16 +371,11 @@ export class AgencyRuntime {
   }
 
   async start(): Promise<void> {
-    // PORT NOTE (magick-agency, decision B8): core first called
-    // `warnIfDncSelfHealUnavailable()` — the DNC cold-start warning about the Redis
-    // set's self-heal. There is no set and no self-heal: the table is always the
-    // baseline. Deleted with `dnc-resync.ts`.
-
     this.dialer.start();
     await this.reaper.reapOnStartup();
     this.reaper.start();
     this.pacing.start();
-    // The compliance window (`AD-P2-C-06`). Published on a timer because it is
+    // The compliance window. Published on a timer because it is
     // read from the table, which is also what makes it correct across a restart —
     // and it is refreshed **once immediately**, not only on the first tick, so a
     // freshly booted replica does not serve an empty rate for a whole interval
@@ -401,8 +383,7 @@ export class AgencyRuntime {
     this.abandonmentMetrics = startAbandonmentMetricsRefresh(ABANDONMENT_REFRESH_MS);
     void refreshAbandonmentWindow().catch((err) =>
       log.warn({ err }, 'Initial abandonment window refresh failed — the timer will retry'));
-    // The dialer's live-concurrency signal (pilot finding 4 — `calls_active_current`
-    // reads flat 0 for the dialer). Refreshed once immediately for a different
+    // The dialer's live-concurrency signal. Refreshed once immediately for a different
     // reason than the abandonment window: nothing reads this in process, so an
     // empty first interval costs no decision — but the series would be ABSENT
     // rather than zero for 15s after every deploy, and "the dialer is exporting
@@ -412,17 +393,12 @@ export class AgencyRuntime {
     this.liveConcurrencyMetrics = startLiveConcurrencyRefresh(AGENCY_LIVE_CONCURRENCY_REFRESH_MS);
     void refreshLiveConcurrency().catch((err) =>
       log.warn({ err }, 'Initial agency live-concurrency refresh failed — the timer will retry'));
-    // PORT NOTE (magick-agency): core started the hourly billing sweep
-    // (`attemptBatcher.start(ATTEMPT_BATCH_SWEEP_MS)`, deleted — no billing) and the
-    // DNC outbox retry (`dncOutbox.start(DNC_OUTBOX_SWEEP_MS)`, deleted — B8) here.
     log.info({ replicaId: this.replicaId }, 'Agency dialer runtime started');
   }
 
   async stop(): Promise<void> {
-    // Pacing stops FIRST, so `maybeFinalize`'s campaign-end flush has already run for
-    // anything finalizing on the way down before the batcher's timer is cleared.
-    // (PORT NOTE: the batcher is gone; pacing still stops first, so no tick can dial
-    // or finalize while the rest of the runtime is coming down.)
+    // Pacing stops FIRST, so no tick can dial or finalize while the rest of the
+    // runtime is coming down.
     await this.pacing.stop();
     this.reaper.stop();
     this.stopStationSweep();
@@ -434,15 +410,13 @@ export class AgencyRuntime {
     // if the process somehow lingers.
     this.liveConcurrencyMetrics?.stop();
     this.liveConcurrencyMetrics = null;
-    // PORT NOTE (magick-agency): core stopped the billing batcher's timer and
-    // gracefully requeued the DNC outbox's claimed rows here; both are deleted.
     this.dialer.stop();
     // Timers only — agents are NOT returned to the pool here. Their sockets die
-    // with the process and D2 lands them in `break` on reconnect, so returning
+    // with the process and a restart lands them in `break` on reconnect, so returning
     // them to `available` on the way out would be a lie the next boot inherits.
     this.wrapup.stop();
     // Station sockets are closed by the HTTP server's own shutdown; agents
-    // rehydrate into `break` on reconnect (D2), never `available`.
+    // rehydrate into `break` on reconnect, never `available`.
     log.info('Agency dialer runtime stopped');
   }
 }
