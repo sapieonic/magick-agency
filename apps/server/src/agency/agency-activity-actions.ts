@@ -47,8 +47,8 @@ export type ActivityActionGroup = Exclude<AuditActionGroup, 'Scheduling'>;
  * parses.
  *
  * ── Why `product` is omitted rather than stated on every entry ──────────────
- * The tenant-wide log spans both products, so there the axis is the answer to a
- * real question. This filter only ever renders inside one campaign, and a
+ * The tenant-wide log spans agency and platform actions (`AuditProduct`), so
+ * there the axis is the answer to a real question. This filter only ever renders inside one campaign, and a
  * campaign is an agency object — every row on this screen is `'agency'` by
  * construction. Restating that on 22 entries would be 22 chances to typo the one
  * value it can hold, and would put a control on the screen whose only option is

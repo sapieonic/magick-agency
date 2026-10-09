@@ -81,7 +81,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
        *
        * An invite claim binds an identity without proving the address it is
        * keyed under, and marks the row `email_unverified` so no by-address
-       * reuse path will attach authority to it (migration 073). The documented
+       * reuse path will attach authority to it. The documented
        * repair is the owner proving that address — and THIS is the only branch
        * where they can, because the claim already wrote their `firebase_uid`
        * onto the row, so every sign-in of theirs resolves here and never
@@ -177,7 +177,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
    *      nothing here and falls through to path 4, which refuses it with
    *      `no_membership`. That is correct, and it is the outcome to preserve
    *      if this lookup is ever widened.
-       *    - **Unverified claim** (migration 073, and the common shape) — the
+       *    - **Unverified claim** (the common shape) — the
        *      INVITED address STAYS on the row and `email_unverified` is set
        *      instead. So this lookup still finds it, and adopting is still the
        *      right answer: whoever arrives here has proven that inbox, which

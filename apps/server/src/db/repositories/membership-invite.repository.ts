@@ -28,7 +28,7 @@ export type MarkClaimedResult =
  * A concurrent issue won the membership's one live-token slot.
  *
  * Thrown by {@link MembershipInviteRepository.createSupersedingOutstanding} when
- * migration 069's partial unique index refuses a second outstanding row. It is a
+ * the partial unique index refuses a second outstanding row. It is a
  * named error rather than a bare `23505` because the two callers owe their users
  * different answers and neither of them is a 500: `POST /invites/resend` answers
  * 409 with the true story (an invitation for this membership was just issued —
@@ -43,10 +43,10 @@ export class LiveInviteConflictError extends Error {
 }
 
 /**
- * The partial unique index from migration 069, by name.
+ * The partial unique index on live invites, by name.
  *
  * Named here rather than matched as a substring because this is the value
- * Postgres reports in `constraint`, and a rename in the migration must break
+ * Postgres reports in `constraint`, and a rename in the schema must break
  * loudly in the suite rather than quietly turn every loser of a resend race into
  * a masked 500.
  */
@@ -74,13 +74,13 @@ function isLiveInviteCollision(err: unknown): boolean {
 
 
 /**
- * `membership_invites` (migration 069) — the token that binds a Firebase
+ * `membership_invites` — the token that binds a Firebase
  * identity to a membership somebody already created.
  *
  * ── Every lookup is BY HASH or BY MEMBERSHIP, and never by email ────────────
  * There is deliberately no `findByEmail` here, and adding one would reopen the
  * defect the table exists to close: `users.email` carries only a non-unique
- * index (`001_initial_schema.sql:60`), so an address is not an identity in this
+ * index, so an address is not an identity in this
  * schema. The token's hash is the only thing that resolves an invite, and the
  * membership id is the only thing that resolves a user from it.
  *
@@ -118,7 +118,7 @@ export class MembershipInviteRepository {
    * Under READ COMMITTED the second transaction's revoke blocks on the first's
    * row lock, re-evaluates, and matches nothing — the winner's freshly inserted
    * row was not visible to that statement's snapshot, so it is not revoked. Both
-   * transactions then insert. What refuses the second one is migration 069's
+   * transactions then insert. What refuses the second one is the
    * partial unique index `uq_membership_invites_live`
    * (`membership_id WHERE claimed_at IS NULL AND revoked_at IS NULL`): the
    * invariant is stated in the schema, where a future caller cannot route around

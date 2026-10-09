@@ -57,11 +57,9 @@ export interface MembershipInviteStateInput {
  * reachable cases, because in each of them a real, signed-in person holds an
  * `agent` membership that no claim will ever be recorded against:
  *
- *  1. **Every `agent` membership predating migration 069** (2026-09-07). The
- *     role itself arrived in migration 051, so this is a real population, and
- *     069 ships no backfill. There is no invite row to claim and none will
- *     appear, so the feature's first deploy would have relabelled all of them
- *     `pending` at once and left them there.
+ *  1. **Every `agent` membership with no invite row** (one that was not created
+ *     through an invite). There is no invite row to claim and none will
+ *     appear, so all of them would be labelled `pending` and left there.
  *  2. **`PUT /users/:id/role` re-roles an existing member to `agent`**
  *     (`user.validator.ts` accepts it). No invite is issued on that path, so a
  *     colleague of six months would flip to `pending` the moment their role
@@ -97,7 +95,7 @@ export interface MembershipInviteStateInput {
  * ── No user row ⇒ `pending` ────────────────────────────────────────────────
  * **Not reachable today, and the arm is still here on purpose.**
  * `memberships.user_id` is `NOT NULL REFERENCES users(id) ON DELETE CASCADE`
- * (migration 001), so a membership cannot outlive its user — hard-deleting the
+ * so a membership cannot outlive its user — hard-deleting the
  * user takes the membership with it. The read that feeds this is a LEFT JOIN
  * rather than an inner one specifically so a relaxed FK would surface a member
  * with no identity instead of silently dropping them from their own tenant's

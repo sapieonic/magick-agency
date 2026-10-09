@@ -234,7 +234,7 @@ export class AgencyIngestService {
      *
      * Counted separately because the CSV module cannot see them — it has no
      * database — so its `summary.accepted`/`rejected` include them as accepted,
-     * and the totals below have to move them across. Migration 053's asserted
+     * and the totals below have to move them across. The asserted
      * invariant (`accepted + rejected = rows_read`, `duplicates` a breakdown
      * rather than a fourth addend) holds either way; a third addend would have
      * broken an operator's reconciliation against their own spreadsheet.

@@ -31,7 +31,7 @@ import type { MembershipRole } from '@magick-agency/db/models/membership.model';
 const log = createChildLogger({ component: 'invite-routes' });
 
 /**
- * `/invites` — the token-bound invitation claim flow (migration 069).
+ * `/invites` — the token-bound invitation claim flow.
  *
  * ── The two GET/POST routes are PUBLIC, and that is the entire point ────────
  * There is no `sessionMiddleware` and no `tenantContextMiddleware` on this
@@ -360,9 +360,9 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
    *
    * ── The user is resolved by MEMBERSHIP, never by email ─────────────────────
    * `invite.membership_id → memberships.user_id`. `users.email` carries only a
-   * non-unique index (`001_initial_schema.sql:60`), so an email lookup is not
+   * non-unique index, so an email lookup is not
    * even a unique operation — the by-address lookups have to pick one of
-   * several possible rows, and since migration 073 they each do so by an
+   * several possible rows, and they each do so by an
    * explicit rule (`findByEmail` orders the unflagged row first,
    * `findByProvenEmail` refuses flagged rows) rather than taking whichever row
    * Postgres hands back. Matching on the address is precisely the mechanism
@@ -388,7 +388,7 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
    * So an unverified claim adopts NO address and marks the row
    * `users.email_unverified`, which bars it from being reused by address while
    * leaving it an ordinary account. See `AdoptIdentityOptions.adoptEmail`,
-   * `userRepository.findByProvenEmail` and migration 073.
+   * `userRepository.findByProvenEmail`.
    *
    * ── A DIFFERENT address still binds, and the mismatch is AUDITED ───────────
    * When the addresses differ, the claim proceeds: the token is the authority,
@@ -819,7 +819,7 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
    * `membershipInviteRepository.createSupersedingOutstanding`, reached through
    * `issueInvite`. Revoking on its own connection and then inserting would let
    * two concurrent resends both revoke before either inserted — leaving two live
-   * links, which is the one thing a resend exists to prevent. Migration 069's
+   * links, which is the one thing a resend exists to prevent. The
    * partial unique index is the half that holds when the transaction alone
    * cannot (see the repository method), and its refusal reaches this route as
    * `LiveInviteConflictError`.

@@ -206,7 +206,7 @@ export async function dncRoutes(app: FastifyInstance): Promise<void> {
     /**
      * `account_id` must belong to THIS tenant. `dnc_entries.account_id` is
      * `REFERENCES accounts(id)` with no composite FK back to `tenant_id`
-     * (migration 050) — the same shape `POST /users/invite`, credits
+     * — the same shape `POST /users/invite`, credits
      * allocate, and the phone-number tag routes already document and fix.
      * A tenant-wide caller naming a foreign tenant's account id would write
      * a `dnc_entries` row this tenant does not own; dial-time suppression

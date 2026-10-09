@@ -73,7 +73,7 @@ const log = createChildLogger({ component: 'agency-campaign-routes' });
 const UUID_PARAM_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Column widths for the lifecycle actor (migration 108), so the route can handle
+ * Column widths for the lifecycle actor, so the route can handle
  * an over-long value rather than letting Postgres raise `22001 value too long`.
  *
  * That error would fail the TRANSITION — a supervisor losing the Stop button
@@ -88,7 +88,7 @@ const ACTOR_USER_ID_MAX = 100;
 const ACTOR_NAME_MAX = 255;
 
 /**
- * `agency_campaigns.name`'s column width (migration 072).
+ * `agency_campaigns.name`'s column width.
  *
  * Its own constant rather than a reuse of {@link ACTOR_NAME_MAX}, which happens to
  * be the same number for an unrelated reason: that one mirrors `audit_logs.actor`,
@@ -440,7 +440,7 @@ export async function agencyCampaignRoutes(
     // Before the announcement lookup: this is pure and costs no round trip, and a
     // body that is going to be refused should not spend a DB read first.
     //
-    // The base is migration 072's COLUMN DEFAULTS, not `{}` — an omitted window
+    // The base is the schema's COLUMN DEFAULTS, not `{}` — an omitted window
     // side becomes the default rather than nothing, so `{ calling_window_start:
     // '20:00' }` alone stores 20:00–20:00 and never dials. Validating the body in
     // isolation cannot see that, and the default path is the ordinary one.
@@ -773,8 +773,8 @@ export async function agencyCampaignRoutes(
 
   // ── The attempt spine's read surface ────────────────────────────
   //
-  // `agency_call_attempts` opens migration 075 with "the audit spine. One row
-  // per dial", and these routes are what read it. The aggregate counters on
+  // `agency_call_attempts` is the audit spine (one row
+  // per dial), and these routes are what read it. The aggregate counters on
   // `/stats` cannot answer per-number questions, and `/app/calls/dialer/history`
   // is a CALL list that structurally cannot show an attempt which never
   // connected, a suppressed contact, or a disposition. A supervisor needs not
@@ -859,9 +859,8 @@ export async function agencyCampaignRoutes(
   // ── The agency-native call read ──────────────────────────────
   //
   // Without this surface the agency workspace would have to link its attempt rows
-  // into `/app/calls/dialer/history/:id` — another product's shell, gated on
-  // another product's capability, with the campaign context and the list the
-  // reader came from both gone.
+  // to a generic call page outside `AgencyLayout`, with the campaign context and
+  // the list the reader came from both gone.
   //
   // It reaches the call through the ATTEMPT, which is the right spine for it: the
   // attempt is what the reader clicked, it is campaign-scoped (so ownership is
@@ -871,7 +870,7 @@ export async function agencyCampaignRoutes(
   //
   // ── Why the call is fetched separately rather than joined ──────────────────
   //
-  // `agency_call_attempts.webrtc_call_id` is deliberately un-FK'd (migration 076):
+  // `agency_call_attempts.webrtc_call_id` is deliberately un-FK'd:
   // both sides are on retention purges with independent windows, so either can
   // outlive the other and a cascade in either direction would destroy the other's
   // audit trail. A join would therefore silently drop exactly the attempts whose
@@ -937,9 +936,8 @@ export async function agencyCampaignRoutes(
     if (!attempt.webrtc_call_id) return { attempt, call: null, availability: 'never_placed' };
 
     /*
-     * `'agency'` scope, not `'dialer'`. This read is the reason the repository's
-     * scope is a parameter rather than a hardcoded predicate: the same function
-     * serves both products, and each names its own.
+     * `'agency'` scope. The repository's scope is a required parameter rather
+     * than a hardcoded predicate, so every read states the population it means.
      *
      * Tenant/account still bound, so a campaign whose row was somehow reachable
      * cannot be used to read another tenant's call.
@@ -1196,7 +1194,7 @@ export async function agencyCampaignRoutes(
    * A malformed key that were quietly ignored would produce a campaign with NO
    * replay protection while the client believes it has some — and the client's
    * next act, on a lost response, is to press the button again. That is the exact
-   * double-dial migration 115 exists to prevent, reached by way of a leniency.
+   * double-dial the idempotency key exists to prevent, reached by way of a leniency.
    * So a key that is present and unusable refuses the whole request; only an
    * ABSENT key means "unkeyed create", which is a legitimate request.
    *
@@ -1715,7 +1713,7 @@ export async function agencyCampaignRoutes(
   // ── `started_at` is not passed from here, deliberately ─────────────────────
   //
   // The lifecycle stamps are derived from the TARGET STATUS inside the single
-  // UPDATE that moves a status (migration 108), which is why there is nothing to
+  // UPDATE that moves a status, which is why there is nothing to
   // pass. A route that passed `{ started_at: new Date() }` on `/resume` would
   // overwrite the original start, so a campaign that began at 09:00 and resumed
   // after lunch would report 14:05; with no parameter, a fifth route cannot

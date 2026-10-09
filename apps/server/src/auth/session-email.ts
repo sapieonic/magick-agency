@@ -41,8 +41,7 @@ import type { DecodedFirebaseToken } from './firebase.js';
  * somebody else, and `POST /users/invite` returns the raw join link to the
  * inviter — so an unverified claim writes nothing to `users.email` and marks the
  * row `email_unverified`, which is what stops this column being an identity for
- * the by-address reuse paths. See `AdoptIdentityOptions.adoptEmail` and
- * migration 073.
+ * the by-address reuse paths. See `AdoptIdentityOptions.adoptEmail`.
  */
 
 export const EMAIL_UNVERIFIED_CODE = 'email_unverified';

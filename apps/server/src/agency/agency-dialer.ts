@@ -359,10 +359,9 @@ export class AgencyDialer {
     // most. `root_contact_id` is the chain head, stamped on every row by a database
     // trigger.
     //
-    // `?? cmd.contactId` is the pre-backfill fallback and is expected to be
-    // unreachable: migrations run in the container entrypoint before the app
-    // boots, so 113 has populated the column for every row by the time this line
-    // executes. It is here because a `null` would reach `WHERE root_contact_id =
+    // `?? cmd.contactId` is a defensive fallback and is expected to be
+    // unreachable: `trg_agency_contacts_root` stamps the column on every row. It
+    // is here because a `null` would reach `WHERE root_contact_id =
     // $1` and match nothing (NULL is never equal to anything) — the fallback makes
     // that case degrade to "this contact's own history" instead of silently to
     // "no history", which is the same class of answer the catch below produces.

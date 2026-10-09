@@ -29,7 +29,7 @@ export interface ResolvedRecipient {
   email: string;
   /**
    * The users behind the address. Usually one; more than one is legal, because
-   * `users.email` carries only a NON-unique index (migration 069 says so).
+   * `users.email` carries only a NON-unique index.
    * Empty for an explicit-audience address that matches no platform user.
    */
   userIds: string[];

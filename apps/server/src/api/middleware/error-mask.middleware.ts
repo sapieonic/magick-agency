@@ -8,7 +8,7 @@ import { redactUrl } from '../../utils/redact-url.js';
  * 5xx bodies are masked; every 4xx passes through, because every 4xx is authored by this
  * codebase — the public API layer's handlers and the internal handler instance behind
  * `callCore`, whose refusals the console reads by `code`. There is no forwarded body from
- * another service that could carry unreviewed provider text.
+ * outside this codebase that could carry unreviewed provider text.
  *
  * Also: the 429 pass-through, the `preserveReviewedUpstreamError` opt-out (the reviewed way
  * to let a fixed-shape 5xx through; its one setter is `sendRevocationCacheUnavailable`,

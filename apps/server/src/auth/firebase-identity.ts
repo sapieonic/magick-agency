@@ -161,8 +161,8 @@ export interface AdoptIdentityOptions {
    *    what path 4 is for. The membership they might have expected is gone
    *    because somebody else claimed the invitation that named it, which is a
    *    fact the audit row records and a resend can correct.
-   *  - **`users.email` carries only a NON-UNIQUE index**
-   *    (`001_initial_schema.sql:60`), so this write can never raise a constraint
+   *  - **`users.email` carries only a NON-UNIQUE index**,
+   *    so this write can never raise a constraint
    *    error — and equally can never be relied on for uniqueness. It CAN produce
    *    two rows sharing an address (the claimant's other account, if they have
    *    one here, plus this one), which is a shape this schema already permits
@@ -193,8 +193,8 @@ export interface AdoptIdentityOptions {
    * that can now sign in. `users.email` is the reuse key for three paths that
    * hand out authority — `POST /users/invite` and super-admin
    * tenant-create/add-user — so that row becomes a trap laid under an address
-   * its owner does not control. See migration 073 for the whole chain; the
-   * short version is that the inviter reads the join link out of their own 201,
+   * its owner does not control. The short version: the
+   * inviter reads the join link out of their own 201,
    * so "the token was delivered to that inbox" is not evidence when the inviter
    * and the claimant are the same person.
    *
@@ -281,7 +281,7 @@ export interface AdoptIdentityOptions {
    * Left open deliberately, and it is narrow in both directions: the attacker
    * controls the timing of their own claim but not of the victim-side invite, so
    * it is not steerable; and the reverse ordering — bind first, invite second —
-   * is closed by migration 073's flag, because the row an unverified claim
+   * is closed by the `email_unverified` flag, because the row an unverified claim
    * leaves behind is one `findByProvenEmail` refuses. Closing it properly means
    * `SELECT ... FOR UPDATE` on the `users` row in the three reuse paths, so the
    * invite holds a row lock this UPDATE must queue behind. That is a change to
@@ -329,7 +329,7 @@ export interface AdoptIdentityOptions {
  *    Set only by an `adoptEmail` caller arriving without
  *    `email_verified === true`; cleared by any caller that does arrive with
  *    one, which is what lets a verified sign-in repair a row an earlier
- *    unverified claim flagged. See migration 073.
+ *    unverified claim flagged.
  *  - **`email` moves only under {@link AdoptIdentityOptions.adoptEmail}**, and
  *    only to a non-empty incoming address that Firebase reports VERIFIED. Off
  *    by default because path 2/3
@@ -389,7 +389,7 @@ export async function adoptFirebaseIdentity(
    * row it matched was still a `pending_` stub. The predicate below admits two
    * shapes, and they mean opposite things for this column. Activating a stub
    * keys a row under an address this identity has not proven — the takeover
-   * migration 073 exists for. Re-binding a row whose `firebase_uid` is ALREADY
+   * the `email_unverified` flag exists to stop. Re-binding a row whose `firebase_uid` is ALREADY
    * this identity changes nothing and hands nothing over: it is the ordinary
    * second-workspace claim, and the address on that row may well have been
    * proven long ago.
@@ -432,7 +432,7 @@ export async function adoptFirebaseIdentity(
             -- a row that is already this identity hands nothing over and must
             -- not revoke a proof it may already carry (a phone-auth claim could
             -- never restore it). See AdoptIdentityOptions.adoptEmail, the
-            -- emailUnverified note above, and migration 073.
+            -- emailUnverified note above.
             email_unverified = CASE
               WHEN $10::boolean IS NULL THEN email_unverified
               WHEN $10::boolean = false THEN false

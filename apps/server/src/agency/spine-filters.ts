@@ -721,7 +721,7 @@ export function parseRetrySelector(
   // the right default — the contacts page opens unfiltered. Here it would seed a
   // second copy of an entire campaign from a request that named nothing, which is
   // never what a supervisor pressing "Retry these contacts" meant, and there is no
-  // campaign delete route in either service to undo it with.
+  // campaign delete route to undo it with.
   //
   // The message names the deliberate way to ask for the whole roster, because
   // refusing without one turns a legitimate (if unusual) intent into a dead end.

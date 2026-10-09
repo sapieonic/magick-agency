@@ -273,7 +273,7 @@ export function zeroOccupancy(): AgencyAgentOccupancy {
  * out" and "no data" are different facts and only one of them is a gap in the
  * record.
  *
- * Unknown states are **dropped, not invented**. Migration 105's CHECK and
+ * Unknown states are **dropped, not invented**. The session-event CHECK and
  * `AgencyAgentState` agree today; if a seventh state is added to one and not the
  * other, an invented key here is one the console's exhaustive switch cannot
  * render, and all six promised keys would still be present — so nothing would

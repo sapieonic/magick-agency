@@ -86,8 +86,8 @@ function primaryMembership(memberships: MembershipRecord[]): MembershipRecord | 
  *
  * ── Closing a staffing row REVOKES NOTHING, which is what makes this safe to do
  *    automatically ─────────────────────────────────────────────────────────
- * Staffing is not authorization. Migration 060's header and the module header of
- * `proxy-agency-staffing.routes.ts` both say so at length: nothing consults this
+ * Staffing is not authorization. The module header of
+ * `proxy-agency-staffing.routes.ts` says so at length: nothing consults this
  * table to decide whether a station join is allowed — `agency.station.connect`
  * does, and the membership change is what takes that away. A row here only decides
  * where an agent is SENT by default. So this is tidying a navigation list on a
@@ -295,7 +295,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     /**
      * `account_id` is caller-supplied and previously went straight into the
      * membership row with no check that it belongs to `request.tenantId`.
-     * `memberships.account_id` is `REFERENCES accounts(id)` (migration 001)
+     * `memberships.account_id` is `REFERENCES accounts(id)`
      * with no composite FK back to the tenant, so nothing else in the schema
      * catches this — a tenant_admin of tenant A could invite a user against
      * an `account_id` that belongs to tenant B, and every reader downstream
@@ -335,8 +335,8 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
      * ── The reuse is deliberate, and it is ALSO the takeover surface ─────────
      * An address that is already known gets its existing `users` row, which is
      * what makes a person invited by two workspaces one person rather than two.
-     * `users.email` carries only a non-unique index
-     * (`001_initial_schema.sql:60`), so minting a second row here instead would
+     * `users.email` carries only a non-unique index,
+     * so minting a second row here instead would
      * not fail — it would silently split the address, and
      * `POST /auth/session` path 2 (`findByEmail`, "whichever row Postgres hands
      * back first") would then activate one of the two and leave the other
@@ -369,7 +369,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
      * writes a membership against whatever row matches. An attacker who
      * self-invites `victim@corp.test` and claims it is then handed every later
      * invitation anybody sends to that address, including a super admin's
-     * `tenant_owner`. Migration 073 is the whole chain.
+     * `tenant_owner`.
      *
      * Unlike the claim-side guard above, this one CAN live here: the poisoned
      * row already exists by the time anybody names the address again.

@@ -66,7 +66,7 @@ const log = createChildLogger({ component: 'agency-routes' });
  *
  * ── A retry whose parent is GONE still gets a banner ─────────────────────────
  *
- * `parent_campaign_id` is `ON DELETE SET NULL` (migration 111), so
+ * `parent_campaign_id` is `ON DELETE SET NULL`, so
  * `retry_generation > 0` with no resolvable parent is a real state rather than a
  * corrupt row. "These contacts were called before, for these reasons" stays true
  * and useful without the parent's name, so the name degrades to a neutral
@@ -194,10 +194,10 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
         replicaId: runtime.replicaId,
       });
 
-      // One live session per agent per TENANT since migration 092. The agent is
+      // One live session per agent per TENANT. The agent is
       // still joined somewhere else and must leave that station first — nothing
       // here yanks them off it, because that station may be a live conversation
-      // (see the migration and `AgencySessionCampaignConflict` for the full
+      // (see `AgencySessionCampaignConflict` for the full
       // reasoning). Refused with the old campaign NAMED: an agent who is told
       // only "conflict" has no way to find the station they left open.
       if (!join.ok) {
@@ -633,7 +633,7 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
     // With no guard, an `on_call` agent could leave and immediately join campaign
     // B — the row is left, so the upsert INSERTS rather than conflicting — and be
     // reserved and bridged while campaign A's attempt is still live on the wire.
-    // That is the exact double-bridge migration 092 exists to make unreachable,
+    // That is the exact double-bridge `uq_agency_agent_live_tenant` exists to make unreachable,
     // one click away instead of free, and the DB constraint cannot see it: both
     // rows satisfy the index because the first one left.
     //
@@ -975,7 +975,7 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
     // relying on the dial-time check alone to keep this campaign's rows from
     // being claimed.
     //
-    // ⚠️ Why (1) is by PHONE and not by contact id. Migration 073 refuses a
+    // ⚠️ Why (1) is by PHONE and not by contact id. The schema has no
     // phone-unique index on purpose, so a campaign holding one number twice is
     // normal, supported data. A by-contact-id write would leave the duplicate
     // `pending`, so the number the customer just asked us to stop calling would
@@ -1318,7 +1318,7 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
    * would set the Redis lease and mirror `available` onto a row with `left_at` set,
    * so the console renders a ready agent and gets no error, while
    * `findLiveForCampaign` (which the pacing tick reads) excludes left rows and
-   * never dials them. Nothing anywhere is red. Migration 092 makes that state
+   * never dials them. Nothing anywhere is red. `uq_agency_agent_live_tenant` makes that state
    * routine rather than exotic — the dedupe
    * closes sessions out from under whoever is holding them — so the guard belongs
    * on the shared path where a new route inherits it instead of having to

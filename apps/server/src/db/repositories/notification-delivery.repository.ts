@@ -84,7 +84,7 @@ class NotificationDeliveryRepository {
       // The scalar subquery yields NULL for an account that is not there, which
       // is the same value `ON DELETE SET NULL` would have left had the row been
       // written before the deletion. The delivery record is meant to outlive the
-      // account — migration 072 says so — so losing the scope is right and losing
+      // account, so losing the scope is right and losing
       // the mail is not.
       //
       // And it is scoped `a.tenant_id = $3`, not merely `a.id = $4`. An existence

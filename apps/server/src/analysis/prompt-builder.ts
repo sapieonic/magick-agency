@@ -126,7 +126,7 @@ export function buildAnalysisPrompt(
 ): AnalysisPrompt {
   const customSection = buildCustomDimensionsPrompt(uniqueDimensions(analyticsConfig.custom_dimensions));
   // Business context (dialer analysis profiles) is prepended so the model reads it
-  // before the common/custom instructions. Absent for AI calls — behaviour unchanged.
+  // before the common/custom instructions. Absent when the profile has none.
   const contextSection = context && context.trim()
     ? `## Business Context\n\n${context.trim()}\n\n`
     : '';

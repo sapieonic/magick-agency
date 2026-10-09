@@ -11,7 +11,7 @@ import type { AgencyCampaignActor } from '@magick-agency/contracts/agency';
  * deny-by-default allow-list, and the difference is not an inconsistency: that
  * function exists to keep a column off the wire (`campaign_id`, the raw provider
  * recording URL), and this one exists to CHANGE THE SHAPE of two columns that are
- * already public. Every campaign field has been served since 072 — the four
+ * already public. Every campaign field is already served — the four
  * routes below all `send` the row — so an allow-list here would be a second,
  * hand-maintained copy of the campaign's whole column list whose only failure mode
  * is silently dropping a field somebody added. `Omit<Record, …> & { … }` is the
@@ -28,8 +28,7 @@ import type { AgencyCampaignActor } from '@magick-agency/contracts/agency';
  *
  * ── `completed_at` still ships beside `ended_at` ────────────────────────────
  *
- * Both, on purpose, and holding the same instant. Migration 108's header has the
- * long form: `completed_at` is on a payload the public API layer and the console
+ * Both, on purpose, and holding the same instant. `completed_at` is on a payload the public API layer and the console
  * already read, and removing a field from a shipped response is a sequencing
  * exercise across the contract and the console rather than a migration. Nothing
  * here computes either one — they come off the

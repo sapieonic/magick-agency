@@ -258,7 +258,7 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
    * ── Occupancy degrades ALONE ──────────────────────────────────────────────
    *
    * `shift_seconds`, `break_seconds` and `occupancy_pct` come from the transition
-   * log (migration 105) in a second statement. If that read fails the repository
+   * log in a second statement. If that read fails the repository
    * catches, warns, and serves every row with occupancy at zero and
    * `occupancy_pct` at `null` rather than 500ing the attempt totals — the same
    * precedent as the per-agent record, and the row SET is unaffected because the
@@ -446,8 +446,8 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
    * them — a product decision, not a redundancy. Every rate is `null` (never `0`)
    * on a zero denominator, and `success_rate_pct`'s denominator is `connected`
    * rather than `attempts`: a call that never bridged had no conversation to
-   * convert. `occupancy` comes from the transition log (migration 105) and is only
-   * meaningful from that migration forward — sessions with no events read as zeros
+   * convert. `occupancy` comes from the transition log and is only
+   * meaningful where events exist — sessions with no events read as zeros
    * rather than as anything inferred. It also DEGRADES to those same zeros if its
    * read fails (the repository catches and warns rather than failing the whole
    * record), so a zeroed occupancy block has two causes and only the log tells

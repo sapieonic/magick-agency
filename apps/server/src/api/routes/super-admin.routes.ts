@@ -50,7 +50,7 @@ const log = createChildLogger({ component: 'super-admin-routes' });
  * (create, list, delete, reactivate, reset password), audit, accounts +
  * concurrency. Deliberately absent:
  *  - credits — no credits in v1 (decision S6);
- *  - AI pipeline/provider service settings — AI calling is out of scope
+ *  - AI pipeline/provider service settings — there is no AI calling
  *    (decision S7);
  *  - tenant delete — not part of the super-admin surface;
  *  - concurrency synchronization and drift tracking — this server is both the
@@ -323,7 +323,7 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
        * unverified Firebase token by design), so reusing one by address hands
        * this tenant's OWNERSHIP to whoever claimed it. An attacker who
        * self-invites `owner@customer.com` into their own tenant and claims it
-       * is waiting for exactly this statement. See migration 073.
+       * is waiting for exactly this statement.
        *
        * A miss writes a fresh stub beside the flagged row — correct, because
        * they are two principals sharing a string, and `users.email` has never
@@ -476,7 +476,7 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
        * Same `email_unverified = false` rule, same reason, as the tenant-create
        * lookup above: an address is a string a super admin typed, and a row
        * bound by an unverified invite claim keys under an address its owner
-       * does not control. Migration 073. Through the repository on this
+       * does not control. Through the repository on this
        * transaction's client, for the reason given at the tenant-create call.
        */
       const existingUser = await userRepository.resolveByProvenEmail(email, {

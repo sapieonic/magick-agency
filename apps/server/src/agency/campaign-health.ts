@@ -165,7 +165,7 @@ export function diagnoseAll(input: CampaignHealthInputs): AgencyStall[] {
     });
   }
 
-  // 4 — capacity. Account-wide, shared with AI calls.
+  // 4 — capacity. Account-wide, shared with every campaign on the account.
   if (saturated(input.concurrencyInUse, input.concurrencyLimit)) {
     found.set('concurrency_saturated', {
       code: 'concurrency_saturated',
