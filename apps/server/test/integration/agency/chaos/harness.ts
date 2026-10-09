@@ -1809,9 +1809,9 @@ export async function assertAbandonmentPredicatesAgree(campaignId: string): Prom
   const theirs = await abandonedCountByProductPredicate(campaignId);
   if (mine !== theirs) {
     throw new Error(
-      `Abandonment predicates disagree on campaign ${campaignId}: test-plan §10 says ${mine}, `
-      + `core's ABANDONED_ATTEMPT_PREDICATE_SQL says ${theirs}. These are the two halves of `
-      + `AD-P2-C-06's cross-check; one of them has drifted and §10 is what changes first.`,
+      `Abandonment predicates disagree on campaign ${campaignId}: the harness's independent audit query says ${mine}, `
+      + `the product's ABANDONED_ATTEMPT_PREDICATE_SQL says ${theirs}. These are the two halves of `
+      + `the abandonment cross-check; one of them has drifted.`,
     );
   }
   return mine;

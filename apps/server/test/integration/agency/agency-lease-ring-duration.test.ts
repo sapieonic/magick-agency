@@ -194,8 +194,8 @@ async function assertNoConcurrentTruncate(campaignId: string): Promise<void> {
       'ENVIRONMENT, NOT A LEASE FAILURE: this test\'s own campaign row disappeared mid-run, ' +
       'which means another integration run truncated the shared test database while this ' +
       '45-second window was open. Re-run on a quiet stack — `ps aux | grep vitest` first. ' +
-      'Overlapping integration runs against one Docker stack are not safe; see the test plan\'s ' +
-      'environment section.',
+      'Overlapping integration runs against one Docker stack are not safe: they share one ' +
+      'test database.',
     );
   }
 }

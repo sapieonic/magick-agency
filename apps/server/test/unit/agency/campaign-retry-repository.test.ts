@@ -144,9 +144,9 @@ beforeEach(() => {
   pool.query.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 
-// ── DR-4: the DNC/invalid exclusion is not a checkbox ──────────────────────
+// ── DNC and invalid contacts are never seeded into a retry: not a checkbox ─
 
-describe('the DR-4 exclusion is unconditional', () => {
+describe('the DNC/invalid exclusion is unconditional', () => {
   it('excludes dnc and invalid even when the selector explicitly asks for suppressed contacts', async () => {
     // The decision this file exists for. `parseRetrySelector` refuses a selector
     // that NAMES `dnc`, but that refusal is the explanation and this is the
@@ -220,13 +220,13 @@ describe('the DR-4 exclusion is unconditional', () => {
   });
 });
 
-// ── DR-2: the copy resets the allowance ────────────────────────────────────
+// ── A retry copies contacts, and the copy resets the allowance ─────────────
 
 describe('the seeding INSERT — what it writes and what it deliberately does not', () => {
   beforeEach(() => stubTransaction());
 
   it('omits state, attempt_count, our_fault_attempts and the outcome columns so they take DB defaults', async () => {
-    // DR-2: a retry campaign is a FRESH allowance, which is the whole point of a
+    // A retry campaign is a FRESH allowance, which is the whole point of a
     // supervisor authoring one. Writing any of these explicitly would be a second
     // copy of migration 073's defaults with nothing keeping the two in step —
     // and writing the PARENT's values would carry a suppressed or exhausted state
@@ -318,7 +318,7 @@ describe('the child campaign row', () => {
     }
   });
 
-  it('stores retry_selector as sent — a record, not a query (DR-5)', async () => {
+  it('stores retry_selector as sent — a record, not a query', async () => {
     // Re-running the selector later would produce a different set (the parent keeps
     // moving if it is resumed) and would make the child's roster non-reproducible
     // from its own row. So what is frozen is the operator's INTENT.
@@ -340,7 +340,7 @@ describe('the child campaign row', () => {
     // "Copy the config columns" applied naively carries a stale auto-pause record,
     // a start time and a terminal status onto a campaign that has never dialled.
     // `status` is absent from the column list entirely rather than written as
-    // 'draft' (DR-9): 072's DEFAULT already says draft, and naming it here would be
+    // 'draft': the column's DEFAULT already says draft, and naming it here would be
     // a second copy of that default.
     stubTransaction();
     await new AgencyCampaignRepository().retryFromCampaign({
@@ -466,8 +466,8 @@ describe('campaignLineage', () => {
 
 describe('findPriorForContactLineage', () => {
   it('keys on root_contact_id and orders by ended_at, not attempt_number', async () => {
-    // `attempt_number` is per contact ROW and resets in every retry campaign
-    // (DR-2), so ordering by it interleaves two passes into nonsense: the parent's
+    // `attempt_number` is per contact ROW and resets in every retry campaign,
+    // so ordering by it interleaves two passes into nonsense: the parent's
     // attempt 3 would sort above the child's attempt 1 even though the child's is
     // more recent. `NULLS LAST` keeps a never-ended attempt (reaped, orphaned) at
     // the bottom rather than at the top, where a NULL sorts first under DESC.

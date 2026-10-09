@@ -13,7 +13,7 @@ import type { AgencyContactFilters } from '../types/agency-spine';
  *    argument (`agencyCampaignTabs.ts`: "sections are URLs, not component
  *    state").
  * 2. The browser's back button answers a filter change.
- * 3. **Retry design DR-3 is literally true.** The selector *is* the filter set
+ * 3. **"The filters on screen become the selector" is literally true.** The selector *is* the filter set
  *    the supervisor is already looking at: "the supervisor narrows the Contacts
  *    tab until it shows the rows they mean, presses Retry these contacts, and
  *    the query string they were already looking at becomes the selector." With

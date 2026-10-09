@@ -3,7 +3,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 
 /**
- * **Every audited write must DERIVE its actor, not assert one (`86d45t7rm`).**
+ * **Every audited write must DERIVE its actor, not assert one.**
  *
  * ── What the type system already guarantees, and where it stops ─────────────
  * `actor_type` is a required field of `CreateAuditLogInput`, so `tsc --noEmit`
@@ -139,7 +139,7 @@ function auditCallSites(): CallSite[] {
   return sites;
 }
 
-describe('every auditLogger.log call site derives its actor (86d45t7rm)', () => {
+describe('every auditLogger.log call site derives its actor', () => {
   const sites = auditCallSites();
 
   /*
@@ -163,7 +163,7 @@ describe('every auditLogger.log call site derives its actor (86d45t7rm)', () => 
       'Use requestAuditActor(request) on a request-scoped write, SYSTEM_AUDIT_ACTOR',
       'on a background one, or thread an AuditActorFields down from the route.',
       'Writing `actor_type: \'human\', user_id: request.user.id` compiles and is the',
-      'defect 86d45t7rm removed: a creator-backed API key carries request.user, so',
+      'defect the actor-type axis removed: a creator-backed API key carries request.user, so',
       'that records the person who minted the credential as though they acted.',
     ].join(' ')).toEqual([]);
   });

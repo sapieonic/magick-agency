@@ -304,7 +304,7 @@ export async function transitionAgencyCampaign(
  * How many contacts a selector would seed, and what they are made of. Writes
  * nothing.
  *
- * The preview is a separate read on purpose (DR-8): the create is one
+ * The preview is a separate read on purpose: the create is one
  * transaction that makes a campaign AND a roster, and a supervisor has to see
  * the count before that happens. Preview and commit share one parser and one
  * predicate builder inside the server, or the preview eventually promises a number the

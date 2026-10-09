@@ -15,7 +15,7 @@ import { PLATFORM_AUDIT_ACTOR_TYPES } from '../../../../src/audit/platform/catal
  */
 
 /**
- * **The audit row must say WHAT KIND of principal acted (`86d45t7rm`).**
+ * **The audit row must say WHAT KIND of principal acted.**
  *
  * Every audited write in this service used to stamp `user_id` and nothing else,
  * and `user_id` answers a narrower question than it reads as: which principal

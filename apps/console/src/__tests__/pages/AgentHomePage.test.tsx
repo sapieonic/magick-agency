@@ -35,6 +35,7 @@ vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../api/agency', () => ({ getMyAssignments: mocks.getMyAssignments }));
 
 import { AgentHomePage } from '../../pages/agency/AgentHomePage';
+import { PARENT_BRAND } from '../helpers/parentBrand';
 
 function Where() {
   const location = useLocation();
@@ -458,7 +459,7 @@ describe('AgentHomePage — the way to settings (B17)', () => {
 
     await screen.findByRole('heading');
     expect(screen.queryByRole('link', { name: 'Go to settings' })).toBeNull();
-    expect(screen.queryByText(/MagickVoice/i)).toBeNull();
+    expect(screen.queryByText(PARENT_BRAND)).toBeNull();
   });
 });
 

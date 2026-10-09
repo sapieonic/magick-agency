@@ -12,7 +12,7 @@ import type { AgencyDisposition, AgencyPriorAttempt } from '../types/agency';
  * attempt_number DESC`. On a retry campaign it becomes lineage-scoped —
  * `WHERE root_contact_id = $1` — and re-orders onto `ended_at DESC NULLS LAST`,
  * because **`attempt_number` is per-contact-row and resets in every retry
- * campaign** (retry design DR-2). Two passes' worth of "attempt 1, attempt 2"
+ * campaign**. Two passes' worth of "attempt 1, attempt 2"
  * interleaved by number is nonsense, so the number is no longer an ordering and
  * this file never presents it as one.
  *

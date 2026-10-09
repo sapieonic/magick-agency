@@ -155,7 +155,7 @@ export const DEFAULT_RETRY_SELECTOR: AgencyRetrySelector = {
  * `from` / `to` already have that shape one level up; these needed it one level
  * down.
  *
- *  - `dnc` / `invalid` — DR-4. Never seeded into any retry, by any selector.
+ *  - `dnc` / `invalid` — DNC and invalid contacts are never seeded into a retry, by any selector.
  *  - `in_flight` — the contact is on a call RIGHT NOW. The server excludes it
  *    unconditionally (seeding it and starting the child would dial a number the
  *    parent has an open call on) and refuses it by name here.

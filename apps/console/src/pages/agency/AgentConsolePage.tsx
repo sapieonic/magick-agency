@@ -1633,7 +1633,7 @@ export default function AgentConsolePage() {
                     "attempt 1" and nothing would say which pass either belonged
                     to. The campaign name is what makes the history legible, and
                     it is also the only thing about an ancestor campaign the
-                    agent is given (retry design DR-7): no stats, no connect
+                    agent is given: no stats, no connect
                     rate, no roster counts, no agent roster.
 
                     The heading count stays the TOTAL across groups, because it

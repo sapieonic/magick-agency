@@ -71,7 +71,7 @@ const PAGE_SIZE = 50;
  * A supervisor authoring a retry is already looking at the set they mean, so
  * **Retry these contacts** carries the filters on screen straight into the
  * dialog — which is why the applied filters live in the URL rather than in this
- * component (`agencyRosterFilters.ts`): retry design DR-3 says the query string
+ * component (`agencyRosterFilters.ts`): the query string
  * the supervisor was already looking at BECOMES the selector, and that is only
  * literally true if there is one representation of it.
  *
@@ -356,7 +356,7 @@ export function AgencyCampaignRosterPage() {
             ── Retry these contacts ──────────────────────────────────────────
             This is where the feature is DISCOVERED: the supervisor is already
             looking at the set they mean, and the filters on screen become the
-            selector (retry design DR-3). It sits beside Export because the two
+            selector. It sits beside Export because the two
             answer the same question about the same rows — "take this filtered
             set and do something with it" — and unlike Export it needs the
             campaign loaded, because the child inherits that campaign's config

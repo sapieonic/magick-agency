@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { ORIGINATOR } from '../../config';
 import { brand } from '../../brand';
+import { PARENT_BRAND } from '../helpers/parentBrand';
 
 /**
  * Magick Agency ships no link to, and no visible mention of, the parent product
@@ -23,9 +24,6 @@ import { brand } from '../../brand';
 
 const srcRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const appRoot = dirname(srcRoot);
-
-/** The parent product's name in any spacing or case, and its domains. */
-const PARENT_BRAND = /magick[\s_-]?voice|magic[\s_-]?voice/i;
 
 const SCANNED_EXT = new Set(['.ts', '.tsx', '.css', '.json', '.html']);
 

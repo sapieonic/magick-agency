@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import type { FastifyInstance, RouteOptions } from 'fastify';
 
 /**
@@ -11,8 +12,8 @@ import type { FastifyInstance, RouteOptions } from 'fastify';
  * tree registered), enumerated from Fastify's own `onRoute` hook — never by grep. The
  * console's paths come from `test/fixtures/console-paths.json`: every HTTP and WebSocket
  * call the console makes from `src/api/*` and `src/config.ts`, each classified
- * `served` or `not_served` with a reason (decision B16: the console ports with only its
- * API base changed, so its paths are the contract).
+ * `served` or `not_served` with a reason (decision B16: the console's paths are the
+ * contract).
  *
  * Four properties, each a way the merge could silently break the console (plus: every endpoint
  * the super-admin UI lists in `saRoutes.ts` is registered):
@@ -34,10 +35,13 @@ import { SA_ROUTES } from '../../../../super-admin/src/api/saRoutes.js';
 interface ConsolePath {
   method: string;
   path: string;
-  source: string;
+  /** Repository-relative file that makes the call; absent for a not_served path no UI calls. */
+  source?: string;
   status: 'served' | 'not_served';
   reason: string;
 }
+
+const REPO_ROOT = fileURLToPath(new URL('../../../../../', import.meta.url));
 
 const FIXTURE = JSON.parse(
   readFileSync(fileURLToPath(new URL('../../fixtures/console-paths.json', import.meta.url)), 'utf8'),
@@ -60,18 +64,18 @@ const PENDING: ReadonlyMap<string, string> = new Map([
 const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['GET /healthz', 'liveness probe'],
   ['GET /readyz', 'readiness probe'],
-  ['POST /api/v1/webhooks/voicelink/webrtc-status/:_', 'VoiceLink bridge webhook (lane C, carrier-facing)'],
-  ['WS /api/v1/webrtc-call/:_/pstn-stream', 'VoiceLink PSTN media leg (lane C, carrier-facing WS)'],
-  ['GET /api/v1/webrtc-recordings/:_', 'signed recording playback (lane D; the HMAC token is the credential)'],
-  ['GET /super-admin/usage', 'super-admin usage counts (lane A NEW, plan §3.3)'],
-  ['GET /super-admin/tenants/:_/accounts/:_/settings', 'per-account settings (lane A NEW, plan §3.2)'],
-  ['PUT /super-admin/tenants/:_/accounts/:_/settings', 'per-account settings (lane A NEW, plan §3.2)'],
-  ['PUT /super-admin/tenants/:_/memberships/:_/role', 'membership role change (lane A NEW, decision Q3d)'],
-  ['DELETE /super-admin/tenants/:_/memberships/:_', 'membership revoke (lane A NEW, decision Q3d)'],
-  ['GET /super-admin/feature-flags/:_', 'per-flag detail (lane A port of master super-admin-feature-flags.routes.ts)'],
+  ['POST /api/v1/webhooks/voicelink/webrtc-status/:_', 'VoiceLink bridge webhook (carrier-facing)'],
+  ['WS /api/v1/webrtc-call/:_/pstn-stream', 'VoiceLink PSTN media leg (carrier-facing WS)'],
+  ['GET /api/v1/webrtc-recordings/:_', 'signed recording playback (the HMAC token is the credential)'],
+  ['GET /super-admin/usage', 'super-admin usage counts'],
+  ['GET /super-admin/tenants/:_/accounts/:_/settings', 'per-account settings'],
+  ['PUT /super-admin/tenants/:_/accounts/:_/settings', 'per-account settings'],
+  ['PUT /super-admin/tenants/:_/memberships/:_/role', 'membership role change (decision Q3d)'],
+  ['DELETE /super-admin/tenants/:_/memberships/:_', 'membership revoke (decision Q3d)'],
+  ['GET /super-admin/feature-flags/:_', 'per-flag detail (super-admin-feature-flags.routes.ts)'],
   // The console's old `/proxy/feature-flags` path is not served. The flag map stays at
   // `GET /feature-flags`, and the console calls it there; the old path is `not_served` in the fixture.
-  ['GET /feature-flags', 'client flag map at its agency path (lane A; console re-pointed, lead ruling)'],
+  ['GET /feature-flags', 'client flag map at its agency path (the console calls it here)'],
 ]);
 
 /** Fastify param names differ between files; the table compares shapes. */
@@ -105,13 +109,17 @@ afterAll(async () => {
 
 describe('the console path inventory', () => {
   it('is the fixture this test is about, with one entry per (method, path)', () => {
-    expect(FIXTURE._source).toMatch(/ee5beb44/);
+    expect(FIXTURE._source).toMatch(/src\/api/);
     const keys = FIXTURE.paths.map((p) => keyOf(p.method, p.path));
     expect(new Set(keys).size).toBe(keys.length);
     for (const p of FIXTURE.paths) {
       expect(['served', 'not_served'], `${p.method} ${p.path}`).toContain(p.status);
       expect(p.reason.length, `${p.method} ${p.path} needs a reason`).toBeGreaterThan(0);
-      expect(p.source, `${p.method} ${p.path} needs a console source line`).toMatch(/^src\/.+:\d+/);
+      if (p.status === 'served') expect(p.source, `${p.method} ${p.path} needs the file that calls it`).toBeDefined();
+      if (p.source !== undefined) {
+        expect(p.source, `${p.method} ${p.path}`).toMatch(/^apps\/(console|super-admin)\/src\//);
+        expect(existsSync(join(REPO_ROOT, p.source)), `${p.method} ${p.path}: ${p.source} does not exist`).toBe(true);
+      }
     }
   });
 

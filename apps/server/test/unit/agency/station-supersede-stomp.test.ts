@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 
 // ---------------------------------------------------------------------------
 // The offline stomp — two sockets on one session, and which of them may decide
-// the agent is gone (ClickUp `86d44papk`).
+// the agent is gone.
 //
 // ── The shape the suite was missing ────────────────────────────────────────
 //

@@ -9,7 +9,7 @@ import {
 /**
  * The contacts tab's filters, in the URL.
  *
- * The round trip is the point: retry design DR-3 says the query string the
+ * The round trip is the point: the rule is that the query string the
  * supervisor is already looking at BECOMES the retry selector, and that is only
  * literally true if the applied filters live there rather than in a component.
  */

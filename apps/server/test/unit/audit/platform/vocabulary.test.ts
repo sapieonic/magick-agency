@@ -230,7 +230,7 @@ describe('the audit product axis', () => {
 });
 
 /**
- * The actor-type axis (86d45t7rm), checked the same two ways as the others and
+ * The actor-type axis, checked the same two ways as the others and
  * for the same reason: the module's `Exclude` pairs only fail `npm run lint`,
  * and vitest does not type-check.
  */

@@ -32,14 +32,14 @@ import styles from './AgencyRetryDialog.module.css';
  *
  * ── This dialog exists because the commit is not reversible ─────────────────
  * `POST .../retry` creates a campaign AND seeds its roster in one transaction,
- * and **there is no campaign delete route in either service**. So the count has
- * to be seen before the button is pressed (DR-8), and the count has to be
+ * and **there is no campaign delete route**. So the count has
+ * to be seen before the button is pressed, and the count has to be
  * explained — which is the whole reason the preview carries a breakdown and an
  * `excluded` pair rather than just a number.
  *
  * ── Why the exclusion note is not a footnote ────────────────────────────────
  * `dnc` and `invalid` suppressions are removed from the seed unconditionally
- * (DR-4) — a customer's recorded request not to be contacted is not an operator
+ * — a customer's recorded request not to be contacted is not an operator
  * choice, and a bad number does not become good. A supervisor who ticks
  * "everything suppressed" and is shown 40 where they expected 300 will report it
  * as a bug unless the other 260 are accounted for on the same screen. So
@@ -49,9 +49,9 @@ import styles from './AgencyRetryDialog.module.css';
  * ── The one-running-campaign rule is stated UP FRONT ────────────────────────
  * `uq_agency_campaign_running (tenant_id, account_id) WHERE status='running'`
  * means a child cannot dial while its parent does. The child is created in
- * `draft` (DR-9) so creation never fails for that reason — but Start will, with
- * `409 another_campaign_running`, and the design's own note is that this is the
- * most likely support ticket the feature generates. Telling the supervisor while
+ * `draft` so creation never fails for that reason — but Start will, with
+ * `409 another_campaign_running`, and that refusal is likely to be the
+ * most common support ticket the feature generates. Telling the supervisor while
  * they are still authoring costs one sentence; telling them at Start costs a
  * refusal on a campaign they already made.
  *
@@ -255,7 +255,7 @@ export function AgencyRetryDialog({
   /**
    * Only what the supervisor CHANGED travels as an override.
    *
-   * The child inherits the parent's whole config server-side (DR-10), so
+   * The child inherits the parent's whole config server-side, so
    * echoing an untouched value back would turn an inheritance into an explicit
    * write — indistinguishable on the row, and wrong the moment the parent's
    * value is what someone meant to carry forward.

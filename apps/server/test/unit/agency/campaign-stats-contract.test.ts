@@ -151,7 +151,7 @@ describe('the stats payload produces every field the contract declares', () => {
       attempts_live: 17,
       attempts_total: 18,
       attempts_connected: 19,
-      // ClickUp 86d45k0bk item 3. A DIFFERENT question from `retries_pending`
+      // A DIFFERENT question from `retries_pending`
       // above — that counts contacts still QUEUED for a retry, this counts dials
       // already PLACED that were not the contact's first — so the two carry
       // distinct fixture values and reading one off the other's key fails.

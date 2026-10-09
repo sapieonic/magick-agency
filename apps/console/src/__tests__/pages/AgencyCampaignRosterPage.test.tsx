@@ -270,7 +270,7 @@ describe('the campaign section bar', () => {
  * ── The filters live in the URL (retry campaigns, slice S4) ────────────────
  *
  * They used to be component state and could not leave the tab. Putting them in
- * the query string is what makes retry design DR-3 literally true rather than a
+ * the query string is what makes the selector rule literally true rather than a
  * coincidence of two representations: "the supervisor narrows the Contacts tab
  * until it shows the rows they mean, presses Retry these contacts, and the
  * query string they were already looking at becomes the selector."

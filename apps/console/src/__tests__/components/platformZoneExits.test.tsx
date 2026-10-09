@@ -18,6 +18,7 @@ vi.mock('../../components/layout/AccountSwitcher', () => ({ AccountSwitcher: () 
 
 import { AgencyLayout } from '../../components/layout/AgencyLayout';
 import { WorkspaceExit } from '../../components/agency/WorkspaceExit';
+import { PARENT_BRAND } from '../helpers/parentBrand';
 
 afterEach(() => cleanup());
 
@@ -34,7 +35,7 @@ describe('platform-zone exits (B17)', () => {
     const link = screen.getByRole('link', { name: 'Team and settings' });
     expect(link.getAttribute('href')).toBe('/app');
     expect(link.textContent).toBe('Team & settings');
-    expect(screen.queryByText(/MagickVoice/i)).toBeNull();
+    expect(screen.queryByText(PARENT_BRAND)).toBeNull();
   });
 
   it('WorkspaceExit defaults to "Go to settings" → /app', () => {

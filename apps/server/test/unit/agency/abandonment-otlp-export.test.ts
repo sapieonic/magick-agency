@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// Ticket 86d44par2 — the three compliance gauges had no OTel counterpart at all.
+// The three compliance gauges used to have no OTel counterpart at all.
 //
 // `agency_abandonment_rate_24h` and its two terms are the numbers a regulator
 // asks for and the numbers the auto-pause is judged by, and all three
@@ -90,7 +90,7 @@ beforeEach(() => {
   resetAbandonmentMetricsState();
 });
 
-describe('86d44par2 · the compliance gauges reach the OTLP pipeline', () => {
+describe('the compliance gauges reach the OTLP pipeline', () => {
   it('registers exactly one observable gauge under each name', () => {
     // One instrument per series feeds both pipelines, so one dashboard query works
     // against either and an existing scrape-based panel keeps meaning what it meant.

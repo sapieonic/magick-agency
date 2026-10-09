@@ -273,7 +273,7 @@ describe('WebRtcBridgeManager dial', () => {
 // call and counted as connected by WEBRTC_CALLS_CONNECTED_STATUSES in usage
 // reporting. Every other teardown path here (browser-close, graceful shutdown)
 // already anchored on answeredAt; the timer was the lone outlier. Same defect as
-// the AI-call timeout path (ClickUp 86d3u9dyd).
+// the AI-call timeout path had.
 describe('WebRtcBridgeManager max-duration timer', () => {
   /** Fire the max-duration timer the manager actually armed on this session. */
   async function fireMaxDurationTimer(mgr: WebRtcBridgeManager, callId: string, opts: { confirm?: boolean } = {}) {

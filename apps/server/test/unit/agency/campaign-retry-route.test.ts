@@ -278,7 +278,7 @@ describe('the 409 refusals carry a code, because that is all the public API laye
   });
 });
 
-// ── Config inheritance and the overrides (DR-10) ───────────────────────────
+// ── Config inheritance and the overrides ───────────────────────────────────
 
 describe('config is inherited from the parent, then patched', () => {
   it('passes every inherited column through when no override is sent', async () => {
@@ -472,7 +472,7 @@ describe('the 201 and the lineage strip', () => {
     expect(res.statusCode).toBe(201);
     const body = res.json();
     expect(body.campaign.id).toBe('camp-child');
-    // DR-9: creation and starting stay separate verbs, and it side-steps
+    // A retry is created in draft: creation and starting stay separate verbs, and it side-steps
     // `uq_agency_campaign_running` at creation time.
     expect(body.campaign.status).toBe('draft');
     expect(body.campaign.retry_generation).toBe(1);

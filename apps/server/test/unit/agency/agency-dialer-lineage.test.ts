@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ---------------------------------------------------------------------------
 // The agent panel's history, now scoped to a contact's RETRY LINEAGE.
 //
-// Retry campaigns COPY contacts rather than sharing them (DR-2 — every piece of
+// Retry campaigns COPY contacts rather than sharing them (every piece of
 // per-campaign state lives on the row, and sharing one would make
 // `uq_agency_attempt_live` a cross-campaign lock), so the previous pass's
 // attempts hang off a DIFFERENT `agency_contacts` row. Without the lineage read
@@ -169,7 +169,7 @@ describe('the panel reads the CHAIN, not the contact row', () => {
 
   it('carries campaign_id, campaign_name and dialed_at onto every prior attempt', async () => {
     // "Attempt 2" means nothing once attempts come from two campaigns, and
-    // `attempt_number` RESETS in each retry campaign (DR-2) so it is no longer a
+    // `attempt_number` RESETS in each retry campaign, so it is no longer a
     // global ordering. `dialed_at` is the fallback time for a row whose `ended_at`
     // is null because it never ended.
     repos.attempt.findPriorForContactLineage.mockResolvedValueOnce([

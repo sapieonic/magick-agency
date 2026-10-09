@@ -237,7 +237,7 @@ describe('stale-call sweep lifecycle — dequeue, answer, and recovery', () => {
     }));
   });
 
-  // ── The in-flight poll and shutdown (`86d41v0n0`) ────────────────────────
+  // ── The in-flight poll and shutdown ──────────────────────────────────────
   //
   // `runSelfHealPoll` nulls its own timer at entry and detaches, so
   // `gracefulShutdown`'s `clearTimeout` cannot stop a sweep that has already

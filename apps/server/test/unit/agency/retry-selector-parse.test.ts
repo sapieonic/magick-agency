@@ -97,7 +97,7 @@ describe('parseRetrySelector — the frozen refusals', () => {
   });
 
   it.each(['dnc', 'invalid'])('refuses suppressed_reason=%s with the rule, not a vocabulary error', (reason) => {
-    // DR-4. The message has to explain the rule: "unknown suppressed_reason: dnc"
+    // DNC and invalid contacts are never retried. The message has to explain the rule: "unknown suppressed_reason: dnc"
     // invites the reader to conclude the server does not know what DNC is, when in fact
     // it knows exactly what it is and is declining to dial it.
     const issues = issuesOf(parseRetrySelector({ suppressed_reason: reason }, { catalog: CATALOG }));
@@ -106,7 +106,7 @@ describe('parseRetrySelector — the frozen refusals', () => {
     );
   });
 
-  it('refuses state=in_flight with the rule, the way DR-4 refuses dnc', () => {
+  it('refuses state=in_flight with the rule, the way the DNC rule refuses dnc', () => {
     // A contact in `in_flight` is ON A CALL right now: `claimDialable` flips the
     // state at dial, `chargeAttempt` writes the outcome at settle. Seeding it
     // into a child and starting that child dials a number the parent has an open

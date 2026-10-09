@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 
 // ---------------------------------------------------------------------------
 // Two halves of the same contract: the heartbeat is received, and the heartbeat
-// is enforced (ClickUp `86d44papk`, fix E).
+// is enforced.
 //
 // ── Received ───────────────────────────────────────────────────────────────
 //
@@ -19,7 +19,7 @@ import type { AddressInfo } from 'node:net';
 //
 // Two things that follow from a frame being received early are asserted alongside
 // it: that a `close` in the same window is not lost either — it used to leave a
-// registry entry nothing could ever remove, which is the blocker in `86d44papk` —
+// registry entry nothing could ever remove, the defect this suite was written for —
 // and that a deferred pong's `server_ts` is the instant the ping ARRIVED rather
 // than the instant the held answer finally went out.
 //
