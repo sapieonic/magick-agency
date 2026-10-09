@@ -104,7 +104,7 @@ const DYNAMIC_CALL_SITES: ReadonlyMap<string, string> = new Map([
 /** Internal handlers no public-API call site reaches, each with why. */
 const UNREACHED_CORE_ROUTES: ReadonlyMap<string, string> = new Map([
   ['GET /api/v1/agency-campaigns/:_/attempts/:_/recording-url',
-    "core's signed-URL minter; master never proxied it (master `error-mask.middleware.ts`, `no_recording`: \"core emits it from its recording-url route, which master does not proxy yet\"); the console plays through `/attempts/:attemptId/recording`"],
+    "the internal handler's signed-URL minter; no public API route forwards to it, and the console plays through `/attempts/:attemptId/recording`"],
 ]);
 
 const shape = (url: string) => url.replace(/:[A-Za-z_][A-Za-z0-9_]*/g, ':_').replace(/\/$/, '');

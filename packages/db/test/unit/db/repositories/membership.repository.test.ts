@@ -104,9 +104,9 @@ describe('MembershipRepository', () => {
      * The SET form of `findAnyByUserAndTenant`, and it had no direct test at all —
      * only route tests over a mocked repository, which cannot see any of the
      * properties below. That gap matters more than the usual missing-unit-test
-     * because the UUID short-circuit is LOAD-BEARING: the ids come from core's
-     * response body, where `agent_user_id` is an opaque string with no `uuid`
-     * column behind it (design D3), so a malformed one is reachable — and inside
+     * because the UUID short-circuit is LOAD-BEARING: the ids come from the internal
+     * handler's response body, where `agent_user_id` is an opaque string with no `uuid`
+     * column behind it, so a malformed one is reachable — and inside
      * `= ANY($1::uuid[])` it raises Postgres `22P02`, which propagates as a 500
      * that `errorMaskHook` turns into "contact support and quote this request id".
      * One junk id in a roster page would take the whole supervisor screen down as
@@ -178,8 +178,8 @@ describe('MembershipRepository', () => {
       expect(params[0]).toEqual([USER_A]);
     });
 
-    it('accepts an UPPER-case uuid, which core can legitimately send', async () => {
-      // `agent_user_id` is opaque to core, so case is not normalised upstream. The
+    it('accepts an UPPER-case uuid, which the dialer runtime can legitimately send', async () => {
+      // `agent_user_id` is opaque to the dialer runtime, so case is not normalised upstream. The
       // shape check must not reject a perfectly valid id — and the `::uuid` cast
       // matches it — which is why the regex is case-insensitive.
       mocks.pool.query.mockResolvedValue({ rows: [memberRow] });
@@ -203,7 +203,7 @@ describe('MembershipRepository', () => {
 
     it('does not query AT ALL for an empty list, or one that is all junk', async () => {
       // `ANY('{}'::uuid[])` matches nothing, so the query would be correct and
-      // pointless. The route reaches this whenever core returns a page of rows
+      // pointless. The route reaches this whenever the handler returns a page of rows
       // whose ids are all unusable, which is a real shape (R4's third state).
       expect(await repo.findAnyByUsersAndTenant([], TENANT)).toEqual([]);
       expect(await repo.findAnyByUsersAndTenant(['nope', ''], TENANT)).toEqual([]);
@@ -211,7 +211,7 @@ describe('MembershipRepository', () => {
     });
 
     it('does not query for a malformed TENANT id either', async () => {
-      // The tenant is master's own (`request.tenantId`), so this should be
+      // The tenant is the public API layer's own (`request.tenantId`), so this should be
       // unreachable — and it is checked anyway because the failure mode is the
       // same `22P02` on `$2::uuid`, and "should be unreachable" is how the first
       // one got shipped.

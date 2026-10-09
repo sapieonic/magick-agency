@@ -217,7 +217,7 @@ describe('Audit logging scenarios (integration)', () => {
           tenantId: uuidFor('json-t'),
           accountId: uuidFor('json-a'),
           eventType: 'call.analysis.completed',
-          eventCategory: 'analysis' as never, // core's value; not in `EventCategory` (type-only cast)
+          eventCategory: 'analysis' as never, // the dialer's value; not in `EventCategory` (type-only cast)
           severity: 'info',
           eventData: {
             model: 'gpt-4o-mini',

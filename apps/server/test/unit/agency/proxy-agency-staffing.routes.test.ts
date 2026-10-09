@@ -191,7 +191,7 @@ describe('GET /my-assignment — reachable by a BARE agent', () => {
     // Enrichment must never turn a 200 into a 500 — the assignment IS the answer
     // and it is already in hand. The redirect keeps working with a null name.
     mocks.findActiveForUser.mockResolvedValue(assignmentRow());
-    mocks.proxyToCore.mockRejectedValue(new Error('core unreachable'));
+    mocks.proxyToCore.mockRejectedValue(new Error('handler unreachable'));
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
 
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/my-assignment` });
@@ -332,7 +332,7 @@ describe('GET /my-assignments — the plural replacement', () => {
     // Enrichment must never turn a 200 into a 500. The ids are the answer and are
     // already in hand, so every link on the landing page keeps working.
     mocks.listActiveForUser.mockResolvedValue([assignmentRow(CAMPAIGN)]);
-    mocks.proxyToCore.mockRejectedValue(new Error('core unreachable'));
+    mocks.proxyToCore.mockRejectedValue(new Error('handler unreachable'));
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
 
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/my-assignments` });
@@ -362,7 +362,7 @@ describe('GET /my-assignments — the plural replacement', () => {
       assignmentRow(OTHER_CAMPAIGN),
     ]);
     mocks.proxyToCore
-      .mockRejectedValueOnce(new Error('core unreachable'))
+      .mockRejectedValueOnce(new Error('handler unreachable'))
       .mockResolvedValueOnce({ status: 200, body: { id: OTHER_CAMPAIGN, name: 'Collections', status: 'running' } });
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
 
@@ -622,7 +622,7 @@ describe('GET /my-campaigns — the staffing HISTORY, closed rows included', () 
     // A history is the surface MOST likely to name campaigns the internal handler has since
     // deleted, so this degradation is the normal path here, not an edge case.
     mocks.listAllForUser.mockResolvedValue([closedRow(CAMPAIGN, '2026-04-01T00:00:00.000Z')]);
-    mocks.proxyToCore.mockRejectedValue(new Error('core unreachable'));
+    mocks.proxyToCore.mockRejectedValue(new Error('handler unreachable'));
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
 
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/my-campaigns` });

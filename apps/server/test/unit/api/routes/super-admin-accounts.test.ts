@@ -221,7 +221,7 @@ describe('super-admin account concurrency routes', () => {
     it('should report unavailable when the allocation read fails', async () => {
       mocks.tenantRepo.findById.mockResolvedValue({ id: 'tenant-1' });
       mocks.accountRepo.findByTenantId.mockResolvedValue([makeAccount()]);
-      mocks.concurrencyRepo.getAllocation.mockRejectedValue(new Error('No core connection'));
+      mocks.concurrencyRepo.getAllocation.mockRejectedValue(new Error('No database connection'));
 
       const res = await app.inject({ method: 'GET', url: '/super-admin/tenants/tenant-1/accounts' });
       expect(res.statusCode).toBe(200);
@@ -364,7 +364,7 @@ describe('super-admin account concurrency routes', () => {
     it('should return 503 when the allocation is unavailable', async () => {
       mocks.tenantRepo.findById.mockResolvedValue({ id: 'tenant-1' });
       mocks.accountRepo.findById.mockResolvedValue(makeAccount({ tenant_id: 'tenant-1' }));
-      mocks.concurrencyRepo.getAllocation.mockRejectedValue(new Error('No core connection'));
+      mocks.concurrencyRepo.getAllocation.mockRejectedValue(new Error('No database connection'));
 
       const res = await app.inject({ method: 'PUT', url, payload: validBody });
       expect(res.statusCode).toBe(503);

@@ -51,7 +51,7 @@ describe('accountSettingsRepository.setRecordingAnalysisToggles (integration)', 
     });
     expect(await row()).toMatchObject({ max_concurrent_calls: 20, concurrency_allocation_version: 2 });
 
-    // Core's pattern, which the route no longer uses.
+    // The upsert-everything pattern, which the route no longer uses.
     await accountSettingsRepository.upsert({ tenant_id: T, account_id: A, max_concurrent_calls: read, allow_recording: true });
 
     expect(await row()).toMatchObject({ max_concurrent_calls: 5, concurrency_allocation_version: 3 });

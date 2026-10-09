@@ -34,24 +34,24 @@ afterAll(closeTestPool);
 
 /** Every table the baseline owns (partitions excluded). */
 const EXPECTED_TABLES = [
-  // identity (master)
+  // identity
   'tenants', 'accounts', 'users', 'memberships', 'membership_invites',
   'super_admins', 'super_admin_audit_log',
-  // phone inventory (master)
+  // phone inventory
   'telephony_providers', 'phone_numbers', 'tenant_phone_assignments', 'phone_account_tags',
-  // notifications (master)
+  // notifications
   'user_notification_preferences', 'notification_deliveries',
-  // audit (master + core, B7)
+  // audit (console and dialer halves, B7)
   'platform_audit_log', 'audit_logs',
-  // master agency
+  // agency campaign management
   'dnc_entries', 'agency_ingest_jobs', 'agency_campaign_agents',
-  // settings / guard / flags (core)
+  // settings / guard / flags
   'account_settings', 'account_provider_concurrency_allocations', 'feature_flag_overrides',
-  // clips (core)
+  // clips
   'audio_files', 'announcements',
-  // analysis (core)
+  // analysis
   'call_analysis_profiles', 'dialer_analysis_jobs',
-  // core agency
+  // agency dialer runtime
   'agency_campaigns', 'agency_contacts', 'agency_agent_sessions', 'agency_agent_session_events',
   'agency_call_attempts', 'agency_ingest_chunks', 'agency_dnc_outbox', 'agency_calls',
 ].sort();
@@ -112,7 +112,7 @@ describe('baseline schema — structure', () => {
   });
 
   it('has exactly one up marker and one down marker, so node-pg-migrate splits it correctly', () => {
-    // core 093's header: node-pg-migrate's sqlMigration splits on
+    // node-pg-migrate's sqlMigration splits on
     // /^\s*--[\s-]*(up|down)\s+migration/im, and a stray comment line that matches
     // moves the split silently.
     const sql = readFileSync(resolve(MIGRATIONS_DIR, '0001_baseline.sql'), 'utf8');
@@ -147,7 +147,7 @@ describe('baseline schema — structure', () => {
     }
   });
 
-  it("drops core's 'default' account_id defaults — they cannot be UUIDs", async () => {
+  it("has no 'default' account_id defaults — they cannot be UUIDs", async () => {
     for (const table of ['agency_campaigns', 'agency_calls', 'call_analysis_profiles', 'dialer_analysis_jobs']) {
       const col = (await columnsOf(table)).get('account_id');
       expect(col!.is_nullable, table).toBe('NO');
@@ -268,8 +268,7 @@ describe('baseline schema — structure', () => {
     expect(rows).toEqual([]);
   });
 
-  // master:test/integration/repositories/agency-campaign-agents-schema.test.ts
-  it('staffing: the 064 per-campaign index exists and the 060 index is gone', async () => {
+  it('staffing: the per-campaign index exists and the per-tenant index is gone', async () => {
     expect(await indexDef('uq_agency_campaign_agent_active_campaign')).toBe(
       'CREATE UNIQUE INDEX uq_agency_campaign_agent_active_campaign ON public.agency_campaign_agents ' +
       'USING btree (tenant_id, user_id, campaign_id) WHERE (unassigned_at IS NULL)',
@@ -295,7 +294,7 @@ describe('baseline schema — structure', () => {
 });
 
 describe('membership_role enum', () => {
-  it("has master's six values in master's declared order (051 appended agent last)", async () => {
+  it("has the six values in their declared order (agent last)", async () => {
     const { rows } = await pool().query<{ v: string }>(
       `SELECT unnest(enum_range(NULL::membership_role))::text AS v`,
     );
@@ -402,7 +401,7 @@ describe('triggers', () => {
     expect(rows[0]!.vol).toBe('s');
   });
 
-  // core 083's contract: the fingerprint is what the ingest INSERT writes, and the
+  // The contract: the fingerprint is what the ingest INSERT writes, and the
   // unique index refuses a byte-identical row in the same campaign.
   it('row fingerprints written through the function collide exactly on identical content', async () => {
     const campaign = await insertCampaign();
@@ -574,7 +573,7 @@ describe('other uniqueness rules', () => {
     });
   });
 
-  it('idx_accounts_tenant_slug_active — a deleted account frees its slug (master 025)', async () => {
+  it('idx_accounts_tenant_slug_active — a deleted account frees its slug', async () => {
     const tenant = await insertTenant();
     const first = await insertAccount(tenant.id, { slug: 'main' });
     await expect(insertAccount(tenant.id, { slug: 'main' })).rejects.toMatchObject({
@@ -685,7 +684,7 @@ describe('checks, cascades and foreign keys', () => {
     await expect(insertAttempt(c2.id, k2.id, { reserved_agent_id: randomUUID() })).rejects.toMatchObject({ code: '23503' });
   });
 
-  it('the attempt spine and the call correlation ids carry NO foreign keys (core 075/076)', async () => {
+  it('the attempt spine and the call correlation ids carry NO foreign keys', async () => {
     const campaign = await insertCampaign();
     const contact = await insertContact(campaign.id);
     // A dangling media-leg id is legal on the attempt...
@@ -741,7 +740,7 @@ describe('checks, cascades and foreign keys', () => {
     await expect(pool().query('DELETE FROM account_settings WHERE tenant_id = $1', [tenant])).rejects.toMatchObject({ code: '23503' });
   });
 
-  it('clips: audio-only announcements; deleting a file un-links inactive announcements (core 031)', async () => {
+  it('clips: audio-only announcements; deleting a file un-links inactive announcements', async () => {
     const audio = await insertAudioFile();
     const announce = (o: Record<string, unknown>) => insertRow('announcements', { tenant_id: TENANT, account_id: ACCOUNT, name: `a-${randomUUID()}`, ...o });
     await expect(announce({ type: 'tts' })).rejects.toMatchObject({ code: '23514', constraint: 'announcements_type_check' });
@@ -830,7 +829,7 @@ describe('audit partitions', () => {
     expect((await insert('2025-12-31T23:59:59Z')).rows[0]!.part).toBe('audit_logs_default');
   });
 
-  it('the parent indexes exist (core 094 campaign expression index included)', async () => {
+  it('the parent indexes exist (campaign expression index included)', async () => {
     for (const name of [
       'idx_audit_log_tenant_created', 'idx_audit_log_action', 'idx_audit_log_tenant_resource',
       'idx_audit_log_tenant_campaign', 'idx_audit_log_tenant_account',

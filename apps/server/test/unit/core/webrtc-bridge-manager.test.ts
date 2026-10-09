@@ -28,9 +28,9 @@ vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
     telephony: {
-      vobiz: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/vobiz' },
-      voicelink: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/voicelink' },
-      plivo: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/plivo' },
+      vobiz: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/vobiz' },
+      voicelink: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/voicelink' },
+      plivo: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/plivo' },
     },
   },
 }));
@@ -418,7 +418,7 @@ describe('WebRtcBridgeManager media relay — VoiceLink (A-law transcode)', () =
     await dial(mgr, VL_PARAMS);
     const arg = mockAdapter.initiateCall.mock.calls[0]![0];
     // URL carries a purpose-bound provider token (verified on pstn-stream connect).
-    expect(arg.mediaStreamUrl).toContain('wss://core.test/api/v1/webrtc-call/call-1/pstn-stream?token=');
+    expect(arg.mediaStreamUrl).toContain('wss://server.test/api/v1/webrtc-call/call-1/pstn-stream?token=');
     await endByUser(mgr);
   });
 

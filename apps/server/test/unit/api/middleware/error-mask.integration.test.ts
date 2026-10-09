@@ -19,7 +19,7 @@ function buildApp(): FastifyInstance {
   app.addHook('onSend', errorMaskHook);
 
   // Simulates a route that forwards an internal-handler 5xx.
-  app.get('/core-5xx', async (_req, reply) => {
+  app.get('/handler-5xx', async (_req, reply) => {
     return reply.code(503).send({ error: 'Bad Gateway', message: 'google ai quota exceeded' });
   });
   // Route-own business 4xx → shown.
@@ -48,7 +48,7 @@ const isMasked = (body: string) => JSON.parse(body).message?.includes('contact s
 
 describe('error masking — Fastify enterWith → onSend seam', () => {
   it('masks a forwarded internal 5xx and hides the upstream message', async () => {
-    const res = await app.inject({ method: 'GET', url: '/core-5xx' });
+    const res = await app.inject({ method: 'GET', url: '/handler-5xx' });
     expect(res.statusCode).toBe(503);
     expect(res.body).not.toContain('google ai');
     expect(isMasked(res.body)).toBe(true);

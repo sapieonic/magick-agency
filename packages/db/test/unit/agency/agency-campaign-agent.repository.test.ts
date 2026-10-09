@@ -1099,7 +1099,7 @@ describe('listAllForUser — the history is BOUNDED', () => {
    * the count only ever grows — every reassignment adds one, `closeAllForUser`
    * manufactures one per campaign in a single statement, and nothing ever removes
    * one, which is exactly what migration 060 chose. Its only caller is a route an
-   * `agent` hits on their own console, which then spends a core round trip per
+   * `agent` hits on their own console, which then spends an internal-handler round trip per
    * distinct campaign.
    */
   async function staffOver(count: number) {
@@ -1207,7 +1207,7 @@ describe('listAllForUser — the history is BOUNDED', () => {
 describe('closeAllForUser — the offboarding close', () => {
   /**
    * ── The leak it closes ──────────────────────────────────────────────────
-   * Nothing in master called any bulk unassign — the staffing route was this
+   * Nothing called any bulk unassign — the staffing route was this
    * repository's only caller — so a removed member stayed on every supervisor's
    * staffing list forever.
    *

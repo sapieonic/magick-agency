@@ -54,7 +54,7 @@ export async function truncateAll(client: pg.Pool | pg.PoolClient = getTestPool(
   );
   if (rows.length === 0) return;
   const sql = `TRUNCATE ${rows.map((r) => r.t).join(', ')} RESTART IDENTITY CASCADE`;
-  // A previous test's fire-and-forget write (e.g. master's un-awaited super-admin
+  // A previous test's fire-and-forget write (e.g. the server's un-awaited super-admin
   // audit INSERT, whose FK check takes RowShareLock on the parent) can still be in
   // flight; TRUNCATE takes AccessExclusiveLock table by table and the two can
   // deadlock. Postgres kills one side after deadlock_timeout. Retry ours.

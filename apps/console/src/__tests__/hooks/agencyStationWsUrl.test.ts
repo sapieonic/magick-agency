@@ -97,8 +97,8 @@ describe('toAbsoluteWsUrl', () => {
     // Re-hosting that onto the API host would break the one case the fallback exists
     // for.
     cfg.apiBase = 'https://staging.api.example.com';
-    expect(toAbsoluteWsUrl('wss://core.internal/api/v1/agency/station/s1?token=t')).toBe(
-      'wss://core.internal/api/v1/agency/station/s1?token=t',
+    expect(toAbsoluteWsUrl('wss://dialer.internal/api/v1/agency/station/s1?token=t')).toBe(
+      'wss://dialer.internal/api/v1/agency/station/s1?token=t',
     );
   });
 

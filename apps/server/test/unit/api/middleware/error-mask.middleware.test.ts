@@ -109,7 +109,7 @@ describe('errorMaskHook', () => {
         [400, { error: 'Bad Request', message: 'vobiz error 21211: invalid To number' }],
         [404, { error: 'Not Found', message: 'some upstream resource detail' }],
         [400, { code: 'UNREVIEWED_PROVIDER_ERROR', message: 'provider detail must not leak' }],
-        [409, { code: 'campaign_roster_empty', message: 'core-authored explanation' }],
+        [409, { code: 'campaign_roster_empty', message: 'handler-authored explanation' }],
         [422, { error: 'Validation failed', details: { fieldErrors: { phone: ['bad'] } } }],
       ] as const) {
         const payload = JSON.stringify(body);

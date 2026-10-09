@@ -51,8 +51,8 @@ vi.mock('@magick-agency/observability', () => ({
 vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    masterService: { url: 'https://master.test', s2sToken: 'tok' },
-    telephony: { vobiz: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/vobiz' } },
+    masterService: { url: 'https://directory.test', s2sToken: 'tok' },
+    telephony: { vobiz: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/vobiz' } },
   },
 }));
 

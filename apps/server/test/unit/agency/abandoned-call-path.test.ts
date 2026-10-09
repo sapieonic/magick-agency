@@ -50,7 +50,7 @@ vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
     telephony: {
-      voicelink: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/voicelink' },
+      voicelink: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/voicelink' },
     },
   },
 }));

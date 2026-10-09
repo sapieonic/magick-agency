@@ -815,7 +815,7 @@ describe('AgencyIngestService', () => {
       csvStream('Mobile\n9876543210\n');
       mocks.supersedeRoster.mockRejectedValue(
         new RosterSupersedeError(
-          'Could not reach the core service to change this roster (4 attempts): core returned 503',
+          'Could not reach the dialer runtime to change this roster (4 attempts): the handler returned 503',
           0,
           'failed',
           undefined,
@@ -850,7 +850,7 @@ describe('AgencyIngestService', () => {
         already_applied: true,
         attempts: 2,
       });
-      mocks.sendRosterChunk.mockRejectedValue(new Error('core exploded'));
+      mocks.sendRosterChunk.mockRejectedValue(new Error('handler exploded'));
 
       await service.run({ job: replaceJob(), expectedContactsTotal: 5000 });
 
@@ -868,7 +868,7 @@ describe('AgencyIngestService', () => {
       // supersede, false — they would believe they still have this morning's
       // roster.
       csvStream('Mobile\n9876543210\n');
-      mocks.sendRosterChunk.mockRejectedValue(new Error('core exploded'));
+      mocks.sendRosterChunk.mockRejectedValue(new Error('handler exploded'));
 
       await service.run({ job: replaceJob(), expectedContactsTotal: 5000 });
 
@@ -936,7 +936,7 @@ describe('AgencyIngestService', () => {
       // meaningful: bolting it onto every failure would train operators to
       // ignore it.
       csvStream('Mobile\n9876543210\n');
-      mocks.sendRosterChunk.mockRejectedValue(new Error('core exploded'));
+      mocks.sendRosterChunk.mockRejectedValue(new Error('handler exploded'));
 
       await service.run({ job: job() });
 

@@ -37,10 +37,10 @@ vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
     telephony: {
-      vobiz: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/vobiz' },
-      plivo: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/plivo' },
+      vobiz: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/vobiz' },
+      plivo: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/plivo' },
       // the bridge reads VoiceLink's base (the default provider is now VoiceLink).
-      voicelink: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/voicelink' },
+      voicelink: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/voicelink' },
     },
   },
 }));

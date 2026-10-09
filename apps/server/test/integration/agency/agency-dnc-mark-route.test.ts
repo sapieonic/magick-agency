@@ -276,7 +276,7 @@ describe('POST /api/v1/agency/attempts/:id/dnc (integration)', () => {
     await getTestPool().query('CREATE TRIGGER p8_fail_dnc BEFORE INSERT ON dnc_entries FOR EACH ROW EXECUTE FUNCTION p8_fail_dnc()');
 
     const response = await markDnc(seeded.attempt.id, {
-      reason: 'verbatim reason',
+      reason: 'customer asked not to be called',
       agent_user_id: AGENT_9,
     });
 

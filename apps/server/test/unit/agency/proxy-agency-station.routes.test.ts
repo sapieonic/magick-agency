@@ -53,7 +53,7 @@ const stationRoutes = (app: FastifyInstance) =>
 describe('rewriteStationWsUrl', () => {
   it('maps the internal absolute URL onto the proxy prefix, preserving the token', () => {
     expect(
-      rewriteStationWsUrl(`wss://core-host:3000/api/v1/agency/station/${SESSION}?token=secret`),
+      rewriteStationWsUrl(`wss://dialer-host:3000/api/v1/agency/station/${SESSION}?token=secret`),
     ).toBe(`/proxy/agency/station/${SESSION}?token=secret`);
   });
 
@@ -72,7 +72,7 @@ describe('rewriteStationWsUrl', () => {
   it('falls back to the original URL on an unexpected shape', () => {
     // Degrading to "client talks to the internal address directly" beats minting a proxy path
     // that is guaranteed to 404.
-    const odd = 'wss://core-host/some/other/path?token=x';
+    const odd = 'wss://dialer-host/some/other/path?token=x';
     expect(rewriteStationWsUrl(odd)).toBe(odd);
   });
 });

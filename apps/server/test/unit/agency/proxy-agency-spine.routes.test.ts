@@ -86,7 +86,7 @@ async function buildApp(): Promise<FastifyInstance> {
 /** The internal handler's campaign body, which the ownership probe reads for the name. */
 const CAMPAIGN_BODY = {
   status: 200,
-  body: { id: CAMPAIGN, name: 'Q3 Renewals', account_id: 'core-account', status: 'stopped' },
+  body: { id: CAMPAIGN, name: 'Q3 Renewals', account_id: 'handler-account', status: 'stopped' },
   headers: new Headers(),
 };
 

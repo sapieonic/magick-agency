@@ -447,7 +447,7 @@ describe('GET /proxy/agency/campaigns/:id/activity', () => {
   // ownership BEFORE the activity read), as in the route's `requireOwnedCampaign`.
   it('serves the public API layer\'s rows when the internal handler is unreachable for the ownership probe too', async () => {
     mocks.auditFind.mockResolvedValue({ logs: [dispositionRow()], total: 1 });
-    mocks.proxyToCore.mockRejectedValue(new Error('core handlers are not registered'));
+    mocks.proxyToCore.mockRejectedValue(new Error('internal handlers are not registered'));
 
     const res = await get();
 

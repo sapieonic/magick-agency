@@ -27,7 +27,7 @@ function renderTopBar({
   accountId = ACCOUNT_ID as string | null,
 } = {}) {
   mocks.useAuth.mockReturnValue({
-    user: { display_name: 'Manas Nilorout', email: 'manas@example.com', avatar_url: null },
+    user: { display_name: 'Test Supervisor', email: 'supervisor@example.com', avatar_url: null },
     logout: vi.fn(),
   });
   mocks.useTenant.mockReturnValue({ tenantId, accountId });
@@ -40,7 +40,7 @@ function renderTopBar({
 }
 
 function openMenu() {
-  fireEvent.click(screen.getByText('Manas Nilorout'));
+  fireEvent.click(screen.getByText('Test Supervisor'));
 }
 
 describe('TopBar — tenant/account IDs in user menu', () => {

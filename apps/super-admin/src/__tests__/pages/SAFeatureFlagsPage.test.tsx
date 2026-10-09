@@ -155,7 +155,7 @@ describe('SAFeatureFlagsPage — filters & rollout', () => {
   it('search narrows the catalog', async () => {
     mocks.getCatalog.mockResolvedValue(catalog(
       flag(),
-      flag({ key: 'new_dialer', owner: 'core', description: 'Next-gen dialer', client_exposed: false }),
+      flag({ key: 'new_dialer', owner: 'dialer', description: 'Next-gen dialer', client_exposed: false }),
     ));
     render(<SAFeatureFlagsPage />);
 
@@ -254,15 +254,15 @@ describe('SAFeatureFlagsPage — filters & rollout', () => {
 describe('SAFeatureFlagsPage — filters & empty states', () => {
   const FLAGS = [
     flag(),
-    flag({ key: 'new_dialer', owner: 'core', type: 'boolean', client_exposed: false, description: 'dialer' }),
-    flag({ key: 'max_threads', owner: 'core', type: 'number', client_exposed: false, description: 'threads' }),
+    flag({ key: 'new_dialer', owner: 'dialer', type: 'boolean', client_exposed: false, description: 'dialer' }),
+    flag({ key: 'max_threads', owner: 'dialer', type: 'number', client_exposed: false, description: 'threads' }),
   ];
 
   it('filters by owner', async () => {
     mocks.getCatalog.mockResolvedValue(catalog(...FLAGS));
     render(<SAFeatureFlagsPage />);
     await waitFor(() => screen.getByText('Agency Dialer Enabled'));
-    fireEvent.change(screen.getByLabelText(/filter by owner/i), { target: { value: 'core' } });
+    fireEvent.change(screen.getByLabelText(/filter by owner/i), { target: { value: 'dialer' } });
     expect(screen.queryByText('Agency Dialer Enabled')).toBeNull();
     expect(screen.getByText('New Dialer')).toBeTruthy();
     expect(screen.getByText('Max Threads')).toBeTruthy();

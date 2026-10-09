@@ -20,9 +20,9 @@ vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
     telephony: {
-      vobiz: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/vobiz' },
-      voicelink: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/voicelink' },
-      plivo: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/plivo' },
+      vobiz: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/vobiz' },
+      voicelink: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/voicelink' },
+      plivo: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/plivo' },
     },
   },
 }));

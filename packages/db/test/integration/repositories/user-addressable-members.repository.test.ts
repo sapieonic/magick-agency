@@ -34,9 +34,9 @@ const { userRepository } = await import('../../../src/repositories/user.reposito
  *     `inactive` membership, and a `deleted` or `inactive` user, are all people
  *     who should not be told — see the method's own docstring on why this differs
  *     from `findIdentitiesInTenant`.
- *  4. **A non-UUID `accountId` NARROWS and raises no `22P02`.** Core's campaign
- *     `account_id` is `VARCHAR(100) NOT NULL DEFAULT 'default'` (core migration
- *     072), so `'default'` is the value the likely core emitter sends. Passed to
+ *  4. **A non-UUID `accountId` NARROWS and raises no `22P02`.** A campaign
+ *     `account_id` historically defaulted to `'default'`, so that is the value a
+ *     stale emitter would send. Passed to
  *     Postgres it would be `22P02` inside the read; guessed as "then everyone in
  *     the tenant" it would mail people who cannot see the account. It must do
  *     neither.
@@ -150,7 +150,7 @@ describe('userRepository.findAddressableMembersInAccount (integration)', () => {
 
     /**
      * `u.status = 'active'`, not `<> 'deleted'`. An `inactive` user is a mailbox
-     * master's own record says nobody is reading — the looser predicate belongs on
+     * the users table itself says nobody is reading — the looser predicate belongs on
      * `findIdentitiesInTenant`, which answers "who was this".
      */
     it.each([['inactive'], ['deleted']])(
@@ -185,9 +185,8 @@ describe('userRepository.findAddressableMembersInAccount (integration)', () => {
 
   describe('an accountId Postgres cannot cast', () => {
     /**
-     * `'default'` is not a hypothetical: it is core's column default for
-     * `agency_campaigns.account_id`, so it is what a faithful core emitter sends
-     * for any campaign created through core's own API.
+     * `'default'` is not a hypothetical: it was the historical column default for
+     * `agency_campaigns.account_id`, so it is what a stale emitter would send.
      */
     it.each([['default'], ['not-a-uuid'], ['']])(
       'narrows to the tenant-level arm for %o, and raises no 22P02',

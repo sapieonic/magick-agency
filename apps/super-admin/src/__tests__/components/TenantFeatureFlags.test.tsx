@@ -266,7 +266,7 @@ describe('TenantFeatureFlags — override row affordances', () => {
     mocks.getCatalog.mockResolvedValue({
       flags: [{
         key: 'max_threads_label', type: 'string', default: 'auto', env_default: 'auto',
-        scopes: ['global', 'tenant'], client_exposed: false, owner: 'core',
+        scopes: ['global', 'tenant'], client_exposed: false, owner: 'dialer',
         description: 'worker threads label', global_override: null,
       }],
     });

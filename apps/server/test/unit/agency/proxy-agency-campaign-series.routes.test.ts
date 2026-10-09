@@ -548,7 +548,7 @@ describe('the public API layer fails closed on the internal handler, through the
     // the client.
     mocks.proxyToCore.mockResolvedValue({
       status,
-      body: { error: 'core said no', details: [{ param: 'from', message: 'too wide' }] },
+      body: { error: 'the handler said no', details: [{ param: 'from', message: 'too wide' }] },
       headers: new Headers(),
     });
     const app = await buildApp('account_admin');

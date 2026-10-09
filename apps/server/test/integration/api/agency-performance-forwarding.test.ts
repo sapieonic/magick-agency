@@ -173,7 +173,7 @@ let injectSpy: { mock: { calls: unknown[][] } } | null = null;
 function received(): ReceivedRequest[] {
   return (injectSpy?.mock.calls ?? []).map(([opts]) => {
     const o = opts as { method: string; url: string; headers: Record<string, string | undefined> };
-    const url = new URL(o.url, 'http://core.in-process');
+    const url = new URL(o.url, 'http://handler.in-process');
     const query: Record<string, string[]> = {};
     for (const key of new Set(url.searchParams.keys())) {
       query[key] = url.searchParams.getAll(key);

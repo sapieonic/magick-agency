@@ -297,7 +297,7 @@ describe('agency campaign proxy routes', () => {
     await app.close();
   });
 
-  it('exposes NO concurrency setter anywhere on the campaign surface (D10)', async () => {
+  it('exposes NO concurrency setter anywhere on the campaign surface (super-admin only)', async () => {
     // Concurrency is super-admin only: an account that can raise its own limit
     // can raise its own carrier spend. There is no /proxy/account-settings and
     // none is being added.
@@ -912,7 +912,7 @@ describe('agency ingest routes', () => {
       mocks.config.agency.rosterReplaceEnabled = true;
       mocks.supersedeRoster.mockRejectedValue(
         new RosterSupersedeError(
-          'Could not reach the core service to change this roster (4 attempts): core returned 503',
+          'Could not reach the dialer runtime to change this roster (4 attempts): the handler returned 503',
           0,
           'failed',
           undefined,
@@ -982,7 +982,7 @@ describe('agency ingest routes', () => {
       // rather than an explanation of our deployment aimed at an operator.
       mocks.config.agency.rosterReplaceEnabled = true;
       mocks.supersedeRoster.mockRejectedValue(
-        new RosterSupersedeError('core has no such route', 404, 'unsupported'),
+        new RosterSupersedeError('the handler has no such route', 404, 'unsupported'),
       );
       const app = await buildApp();
       const res = await app.inject({
@@ -1058,7 +1058,7 @@ describe('agency ingest routes', () => {
         job({
           status: 'failed',
           error_code: 'roster_incomplete',
-          error_message: 'Core is missing chunks 7, 11. The import did not complete; upload the file again.',
+          error_message: 'The roster is missing chunks 7, 11. The import did not complete; upload the file again.',
         }),
       );
       const app = await buildApp();

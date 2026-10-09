@@ -96,7 +96,7 @@ describe('isUnsafeCorePath', () => {
     ];
     for (const path of accepted) {
       expect(isUnsafeCorePath(path)).toBe(false);
-      const url = new URL(`https://core.test/api/v1${path}`);
+      const url = new URL(`https://server.test/api/v1${path}`);
       expect(url.pathname + url.search).toBe(`/api/v1${path}`);
     }
   });
@@ -125,7 +125,7 @@ describe('the wire → param → interpolated path chain', () => {
     return built;
   }
 
-  const CORE = 'https://core.test/api/v1';
+  const CORE = 'https://server.test/api/v1';
 
   it('refuses the double-encoded traversal that reaches another collection', async () => {
     const built = await pathBuiltFor('/proxy/calls/x%2F%252e%252e%2F%252e%252e%2Fknowledge-bases/recording');

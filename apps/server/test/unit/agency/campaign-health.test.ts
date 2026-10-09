@@ -196,7 +196,7 @@ describe('evidence, and the refusals', () => {
     // Without `limit > 0` in `saturated()`, a degraded settings read plus ANY
     // known non-zero in-use count satisfies `in_use >= 0` and the strip reports
     // `concurrency_saturated` — a diagnosis whose own header says has no action
-    // (D10: no setter, contact support) — for a ceiling that was never
+    // (no tenant-facing setter, contact support) — for a ceiling that was never
     // measured, let alone reached. Deleting `limit > 0` from `saturated()` must
     // turn this test red.
     const { stall, other_stalls } = campaignHealth(healthy({

@@ -227,7 +227,7 @@ describe('AgencyCampaignAgentRepository (integration)', () => {
       expect(record.assigned_by).toBeNull();
     });
 
-    it('accepts a campaign id core knows and master does not', async () => {
+    it('accepts a campaign id with no agency_campaigns row (no FK)', async () => {
       await expect(repo.assign(assignInput({ campaign_id: randomUUID() }))).resolves.toBeTruthy();
     });
   });
@@ -241,7 +241,7 @@ describe('AgencyCampaignAgentRepository (integration)', () => {
      * their morning row, so an ordinary handover destroyed a supervisor's earlier
      * decision and the agent's landing page could only ever name one campaign.
      *
-     * Being live on one campaign at a time is unchanged — that is core's session
+     * Being live on one campaign at a time is unchanged — that is the session
      * index, not this table.
      */
     it('KEEPS both: two rows, both active', async () => {

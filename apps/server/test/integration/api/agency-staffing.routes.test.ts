@@ -532,7 +532,7 @@ describe('agency staffing routes (integration)', () => {
 
     it('reports campaign_name: null when the internal call THROWS', async () => {
       await seedAssignment();
-      mocks.proxyToCore.mockRejectedValue(new Error('core unreachable'));
+      mocks.proxyToCore.mockRejectedValue(new Error('handler unreachable'));
 
       const res = await app.inject({
         method: 'GET',
@@ -669,7 +669,7 @@ describe('agency staffing routes (integration)', () => {
 
     it('nulls the labels when the internal call THROWS', async () => {
       await seedAssignment({ campaignId: CAMPAIGN });
-      mocks.proxyToCore.mockRejectedValue(new Error('core unreachable'));
+      mocks.proxyToCore.mockRejectedValue(new Error('handler unreachable'));
 
       const res = await app.inject({
         method: 'GET',
