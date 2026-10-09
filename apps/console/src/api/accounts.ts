@@ -32,7 +32,6 @@ export async function listMyAccounts(tenantId: string): Promise<TenantAccount[]>
   return res.accounts;
 }
 
-// PORT NOTE (magick-agency): cusui's `createAccount`, `updateAccount` and
-// `deleteAccount` (`POST|PUT|DELETE /accounts`, the AccountsPage) are not ported:
-// account administration is a super-admin act in agency (plan §3.4), and the
+// There is no `createAccount`, `updateAccount` or
+// `deleteAccount` (`POST|PUT|DELETE /accounts`): account administration is a super-admin act in agency, and the
 // contract has no `account.create|update|delete` permission.

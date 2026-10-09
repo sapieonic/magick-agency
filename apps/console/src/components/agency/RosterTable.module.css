@@ -420,7 +420,7 @@
   color: var(--success, #16a34a);
 }
 
-/* `no_dials` is gone — core cannot produce a zero-dial row. See `rosterFlag`. */
+/* `no_dials` is gone — the API cannot produce a zero-dial row. See `rosterFlag`. */
 .flag[data-kind='thin'] {
   color: var(--text-muted);
 }

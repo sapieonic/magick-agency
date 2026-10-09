@@ -28,7 +28,7 @@ import styles from './AgentPerformancePage.module.css';
  * For exactly the reason `/station` and `/dialer` are. An `agent` is hierarchy
  * level 5 and inherits no navigation: `AppLayout`'s nav floors at `viewer` and
  * `AgencyLayout`'s entries do too, so either shell would render its chrome around
- * nothing — §A.1's *"that is not navigation, it is noise"*. The route therefore
+ * nothing's *"that is not navigation, it is noise"*. The route therefore
  * sits beside `/dialer` in `App.tsx`, gated identically (`RequireAuth` +
  * `RequireCapability capability="agency"` + `RequireFlag
  * flag="agency_dialer_enabled"`, both entitlements default off) and adds nothing
@@ -49,7 +49,7 @@ import styles from './AgentPerformancePage.module.css';
  * ── The account-resolution trap, now guarded in ONE place ──────────────────
  * An `agent` is below `account.read`'s `viewer` floor, so `GET /accounts` 403s
  * for them; and a request sent before `TenantContext` resolves carries no
- * `X-Account-Id`, which core answers with a 400 that has nothing to do with the
+ * `X-Account-Id`, which the API answers with a 400 that has nothing to do with the
  * data. So every read waits for BOTH ids — and "resolution settled but there is
  * no account" is an ERROR STATE rather than a permanent spinner, because with no
  * account nothing is in flight and nothing will fire again.
@@ -78,7 +78,7 @@ import styles from './AgentPerformancePage.module.css';
  *
  * ── The way out is a link, and here that is safe ───────────────────────────
  * The station has no escape route on purpose: clicking away drops the station
- * socket, and for up to 45 seconds after that core still believes the agent is in
+ * socket, and for up to 45 seconds after that the API still believes the agent is in
  * the dialable pool, so a reservation landing in that window bridges a customer
  * to nobody (`agencyStationExit.ts`). **This page holds no socket and no
  * session.** So a link back to `/dialer` is ordinary navigation rather than a
@@ -179,7 +179,7 @@ function AgentPerformanceWorkspace() {
       bucket_count: todayState.stats.buckets.length,
       // No wiring today distinguishes a station-menu / agent-home arrival from a
       // direct one (see `agencyStationExit.ts`'s `STATION_HISTORY_LINKS`, which
-      // carries no query param and is pinned verbatim by
+      // carries no query param and is pinned exactly by
       // `AgentConsolePage.stationExit.test.tsx`). Tagging that link would be a
       // safe, additive change but is left for a follow-up rather than bundled
       // with an analytics-only pass.
@@ -265,12 +265,12 @@ function AgentPerformanceWorkspace() {
  *
  * ── One mapping from status to meaning, not two ────────────────────────────
  * `assignmentEntry` already owns "can this campaign still be entered, and what
- * should be said about it if not". It is reused verbatim rather than re-derived:
- * its shape is an allow-list of BLOCKS, so a lifecycle state core adds is treated
+ * should be said about it if not". It is reused as-is rather than re-derived:
+ * its shape is an allow-list of BLOCKS, so a lifecycle state the API adds is treated
  * as ordinary instead of as finished, and a second copy here is the one that goes
  * stale. `AgencyCampaignStatusBadge` keeps the other half of that property — it
- * renders an unrecognised status verbatim, which is what lets master forward
- * core's lifecycle without this client mirroring it.
+ * renders an unrecognised status as-is, which is what lets the server forward
+ * the API's lifecycle without this client mirroring it.
  */
 function StaffingHistory({ state }: { state: HistoryState }) {
   if (state.status === 'loading') {
@@ -343,7 +343,7 @@ function StaffingHistory({ state }: { state: HistoryState }) {
       {/*
         The other axis, on its own line and in its own words. "Assignments"
         rather than "campaigns" is the whole reason it is not in the chain above:
-        an agent can hold two stints on one campaign, and master's `active` flag
+        an agent can hold two stints on one campaign, and the server's `active` flag
         is per assignment row.
       */}
       {summary.campaigns > 0 && (
@@ -387,8 +387,8 @@ function HistoryRow({ entry }: { entry: AgencyStaffingHistoryEntry }) {
         </span>
       </div>
       {/*
-        `active` is master's own flag rather than `unassigned_at === null`.
-        Master owns the staffing table and may end an assignment in ways this
+        `active` is the server's own flag rather than `unassigned_at === null`.
+        The server owns the staffing table and may end an assignment in ways this
         client has no business modelling; two sources for one boolean is two
         answers.
       */}

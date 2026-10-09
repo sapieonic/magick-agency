@@ -11,8 +11,8 @@ import type {
 } from '../../types/agency';
 
 /**
- * The State Rail — §A.3's "single most important component in the product", and
- * §A.13.1's frame bindings at the point they are **consumed**.
+ * The State Rail's "single most important component in the product", and
+ *'s frame bindings at the point they are **consumed**.
  *
  * The rail's own rule is what most of this file protects: **the rail is the call's
  * state, and only an authoritative frame moves it.** Two Phase 2 additions push
@@ -20,9 +20,9 @@ import type {
  * the hook, because the hook can only supply a value — whether it lands in the
  * label (a state claim) or the sub-text (a note about it) is decided here:
  *
- *  - the §A.13.8 "no `agent_state` follows" line, which must NOT read as a state;
+ *  - the "no `agent_state` follows" line, which must NOT read as a state;
  *  - a wrap-up with no frame behind it, which must render no clock at all rather
- *    than an empty track that will never move (§A.13.5.1).
+ *    than an empty track that will never move.
  */
 
 const BRIDGED_AT = '2026-08-11T10:00:04.000Z';
@@ -48,7 +48,7 @@ const liveBridged: LiveAttempt = {
 // `bridgedAt: null` IS "still ringing" — the rail has always derived it that way,
 // and it is now the only discriminator `LiveAttempt` carries. The dead
 // `secondsRemaining`/`ringing` fields that used to sit here came from a
-// `countdown` frame core emits from nowhere.
+// `countdown` frame the server emits from nowhere.
 const liveRinging: LiveAttempt = {
   attempt: ATTEMPT,
   bridgedAt: null,
@@ -121,14 +121,14 @@ afterEach(() => {
 });
 
 describe('describeRail — the waiting line is a note, not a state', () => {
-  it('puts §A.13.8s line in the sub-text and leaves the state label alone', () => {
+  it('puts line in the sub-text and leaves the state label alone', () => {
     const withoutLine = describeRail(railBase());
     const withLine = describeRail(railBase({ waitingForDialer: WAITING }));
 
     /**
      * The load-bearing half. Rendering the copy as the **label** would assert a
      * transition no authority delivered — the agent is still in wrap-up, and
-     * `agent_state` is the only thing that may say otherwise (§A.13.1). An
+     * `agent_state` is the only thing that may say otherwise. An
      * implementation that swaps the label passes any assertion that merely looks
      * for the string somewhere in the rail, which is why this names the slot.
      */
@@ -160,7 +160,7 @@ describe('describeRail — the waiting line is a note, not a state', () => {
   });
 
   it('falls back to the release reason when there is no line', () => {
-    // Proves the slot is shared rather than reserved: the §A.8.4 sub-text is what
+    // Proves the slot is shared rather than reserved: the sub-text is what
     // occupies it normally, so a test asserting only the waiting case could not
     // tell "always the line" from "the line when present".
     expect(describeRail(railBase()).detail).not.toBeNull();
@@ -199,16 +199,16 @@ describe('StateRail — what reaches the DOM', () => {
 
   it('renders no clock, and no empty track, when no wrap-up frame arrived', () => {
     /**
-     * §A.13.8's "no wrap-up frame at all" row at the point of consumption: the
+     *'s "no wrap-up frame at all" row at the point of consumption: the
      * state is `wrapup`, the anchor is null, and the rail must show "Wrap-up" with
      * **no bar, no digits and no waiting treatment**. `WrapupTimer` has its own
      * tests for the held panel, but nothing there can see the rail rendering it
      * unconditionally — and a track that will never move is exactly the
-     * forever-empty progress indicator §A.13.5.1 forbids.
+     * forever-empty progress indicator forbids.
      */
     renderRail({ wrapup: null });
 
-    // The words still come from the §A.8.4 reason mapping, because a `released`
+    // The words still come from the reason mapping, because a `released`
     // did arrive — it is the wrap-up *frame* that did not. Asserted rather than
     // assumed: an earlier draft of this test expected a bare "Wrap-up" plus a null
     // sub-text here, and was wrong about the product, not the other way round.
@@ -260,7 +260,7 @@ describe('StateRail — what reaches the DOM', () => {
 
   it('anchors the talk timer to bridged_at, and shows none while still ringing', () => {
     // 12s after the server's bridge instant, through the corrected clock — not a
-    // restart at 00:00 and not client receipt time (§A.13.1).
+    // restart at 00:00 and not client receipt time.
     renderRail({ agentState: 'on_call', live: liveBridged, release: null, wrapup: null });
     expect(screen.getByTestId('talk-timer').textContent).toBe('0:12');
 
@@ -273,7 +273,7 @@ describe('StateRail — what reaches the DOM', () => {
   });
 
   /**
-   * ── `AD-P2-U-01` criterion (a), as an injectivity property ────────────────────
+   * ── The state-rail distinctness requirement, as an injectivity property ────────────────────
    *
    * "Every agent state has an unambiguous visual treatment" is not the same claim as
    * "every agent state renders something", and the gap between them is where this
@@ -283,12 +283,12 @@ describe('StateRail — what reaches the DOM', () => {
    *
    * So the six states are rendered together and their treatments compared **against
    * each other**. The triple is `(data-tone, data-hatched, label)` — the three
-   * channels the rail actually paints, per §A.11's rule that colour never carries
+   * channels the rail actually paints, 's rule that colour never carries
    * state alone — read off the DOM rather than from `describeRail`, because
    * `data-hatched` is the component's and not the table's.
    *
    * Two collisions are live in this table and both are load-bearing:
-   *  - `offline` and `break` share `neutral` (§A.3 gives both `--bg-tertiary`), so the
+   *  - `offline` and `break` share `neutral` ( gives both `--bg-tertiary`), so the
    *    hatch is the only tint-independent separator;
    *  - `reserved` and `wrapup` share `warning`, so the label is.
    * Each is asserted explicitly below, so removing either second channel reddens a
@@ -373,7 +373,7 @@ describe('StateRail — what reaches the DOM', () => {
         wrapup: null,
       });
 
-      // The collision is real and intended (§A.3's table), which is what makes the
+      // The collision is real and intended ('s table), which is what makes the
       // second channel load-bearing rather than decorative.
       expect(onBreak.tone).toBe(offline.tone);
       expect(onBreak.hatched).toBe('true');
@@ -406,11 +406,11 @@ describe('StateRail — what reaches the DOM', () => {
 
     /**
      * The window this criterion actually lost, and the one the enumeration above
-     * cannot see: `released` clears `live` and core's *next* frame is what says
+     * cannot see: `released` clears `live` and the server's *next* frame is what says
      * whether a wrap-up follows, so between the two `agentState` is still `on_call`
      * with nothing live behind it. That fell through to the `Offline` fallback — an
      * agent who had just finished talking to a customer told they had not started
-     * their shift, in the one region §A.3 calls the most important on the screen.
+     * their shift, in the one region calls the most important on the screen.
      */
     it('never reads as Offline in the window between `released` and the next state frame', () => {
       renderRail({ agentState: 'on_call', live: null, release: RELEASE, wrapup: null });
@@ -425,7 +425,7 @@ describe('StateRail — what reaches the DOM', () => {
       cleanup();
 
       // And with no release either — a `ready` reporting `on_call` with no attempt —
-      // it is still core's word for the state and still not `Offline`.
+      // it is still the server's word for the state and still not `Offline`.
       renderRail({ agentState: 'on_call', live: null, release: null, wrapup: null });
       expect(screen.getByTestId('rail-label').textContent).toBe('On call');
     });
@@ -441,7 +441,7 @@ describe('StateRail — what reaches the DOM', () => {
     const rail = screen.getByRole('status');
 
     // A second channel, not a decoration: colour alone cannot separate "I have
-    // stepped away" from "I have not started" (§A.3, §A.11).
+    // stepped away" from "I have not started".
     expect(rail.getAttribute('data-hatched')).toBe('true');
     expect(screen.getByTestId('rail-label').textContent).toBe('On break — Lunch');
 
@@ -450,16 +450,15 @@ describe('StateRail — what reaches the DOM', () => {
     expect(screen.getByRole('status').getAttribute('data-hatched')).toBeNull();
   });
   /**
-   * §A.8.2's third row and §A.8.3's reclaim — the two states an agent can act
+   *'s third row and's reclaim — the two states an agent can act
    * their way out of, and the two that shipped as copy with no control at all.
    *
-   * That absence is the reason core's `4409` could not safely be sent: the console
+   * That absence is the reason the server's `4409` could not safely be sent: the console
    * would set `superseded`, release the microphone, render "Your station moved to
-   * another window" and offer nothing, so the only recovery was a page reload
-   * (`86d44papk`).
+   * another window" and offer nothing, so the only recovery was a page reload.
    */
   describe('the way back out of a lost station', () => {
-    it('states the disconnected case in §A.8.2’s words, in the danger tone', () => {
+    it('states the disconnected case in’s words, in the danger tone', () => {
       renderRail({ connection: 'disconnected' });
       expect(screen.getByTestId('rail-label').textContent).toBe(
         'Disconnected — you are not receiving calls',
@@ -475,7 +474,7 @@ describe('StateRail — what reaches the DOM', () => {
     });
 
     it('words the same handler as a reclaim when another window took the station', () => {
-      // One act — reclaiming IS attaching, because core gives the station to
+      // One act — reclaiming IS attaching, because the server gives the station to
       // whoever attaches last — but the agent's question is different, so the
       // label is too.
       const onReconnect = vi.fn();
@@ -507,8 +506,8 @@ describe('StateRail — what reaches the DOM', () => {
       /**
        * The `disconnected` arm outranks the live-attempt arms, so an agent four
        * minutes into a conversation was told "you are not receiving calls" —
-       * §A.8.2's copy, written for an idle agent — while a talk timer counted up
-       * beside it. §A.8.1 owns the words for losing the connection during a call.
+       *'s copy, written for an idle agent — while a talk timer counted up
+       * beside it. owns the words for losing the connection during a call.
        */
       renderRail({ connection: 'disconnected', live: liveBridged, release: null, wrapup: null });
       expect(screen.getByTestId('rail-label').textContent).toBe('Connection lost');
@@ -534,7 +533,7 @@ describe('StateRail — what reaches the DOM', () => {
     });
 
     it('tells the agent it is two steps, because it is two steps', () => {
-      // Core released the agent when the socket went, so `ready` reports them
+      // The server released the agent when the socket went, so `ready` reports them
       // `offline` after a successful reconnect. "Reconnect to start taking calls
       // again" promised one press and left agents out of the pool.
       renderRail({ connection: 'disconnected' });
@@ -546,8 +545,7 @@ describe('StateRail — what reaches the DOM', () => {
 });
 
 /**
- * NEW (magick-agency, CONTRACT-DIFF §1): core's `intervals.deferred_hangup_ms`,
- * which cusui's type lacked. Rendered as an upper bound while a live call is
+ * The server's `intervals.deferred_hangup_ms`, rendered as an upper bound while a live call is
  * reconnecting — never a countdown (see the `disconnected` arm's note).
  */
 describe('the reconnect window', () => {
@@ -561,7 +559,7 @@ describe('the reconnect window', () => {
     expect(rail.detail).not.toMatch(/\d+s left|remaining/);
   });
 
-  it('keeps cusui’s sentence with no call, or without the value', () => {
+  it('keeps the plain sentence with no call, or without the value', () => {
     const plain = 'Stay on the line — we’re reconnecting you.';
     expect(
       describeRail(railBase({ connection: 'reconnecting', live: null, release: null, wrapup: null, deferredHangupMs: 30_000 })).detail,

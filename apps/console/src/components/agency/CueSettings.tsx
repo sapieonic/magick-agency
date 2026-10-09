@@ -4,11 +4,11 @@ import type { CuePrefs } from '../../utils/agencyCuePrefs';
 import styles from './CueSettings.module.css';
 
 /**
- * `Sound & flash ▾` — the settings surface for the cue preferences (`AD-P2-U-07`).
+ * `Sound & flash ▾` — the settings surface for the cue preferences.
  *
  * ── Why this had to exist ─────────────────────────────────────────────────────
  * `escalatedVisualActive` has read a volume and a `ConnectFlashSetting` since
- * `AD-P2-U-02` and **nothing set either.** So the visual escalation was reachable
+ * an earlier change and **nothing set either.** So the visual escalation was reachable
  * only by accident — an `AudioContext` the browser happened to refuse — and a deaf
  * agent had no way to turn on the one channel built for them. A preference that is
  * read and never written is not a feature with a missing UI; it is a feature that
@@ -16,13 +16,13 @@ import styles from './CueSettings.module.css';
  *
  * ── The label discloses nothing ───────────────────────────────────────────────
  * "Sound & flash", filed under display, alongside no explanation of who might want
- * it. §A.4.3.1 is explicit: an agent who needs *Always* sets it in two clicks
+ * it. is explicit: an agent who needs *Always* sets it in two clicks
  * **without telling their employer anything about themselves.** Calling this
  * "Accessibility" would make using it a disclosure, and an agent who does not want
  * to disclose would go without the channel instead.
  *
  * ── Keyboard first, because the console has a no-mouse requirement ────────────
- * §A.13.9 applies to a new popover exactly as it applies to `Break`: the trigger is
+ * applies to a new popover exactly as it applies to `Break`: the trigger is
  * a real button in the tab order, `Enter`/`Space`/`ArrowDown` open it from the
  * keyboard, `Esc` closes it and **returns focus to the trigger** (a popover that
  * drops focus to `<body>` strands a keyboard agent at the top of the document), and
@@ -82,7 +82,7 @@ export function CueSettings({ prefs, onChange }: CueSettingsProps) {
 
   const close = useCallback((returnFocus: boolean) => {
     setOpen(false);
-    // §A.13.9: every transient surface returns focus to the control that opened it.
+    // every transient surface returns focus to the control that opened it.
     if (returnFocus) triggerRef.current?.focus();
   }, []);
 
@@ -93,7 +93,7 @@ export function CueSettings({ prefs, onChange }: CueSettingsProps) {
     firstFieldRef.current?.focus();
   }, [open]);
 
-  // Viewport clamping by measurement, per §A.13.10 — pure-CSS placement clips at
+  // Viewport clamping by measurement,  — pure-CSS placement clips at
   // the edge of the header, which is exactly where this popover lives.
   useEffect(() => {
     if (!open) return undefined;
@@ -237,7 +237,7 @@ export function CueSettings({ prefs, onChange }: CueSettingsProps) {
               {prefs.volume === 0 ? 'Off' : `${prefs.volume}%`}
             </output>
             {/*
-              0% is a permitted setting, not an error (§A.4.3.1) — an agent may work
+              0% is a permitted setting, not an error — an agent may work
               in silence and the console's job is to make that safe rather than to
               argue with them. What it must not do is let them reach silence without
               knowing the flash is what is left.

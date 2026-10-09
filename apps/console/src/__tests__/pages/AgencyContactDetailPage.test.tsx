@@ -4,7 +4,7 @@ import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import type { AgencyAttempt, AgencyContactDetail } from '../../types/agency-spine';
 
 /**
- * The per-contact drill-down (MAG-159) — the "why was this number called four
+ * The per-contact drill-down — the "why was this number called four
  * times" view.
  *
  * Two things are pinned here that a plausible implementation gets wrong:
@@ -12,7 +12,7 @@ import type { AgencyAttempt, AgencyContactDetail } from '../../types/agency-spin
  * 1. **`context` is filtered through the campaign's own display rules.** The
  *    operator marks columns not-for-screen for the AGENT floor; this screen has
  *    a wider audience, so it must honour the same list rather than spreading
- *    the row. UX spec §E.3's warning — "a field in `context` is a field on an
+ *    the row. The design warning — "a field in `context` is a field on an
  *    agent's screen the moment anyone changes the render rules" — is about
  *    exactly this moment.
  *
@@ -272,7 +272,7 @@ describe('the agent is named', () => {
   });
 
   it('falls back to the id rather than claiming there was no agent', async () => {
-    // Master could not resolve the name (identity store degraded). The attempt
+    // The server could not resolve the name (identity store degraded). The attempt
     // still HAD an agent, so "no agent" would be false — the id is a real, if
     // unreadable, answer.
     mocks.getCampaignAttempts.mockResolvedValue({
@@ -322,7 +322,7 @@ describe('the recording link stays inside the agency workspace', () => {
    * The destination is now the agency's own call detail, gated on `agency` and
    * floored at `agency.supervise` — which is what this page already requires. So
    * there is no such viewer, the branch is dead, and its removal is the fix
-   * rather than a regression (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b).
+   * rather than a regression.
    */
   it('links without a calls.dialer capability, because the destination does not need one', async () => {
     mocks.isEnabled.mockImplementation((capability: string) => capability !== 'calls.dialer');
@@ -343,7 +343,7 @@ describe('the recording link stays inside the agency workspace', () => {
   });
 
   it('fails open — an unresolved governance map still offers the link', async () => {
-    // Matches `RequireCapability`'s own posture: master's 403 is the real
+    // Matches `RequireCapability`'s own posture: the server's 403 is the real
     // enforcement, so an empty map must not hide a working link.
     mocks.isEnabled.mockReturnValue(true);
     renderPage();

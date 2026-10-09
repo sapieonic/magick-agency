@@ -185,8 +185,8 @@ describe('activityDetailSummary', () => {
 });
 
 /**
- * The vocabulary as master serves it, in miniature. Nothing here is a copy of
- * master's real list — that is exactly what this rework removed — so the labels
+ * The vocabulary as the API serves it, in miniature. Nothing here is a copy of
+ * the API's real list — that is exactly what this rework removed — so the labels
  * are deliberately not the production ones: what is under test is that the
  * rendered copy comes from the RESPONSE, not from anything in this repository.
  */
@@ -214,7 +214,7 @@ describe('activityActionLabel', () => {
   });
 
   /**
-   * The case an older master produces. Every row falls back to its raw name
+   * The case an older server produces. Every row falls back to its raw name
    * rather than rendering blank — which is why the label resolver is separate
    * from the filter, and why the filter is the only thing that disappears.
    */

@@ -17,25 +17,25 @@ import { LoadingSpinner } from '../common/LoadingSpinner';
  *
  * ── Capabilities are the signal, and the `calls` NODE cannot be part of it ──
  * Of the four gating layers, governance capabilities are the one that answers
- * "what does this tenant have": RBAC answers "who is this person", core's
+ * "what does this tenant have": RBAC answers "who is this person", the API's
  * feature flags answer "is the code switched on", and route guards are the
  * consequence rather than the input.
  *
  * The obvious predicate — `agency && !calls` — cannot work, and it is worth
  * writing down why rather than letting the next reader rediscover it. `calls` is
- * `mandatory: true` in master's catalog (`src/governance/catalog.ts:35`): the
+ * `mandatory: true` in the governance catalog: the
  * resolver forces it to `true` for every tenant and an override cannot turn it
  * off. So `calls === false` is unreachable and an `&& !calls` clause is an
  * `&& false`. The same fact is why `agency` is a ROOT capability rather than a
- * child of `calls` (§7 — "`calls` is `mandatory:true` and could never gate it").
+ * child of `calls` (`calls` is `mandatory:true` and could never gate it).
  *
  * That is a fact about one NODE, and an earlier revision of this comment turned
  * it into a rule about the whole `calls` SUBTREE. It does not follow. Nothing
  * under `calls` is a source of agency-ness — but the other half of this test is
  * proving AI-ness, and for that the subtree is evidence like any other:
- * `calls.dialer` is `default: false` and disableable (`catalog.ts:38`), so a
+ * `calls.dialer` is `default: false` and disableable, so a
  * `true` there is not an always-on platform fact, it is an operator having
- * granted the Softphone — which §7b places squarely in the AI zone. Every
+ * granted the Softphone — which is squarely a sign of the voice-AI product. Every
  * non-mandatory key below is judged on its own catalog row, not on its ancestry.
  *
  * ── What counts as a primary-app product, key by key ───────────────────────
@@ -67,7 +67,7 @@ import { LoadingSpinner } from '../common/LoadingSpinner';
  *    mandatory node. Every tenant has them on and no operator turns them off to
  *    describe a product boundary, so requiring `false` would only stop this
  *    feature from ever firing.
- *  - `calls.dialer.analytics` — master's resolver gates a child on its entire
+ *  - `calls.dialer.analytics` — the API's resolver gates a child on its entire
  *    parent chain, so it cannot be `true` unless `calls.dialer` is, which is
  *    tested. Redundant, not excluded.
  *  - `messaging.*`, `agency.*` — same parent gating, under keys already tested or
@@ -85,7 +85,7 @@ import { LoadingSpinner } from '../common/LoadingSpinner';
  * wrong one strands a paying customer), but read it for what it is: this infers
  * "agency-only" from the ABSENCE of everything else, which is not the question
  * "what did we sell this tenant". Until a tenant carries a positive marker of its
- * own — a provisioning preset, or a tenant attribute master sets when it sells
+ * own — a provisioning preset, or a tenant attribute the API sets when it sells
  * the agency offering alone — this feature fires for tenants an operator has
  * explicitly stripped, and not for most agency-only tenants. It is worth having
  * anyway (it is free when it does fire, and harmless when it does not), but do
@@ -102,7 +102,7 @@ import { LoadingSpinner } from '../common/LoadingSpinner';
  *     below tests `=== true` / `=== false` rather than truthiness, so an absent
  *     key is never read as "off" and the predicate answers `false`. → `/app`.
  *  3. **Both products** — `false`. → `/app`.
- *  4. **The agency flag is off in core** — `false`, even with the capability on.
+ *  4. **The agency flag is off in the API** — `false`, even with the capability on.
  *     `/agency` is gated on `agency_dialer_enabled` as well, so redirecting on
  *     the capability alone would land the reader on a plan-gate refusal with no
  *     shell around it — stranded, just one layer further in. `useFeatureFlags`
@@ -163,14 +163,14 @@ import { LoadingSpinner } from '../common/LoadingSpinner';
  *
  * ── This is a ROUTING decision, not an enforcement one ─────────────────────
  * Nothing here gates access. `RequireCapability` still fails open on purpose and
- * must keep doing so (§7); master's 403 is the real enforcement. Everything this
+ * must keep doing so; the API's 403 is the real enforcement. Everything this
  * component can get wrong is a matter of which of two reachable pages somebody
  * lands on first.
  *
  * ── Why the root and not `/app`'s index route ──────────────────────────────
  * Putting it on `<Route index>` under `/app` would have killed the deliberate
  * exit. `AgencyLayout` links back to `/app` for the platform zone — team,
- * credits, invoices, settings, the audit log — and §7b requires that link to
+ * credits, invoices, settings, the audit log — and that link has to
  * survive: "a pure-agency supervisor legitimately administers in `/app` and
  * operates in `/agency`". A redirect on `/app` would bounce that exit straight
  * back into `/agency`, leaving the platform zone unreachable for exactly the
@@ -180,11 +180,10 @@ import { LoadingSpinner } from '../common/LoadingSpinner';
  */
 
 /*
- * PORT NOTE (magick-agency): cusui's `PRIMARY_APP_PRODUCTS` and
- * `isAgencyOnlyTenant` are removed. They answered "does this tenant hold the
- * agency capability and NONE of the AI product's" from master's governance map;
+ * There is no `PRIMARY_APP_PRODUCTS` or `isAgencyOnlyTenant` here. Such a check would answer "does this tenant hold the
+ * agency capability and NONE of the AI product's" from the governance map;
  * in Magick Agency every tenant is agency-only by construction (there is no AI
- * product, and the section-level `agency` gate is always on, plan §3.2). So the
+ * product, and the section-level `agency` gate is always on). So the
  * predicate reduces to the dialer flag alone, below. The `/app` shell this falls
  * back to is the platform zone (team, notifications, call summaries) — see
  * `pages/AppHomeRedirect.tsx`, `/app`'s index.

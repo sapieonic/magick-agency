@@ -1,4 +1,4 @@
-/* No new tokens (§1). Red = a call is being ended, per the feature-wide mapping. */
+/* No new tokens. Red = a call is being ended, per the feature-wide mapping. */
 
 .wrap {
   display: flex;
@@ -10,7 +10,7 @@
 .button {
   position: relative;
   overflow: hidden;
-  /* 56px per §A.7.1. Geometry is frozen — this height never changes between
+  /* 56px  Geometry is frozen — this height never changes between
      phases, because a control that moves 12px is a misclick and a misclick here
      hangs up on a human being. */
   height: 56px;

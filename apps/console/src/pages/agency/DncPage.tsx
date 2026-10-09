@@ -26,7 +26,7 @@ const PAGE_SIZE = 50;
  *
  * ── Why this is not a boolean ────────────────────────────────────────────────
  * It used to be `isEnforced`, rendering everything narrower than tenant-wide as
- * "Not enforced". That was true while master only ever wrote tenant-wide rows
+ * "Not enforced". That was true while the server only ever wrote tenant-wide rows
  * from a mark. Campaign-scoped marks make it false, and false in the worst
  * direction: it prints "this does not stop any call" beside the number of a
  * customer who asked not to be called, next to a suppression that is live.
@@ -34,17 +34,17 @@ const PAGE_SIZE = 50;
  * The two enforcement points are separate and only the first is workspace-wide:
  *
  *  1. **Dial time.** `pre-dial-gates.ts` asks `DncRegistry.check(tenantId, …)`,
- *     which reads the flat `dnc:{tenantId}` Redis set. Master publishes into it
+ *     which reads the flat `dnc:{tenantId}` Redis set. The server publishes into it
  *     from `listTenantWidePhones` — `account_id IS NULL AND campaign_id IS NULL`
- *     (`dnc.repository.ts:308`). So ONLY a tenant-wide row is consulted here.
- *  2. **Roster import.** Master's ingest calls `dncRepository.findSuppressed`,
+ *     (`dnc.repository.ts`). So ONLY a tenant-wide row is consulted here.
+ *  2. **Roster import.** The server's ingest calls `dncRepository.findSuppressed`,
  *     whose predicate is `(account_id IS NULL OR account_id = $3) AND
  *     (campaign_id IS NULL OR campaign_id = $4)`. A scoped row therefore DOES
  *     drop the number — from that campaign's imports, or from that account's
  *     campaigns' imports. This is the point the old copy denied outright.
  *
  * A campaign-scoped row additionally has its campaign's existing roster rows
- * suppressed at the moment an agent marks it (core's `suppressByPhone`), but
+ * suppressed at the moment an agent marks it (the API's `suppressByPhone`), but
  * that is a property of the mark, not of the row — the same row added through
  * the public API (`dnc.routes.ts` accepts `campaign_id`) gets no such sweep. So
  * the cell and its tooltip claim the import-time guarantee, which every row of
@@ -54,19 +54,19 @@ const PAGE_SIZE = 50;
  * a "compliance view shows only enforced entries" reading would suggest, and
  * deliberately so. There is no other surface for them: filtering would leave a
  * scoped row invisible AND unremovable — reinstating the missing-correction-path
- * gap this page exists to close (`MAG-116`) — and would hide the case where a
+ * gap this page exists to close — and would hide the case where a
  * number is suppressed less widely than an operator assumes, which is exactly
- * the failure `MAG-110` says an operator must be able to notice.
+ * the failure an operator must be able to notice.
  *
  * Naming the campaign is deliberately NOT attempted here: `dnc_entries` has no
- * FK to `agency_campaigns` (it lives in core's database), so it is a lookup that
+ * FK to `agency_campaigns` (it lives in the API's database), so it is a lookup that
  * can fail, and a row whose campaign cannot be named must still show its scope.
- * Left to `MAG-129`.
+ * Left as a follow-up.
  */
 type DncScopeKind = 'tenant' | 'campaign' | 'account';
 
 function scopeOf(entry: DncEntry): DncScopeKind {
-  // Campaign first: it is the narrowest, and master's own lookup treats a
+  // Campaign first: it is the narrowest, and the server's own lookup treats a
   // campaign_id as the deciding column when both are set.
   if (entry.campaign_id !== null) return 'campaign';
   if (entry.account_id !== null) return 'account';
@@ -88,7 +88,7 @@ const SCOPE_LABEL: Record<DncScopeKind, string> = {
 const SCOPE_TOOLTIP: Record<DncScopeKind, string> = {
   // "Enforced everywhere" is what this said, and it was the widest claim on the
   // page — read as the platform honouring the number, which it does not. DNC is
-  // an agency-dialing suppression list (Q2): the dial-time gate lives in core's
+  // an agency-dialing suppression list (Q2): the dial-time gate lives in the API's
   // `agency/pre-dial-gates.ts` and nothing in AI dispatch consults it. The
   // widest true claim is every agency campaign in the workspace.
   tenant:
@@ -110,10 +110,10 @@ const SCOPE_TOOLTIP: Record<DncScopeKind, string> = {
 /**
  * Where the entry came from — narrowed for `regulator` (Q2).
  *
- * `types/dnc.ts` mirrors master's shapes and labels each source generically;
+ * `types/dnc.ts` mirrors the server's shapes and labels each source generically;
  * "Regulator list" beside a suppression on a platform screen reads as a
  * regulatory record the platform honours everywhere. It is not one. The stored
- * value is untouched — master still writes and filters `source: 'regulator'` —
+ * value is untouched — the server still writes and filters `source: 'regulator'` —
  * only the words it renders as change, and only this one entry needed it.
  */
 const SOURCE_LABEL: Record<DncSource, string> = {
@@ -155,7 +155,7 @@ export function DncPage() {
    *
    * A NULL `added_by` renders as an explicit "Unattributed" rather than an empty
    * cell — an empty cell reads as a rendering fault, and the distinction matters
-   * because `MAG-107` means older rows genuinely lost their attribution.
+   * because older rows genuinely lost their attribution.
    */
   const { members } = useTeam();
   const nameById = useMemo(() => {
@@ -205,7 +205,7 @@ export function DncPage() {
     setAdding(true);
     try {
       // `account_id` is deliberately not sent: an account-scoped row never
-      // enters core's flat `dnc:{tenantId}` Redis set, so it would appear on
+      // enters the API's flat `dnc:{tenantId}` Redis set, so it would appear on
       // this list while failing to suppress a single dial. Tenant-wide is the
       // only scope that actually stops a call.
       const summary = await addDncEntries(

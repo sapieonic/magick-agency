@@ -1,6 +1,6 @@
 /**
  * Which lifecycle controls a campaign's state offers, and why the others are
- * refused (`MAG-134`).
+ * refused.
  *
  * ── Refused, not absent ──────────────────────────────────────────────────────
  * Controls used to be *hidden* by state. Hiding does prevent the click, but it
@@ -8,26 +8,26 @@
  * — "why can't I resume this?" — to be discovered by not finding a button. So a
  * control the state forbids is now rendered disabled beside its reason. The
  * alternative the spec rules out explicitly is worse than both: letting the
- * click through and reporting core's 409.
+ * click through and reporting the server's 409.
  *
  * ── Permission is different from state, and stays hidden ─────────────────────
  * A role without `agency.supervise` is not being told "not now" — it is being
  * told "not you", every time, on every campaign. That is a property of the
  * viewer, not of the campaign, so it hides the controls rather than papering the
- * page with eight refusals. Master's 403 is the enforcement either way.
+ * page with eight refusals. The API's 403 is the enforcement either way.
  *
  * ── Terminal states offer nothing at all ─────────────────────────────────────
  * `stopped` and `completed` are over. Four disabled buttons under a finished
- * campaign is noise pretending to be information, and core has no transition out
+ * campaign is noise pretending to be information, and the server has no transition out
  * of either — a stopped campaign cannot be restarted.
  */
 
 import type { AgencyCampaignStatus } from '../types/agency-campaign';
 
 /**
- * Narrows `AgencyCampaign.status` — deliberately `string` (core's CHECK
+ * Narrows `AgencyCampaign.status` — deliberately `string` (the server's CHECK
  * constraint is the authority, and `AgencyCampaignStatusBadge` renders an
- * unrecognised value verbatim rather than mapping it) — to the closed
+ * unrecognised value unchanged rather than mapping it) — to the closed
  * `AgencyCampaignStatus` enum the analytics catalog (`analytics/events.ts`)
  * requires. Callers there skip the emit rather than pass a status this build
  * has never heard of.
@@ -79,7 +79,7 @@ export function campaignEnding(status: string): CampaignEnding | null {
  *
  * The single definition of "finished" in this repo. It exists because there were
  * three copies of the same expression and the series module had a FOURTH answer
- * — it keyed on `ended_at` alone, so a master that does not yet send the
+ * — it keyed on `ended_at` alone, so an API that does not yet send the
  * lifecycle timestamps made a stopped campaign behave as a live one and told the
  * reader "today is still in progress" about a campaign that ended in July.
  */
@@ -158,7 +158,7 @@ const CONTROLS_FOR_STATUS: Record<string, AgencyCampaignControl[]> = {
  * An unrecognised status returns nothing rather than guessing: a state this
  * build has never heard of is one whose transitions it cannot know, and
  * offering Start on it is a click that fails at the API — the exact outcome
- * `MAG-134` is about.
+ * the refused controls exist to prevent.
  */
 export function agencyCampaignControls(status: string): AgencyCampaignControl[] {
   return CONTROLS_FOR_STATUS[status] ?? [];
@@ -170,8 +170,8 @@ export function agencyCampaignControls(status: string): AgencyCampaignControl[] 
  * The rendered buttons already hide or disable anything this returns false for
  * — this is the *click* half of the same rule. The page also re-reads before
  * POSTing Start / Resume, so a `campaignRef` that still says `draft` after
- * the campaign is `running` does not become core's 409. Returning false is
- * "do not send", not "the button is missing": MAG-134 then re-renders the
+ * the campaign is `running` does not become the server's 409. Returning false is
+ * "do not send", not "the button is missing": the next render then shows the
  * real controls.
  */
 export function isLifecycleActionEnabled(status: string, action: AgencyCampaignAction): boolean {

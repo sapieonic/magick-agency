@@ -112,8 +112,6 @@ describe('vocabulary — humanizeToken', () => {
   });
 });
 
-// PORT NOTE (magick-agency): "uses no jargon for campaign types" and "uses plain
-// language for sources" are deleted with `TYPE_LABELS` / `SOURCE_LABELS`.
 describe('vocabulary — label maps', () => {
 
 

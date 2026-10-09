@@ -1,9 +1,8 @@
 /**
- * The connect cue — §A.4.3.1, `AD-P2-U-02`.
+ * The connect cue.
  *
- * §A.4.3 called for four redundant channels for the agent noticing that audio
- * connected. Phase 1 shipped **zero** of the non-visual one. QA's framing is the
- * one this module is written to: that was *an untested surface, not a passed one* —
+ * called for four redundant channels for the agent noticing that audio
+ * connected. Phase 1 shipped **zero** of the non-visual one. This module is written to one framing: that was *an untested surface, not a passed one* —
  * and the requirement is a **timing** requirement. A cue that fires 400ms late, or
  * on the wrong frame, satisfies a checklist and fails the agent.
  *
@@ -19,7 +18,7 @@
  * from a `useEffect` watching `bridgedAt`.** An effect is deferred and batched;
  * under load it lands tens to hundreds of milliseconds late, and the lateness is
  * invisible in development, on an unloaded machine, with one call in flight. That
- * is why §A.4.3.1 states the budget as a **measurement** rather than an
+ * is why states the budget as a **measurement** rather than an
  * instruction: the lag is written to the diagnostics buffer on every connect, so
  * a regression shows up as data instead of as an argument.
  */
@@ -45,17 +44,17 @@ export interface CueSpec {
   peak: number;
 }
 
-/** 8ms linear attack, 25ms linear release, per tone (§A.4.3.1). */
+/** 8ms linear attack, 25ms linear release, per tone. */
 export const CUE_ATTACK_S = 0.008;
 export const CUE_RELEASE_S = 0.025;
 /** A 5ms lead so the envelope starts on a scheduling boundary, not mid-buffer. */
 export const CUE_LEAD_S = 0.005;
 
 /**
- * The cue table, normative in §A.4.3.1.
+ * The cue table, normative in
  *
  * **Get-ready is a rhythm** (three even knocks at one pitch, no melodic
- * movement); **connect rises**; **disconnect falls**. This supersedes §A.4.2's
+ * movement); **connect rises**; **disconnect falls**. This supersedes's
  * rising three-tone get-ready: a rising 3-tone and a rising 2-tone are the two
  * cues that most need telling apart — one means *read now*, the other means *a
  * human can hear you* — and making them the same gesture at two lengths is the
@@ -87,10 +86,10 @@ export const CUE_SPECS: Record<CueName, CueSpec> = {
 };
 
 /**
- * How a cue is **seen** — the visual counterpart of `CUE_SPECS` (`AD-P2-U-07`).
+ * How a cue is **seen** — the visual counterpart of `CUE_SPECS`.
  *
  * ── Why this table exists at all ─────────────────────────────────────────────
- * `AD-P2-U-02` shipped the audio half and **one** visual: a single generic flash,
+ * An earlier change shipped the audio half and **one** visual: a single generic flash,
  * fired on connect only. That satisfies "a visual exists" and fails the actual
  * requirement, which is that an agent who cannot hear the cues can tell *which*
  * event happened. A get-ready and a connect that look identical are worse than one
@@ -98,7 +97,7 @@ export const CUE_SPECS: Record<CueName, CueSpec> = {
  * ringing.
  *
  * ── The principle is carried over from the audio, not re-invented ────────────
- * §A.4.3.1 gave the three cues distinct **rhythm and contour** rather than
+ * gave the three cues distinct **rhythm and contour** rather than
  * distinct pitch, because pitch alone is the axis a listener in a noisy room
  * loses first. The visual channel has exactly the same trap one axis over:
  * **colour alone is the axis a colour-blind agent loses first**, and this is an
@@ -159,7 +158,7 @@ export function visualCueSignature(cue: CueName): string {
 
 /**
  * Where a cue actually gets played. Injectable so the rules above are unit
- * tests rather than audio captures (§A.4.3.1 "What QA can assert").
+ * tests rather than audio captures ( "What QA can assert").
  */
 export interface CueSink {
   /** Schedule the cue now. Called synchronously, from the frame handler. */
@@ -188,13 +187,13 @@ export interface EscalatedVisual {
 
 export interface CueDispatcherOptions {
   sink: CueSink;
-  /** 0–100. **0 is a permitted setting**, not an error (§A.4.3.1). */
+  /** 0–100. **0 is a permitted setting**, not an error. */
   volume: () => number;
   /** Whether the visual escalation applies — see `escalatedVisualActive`. */
   escalated: () => boolean;
   /** `performance.now()`, injected so the lag assertion is deterministic. */
   now: () => number;
-  /** Writes to the diagnostics ring buffer (§A.3.1). */
+  /** Writes to the diagnostics ring buffer. */
   log: (event: string, detail: string) => void;
   /**
    * The visual channel for an agent who cannot hear the cue. **Haptics belong
@@ -274,7 +273,7 @@ export class CueDispatcher {
    * the console saw the attempt without ever firing anything for it.
    *
    * Marking it connected is what makes the invariant hold: `bridged` is emitted
-   * once ever (§A.13.1.1), so if a later duplicate did arrive it must still fire
+   * once ever, so if a later duplicate did arrive it must still fire
    * nothing — and a `released` for this attempt must still be able to fall.
    */
   onRehydrated(attemptId: string, bridged: boolean): void {
@@ -297,7 +296,7 @@ export class CueDispatcher {
      * `reserved`, `connect` rides **`bridged` and nothing else**, `disconnect`
      * rides a `released` that actually bridged. A visual on `status:answered`
      * would tell the agent a human is on the line while they are on dead air —
-     * the same defect in the visual channel that §A.4.3.1's assertion 2 pins in
+     * the same defect in the visual channel that's assertion 2 pins in
      * the audible one.
      */
     if (escalated) {

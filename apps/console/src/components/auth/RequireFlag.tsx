@@ -12,7 +12,7 @@ import { CapabilityUnavailable } from '../common/CapabilityUnavailable';
  * While the flag map is still loading it shows a spinner (avoids a flash), then
  * renders a NEUTRAL IN-PLACE screen (URL preserved — never a redirect) once the
  * flag has resolved to off. Fail-safe CLOSED: an errored/absent flag hides the
- * screen (matching core's default-off posture and `useFeatureFlags` semantics).
+ * screen (matching the API's default-off posture and `useFeatureFlags` semantics).
  */
 export default function RequireFlag({
   flag,
@@ -27,9 +27,7 @@ export default function RequireFlag({
 
   useEffect(() => {
     if (!unavailable) return;
-    // PORT NOTE (magick-agency): cusui tracked its two AI flags here
-    // (`custom_sip`, `ai_call_transfer`); the console tracks the two agency flags a
-    // route is gated on.
+    // Only the two agency flags a route is gated on are tracked.
     if (flag !== 'agency_dialer_enabled' && flag !== 'agency_call_analysis') return;
 
     trackFeatureGateUnavailable({

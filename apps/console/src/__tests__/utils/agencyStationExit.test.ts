@@ -16,7 +16,7 @@ import {
 import type { AgencyAgentState } from '../../types/agency';
 
 /**
- * The station's two exits (`MAG-160`, §A.13.3) — which states refuse them, and
+ * The station's two exits — which states refuse them, and
  * the rule that they never read as the same control.
  */
 
@@ -38,12 +38,12 @@ describe('both exits are refused while a customer is involved', () => {
 /**
  * ── The asymmetry, pinned ───────────────────────────────────────────────────
  *
- * Exit leaves the session live and only drops the socket, and core's
+ * Exit leaves the session live and only drops the socket, and the API's
  * `AGENT_LEASE_MS.available` (45s) is renewed by that socket's heartbeat alone
  * while the pacing engine reserves off Redis. So an Exit taken in `available`
  * leaves the agent dialable for up to 45 seconds with no console attached, and a
  * reservation landing in that window answers a customer to nobody — the failure
- * D1 makes unreachable except by an agent physically disappearing.
+ * the design makes unreachable except by an agent physically disappearing.
  *
  * Leave is what actually ends the session, so it must stay offered here: it is
  * both the correct action and the remedy Exit's refusal names. This is the test
@@ -76,7 +76,7 @@ describe('available refuses Exit and not Leave', () => {
 
 describe('the two exits are never the same control', () => {
   it('has different labels', () => {
-    // §A.13.3: they are different acts. One ends the session and frees the
+    // They are different acts. One ends the session and frees the
     // agent's one-live-session slot; the other only changes the URL.
     expect(LEAVE_LABEL).not.toBe(EXIT_LABEL);
   });

@@ -161,7 +161,7 @@ export function AgencyCampaignDetailPage() {
   /**
    * Synchronous with the click. `setBusy` is a render, so two Start clicks in
    * the same frame both see `busy === null` and both POST — the 7× `/start`
-   * 409 in chitboss UAT is that click, repeated, against a button that never
+   * 409 seen in real use is that click, repeated, against a button that never
    * disabled. The ref is the lock the state cannot be.
    */
   const busyRef = useRef(false);
@@ -175,12 +175,12 @@ export function AgencyCampaignDetailPage() {
   const loadTokenRef = useRef(0);
 
   /**
-   * `agency.supervise`, floored at `account_admin` (`MAG-136`).
+   * `agency.supervise`, floored at `account_admin`.
    *
    * These controls used to check `proxy.schedules.write` — an `operator`-level
-   * permission borrowed because that was what master's lifecycle routes happened
+   * permission borrowed because that was what the server's lifecycle routes happened
    * to gate on. It is now a recorded decision that starting, pausing and stopping
-   * a dialing campaign is a supervisory act, and master's four lifecycle proxies
+   * a dialing campaign is a supervisory act, and the server's four lifecycle proxies
    * gate on `agency.supervise` to match. The UI gate has to be the API gate:
    * checking the looser one here would show an `operator` four buttons that 403.
    */
@@ -189,7 +189,7 @@ export function AgencyCampaignDetailPage() {
   // shift is the case this exists for.
   const canJoinStation = hasPermission(role, 'agency.station.connect');
   /*
-    Master names BOTH permissions on `POST .../retry`: creating a campaign
+    The server names BOTH permissions on `POST .../retry`: creating a campaign
     (`agency.campaigns.write`) and acting on another campaign's call results
     (`agency.supervise`). Same `account_admin` floor today; naming both keeps
     this affordance correct if either moves.
@@ -235,7 +235,7 @@ export function AgencyCampaignDetailPage() {
    * Campaign row only — the Start / Resume preflight and the 409 repair.
    * `load()` waits on stats as well (the page paints them together), and a
    * stats outage must not turn a fresh `running` into `null` and fall back
-   * to the stale `draft` that MAG-134 would have hidden.
+   * to the stale `draft` whose Start button would otherwise be hidden.
    */
   const refreshCampaign = useCallback(async (): Promise<AgencyCampaign | null> => {
     if (!id || !tenantId || !accountId) return null;
@@ -267,12 +267,12 @@ export function AgencyCampaignDetailPage() {
    * drain.
    *
    * So: poll while the status implies movement OR while the server says
-   * attempts are still live. `attempts_live` comes from core's own count, not
+   * attempts are still live. `attempts_live` comes from the API's own count, not
    * from anything derived here.
    *
-   * **Anyone on the floor is also movement** (`MAG-148`). Agent state changes
+   * **Anyone on the floor is also movement**. Agent state changes
    * without any attempt being live — a break ends, a wrap-up is submitted, a
-   * station drops — and §C.4 is a live view of exactly those. The durations tick
+   * station drops — and is a live view of exactly those. The durations tick
    * client-side from `state_since`, so an unpolled floor does not *look* frozen;
    * it looks current and reports states the agents left minutes ago, which is
    * worse. This is not the same predicate as `attempts_live`: a paused campaign
@@ -285,8 +285,8 @@ export function AgencyCampaignDetailPage() {
    * A draft (or a drained pause) does not poll — nothing is moving. That is
    * also the view that still shows Start / Resume after another tab, or this
    * tab's own first click, has already moved the campaign. Coming back to the
-   * window is the moment to learn that, so MAG-134 can hide the button instead
-   * of letting the click become core's 409.
+   * window is the moment to learn that, so the button can be hidden instead
+   * of letting the click become the API's 409.
    */
   useEffect(() => {
     const refetchIfVisible = () => {
@@ -326,9 +326,9 @@ export function AgencyCampaignDetailPage() {
       let fromStatus = campaignRef.current?.status;
       try {
         /**
-         * Start / Resume from a stale view is the UAT bug: MAG-134 would
-         * have hidden the button if we held `running`. Re-read before
-         * POSTing so the click does not become core's 409. Pause / Stop
+         * Start / Resume from a stale view is a known bug: the button would
+         * have been hidden if we held `running`. Re-read before
+         * POSTing so the click does not become the API's 409. Pause / Stop
          * are still guarded against the status we hold — those buttons
          * are not the ones that stayed enabled across a transition.
          */
@@ -365,11 +365,11 @@ export function AgencyCampaignDetailPage() {
         const statusCode = err instanceof ApiError ? err.statusCode : 0;
         /**
          * A 409 is an answer, not a transport failure. Two kinds:
-         * the campaign moved underneath us (stale Start / Resume), or D9's
+         * the campaign moved underneath us (stale Start / Resume), or the
          * one-running-campaign-per-account rule refused the start. The
-         * first is repaired by refetching — MAG-134 then replaces the
+         * first is repaired by refetching — the refreshed view then replaces the
          * button, and a conflict toast on a control that has just
-         * disappeared is the UAT friction. The second is a real refusal
+         * disappeared is friction. The second is a real refusal
          * (this campaign is still a draft) and still has to be said.
          */
         let reportFailure = true;
@@ -484,7 +484,7 @@ export function AgencyCampaignDetailPage() {
   const timeline = campaignTimeline(campaign, ending, now);
   /*
     The two header facts, in reading order, with the absent ones dropped rather
-    than dashed — `campaignTimeline` returns `null` for anything this master did
+    than dashed — `campaignTimeline` returns `null` for anything this server did
     not carry, and "Started —" reads as a failed read (or, on a campaign that
     genuinely never started, as a wrong one).
   */
@@ -677,7 +677,7 @@ export function AgencyCampaignDetailPage() {
         </p>
       )}
 
-      {/* No description line: core has no such column, so it was a paragraph
+      {/* No description line: the API has no such column, so it was a paragraph
           that could only ever be empty. See the note on `AgencyCampaign`. */}
 
       {error && <ErrorAlert message={error} onRetry={() => void load()} />}
@@ -698,11 +698,11 @@ export function AgencyCampaignDetailPage() {
       />
 
       {/*
-        The workspace's sections (`MAG-166`). Contacts, Call attempts, Activity
+        The workspace's sections. Contacts, Call attempts, Activity
         and Settings used to be secondary buttons in the header row above —
         the same row that carries Stop — each gated on its own permission at the
         call site. They are tabs now, gated inside `CAMPAIGN_TABS` on the same
-        permissions master enforces, which leaves the header holding only the
+        permissions the server enforces, which leaves the header holding only the
         affordances that CHANGE the campaign.
       */}
       <CampaignTabs
@@ -1091,7 +1091,7 @@ export function AgencyCampaignDetailPage() {
       )}
 
       {/*
-        §C.3's derived figures on their own section. They are read at a
+'s derived figures on their own section. They are read at a
         different moment from the counters — "is this campaign healthy" rather
         than "where has the list got to" — and putting them under the counters
         meant a supervisor scrolled past four numbers with denominators and
@@ -1151,7 +1151,7 @@ export function AgencyCampaignDetailPage() {
           assigned to.
 
           `canControl` is `hasPermission(role, 'agency.supervise')` — the exact
-          permission master floors all four assignment routes on, so the gate
+          permission the server floors all four assignment routes on, so the gate
           here is the gate there.
         */}
         <CampaignAgentAssignments
@@ -1160,7 +1160,7 @@ export function AgencyCampaignDetailPage() {
           /*
             The floor's own data, handed over rather than fetched again — it is
             what lets the staffing list say "assigned, but not at this station".
-            `undefined` agents means core produced no per-agent rows (or the
+            `undefined` agents means the API produced no per-agent rows (or the
             stats read failed), which is NOT an empty floor, so it is passed
             through as `null` and the list claims nothing.
           */
@@ -1193,7 +1193,7 @@ export function AgencyCampaignDetailPage() {
           open
           campaign={campaign}
           /*
-            Contract §8's default, used because this entry point has no filtered
+            The default, used because this entry point has no filtered
             list behind it: ONE dimension, `last_outcome ∈ {no_answer, busy,
             __none__}`.
 

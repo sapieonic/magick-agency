@@ -1,5 +1,5 @@
 /**
- * The notes status line and the autosave guards (§A.13.7, spec `868051f`).
+ * The notes status line and the autosave guards.
  *
  * Pure, because every rule here is a rule about *truthfulness* and the way each
  * one fails is by looking fine. A static string, a local timestamp and an
@@ -72,7 +72,7 @@ const TONE_BY_STATE: Record<NotesStatusState, NotesStatusTone> = {
 
 /**
  * Weight rises with colour, because **colour alone is not a distinction**
- * (§A.11) — a colour-blind agent, or a badly-calibrated agency-floor monitor,
+ * — a colour-blind agent, or a badly-calibrated agency-floor monitor,
  * must still see the difference.
  */
 const WEIGHT_BY_TONE: Record<NotesStatusTone, 400 | 500 | 600> = {
@@ -81,7 +81,7 @@ const WEIGHT_BY_TONE: Record<NotesStatusTone, 400 | 500 | 600> = {
   danger: 600,
 };
 
-/** Copy is verbatim from §A.13.7's table. `saved` is built with its timestamp. */
+/** Copy follows the notes-status table. `saved` is built with its timestamp. */
 const COPY_BY_STATE: Record<Exclude<NotesStatusState, 'saved'>, string> = {
   resting: 'Notes save as you type.',
   saving: 'Saving…',
@@ -324,7 +324,7 @@ export function detectForeignWrite(sentNotes: string, echoedNotes: string): bool
  * **Demoted from the durability story to the failure buffer** now that the route
  * ships: invisible when things work, and what makes the two failure rows honest
  * rather than merely apologetic. Still needed because the server save can fail,
- * and because §A.8.1's network drop currently ends the call immediately — so at
+ * and because a network drop currently ends the call immediately — so at
  * the moment it matters most, the last server save may already be seconds stale.
  */
 export function notesStorageKey(attemptId: string): string {

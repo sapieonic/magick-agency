@@ -88,7 +88,7 @@ export interface AgentRosterFilters {
   /**
    * Show agents who have since left the team.
    *
-   * Master's parameter, not core's. It changes which ROWS come back and
+   * A server-side parameter, not a client filter. It changes which ROWS come back and
    * deliberately does **not** move the benchmark — see `AgencyRosterBenchmark`.
    */
   includeInactive: boolean;
@@ -148,7 +148,7 @@ export function useAgentRoster(filters: AgentRosterFilters): UseAgentRoster {
     /**
      * Both ids, for the reason every agency surface waits for both: `TenantContext`
      * resolves the account asynchronously, and a request sent in that window
-     * carries no `X-Account-Id`, which core answers with a 400 about a header this
+     * carries no `X-Account-Id`, which the API answers with a 400 about a header this
      * client never sent.
      *
      * The account is a **required predicate** on this route rather than an
@@ -185,7 +185,7 @@ export function useAgentRoster(filters: AgentRosterFilters): UseAgentRoster {
       sort,
       order,
       /*
-        Explicit, and the contract's MAXIMUM. Sending none applied core's default
+        Explicit, and the contract's MAXIMUM. Sending none applied the API's default
         of 100, so a 180-agent agency silently lost 80 rows — and under
         `conversions desc` the eighty cut are the lowest converters, the exact
         population a supervisor opens this screen to find. There is no server-side
@@ -193,7 +193,7 @@ export function useAgentRoster(filters: AgentRosterFilters): UseAgentRoster {
         the flag filter are what handle a floor larger than it.
       */
       limit: ROSTER_LIMIT,
-      // Omitted rather than sent empty: master whitelists this route's params and
+      // Omitted rather than sent empty: the API whitelists this route's params and
       // answers an unknown or malformed one with a 400, so a blank `campaign_id`
       // would be a validation error about a filter nobody asked for.
       ...(campaignId ? { campaign_id: campaignId } : {}),
@@ -216,8 +216,8 @@ export function useAgentRoster(filters: AgentRosterFilters): UseAgentRoster {
          * blank screen, which is the worst outcome available and the only one the
          * reader cannot act on.
          *
-         * It is a realistic arrival rather than a hypothetical: master forwards
-         * core's body through a spread, and phase 02 swaps the data source
+         * It is a realistic arrival rather than a hypothetical: the API forwards
+         * the API's body through a spread, and phase 02 swaps the data source
          * underneath a console already built against this payload — a rollup that
          * produces rows without a cohort is exactly how this shows up. `error`
          * gives the reader a sentence and a retry, which is what a contract
@@ -255,8 +255,8 @@ export function useAgentRoster(filters: AgentRosterFilters): UseAgentRoster {
           `ready` and `empty`, so an all-departed floor rendered three sentences at
           once: "nobody was handed a call in this window", "2 former members
           hidden — they dialled in this window", and "2 agents dialled". That is an
-          ordinary master response, not a shape violation: core returns two revoked
-          agents, master filters both and answers `200 { rows: [],
+          an ordinary server response, not a shape violation: the dialer runtime returns two
+          revoked agents, the API filters both and answers `200 { rows: [],
           inactive_omitted: 2, total_agents: 2 }`. Rows-empty-with-rows-hidden is a
           third answer and the caller renders it as one — the former-members note
           and the toggle that reveals them, without the sentence saying nobody
@@ -264,7 +264,7 @@ export function useAgentRoster(filters: AgentRosterFilters): UseAgentRoster {
 
           ── And `inactive_omitted` was only HALF the predicate ────────────────
           It keyed on that count alone, so `{ rows: [], unattributed_omitted: 3 }`
-          — master dropped three ids it could not attribute to any member, R4's
+          — the API dropped three ids it could not attribute to any member, R4's
           third state — took the `empty` arm and rendered "Nobody was handed a
           call in this window" directly beneath a readout saying three agents
           dialled. `allRowsHiddenReason` is the shared predicate over both counts,

@@ -5,12 +5,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *
  * This is a regression pin, not a style check. `apiFetch` takes `accountId` as
  * its FOURTH argument, so omitting it is silent at every layer that could catch
- * it: TypeScript is happy (the parameter is optional), master is happy (it
+ * it: TypeScript is happy (the parameter is optional), the server is happy (it
  * treats `X-Account-Id` as optional and simply omits `x-mgkvc-account` when
- * absent), and the failure surfaces only at core, whose `authMiddleware`
+ * absent), and the failure surfaces only at the server, whose `authMiddleware`
  * requires the header on every authenticated route — as
- * `400 Missing required header: x-mgkvc-account`, masked by master, naming
- * nothing in cusui.
+ * `400 Missing required header: x-mgkvc-account`, masked by the server, naming
+ * nothing in the console.
  *
  * That is exactly how the entire agency surface shipped non-functional: every
  * `apiFetch` call in `agency.ts` and `agencyCampaigns.ts` passed `tenantId` and
@@ -119,7 +119,7 @@ const CALLS: Array<[string, () => Promise<unknown>]> = [
     () => submitDisposition('a1', { disposition_code: 'sale' }, TENANT, ACCOUNT),
   ],
   ['markContactDnc', () => markContactDnc('a1', {}, TENANT, ACCOUNT)],
-  // The assignment routes (`MAG-160`). Master-native rather than proxied, but
+  // The assignment routes. Handled by the server itself rather than proxied, but
   // they resolve the tenant from the same headers — `my-assignment` is read by
   // an `agent`, the one role with no other way to discover a campaign id, so a
   // missing header there is a dead end rather than a degraded page.
@@ -169,7 +169,7 @@ describe('agency API — the header is genuinely caller-supplied', () => {
   it('omits the header entirely when no account is selected', async () => {
     await listAgencyCampaigns(TENANT, undefined);
 
-    // Not an endorsement of the request — it will 400 at core. Asserted so the
+    // Not an endorsement of the request — it will 400 at the server. Asserted so the
     // no-account path stays visibly distinct from the fixed path, and so a UI
     // guard has something concrete to prevent.
     expect(headersOf()['X-Account-Id']).toBeUndefined();
@@ -177,7 +177,7 @@ describe('agency API — the header is genuinely caller-supplied', () => {
 });
 
 describe('getMyAssignment — 204 is the unassigned answer', () => {
-  it('resolves null rather than undefined when master says 204', async () => {
+  it('resolves null rather than undefined when the server says 204', async () => {
     // `apiFetch` returns `undefined` for a 204, and `undefined` is what a
     // forgotten `await` also looks like. Normalising here means every caller
     // branches on a value that can only mean one thing — nobody has staffed

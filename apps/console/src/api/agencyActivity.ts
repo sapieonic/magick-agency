@@ -5,10 +5,10 @@ import { captureApiError } from './error-analytics';
 import type { ActivityFilters, ActivityPage } from '../types/agency-activity';
 
 /**
- * One campaign's merged audit trail, from master's `/proxy/agency`.
+ * One campaign's merged audit trail, from the server's `/proxy/agency`.
  *
- * Master fans out to its own audit rows and to core's over S2S and interleaves
- * them; cusui never reaches core. `partial: true` on the response means core's
+ * The server fans out to its own audit rows and to the dialer runtime's and interleaves
+ * them; the console never reaches the dialer runtime. `partial: true` on the response means the dialer runtime's
  * half is missing and the page must be rendered as incomplete rather than as
  * the whole trail.
  */
@@ -17,7 +17,7 @@ const AGENCY_BASE = `${API_BASE}/proxy/agency`;
 
 function toQuery(filters: ActivityFilters, extra: Record<string, string> = {}): string {
   const qs = new URLSearchParams();
-  // One repeated param per action rather than a comma-joined string. Master
+  // One repeated param per action rather than a comma-joined string. The server
   // accepts both, and repeats cannot be misread if an action name ever contains
   // a comma.
   for (const action of filters.actions ?? []) qs.append('action', action);
@@ -80,8 +80,8 @@ function parseRowLimit(header: string | null): number | null {
  * Fetched as a blob rather than linked, because the endpoint needs the auth and
  * tenant headers an `<a href>` cannot carry.
  *
- * **A 424 here is an answer, not a transport failure.** Master refuses to write
- * a file that would be missing core's half of the trail — every status change
+ * **A 424 here is an answer, not a transport failure.** The server refuses to write
+ * a file that would be missing the server's half of the trail — every status change
  * and any automatic pause — because a screen can carry an "incomplete" banner
  * and a file that leaves the building cannot. The caller must surface that
  * refusal and its remedy rather than retrying blindly.

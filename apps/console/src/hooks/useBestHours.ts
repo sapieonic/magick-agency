@@ -102,8 +102,8 @@ export function useBestHours(filters: BestHoursFilters): UseBestHours {
     /*
       Both ids, for the reason every agency surface waits for both: `TenantContext`
       resolves the account asynchronously, and a request sent in that window carries
-      no `X-Account-Id` — which master answers with `400 account_scope_required`
-      before it even resolves the tenant's core key. The account is a REQUIRED
+      no `X-Account-Id` — which the API answers with `400 account_scope_required`
+      before it even resolves the tenant's the API key. The account is a REQUIRED
       predicate on this route rather than an optional filter, so there is no
       degraded read to fall back to.
     */
@@ -170,7 +170,7 @@ export function useBestHours(filters: BestHoursFilters): UseBestHours {
         /*
           `empty` is decided here, once, rather than by every consumer looking at
           `rows.length`. Nothing is ever hidden from this read — no dimension is
-          `agent`, so master has nobody to drop — which is why this union has three
+          `agent`, so the API has nobody to drop — which is why this union has three
           arms where the roster's has four.
         */
         setState({ status: page.rows.length === 0 ? 'empty' : 'ready', page });

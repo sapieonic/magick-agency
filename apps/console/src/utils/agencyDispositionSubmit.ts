@@ -7,8 +7,8 @@ import {
 } from './agencyStaleResponse';
 
 /**
- * Classifying a disposition submit's outcome against core's frozen shape
- * (`AD-P2-C-04`, contract `606d3cb`).
+ * Classifying a disposition submit's outcome against the server's frozen shape
+ *.
  *
  * Pure, because the interesting cases are the ones a console gets wrong by
  * reading the status code literally.
@@ -17,7 +17,7 @@ import {
 /**
  * ── Why a re-submitted SAME code is a success, not `already_dispositioned` ────
  *
- * The obvious reading of `already_dispositioned` is a 409. Core deliberately does
+ * The obvious reading of `already_dispositioned` is a 409. The server deliberately does
  * not do that, and the reasoning is about the one interaction whose entire purpose
  * is recording what was said to a customer: the agent presses Submit, the network
  * blips, the console retries — and a strict 409 would show them an error for an
@@ -38,10 +38,10 @@ export type DispositionOutcome =
   /**
    * Recorded.
    *
-   * `nextAttemptAt` is core's own `next_attempt_at` — set when the disposition
+   * `nextAttemptAt` is the server's own `next_attempt_at` — set when the disposition
    * scheduled a retry or honoured a `callback_at`, null otherwise. It is carried
    * here because it is the only thing that lets the confirmation name the
-   * callback time, and `confirmationCopy` — CR-1's mitigation — cannot say "we'll
+   * callback time, and `confirmationCopy` — the callback copy's mitigation — cannot say "we'll
    * call back at 3" without it. **Before this it had zero callers**: the console
    * announced a flat "Disposition saved." and the agent was never told the time
    * the system had actually booked.
@@ -50,7 +50,7 @@ export type DispositionOutcome =
       kind: 'saved';
       nextAttemptAt: string | null;
       /**
-       * PORT NOTE (magick-agency, CONTRACT-DIFF §1): core's
+       * The server's
        * `callback_requested_at`, what the agent ASKED for. Absent when the
        * response does not carry it; `nextAttemptAt` stays the time that will
        * actually be dialled.
@@ -62,7 +62,7 @@ export type DispositionOutcome =
    * be told, because the record of a conversation is not silently rewritable.
    */
   | { kind: 'conflict'; recordedCode?: string }
-  /** Core refused it. `code` drives the pad's copy; `message` is the fallback. */
+  /** The server refused it. `code` drives the pad's copy; `message` is the fallback. */
   | { kind: 'rejected'; code: AgencyActionErrorCode | null; message: string; allowedCodes?: string[] }
   /**
    * The response was for an attempt that is no longer on the station. Carries the
@@ -93,7 +93,7 @@ export function classifySubmitOutcome(response: RawSubmitResponse): DispositionO
 
   if (response.status >= 200 && response.status < 300) {
     // Includes the idempotent replay. Nothing here inspects the body for a
-    // "was this new?" signal, because core deliberately does not send one.
+    // "was this new?" signal, because the server deliberately does not send one.
     //
     // A missing or non-string `next_attempt_at` reads as null rather than as a
     // reason to fail the classification: a saved disposition is saved, and the
@@ -102,8 +102,8 @@ export function classifySubmitOutcome(response: RawSubmitResponse): DispositionO
     return {
       kind: 'saved',
       nextAttemptAt: typeof body['next_attempt_at'] === 'string' ? body['next_attempt_at'] : null,
-      // PORT NOTE (magick-agency): carried only when present, so a response
-      // without it classifies exactly as cusui's did.
+      // Carried only when present, so a response
+      // without it still classifies correctly.
       ...(typeof body['callback_requested_at'] === 'string'
         ? { callbackRequestedAt: body['callback_requested_at'] }
         : {}),
@@ -144,7 +144,7 @@ export function classifySubmitOutcome(response: RawSubmitResponse): DispositionO
  * defence-in-depth rather than like a bug.
  *
  * It is not defence-in-depth. Classifying first means `{kind:'rejected'}` reaches
- * the pad with customer A's message and A's preserved note, and §A.13.6's own
+ * the pad with customer A's message and A's preserved note, and the pad's own
  * rules then do the damage: the error renders over customer B's pad, **A's note is
  * restored into B's notes field**, and submit re-enables inviting the agent to
  * save A's disposition against B. The middle one is cross-contact data
@@ -211,9 +211,9 @@ function readAttemptId(body: unknown): string | null {
  * in P2, and capturing a datetime without acting on it means the agent promises a
  * callback and nothing ever happens.
  *
- * ── CR-1, and why it is load-bearing here specifically ───────────────────────
+ * ── The callback copy, and why it is load-bearing here specifically ───────────────────────
  * Always "we", never "I". A callback re-enters the roster as an ordinary pending
- * contact and **whichever agent is available takes it** (D11) — so "I'll call you
+ * contact and **whichever agent is available takes it** — so "I'll call you
  * back" is a promise the product breaks. This copy is the entire mitigation for
  * that decision, which is why it lives beside the outcome rather than at the call
  * site.
@@ -222,7 +222,7 @@ export function confirmationCopy(input: {
   dispositionLabel: string;
   nextAttemptAt: string | null;
   /**
-   * PORT NOTE (magick-agency, CONTRACT-DIFF §1): what the agent asked for. Core
+   * What the agent asked for. The server
    * defers a callback outside the contact's calling window to the next window
    * open, and says so by returning the two separately; "when they differ, the
    * console should say what will happen rather than what was asked". So the time
@@ -248,12 +248,12 @@ export function confirmationCopy(input: {
   });
   // "We", never "I", and it does not claim this agent will make the call.
   //
-  // PORT NOTE (magick-agency): the "moved into calling hours" test is an exact,
-  // millisecond comparison of two parsed instants. That is safe only because core
+  // The "moved into calling hours" test is an exact,
+  // millisecond comparison of two parsed instants. That is safe only because the server
   // echoes the SAME `Date` in both fields when it does not move the callback:
   // `resolveCallbackDialTime` returns `requestedAt` itself when the window is open
-  // (core @ `4850d1d9`, `agency.routes.ts:1803`), and both are serialised with
-  // `toISOString()` (`agency.routes.ts:959-960`). A server that rounded or
+  // (in the server's agency routes), and both are serialised with
+  // `toISOString()`. A server that rounded or
   // re-derived one of them (seconds precision, a different timezone offset in the
   // string is fine — `Date.parse` normalises it) would make every callback read
   // as moved. Behaviour deliberately unchanged; keep the server's echo exact.

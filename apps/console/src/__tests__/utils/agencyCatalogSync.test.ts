@@ -9,7 +9,7 @@ import {
 import type { AgencyDisposition, AgencyBreakReason } from '../../types/agency';
 
 /**
- * The shared catalog concern (§A.13.4 / §A.13.6 / §A.13.8).
+ * The shared catalog concern.
  *
  * Every function here has a plausible wrong implementation that passes a glance,
  * so each block below is written to fail against that wrong implementation
@@ -68,7 +68,7 @@ describe('resyncCatalog — labels for codes we already know', () => {
     // what `humaniseCode` would produce ("Admin"), so this fails against a rebuild
     // that discards the known entry. The first draft of this test used
     // `technical_issue`, whose two spellings coincide — it passed with the
-    // preservation branch deleted and was therefore observing nothing (§16.6).
+    // preservation branch deleted and was therefore observing nothing.
     const next = resyncCatalog(BREAKS, ['admin', 'lunch']);
     expect(next.map((e) => e.label)).toEqual(['Admin time', 'Lunch']);
   });
@@ -83,7 +83,7 @@ describe('resyncCatalog — labels for codes we already know', () => {
 
   it('carries no invented flags on a synthesized entry', () => {
     // Inventing `requires_note` for a code we were never told about would block a
-    // legitimate submit. Core is the real enforcement for criterion (c).
+    // legitimate submit. The API is the real enforcement for criterion (c).
     const next = resyncCatalog(DISPOSITIONS, ['brand_new']);
     expect(next[0]?.requires_note).toBeUndefined();
     expect(next[0]?.requires_datetime).toBeUndefined();
@@ -190,7 +190,7 @@ describe('numberKeysRemapped', () => {
   });
 
   it('never warns at boundCount 0 — the BreakMenu contract', () => {
-    // Number keys are the pad's alone (§A.13.4). A surface that binds no digits
+    // Number keys are the pad's alone. A surface that binds no digits
     // cannot have remapped one, so this must be false even for a total rewrite.
     expect(numberKeysRemapped(BREAKS, [], 0)).toBe(false);
     expect(numberKeysRemapped(BREAKS, [...BREAKS].reverse(), 0)).toBe(false);
@@ -231,7 +231,7 @@ describe('typeaheadIndex', () => {
 
   it('returns null for a digit — the break menu binds no number keys', () => {
     // Without this, `1` in the break menu could fall through to a typeahead match
-    // and quietly become the number-key binding §A.13.4 forbids.
+    // and quietly become the number-key binding that is forbidden.
     expect(typeaheadIndex(entries, '1', null)).toBeNull();
     expect(typeaheadIndex([{ code: 'x', label: '1st break' }], '1', null)).toBeNull();
   });

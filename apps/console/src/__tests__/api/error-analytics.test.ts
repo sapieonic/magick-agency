@@ -17,10 +17,9 @@ vi.mock('firebase/auth', () => ({
 }));
 
 /*
- * PORT NOTE (magick-agency): `safeAnalyticsPath` (4) and `captureApiError` (1)
- * are verbatim. The `raw fetch integrations` describe (3) is DELETED: it drove
- * the contact-list upload, audio-file upload and CSV-export downloader, AI-product
- * modules that are not ported.
+ * Covers `safeAnalyticsPath` and `captureApiError`. There is no raw-fetch
+ * integrations suite: the console has no contact-list upload, audio-file upload
+ * or CSV-export downloader.
  */
 import { safeAnalyticsPath, captureApiError } from '../../api/error-analytics';
 

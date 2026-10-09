@@ -11,8 +11,7 @@ export const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
  * itself — `magick-agency-console` for the default brand, `acme-console` for a
  * brand pack named `acme`.
  *
- * PORT NOTE (magick-agency, decision B17): the suffix is `-console` (cusui:
- * `-customer-ui`). The value is user-visible: the campaign activity trail shows
+ * Decision B17: the suffix is `-console`. The value is user-visible: the campaign activity trail shows
  * it as the actor of a dialer row (`agencyActivityCopy.ts`). The header NAME is
  * wire, not branding, and is unchanged.
  */
@@ -33,7 +32,7 @@ export const ENDPOINTS = {
     session: `${API_BASE}/auth/session`,
     me: `${API_BASE}/auth/me`,
   },
-  // PORT NOTE (magick-agency): `tenants.base` / `tenants.get` and `accounts.get`
+  // `tenants.base` / `tenants.get` and `accounts.get`
   // are deleted — nothing in the console calls them (`listTenants`,
   // `updateTenant` and the account CRUD went with their pages).
   tenants: {
@@ -73,7 +72,7 @@ export const ENDPOINTS = {
      * AUTHENTICATED, and the only recovery from an invitation that expired.
      *
      * A literal segment rather than a token one, and it sits under the same
-     * `/invites` prefix on master. Body is `{ membership_id }`: the membership is
+     * `/invites` prefix on the server. Body is `{ membership_id }`: the membership is
      * what the invitation binds to, and naming it (rather than the address)
      * is what makes a resend land on the row that already exists instead of
      * colliding with it — `POST /users/invite` answers 409 for an address that is
@@ -87,25 +86,24 @@ export const ENDPOINTS = {
     membership: (id: string) => `${API_BASE}/users/${id}/membership`,
   },
   proxy: {
-    // PORT NOTE (magick-agency): of cusui's `proxy.calls` block only the two
-    // getters `api/calls.ts` still needs are kept (the shared call-detail
-    // component's defaults; the agency attempt page overrides both). The AI
-    // call, bulk, concurrency and export routes are not ported.
+    // Only the two getters `api/calls.ts` needs (the shared call-detail
+    // component's defaults; the agency attempt page overrides both). There are
+    // no AI call, bulk, concurrency or export routes.
     calls: {
       get: (id: string) => `${API_BASE}/proxy/calls/${id}`,
       recording: (id: string) => `${API_BASE}/proxy/calls/${id}/recording`,
     },
     // Call-analysis profiles — the dialer's reusable "what we measure"
-    // definition (its answer to a prompt template's analytics_config). Core
+    // definition (its answer to a prompt template's analytics_config). The server
     // exposes these as `/api/v1/call-analysis-profiles/*`; reached here through
-    // master's `/proxy/call-analysis-profiles` passthrough, section-gated on the
+    // the server's `/proxy/call-analysis-profiles` passthrough, section-gated on the
     // `calls.dialer.analytics` capability.
     callAnalysisProfiles: {
       base: `${API_BASE}/proxy/call-analysis-profiles`,
       get: (id: string) => `${API_BASE}/proxy/call-analysis-profiles/${id}`,
     },
     /**
-     * Per-AGENT numbers, under master's `/proxy/agency` prefix.
+     * Per-AGENT numbers, under the server's `/proxy/agency` prefix.
      *
      * ── Why these are in the catalog and the rest of `/proxy/agency` is not ──
      * The house rule is that `ENDPOINTS` is the single source of truth for URL
@@ -116,7 +114,7 @@ export const ENDPOINTS = {
      * separate move and not one to make halfway through a bug fix.
      *
      * ── The pairing is the point of listing them together ───────────────────
-     * Each read exists twice on master: a `my-` form floored at
+     * Each read exists twice on the server: a `my-` form floored at
      * `agency.station.connect` so a bare `agent` (level 5) can call it and scoped
      * to the caller SERVER-SIDE, and an `agents/:userId` twin floored at
      * `agency.supervise`. The `my-` form takes no subject on purpose — an optional
@@ -124,7 +122,7 @@ export const ENDPOINTS = {
      * controls. Seeing the four side by side is what makes a fifth builder that
      * blurred them look wrong.
      *
-     * `userId` is encoded: it is master's user id, opaque to this client, and a
+     * `userId` is encoded: it is the server's user id, opaque to this client, and a
      * path segment built by concatenation is the one that breaks quietly.
      */
     agency: {
@@ -140,7 +138,7 @@ export const ENDPOINTS = {
        * both services route on segment COUNT first, so a two-segment path can
        * never be read as a `:userId` of `"stats"`. The two are listed adjacently
        * so the difference is visible rather than something a reader has to
-       * reconstruct — the phase-01 contract asks both backends to assert it
+       * reconstruct — the contract tests assert it
        * explicitly for the same reason.
        *
        * **This route takes no `agent_user_id`.** Its subject is the whole roster;
@@ -160,8 +158,8 @@ export const ENDPOINTS = {
        * segment-count reasoning as `agentsStats` above — `agents/grouped-stats`
        * cannot be read as a `:userId` of `"grouped-stats"`.
        *
-       * **Takes no `agent_user_id` either**, and for the same reason: core has no
-       * user table, so only master's `memberships` can police that boundary.
+       * **Takes no `agent_user_id` either**, and for the same reason: the server has no
+       * user table, so only the server's `memberships` can police that boundary.
        * Filtering to one person is the per-agent record's job.
        */
       agentsGroupedStats: `${API_BASE}/proxy/agency/agents/grouped-stats`,
@@ -191,26 +189,24 @@ export const ENDPOINTS = {
     },
   },
   /**
-   * PORT NOTE (magick-agency): cusui read the client flag map at
-   * `/proxy/feature-flags` (master proxying core). Agency serves the map itself,
-   * at `GET /feature-flags` (lane A, permission `agency.flags.read`, floor
-   * `agent`), so this is the one console path that changed.
+   * The client flag map is served by the server itself at `GET /feature-flags`
+   * (permission `agency.flags.read`, floor `agent`), not through a `/proxy/*`
+   * route.
    */
   featureFlags: `${API_BASE}/feature-flags`,
-  // PORT NOTE (magick-agency): `governance.effective` is not ported — per-account
-  // settings ride the session payload (extraction plan §3.2).
-  // Do Not Call — master-native (NOT proxied), a master-native route in MagickVoice. Master
-  // owns `dnc_entries`; core receives only a derived, tenant-flat Redis set for
-  // its dial-time check, so there is no core route behind these.
+  // There is no `governance.effective` endpoint — per-account
+  // settings ride the session payload.
+  // Do Not Call — served by the server itself (NOT proxied). The server
+  // owns `dnc_entries`; the dialer runtime receives only a derived, tenant-flat Redis set for
+  // its dial-time check, so there is no dialer-runtime route behind these.
   dnc: {
     base: `${API_BASE}/dnc`,
     get: (id: string) => `${API_BASE}/dnc/${id}`,
   },
   /**
-   * Per-user notification subscriptions — master-native, like `governance` and
-   * `dnc` above rather than a `/proxy/*` route.
+   * Per-user notification subscriptions — served by the server itself, like `dnc` above, rather than a `/proxy/*` route.
    *
-   * Every route is about the CALLER and takes no subject: master reads the user
+   * Every route is about the CALLER and takes no subject: the server reads the user
    * from the session and there is no `user_id` parameter to pass, which is what
    * stops "my settings" becoming a surface that could read or rewrite a
    * colleague's. Authenticated but with NO permission floor — a `viewer`
@@ -222,7 +218,7 @@ export const ENDPOINTS = {
     preferences: `${API_BASE}/notifications/preferences`,
   },
   /**
-   * PORT NOTE (magick-agency): only `base` (the caller's own numbers, read by
+   * only `base` (the caller's own numbers, read by
    * the campaign builder's caller-ID picker) is kept; tagging and inbound
    * configuration are AI-platform surfaces.
    */
@@ -231,9 +227,8 @@ export const ENDPOINTS = {
   },
 } as const;
 
-// PORT NOTE (magick-agency): cusui's `LANGUAGES`, `TtsVoice`,
-// `TtsLanguageOption`, `TTS_LANGUAGES`, `TTS_DEFAULT_LANGUAGE` and
-// `TTS_DEFAULT_VOICE` (AI call languages and text-to-speech) are not ported.
+// There are no AI call languages or text-to-speech options (`LANGUAGES`,
+// `TtsVoice`, `TTS_LANGUAGES`, ...) in this console.
 
 export const ROLES = [
   { value: 'tenant_owner', label: 'Owner', color: 'var(--accent)' },
@@ -243,7 +238,7 @@ export const ROLES = [
   { value: 'viewer', label: 'Viewer', color: 'var(--text-muted)' },
   // Agency Dialer role. This entry is what makes an existing `agent` membership
   // render as "Agent" rather than leaking the raw role string — and the role is
-  // now **assignable** too: both of `TeamPage`'s pickers offer it (`MAG-160`).
+  // now **assignable** too: both of `TeamPage`'s pickers offer it.
   // It was display metadata only while an `agent` had no way into the product
   // but a pasted `/station?campaign=` URL; that reason is spent now they land on
   // their assigned station at sign-in.
@@ -251,9 +246,7 @@ export const ROLES = [
 ] as const;
 
 /*
- * PORT NOTE (magick-agency, decision B17): cusui's `DOCS_BASE_URL`,
- * `DOCS_SLUGS`, `DocsSlug` and `docsUrl` are deleted. They built the page
- * guide's "Read the full guide" link to the parent product's documentation
- * site; Magick Agency has no docs site, so the link is removed rather than left
- * pointing somewhere else.
+ * Decision B17: there is no docs-site URL helper (`DOCS_BASE_URL`, `docsUrl`).
+ * Magick Agency has no docs site, so the page guide has no "Read the full
+ * guide" link rather than one pointing somewhere else.
  */

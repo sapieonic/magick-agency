@@ -14,7 +14,7 @@ import { MemoryRouter } from 'react-router-dom';
  * top of it would be wrong.
  *
  * Every entry is also gated on the permission of the page it opens, so a floor
- * that drifts above what master requires hides a working page, and one that drifts
+ * that drifts above what the server requires hides a working page, and one that drifts
  * below offers a link that 403s on click. Both are asserted per role rather than in
  * aggregate.
  */
@@ -93,7 +93,7 @@ describe('AgencySidebar — the floors, per role', () => {
   it('offers a viewer the read-only destinations and not the create one', () => {
     // `agency.campaigns.read` floors at `viewer`; `…write` at `account_admin`.
     // Analytics reads the campaign list plus one `/stats` each, both of which
-    // master gates on the read permission — so a viewer gets it.
+    // the server gates on the read permission — so a viewer gets it.
     renderSidebar('viewer');
 
     expect(navLabels()).toEqual(['Campaigns', 'Analytics', 'Do Not Call']);
@@ -131,7 +131,7 @@ describe('AgencySidebar — the floors, per role', () => {
   it('offers an agent NOTHING, which is why an agent is never routed here', () => {
     // Notifications does not change this: it floors at `agency.supervise`.
     // Worth stating because an `agent` DOES have real subscriptions to manage
-    // (master shows every role the two `explicit`-audience `campaign.*`
+    // (the server shows every role the two `explicit`-audience `campaign.*`
     // events) — they simply do not reach them through this shell, which they
     // never see.
     renderSidebar('agent');

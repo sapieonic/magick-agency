@@ -64,12 +64,11 @@ describe('the three absences', () => {
 
   it('says nothing bespoke about a null connect rate, because that row cannot exist', () => {
     /**
-     * `connect_rate_pct` is never null on a served row: core groups over attempts
+     * `connect_rate_pct` is never null on a served row: The API groups over attempts
      * already filtered on `dialed_at IS NOT NULL`, so `attempts >= 1` and the
      * divisor is never zero. This used to render "No dials in this window" and a
      * test used to construct `attempts: 0` to prove it — a passing assertion over a
-     * payload the server cannot send, which is the MAG-106 pattern the phase-01
-     * contract names.
+     * payload the server cannot send, which is the impossible-payload pattern.
      *
      * What is left is inert: it renders rather than throwing if the shape ever
      * changes, and it makes no claim about a state nobody can explain. The three
@@ -106,7 +105,7 @@ describe('the three absences', () => {
      * while the others stay right.
      */
     const empty = rosterRow({
-      // A row that dialled and reached nobody — `attempts` stays >= 1 because core
+      // A row that dialled and reached nobody — `attempts` stays >= 1 because the API
       // cannot produce a row without one.
       attempts: 40,
       connected: 0,
@@ -225,7 +224,7 @@ describe('a rate is gated on the denominator it divides by', () => {
 
   it('falls back to rates_reportable when the new flag is absent — never wider', () => {
     /**
-     * Merge order is core → master → cusui, so this console can meet a service that
+     * Merge order is the API, then the console, so this console can meet a service that
      * predates the field, and the honest fallback is the behaviour that shipped
      * before it. `true` would REVEAL rates the console withholds today; re-deriving
      * `connected >= 20` here would make this client compute a threshold the mirrored
@@ -259,7 +258,7 @@ describe('a rate is gated on the denominator it divides by', () => {
     const row = hollowRow({ success_rate_pct: 33.3 });
     expect(rosterFlag(row, rosterBenchmark(), true)).toBeNull();
     // And the server's `false` is honoured even where the mirrored constant would
-    // have admitted the row: the threshold is core's to tune.
+    // have admitted the row: the threshold is the API's to tune.
     const refused = rosterRow({ success_rate_pct: 4, success_rate_reportable: false });
     expect(refused.connected).toBeGreaterThanOrEqual(AGENCY_ROSTER_MIN_RATE_DENOMINATOR);
     expect(rosterFlag(refused, rosterBenchmark(), true)).toBeNull();
@@ -271,7 +270,7 @@ describe('a rate is gated on the denominator it divides by', () => {
      *
      * `rosterFlag` gated on `successRateReportable(row)` and then ran its OWN
      * `row.connected < AGENCY_ROSTER_MIN_RATE_DENOMINATOR` unconditionally. So on a
-     * server that sends the flag — every server that matters — a row core had
+     * server that sends the flag — every server that matters — a row the API had
      * ADMITTED to the success-rate pool was silently dropped here by a second
      * threshold this client computed for itself.
      *
@@ -282,13 +281,13 @@ describe('a rate is gated on the denominator it divides by', () => {
      *  2. It disagrees with the CELL in the same row, which gates on the flag alone.
      *     A row whose conversion rate is printed as a quotable figure and whose chip
      *     is suppressed as unquotable is one table saying both things at once.
-     *  3. It disagrees with the SERVER the moment core tunes the threshold — and the
-     *     percentiles the chip compares against would move with core while the chip's
+     *  3. It disagrees with the SERVER the moment the threshold is tuned the threshold — and the
+     *     percentiles the chip compares against would move with the API while the chip's
      *     own admission test stayed at twenty, which is exactly the "flagged against a
      *     cohort they were excluded from" defect in reverse.
      *
-     * 12 connects with `success_rate_reportable: true` is not a payload core emits
-     * today; it is the payload core emits the day the floor is tuned, and the client's
+     * 12 connects with `success_rate_reportable: true` is not a payload the API emits
+     * today; it is the payload the API emits the day the floor is tuned, and the client's
      * job is to take the server's word for it. `success_rate_pct: 4` is below the
      * fixture band's `p25` of 14.2, so a chip is genuinely due.
      */
@@ -524,7 +523,7 @@ describe('the flag chip', () => {
   it('refuses to compare a row the success-rate POOL excluded', () => {
     /**
      * `rates_reportable` is `attempts >= 20`. The success-rate percentiles have a
-     * second floor: core only admits a row when `connected >= 20` too. So a row with
+     * second floor: The API only admits a row when `connected >= 20` too. So a row with
      * 400 dials and 3 connects is reportable, is absent from the pool the band came
      * from, and comparing its rate against that band flags somebody against a cohort
      * they were excluded from.
@@ -542,7 +541,7 @@ describe('the flag chip', () => {
     ).toBeNull();
   });
 
-  it('has no "no dials" kind, because core cannot produce a zero-dial row', () => {
+  it('has no "no dials" kind, because the API cannot produce a zero-dial row', () => {
     /**
      * `rosterAttemptTotals` is a `COUNT(*) … GROUP BY s.agent_user_id` over rows
      * filtered on `dialed_at IS NOT NULL`, so a group exists only because a dial
@@ -610,7 +609,7 @@ describe('the roster’s default scope', () => {
   /**
    * `AgencyCampaign` carries `id`, `name` and `status` and **no timestamps**, so
    * "most recently active" is resolved from status class first and the list's own
-   * order (core serves `ORDER BY created_at DESC`) only as a tie-break.
+   * order (the API serves `ORDER BY created_at DESC`) only as a tie-break.
    */
   it('prefers a campaign that is dialing right now', () => {
     expect(
@@ -648,8 +647,8 @@ describe('the roster’s default scope', () => {
   });
 
   it('treats an unrecognised status as having dialled, not as a draft', () => {
-    // The instinct `AgencyCampaignStatusBadge` records: master forwards whatever
-    // core says, so a status this mirror has not learned yet must not be demoted
+    // The instinct `AgencyCampaignStatusBadge` records: The API forwards whatever
+    // the API says, so a status this mirror has not learned yet must not be demoted
     // below the one class guaranteed to have no roster.
     expect(
       defaultRosterCampaign([{ id: 'draft', status: 'draft' }, { id: 'new', status: 'winding_down' }]),
@@ -781,10 +780,10 @@ describe('the honesty affordances', () => {
 
   it('never renders a "showing N of M" fraction', () => {
     /**
-     * The coordinator's ruling, and the reason is structural: core cuts to `limit`
-     * and master then filters the page it was handed, so a page of 1 row can
+     * The coordinator's ruling, and the reason is structural: The API cuts to `limit`
+     * and the API then filters the page it was handed, so a page of 1 row can
      * legitimately carry `total_agents: 3` and `inactive_omitted: 1`. "1 of 3" is
-     * wrong and "1 of 2" is not derivable, because master never saw the rows core
+     * wrong and "1 of 2" is not derivable, because the API never saw the rows the API
      * cut. Three separate true statements is the only honest form.
      */
     const note = truncationNote(
@@ -814,13 +813,13 @@ describe('the honesty affordances', () => {
 
   it('says nothing at all when inactive_omitted is ABSENT from the body', () => {
     /**
-     * Master has a documented degrade path that serves core's body unfiltered, with
+     * The API has a documented degrade path that serves the API's body unfiltered, with
      * no `inactive_omitted` on it. Read straight, `total_agents <= rows.length +
      * undefined` is `1 <= NaN`, which is `false` — so the note fired on every single
      * page and told a supervisor looking at their whole floor that the rest of it
      * was further down an order.
      *
-     * The guard stays even though master is being fixed in parallel: a comparison
+     * The guard stays even though the API is being fixed in parallel: a comparison
      * against `undefined` should not be reachable from a field the wire can omit,
      * and the two fixes are independent.
      */
@@ -933,7 +932,7 @@ describe('the columns are the sortable set', () => {
   });
 
   it('asks for the contract’s maximum limit', () => {
-    // Sending none applied core's default of 100, so a 180-agent agency lost its 80
+    // Sending none applied the API's default of 100, so a 180-agent agency lost its 80
     // lowest converters — the population being triaged.
     expect(ROSTER_LIMIT).toBe(200);
   });
@@ -979,7 +978,7 @@ describe('utilisation shows its denominator', () => {
 describe('the team row’s utilisation is POOLED, and degrades to the median', () => {
   it('divides the cohort’s handled time by the cohort’s shift', () => {
     /**
-     * D10's `shift_seconds` is what makes the floor's own utilisation derivable at
+     * `shift_seconds` is what makes the floor's own utilisation derivable at
      * all. 54,000 + 6,400 handled over 151,000 on shift is 40% — and the fixture's
      * median is 38.5%, so this assertion cannot pass against the stand-in that
      * preceded the field.
@@ -1016,7 +1015,7 @@ describe('the team row’s utilisation is POOLED, and degrades to the median', (
   });
 
   it('falls back to the median stand-in when the field has not shipped', () => {
-    // Merge order is core → master → cusui, so the field is normally there. A
+    // Merge order is the API, then the console, so the field is normally there. A
     // `typeof` guard anyway: the type is a hand-mirrored claim about the wire, and
     // every absence on this surface degrades to the next-best true statement.
     const benchmark = rosterBenchmark();
@@ -1031,7 +1030,7 @@ describe('the team row’s utilisation is POOLED, and degrades to the median', (
   });
 
   it('says the floor has no recorded shift rather than 0%', () => {
-    // A zero denominator is `null`, never `0`: core's agent-state event log shipped
+    // A zero denominator is `null`, never `0`: The API's agent-state event log shipped
     // after the dialer, so a floor whose sessions predate it has no events rather
     // than zeroed ones — and "0% utilised" is a confident claim that it sat idle.
     const readout = teamUtilisation(
@@ -1073,7 +1072,7 @@ describe('handle time gets a band, in seconds', () => {
   it('says nothing at all when the block has not shipped', () => {
     /**
      * Silence rather than "no median yet — too few rated agents": that sentence is a
-     * claim about the FLOOR, and making it about a field master has not deployed
+     * claim about the FLOOR, and making it about a field the API has not deployed
      * would be a false one.
      */
     const benchmark = rosterBenchmark();

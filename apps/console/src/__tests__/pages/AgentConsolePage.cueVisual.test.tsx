@@ -28,10 +28,10 @@ import { CUE_PREFS_STORAGE_KEY } from '../../utils/agencyCuePrefs';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
 /**
- * `AD-P2-U-07` — **escalated-visual mode, at the page.**
+ *  **escalated-visual mode, at the page.**
  *
  * ── What was actually wrong, and why a page test is the only place to prove it ─
- * `AD-P2-U-02` shipped the audio cues and *one* visual: a single generic flash on
+ * An earlier change shipped the audio cues and *one* visual: a single generic flash on
  * connect, keyed off an attribute (`data-connect-flash`) that **no test asserted
  * anywhere**. So the visual channel had exactly one state, was eyeballed rather
  * than pinned, and an agent who could not hear got one flash per call that could
@@ -226,7 +226,7 @@ async function mounted() {
 }
 
 /**
- * A real keypress, fired **from wherever focus actually is** (`MAG-90`).
+ * A real keypress, fired **from wherever focus actually is**.
  *
  * The default is `document.activeElement`, not `document`, because that is what a
  * browser does: a keydown's target is the focused element, and the page's global
@@ -340,7 +340,7 @@ describe('criterion (a) — with audio off, the three cues are three different s
     /**
      * The ticket's deciding assertion. **Audio disabled entirely**, on hardware that
      * works: the context is unlocked and running, and the agent has set the volume to
-     * 0 — the setting §A.4.3.1 explicitly permits.
+     * 0 — the setting explicitly permits.
      */
     await mounted();
     await goAvailable();
@@ -449,7 +449,7 @@ describe('criterion (a) — with audio off, the three cues are three different s
     });
 
     const element = flash()!;
-    // On the rail — §A.3's "single most important component" — not in a corner.
+    // On the rail's "single most important component" — not in a corner.
     expect(element.closest('[role="status"]')).toBeTruthy();
     /**
      * `aria-hidden`, and deliberately. The rail is this screen's only polite live
@@ -852,7 +852,7 @@ describe('criterion (d) — the settings surface is reachable without a mouse', 
   });
 
   it('Esc closes it and gives focus back to the trigger', async () => {
-    // §A.13.9: every transient surface returns focus to the control that opened it.
+    // every transient surface returns focus to the control that opened it.
     // A popover that closes and drops focus to `<body>` strands a keyboard agent at
     // the top of the document — on this screen, past the whole contact panel.
     await mounted();
@@ -898,7 +898,7 @@ describe('criterion (d) — the settings surface is reachable without a mouse', 
      * *different* element type — `<input type="range">` rather than `type="radio"` —
      * so a guard narrowed by accident to just the one would pass the test above and
      * still leave the agent stuck here. `range` responds to the arrow keys; it has no
-     * claim on `b`, and §A.9's suppression exists for a note that contains the
+     * claim on `b`, and's suppression exists for a note that contains the
      * letter, not for a control that cannot type one.
      */
     await mounted();

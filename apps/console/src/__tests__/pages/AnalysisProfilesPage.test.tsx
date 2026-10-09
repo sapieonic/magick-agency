@@ -140,8 +140,8 @@ describe('AnalysisProfilesPage — a refused delete has to reach the operator', 
   /*
     Regression cover for a defect an adversarial review found, and the shape is
     worth stating because it is the sort that hides forever: the whole cross-service
-    chain worked. Core answered 409 with a sentence whose entire content is the
-    remedy, master's error mask deliberately allow-lists the code so it survives the
+    chain worked. The API answered 409 with a sentence whose entire content is the
+    remedy, the API's error mask deliberately allow-lists the code so it survives the
     hop unmasked — and then this page dropped it on the floor.
 
     `handleDeleteConfirm` caught the throw under the comment "Surfaced by the hook's
@@ -176,7 +176,7 @@ describe('AnalysisProfilesPage — a refused delete has to reach the operator', 
     fireEvent.click(confirm);
   }
 
-  it("renders core's refusal verbatim rather than closing the dialog on silence", async () => {
+  it("renders the API's refusal as-is rather than closing the dialog on silence", async () => {
     const remove = vi.fn().mockRejectedValue(new Error(REFUSAL));
     setupProfiles({ profiles: [profileRow], total: 1, defaultProfile: profileRow, remove });
     renderPage();

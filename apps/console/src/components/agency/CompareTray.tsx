@@ -40,7 +40,7 @@ import shell from './AgentAnalyticsSection.module.css';
  * no loading state, no error state and no retry here — there is nothing to fail.
  *
  * The server-side alternative was refused for a sharper reason than symmetry:
- * master holds ONE `AGENT_STATS_QUERY_PARAMS` whitelist shared by `/my-stats` and
+ * the API holds ONE `AGENT_STATS_QUERY_PARAMS` whitelist shared by `/my-stats` and
  * its supervisory twin, so adding a `compare_to` param for a "vs team" line would
  * expose it on the agent's own scorecard in the same edit — and the cohort band is
  * supervisor-only by user ruling. See `utils/agencyCompareTray.ts`.
@@ -334,7 +334,7 @@ function CompareTable({
                     {/*
                       `null` renders NO line rather than "no median yet": that
                       sentence is a claim about the floor, and making it about a
-                      percentile block master has not shipped (`aht` is additive)
+                      percentile block the API has not shipped (`aht` is additive)
                       would be a false one.
                     */}
                     {band !== null && (

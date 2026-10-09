@@ -31,13 +31,13 @@ import { openWrapup, type WrapupAnchor } from '../utils/agencyWrapup';
  * terminal state, and the user presses "New call". That is correct for a
  * socket whose lifetime is one call the user initiated. It is unusable for a
  * socket that must survive an eight-hour shift across wifi blips, laptop
- * sleeps and a master deploy. So reconnect, backoff, heartbeat and token
+ * sleeps and an API deploy. So reconnect, backoff, heartbeat and token
  * re-minting are all new here rather than adapted.
  *
- * ── The frame rule that matters most (UX §A.3.1) ───────────────────────────
+ * ── The frame rule that matters most ───────────────────────────
  * The socket carries TWO vocabularies and only one may move the UI. The bridge
  * borrows this socket per attempt and emits its own `status`/`ended` frames
- * onto it, relayed verbatim. Those describe the MEDIA LEG, not the attempt.
+ * onto it, relayed unchanged. Those describe the MEDIA LEG, not the attempt.
  *
  * `status: 'answered'` and `bridged` look interchangeable and are not:
  * `answered` means the carrier says the far end went off-hook; `bridged` means
@@ -49,7 +49,7 @@ import { openWrapup, type WrapupAnchor } from '../utils/agencyWrapup';
  *
  * So: `bridged` and nothing else opens the call. Everything unrecognised goes
  * to the diagnostic sink by default; an unknown frame is expected traffic
- * after a core deploy, never an error, and must never throw or drop the socket.
+ * after an API deploy, never an error, and must never throw or drop the socket.
  *
  * ── The one bridge frame that is NOT diagnostic (`media`) ───────────────────
  * The socket also carries the customer's **voice**, in both directions. That
@@ -65,20 +65,20 @@ export type StationConnection =
   | 'idle'
   | 'connecting'
   | 'open'
-  /** Socket lost, retry scheduled. Do NOT say "call ended" here (§A.8.1). */
+  /** Socket lost, retry scheduled. Do NOT say "call ended" here. */
   | 'reconnecting'
   /** Terminal: this session cannot be reconnected. Re-bootstrap required. */
   | 'session_gone'
-  /** Terminal: another window took this session (§A.8.3). */
+  /** Terminal: another window took this session. */
   | 'superseded'
   /**
    * Terminal *by choice*: the console has stopped retrying and is waiting for the
    * agent to say so. Reached two ways, both meaning "you are not receiving calls
    * and we are no longer pretending otherwise":
    *
-   * - three missed pings (§A.8.2) — 30 s of silence on an open socket. Core's
+   * - three missed pings — 30 s of silence on an open socket. The API's
    *   `OWNERSHIP_TTL_MS` is 30 s, so by this point the server really has dropped
-   *   the agent; the socket is closed here so core's registry stops claiming a
+   *   the agent; the socket is closed here so the API's registry stops claiming a
    *   station this console cannot use.
    * - the flap cap — more than `FLAP_LIMIT` connects inside `FLAP_WINDOW_MS`,
    *   which is not a network to wait out.
@@ -116,10 +116,10 @@ export interface LiveAttempt {
    * Set only by `bridged` (or read off `ready.active_attempt.bridged_at` on a
    * reconnect). Its presence IS "the call is up", and **its absence IS "still
    * ringing"** — that is the whole pre-answer/post-answer discriminator, and the
-   * only one core supplies.
+   * only one the API supplies.
    *
    * `secondsRemaining` and `ringing` used to sit beside this, fed exclusively by
-   * the `countdown` frame. Core emits no such frame and nothing read either field;
+   * the `countdown` frame. The API emits no such frame and nothing read either field;
    * both went with the handler. `StateRail` has always derived "Ringing — get
    * ready" from `bridgedAt === null`, so nothing on screen changed.
    */
@@ -129,7 +129,7 @@ export interface LiveAttempt {
 export interface UseAgencyStationResult {
   connection: StationConnection;
   agentState: AgencyAgentState;
-  /** `agent_state.since` — the ONLY anchor for break elapsed time (§A.13.4). */
+  /** `agent_state.since` — the ONLY anchor for break elapsed time. */
   agentStateSince: string | null;
   /** `agent_state.break_reason`, the code in effect while on break. */
   breakReasonCode: string | null;
@@ -143,14 +143,14 @@ export interface UseAgencyStationResult {
    * uncancellable — the moment the socket blipped or another window queued it.
    *
    * **`null` means the last transition said nothing is queued, not "unknown".**
-   * Core's `/break/cancel` sends an `agent_state` with the pending fields omitted
+   * The API's `/break/cancel` sends an `agent_state` with the pending fields omitted
    * for exactly this purpose, so absence is a statement. Read it together with
    * `agentStateSince`, which moves on every transition and is what tells a
    * consumer a frame has actually spoken.
    *
-   * Core pairs `pending_state: 'break'` with `pending_break_reason` at all three of
+   * The API pairs `pending_state: 'break'` with `pending_break_reason` at all three of
    * its emitters (the `/break` route, wrap-up entry, and `ready`), so a queued
-   * break with no code is not a state core can produce and is not defended against
+   * break with no code is not a state the API can produce and is not defended against
    * here.
    */
   pendingBreakCode: string | null;
@@ -165,46 +165,46 @@ export interface UseAgencyStationResult {
    * statement of the same value has to be visible, and a value that is already
    * `null` moves nothing. `agentStateSince` used to serve as that marker and no
    * longer can: `ready` restates the queue and carries no `since`, deliberately —
-   * a reconnect is not a transition, and core refuses to invent the instant a break
+   * a reconnect is not a transition, and the API refuses to invent the instant a break
    * was queued (`contracts.ts`, `AgencyStationReadyFrame.pending_state`).
    *
    * `0` therefore means "no frame has spoken yet", which is a different thing from
-   * "core says nothing is queued".
+   * "the API says nothing is queued".
    */
   pendingBreakStatements: number;
   live: LiveAttempt | null;
   /**
    * The released attempt whose panel and pad **stay up** through wrap-up.
    *
-   * §A.13.1: on a `released` with `requires_disposition: true` the console takes
+   * on a `released` with `requires_disposition: true` the console takes
    * wrap-up shape *immediately* — "panel stays up and readable, pad enabled". The
    * Phase 1 hook cleared `live` on every `released`, which is correct for the
    * agent's *call* and wrong for the agent's *screen*: it left them dispositioning
    * a contact whose details had just vanished.
    *
-   * Cleared by a new `reserved` (§A.8.4 — a new reservation always wins) and by
+   * Cleared by a new `reserved` (a new reservation always wins) and by
    * `agent_state` leaving `wrapup`.
    */
   retainedAttempt: AgencyReservedAttempt | null;
   /**
    * The attempt the station holds **now**, for the stale-response guard: the live
    * or reserved one, else the one being dispositioned. `null` only when there is
-   * genuinely none — which is deliberately not a discard (§A.13.6).
+   * genuinely none — which is deliberately not a discard.
    */
   currentAttemptId: string | null;
   /**
-   * Wrap-up, captured **once, on the frame** (§A.13.5).
+   * Wrap-up, captured **once, on the frame**.
    *
    * `null` means **no wrap-up frame**, which is a different state from a frame
    * carrying `ends_at: null` — that one is a real held window and produces an
    * anchor with a null `deadlineMs`. There is deliberately no companion "waiting
    * for the frame" flag here: a flag beside a nullable anchor is how the two get
-   * merged back together (§A.13.5.1).
+   * merged back together.
    */
   wrapup: WrapupAnchor | null;
   /**
    * Rolling median offset from `pong`, in ms, to subtract from a server instant
-   * (§A.13.2). Zero until the first sample, which is the honest position.
+   *. Zero until the first sample, which is the honest position.
    */
   clockOffsetMs: number;
   release: AgencyStationReleasedFrame | null;
@@ -219,13 +219,13 @@ export interface UseAgencyStationResult {
    * The `released` that landed while this session had no socket (`ready`).
    *
    * Held **separately from `release`** rather than folded into it, and the reason
-   * is the one core states in the contract: this is history, not a transition. It
+   * is the one the API states in the contract: this is history, not a transition. It
    * must not fire the disconnect cue, must not clear a panel, and must not open a
    * wrap-up — everything the `released` handler does is right for a call ending
    * now and wrong for one that ended nine minutes ago. Keeping it in its own field
    * means the distinction is structural instead of a comment asking for care.
    *
-   * **Core consumes it on read**, so this frame is the only offer. Dropped, the
+   * **The API consumes it on read**, so this frame is the only offer. Dropped, the
    * record is gone for good and the agent comes back to an empty station.
    */
   missedRelease: AgencyMissedRelease | null;
@@ -235,19 +235,19 @@ export interface UseAgencyStationResult {
   /** Consecutive missed heartbeats, for the connection health pill. */
   missedPings: number;
   diagnostics: DiagnosticEntry[];
-  // `hangup` removed — see the note where its implementation was (`MAG-112`).
+  // `hangup` removed — see the note where its implementation was.
   // Hanging up is `hangupAttempt()` in `src/api/agency.ts`, not a socket frame.
   /** Force a reconnect (the "Reconnect" button on a dropped station). */
   reconnect: () => void;
   /**
-   * Push one captured audio frame to core. Returns whether it went on the wire.
+   * Push one captured audio frame to the API. Returns whether it went on the wire.
    *
    * **Reads the socket ref at call time, never a closed-over socket**, so a
    * reconnect mid-call resumes the agent's uplink onto the new socket with no
    * re-wiring by the caller — and a `false` during the gap is a dropped 20 ms
    * frame, which is the correct outcome and is inaudible.
    *
-   * Unlike the removed `hangup` frame, this one is read: core's borrowed-leg
+   * Unlike the removed `hangup` frame, this one is read: the API's borrowed-leg
    * listener acts on `media` and nothing else
    * (`webrtc-bridge-manager.ts:1083`).
    */
@@ -270,7 +270,7 @@ function backoffFor(attempt: number): number {
 }
 
 /**
- * §A.8.2's third row. Three missed pings is 30 s of silence, which is also core's
+ * the third row. Three missed pings is 30 s of silence, which is also the API's
  * `OWNERSHIP_TTL_MS` — so the server has genuinely dropped the agent and the
  * console must say so rather than keep a dead socket open.
  */
@@ -280,7 +280,7 @@ const MISSED_PING_LIMIT = 3;
  * The flap cap the ticket asks for. More than `FLAP_LIMIT` connects inside
  * `FLAP_WINDOW_MS` is not a connection to wait out, and retrying it forever is
  * the incident this whole change exists to stop: the console reconnects ~1/s,
- * core supersedes and re-attaches at the same rate, and the agent strobes in and
+ * the API supersedes and re-attaches at the same rate, and the agent strobes in and
  * out of the dialable pool while the screen looks busy but fine.
  *
  * **It counts one specific thing: a socket that PROVED liveness and then died.**
@@ -292,7 +292,7 @@ const MISSED_PING_LIMIT = 3;
  *   33.5 s, so the seventh tripped it — and a rolling deploy, a pod restart or an
  *   LB drain all exceed 34 s. That parked every agent on the floor behind a
  *   manual click simultaneously, which is the opposite of a hook whose whole job
- *   is to survive a shift across wifi blips and a master deploy.
+ *   is to survive a shift across wifi blips and an API deploy.
  * - **It could not see the only pattern that still loops fast.** Now that the
  *   ladder resets on a `pong` rather than on `open`, a socket that never proves
  *   liveness walks out to the 15 s ceiling on its own — the cadence decays and
@@ -337,11 +337,11 @@ function abandon(socket: WebSocket | null, reason = 'replaced'): void {
   socket.onmessage = null;
   socket.onclose = null;
   socket.onerror = null;
-  // 1000 for the same reason the effect cleanup uses it: core must be able to
+  // 1000 for the same reason the effect cleanup uses it: the API must be able to
   // tell a deliberate close from a dropped connection. There is deliberately no
-  // "the same console is replacing this socket" code — core does not define one,
+  // "the same console is replacing this socket" code — the API does not define one,
   // and inventing an unshipped contract here would be worse than the cost, which
-  // is that core rehydrates the agent as `offline` and they re-arm. That cost is
+  // is that the API rehydrates the agent as `offline` and they re-arm. That cost is
   // unchanged from before this fix and is bounded by how rarely we now reconnect.
   if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
     socket.close(1000, reason);
@@ -354,13 +354,13 @@ export function useAgencyStation(
     tenantId?: string;
     /**
      * Required in practice, `undefined`-tolerant in the type only because every
-     * other option here is optional. Core rejects any authenticated route with
+     * other option here is optional. The API rejects any authenticated route with
      * no `x-mgkvc-account`, so a token mint without it fails the reconnect.
      */
     accountId?: string;
     enabled?: boolean;
     /**
-     * The connect cue's dispatcher (§A.4.3.1). Optional so every existing caller
+     * The connect cue's dispatcher. Optional so every existing caller
      * and test is unaffected; when absent the console is simply silent.
      *
      * Passed in rather than constructed here because the `AudioContext` behind it
@@ -411,16 +411,16 @@ export function useAgencyStation(
    * **nothing checked which socket a callback belonged to**. A stale socket's
    * `onclose` cleared the LIVE socket's heartbeat, nulled its pointer (so
    * `sendMedia` started returning false: dead air, mid-call) and scheduled
-   * another connect. That second socket made core supersede the first, whose
+   * another connect. That second socket made the API supersede the first, whose
    * close did the same again — a ~1/s reconnect loop that never backed off,
    * because `onopen` reset the ladder every lap. Measured in production at ~28
-   * cycles in 31 minutes across three agents (ClickUp `86d44papk`).
+   * cycles in 31 minutes across three agents.
    *
    * `connect()` claims the hook by incrementing this; every callback compares
    * before touching shared state. This is the pattern already used for exactly
    * this class of bug everywhere else in the platform — `useAgentAttempts.ts`'s
-   * `generation.current += 1` with `decideListResponse`, master's
-   * `LocalCache.epochFor`/`setIfEpoch`, core's `claim_generation` — and the
+   * `generation.current += 1` with `decideListResponse`, the API's
+   * `LocalCache.epochFor`/`setIfEpoch`, the API's `claim_generation` — and the
    * station socket was the only place lacking it.
    *
    * It replaces the old `closingRef`, which could not work: a deliberate close
@@ -463,7 +463,7 @@ export function useAgencyStation(
    *  * **Tick count.** A tick is not a second. A backgrounded tab is throttled to
    *    about one timer a minute and a suspended machine delivers several coalesced
    *    ticks at once, so "three misses" could mean three seconds of real silence
-   *    or three minutes — while §A.8.2 states the threshold in seconds.
+   *    or three minutes — while the contract states the threshold in seconds.
    *  * **Time since the last pong.** The right units and the wrong quantity: it
    *    measures a gap in which we may never have ASKED. Whether that is reachable
    *    depends on something else stopping the pings for long enough that the tick
@@ -488,14 +488,14 @@ export function useAgencyStation(
    * Written by `applyAgentState` at the moment a state frame is handled, which is
    * what makes it usable *inside* the handler: `liveRef` above is assigned during
    * render and therefore still holds the pre-batch value while several frames are
-   * being dispatched in one task — exactly the situation this is read in (core sends
+   * being dispatched in one task — exactly the situation this is read in (the API sends
    * `released` → `agent_state` → `wrapup` back to back).
    *
    * Its consumers — the `agent_state` handler and `ready`'s wrap-up-is-over branch —
    * both ask it the one question "did a wrap-up actually happen?", which decides
    * whether the `released` frame has already been explained to the agent or still
    * owes them an account. A boolean flag beside `wrapup` would
-   * answer the same question and is deliberately avoided — §A.13.5.1 keeps "no frame"
+   * answer the same question and is deliberately avoided — "no frame"
    * and "a frame with no deadline" structurally distinct, and a companion flag next
    * to that anchor is how the two get merged back together.
    */
@@ -576,7 +576,7 @@ export function useAgencyStation(
    * they cannot come apart: a consumer reconciling its own copy needs the counter to
    * move even when the code does not, and a caller that set one without the other
    * would silently break the clearing case — which is the case that matters, since
-   * absence is how core says the queue is empty.
+   * absence is how the API says the queue is empty.
    *
    * Stable identity (`[]`, setters only), because `handleFrame` depends on it and
    * `handleFrame` → `connect` → the connect effect: a dependency that moved would
@@ -607,7 +607,7 @@ export function useAgencyStation(
 
   /**
    * Route one frame. Switches on the AUTHORITATIVE set only; everything else
-   * — bridge frames, and anything core adds later — falls through to the
+   * — bridge frames, and anything the API adds later — falls through to the
    * diagnostic sink rather than throwing.
    */
   const handleFrame = useCallback(
@@ -672,14 +672,14 @@ export function useAgencyStation(
            * field was applied only when present, so a reconnect could *add* state
            * and never *remove* it. Everything this console believed from frames the
            * previous socket delivered survived a reconnect that contradicted it —
-           * and core cannot contradict it any other way, because the frames that
+           * and the API cannot contradict it any other way, because the frames that
            * would have (`released`, `agent_state`) were sent into the socket that
            * had already gone.
            *
            * Two live defects came out of that one omission, and they are the same
            * defect:
            *
-           *  - **`live` was never cleared.** Core sends `missed_release` *exactly*
+           *  - **`live` was never cleared.** The API sends `missed_release` *exactly*
            *    when it holds no attempt (`agency.routes.ts:880`,
            *    `activeAttempt ? null : takeMissedRelease(...)`) and only when the
            *    `released` frame could not be delivered (`agency-dialer.ts:646`,
@@ -688,11 +688,11 @@ export function useAgencyStation(
            *    bridged attempt that had ended: microphone armed, recording
            *    indicator lit, talk timer running, pad unlocked, and `panelAttempt`
            *    truthy — which suppresses the one component that renders the
-           *    "While you were disconnected" notice. Core had already consumed the
+           *    "While you were disconnected" notice. The API had already consumed the
            *    record on read, so it was gone for good.
            *  - **`retainedAttempt` / `release` / `wrapup` were never cleared**, so
            *    a wrap-up that lapsed while the socket was away left the pad
-           *    unlocked over a window core had closed. The agent wrote a
+           *    unlocked over a window the API had closed. The agent wrote a
            *    disposition into it and the submit 409'd.
            *
            * So: replace or clear, field by field, and never merely add.
@@ -711,9 +711,9 @@ export function useAgencyStation(
              * reconnect onto a live call rendered as "Ringing — get ready" for the
              * rest of the conversation: no talk timer, and an agent told to wait
              * while a customer was already speaking. Nothing errored, which is why
-             * it survived — §A.13.1.1 names it exactly.
+             * it survived — the contract names it exactly.
              *
-             * There is no second `bridged` frame coming. Core deliberately does not
+             * There is no second `bridged` frame coming. The API deliberately does not
              * re-emit one, because the connect cue lives in that handler.
              */
             const bridgedAt = frame.active_attempt.bridged_at;
@@ -723,13 +723,13 @@ export function useAgencyStation(
             /**
              * **A rehydrated socket is not a connect event**, so this fires nothing
              * — it only tells the dispatcher what it missed, so that a later
-             * `released` for a call that WAS live can still fall (§A.4.3.1).
+             * `released` for a call that WAS live can still fall.
              */
             cues?.onRehydrated(frame.active_attempt.attempt_id, bridgedAt !== null);
             /**
              * Analytics: a reservation recovered after reconnect, not a fresh one —
              * `from_reconnect: true`. Never paired with `trackAgencyAttemptBridged`
-             * here even when `bridgedAt` is already set: core does not re-emit
+             * here even when `bridgedAt` is already set: the API does not re-emit
              * `bridged` on reconnect (see the note above), so the true `bridged`
              * frame handler below is the only source of that event, and an
              * already-bridged recovery is out of scope for it — this event alone
@@ -759,13 +759,13 @@ export function useAgencyStation(
             }
           } else {
             /**
-             * **No `active_attempt` ⇒ core holds no attempt for this session, so
+             * **No `active_attempt` ⇒ the API holds no attempt for this session, so
              * neither may we.**
              *
              * The one line that closes the worst of the two defects. `live` is
              * otherwise cleared only by `released` — and on this path that frame was
              * delivered into a socket that no longer existed, which is the very
-             * condition core uses to decide to hand us a `missed_release` instead.
+             * condition the API uses to decide to hand us a `missed_release` instead.
              * Leaving it set held a dead call open in every visible respect: the
              * `audio.sync` effect keys on `live?.attempt.attempt_id`, so the
              * microphone stayed armed with the browser's recording indicator lit and
@@ -799,11 +799,11 @@ export function useAgencyStation(
             // anchor we already hold is kept (a reconnect without a page reload
             // keeps its countdown) and none is invented — no anchor renders the
             // `held` treatment, "ends when you act", which is the honest reading of
-            // "core says you are in wrap-up and cannot tell us until when".
+            // "the API says you are in wrap-up and cannot tell us until when".
             if (frame.active_wrapup) {
               setWrapup(openWrapup(frame.active_wrapup, offsetRef.current, Date.now()));
               /**
-               * A consistency check with a real, if rare, subject: if core names a
+               * A consistency check with a real, if rare, subject: if the API names a
                * different attempt's wrap-up than the one whose panel we are holding,
                * ours is from a call that finished while the socket was away and the
                * contact details beside the pad belong to the wrong customer.
@@ -820,7 +820,7 @@ export function useAgencyStation(
              * this. `agent_state{state !== 'wrapup'}` clears the anchor and the
              * retained attempt; the `agent_state` that would have said so was sent
              * into the dead socket, so without this the console reconnects still
-             * believing in a wrap-up core closed minutes ago — pad unlocked over a
+             * believing in a wrap-up the API closed minutes ago — pad unlocked over a
              * window that will 409, `currentAttemptId` still pointing at the finished
              * attempt.
              *
@@ -828,11 +828,10 @@ export function useAgencyStation(
              * correction: it used to, and the rule was written when the wrap-up rail
              * was its only consumer. It has a second one now with a longer lifetime
              * — `IdlePanel` renders `releaseAccount(release)` for a
-             * `requires_disposition` release that no wrap-up ever explained (core
-             * `#290`: the agent dispositioned mid-call, so `agent_state{wrapup}` and
+             * `requires_disposition` release that no wrap-up ever explained (the agent dispositioned mid-call, so `agent_state{wrapup}` and
              * `wrapup` are never sent and the state goes `on_call → available`). On
              * that path this console **witnessed** the release while connected, so
-             * core holds no `missed_release` to hand back, and clearing here left a
+             * the API holds no `missed_release` to hand back, and clearing here left a
              * brief reconnect in the idle window silently deleting the only account
              * of the call the agent will ever get.
              *
@@ -844,10 +843,10 @@ export function useAgencyStation(
              *    whole window. Keeping it would re-state a finished call in the idle
              *    panel beside "Waiting for a call". This is the same clause, read off
              *    the same ref, as the `agent_state` handler's.
-             *  - `frame.missed_release` — core's own account of a release this
+             *  - `frame.missed_release` — the API's own account of a release this
              *    session did not see is newer, and it is the authority. It also
              *    renders in the same slot, so two notices would compete.
-             *  - `frame.active_attempt` — core has handed us a *call*, so anything we
+             *  - `frame.active_attempt` — the API has handed us a *call*, so anything we
              *    still hold about a previous one is stale.
              *
              * The lifetime does not grow past "until the next call": `reserved`
@@ -863,13 +862,13 @@ export function useAgencyStation(
             }
           }
           /**
-           * **Consumed-on-read on core's side, so this is the only offer.** Stored,
+           * **Consumed-on-read on the API's side, so this is the only offer.** Stored,
            * never routed through the `released` handler: that one fires the
            * disconnect cue, clears `live` and opens wrap-up, all of which are
            * statements about a call ending *now*.
            *
            * Assigned unconditionally, like every other field here: a reconnect that
-           * carries no missed release is core saying there is none, and a stale
+           * carries no missed release is the API saying there is none, and a stale
            * notice about an older call is the defect `reserved` already clears.
            */
           if (frame.missed_release) {
@@ -877,7 +876,7 @@ export function useAgencyStation(
               campaign_id: bootstrapRef.current?.campaign_id ?? '',
               reason: frame.missed_release.reason,
               requires_disposition: frame.missed_release.requires_disposition,
-              // `AgencyMissedRelease` carries no `bridged_at` — core does not tell
+              // `AgencyMissedRelease` carries no `bridged_at` — the API does not tell
               // us here whether the call connected before the socket dropped.
               was_bridged: false,
               talk_seconds: 0,
@@ -890,13 +889,13 @@ export function useAgencyStation(
            *
            * This was a comment explaining that `ready` carried no `pending_state`, so
            * a break queued before the drop could not be restored from this frame and
-           * `pendingBreakCode` was left alone rather than cleared. Core closed the
-           * gap (`4f59d8b`): `ready` now carries the same two fields as
+           * `pendingBreakCode` was left alone rather than cleared. The API closed the
+           * gap: `ready` now carries the same two fields as
            * `agent_state`, unconditionally — not only beside `active_wrapup`, because
            * a break can equally be queued from `reserved` or `on_call` and those
            * reconnects arrive with `active_attempt` instead.
            *
-           * **Core `peek`s the queue to report it, so the break still lands.**
+           * **The API `peek`s the queue to report it, so the break still lands.**
            * `releaseAgent` `take`s it when wrap-up ends and the agent leaves the
            * pool regardless of whether this console ever rendered the badge — which
            * is why restoring it is not cosmetic: the agent is being told, in advance,
@@ -904,7 +903,7 @@ export function useAgencyStation(
            * not remember making.
            *
            * Assigned unconditionally like every other field on this snapshot:
-           * absence is core saying the queue is empty (cancelled while the socket was
+           * absence is the API saying the queue is empty (cancelled while the socket was
            * away, or already applied), so keeping what we hold would leave a badge up
            * for a break that will never happen.
            */
@@ -922,7 +921,7 @@ export function useAgencyStation(
            * **The queue, read off every transition — including the ones that say it
            * is empty.**
            *
-           * `pending_state` absent is core telling us nothing is queued, not core
+           * `pending_state` absent is the API telling us nothing is queued, not it
            * declining to say: `/break/cancel` emits an `agent_state` with these
            * fields omitted for precisely that purpose. So this assigns
            * unconditionally rather than only when the fields are present — an
@@ -931,15 +930,14 @@ export function useAgencyStation(
            */
           stateBreakQueue(frame.pending_state, frame.pending_break_reason);
           if (frame.state !== 'wrapup') {
-            // **`agent_state` is the one authority for wrap-up ENDING** (§A.13.5).
+            // **`agent_state` is the one authority for wrap-up ENDING**.
             // Not the countdown reaching zero, not the wrap-up frame, and not the
             // disposition response — so there is no second frame to race and no
             // case where the console has to decide which of two frames won.
             setWrapup(null);
             setRetainedAttempt(null);
             /**
-             * **`release` outlives wrap-up only when there was no wrap-up** (core
-             * `#290`).
+             * **`release` outlives wrap-up only when there was no wrap-up** (see above).
              *
              * A wrap-up that actually happened has already put the release copy in
              * front of the agent — it is the wrap-up rail's label and sub-text for
@@ -947,7 +945,7 @@ export function useAgencyStation(
              * finished call in the idle panel beside "Waiting for a call".
              *
              * A release the agent never saw explained is the opposite case, and it
-             * is the one core's wrap-up early return produces: the
+             * is the one the API's wrap-up early return produces: the
              * `agent_state{wrapup}` and `wrapup` frames are never sent, so the state
              * goes `on_call → available` and the panel empties with no account of the
              * call at all. Keeping the frame there is what lets `IdlePanel` say the
@@ -985,18 +983,18 @@ export function useAgencyStation(
           // race against the carrier answering.
           setRelease(null);
           setReleasedAt(null);
-          // A new reservation always wins and replaces the panel (§A.8.4), so any
+          // A new reservation always wins and replaces the panel, so any
           // wrap-up still on screen belongs to a call that is over.
           setRetainedAttempt(null);
           setWrapup(null);
           // Same rule for the account of a call the agent missed: it was about the
           // previous customer, and leaving it beside this one's details is the
-          // stale-notice defect §A.7.1.1 refuses everywhere else on this screen.
+          // stale-notice defect refused everywhere else on this screen.
           setMissedRelease(null);
           setLive({ attempt: frame.attempt, bridgedAt: null });
           /**
            * Analytics: the shift's running reservation tally. A local counter —
-           * `frame.attempt.attempt_number` is core's per-CONTACT retry count, not
+           * `frame.attempt.attempt_number` is the API's per-CONTACT retry count, not
            * a per-shift tally, so it is not reused here.
            */
           {
@@ -1015,14 +1013,14 @@ export function useAgencyStation(
           return;
         }
 
-        // ── `countdown` REMOVED (`MAG-39` follow-up) ────────────────────────
+        // ── `countdown` REMOVED ────────────────────────
         //
         // This handled `{event:'countdown', attempt_id, seconds_remaining}` into
-        // `live.secondsRemaining` / `live.ringing`. **Core emits that frame from
+        // `live.secondsRemaining` / `live.ringing`. **The API emits that frame from
         // nowhere** — its `contracts.ts` declares the type and no call site sends
         // one — and nothing in this repo read either field: `StateRail` derives
         // "Ringing — get ready" from `bridgedAt === null`, which is the only
-        // discriminator core actually provides.
+        // discriminator the API actually provides.
         //
         // So this was a handler that could not run, writing fields nobody read.
         // Deleted rather than left in place, because a live-looking handler is
@@ -1041,8 +1039,8 @@ export function useAgencyStation(
            * committed** — not from a `useEffect` watching `bridgedAt`. An effect is
            * deferred and batched: under load it lands tens to hundreds of
            * milliseconds late, and the lateness is invisible in development with one
-           * call in flight on an idle machine. §A.4.3.1 budgets 150ms from frame
-           * receipt and has the lag written to diagnostics on every connect, so a
+           * call in flight on an idle machine. the budget is 150ms from frame
+           * receipt and the lag is the lag written to diagnostics on every connect, so a
            * regression to the effect shape shows up as data rather than as an
            * argument.
            */
@@ -1079,7 +1077,7 @@ export function useAgencyStation(
           cues?.onReleased(frame.attempt_id);
           setRelease(frame);
           setReleasedAt(Date.now());
-          // The panel and pad stay up when there is still work to do (§A.13.1).
+          // The panel and pad stay up when there is still work to do.
           // The call is over — `live` goes — but the contact the agent is about to
           // disposition must not vanish from under them.
           if (frame.requires_disposition) {
@@ -1139,7 +1137,7 @@ export function useAgencyStation(
            * pong cannot reach here and reset the live socket's ladder. Without
            * that guard this line would be a new bug rather than a fix.
            *
-           * No starvation risk on a healthy socket: core answers `ping` with
+           * No starvation risk on a healthy socket: the API answers `ping` with
            * `pong` unconditionally once attached, and `onopen` sends one
            * immediately rather than waiting out the first heartbeat interval.
            */
@@ -1153,7 +1151,7 @@ export function useAgencyStation(
           // costs nothing: `ping` sent `ts`, `pong` echoes it and adds `server_ts`.
           // A machine minutes out of NTP would otherwise render a countdown
           // minutes out — looking exactly like a product bug and reproducing on
-          // nobody's development machine (§A.13.2).
+          // nobody's development machine.
           if (typeof frame.ts === 'number' && typeof frame.server_ts === 'number') {
             estimatorRef.current = estimatorRef.current.push({
               ts: frame.ts,
@@ -1174,7 +1172,7 @@ export function useAgencyStation(
         }
 
         default: {
-          // Bridge-originated `status`/`ended`, and anything core adds later.
+          // Bridge-originated `status`/`ended`, and anything the API adds later.
           // Diagnostic ONLY — never agent state, never a panel clear, never
           // any part of the connect cue.
           const unknown = frame as { event: string; status?: string; reason?: string };
@@ -1245,7 +1243,7 @@ export function useAgencyStation(
         // The mint is an await, and neither `clearTimers()` nor the effect
         // cleanup can cancel one. Without this check a connect abandoned while
         // its token was in flight came back and opened a socket anyway — the
-        // second socket that made core supersede the first.
+        // second socket that made the API supersede the first.
         if (gen !== generationRef.current) return;
         url = minted.station_ws_url;
       } catch (err) {
@@ -1295,8 +1293,8 @@ export function useAgencyStation(
        * blipped inside its first 10 s carried backoff it had not earned.
        *
        * Uncounted because counting it would move the give-up deadline from 30 s
-       * after open to 20 s, breaking the symmetry with core's own grace. (An
-       * earlier version of this comment claimed it was to keep the §A.8.2 pill on
+       * after open to 20 s, breaking the symmetry with the API's own grace. (An
+       * earlier version of this comment claimed it was to keep the connection pill on
        * "Connected" — that was wrong: the pill switches at two misses, so one
        * would not have moved it.)
        */
@@ -1316,7 +1314,7 @@ export function useAgencyStation(
         /**
          * Counted whether or not the frame can be sent. The old code returned
          * early when the socket was not OPEN, so a socket the browser had moved
-         * to CLOSING stopped accumulating misses entirely and §A.8.2's third row
+         * to CLOSING stopped accumulating misses entirely and the third row
          * was unreachable — the detector disarmed itself in exactly the state it
          * exists to detect. A socket that is not OPEN will not answer either, so
          * it is a miss.
@@ -1328,13 +1326,13 @@ export function useAgencyStation(
          * ── NEVER TEAR DOWN A LIVE CALL ON THIS TIMER ──────────────────────
          *
          * This socket IS the media leg. Media frames produce no `pong`, and
-         * core answers a ping only after a database read — so a slow (not
+         * the API answers a ping only after a database read — so a slow (not
          * failed) read, or any stall in that path, stops the pongs on a socket
          * whose audio is still flowing perfectly. Giving up there closes the
-         * socket, drops the microphone and arms core's deferred hangup: a core
+         * socket, drops the microphone and arms the API's deferred hangup: an API
          * database slowdown would become a floor-wide simultaneous call drop.
          *
-         * Core's own silent-station sweep refuses exactly this, in exactly these
+         * The API's own silent-station sweep refuses exactly this, in exactly these
          * words — "that would put a live customer on silence and arm the
          * deferred hangup, on the strength of a timer the *client* stopped"
          * (`runtime.ts`, `sweepSilentStations`). Its guard is `hasLiveAttempt`;
@@ -1371,7 +1369,7 @@ export function useAgencyStation(
          * held is how a hold quietly stops covering the case it was added for.
          *
          * `MISSED_PING_LIMIT` reads as a count and is applied here as a number of
-         * intervals, which is what §A.8.2's 30 s is: three of them. The count in
+         * intervals, which is what the 30 s is: three of them. The count in
          * `pendingPings` is now display only (the pill's escalation), exactly as
          * review asked — nothing decides on it.
          */
@@ -1466,8 +1464,8 @@ export function useAgencyStation(
     };
 
     /**
-     * Stop trying, and say so, leaving `reconnect()` as the way back (§A.8.2's
-     * big Reconnect, §A.8.3's reclaim). Bumping the generation first is what
+     * Stop trying, and say so, leaving `reconnect()` as the way back (the
+     * big Reconnect, the reclaim). Bumping the generation first is what
      * makes the retired socket's later close inert.
      */
     function giveUp(cause: 'heartbeat' | 'flapping', detail: string): void {
@@ -1475,10 +1473,10 @@ export function useAgencyStation(
       clearTimers();
       const dying = socketRef.current;
       socketRef.current = null;
-      // Closed rather than left open: at three missed pings core's 30 s
+      // Closed rather than left open: at three missed pings the API's 30 s
       // ownership key has already lapsed, but its in-process registry still
       // holds this socket — so `/available` would keep succeeding against a
-      // station the agent cannot actually use. Closing makes core's refusal
+      // station the agent cannot actually use. Closing makes the API's refusal
       // honest.
       abandon(dying, cause);
       connectStampsRef.current = [];
@@ -1491,7 +1489,7 @@ export function useAgencyStation(
         had_live_attempt: liveRef.current !== null,
         had_wrapup: wrapupRef.current !== null,
         // The two causes have opposite runbooks — the line is bouncing versus
-        // core's pong path has stalled — and without this they emitted identical
+        // the API's pong path has stalled — and without this they emitted identical
         // payloads, so the incident was detectable and not triageable. The
         // in-tab diagnostics ring buffer never leaves the browser.
         cause,
@@ -1559,18 +1557,18 @@ export function useAgencyStation(
     };
   }, [bootstrap, enabled, connect, clearTimers]);
 
-  // ── `hangup` REMOVED (`MAG-112`) ──────────────────────────────────────────
+  // ── `hangup` REMOVED ──────────────────────────────────────────
   //
   // This sent `{event:'hangup', attempt_id}` on the station socket, with the
   // comment "authenticated by the socket itself — an `agent` at level 5 cannot
   // reach the generic `/proxy/webrtc-call/:id/end` route, by design." The premise
-  // was right and the conclusion never shipped: core's station socket carries two
+  // was right and the conclusion never shipped: the API's station socket carries two
   // `message` listeners, one acting only on `ping` and one only on `media`, so
   // the frame fell off the end of both and was discarded silently.
   //
   // The agent-native HTTP route it was a "fallback" for did not exist either, so
-  // the console's hang-up button did nothing by either path. Core now registers
-  // `POST /agency/attempts/:id/hangup`, master proxies it at
+  // the console's hang-up button did nothing by either path. The API now registers
+  // `POST /agency/attempts/:id/hangup`, the API proxies it at
   // `agency.attempts.handle`, and `AgentConsolePage` calls that and surfaces the
   // rejection. Deleted rather than left as a no-op: a caller of this hook has no
   // way to tell a frame nobody reads from one that works.
@@ -1591,7 +1589,7 @@ export function useAgencyStation(
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
     const frame = encodeAgencyMediaFrame(payload);
-    // `null` ⇒ core would have dropped it for length. Dropping it here instead
+    // `null` ⇒ the API would have dropped it for length. Dropping it here instead
     // means the ceiling is one number in one place rather than a silent discard
     // two services away.
     if (frame === null) return false;
@@ -1600,10 +1598,10 @@ export function useAgencyStation(
   }, []);
 
   /**
-   * The agent's own way back — §A.8.2's big **Reconnect** and §A.8.3's **Use this
+   * The agent's own way back — the big **Reconnect** and the **Use this
    * window instead**, which are the same act: mint a token for this session and
    * attach. Reclaiming needs nothing more, because the session outlives the
-   * socket and core's registry hands the station to whoever attaches last.
+   * socket and the API's registry hands the station to whoever attaches last.
    *
    * Deliberate intent, so the flap cap and the missed-ping count are cleared:
    * being refused because of what the previous minute did would make the button
@@ -1631,14 +1629,14 @@ export function useAgencyStation(
    * dialog was even shown**. An agent mid-call who pressed Ctrl-W and then chose
    * *Stay* — the exact outcome the prompt exists to produce — was left on a live
    * page with no socket, no heartbeat and no media path. `onclose` took the
-   * deliberate-teardown branch, so nothing retried; core expired the lease into
+   * deliberate-teardown branch, so nothing retried; the API expired the lease into
    * `agent_disconnected`; and the health pill has no `'idle'` arm, so the console
    * read "Connecting" while the customer sat on dead air. The damage landed
    * whether or not the browser ever showed the dialog.
    *
    * So: **`beforeunload` only prompts, and touches nothing.** `pagehide` does the
-   * close, which is where `MAG-112`'s reasoning still holds — an unloading tab
-   * that told core nothing leaves a customer on dead air until the heartbeat
+   * close, which is where that reasoning still holds — an unloading tab
+   * that told the API nothing leaves a customer on dead air until the heartbeat
    * grace expires, and `pagehide` is the last point at which we can say so.
    *
    * ── The prompt itself ──────────────────────────────────────────────────────
@@ -1713,7 +1711,7 @@ export function useAgencyStation(
      *
      * **The wrap-up anchor is the third source and it is not decoration.** A socket
      * that reconnects mid-wrap-up gets `ready.active_wrapup` and nothing else —
-     * core has no attempt payload to hand back for a call that already ended, so
+     * the API has no attempt payload to hand back for a call that already ended, so
      * `live` and `retainedAttempt` are both null while the agent still owes a
      * disposition. Without this arm the console holds no attempt id, so notes
      * cannot hydrate and `submit()` returns early on `attemptId === null`: the
@@ -1737,20 +1735,20 @@ export function useAgencyStation(
 }
 
 /**
- * Master rewrites core's absolute URL onto its own `/proxy/...` prefix, which
+ * The server rewrites the dialer runtime's absolute URL onto its own `/proxy/...` prefix, which
  * arrives here as a PATH. A relative path is not a valid WebSocket URL, so it
  * has to be resolved against a host — and the host is **`API_BASE`, not the
- * page's origin**, because the SPA and master are not the same origin on any
+ * page's origin**, because the SPA and the API are not the same origin on any
  * real deployment.
  *
  * This resolved against `window.location.host` alone, which is correct in dev
- * (`API_BASE` empty, Vite proxying `/proxy` to master) and correct on any
+ * (`API_BASE` empty, Vite proxying `/proxy` to the API) and correct on any
  * single-origin deploy — and wrong everywhere else. On staging the page is
- * served from `staging.app.magickvoice.com` while `API_BASE` is
- * `https://staging.appi.magickvoice.com`, so the upgrade went to the SPA's own
+ * served from one host while `API_BASE` is
+ * another host, so the upgrade went to the SPA's own
  * host, matched its history fallback, and came back **`200 text/html`** — the
  * index page. A WebSocket handshake that gets a 200 instead of a 101 never
- * opens, so master's own close codes are never reached and the console has
+ * opens, so the API's own close codes are never reached and the console has
  * nothing to report but a bare transport failure. It then re-mints a token and
  * retries forever on the backoff below, which is what turns one misresolved
  * host into a wall of console errors and a steady stream of token mints.
@@ -1761,12 +1759,12 @@ export function useAgencyStation(
  *
  * Only the **origin** is taken from `API_BASE`, matching the other two — a base
  * with a path prefix is not joined onto the socket path, because the path is
- * master's own rewrite and is already absolute from the host root.
+ * the API's own rewrite and is already absolute from the host root.
  *
  * An absolute `ws(s)://` URL is still passed through untouched: that is
- * `rewriteStationWsUrl`'s documented degradation (an unrecognised core URL is
- * left alone so the client talks to core directly), and rewriting its host to
- * master's would break exactly the case that fallback exists for.
+ * `rewriteStationWsUrl`'s documented degradation (an unrecognised the API URL is
+ * left alone so the client talks to the API directly), and rewriting its host to
+ * the API's would break exactly the case that fallback exists for.
  */
 export function toAbsoluteWsUrl(pathOrUrl: string): string {
   if (/^wss?:\/\//i.test(pathOrUrl)) return pathOrUrl;

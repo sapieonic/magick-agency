@@ -43,9 +43,9 @@ import {
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
 /**
- * `AD-P3-U-03` — the callback picker and mark-DNC, **at the page**.
+ * The callback picker and mark-DNC, **at the page**.
  *
- * Two disciplines carried over from `AD-P2-U-01`/`U-04`: nothing here asserts a
+ * Two disciplines carried over from the agent console tests: nothing here asserts a
  * handler exists or a component got the right props — every keyboard test drives
  * a real `keydown` on `window` and asserts an observable consequence; and every
  * assertion goes through the page, because a green component test is not
@@ -178,9 +178,9 @@ function press(key: string, target: Element | Document = document) {
   });
 }
 
-describe('CR-1 — the callback copy says “we”, never “I”', () => {
+describe('the callback copy says “we”, never “I”', () => {
   /**
-   * This is the **entire** mitigation for D11: a callback returns the contact to
+   * This is the **entire** mitigation for Shared pool: a callback returns the contact to
    * `pending` and the pacing engine hands it to whichever agent is free, so the
    * agent who booked it is not the agent who makes it. Nothing in the product
    * enforces the promise — only this copy bounds it, and until now nothing
@@ -243,8 +243,8 @@ async function assertiveRegion(): Promise<HTMLElement> {
 }
 
 describe('the confirmation after a callback is saved', () => {
-  it('names the time core booked, in the plural, on the page', async () => {
-    // `confirmationCopy` is where CR-1 lives and it had **zero callers**: the
+  it('names the time the API booked, in the plural, on the page', async () => {
+    // `confirmationCopy` is where the callback copy rule lives and it had **zero callers**: the
     // console announced a flat "Disposition saved." and the agent was never told
     // the time the system actually booked. This asserts the rendered live
     // region, so the copy cannot go dead again without reddening.
@@ -272,7 +272,7 @@ describe('the confirmation after a callback is saved', () => {
     expect(live.textContent).not.toMatch(/\bI['’]ll\b/);
   });
 
-  // NEW (magick-agency, CONTRACT-DIFF §1): the response's `callback_requested_at`
+  // The response's `callback_requested_at`
   // reaches the page, so a callback moved into calling hours says so.
   it('says when a callback was moved into calling hours', async () => {
     mocks.submitDisposition.mockResolvedValue({
@@ -298,7 +298,7 @@ describe('the confirmation after a callback is saved', () => {
     await waitFor(() => expect(live.textContent).toContain('the next time inside calling hours'));
   });
 
-  it('still says “we” when core scheduled something but named no time', async () => {
+  it('still says “we” when the API scheduled something but named no time', async () => {
     mocks.submitDisposition.mockResolvedValue({
       attempt_id: 'att-1',
       contact_id: 'c-1',
@@ -364,7 +364,7 @@ describe('mark DNC', () => {
   });
 
   it('states the DEFAULT option’s scope with the number and campaign in it, and never overstates it', async () => {
-    // The single action became a choice (§A.7.5 revision): the default is
+    // The single action became a choice: the default is
     // scoped to the campaign the agent is on, and its own copy must not borrow
     // the wider, workspace-wide claim that belongs to the escalation below.
     await onCall();
@@ -451,7 +451,7 @@ describe('mark DNC', () => {
   it('hides the tenant-wide escalation for a role lacking agency.dnc.manage — the campaign default still works', async () => {
     // `agent` (level 5) holds `agency.dnc.write` (floor: `agent`) but not
     // `agency.dnc.manage` (floor: `account_admin`, level 30) — the same floor
-    // master already uses for REMOVING an entry. Hiding the wider escalation
+    // the API already uses for REMOVING an entry. Hiding the wider escalation
     // must not disable the narrower, default action.
     mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'agent' });
     await onCall();
@@ -507,7 +507,7 @@ describe('mark DNC', () => {
     // campaign-scoped mark still may not borrow the escalation's wording.
     //
     // (This arm DOES read `dnc_recorded` — see `agencyDncCopy.ts`. It once did
-    // not, on the reasoning that core suppresses the roster row directly; that is
+    // not, on the reasoning that the API suppresses the roster row directly; that is
     // true of the ROSTER and false of the LIST the sentence names. The
     // `dnc_recorded: false` wording is pinned in `agencyDncCopy.test.ts`.)
     mocks.markContactDnc.mockResolvedValue({
@@ -577,7 +577,7 @@ describe('mark DNC', () => {
 });
 
 /**
- * `MAG-126` — the DNC result belongs to the **contact**, not to `live`.
+ * The DNC result belongs to the **contact**, not to `live`.
  *
  * `released` sets `live` to null while `panelAttempt` (`live?.attempt ??
  * retainedAttempt`) keeps that same contact on screen for the whole wrap-up
@@ -678,7 +678,7 @@ async function nextCallArrives() {
   });
 }
 
-describe('MAG-126 — the DNC result survives the hangup it was marked before', () => {
+describe('the DNC result survives the hangup it was marked before', () => {
   it('keeps the confirmation, naming the contact it is about, through the whole wrap-up window', async () => {
     await onCall();
     await markDnc();

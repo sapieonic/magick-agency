@@ -1,13 +1,13 @@
 import type { AgencyCampaignStats } from '../types/agency-campaign';
 
 /**
- * Who reads each field of the supervisor stats payload — MAG-151 acceptance (3).
+ * Who reads each field of the supervisor stats payload.
  *
  * ── The defect this exists to stop ──────────────────────────────────────────
- * Three separate slices of one payload have now shipped computed by core,
- * proxied by master, and **discarded at the last hop**: the health-strip fields
- * (MAG-71), the agent roster (MAG-148), and §C.3's derived figures (MAG-151).
- * Each was found by a person happening to read core's contract beside cusui's,
+ * Three separate slices of one payload have now shipped computed by the server,
+ * proxied by the API, and **discarded at the last hop**: the health-strip fields,
+ * the agent roster, and the derived campaign figures.
+ * Each was found by a person happening to read the server's contract beside this console's,
  * and each time the review step that should have caught it did not, because
  * there was nothing to catch it *with* — a field nobody consumes produces no
  * error, no warning, and no failing test. It produces a blank space on a screen
@@ -32,15 +32,15 @@ import type { AgencyCampaignStats } from '../types/agency-campaign';
  * because nothing references it.
  *
  * ── What this deliberately does NOT do ──────────────────────────────────────
- * It does not detect a field **core added and cusui never declared**. That
+ * It does not detect a field **the server added and this console never declared**. That
  * direction cannot be checked from inside this repo, and the obvious
- * implementation — scraping a sibling `magic-voice-core` checkout — is a
- * pattern already known to be broken: master's equivalent guard reads the
- * sibling's *working tree*, so its result depends on which branch someone else
- * has checked out, and it skips silently in CI where no sibling exists
- * (MAG-143). Building a second copy of that before MAG-143 settles the
- * mechanism would double the maintenance and the false confidence. The
- * cross-repo direction is tracked there; this half is the half that can be
+ * implementation — scraping a sibling server checkout — is a
+ * pattern already known to be broken: an equivalent guard that reads the
+ * sibling's *working tree* has a result that depends on which branch someone else
+ * has checked out, and it skips silently in CI where no sibling exists.
+ * Building a second copy of that before the mechanism is settled would
+ * double the maintenance and the false confidence. The
+ * cross-repo direction is tracked separately; this half is the half that can be
  * enforced everywhere, including CI.
  */
 
@@ -102,9 +102,9 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
       + 'trusted the stats copy could show "Running" beside a Start button that 409s.',
   },
 
-  // ── §C.1's counters ────────────────────────────────────────────────────────
+  // ── the campaign counters ────────────────────────────────────────────────────────
   //
-  // These moved off the page and into `agencyCampaignOverview` (MAG-167): the
+  // These moved off the page and into `agencyCampaignOverview`: the
   // Overview panel no longer renders one tile per field, so every one of them
   // is now read by a derivation — the funnel's proportions, the "list worked"
   // ring, or a cell of the pulse strip — rather than by a `formatMetric` call
@@ -129,7 +129,7 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
   // with no breakdown, which draws no bar and claims nothing about who is free.
   agents_live: { consumedIn: FLOOR },
 
-  // ── §C.2's health strip ────────────────────────────────────────────────────
+  // ── the health strip ────────────────────────────────────────────────────
   stall: { consumedIn: STRIP },
   other_stalls: { consumedIn: STRIP },
   concurrency_limit: { consumedIn: STRIP },
@@ -139,7 +139,7 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
   abandoned_24h: { consumedIn: STRIP },
   answered_24h: { consumedIn: STRIP },
 
-  // ── §C.3's derived figures ─────────────────────────────────────────────────
+  // ── the derived figures ─────────────────────────────────────────────────
   connect_rate_pct: { consumedIn: PERFORMANCE },
   human_connects: { consumedIn: PERFORMANCE },
   machine_connects: { consumedIn: PERFORMANCE },
@@ -157,20 +157,20 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
   attempts_success: { consumedIn: PERFORMANCE },
   success_rate_pct: { consumedIn: PERFORMANCE },
 
-  // ── §C.4's floor ───────────────────────────────────────────────────────────
+  // ── the agent floor ───────────────────────────────────────────────────────────
   agents: { consumedIn: FLOOR },
   agents_by_state: { consumedIn: FLOOR },
 
-  // ── MAG-167: the workspace redesign's two nice-to-have fields ─────────────
+  // ── the workspace redesign's two nice-to-have fields ─────────────
   //
   // Both are read by a derivation in the Overview module rather than by a
-  // `formatMetric` call in JSX, which is the pattern every §C.1 counter moved to
+  // `formatMetric` call in JSX, which is the pattern every campaign counter moved to
   // — and the reason those entries moved with their readers.
   //
   // Neither has a fallback and neither needs one: an absent field drops the one
   // sentence it fills. That is what let them ship as the lower-priority half of
   // the contract, and it is also why this map is the only thing standing between
-  // "core sends it" and "nobody notices it stopped arriving".
+  // "the server sends it" and "nobody notices it stopped arriving".
   attempts_retried: { consumedIn: OVERVIEW },
   agents_peak: { consumedIn: OVERVIEW },
 };

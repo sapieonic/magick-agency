@@ -3,7 +3,7 @@ import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 import { RailPresenceRegion } from '../../components/agency/RailPresenceRegion';
 
 /**
- * `AD-P2-U-04` — keyboard focus survives the rail's repaint (§A.13.9).
+ * Keyboard focus survives the rail's repaint.
  *
  * The rail's right-hand region is rewritten four times a second to advance the
  * break elapsed time, and `End break` is the **only** control in the break state.
@@ -99,7 +99,7 @@ describe('the paired property — focus held AND the timer still moving', () => 
 
   it('advances from the SERVER anchor, so a five-minute break does not read as four', () => {
     // Anchored to `agent_state.since`, never to a local counter started at the
-    // transition — that is the §A.13.4 defect this repaint exists to prevent.
+    // transition — that is the defect this repaint exists to prevent.
     renderBreak();
     advance(300_000);
     expect(elapsed()).toBe('5:00');

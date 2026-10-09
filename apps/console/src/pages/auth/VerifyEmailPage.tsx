@@ -81,11 +81,10 @@ export default function VerifyEmailPage() {
         `returnTo` rather than `/app`: a returning user's shell is an entitlement
         decision, and with nothing carried `returnTo` IS `/`, i.e. `HomeRedirect`,
         the one place that makes it.
-        PORT NOTE (magick-agency): cusui sent a new user (`session.is_new`) to
-        `/onboarding`. Agency has no onboarding and no sign-up: `POST /auth/session`
-        refuses an unknown identity with 403 `no_membership` (plan §3.1, path 4), so
-        a session that resolves always belongs to an invited member, and `is_new`
-        is never true here. The branch is deleted; every session goes to `returnTo`.
+        There is no onboarding and no sign-up: `POST /auth/session` refuses an
+        unknown identity with 403 `no_membership`, so a session that resolves
+        always belongs to an invited member, and `is_new` is never true here.
+        Every session goes to `returnTo`.
       */
       navigate(returnTo, { replace: true });
     } catch (err) {

@@ -36,7 +36,7 @@ import {
  * The contribution view's derivations.
  *
  * ── The one rule this file exists for ─────────────────────────────────────
- * The screen puts a campaign's own total next to per-agent rows that master may
+ * The screen puts a campaign's own total next to per-agent rows that the API may
  * have filtered, so **the two do not have to add up** — and the difference is
  * exactly the work of people who have left the team. Every case about
  * `contributionAsymmetryNote` and `contributionShareCell` is about that: the rows
@@ -48,7 +48,7 @@ describe('agencyCampaignContribution — what the view asks for', () => {
   it('groups by agent AND campaign, and reads the campaign total separately', () => {
     /**
      * Two reads, and the second is not a sum of the first. With `agent` grouped
-     * master drops departed members' rows; with `campaign` alone there is nothing
+     * the API drops departed members' rows; with `campaign` alone there is nothing
      * to drop, because no row belongs to a person. Summing the rows instead would
      * silently redefine "the campaign's total" as "the total of the people still
      * here".
@@ -211,7 +211,7 @@ describe('agencyCampaignContribution — the share of the campaign', () => {
   });
 });
 
-describe('agencyCampaignContribution — the D8 asymmetry is said out loud', () => {
+describe('agencyCampaignContribution — the asymmetry is said out loud', () => {
   it('says nothing when nothing was hidden', () => {
     // The common case. A note on every page is a note nobody reads.
     expect(contributionAsymmetryNote(contributionPage(), campaignTotalRow())).toBeNull();
@@ -266,7 +266,7 @@ describe('agencyCampaignContribution — the D8 asymmetry is said out loud', () 
 
   it('names an unattributable row as what it is, never as a former member', () => {
     /**
-     * R4's third state: an id with no membership row of any status. Master counts it
+     * The third state: an id with no membership row of any status. The API counts it
      * separately from `inactive_omitted` precisely because folding the two would
      * claim somebody left a team they were never on — so the sentence must not put
      * it in the same words, and the toggle must not be offered as a remedy for it,
@@ -296,8 +296,8 @@ describe('agencyCampaignContribution — the D8 asymmetry is said out loud', () 
 
   it('treats an ABSENT unattributed count as zero, never as a claim', () => {
     /**
-     * Master invented the field, so a console that ran ahead of it — or met the
-     * degrade path where `asSpinePage` cannot recognise core's body — must behave
+     * The API invented the field, so a console that ran ahead of it — or met the
+     * degrade path where `asSpinePage` cannot recognise the API's body — must behave
      * exactly as it did before the field existed: say nothing about rows it was not
      * told about, rather than `NaN rows could not be attributed`.
      */
@@ -351,9 +351,9 @@ describe('agencyCampaignContribution — the D8 asymmetry is said out loud', () 
     expect(note).toContain('Show former team members');
   });
 
-  it('falls silent when master could not tell us how many were hidden', () => {
+  it('falls silent when the API could not tell us how many were hidden', () => {
     /**
-     * Master invented `inactive_omitted` and has a degrade path that serves core's
+     * The API invented `inactive_omitted` and has a degrade path that serves the API's
      * body unrecognised. `undefined <= 0` is `false`, so an unguarded read would
      * render "NaN former team members hidden" on a page where nothing was.
      */
@@ -376,10 +376,10 @@ describe('agencyCampaignContribution — three facts, and no fraction between th
   it('never renders a "showing N of M" fraction', () => {
     /**
      * Uncomputable, because of the ORDER the two services apply their rules in:
-     * core scopes, groups, ranks and cuts to `limit`, and master then filters the
+     * The API scopes, groups, ranks and cuts to `limit`, and the API then filters the
      * page it was handed. So `rows.length` is "the top `limit`, minus whichever
-     * departed members happened to be inside it", and master never saw the groups
-     * core cut.
+     * departed members happened to be inside it", and the API never saw the groups
+     * the API cut.
      */
     const note = contributionTruncationNote(
       contributionPage({ total_groups: 240, limit: 200, inactive_omitted: 3 }),
@@ -405,8 +405,8 @@ describe('agencyCampaignContribution — three facts, and no fraction between th
 
   it('does not claim truncation when the only missing groups were UNATTRIBUTABLE', () => {
     /**
-     * R4's third state, and the second count that has to be added back. Core
-     * counted these groups in `total_groups`; master dropped them and reported them
+     * The third state, and the second count that has to be added back. The server
+     * counted these groups in `total_groups`; the server dropped them and reported them
      * separately from `inactive_omitted`, because an id with no membership row of
      * any status never was a member and calling it a former one would be false.
      *
@@ -443,7 +443,7 @@ describe('agencyCampaignContribution — three facts, and no fraction between th
 
   it('treats an ABSENT unattributed count as zero rather than as an excuse', () => {
     /**
-     * Master invented the field. Absent must mean "nothing was dropped for that
+     * The API invented the field. Absent must mean "nothing was dropped for that
      * reason" — today's behaviour — and NOT "assume something was", which would
      * suppress a truncation note on a page that really was cut. So a genuinely
      * truncated page still says so, and `undefined` never reaches the arithmetic
@@ -471,7 +471,7 @@ describe('agencyCampaignContribution — three facts, and no fraction between th
 
   it('reads out the population that dialled, not the row count', () => {
     /**
-     * `total_groups` is core's pre-limit, pre-filter count — with one campaign
+     * `total_groups` is the API's pre-limit, pre-filter count — with one campaign
      * filtered and `agent` grouped, a group IS an agent. `rows.length` would move
      * when a former member was dropped, which reads as the campaign having had
      * fewer people on it.
@@ -700,7 +700,7 @@ describe('agencyCampaignContribution — a rate is gated on the denominator it d
 
   it('falls back to rates_reportable when the new flag is absent — never wider', () => {
     /**
-     * Merge order is core → master → cusui, so this console can meet a service that
+     * Merge order is the API, then the console, so this console can meet a service that
      * predates the field. The fallback is the behaviour that shipped before it, and
      * the two tempting alternatives are both worse: `true` would REVEAL rates the
      * console withholds today, and re-deriving `connected >= 20` here would have
@@ -726,7 +726,7 @@ describe('agencyCampaignContribution — a rate is gated on the denominator it d
     expect(contributionSuccessRateReportable(hollow)).toBe(true);
   });
 
-  it('withholds NOTHING when both flags are absent — a core that predates them', () => {
+  it('withholds NOTHING when both flags are absent — an API that predates them', () => {
     // The permissive fallback, once, all the way down: `rates_reportable` absent
     // means "do not withhold", and the second flag then inherits that rather than
     // withholding every conversion rate on the screen.
@@ -788,7 +788,7 @@ describe('agencyCampaignContribution — the threshold is the server’s', () =>
 
   it('never re-derives the threshold from the mirrored constant', () => {
     /**
-     * The reason the flag exists at all. Core may tune
+     * The reason the flag exists at all. The API may tune
      * `AGENCY_ROSTER_MIN_RATE_DENOMINATOR` or change which denominator it counts, and
      * this console's mirrored copy is then stale by definition — it is documented as a
      * number to SAY out loud, never to compute with. So a row under the mirrored 20
@@ -804,11 +804,11 @@ describe('agencyCampaignContribution — the threshold is the server’s', () =>
     ).toBe('withheld');
   });
 
-  it('does NOT withhold when the field is absent — core may predate it', () => {
+  it('does NOT withhold when the field is absent — the API may predate it', () => {
     /**
-     * Merge order is core → master → cusui, so this console can meet a core that has
-     * not shipped the field yet, and master has a documented degrade path that serves
-     * core's body unrecognised. The guard's fallback is the PERMISSIVE one: an absent
+     * Merge order is the API, then the console, so this console can meet an API that has
+     * not shipped the field yet, and the API has a documented degrade path that serves
+     * the API's body unrecognised. The guard's fallback is the PERMISSIVE one: an absent
      * flag means "do not withhold", which is today's behaviour, rather than
      * withholding every rate on the screen — a table of "Not enough calls" beside rows
      * with hundreds of dials is a worse screen than the gap the field closed.
@@ -831,7 +831,7 @@ describe('agencyCampaignContribution — the threshold is the server’s', () =>
 });
 
 describe('agencyCampaignContribution — naming a row', () => {
-  it('uses the name master resolved', () => {
+  it('uses the name the API resolved', () => {
     expect(contributionAgentName(contributionRow())).toBe('Ravi Kumar');
     expect(contributionNameResolved(contributionRow())).toBe(true);
   });

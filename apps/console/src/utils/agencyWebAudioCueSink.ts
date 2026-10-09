@@ -8,7 +8,7 @@ import {
 } from './agencyCues';
 
 /**
- * The WebAudio `CueSink` — §A.4.3.1.
+ * The WebAudio `CueSink`
  *
  * **Synthesised, never fetched.** An audio asset is a network request that can
  * lose the race against `bridged`, needs a cache policy, and is one CSP change

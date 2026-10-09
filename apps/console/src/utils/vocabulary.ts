@@ -6,14 +6,9 @@
  * never changes the values sent to or received from the backend. Surfaces import
  * these maps and the `humanizeStatus` / `humanizeToken` helpers instead of
  * hand-rolling `status.replace(/_/g, ' ')` or scattering string literals.
- *
- * See docs/reference/magick-comms-cusui/docs/core-ui-redesign/02-design-spec.md for the canonical copy dictionary.
  */
-// PORT NOTE (magick-agency): cusui's `TYPE_LABELS` / `SOURCE_LABELS` (broadcast
-// channel and source names, typed from `types/bulk-dispatch-job`) and
-// `PIPELINE_VOICE_LABELS` / `pipelineVoiceLabel` (AI pipeline tiers) are removed
-// with the AI product. The status, token, sentiment and analysis vocabulary the
-// agency call detail uses is verbatim.
+// Covers the status, token, sentiment and analysis vocabulary the agency call
+// detail uses. There are no broadcast channel or AI pipeline labels.
 
 /** Which kind of thing a status describes — changes some labels (e.g. completed). */
 export type StatusScope = 'job' | 'call' | 'message';
@@ -236,9 +231,9 @@ export const ANALYSIS_STATUS_MESSAGES: Record<string, string> = {
  * What to say when the summary is on screen and the transcript is not.
  *
  * A purged transcript is a STATE, and rendering nothing for it is how a
- * compliance reader concludes the call was never transcribed. Core's retention
+ * compliance reader concludes the call was never transcribed. The server's retention
  * step nulls `conversation_log` on its own, shorter window and leaves
- * `analysis_status` at `completed` (`retention-purge.ts`, §14.6) — so the
+ * `analysis_status` at `completed` (`retention-purge.ts`) — so the
  * section simply vanishes from under a summary that is still there.
  *
  * `ANALYSIS_STATUS_MESSAGES.deleted` is the wrong sentence for it: that one is

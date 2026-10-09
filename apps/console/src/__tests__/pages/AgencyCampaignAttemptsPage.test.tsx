@@ -4,7 +4,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import type { AgencyAttempt, AgencyKeysetPage } from '../../types/agency-spine';
 
 /**
- * The campaign Attempts view (MAG-159).
+ * The campaign Attempts view.
  *
  * ── What this file exists to prevent ────────────────────────────────────────
  * "Renders 200 with rows" passes against a view that shows only the calls that
@@ -48,7 +48,7 @@ import AttemptsPage from '../../pages/agency/AgencyCampaignAttemptsPage';
 const BRIDGED: AgencyAttempt = {
   id: 'attempt-bridged', contact_id: 'contact-1', campaign_id: 'camp-1', attempt_number: 2,
   phone_e164: '+919876500001', caller_id: '+919000000001',
-  // A UUID, as master actually serves. A fixture that looks like a name is how
+  // A UUID, as the server actually serves. A fixture that looks like a name is how
   // a raw-UUID render passes review — which is what happened the first time.
   agent_user_id: 'ac1f9d2e-1111-4222-8333-444455556666', agent_name: 'Ravi Menon',
   reserved_agent_id: 'session-1', state: 'ended', outcome: 'connected',
@@ -88,7 +88,7 @@ const ORPHANED: AgencyAttempt = {
  *
  * `answered_at` is null and so is `bridged_at`, which is what separates it from
  * `ABANDONED` above: nobody was reached, so nobody was inconvenienced. Reading it
- * as `abandoned` is the pilot defect core's classifier fix repairs, and the reason
+ * as `abandoned` is the pilot defect the server's classifier fix repairs, and the reason
  * a supervisor needs the two to render differently.
  */
 const CANCELED: AgencyAttempt = {
@@ -193,7 +193,7 @@ describe('the rows a call list cannot show', () => {
     const bridged = screen.getByTestId(`attempt-row-${BRIDGED.id}`);
     const link = within(bridged).getByText('Open call').closest('a');
     // Deliberately a LINK to the call page rather than an inline player: the
-    // call may have been purged since (core keeps the id un-FK'd on purpose),
+    // call may have been purged since (the server keeps the id un-FK'd on purpose),
     // and that page is where "no longer available" can be said properly.
     //
     // And it is the AGENCY's call page, keyed on the attempt — see the
@@ -206,7 +206,7 @@ describe('the rows a call list cannot show', () => {
     renderPage();
     const row = await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
     expect(within(row).getByText('Ravi Menon')).toBeTruthy();
-    // Core can only serve the id (it has no user table); master resolves it.
+    // The dialer runtime can only serve the id (it has no user table); the server resolves it.
     // Rendering the id is a column a supervisor can neither read nor filter by
     // — and the original fixture for this test was the string 'ravi', which is
     // precisely how that shipped unnoticed.
@@ -214,7 +214,7 @@ describe('the rows a call list cannot show', () => {
   });
 
   it('falls back to the id rather than claiming there was no agent', async () => {
-    // Master could not resolve the name. The attempt still HAD an agent, so
+    // The server could not resolve the name. The attempt still HAD an agent, so
     // "no agent" would be false — the id is a real, if unreadable, answer.
     mocks.getCampaignAttempts.mockResolvedValue(page([{ ...BRIDGED, agent_name: null }]));
     renderPage();
@@ -376,7 +376,7 @@ describe('the recording link stays inside the agency workspace', () => {
    * This link used to point at `/app/calls/dialer/history/:id` — out of
    * `AgencyLayout`, into the primary application's shell, onto a
    * `calls.dialer`-gated route, with the campaign context and this very list
-   * gone (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b). It pointed there because that
+   * gone. It pointed there because that
    * was the only place a call detail existed.
    *
    * It now points at the agency's own detail page, and the assertion is on the
@@ -434,7 +434,7 @@ describe('the recording link stays inside the agency workspace', () => {
 });
 
 /**
- * ── This screen is a section of the campaign workspace (`MAG-166`) ──────────
+ * ── This screen is a section of the campaign workspace ──────────
  *
  * The bar is what makes it one, and it is rendered by each page rather than by
  * a shared route layout — so without an assertion here it could be deleted

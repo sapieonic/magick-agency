@@ -88,7 +88,7 @@
 }
 
 /*
-  What is NOT on screen: a truncated roster, or members master dropped. Same
+  What is NOT on screen: a truncated roster, or members the API dropped. Same
   weight as the description above the table — these are sentences a reader has to
   actually read, and a smaller grey would make them the thing that gets skipped.
 */

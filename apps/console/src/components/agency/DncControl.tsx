@@ -13,7 +13,7 @@ import {
 import styles from './DncControl.module.css';
 
 /**
- * Mark DNC (§A.7.5, `AD-P3-U-03`).
+ * Mark DNC.
  *
  * **This one does warrant a modal**, and it is the only agent action that does:
  * it is rare, irreversible from the console, and compliance-bearing. Every other

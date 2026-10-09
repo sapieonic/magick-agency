@@ -4,11 +4,11 @@ import type {
 } from '../types/agency-campaign';
 
 /**
- * The agent floor (§C.4) — as pure functions, because the ordering IS the
+ * The agent floor — as pure functions, because the ordering IS the
  * feature and an ordering is a proposition, not a layout.
  *
  * ── Why risk, not the alphabet ──────────────────────────────────────────────
- * §C.4 exists so a supervisor can "spot trouble in seconds". A floor sorted by
+ * The floor exists so a supervisor can "spot trouble in seconds". A floor sorted by
  * name makes them read every tile to find the one that needs them, which is the
  * job the sort was supposed to do. So risk is the DEFAULT — "the default is what
  * gets used" — and the alphabet is the opt-in, for roll-call.
@@ -48,7 +48,7 @@ export const CALL_OVERRUN_AHT_MULTIPLE = 2;
 export const LONG_BREAK_SECONDS = 30 * 60;
 
 /**
- * §C.4's risk ranking, worst first. **The order is load-bearing** and is pinned
+ * The risk ranking, worst first. **The order is load-bearing** and is pinned
  * literally in the tests rather than derived, because a reorder is a decision
  * someone made and should break a test rather than quietly change which agent a
  * supervisor looks at first.
@@ -191,7 +191,7 @@ export function floorRisk(
   /*
    * 4. Heartbeat lost.
    *
-   * `=== false`, and it must stay `=== false`. `connected` is `null` when core's
+   * `=== false`, and it must stay `=== false`. `connected` is `null` when the server's
    * Redis read faulted, and `!agent.connected` — the natural thing to type —
    * would turn that fault into a floor full of agents reported as dropped, on
    * the exact screen a supervisor uses to decide who to chase. A degraded read
@@ -313,7 +313,7 @@ const STATE_SUMMARY_ORDER: readonly AgencyAgentLiveState[] = [
  *
  * ── The same rule the Overview rail applies, for the same reason ───────────
  * `agencyCampaignOverview`'s `FLOOR_BAR_ORDER` excludes `offline` because an
- * agent who signed out is not on shift — core's own `shift_seconds` excludes it
+ * agent who signed out is not on shift — the server's own `shift_seconds` excludes it
  * (`foldOccupancy`), so including it here diluted every share by signed-out
  * time. This tab was doing the opposite: `offline` landed in the stacked bar and
  * in the total every other state's share was taken of, so a supervisor could
@@ -331,7 +331,7 @@ const ON_SHIFT_STATES: readonly AgencyAgentLiveState[] = STATE_SUMMARY_ORDER.fil
  * `agents_by_state` as one readable line — "3 on a call · 2 available".
  *
  * ── Why zeroes are dropped ──────────────────────────────────────────────────
- * Core seeds **every** state with a zero, so a faithful rendering is six
+ * The server seeds **every** state with a zero, so a faithful rendering is six
  * entries of which four are usually `0`. The two that matter then have to be
  * found rather than read. Dropping the zeroes is safe here in a way it is not
  * elsewhere on this screen: this is a total record, so an absent state is
@@ -429,7 +429,7 @@ export interface FloorTotals {
 /**
  * The floor's own arithmetic, from the roster rather than the roll-up.
  *
- * `agents_by_state` would give the same `available` — core tallies it from this
+ * `agents_by_state` would give the same `available` — the server tallies it from this
  * very array — but `handled` and `busiest` are only in the rows, and taking two
  * of the four numbers from one source and two from another is how a card ends up
  * saying "3 of 9" above a table of eight.
@@ -475,7 +475,7 @@ export function agentInitials(displayName: string): string {
 }
 
 /**
- * How long the fallback identifier is when master could not resolve a name.
+ * How long the fallback identifier is when the API could not resolve a name.
  *
  * Long enough to be unambiguous on a floor of a few dozen, short enough not to
  * dominate the tile.
@@ -484,12 +484,12 @@ export function agentInitials(displayName: string): string {
  * The two fields the name fallback needs, and nothing else.
  *
  * ── Why this is structural rather than `AgencySupervisorAgent` ─────────────
- * Master enriches an agent id into a name on several payloads now — the live
+ * The API enriches an agent id into a name on several payloads now — the live
  * floor, the attempts spine, and the roster read — and every one of them has the
- * same pair of fields for the same reason (core has no user table, design D3, so
+ * same pair of fields for the same reason (the server has no user table, so
  * the id is all it can serve). Typing the helper on the *floor's* row would force
  * a second copy of {@link agentDisplayName} for each new payload, and a second
- * copy is a second answer to "what do we call somebody master could not resolve".
+ * copy is a second answer to "what do we call somebody the API could not resolve".
  * That question has one right answer and it is below.
  */
 export interface NamedAgent {
@@ -502,8 +502,8 @@ export const AGENT_ID_FALLBACK_LENGTH = 8;
 /**
  * What the tile calls this person.
  *
- * **`agent_name: null` means master could not resolve them** — a deleted user,
- * or an id from outside this tenant. Master sends `null` rather than a
+ * **`agent_name: null` means the API could not resolve them** — a deleted user,
+ * or an id from outside this tenant. The API sends `null` rather than a
  * placeholder precisely so this decision is made here, and there are two
  * tempting wrong answers:
  *
@@ -518,7 +518,7 @@ export const AGENT_ID_FALLBACK_LENGTH = 8;
  * which is exactly what the supervisor needs to tell two tiles apart and to
  * quote to support.
  *
- * A whitespace-only or empty name is treated as unresolved too — master should
+ * A whitespace-only or empty name is treated as unresolved too — the API should
  * not send one, but rendering it would produce the blank tile above.
  */
 export function agentDisplayName(agent: NamedAgent): string {
@@ -551,7 +551,7 @@ export interface RankedFloorAgent {
  * — of two overrunning wrap-ups the 12-minute one is the one to look at — then
  * by name, then by session id so the order is total and a poll cannot reshuffle
  * two tiles that compare equal. Rank 5 skips the duration tie-break entirely and
- * goes straight to the name, which is what §C.4 asks for.
+ * goes straight to the name, which is what the floor's design calls for.
  *
  * `name`: display name, then session id. Roll-call.
  *
@@ -597,26 +597,26 @@ export function rankFloor(
  *
  * **`wrapup` only.** The route is the one thing that can end a held wrap-up, and
  * that is all it is for; offering it against an `available` or `on_call` session
- * would advertise an action core will refuse. Note this is deliberately NOT
+ * would advertise an action the server will refuse. Note this is deliberately NOT
  * gated on `wrapup_overrun` — a supervisor may know the agent has left for the
  * day thirty seconds in, and the console making them wait out a grace period it
  * invented would be the console overruling them.
  *
  * Permission is the caller's to check and is **not** folded in here: the UI gate
- * must be `hasPermission(role, 'agency.supervise')`, matching master's
+ * must be `hasPermission(role, 'agency.supervise')`, matching the API's
  * `requirePermission('agency.supervise')` exactly, or the button 403s on click.
  */
 export function canForceAvailable(agent: AgencySupervisorAgent): boolean {
   return agent.state === 'wrapup';
 }
 
-/** Free-text reason cap, mirroring master's `forceAvailableSchema`. */
+/** Free-text reason cap, mirroring the API's `forceAvailableSchema`. */
 export const FORCE_AVAILABLE_REASON_MAX = 1000;
 
 /**
  * The destructive-confirm copy.
  *
- * It names the consequence **in the supervisor's terms**, which master's route
+ * It names the consequence **in the supervisor's terms**, which the API's route
  * comment spells out: the attempt is left `no_disposition`, identical to what
  * the reaper's sweep would have written. A confirm that said only "return this
  * agent to the pool" would hide the part that matters — the call this agent was

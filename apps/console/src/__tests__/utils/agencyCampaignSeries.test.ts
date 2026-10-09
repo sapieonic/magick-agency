@@ -39,10 +39,10 @@ import type { AgencyCampaignSeries } from '../../types/agency-campaign-series';
  *
  * `now` is passed explicitly everywhere rather than read off the wall clock, so
  * the boundary cases below (a campaign that ended earlier, an `ended_at` in the
- * future, a range longer than core's cap) are assertions rather than something
+ * future, a range longer than the API's cap) are assertions rather than something
  * that happens to hold on the day the suite is run.
  *
- * The suite is pinned to `TZ=UTC` (see docs/reference/magick-comms-cusui/CLAUDE.md, "Testing Patterns"), which is
+ * The suite is pinned to `TZ=UTC` (see `vite.config.ts`), which is
  * why an instant can be compared to a literal at all. Nothing here needs a
  * second zone: the one zone-sensitive derivation this module reaches —
  * `bucketDay`, for the bar labels — already has a `*.timezone.test.tsx` of its
@@ -201,7 +201,7 @@ describe('campaignSeriesRange', () => {
   });
 
   it('falls back to today when `ended_at` is in the future', () => {
-    // Not a thing core produces, but clock skew between a server and a browser
+    // Not a thing the API produces, but clock skew between a server and a browser
     // is very ordinary — and a range ending tomorrow asks for a day that cannot
     // have happened.
     const range = campaignSeriesRange(
@@ -433,7 +433,7 @@ describe('rateTrend — null, never zero', () => {
   it('has no conversion at all when `successes` was absent, whatever the denominator', () => {
     // An absent numerator is an ABSENCE, not a zero — the same rule
     // `attempts_retried` and `agents_peak` follow on this payload. It used to be
-    // coerced to 0, which turned "master did not send this" into a measured 0%
+    // coerced to 0, which turned "the API did not send this" into a measured 0%
     // conversion that joins the line and draws a cliff.
     const raw = bucket({ bucket_start: day(0), attempts: 100, connected: 40 });
     delete (raw as Partial<AgencyAgentStatsBucket>).successes;
@@ -721,7 +721,7 @@ describe('rateTrend — the axis and the legend', () => {
 });
 
 describe('rateTrend — the buckets themselves', () => {
-  it('keeps master’s order rather than re-deriving it', () => {
+  it('keeps the API’s order rather than re-deriving it', () => {
     // Re-sorting here would give the screen a second opinion about a sequence
     // the server already ordered.
     const trend = rateTrend(
@@ -776,7 +776,7 @@ describe('rateTrend — the buckets themselves', () => {
 });
 
 /*
-  ── Regressions found in review (MAG-167) ───────────────────────────────────
+  ── Regressions found in review ───────────────────────────────────
   Three defects that all shared one shape: the screen asserting something false
   in words. Each is pinned here against the exact input that produced it.
 */
@@ -784,9 +784,9 @@ describe('review regressions', () => {
   // Its own clock: `NOW` above is scoped to the range describe block.
   const NOW = new Date('2026-08-27T15:30:00.000Z');
 
-  it('treats a finished campaign as finished even when master sent no `ended_at`', () => {
+  it('treats a finished campaign as finished even when the API sent no `ended_at`', () => {
     /*
-      `ended_at` is optional because a master that predates the lifecycle
+      `ended_at` is optional because an API that predates the lifecycle
       timestamps does not send it. Keying "has it finished?" on the timestamp
       made a campaign that stopped in July open on the last 14 days — fourteen
       empty bars under a heading promising a trend — and then claim today was
@@ -881,7 +881,7 @@ describe('the zone note says whose day the bars are cut in', () => {
     expect(note).not.toContain('part of a day');
   });
 
-  it('says nothing at all when master sent no zone', () => {
+  it('says nothing at all when the API sent no zone', () => {
     // "Days are counted in the campaign's time zone" without naming it tells a
     // reader nothing they can check.
     expect(campaignSeriesZoneNote(series([], { timezone: null }))).toBeNull();

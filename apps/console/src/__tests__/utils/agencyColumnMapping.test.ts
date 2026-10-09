@@ -17,7 +17,7 @@ import {
 import type { AgencyColumnAnalysis, AgencyColumnStat } from '../../types/agency-campaign';
 
 /**
- * `AD-P3-U-01` acceptance (a): *the operator can map any column as the phone
+ * requirement: *the operator can map any column as the phone
  * number*. The file below is the spec's own — no column is called `phone`, the
  * timezone column is called `TZ`, and one column holds an internal score an
  * agent must never see.
@@ -45,7 +45,7 @@ function analysis(over: Partial<AgencyColumnAnalysis> = {}): AgencyColumnAnalysi
   };
 }
 
-describe('seeding the mapping from master analysis', () => {
+describe('seeding the mapping from the API analysis', () => {
   it('preselects the suggested phone column and leaves everything else Detail', () => {
     const state = initialMapping(analysis());
     expect(state.roles['Cust Mobile']).toBe('phone');
@@ -53,8 +53,8 @@ describe('seeding the mapping from master analysis', () => {
     expect(state.roles['TZ']).toBe('detail');
   });
 
-  it('preselects NOTHING when master withheld the suggestion as ambiguous', () => {
-    // Master withholds when two columns score within 10% of each other. Picking
+  it('preselects NOTHING when the API withheld the suggestion as ambiguous', () => {
+    // The API withholds when two columns score within 10% of each other. Picking
     // the higher one anyway dials the wrong people, and the operator never sees
     // that a choice was made for them.
     const state = initialMapping(
@@ -69,7 +69,7 @@ describe('seeding the mapping from master analysis', () => {
   });
 
   it('never auto-detects a timezone column', () => {
-    // D4: an unmapped contact uses the campaign default. A column called `TZ`
+    // An unmapped contact uses the campaign default. A column called `TZ`
     // holding something else, silently mapped, is worse than asking.
     expect(timezoneColumn(initialMapping(analysis()))).toBeNull();
   });
@@ -192,23 +192,23 @@ describe('the ingest request', () => {
 /**
  * The country code applied to a number written without one.
  *
- * It was plumbed the whole way — cusui's request type, master's schema, master's
- * job column, master's normalizer — and no UI ever set it, so every roster
- * inherited master's `DEFAULT_PHONE_COUNTRY_CODE` (`91` unset). A US list
+ * It was plumbed the whole way — the console's request type, the API's schema, the API's
+ * job column, the API's normalizer — and no UI ever set it, so every roster
+ * inherited the API's `DEFAULT_PHONE_COUNTRY_CODE` (`91` unset). A US list
  * therefore imported as "100% accepted" and dialed India, and the carrier bill
  * was the first place anyone could have found out.
  */
 describe('the default country code', () => {
   it('starts empty, because only the server knows what its default is', () => {
     // Not `'91'`. Pre-filling would turn an inherited server default into a value
-    // cusui asserts, which changes what is dialed anywhere the env differs.
+    // the console asserts, which changes what is dialed anywhere the env differs.
     expect(initialMapping(analysis()).defaultCountryCode).toBe('');
   });
 
   it('sends nothing at all when untouched — byte-identical to the old request', () => {
     // The zero-behaviour-change claim, asserted as an exact request rather than
     // as an absent key: an extra field with an empty value would still reach
-    // master's schema and be a change.
+    // the API's schema and be a change.
     const request = buildIngestRequest(initialMapping(analysis()), {
       s3Key: 'k',
       fileName: 'f.csv',
@@ -243,8 +243,8 @@ describe('the default country code', () => {
     expect('default_country_code' in request!).toBe(false);
   });
 
-  it('mirrors master’s own rule rather than inventing a stricter one', () => {
-    // Master validates `/^\+?\d{1,3}$/` on both the analyze and ingest schemas.
+  it('mirrors the API’s own rule rather than inventing a stricter one', () => {
+    // The API validates `/^\+?\d{1,3}$/` on both the analyze and ingest schemas.
     for (const good of ['1', '91', '+91', '971']) expect(countryCodeError(good)).toBeNull();
     for (const bad of ['1234', 'abc', '9a', '+', '++91', '9 1']) {
       expect(countryCodeError(bad)).toContain('1 to 3 digits');
@@ -253,7 +253,7 @@ describe('the default country code', () => {
     expect(countryCodeError('')).toBeNull();
   });
 
-  it('blocks the import on a bad code instead of letting master 400 after upload', () => {
+  it('blocks the import on a bad code instead of letting the API 400 after upload', () => {
     const state = setDefaultCountryCode(initialMapping(analysis()), '1234');
     expect(mappingBlockReason(state)).toBe('bad_country_code');
     expect(buildIngestRequest(state, { s3Key: 'k', fileName: 'f.csv' })).toBeNull();

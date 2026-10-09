@@ -22,12 +22,12 @@ import type {
 } from '../../types/agency';
 
 /**
- * `AD-P2-U-02` / §A.4.3.1 — the connect cue.
+ * the connect cue.
  *
- * The six assertions §A.4.3.1 requires, each mapping to a way this has failed
+ * The six assertions requires, each mapping to a way this has failed
  * before, plus the haptics-placement defect found in the prototype.
  *
- * **Assertion 1 must exercise the frame handler, not a re-render** — §A.4.3.1 says
+ * **Assertion 1 must exercise the frame handler, not a re-render** says
  * so explicitly, "or it passes against the exact implementation it exists to
  * prevent". So the cue tests below drive real frames through `useAgencyStation`
  * rather than calling the dispatcher directly: a `useEffect` watching `bridgedAt`
@@ -106,7 +106,7 @@ interface Harness {
    *
    * It used to be a bare `string[]` of attempt ids, because the escalation fired on
    * connect and nothing else — so a deaf agent got one flash per call that could
-   * equally have meant "ringing", "connected" or "they hung up". `AD-P2-U-07` fires
+   * equally have meant "ringing", "connected" or "they hung up". this fires
    * it for all three cues, and the cue is the payload that matters: an assertion on
    * attempt ids alone cannot tell three identical flashes from three different ones.
    */
@@ -188,13 +188,13 @@ async function station(dispatcher: CueDispatcher) {
   return view;
 }
 
-describe('§A.4.3.1 — the six required assertions, through the frame handler', () => {
+describe('the six required assertions, through the frame handler', () => {
   it('1: the cue is scheduled INSIDE the frame handler, before React commits', async () => {
     const { dispatcher, h } = buildDispatcher();
     await station(dispatcher);
 
     /**
-     * **This is the assertion §A.4.3.1 says test 1 must make** — "must exercise the
+     * **This is the assertion says test 1 must make** — "must exercise the
      * frame handler, not a re-render, or it passes against the exact implementation
      * it exists to prevent".
      *
@@ -434,11 +434,11 @@ describe('haptics sit inside the escalated-visual branch', () => {
 
 describe('the visual cues are three different things, not one flash three times', () => {
   /**
-   * `AD-P2-U-07`'s criterion (a), at the table.
+   * At the table.
    *
    * The shipped state was **one** generic flash fired on connect only. That
    * satisfies "a visual exists" and fails the requirement, which is that an agent
-   * who cannot hear can tell *which* event happened — the same reason §A.4.3.1 gave
+   * who cannot hear can tell *which* event happened — the same reason gave
    * the audio distinct rhythm and contour rather than distinct pitch.
    *
    * These assertions are what the "collapse the three treatments into one" mutation
@@ -590,8 +590,8 @@ describe('WebAudioCueSink — the half that touches the hardware', () => {
     expect(risingHz[1]!).toBeGreaterThan(risingHz[0]!);
     expect(fallingHz[1]!).toBeLessThan(fallingHz[0]!);
 
-    // Get-ready is a RHYTHM: three even knocks at one pitch. §A.4.3.1 supersedes
-    // §A.4.2's rising three-tone precisely so it cannot be confused with connect.
+    // Get-ready is a RHYTHM: three even knocks at one pitch. supersedes
+    //'s rising three-tone precisely so it cannot be confused with connect.
     const ready = fakeCtx();
     new WebAudioCueSink(ready.ctx).play('get_ready', 1);
     const readyHz = ready.oscillators.map((o) => (o['frequency'] as { value: number }).value);

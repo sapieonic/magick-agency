@@ -39,26 +39,25 @@ function profile(over: Partial<CallAnalysisProfile> = {}): CallAnalysisProfile {
 }
 
 /**
- * The three repos cannot share a constant, so these literals are the only thing
- * keeping cusui's gate pointed at the capability master actually enforces. A
+ * The console cannot import the server's constants, so these literals are the only thing
+ * keeping the console's gate pointed at the capability the API actually enforces. A
  * rename on either side turns the gate into decoration: `useGovernance`
  * fails OPEN, so a key nobody publishes reads as "enabled" and the control is
- * offered to a tenant master will 403.
+ * offered to a tenant the server will 403.
  */
-describe('capability keys — pinned against master', () => {
+describe('capability keys — pinned against the API', () => {
   it('mirrors the two keys `assertCampaignBehavioralCapabilities` passes to `assertCapability`', () => {
-    // magick-master/src/api/routes/proxy-agency-campaigns.routes.ts:
+    // The campaign routes on the server:
     //   assertCapability(request, reply, 'agency.recording')   ← record_calls
     //   assertCapability(request, reply, 'agency.analytics')   ← analysis_profile_id
-    // and magick-master/src/governance/catalog.ts declares both with
+    // and the server's governance catalog declares both with
     // `parent: 'agency', default: false, enforcement: ['nav','behavioral']`.
     expect(AGENCY_RECORDING_CAPABILITY).toBe('agency.recording');
     expect(AGENCY_ANALYTICS_CAPABILITY).toBe('agency.analytics');
   });
 
-  // PORT NOTE (magick-agency): cusui's "keeps the profile-LIST capability distinct
-  // from the profile-WRITE capability" is deleted with `PROFILE_LIST_CAPABILITY`
-  // (master's `calls.dialer.analytics`; agency has no such capability).
+  // There is no separate profile-LIST capability: agency has no
+  // `calls.dialer.analytics`, so only the profile-WRITE capability is pinned.
 });
 
 describe('recordingStateFromCampaign', () => {
@@ -147,7 +146,7 @@ describe('resolveProfileId', () => {
 });
 
 /**
- * `MAG-152`: `useCallAnalysisProfiles` initialises `profiles` to `[]`, which is
+ * `useCallAnalysisProfiles` initialises `profiles` to `[]`, which is
  * indistinguishable from a list that genuinely does not carry the campaign's
  * profile unless `loading`/`error` are consulted too. Distinguishing pending,
  * failed and settled-and-absent — not just the last of the three — is the
@@ -255,7 +254,7 @@ describe('recordingPayload — what actually goes on the wire', () => {
   });
 
   it('OMITS `record_calls` when the capability is off and the value would enable', () => {
-    // Master answers 403 rather than stripping, so sending the unchanged `true`
+    // The API answers 403 rather than stripping, so sending the unchanged `true`
     // would make a capability-off tenant unable to save an unrelated edit.
     const payload = recordingPayload({
       recordingEnabled: false,
@@ -308,9 +307,9 @@ describe('campaignSaveRefusal — the five refusals, in the shape they actually 
   const noProfile = { sentAnalysisProfile: false };
   const withProfile = { sentAnalysisProfile: true };
 
-  it('names `agency.recording` on master’s capability 403', () => {
-    // Master raises this BEFORE calling core, so `sawCoreErrorStatus` is false
-    // and the body reaches the browser verbatim. `ApiError` reduces it to the
+  it('names `agency.recording` on the API’s capability 403', () => {
+    // The server raises this BEFORE reaching the dialer runtime, so `sawCoreErrorStatus` is false
+    // and the body reaches the browser unchanged. `ApiError` reduces it to the
     // message `'capability_disabled'` — a wire token, not an explanation.
     const message = campaignSaveRefusal(
       apiError(403, { error: 'capability_disabled', capability: 'agency.recording' }),
@@ -338,8 +337,8 @@ describe('campaignSaveRefusal — the five refusals, in the shape they actually 
     expect(message).toContain('agency.something_new');
   });
 
-  it('forwards core’s `Feature Not Enabled` message and adds the way out', () => {
-    // `Feature Not Enabled` is the one core 4xx label on master's
+  it('forwards the API’s `Feature Not Enabled` message and adds the way out', () => {
+    // `Feature Not Enabled` is the one 4xx label on the API's
     // FORWARDABLE_ERROR_LABELS allow-list, so its message survives masking.
     const message = campaignSaveRefusal(
       apiError(403, {
@@ -353,8 +352,8 @@ describe('campaignSaveRefusal — the five refusals, in the shape they actually 
   });
 
   /**
-   * ⚠️ Core's `{ error: 'Not Found', message: 'Analysis profile not found' }`
-   * NEVER reaches the browser: `'Not Found'` is not on master's allow-list and
+   * ⚠️ The API's `{ error: 'Not Found', message: 'Analysis profile not found' }`
+   * NEVER reaches the browser: `'Not Found'` is not on the API's allow-list and
    * the body carries no `details`, so the error-mask hook rewrites it to the
    * generic "contact support and quote the request ID". The only evidence left
    * is that WE sent a profile id — which is why the refusal takes that as
@@ -375,7 +374,7 @@ describe('campaignSaveRefusal — the five refusals, in the shape they actually 
     expect(campaignSaveRefusal(masked, noProfile)).toBeNull();
   });
 
-  it('claims the profile outright when core NAMES it, masked or not', () => {
+  it('claims the profile outright when the API NAMES it, masked or not', () => {
     const named = apiError(404, {
       error: 'Not Found',
       code: 'analysis_profile_not_found',
@@ -388,7 +387,7 @@ describe('campaignSaveRefusal — the five refusals, in the shape they actually 
    * The case the codeless-only guess gets wrong, and the reason this is not
    * `status === 404 && sentAnalysisProfile`.
    *
-   * `campaign_not_found` is master-allow-listed, so it arrives UNMASKED with a
+   * `campaign_not_found` is on the server's error allow-list, so it arrives UNMASKED with a
    * real message. The settings page sits under a persistent account switcher, so
    * switching account mid-edit and saving produces exactly this — while a
    * profile is still selected. Blaming the profile sends the operator to pick a

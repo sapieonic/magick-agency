@@ -24,8 +24,8 @@ import styles from './AgencyJoinPage.module.css';
  * Where an emailed agency invite lands: `/agency/join/:token`.
  *
  * ── The defect this page removes ───────────────────────────────────────────
- * `POST /auth/session` provisions a BRAND-NEW TENANT for an address master does
- * not recognise (`master/src/api/routes/auth.routes.ts`, path 4), and an invited
+ * `POST /auth/session` provisions a BRAND-NEW TENANT for an address the server does
+ * not recognise (the unknown-address path of the session route), and an invited
  * agent's membership is activated by matching the address they sign in with
  * against the stub row their supervisor's invite wrote. Those two facts together
  * are the whole problem: an agent who signed up, or who picked a Google account
@@ -35,7 +35,7 @@ import styles from './AgencyJoinPage.module.css';
  * all, which closes the hazard and leaves an invited agent with no Google account
  * with no way in whatsoever. This page is that way in.
  *
- * What changes is where the authority lives. Master now mints a single-use token,
+ * What changes is where the authority lives. The server now mints a single-use token,
  * emails it, and exposes a claim endpoint where the TOKEN is what authorizes the
  * membership. The address the agent ends up signing in with therefore no longer
  * has to match the address the invite was sent to — so the match that was failing
@@ -88,7 +88,7 @@ const ROLE_LABELS: Record<Role, string> = {
   tenant_owner: 'Workspace owner',
 };
 
-/** The role as copy. Falls back to the raw value so a role master adds before this
+/** The role as copy. Falls back to the raw value so a role the server adds before this
  *  client knows about it renders as itself rather than as blank space. */
 function roleLabel(role: Role): string {
   return ROLE_LABELS[role] ?? role;
@@ -101,7 +101,7 @@ function roleLabel(role: Role): string {
  * invite cannot grant ownership of a workspace — so the narrowing happens here
  * rather than by widening the analytics enum to a role no event can carry. `null`
  * for that impossible case, which reads in the funnel as "an invite we could not
- * classify" and is the honest answer if master ever sends one.
+ * classify" and is the honest answer if the server ever sends one.
  */
 function analyticsRole(role: Role): AccountRole | null {
   return role === 'tenant_owner' ? null : role;
@@ -146,7 +146,7 @@ type Lookup =
 type Pending = null | 'google' | 'create' | 'sign_in' | 'confirm' | 'decline';
 
 /** Addresses are compared case-insensitively and trimmed. Gmail's dot and `+tag`
- *  equivalences are deliberately NOT normalised away: master matches on the exact
+ *  equivalences are deliberately NOT normalised away: the server matches on the exact
  *  string, so treating `a.b@gmail.com` as the invited `ab@gmail.com` here would
  *  suppress a confirmation for a mismatch the backend still sees. */
 function sameAddress(a: string | null, b: string): boolean {
@@ -277,10 +277,10 @@ const STRENGTH_LABELS = ['Too short', 'Weak', 'Fair', 'Good', 'Strong'];
  * — which is fixable by the recipient alone, in ten seconds, if anybody tells them
  * that is what happened.
  *
- * `identity_already_bound` is master's fifth, added after this page was first
+ * `identity_already_bound` is the server's fifth, added after this page was first
  * written. It means the invited user row already has a real account behind it —
  * they were invited, and then signed in by some other route before opening the
- * link. Master refuses to rebind the row and leaves the invitation outstanding,
+ * link. The server refuses to rebind the row and leaves the invitation outstanding,
  * so the honest reading is not "your invitation is broken" but "you are already
  * set up": the account exists, at that address, and the sign-in page is the whole
  * remedy. Told as its own screen rather than folded into `claimed`, because the
@@ -349,7 +349,7 @@ function Unavailable({ status }: { status: InviteUnavailableStatus }) {
 }
 
 /**
- * The lookup itself failed — a network blip, or master being unreachable.
+ * The lookup itself failed — a network blip, or the server being unreachable.
  *
  * Separate from the four above because it is the only one that may resolve by
  * itself, which is exactly what makes a retry button the right control and a
@@ -641,7 +641,7 @@ export default function AgencyJoinPage() {
   /**
    * The way onward from the error, when the error has one.
    *
-   * Only `identity_in_use` sets it today: master refuses that claim because the
+   * Only `identity_in_use` sets it today: the server refuses that claim because the
    * Google account already belongs to a different user row here, and its advice
    * — "sign in with it directly" — is a page this app has and had no link to.
    * Kept beside `error` rather than folded into the message so the remedy is a
@@ -711,7 +711,7 @@ export default function AgencyJoinPage() {
    * address check. The credential outlives the page (Firebase persists it in
    * localStorage), the suppression that keeps the provider from syncing it does
    * not survive a full page load, and `POST /auth/session` provisions a tenant
-   * for an address master does not recognise — so walking away from the mismatch
+   * for an address the server does not recognise — so walking away from the mismatch
    * screen produced the stray empty tenant this page exists to abolish, one
    * navigation later.
    *
@@ -817,7 +817,7 @@ export default function AgencyJoinPage() {
         unmount cleanup must read this as a join being finished rather than as an
         abandoned credential: the claim may already have bound the membership, and
         signing out from underneath it is the race described where these refs are
-        declared. Put back down if — and only if — master refuses, because then
+        declared. Put back down if — and only if — the server refuses, because then
         nothing was spent and the credential is ours to clean up again.
       */
       claimSent.current = true;
@@ -856,7 +856,7 @@ export default function AgencyJoinPage() {
         return;
       }
       /*
-        Master's `identity_in_use`: the account they signed in with already
+        The server's `identity_in_use`: the account they signed in with already
         belongs to a different user row here. The INVITATION is untouched and
         another account still claims it, so this is a message under the options
         rather than a terminal screen — and it is the one failure on this page
@@ -939,7 +939,7 @@ export default function AgencyJoinPage() {
         a different account", the only control on the page that signs out — so a
         refused claim returned the visitor to the two options while Firebase still
         held the colliding account, where pressing Continue with Google
-        re-selected it and failed identically. A loop with no exit, on master's
+        re-selected it and failed identically. A loop with no exit, on the server's
         commonest claim conflict (`identity_in_use`, which is REACHABLE precisely
         because this page allows a mismatched address).
 
@@ -1137,14 +1137,14 @@ export default function AgencyJoinPage() {
           {/*
             Two independent absences, each dropping its own clause rather than
             filling it. `inviter_name` is null for a system or API invite;
-            `tenant_name` is null whenever master's tenant lookup came back empty
+            `tenant_name` is null whenever the server's tenant lookup came back empty
             — it sends `tenant?.name ?? null` on purpose, refusing to substitute
             a raw tenant UUID for a name at an unauthenticated caller. Typed as a
             plain string, this rendered "You have been set up as Agent at ." with
             an empty `<strong>` mid-sentence, on the one page in the product that
             most has to not look like phishing. There is nothing honest to put
             there — inventing "your workspace" would be this client asserting
-            something master declined to say — so the sentence simply ends.
+            something the server declined to say — so the sentence simply ends.
           */}
           <p className={styles.lede}>
             {pendingInvite.inviter_name ? (
@@ -1242,7 +1242,7 @@ export default function AgencyJoinPage() {
             elements above where the message renders.
 
             The link lives INSIDE the region so it is announced with the sentence
-            that calls for it. It is the remedy for master's `identity_in_use`
+            that calls for it. It is the remedy for the server's `identity_in_use`
             refusal, whose own message ends "sign in with it directly" — advice
             this page previously gave with nothing to press.
           */}

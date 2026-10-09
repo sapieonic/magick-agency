@@ -4,12 +4,9 @@ import { PageDescription } from '../../components/common/PageDescription';
 import * as config from '../../config';
 
 /*
- * PORT NOTE (magick-agency, decision B17): cusui's 8 cases here pinned the page
- * guide's "Read the full guide" link to the parent product's documentation site
- * (`docs.magickvoice.com`) and the `docsUrl` / `DOCS_SLUGS` helpers behind it.
- * Magick Agency has no docs site, so the link and the helpers are deleted, and
- * the 8 cases are replaced by these 2 deletion tests. cusui's collapsed-from-
- * storage case survives without its link assertion (third case).
+ * Decision B17: Magick Agency has no docs site, so the page guide has no "Read
+ * the full guide" link and there are no docs-URL helpers. The first two cases
+ * pin that absence; the third pins the collapsed-from-storage behaviour.
  */
 
 afterEach(cleanup);

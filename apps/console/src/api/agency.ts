@@ -26,7 +26,7 @@ import type {
 /**
  * Agent-native routes. These exist rather than reusing the generic call API
  * because the `agent` role sits at hierarchy level 5, below every permission
- * floor that predates the Agency Dialer — and because core can verify the
+ * floor that predates the Agency Dialer — and because the server can verify the
  * caller IS the reserved agent for an attempt, an ownership check the generic
  * routes cannot express.
  */
@@ -118,7 +118,7 @@ export async function hangupAttempt(
  * Go on break with a reason.
  *
  * `reason` must be a `code` from `bootstrap.break_reasons` — campaign config is
- * the sole authority and core rejects anything else with `unknown_break_reason`
+ * the sole authority and the server rejects anything else with `unknown_break_reason`
  * plus the `allowed_codes` that *are* valid, so a console holding a stale
  * bootstrap can recover in one round trip instead of making the agent
  * re-bootstrap mid-shift.
@@ -169,13 +169,13 @@ export async function cancelQueuedBreak(
 
 /**
  * Supervisor override — end a held wrap-up and return the agent to the pool
- * (`MAG-142`, §C.4's control).
+ * ('s control).
  *
  * ── Why this is not `/available` ────────────────────────────────────────────
  * `POST /sessions/:id/available` **refuses while a disposition is outstanding**,
  * and that refusal is the only thing making a required disposition required. So
  * the one route that CAN end a held wrap-up is a separate route with a higher
- * floor: master gates it on `agency.supervise`, which under D6 an `agent` cannot
+ * floor: the server gates it on `agency.supervise`, which under the role hierarchy an `agent` cannot
  * reach. The person who benefits from skipping a disposition cannot call the
  * route that skips it.
  *
@@ -183,7 +183,7 @@ export async function cancelQueuedBreak(
  * 'agency.supervise')`.** Any looser check renders a button that 403s on click.
  *
  * `:id` is the **session** id, never `agent_user_id`. `reason` is optional free
- * text recorded on core's audit event, capped at 1000 chars by master's schema
+ * text recorded on the audit event, capped at 1000 chars by the server's schema
  * (`FORCE_AVAILABLE_REASON_MAX`); an empty one is omitted rather than sent as
  * `''`, which would record a reason that was never given.
  *
@@ -208,15 +208,15 @@ export async function forceAgentAvailable(
 /**
  * Submit the disposition for an attempt.
  *
- * `requires_note` / `requires_datetime` are enforced by **core** against the
+ * `requires_note` / `requires_datetime` are enforced by **the server** against the
  * campaign catalog; the console's own guard exists so an agent is never left
  * pressing a button that will fail, not as the enforcement. On a 400 the error
  * carries a `code` from the closed `AgencyActionErrorCode` union — and
- * `allowed_codes` for `unknown_disposition_code` — which master allow-lists
+ * `allowed_codes` for `unknown_disposition_code` — which the server allow-lists
  * through its error mask so the pad can key its copy off the code rather than
  * showing a support message.
  *
- * Master attributes the action to the signed-in user server-side; the console
+ * The server attributes the action to the signed-in user server-side; the console
  * neither sends nor can influence `agent_user_id`.
  */
 export async function submitDisposition(
@@ -234,17 +234,17 @@ export async function submitDisposition(
 }
 
 /**
- * Mark the contact on the line as Do Not Call (`AD-P3-U-03`).
+ * Mark the contact on the line as Do Not Call.
  *
- * **Not a disposition.** §A.7.5 keeps this as its own action because of the case
+ * **Not a disposition.** keeps this as its own action because of the case
  * that actually happens: the customer says "take me off your list" in the first
- * three seconds and hangs up, before there is anything to disposition. Core
- * suppresses the contact immediately and forwards to master, which owns
+ * three seconds and hangs up, before there is anything to disposition. The server
+ * suppresses the contact immediately and forwards to the server, which owns
  * `dnc_entries`.
  *
- * **This path never writes an ACCOUNT-scoped row** — master's internal route
+ * **This path never writes an ACCOUNT-scoped row** — the server's internal route
  * refuses an `account_id` outright, because an account-scoped row never enters
- * core's flat `dnc:{tenantId}` Redis set and so would never suppress a dial at
+ * the server's flat `dnc:{tenantId}` Redis set and so would never suppress a dial at
  * dial time. That leaves exactly two scopes reachable from here, and only one of
  * them is workspace-wide: `scope: 'tenant'` writes the unscoped row that reaches
  * the flat set, while the default `scope: 'campaign'` writes a campaign-scoped
@@ -256,14 +256,14 @@ export async function submitDisposition(
  * and may never land. The console must not claim the list write in that case —
  * see `agencyDncCopy.ts`.
  *
- * The request asserts `scope`, never `campaign_id`: core already knows the
+ * The request asserts `scope`, never `campaign_id`: the server already knows the
  * campaign from the attempt it is looking at, so naming one here would be the
- * client asserting a fact the server owns (the same reasoning master's own
+ * client asserting a fact the server owns (the same reasoning the server's own
  * `createSessionSchema` applies to `agent_user_id`). Absent `scope` is defined,
  * server-side, as `'campaign'` — the narrower, fail-safe reading — and that is
  * exactly what the console's default sends explicitly rather than by omission,
  * so the request stays self-describing in a log or a test. The tenant-wide
- * escalation sends `scope: 'tenant'` on purpose, and master additionally floors
+ * escalation sends `scope: 'tenant'` on purpose, and the server additionally floors
  * that path at `agency.dnc.manage`.
  */
 export async function markContactDnc(
@@ -370,18 +370,19 @@ export async function saveAttemptNotes(
   };
 }
 
-/* ── Agent ↔ campaign assignment (`MAG-160`) ───────────────────────────────────
+/* ── Agent ↔ campaign assignment ─────────────────────────────────────
  *
- * Master-native routes under the same `/proxy/agency` prefix, but not proxied to
- * core: core has no identity model, so the mapping of a *person* to a campaign
- * can only live in master. They are staffing, never authorization — see
+ * Routes under the same `/proxy/agency` prefix that are served by the public API
+ * layer itself, not forwarded to the dialer runtime: it has no
+ * identity model, so the mapping of a *person* to a campaign can only live in
+ * the server. They are staffing, never authorization — see
  * `AgencyMyAssignment`.
  */
 
 /**
  * Where this agent is sent by default. `null` ⇒ **nobody has staffed them yet**.
  *
- * Master answers `204` with no body for the unassigned case, which `apiFetch`
+ * The server answers `204` with no body for the unassigned case, which `apiFetch`
  * resolves as `undefined`; it is normalised to `null` here so every caller
  * branches on a value rather than having to know that a status code was the
  * answer. Floored at `agency.station.connect` (level `agent`) — deliberately NOT
@@ -406,7 +407,7 @@ export async function getMyAssignment(
  * them yet — a steady state, not a failure.
  *
  * Replaces {@link getMyAssignment}. The singular route could only ever name one
- * campaign, which was not a simplification but a data loss: master's staffing
+ * campaign, which was not a simplification but a data loss: the server's staffing
  * table allowed one active assignment per tenant, so putting somebody on an
  * afternoon campaign silently unstaffed them from the morning one and the wire
  * shape had no way to reveal it.
@@ -434,7 +435,7 @@ export async function getMyAssignments(
    * `?? []` guards a body-less 200, which `apiFetch` resolves as `undefined`.
    *
    * The previous version of this comment claimed it covered "a 204 from an older
-   * master that predates this route". It does not: an older master has no such
+   * server that predates this route". It does not: an older server has no such
    * route and answers **404**, which `apiFetch` throws on — and that throw is the
    * behaviour we want, since "we could not ask" is a different screen from "nobody
    * has staffed you".
@@ -448,7 +449,7 @@ export async function getMyAssignments(
 
 /**
  * The campaign's assigned people. Floored at `agency.supervise` — the same
- * permission master gates the route on, so the UI gate and the API gate are one
+ * permission the server gates the route on, so the UI gate and the API gate are one
  * check and a control can never render for someone it will 403 for.
  *
  * Distinct from the *agent floor*, which is live session state read off the
@@ -472,11 +473,11 @@ export async function listCampaignAgents(
  *
  * **Assigning someone who is already assigned elsewhere MOVES them** — one
  * active assignment per user per tenant, enforced by a partial unique index in
- * master rather than by a check-then-write, so two supervisors assigning the
+ * the server rather than by a check-then-write, so two supervisors assigning the
  * same person at once cannot both win.
  *
  * It does not touch a live session. If the agent is still joined to the old
- * campaign, their next join is refused by core with `session_on_other_campaign`
+ * campaign, their next join is refused by the server with `session_on_other_campaign`
  * and the console tells them to leave that station first — nobody is yanked off
  * a call by a staffing change.
  */

@@ -14,7 +14,7 @@ import { ErrorText } from '../common/ErrorText';
 import { AudioWaveform } from '../audio/AudioWaveform';
 import type { CallAnalysisResult, ConversationEntry } from '../../types/call';
 import { loadTranscriptVisible, saveTranscriptVisible } from '../../utils/transcript-prefs';
-// Shared with the call detail page — reused verbatim so the extracted sections
+// Shared with the call detail page — reused as-is so the extracted sections
 // render identically whether mounted on the Calls page or the IVR session page.
 import styles from '../../pages/calls/CallDetailPage.module.css';
 import {
@@ -348,7 +348,7 @@ interface AnalysisStatusCardProps {
   retryLabel?: string;
   /**
    * Whether to offer Retry. Defaults to `failed` only — the dialer also allows it
-   * from `expired`, but ONLY when a recording actually exists (core 400s with
+   * from `expired`, but ONLY when a recording actually exists (the API 400s with
    * ANALYSIS_NO_RECORDING otherwise), which the caller alone can determine.
    */
   canRetry?: boolean;

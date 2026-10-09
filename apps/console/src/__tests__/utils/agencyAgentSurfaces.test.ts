@@ -71,7 +71,7 @@ describe('the station’s links stay in step with this list', () => {
   it('sends the console at the two HISTORY surfaces, by their real paths', () => {
     /**
      * The console cannot use `AgentNav`: navigating away from a live station
-     * closes the socket and leaves core holding the agent's lease for up to 45s
+     * closes the socket and leaves the API holding the agent's lease for up to 45s
      * with no screen attached, so `STATION_HISTORY_LINKS` opens the same
      * destinations in a new tab instead. Two lists, one set of paths — and this
      * is what stops a renamed route fixing one and breaking the other.

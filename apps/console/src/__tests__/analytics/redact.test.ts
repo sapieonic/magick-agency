@@ -17,8 +17,8 @@ describe('redactInviteToken', () => {
 
   it('redacts the token wherever the string carries it', () => {
     expect(redactInviteToken(`/agency/join/${TOKEN}`)).toBe('/agency/join/:token');
-    expect(redactInviteToken(`https://app.magickvoice.com/agency/join/${TOKEN}?utm=mail`))
-      .toBe('https://app.magickvoice.com/agency/join/:token?utm=mail');
+    expect(redactInviteToken(`https://app.example.com/agency/join/${TOKEN}?utm=mail`))
+      .toBe('https://app.example.com/agency/join/:token?utm=mail');
     // As prose, which is how it reaches an autocapture `$el_text`.
     expect(redactInviteToken(`Your link: https://app.mv.com/agency/join/${TOKEN} — opens once`))
       .toBe('Your link: https://app.mv.com/agency/join/:token — opens once');
@@ -28,7 +28,7 @@ describe('redactInviteToken', () => {
     /*
       This is the whole reason `isHighEntropyTokenLikeSegment` is not reused here.
       That predicate requires a digit, because it is guessing at paths whose shape
-      it does not know. A base64url token need not contain one — master mints 32
+      it does not know. A base64url token need not contain one — the server mints 32
       random bytes, so roughly one token in 1,500 has no digit at all — and
       "usually redacted" is not a property worth having for a live credential.
 

@@ -62,7 +62,7 @@ function getRoleColor(role: Role): string {
 }
 
 /**
- * The Invite column's two values (ClickUp `14ygtkj7tbx`), styled the same way
+ * The Invite column's two values, styled the same way
  * `ROLE_COLOR_MAP` styles the Role column beside it — `--warning` for a state
  * that needs attention, `--success` for the settled one. Not `--ember`: ember
  * is reserved for what the platform is doing right now (a live call, a running
@@ -76,7 +76,7 @@ const INVITE_BADGE_COLOR: Record<'active' | 'pending', string> = {
 
 /**
  * Operator-facing copy. The wire enum (`'active' | 'pending'`) must never reach
- * the screen verbatim, and `'active'` must not reach it in TRANSLATION either:
+ * the screen as-is, and `'active'` must not reach it in TRANSLATION either:
  * `Membership.status` is separately `'active' | 'inactive' | 'revoked'`, and
  * super-admin's own tenant-members table already renders a green **Active** for
  * that different fact (`SATenantDetailPage`'s `saStatusLabel`). A supervisor who
@@ -91,13 +91,13 @@ const INVITE_BADGE_LABEL: Record<'active' | 'pending', string> = {
 
 
 /**
- * Whether master has NOT told us this person has signed up — either it says
+ * Whether the server has NOT told us this person has signed up — either it says
  * `'pending'`, or it says nothing at all.
  *
  * The twin of the badge's absent-field handling, and it resolves the other way
  * on purpose. This
  * one gates the Resend control, where an absent field defaulting to `'active'`
- * removes it: against a master that predates `invite_state`, Resend would
+ * removes it: against a server that predates `invite_state`, Resend would
  * vanish for every agent in the product at once, silently, with nothing on
  * screen to say why. Resend is the only remedy for an expired or never-sent
  * invitation, and before this ticket it was offered to every agent regardless —
@@ -105,7 +105,7 @@ const INVITE_BADGE_LABEL: Record<'active' | 'pending', string> = {
  * silent, and a narrowing only once the server has something to say.
  *
  * Written as `!== 'active'` rather than `=== 'pending'` so a third literal
- * master might add also keeps the control rather than removing it.
+ * the server might add also keeps the control rather than removing it.
  */
 export function inviteNotKnownJoined(member: TenantMember): boolean {
   return member.membership.invite_state !== 'active';
@@ -119,7 +119,7 @@ export function inviteNotKnownJoined(member: TenantMember): boolean {
  * can never be read from two different resolutions of it.
  *
  * ── Accessible by construction, which is why there is no ARIA here ─────────
- * It reuses the `roleBadge` pill beside it verbatim — same class, same
+ * It reuses the `roleBadge` pill beside it unchanged — same class, same
  * `color-mix` background, a different colour/label pair — and the fact that
  * distinguishes the two states is the rendered WORD, not the colour. So it
  * survives grayscale, a colour-blind reader and a screen reader with no added
@@ -130,7 +130,7 @@ function InviteStateBadge({ member }: { member: TenantMember }) {
   const state = member.membership.invite_state;
 
   /**
-   * Absent — an older master, or a cached SPA outliving a rollback — renders a
+   * Absent — an older server, or a cached SPA outliving a rollback — renders a
    * neutral placeholder and NO badge.
    *
    * There is deliberately no display default, because every default is a
@@ -160,7 +160,7 @@ function InviteStateBadge({ member }: { member: TenantMember }) {
 }
 
 /**
- * `agent` is offered here (`MAG-160`).
+ * `agent` is offered here.
  *
  * It used to be display-metadata only — `ROLES` carried it so an existing
  * membership rendered as "Agent" rather than the raw string, and neither picker
@@ -173,7 +173,7 @@ function InviteStateBadge({ member }: { member: TenantMember }) {
  * Last in both lists, and it is the only entry below `viewer`: the order runs
  * most-access to least, and `agent` (level 5) is not "a smaller viewer" but a
  * different job — it holds the four `agency.*` permissions and nothing else at
- * all. Master's validators already accept it on both routes.
+ * all. The server's validators already accept it on both routes.
  */
 const INVITE_ROLES: Array<{ value: Role; label: string }> = [
   { value: 'account_admin', label: 'Account Admin' },
@@ -200,26 +200,25 @@ function getInviteFailureReason(error: unknown): 'validation_error' | 'invite_er
 /**
  * The link an invited person has to open, which somebody has to send them.
  *
- * ── This panel is now conditional on what master says ──────────────────────
+ * ── This panel is now conditional on what the server says ──────────────────────
  * Everything below was written while `POST /users/invite` returned nothing this
- * client read. It now returns `invite_email` and `sign_in_url` (master's PR
- * #221), the response is retained, and **the hand-off renders only on
+ * client read. It now returns `invite_email` and `sign_in_url`, the response is retained, and **the hand-off renders only on
  * `sent: false`**. So the paragraphs below describe the state the platform is in
  * today rather than a permanent one, and the panel stops claiming nobody was
  * emailed on the day a transport is wired up rather than needing this file
  * changed again. `sign_in_url` is preferred over the derivation below whenever
- * master has one, because the browser's origin is whatever deployment the
+ * the server has one, because the browser's origin is whatever deployment the
  * supervisor happens to be on.
  *
  * ── Why this exists at all, and what has since changed ──────────────────────
  * `POST /users/invite` writes a membership plus, for a new address, a stub user
- * whose `firebase_uid` is `pending_<uuid>`. Master adopts that stub on the
+ * whose `firebase_uid` is `pending_<uuid>`. The server adopts that stub on the
  * invitee's first Firebase sign-in, matched **by email** — which used to be the
  * entire activation mechanism, and it required the invited person to
  * independently arrive at the app and sign in with the exact address typed here.
  *
  * **"Nothing sends that invite" is no longer true, and this comment used to say
- * it flatly.** Master had the transport all along (`notifications/mailjet.client.ts`,
+ * it flatly.** The server had the transport all along (`notifications/mailjet.client.ts`,
  * already sending bulk-dispatch completion mail) and no transactional path wired
  * to it. It now has one: an `agent` invite mints a single-use token, mails a link
  * to `/agency/join/:token`, and the claim endpoint binds whatever identity the
@@ -228,9 +227,9 @@ function getInviteFailureReason(error: unknown): 'validation_error' | 'invite_er
  * has a way in for the first time.
  *
  * That is why the panel branches instead of asserting: `invite_email.sent` is
- * master's own answer for this invite, on this deployment, with this
+ * the server's own answer for this invite, on this deployment, with this
  * configuration. Every other role still gets no token and no mail (see
- * `roleGetsTokenInvite`), and a master with no `platformEmail` block still
+ * `roleGetsTokenInvite`), and a server with no `platformEmail` block still
  * answers `not_configured` — both land on the hand-off below, which is the older
  * behaviour kept for exactly the cases that still need it rather than a claim
  * about the platform.
@@ -299,7 +298,7 @@ export function inviteSignInUrl(role: InviteUserInput['role'], origin: string): 
  * ── Which way each gate fails, because they are not the same ───────────────
  * `GovernanceContext.isEnabled` is `map[capability] !== false`, i.e. it fails
  * **OPEN** — an unloaded or failed map reports every capability as present,
- * deliberately, because master's 403 is the real enforcement (L2) and a missing
+ * deliberately, because the server's 403 is the real enforcement (L2) and a missing
  * map must never blank the app. `useFeatureFlags` fails **CLOSED**. So the
  * composite is fail-closed, which is the right direction for a promise about a
  * link somebody is about to email: the pessimistic sentence names a remedy, and
@@ -348,12 +347,12 @@ interface CreatedInvite {
   email: string;
   role: InviteUserInput['role'];
   /**
-   * What master said about it.
+   * What the server said about it.
    *
    * Retained rather than discarded because two of its fields decide what the
    * panel is allowed to claim: `invite_email.sent` decides whether the hand-off
    * is shown at all, and `sign_in_url` is a better link than the one derived from
-   * `window.location.origin` whenever master has one. See {@link
+   * `window.location.origin` whenever the server has one. See {@link
    * InviteUserResult}.
    */
   result: InviteUserResult;
@@ -410,7 +409,7 @@ function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps) {
       /*
         `result ?? {}` because `apiFetch` returns `undefined` for a 204 and this
         route's body is not something the panel should crash on: an absent one is
-        read exactly like an older master's — no `invite_email`, so the hand-off
+        read exactly like an older server's — no `invite_email`, so the hand-off
         stands. A `.` into an undefined body inside a render would take the whole
         page down AFTER the membership had been written, which is the one moment
         the supervisor most needs to be told what happened.
@@ -430,22 +429,22 @@ function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps) {
 
   if (created) {
     /**
-     * Whether master actually told them.
+     * Whether the server actually told them.
      *
-     * An absent `invite_email` is an older master, and is read as "not sent" —
+     * An absent `invite_email` is an older server, and is read as "not sent" —
      * which is both the current truth and the safe direction to be wrong in: a
      * hand-off nobody needed, rather than a hidden hand-off somebody did.
      */
     const emailed = created.result.invite_email?.sent === true;
     /**
-     * Master's link when it has one, ours otherwise.
+     * The server's link when it has one, ours otherwise.
      *
      * Both compute the same product rule (the agency door for an `agent` and
-     * `/login` for every other role) from different inputs: master from its configured
-     * `CUSUI_BASE_URL`, this client from `window.location.origin`. Master's is
+     * `/login` for every other role) from different inputs: the server from its configured
+     * `CONSOLE_BASE_URL`, this client from `window.location.origin`. The server's is
      * preferred because the origin in the browser is whatever deployment the
      * supervisor happens to be on — a preview build would otherwise hand out a
-     * preview link. `null` is the answer when master has no base URL configured,
+     * preview link. `null` is the answer when the server has no base URL configured,
      * and the local derivation is then the only one that exists.
      */
     const signInUrl = created.result.sign_in_url ?? inviteSignInUrl(created.role, window.location.origin);
@@ -464,7 +463,7 @@ function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps) {
           <div className={styles.modalBody}>
             {emailed ? (
               /*
-                Master emailed them. The hand-off is not shown at all — telling a
+                The server emailed them. The hand-off is not shown at all — telling a
                 supervisor to send a link that has already been sent produces a
                 second, confusing message to the invitee, and an instruction the
                 product knows to be unnecessary reads as one it cannot be trusted
@@ -583,12 +582,12 @@ function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps) {
  * Whether this member's invitation can be re-issued.
  *
  * ── The one-way door this control closes ───────────────────────────────────
- * An invitation expires after seven days. Master's own copy on the join page
+ * An invitation expires after seven days. The server's own copy on the join page
  * then tells the agent to "ask your supervisor to send a new one" — and until
  * this existed, the supervisor could not: `POST /users/invite` answers `409 User
  * already has a membership in this context` for the same address, so the only
  * remaining move was to delete the membership and rebuild it. `POST
- * /invites/resend` is master's answer (it revokes any outstanding token and mints
+ * /invites/resend` is the server's answer (it revokes any outstanding token and mints
  * a fresh one against the SAME membership), and this repo shipped no caller for
  * it, which made the dead end certain rather than possible.
  *
@@ -598,8 +597,7 @@ function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps) {
  * returned no `firebase_uid` — the field that distinguishes a `pending_<uuid>`
  * stub from an activated account — and guessing from a null `display_name`
  * would have been worse than not narrowing, since a real email/password user
- * who has signed up has one too. That gap is what `invite_state` (ticket
- * `14ygtkj7tbx`) closes: master now answers the identity question itself, on
+ * who has signed up has one too. That gap is what `invite_state` closes: the server now answers the identity question itself, on
  * the same route, from the one rule it applies to every role — `pending` iff
  * the stored identity is still a placeholder stub, `active` otherwise.
  *
@@ -608,14 +606,14 @@ function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps) {
  * workspace's invitation: somebody who already had a Magick Agency login reads
  * `active` from the moment they are invited here, so hiding Resend from them is
  * a judgement about who is likely to need it, not a statement that their
- * invitation was used. Master's `POST /invites/resend` has no refusal for an
+ * invitation was used. The server's `POST /invites/resend` has no refusal for an
  * already-joined membership — it would mint and mail a fresh link quite
  * happily — so this narrowing is the UI's own, and it is deliberately the only
  * place the identity signal is allowed to REMOVE a control.
  *
  * Hence `inviteNotKnownJoined` rather than `invite_state ===
  * 'pending'`: the two differ only on an absent field, and here that difference
- * is the whole control. A master that predates `invite_state` sends nothing,
+ * is the whole control. A server that predates `invite_state` sends nothing,
  * and reading that as `'active'` would take Resend away from every agent in the
  * product at once — a silent, platform-wide regression on the only remedy for
  * an expired invitation, reachable by an ordinary rollback or by a browser
@@ -623,7 +621,7 @@ function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps) {
  * exactly what shipped before this ticket.
  *
  * The role test is NOT made redundant by any of that and stays for its
- * original, unrelated reason: `roleGetsTokenInvite` in master mints a token for
+ * original, unrelated reason: `roleGetsTokenInvite` in the server mints a token for
  * an `agent` and for nobody else, so a resend for any other role — signed up or
  * not — sends the same non-token mail a first invite would and cannot produce a
  * claimable link. `invite_state` answers "has this person signed up"; it says
@@ -637,7 +635,7 @@ function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps) {
  * and a supervisor pressing this button still reads `pending` here; and an
  * agent who has a login but has never opened THIS workspace reads `active`, so
  * the control is withheld from a person who may genuinely be waiting on a link.
- * Master's answer to the first is unchanged — the claim fails with
+ * The server's answer to the first is unchanged — the claim fails with
  * `identity_already_bound`, which the join page renders as "You are already set
  * up — sign in", one press from the fix. The second costs a supervisor a
  * support request rather than a broken invitation, which is the cheaper of the
@@ -656,13 +654,13 @@ export function invitationIsResendable(member: TenantMember): boolean {
  * gives.
  *
  * A confirmation rather than a bare menu item that fires, because a resend is not
- * idempotent from the recipient's side — master revokes the outstanding token
+ * idempotent from the recipient's side — the server revokes the outstanding token
  * first, so pressing this INVALIDATES a link that may be sitting unread in the
  * agent's inbox. A supervisor who meant to press "Change Role" must not discover
  * that by having broken the link they were about to be asked about.
  *
  * The outcome reads `invite_email.sent` exactly as {@link InviteModal} does, and
- * for the same reason: whether anybody was told is master's answer, per
+ * for the same reason: whether anybody was told is the server's answer, per
  * deployment, and the panel must not claim either way on its own.
  */
 function ResendInviteModal({
@@ -727,10 +725,10 @@ function ResendInviteModal({
               )}
               <CopyableField label="Their email" value={member.user.email} mono />
               {/*
-                Master's link, and only master's. There is no client-side
+                The server's link, and only the server's. There is no client-side
                 derivation for this one: the useful link carries the freshly
-                minted TOKEN, which only master has ever seen. Where it answers
-                `null` (no `CUSUI_BASE_URL` configured) the honest thing is to say
+                minted TOKEN, which only the server has ever seen. Where it answers
+                `null` (no `CONSOLE_BASE_URL` configured) the honest thing is to say
                 so rather than to substitute the sign-in page, which is a URL that
                 looks like the invitation and claims nothing.
               */}
@@ -795,7 +793,7 @@ function ActionsDropdown({ member, currentRole, onRoleChanged, onRemoveClick, on
   const { tenantId } = useTenant();
   const canUpdateRole = usePermission('user.update_role');
   const canRemove = usePermission('user.remove');
-  /* `user.invite` rather than a permission of its own: master guards
+  /* `user.invite` rather than a permission of its own: the server guards
      `POST /invites/resend` with exactly that, on the reasoning that re-issuing an
      invitation is the same act as issuing one. A menu item behind a looser check
      than the route would 403 on arrival. */
@@ -807,7 +805,7 @@ function ActionsDropdown({ member, currentRole, onRoleChanged, onRemoveClick, on
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Mirrors master's ROLE_HIERARCHY; `agent` is below `viewer` (Agency Dialer).
+  // Mirrors the server's ROLE_HIERARCHY; `agent` is below `viewer` (Agency Dialer).
   const ROLE_LEVELS: Record<Role, number> = {
     agent: 5,
     viewer: 10,

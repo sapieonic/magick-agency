@@ -39,9 +39,7 @@ function tenant(
   return { accountId, accountResolution, accountError, reloadAccounts: mocks.reloadAccounts };
 }
 
-// PORT NOTE (magick-agency): the default flag is `agency_call_analysis` (the
-// `/app/call-summaries` gate) where cusui's was the AI product's `custom_sip`,
-// which agency does not have and no longer tracks. Assertions unchanged.
+// The default flag is `agency_call_analysis` (the `/app/call-summaries` gate).
 function renderGuard(flag = 'agency_call_analysis') {
   return render(
     <MemoryRouter initialEntries={['/app/sip/connections']}>

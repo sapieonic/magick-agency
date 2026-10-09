@@ -21,7 +21,7 @@ import { dispositionLabel } from './agencySpineCopy';
  * knows about a request.
  *
  * ── Why the vocabulary is pinned twice ──────────────────────────────────────
- * Core answers `400 <key> is not a retry selector dimension` for any key it does
+ * The server answers `400 <key> is not a retry selector dimension` for any key it does
  * not recognise, and it does so on the WHOLE request — so one stray key from a
  * filter set is not a widened cohort, it is a refused retry with a message about
  * a field the supervisor never typed. Which keys travel is therefore worth a
@@ -33,7 +33,7 @@ import { dispositionLabel } from './agencySpineCopy';
  */
 
 /**
- * Every dimension core's `parseRetrySelector` accepts (wire contract §1).
+ * Every dimension the server's `parseRetrySelector` accepts (wire contract).
  *
  * A `Record<K, true>` rather than an array literal, because **a `Record` key set
  * is exhaustiveness-checked and an array literal is not**. Left as an array, a
@@ -54,7 +54,7 @@ export type RetrySelectorKey = keyof typeof RETRY_SELECTOR_KEYS;
 
 /**
  * The contacts-tab filters that are **not** selector dimensions, and are
- * stripped before any retry call (contract §1).
+ * stripped before any retry call (contract).
  *
  * `phone` is a lookup, not a cohort — "retry this one number" is a decision
  * about a contact, and there is no shape of retry campaign that means it.
@@ -97,7 +97,7 @@ const DROPPED_FILTER_LABEL: Record<NonSelectorContactFilter, string> = {
 };
 
 /**
- * The literal bucket key core uses for a contact with no `last_disposition` —
+ * The literal bucket key the server uses for a contact with no `last_disposition` —
  * one nobody ever wrote up. Not a code an operator can author.
  */
 export const NO_DISPOSITION_BUCKET = '__none__';
@@ -111,7 +111,7 @@ const NEVER_DIALED_COPY = 'never dialed at all';
 
 /**
  * What the retry dialog offers when it is opened from the campaign header
- * rather than from a filtered contacts list (contract §8).
+ * rather than from a filtered contacts list (contract).
  *
  * The uncontroversial "we did not reach them" set — no answer, busy, and the
  * contacts a stopped-mid-run campaign never dialled at all. **Everything else is
@@ -132,7 +132,7 @@ export const DEFAULT_RETRY_SELECTOR: AgencyRetrySelector = {
   // one with no filtered list behind it to correct it — was dead on every
   // campaign.
   //
-  // "We did not reach them" is a UNION, and `__none__` (core's
+  // "We did not reach them" is a UNION, and `__none__` (the server's
   // `RETRY_NO_OUTCOME`) is what expresses it inside a single dimension, where
   // the algebra already ORs. It is the same bucket key the preview's
   // `by_last_outcome` breakdown uses for a NULL outcome, so the value selected
@@ -141,7 +141,7 @@ export const DEFAULT_RETRY_SELECTOR: AgencyRetrySelector = {
 };
 
 /**
- * Values core refuses OUTRIGHT, as a 400 on the whole request — so a selector
+ * Values the server refuses OUTRIGHT, as a 400 on the whole request — so a selector
  * carrying one is not a narrower cohort, it is a dead preview.
  *
  * These are dimensions the roster DOES offer as chips, which is what makes them
@@ -156,7 +156,7 @@ export const DEFAULT_RETRY_SELECTOR: AgencyRetrySelector = {
  * down.
  *
  *  - `dnc` / `invalid` — DR-4. Never seeded into any retry, by any selector.
- *  - `in_flight` — the contact is on a call RIGHT NOW. Core excludes it
+ *  - `in_flight` — the contact is on a call RIGHT NOW. The server excludes it
  *    unconditionally (seeding it and starting the child would dial a number the
  *    parent has an open call on) and refuses it by name here.
  */
@@ -200,7 +200,7 @@ export function selectorFromContactFilters(filters: AgencyContactFilters): Selec
   const droppedValues: string[] = [];
 
   /**
-   * Copy one dimension, leaving behind the values core would refuse.
+   * Copy one dimension, leaving behind the values the server would refuse.
    *
    * A dimension that is left EMPTY by the strip is omitted entirely rather than
    * sent as `[]` — the same rule the empty-chip-group case follows, and for the
@@ -278,7 +278,7 @@ export function droppedFilterNotice(dropped: readonly NonSelectorContactFilter[]
   );
 }
 
-/** Whether a selector names no dimension at all. Core refuses that with a 400. */
+/** Whether a selector names no dimension at all. The server refuses that with a 400. */
 export function isSelectorEmpty(selector: AgencyRetrySelector): boolean {
   return !(
     selector.state?.length
@@ -295,13 +295,13 @@ export function isSelectorEmpty(selector: AgencyRetrySelector): boolean {
  * The selector as query parameters, for the preview read.
  *
  * Multi-value keys go as REPEATED params, matching every other agency filter
- * this client sends. Master's `forwardAllowedQuery` joins repeated values with a
- * comma and core's `multiParam` splits on one, which is why a disposition code
+ * this client sends. The API's `forwardAllowedQuery` joins repeated values with a
+ * comma and the server's `multiParam` splits on one, which is why a disposition code
  * containing a comma cannot survive the trip — a platform limitation of the
  * filter encoding, stated here because the retry dialog is where a supervisor
  * would first meet it and conclude their cohort was wrong.
  *
- * `never_attempted` is only ever sent as `true`. Core accepts `false`, but
+ * `never_attempted` is only ever sent as `true`. The server accepts `false`, but
  * `false` constrains nothing, so sending it would put a key in the frozen
  * `retry_selector` record that describes no part of the roster.
  */
@@ -343,7 +343,7 @@ export function dispositionBucketLabel(
  *
  * `attemptOutcomeLabel` falls through to the raw string for anything it does not
  * know, so `__none__` rendered as `__none__` on screen. That is not a rare
- * shape: `__none__` is core's `by_last_outcome` key for a NULL outcome, it is a
+ * shape: `__none__` is the server's `by_last_outcome` key for a NULL outcome, it is a
  * member of `DEFAULT_RETRY_SELECTOR`, and the default is what every Retry
  * pressed from the campaign header uses — so it appeared in the breakdown of
  * essentially every preview opened that way.
@@ -360,7 +360,7 @@ export function outcomeBucketLabel(code: string): string {
 /**
  * The selector in the supervisor's own words, for the dialog's summary line.
  *
- * Deliberately NOT the same string core builds for the agent's banner
+ * Deliberately NOT the same string the server builds for the agent's banner
  * (`retry_context.selection_summary`). That one describes a campaign that
  * exists, is composed from the frozen record, and is the campaign's own fact.
  * This one describes a campaign that does not exist yet, and has to name
@@ -374,11 +374,11 @@ export function describeSelector(
   catalog: readonly AgencyDispositionEntry[] | undefined,
 ): string {
   /**
-   * One clause per DIMENSION. Joined with "and", because that is what core does
+   * One clause per DIMENSION. Joined with "and", because that is what the server does
    * across dimensions — see the return statement.
    */
   const clauses: string[] = [];
-  /** Values inside one dimension. Core ORs these. */
+  /** Values inside one dimension. The server ORs these. */
   const orList = (values: readonly string[]): string =>
     values.length <= 1
       ? (values[0] ?? '')
@@ -437,7 +437,7 @@ export function describeSelector(
   if (clauses.length === 0) return 'No cohort is selected yet.';
   // ── "and" ACROSS dimensions, "or" WITHIN one ─────────────────────────────
   //
-  // Core's algebra, exactly: values inside a dimension are `= ANY(...)`, and
+  // the server's algebra, exactly: values inside a dimension are `= ANY(...)`, and
   // separate dimensions are separate `AND`ed conditions. This line used to join
   // everything with "or", which describes a different — and always wider —
   // cohort than the one that will be seeded: `{state: ['exhausted'],
@@ -452,7 +452,7 @@ export function describeSelector(
   return `Contacts ${clauses.join(', and ')}.`;
 }
 
-/** `<parent name> — Retry <n>`, core's own default, offered pre-filled and editable. */
+/** `<parent name> — Retry <n>`, the server's own default, offered pre-filled and editable. */
 export function defaultRetryName(parentName: string, parentGeneration: number): string {
   return `${parentName} — Retry ${parentGeneration + 1}`;
 }
@@ -462,7 +462,7 @@ export function defaultRetryName(parentName: string, parentGeneration: number): 
  *
  * Each names the remedy, because each has one and none of them is "try again":
  * an empty selection needs a wider cohort, an oversized one needs a narrower,
- * and an exhausted generation chain needs a fresh campaign. Core's own
+ * and an exhausted generation chain needs a fresh campaign. The server's own
  * `message` is the fallback for a code this build has not heard of — it beats
  * "something went wrong", and it is the only thing left to say.
  */
@@ -508,7 +508,7 @@ export function retryRefusalCopy(
  *
  * ── The replay sentence does not claim a count, because there is none ───────
  *
- * On `idempotent_replay` core seeded nothing now and sends `contacts_seeded:
+ * On `idempotent_replay` the server seeded nothing now and sends `contacts_seeded:
  * null`; the campaign is the one this supervisor already made. Saying "created
  * with 812 contacts" would be a second claim of a creation that happened once —
  * and the supervisor is here precisely because they could not tell whether the
@@ -528,7 +528,7 @@ export function retryCreatedToast(result: AgencyRetryCreateResponse): string {
     `${result.campaign.name} created as a draft with `
     + `${seeded.toLocaleString()} contact${seeded === 1 ? '' : 's'}.`
     // Only when it happened, and only when the field arrived at all — an absent
-    // `duplicates_collapsed` is an older core saying nothing, not a measured
+    // `duplicates_collapsed` is an older the server saying nothing, not a measured
     // zero. The clause exists because the preview showed a LARGER number a
     // moment ago, and a supervisor who spots the gap with no explanation cannot
     // tell a duplicate collapse from rows lost to a bug.
@@ -549,7 +549,7 @@ export function retryCreatedToast(result: AgencyRetryCreateResponse): string {
  *
  * `crypto.randomUUID()` needs a secure context, which every surface that can
  * reach this page has; the fallback exists so a non-secure origin degrades to an
- * UNKEYED create (core's legal absent case) rather than throwing inside a render
+ * UNKEYED create (the server's legal absent case) rather than throwing inside a render
  * — a dialog that cannot open is worse than one without replay protection.
  */
 export function mintRetryIdempotencyKey(): string | undefined {

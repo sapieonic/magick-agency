@@ -30,7 +30,7 @@ import type { AgencyStaffingHistoryEntry } from '../../types/agency-stats';
  * For exactly the reason `/station`, `/dialer` and `/dialer/performance` are: an
  * `agent` is hierarchy level 5 and inherits no navigation, so `AppLayout`'s nav
  * (floored at `viewer`) and `AgencyLayout`'s entries would each render chrome
- * around nothing — §A.1's *"that is not navigation, it is noise"*. The route sits
+ * around nothing's *"that is not navigation, it is noise"*. The route sits
  * beside `/dialer` in `App.tsx`, gated identically (`RequireAuth` +
  * `RequireCapability capability="agency"` + `RequireFlag
  * flag="agency_dialer_enabled"`, both entitlements default off) and adds nothing to
@@ -57,7 +57,7 @@ import type { AgencyStaffingHistoryEntry } from '../../types/agency-stats';
  * must not be sent to an agent-scoped page. `dialerEntryRoutes.test.tsx` pins it.
  *
  * ── Why the staffing history is fetched here ──────────────────────────────
- * `AgencyAttempt` carries `campaign_id` and no campaign NAME — core has the name,
+ * `AgencyAttempt` carries `campaign_id` and no campaign NAME — the API has the name,
  * the row does not — and this list is cross-campaign, so the campaign column is the
  * one column that cannot be derived from the URL. `getMyCampaigns` is the id→name
  * source: it is floored at `agency.station.connect` (one of the very few reads an
@@ -116,7 +116,7 @@ export function AgentAttemptsPage() {
      * Both ids, for the reason every agency surface waits for both: an `agent` is
      * below `account.read`'s `viewer` floor so `GET /accounts` 403s for them, and a
      * request sent before `TenantContext` resolves carries no `X-Account-Id`, which
-     * core answers with a 400 about a header this client never sent. This cannot
+     * the API answers with a 400 about a header this client never sent. This cannot
      * become a permanent spinner — `AgentSurfaceShell` renders `AccountUnavailable`
      * once resolution settles without an account, and the panel below renders its
      * own three states regardless of what this read does.

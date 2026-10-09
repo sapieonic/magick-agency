@@ -37,7 +37,7 @@ vi.mock('../../api/agencyActivity', () => ({
 
 import ActivityPageView from '../../pages/agency/AgencyCampaignActivityPage';
 
-/** Core-only: no console row exists for an automatic pause. */
+/** Dialer-runtime-only: no console row exists for an automatic pause. */
 const AUTO_PAUSE: ActivityRow = {
   id: 'core:c-auto',
   at: '2026-08-01T11:00:00.000Z',
@@ -48,7 +48,7 @@ const AUTO_PAUSE: ActivityRow = {
   detail: { reason: 'abandonment_ceiling', measured_pct: 4.2, ceiling_pct: 3 },
 };
 
-/** Master-only, and its `target.id` is the ATTEMPT, not the campaign. */
+/** API-layer-only, and its `target.id` is the ATTEMPT, not the campaign. */
 const DISPOSITION: ActivityRow = {
   id: 'master:m-disp',
   at: '2026-08-01T12:00:00.000Z',
@@ -60,11 +60,10 @@ const DISPOSITION: ActivityRow = {
 };
 
 /**
- * The action vocabulary master serves alongside the rows.
+ * The action vocabulary the server serves alongside the rows.
  *
- * The filter is built from THIS and from nothing in the client — cusui used to
- * hand-maintain the same list and could not check it against master or core,
- * neither of which is a dependency of this repository.
+ * The filter is built from THIS and from nothing in the client — a
+ * hand-maintained list could not be checked against the server's own catalog.
  */
 const SERVED_ACTIONS: ActivityActionOption[] = [
   { value: 'agency_campaign.paused', label: 'Paused', group: 'Campaign' },
@@ -228,8 +227,8 @@ describe('stating what is missing', () => {
   });
 
   /**
-   * MAG-158 acceptance 6. The retention window is configured server-side — in
-   * the retention Lambda, not even in core's own config — so a number copied
+   * The retention window is configured server-side — in
+   * the retention Lambda, not even in the server's own config — so a number copied
    * into this client would go stale and tell the operator the wrong thing.
    */
   it('states the retention horizon from the API', async () => {
@@ -258,9 +257,8 @@ describe('stating what is missing', () => {
 /**
  * The action filter is now built from `available_actions` on the response.
  *
- * The list it replaced was hand-maintained here and unverifiable: master's
- * catalog and core's event types live in two other repositories, neither a
- * dependency of this one. What these pin is that nothing is copied back in — not
+ * A hand-maintained list here would be unverifiable against the server's action
+ * catalog and event types. What these pin is that nothing is copied back in — not
  * as a list, and not as a fallback.
  */
 describe('the action filter', () => {
@@ -295,7 +293,7 @@ describe('the action filter', () => {
   });
 
   /**
-   * An older master, which deploy order permits (core → master → cusui).
+   * An older server, which deploy order permits.
    *
    * The filter goes away rather than falling back to a built-in list — that
    * fallback is the mirror this removed, and every stale entry in it would be a
@@ -303,7 +301,7 @@ describe('the action filter', () => {
    * are the filter that matters on a finished campaign.
    */
   it.each([
-    // The first is the older-master case literally: no such key on the body.
+    // The first is the older-server case literally: no such key on the body.
     ['the key is absent', () => {
       const body = page();
       delete body.available_actions;
@@ -331,8 +329,8 @@ describe('the action filter', () => {
   /**
    * The guarantee that survived the rework, and the one this view cannot trade
    * away: the served list says what is worth OFFERING as a filter, never what
-   * the trail can contain. An action no build knows — a newer core's, or an
-   * older master serving no vocabulary at all — must still reach the table,
+   * the trail can contain. An action no build knows — a newer server's, or an
+   * older server serving no vocabulary at all — must still reach the table,
    * legible as itself rather than blank or dropped.
    */
   it.each([
@@ -377,7 +375,7 @@ describe('filters and export', () => {
     expect(filters.from).toBeTruthy();
   });
 
-  /** MAG-158 acceptance 7: the file must be the view, filters and all. */
+  /** The file must be the view, filters and all. */
   it('exports with the filters currently in force', async () => {
     renderPage();
     await waitFor(() => expect(mocks.getCampaignActivity).toHaveBeenCalled());
@@ -413,7 +411,7 @@ describe('filters and export', () => {
   });
 
   /**
-   * Master's 424 is an answer — it refused to write a file missing the dialer's
+   * The server's 424 is an answer — it refused to write a file missing the dialer's
    * half — so it must reach the operator rather than being swallowed.
    */
   it('surfaces a refused export instead of failing silently', async () => {
@@ -428,7 +426,7 @@ describe('filters and export', () => {
 
   /**
    * The ceiling is read out of a response header, so "truncated, size unknown"
-   * is a state master can actually put this page in. The warning must survive
+   * is a state the server can actually put this page in. The warning must survive
    * losing the number — and must not carry the number's absence into the copy.
    */
   it('still warns when the ceiling itself could not be read', async () => {
@@ -653,7 +651,7 @@ describe('honesty of the page state', () => {
   });
 
   /**
-   * Master refuses an inverted range too, but telling the supervisor before they
+   * The server refuses an inverted range too, but telling the supervisor before they
    * press Apply is the difference between a correction and a support ticket —
    * and stops it being reported as "the voice service returned an error".
    */
@@ -735,10 +733,10 @@ describe('races', () => {
 
 describe('permissions', () => {
   /**
-   * The floor master enforces is `audit.read` (`account_admin` since MAG-157).
+   * The floor the server enforces is `audit.read` (`account_admin`).
    * A `viewer` who could see the button would only get a 403 on click.
    */
-  it('hides the export from a role below the floor master enforces', async () => {
+  it('hides the export from a role below the floor the server enforces', async () => {
     mocks.useTenant.mockReturnValue({
       tenantId: 'tenant-1',
       accountId: 'account-1',
@@ -891,7 +889,7 @@ describe('accessibility', () => {
 });
 
 /**
- * ── This screen is a section of the campaign workspace (`MAG-166`) ──────────
+ * ── This screen is a section of the campaign workspace  ──────────
  *
  * The bar is what makes it one, and it is rendered by each page rather than by
  * a shared route layout — so without an assertion here it could be deleted
@@ -911,12 +909,12 @@ describe('the campaign section bar', () => {
 });
 
 /**
- * **A credential is not a person and not the system (86d45t7rm).**
+ * **A credential is not a person and not the system.**
  *
- * Master stopped stamping a key's CREATOR as the actor, so a key-authenticated
+ * The server stopped stamping a key's CREATOR as the actor, so a key-authenticated
  * row now arrives with `user_id: null` — the same shape a scheduler write has.
  * The pre-existing cell keyed its "Automatic" branch on `actor.system`, which
- * master keeps false for a key precisely so that branch cannot swallow one; this
+ * the server keeps false for a key precisely so that branch cannot swallow one; this
  * pins that it does not, and that the row names the credential instead.
  */
 describe('AgencyCampaignActivityPage — a key-authenticated row', () => {
@@ -953,10 +951,10 @@ describe('AgencyCampaignActivityPage — a key-authenticated row', () => {
   /**
    * The marker is appended to a NAME, never wrapped around the fallback.
    * `{display ?? 'API key'} (API key)` rendered "API key (API key)" on every row
-   * master could not name — which is the common case, since a revoked key is
+   * the server could not name — which is the common case, since a revoked key is
    * both the one a reviewer looks up and the one most likely to go unnamed.
    */
-  it('falls back to a bare label, not a doubled one, when master cannot name it', async () => {
+  it('falls back to a bare label, not a doubled one, when the server cannot name it', async () => {
     mocks.getCampaignActivity.mockResolvedValue(page({
       rows: [{ ...KEY_ROW, actor: { ...KEY_ROW.actor, display: null } }],
     }));
@@ -998,9 +996,9 @@ describe('AgencyCampaignActivityPage — a key-authenticated row', () => {
   });
 
   /**
-   * ── The trap master's own contract calls out ──────────────────────────────
+   * ── The trap the server's own contract calls out ──────────────────────────────
    *
-   * A row written before master recorded the distinction reports
+   * A row written before the server recorded the distinction reports
    * `type: 'unknown'` while keeping `system: true`. Reading `type` here instead
    * of `system` would flip every historical background row in every campaign
    * trail from "Automatic" to an unhandled value — a visible rewrite of

@@ -16,7 +16,7 @@ import type { AgencyColumnAnalysis } from '../../../types/agency-campaign';
 import styles from './ColumnMapper.module.css';
 
 /**
- * The column mapping screen (§B.3) — *the most important screen in this wizard*.
+ * The column mapping screen — *the most important screen in this wizard*.
  *
  * The phone column will not be called `phone`. Everything here exists so an
  * operator can say which one it is, with enough evidence in front of them to be
@@ -57,7 +57,7 @@ export function ColumnMapper({
       </p>
 
       {/*
-        Master withholds the suggestion when two columns are too close to call.
+        The server withholds the suggestion when two columns are too close to call.
         Naming them is the whole value: the operator knows which two to look at.
       */}
       {analysis.phone_column_ambiguous ? (
@@ -128,7 +128,7 @@ export function ColumnMapper({
         </p>
       ) : null}
 
-      {/* Learned BEFORE the ingest, not after — §B.3. */}
+      {/* Learned BEFORE the ingest, not after. */}
       {validity ? (
         <p className={styles.validity} data-testid="phone-validity">
           {validity}
@@ -137,7 +137,7 @@ export function ColumnMapper({
 
       {/*
         The country a bare number belongs to, and the reason it is a control
-        rather than a constant: master normalises every number that carries no
+        rather than a constant: the server normalises every number that carries no
         `+` by prepending a default country code, and that default is an env var
         on the server — `91` unless set. Nothing surfaced it, so a US roster
         imported as "100% accepted" and then dialed India, and the first place an
@@ -172,7 +172,7 @@ export function ColumnMapper({
       </div>
 
       {/*
-        D4, stated inline next to the timezone role rather than in a help panel:
+        Stated inline next to the timezone role rather than in a help panel:
         this is the moment the operator decides whether to map one.
       */}
       <p className={styles.timezoneNote}>

@@ -21,8 +21,5 @@ export function useAccounts() {
 
   useEffect(() => { load(); }, [load]);
 
-  // PORT NOTE (magick-agency): cusui's `remove` (`DELETE /accounts/:id`, the
-  // AccountsPage's) is not ported — see `api/accounts.ts`.
-
   return { accounts, loading, error, reload: load };
 }

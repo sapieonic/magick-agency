@@ -263,7 +263,7 @@ describe('the contact state the stats payload does not count', () => {
     expect(funnel.cells.map((c) => c.key)).not.toContain('contacts_on_call');
   });
 
-  it('prefers a real counter over the subtraction the moment core carries one', () => {
+  it('prefers a real counter over the subtraction the moment the API carries one', () => {
     // Forward-compatible: `contacts_on_call` is not on the payload today, but
     // it is the field that closes this properly, and it must win when it lands.
     const funnel = contactFunnel({
@@ -371,7 +371,7 @@ describe('the contact state the stats payload does not count', () => {
   it('names what a measured count does not explain', () => {
     /*
       The invariant the panel now claims: every contact is in a listed cell or in
-      `unaccounted`. Summing only the five would break it the moment core carries
+      `unaccounted`. Summing only the five would break it the moment the API carries
       `contacts_on_call` and disagrees with the residual — sending 2 where the
       five leave 3 would report 3 unaccounted beside a cell reading 2, and the
       genuinely unexplained 1 would go unnamed.
@@ -492,7 +492,7 @@ describe('the pulse strip', () => {
     expect(pulse.wins.sub).toBe('19.7% of calls that reached someone');
   });
 
-  it('drops a rate’s sub-line when core has nothing to measure — never 0%', () => {
+  it('drops a rate’s sub-line when the API has nothing to measure — never 0%', () => {
     const pulse = pulseFigures(stats({ connect_rate_pct: null, success_rate_pct: null }));
 
     expect(pulse.humans.sub).toBeNull();
@@ -548,7 +548,7 @@ describe('the floor summary', () => {
     }));
 
     // 4 + 1 + 0 + 3 + 1. An agent who logged out at 17:00 was not on shift at
-    // 18:00 — the same rule core's `shift_seconds` applies.
+    // 18:00 — the same rule the API's `shift_seconds` applies.
     expect(floor.onShift).toBe(9);
     expect(floor.slices.map((s) => s.state)).toEqual(['on_call', 'wrapup', 'available', 'break']);
     expect(floor.slices[0]!.label).toBe('On a call');
@@ -671,7 +671,7 @@ describe('pulse rates honour the shared low-volume threshold', () => {
   });
 
   it('still drops the line when the rate itself is null, above the threshold', () => {
-    // `null` is "core has nothing to measure" — never a 0%.
+    // `null` is "the API has nothing to measure" — never a 0%.
     const s = stats({ attempts_total: 4000, connect_rate_pct: null, success_rate_pct: null });
     expect(pulseFigures(s).humans.sub).toBeNull();
     expect(pulseFigures(s).wins.sub).toBeNull();
@@ -679,7 +679,7 @@ describe('pulse rates honour the shared low-volume threshold', () => {
 });
 
 /*
-  ── The campaign's own clock (`MAG-167`) ────────────────────────────────────
+  ── The campaign's own clock ────────────────────────────────────
 
   `started_at`, `ended_at` and `last_transition_by` are what let a TERMINAL
   campaign say anything about itself, and a terminal campaign is the primary
@@ -687,7 +687,7 @@ describe('pulse rates honour the shared low-volume threshold', () => {
   the failures worth pinning are the ones that read as facts: a duration that
   came out negative because two services stamped two clocks, an automatic
   pause attributed to nobody at all, and a "Agents who worked it: 0" on a
-  campaign core never measured.
+  campaign the API never measured.
 */
 
 const SECOND = 1000;
@@ -761,7 +761,7 @@ describe('campaignTimeline', () => {
   });
 
   it('drops the start line entirely when the field did not arrive', () => {
-    // An older master. Not "Started —", which reads as a failed read.
+    // An older API. Not "Started —", which reads as a failed read.
     const timeline = campaignTimeline(campaign(), null, NOW);
 
     expect(timeline.started).toBeNull();
@@ -834,12 +834,12 @@ describe('campaignTimeline', () => {
 
     expect(by({ user_id: 'usr-1', name: 'Priya Sharma' })).toBe('Priya Sharma');
     /*
-      `null` is core saying nobody did this — the abandonment auto-pause. On a
+      `null` is the API saying nobody did this — the abandonment auto-pause. On a
       campaign that stopped itself that is the single most useful sentence on
       the page, so it is said rather than dropped.
     */
     expect(by(null)).toBe('Automatically');
-    // `undefined` is an older master carrying no such field. This console then
+    // `undefined` is an older API carrying no such field. This console then
     // has nothing to say either way, so it says nothing.
     expect(by(undefined)).toBeNull();
   });
@@ -915,15 +915,15 @@ describe('howItEndedLines', () => {
     expect(lines[0]).toEqual({ label: 'Dialing', value: 'Never started' });
   });
 
-  it('drops the peak when core did not measure it, and keeps a measured zero', () => {
+  it('drops the peak when the API did not measure it, and keeps a measured zero', () => {
     const peak = (value: number | null | undefined) =>
       howItEndedLines(stopped, stats({ agents_peak: value }), 'stopped', NOW)
         .find((line) => line.label === 'Agents who worked it');
 
     /*
       A stopped campaign's live floor is always empty, so `agents_live` can
-      never answer "was anyone ever on this". `null` is core saying it did not
-      measure — an older core, or a campaign predating the agent event log —
+      never answer "was anyone ever on this". `null` is the API saying it did not
+      measure — an older API, or a campaign predating the agent event log —
       and rendering that as `0` would assert nobody worked the campaign.
     */
     expect(peak(null)).toBeUndefined();
@@ -983,7 +983,7 @@ describe('the retries sub-line under the dial count', () => {
   });
 
   it('says nothing rather than more retries than dials', () => {
-    // Not a number core can produce, but one a mid-deploy pairing of two
+    // Not a number the API can produce, but one a mid-deploy pairing of two
     // versions can: "including 8,000 retries" under "6,742 dials" is a screen
     // nobody can act on.
     expect(pulseFigures(stats({ attempts_total: 6742, attempts_retried: 8000 })).dials.sub)

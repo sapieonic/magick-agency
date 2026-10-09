@@ -10,10 +10,8 @@ interface LogoProps {
 /**
  * Brand mark: a text tile in the brand accent with the brand's `shortName`.
  *
- * PORT NOTE (magick-agency, decision B17): cusui rendered `/logo.png` from the
- * active brand pack, which was the parent product's artwork. That asset is gone
- * and no replacement art exists, so the mark is a neutral wordmark tile — the
- * same one the super-admin app uses (`apps/super-admin/src/components/common/Logo.tsx`).
+ * Decision B17: no logo image asset exists, so the mark is a neutral wordmark
+ * tile — the same one the super-admin app uses (`apps/super-admin/src/components/common/Logo.tsx`).
  */
 export function Logo({ size = 28, className, title = brand.name }: LogoProps) {
   return (

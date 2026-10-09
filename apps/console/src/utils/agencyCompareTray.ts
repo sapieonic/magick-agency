@@ -34,7 +34,7 @@ import type {
  *
  * ── The one-line hazard the ruling avoids ─────────────────────────────────
  * The obvious server-side shape is a `compare_to` param on the per-agent stats
- * route. Master's `proxy-agency-performance.routes.ts` holds ONE
+ * route. The API's `proxy-agency-performance.routes.ts` holds ONE
  * `AGENT_STATS_QUERY_PARAMS` whitelist shared by `/my-stats` and its supervisory
  * twin, so adding `compare_to` to it would expose that param on the agent's own
  * scorecard **in the same edit** — and the cohort band is supervisor-only by user
@@ -210,14 +210,14 @@ export function compareAgentName(row: AgencyRosterAgentRowWithName): string {
  * revealed former members — a different number under the same name.
  *
  * `band` is `null` where the payload carries no percentile block for the metric
- * (`aht` is additive, D10), which renders NO line rather than "no median yet": that
- * sentence is a claim about the floor, and making it about a field master has not
+ * (`aht` is additive), which renders NO line rather than "no median yet": that
+ * sentence is a claim about the floor, and making it about a field the API has not
  * shipped would be a false one.
  */
 export interface CompareMetric {
   key: 'dials' | 'connects' | 'conversions' | 'connect_rate' | 'success_rate' | 'aht' | 'occupancy';
   label: string;
-  /** The denominator, or what the count counts — the roster's header hints, verbatim. */
+  /** The denominator, or what the count counts — the roster's header hints, unchanged. */
   hint: string;
   /** One agent's figure. A count is plain text; a rate is a {@link RosterCell}. */
   cell: (row: AgencyRosterAgentRowWithName) => RosterCell;

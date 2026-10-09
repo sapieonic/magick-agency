@@ -7,7 +7,7 @@ import type { AgencyIngestJob } from '../../../types/agency-campaign';
 import styles from './IngestSummary.module.css';
 
 /**
- * The ingest summary (§B.4) — the screen an operator reconciles against their
+ * The ingest summary — the screen an operator reconciles against their
  * own spreadsheet.
  *
  * **Three counters, not four.** `accepted + rejected = rows_read`; duplicates
@@ -89,7 +89,7 @@ export function IngestSummary({
       {/*
         Outside the breakdown list above, on purpose. Everything in that list is
         a slice of `rejected`; this is a count taken on the far side of a network
-        hop, of rows master believed it had sent successfully. Putting it in the
+        hop, of rows the server believed it had sent successfully. Putting it in the
         list would invite exactly the arithmetic it cannot support.
       */}
       {summary.coreRefusedNotice ? (

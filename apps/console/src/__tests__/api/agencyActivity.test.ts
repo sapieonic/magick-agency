@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *
  * What is pinned here is the truncation signal, because it is the one piece of
  * this response that is read out of HEADERS another service writes and then
- * shown to an operator verbatim. A header is not a guarantee: anything that
+ * shown to an operator unchanged. A header is not a guarantee: anything that
  * does not parse as a count has to become "size unknown" before it leaves this
  * module, or it becomes copy.
  */

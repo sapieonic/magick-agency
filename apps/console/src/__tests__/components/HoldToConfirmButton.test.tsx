@@ -11,9 +11,9 @@ import {
 import { RETRY_HOLD_COPY } from '../../components/agency/AgencyRetryDialog';
 
 /**
- * `HoldToConfirmButton` (§A.7.1.1, `AD-P2-U-02`).
+ * `HoldToConfirmButton`.
  *
- * §A.7.1.1 ends by naming exactly what QA can assert, and those five are the spine
+ * ends by naming exactly what QA can assert, and those five are the spine
  * of this file: a 400ms press ends nothing; a 500ms press ends exactly once; a
  * press interrupted at 300ms by `Esc` ends nothing and leaves no residual fill;
  * `E`,`E` at 1.4s apart ends once and at 1.6s apart ends nothing; and a `released`
@@ -47,7 +47,7 @@ const button = () => screen.getByRole('button');
 const fill = () => screen.getByTestId('hangup-fill');
 const label = () => button().textContent;
 
-describe('the five assertions §A.7.1.1 names', () => {
+describe('the five assertions names', () => {
   it('a 400ms press ends nothing', () => {
     const { onConfirm } = setup();
     fireEvent.pointerDown(button());
@@ -296,7 +296,7 @@ describe('released is the authoritative end, and we never retry for the agent', 
 
   it('does not re-send on its own', () => {
     // A retry landing after a new `reserved` hangs up a DIFFERENT customer. The
-    // same shape §A.13.6 forbids for a stale disposition response.
+    // same shape forbids for a stale disposition response.
     const { onConfirm } = setup();
     fireEvent.pointerDown(button());
     advance(HOLD_MS);

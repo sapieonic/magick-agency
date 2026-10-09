@@ -15,7 +15,7 @@ import { matchRoutes } from 'react-router-dom';
  * for a signed-out visitor becomes `/login?next=%2Fapp`. That is the primary app's
  * page with its Sign Up tab, handed to an agent following an invite link, which is
  * precisely the defect the agency door exists to prevent. It is also the exact
- * failure mode both commit messages name as the cost of shipping master's invite
+ * failure mode both commit messages name as the cost of shipping the API's invite
  * change before this route lands.
  *
  * A defect invisible from inside a renderer needs a test outside one — the

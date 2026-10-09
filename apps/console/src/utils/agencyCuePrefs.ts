@@ -1,11 +1,11 @@
 import type { ConnectFlashSetting } from './agencyCues';
 
 /**
- * The agent's cue preferences — the settings half of `AD-P2-U-07`.
+ * The agent's cue preferences — the settings half of the cue feature.
  *
  * ── Why this is a module and not two `useState` calls ─────────────────────────
  * `escalatedVisualActive` has read a volume and a `ConnectFlashSetting` since
- * `AD-P2-U-02`, and **nothing set either of them.** The values were module
+ * an earlier change, and **nothing set either of them.** The values were module
  * constants with a comment explaining that inventing a persisted preference with
  * no UI would be a dead control panel — correct at the time, and the reason the
  * escalation was reachable only by an `AudioContext` the browser refused to run.
@@ -21,7 +21,7 @@ import type { ConnectFlashSetting } from './agencyCues';
 
 export interface CuePrefs {
   /**
-   * 0–100. **0 is a permitted setting, not an error** (§A.4.3.1) — an agent is
+   * 0–100. **0 is a permitted setting, not an error** — an agent is
    * allowed to work in silence, and `escalatedVisualActive` turns the visual
    * channel on permanently when they do.
    */
@@ -52,7 +52,6 @@ export const DEFAULT_CUE_PREFS: CuePrefs = { volume: 70, connectFlash: 'auto' };
  * The `v1` suffix is so a future shape change is a fresh default rather than a
  * parse of something that no longer means what it says.
  */
-// PORT NOTE (magick-agency, decision B17): renamed from cusui's `magickvoice.agency.cuePrefs.v1`; no stored values to migrate.
 export const CUE_PREFS_STORAGE_KEY = 'magick-agency.cuePrefs.v1';
 
 const FLASH_SETTINGS: readonly ConnectFlashSetting[] = ['auto', 'always', 'never'];

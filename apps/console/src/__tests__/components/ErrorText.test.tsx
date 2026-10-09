@@ -14,7 +14,7 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('ErrorText', () => {
-  it('renders a plain message verbatim with no chip', () => {
+  it('renders a plain message as is with no chip', () => {
     const { container } = render(<ErrorText message="Insufficient credits" />);
     expect(container.textContent).toBe('Insufficient credits');
     expect(screen.queryByText('Request ID')).toBeNull();

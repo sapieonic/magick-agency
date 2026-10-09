@@ -197,7 +197,7 @@ export function identifyUser(params: IdentifyParams): void {
 /**
  * Which product the mounted shell belongs to — `AppLayout` is the primary AI
  * application, `AgencyLayout` is Magick Agency
- * (`docs/reference/magickvoice-platform/docs/agency-dialer-design.md` §7b: two shells, one per product).
+ * (two shells, one per product).
  */
 export type ProductSurface = 'ai' | 'agency';
 

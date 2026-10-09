@@ -32,7 +32,7 @@ describe('the agency entry points', () => {
     const start = app.indexOf('<Route path="/app"');
     expect(start).toBeGreaterThan(-1);
     // Up to the super-admin section, which is the next top-level route group.
-    // PORT NOTE (magick-agency): the console has no super-admin section (it is
+    // The console has no super-admin section (it is
     // its own app), so the `/app` block ends at the catch-all, the next
     // top-level route.
     const end = app.indexOf('<Route path="*"');
@@ -53,8 +53,8 @@ describe('the agency entry points', () => {
 
   it('gates /dialer exactly as /station is gated', () => {
     /**
-     * Both default off, so the whole surface stays invisible until master grants
-     * the capability and core enables the flag. Asserted by extracting each
+     * Both default off, so the whole surface stays invisible until the API grants
+     * the capability and the API enables the flag. Asserted by extracting each
      * route's own element block, so a gate removed from one and not the other
      * fails here rather than shipping a way around the entitlement.
      */
@@ -102,8 +102,8 @@ describe('the agency entry points', () => {
 
   it('gates /dialer/performance exactly as /dialer and /station are gated', () => {
     /**
-     * Both entitlements default off, so this surface stays invisible until master
-     * grants the `agency` capability and core enables the flag. Extracted per
+     * Both entitlements default off, so this surface stays invisible until the API
+     * grants the `agency` capability and the API enables the flag. Extracted per
      * route so a gate dropped from one and not the others fails here rather than
      * shipping a way around the entitlement — and note the assertion is on the
      * SAME two gates, not on new ones: this route needs no new capability, and
@@ -141,8 +141,8 @@ describe('the agency entry points', () => {
 
   it('gates /dialer/attempts exactly as its three siblings are gated', () => {
     /**
-     * Both entitlements default off, so this surface stays invisible until master
-     * grants the `agency` capability and core enables the flag. Extracted per route
+     * Both entitlements default off, so this surface stays invisible until the API
+     * grants the `agency` capability and the API enables the flag. Extracted per route
      * so a gate dropped from one and not the others fails here rather than shipping
      * a way around the entitlement — and the assertion is on the SAME two gates,
      * not on new ones: `RequireCapability`'s hand-maintained union already carries
