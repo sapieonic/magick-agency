@@ -67,11 +67,10 @@ files are listed in [`modules.md`](modules.md).
 
 **Deployment pieces:**
 
-- **No OpenTelemetry SDK is started.** Nothing in `apps/server/src` creates a meter provider, a
-  trace exporter or a `/metrics` endpoint, so the declared metrics and `@Traced` spans go to the
-  OTel API's no-op implementation. Logs can be shipped over OTLP by `pino-opentelemetry-transport`
-  when `OTEL_ENABLED=true` and `OTEL_EXPORTER_OTLP_ENDPOINT` are set
-  (`packages/observability/src/logger.ts`).
+- **OpenTelemetry export is built but has not run against Grafana Cloud.** The SDK
+  (`apps/server/src/instrumentation.ts`) pushes traces, metrics and logs over OTLP when
+  `OTEL_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME` are set; it was
+  checked end to end against a local OTLP collector only.
 
 **Out of scope:** metering and billing; AI calling; bring-your-own SIP and other carriers; a
 separate identity layer.
@@ -89,7 +88,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Q3 contract choices | Ratify the five |
 | B15 roster supersede | Build it, or leave replace and clear refused |
 | Gated items | Vendor setup; Playwright happy path; parity check; dark pilot; real VoiceLink call and recording; launch |
-| Metric export | Build the OpenTelemetry SDK wiring and decide where metrics go |
+| Metric export | Grafana Cloud's OTLP gateway is the assumed destination; confirm it and issue the token |
 
 ## Deployment invariants
 
@@ -153,7 +152,7 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
    existing numbers and recording retention), Firebase service account and authorised domain,
    Mailjet sender and domain, S3 bucket, Gemini / OpenAI keys, domain and TLS, PostHog.
 3. **Deployment packaging:** done (`docker/`, see [`operations.md`](operations.md) "Production
-   packaging"). Left: the OpenTelemetry SDK and a metric destination, and standing the stack up
+   packaging") and the OpenTelemetry SDK. Left: the Grafana Cloud token, and standing the stack up
    once on a real host with the vendor accounts from step 2.
 4. **Real-world checks:** one real VoiceLink sandbox call; one real recording analysed; the
    Playwright happy path against real Firebase.

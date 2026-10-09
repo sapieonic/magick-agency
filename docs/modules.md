@@ -17,9 +17,9 @@ For how the pieces fit together, read [`architecture.md`](architecture.md); for 
 
 ### `apps/server/src/`
 
-Composition: `index.ts` (process start, signal handling, shutdown order), `app.ts` (`buildApp`: app-wide limiter, error handler and 5xx mask, probes, WebSocket plugin, the four area plugins), `app-context.ts` (what plugins and bootstraps receive), `db-tls.ts` (the Postgres TLS decision shared by the server, migrations and the super-admin CLI), `migrate.ts` (the pre-boot migration step, bundled to `dist/migrate.js` and run by `docker/entrypoint.sh`).
+Composition: `instrumentation.ts` (the OpenTelemetry SDK, imported first; exports over OTLP only when `OTEL_ENABLED`, the endpoint and `OTEL_SERVICE_NAME` are all set), `index.ts` (process start, signal handling, shutdown order, the OTel flush last), `app.ts` (`buildApp`: app-wide limiter, error handler and 5xx mask, probes, WebSocket plugin, the four area plugins), `app-context.ts` (what plugins and bootstraps receive), `db-tls.ts` (the Postgres TLS decision shared by the server, migrations and the super-admin CLI), `migrate.ts` (the pre-boot migration step, bundled to `dist/migrate.js` and run by `docker/entrypoint.sh`).
 
-Files: `app-context.ts`, `app.ts`, `db-tls.ts`, `index.ts`, `migrate.ts`
+Files: `app-context.ts`, `app.ts`, `db-tls.ts`, `index.ts`, `instrumentation.ts`, `migrate.ts`
 
 | Test file | Cases |
 |---|---|
@@ -447,6 +447,7 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 | `apps/server/test/unit/config/blocks-disjoint.test.ts` | 2 |
 | `apps/server/test/unit/config/config.test.ts` | 3 |
 | `apps/server/test/unit/config/open-questions-config.test.ts` | 38 |
+| `apps/server/test/unit/config/otel-config.test.ts` | 4 |
 | `apps/server/test/unit/config/schema.dialer-analysis.test.ts` | 11 |
 
 ### `apps/server/src/config/blocks/`
@@ -702,9 +703,9 @@ Files: `tts-file-cache.ts`
 
 ### `apps/server/src/utils/`
 
-Shared helpers: audio and FIR filter, concurrency, decode gate, phone normaliser, recording URL signing and resolution, recording proxy, URL redaction, retry, safe emit, webhook base URL, WebSocket no-delay, abort errors.
+Shared helpers: audio and FIR filter, concurrency, decode gate, phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown), retry, safe emit, webhook base URL, WebSocket no-delay, abort errors.
 
-Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `concurrency.ts`, `decode-gate.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `retry.ts`, `safe-emit.ts`, `webhook-base.ts`, `ws-nodelay.ts`
+Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `retry.ts`, `safe-emit.ts`, `webhook-base.ts`, `ws-nodelay.ts`
 
 | Test file | Cases |
 |---|---|
@@ -715,10 +716,11 @@ Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `concurrency.ts`, `decode-g
 | `apps/server/test/unit/utils/concurrency.test.ts` | 14 |
 | `apps/server/test/unit/utils/decode-gate.test.ts` | 23 |
 | `apps/server/test/unit/utils/metrics-tts-clip-cache.test.ts` | 7 |
+| `apps/server/test/unit/utils/otel-sdk-config.test.ts` | 31 |
 | `apps/server/test/unit/utils/recording-proxy-resolve.test.ts` | 9 |
 | `apps/server/test/unit/utils/recording-proxy.test.ts` | 25 |
 | `apps/server/test/unit/utils/recording-url.test.ts` | 13 |
-| `apps/server/test/unit/utils/redact-url.test.ts` | 13 |
+| `apps/server/test/unit/utils/redact-url.test.ts` | 23 |
 | `apps/server/test/unit/utils/retry.test.ts` | 9 |
 
 ### Cross-cutting tests (`apps/server`)
@@ -914,9 +916,9 @@ Files: `abandonment-predicate.ts`, `break-manager.ts`, `index.ts`, `keyset-curso
 
 ### `packages/observability/src/`
 
-Logger, log context, PII masking (`crypto.ts`), OTel meter and metric instruments, `@Traced` and `withSpan`, service name and version.
+Logger, log context, PII masking (`crypto.ts`), the log-side URL scrubber (`url-scrub.ts`, import-free so the OTel span hook can use it), OTel meter and metric instruments, `@Traced` and `withSpan`, service name and version.
 
-Files: `crypto.ts`, `index.ts`, `log-context.ts`, `logger.ts`, `meter.ts`, `metric-instruments.ts`, `service.ts`, `tracing.ts`, `version.ts`
+Files: `crypto.ts`, `index.ts`, `log-context.ts`, `logger.ts`, `meter.ts`, `metric-instruments.ts`, `service.ts`, `tracing.ts`, `url-scrub.ts`, `version.ts`
 
 | Test file | Cases |
 |---|---|

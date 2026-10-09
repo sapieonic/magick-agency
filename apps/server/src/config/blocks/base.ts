@@ -1,8 +1,11 @@
 import { z } from 'zod';
+import { SERVICE_NAME } from '@magick-agency/observability/service';
 import type { Env } from '../env.js';
+import { resolveMetricsExportIntervalMs } from '../../utils/otel-sdk-config.js';
 
 /**
- * Base block: process (`config.server`), Postgres (`config.db`), Redis (`config.redis`).
+ * Base block: process (`config.server`), Postgres (`config.db`), Redis (`config.redis`),
+ * OpenTelemetry (`config.otel`).
  */
 /** Decision Q1: connection-string parameters pg lets override the pool's `ssl` object. */
 export const URL_TLS_PARAMS = ['ssl', 'sslmode', 'sslrootcert', 'sslcert', 'sslkey', 'sslnegotiation'] as const;
@@ -111,6 +114,37 @@ export const baseConfigSchema = z.object({
     url: z.string().url(),
     keyPrefix: z.string().default(''),
   }),
+  /**
+   * The OpenTelemetry SDK's settings, as `src/instrumentation.ts` resolves them. That file
+   * cannot read this block: it runs before any other module, and this config's module body can
+   * `process.exit(1)` (see the `src/utils/otel-sdk-config.ts` header). It reads the same
+   * variables itself, with the same lenient parsing (an unusable interval falls back to the
+   * default rather than failing boot), and `test/unit/config/otel-config.test.ts` pins that the
+   * two agree. Not modelled here, though the SDK side reads them: `OTEL_EXPORTER_OTLP_HEADERS`
+   * (it carries the Grafana Cloud token), `OTEL_ENVIRONMENT`, `OTEL_SERVICE_INSTANCE_ID`,
+   * `OTEL_LOG_LEVEL`, and the SDK's own standard variables (`OTEL_RESOURCE_ATTRIBUTES`,
+   * `OTEL_LOGS_EXPORTER`, …). `serviceName` / `serviceInstanceIdEnabled` are what the code sets;
+   * NodeSDK still merges `OTEL_RESOURCE_ATTRIBUTES` over them.
+   */
+  otel: z.object({
+    /** Only the exact string `true`. */
+    enabled: z.string().optional().transform((v) => v === 'true'),
+    /** Base URL; the SDK appends `/v1/traces`, `/v1/metrics` and `/v1/logs`. Blank = unset. */
+    endpoint: z.string().optional().transform((v) => v || undefined),
+    metricsExportIntervalMs: z.string().optional().transform(resolveMetricsExportIntervalMs),
+    /** Blank = unset. */
+    serviceName: z.string().optional().transform((v) => v || undefined),
+    serviceInstanceIdEnabled: z.string().optional().transform((v) => v === 'true'),
+  }).transform(({ serviceName, ...o }) => ({
+    ...o,
+    serviceName: serviceName ?? SERVICE_NAME,
+    /**
+     * Traces, metrics and logs leave the process only when OTel is enabled, the endpoint is set
+     * AND `OTEL_SERVICE_NAME` is set (`instrumentation.ts`): the fallback name is the production
+     * name Grafana alerts on (Manas, 2026-10-09).
+     */
+    exporting: o.enabled && o.endpoint !== undefined && serviceName !== undefined,
+  })),
 });
 
 export function readBaseEnv(env: Env) {
@@ -132,6 +166,13 @@ export function readBaseEnv(env: Env) {
     redis: {
       url: env['REDIS_URL'],
       keyPrefix: env['REDIS_KEY_PREFIX'],
+    },
+    otel: {
+      enabled: env['OTEL_ENABLED'],
+      endpoint: env['OTEL_EXPORTER_OTLP_ENDPOINT'],
+      metricsExportIntervalMs: env['OTEL_METRICS_EXPORT_INTERVAL_MS'],
+      serviceName: env['OTEL_SERVICE_NAME'],
+      serviceInstanceIdEnabled: env['OTEL_SERVICE_INSTANCE_ID_ENABLED'],
     },
   };
 }

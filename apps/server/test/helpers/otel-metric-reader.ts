@@ -1,30 +1,20 @@
 import { metrics } from '@opentelemetry/api';
 import {
   AggregationTemporality,
-  InstrumentType,
   MeterProvider,
   MetricReader,
-  type AggregationTemporalitySelector,
   type MetricReaderOptions,
 } from '@opentelemetry/sdk-metrics';
 import type { MetricData } from '@opentelemetry/sdk-metrics';
+import { freshGaugeTemporality } from '../../src/utils/otel-sdk-config.js';
 
 /**
- * A manual metric reader for tests. The application has no OTel SDK at runtime yet, so
- * the reader class and its gauge temporality rule live here, and the suites read metrics
- * through the real SDK aggregation.
- * `@opentelemetry/sdk-metrics` is an `apps/server` devDependency for this helper.
+ * A manual metric reader for tests. `freshGaugeTemporality` is the runtime's own gauge rule
+ * (`src/utils/otel-sdk-config.ts`, re-exported for the suites that import it from here); the
+ * reader class lives here because the runtime exports over OTLP and has no scrape reader. The
+ * suites read metrics through the real SDK aggregation.
  */
-const GAUGE_INSTRUMENT_TYPES: ReadonlySet<InstrumentType> = new Set([
-  InstrumentType.OBSERVABLE_GAUGE,
-  InstrumentType.GAUGE,
-]);
-
-export function freshGaugeTemporality(base: AggregationTemporalitySelector): AggregationTemporalitySelector {
-  return instrumentType => (GAUGE_INSTRUMENT_TYPES.has(instrumentType)
-    ? AggregationTemporality.DELTA
-    : base(instrumentType));
-}
+export { freshGaugeTemporality };
 
 export class ScrapeMetricReader extends MetricReader {
   constructor(options?: MetricReaderOptions) {
@@ -42,7 +32,7 @@ export class ScrapeMetricReader extends MetricReader {
 
 /**
  * A real OTel meter provider for suites that need to READ a metric's value back
- * — what an OTLP export (or the `:9090` scrape) would actually carry — rather
+ * — what an OTLP export would actually carry — rather
  * than assert on a stand-in instrument's calls.
  *
  * `src/utils/metrics.ts` creates its instruments from the GLOBAL meter at module

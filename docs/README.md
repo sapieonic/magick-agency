@@ -19,11 +19,11 @@ Mailjet, S3, Gemini / OpenAI, PostHog).
 (identity, tenancy, RBAC, invites, settings, super-admin, notifications, audit), the dialer domain
 and data, the voice engine, the dialer runtime, call analysis, the public API, the console and the
 super-admin console. Manas's 2026-10-09 rulings on the open questions and branding are implemented.
-Last full run: lint clean in 7 packages; server 6412 unit / 1172 integration; console 4367;
+Last full run: lint clean in 7 packages; server 6457 unit / 1172 integration; console 4367;
 super-admin 366; builds OK.
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
-No OpenTelemetry metrics or trace export. The production image and compose file exist (`docker/`)
+Agency's dashboards and alert rules. The production image and compose file exist (`docker/`)
 but have not run on a real host. Nothing has run against a real carrier, a real Firebase sign-in or
 production data.
 

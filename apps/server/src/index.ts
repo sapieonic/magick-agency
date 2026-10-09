@@ -1,3 +1,7 @@
+// First import, always: it installs the meter provider before `@magick-agency/observability`
+// binds every metric to the global meter, and its auto-instrumentations patch pg, ioredis and
+// http before those are loaded.
+import { shutdownOtelSdk } from './instrumentation.js';
 import Redis from 'ioredis';
 import { initDbPool, closePool } from '@magick-agency/db';
 import { logger } from '@magick-agency/observability';
@@ -48,18 +52,25 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info({ signal }, 'shutting down');
-    // `http closed` marks the HTTP-first order in the logs (docs/operations.md, "Shutdown and
-    // grace period"); it is logged only when the close succeeded.
-    await app.close().then(
-      () => logger.info('http closed'),
-      (err) => logger.error({ err }, 'http close failed'),
-    );
-    for (const stop of [...stops].reverse()) {
-      await stop().catch((err) => logger.error({ err }, 'stop failed'));
+    try {
+      // `http closed` marks the HTTP-first order in the logs (docs/operations.md, "Shutdown and
+      // grace period"); it is logged only when the close succeeded.
+      await app.close().then(
+        () => logger.info('http closed'),
+        (err) => logger.error({ err }, 'http close failed'),
+      );
+      for (const stop of [...stops].reverse()) {
+        await stop().catch((err) => logger.error({ err }, 'stop failed'));
+      }
+      await redis.quit().catch(() => {});
+      await closePool();
+    } finally {
+      // Last, after everything that records a metric or a span: the SDK's final forced flush
+      // carries what the stops above recorded. No-op with OTel off. In a `finally`, so a rejected
+      // `closePool()` cannot skip the flush and leave the process alive with the shutdown latched.
+      await shutdownOtelSdk();
+      process.exit(0);
     }
-    await redis.quit().catch(() => {});
-    await closePool();
-    process.exit(0);
   };
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
@@ -76,10 +87,13 @@ async function main(): Promise<void> {
   // start complete first), so no request — an agent going available, say — lands
   // before the startup reap.
   await app.listen({ port: config.server.port, host: config.server.host });
-  logger.info({ port: config.server.port }, 'magick-agency listening');
+  logger.info({ port: config.server.port, otelExport: config.otel.exporting }, 'magick-agency listening');
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   logger.fatal({ err }, 'boot failed');
+  // Flush first: with OTel on, this line and the startup spans would otherwise never leave the
+  // process.
+  await shutdownOtelSdk();
   process.exit(1);
 });

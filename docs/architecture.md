@@ -300,12 +300,18 @@ bucket keyed on a client-supplied header. Buckets key on `request.ip`, which tru
 
 ## Observability
 
+- **OpenTelemetry SDK** (`apps/server/src/instrumentation.ts`, the first import of `src/index.ts`):
+  a NodeSDK that exports traces, metrics and logs over OTLP (http/protobuf, push only) when
+  `OTEL_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME` are all set. Otherwise
+  nothing starts and every metric and span is a no-op. Metric views, resource and reader settings
+  are in `apps/server/src/utils/otel-sdk-config.ts`. Shutdown flushes it last, capped at 5 s.
 - **Logs**: pino (`packages/observability/src/logger.ts`), service name `magick-agency`, PII masking,
-  secret-bearing headers redacted. JSON to stdout in production; also OTLP via
-  `pino-opentelemetry-transport` when `OTEL_ENABLED=true` and `OTEL_EXPORTER_OTLP_ENDPOINT` are set.
+  secret-bearing headers redacted. JSON to stdout; with the SDK running, also OTLP through its
+  `instrumentation-pino` bridge.
 - **Metrics and traces**: declared per module area in `packages/observability/src/metrics/`; spans
-  via `@Traced`. **No OTel SDK is started in the server** (no meter provider, exporter or
-  `/metrics`), so these are no-ops at runtime today (see [`status.md`](status.md)).
+  via `@Traced` plus the SDK's auto-instrumentations (http, undici, pg, ioredis, …). Credentials in
+  URLs (`?token=`, `sig=`, `*verify_token=`, signed-URL keys, media-stream path tokens) are
+  redacted on spans as in logs (`apps/server/src/utils/redact-url.ts`).
 - **Product analytics**: PostHog (`analytics/posthog.ts`), off unless `POSTHOG_ENABLED`.
 
 ## Testing
