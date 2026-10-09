@@ -742,6 +742,19 @@ Scenario, flow, guard and setup tests that span several modules.
 | `apps/server/test/unit/scenarios/voicelink-webrtc-lifecycle-scenarios.test.ts` | 3 |
 | `apps/server/test/unit/test-redis-guard.test.ts` | 7 |
 
+## `grafana`
+
+### `grafana/`
+
+Agency's alert rules and dashboard as a Terraform root module with its own local state (decision B6); routing comes from the stack's shared notification policy. See `grafana/README.md`.
+
+Files: `README.md`, `dashboards/magick-agency-overview.json`, `scripts/metric-declarations.mjs`, `terraform/alert-rules.tf`, `terraform/alerting.tf`, `terraform/dashboard.tf`, `terraform/terraform.tfvars.example`, `terraform/variables.tf`, `terraform/versions.tf`
+
+| Test file | Cases |
+|---|---|
+| `grafana/scripts/validate-alerts.test.mjs` (`pnpm test:grafana`, node:test) | 16 |
+| `grafana/scripts/validate-dashboard.test.mjs` (`pnpm test:grafana`, node:test) | 15 |
+
 ## `packages/contracts`
 
 ### `packages/contracts/src/`

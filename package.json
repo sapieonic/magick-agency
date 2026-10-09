@@ -10,6 +10,7 @@
     "lint": "pnpm -r --workspace-concurrency=4 run lint",
     "test": "pnpm -r --workspace-concurrency=4 run test",
     "test:integration": "pnpm -r --workspace-concurrency=1 run test:integration",
+    "test:grafana": "node --test grafana/scripts/validate-alerts.test.mjs grafana/scripts/validate-dashboard.test.mjs",
     "build": "pnpm -r run build",
     "infra:up": "docker compose -f docker/docker-compose.dev.yml up -d --wait",
     "infra:down": "docker compose -f docker/docker-compose.dev.yml down",

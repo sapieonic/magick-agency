@@ -63,7 +63,8 @@ files are listed in [`modules.md`](modules.md).
 - The rollback-window DNC mirror back to the previous platform. Only the `agency_dnc_outbox` table
   exists; nothing writes it.
 - The link from the previous platform's UI to Magick Agency.
-- Dashboards and alert rules (B6).
+- Applying agency's alert rules and dashboard (`grafana/`, B6) to Grafana Cloud: written and
+  validated, never applied. The first `terraform apply` is in `grafana/README.md`.
 
 **Deployment pieces:**
 

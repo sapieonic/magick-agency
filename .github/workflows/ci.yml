@@ -23,6 +23,8 @@ jobs:
       # lint = tsc --noEmit over src AND test in every package (tests are typechecked).
       - run: pnpm lint
       - run: pnpm test
+      # Alert rules and dashboard vs the metric declarations (grafana/README.md).
+      - run: pnpm test:grafana
       - run: pnpm build
 
   integration:

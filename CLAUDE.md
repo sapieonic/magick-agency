@@ -60,6 +60,7 @@ pnpm lint                # tsc --noEmit over src AND test, every package
 pnpm test                # unit, all packages
 pnpm test:integration    # real Postgres/Redis (needs infra:up); runs packages serially
 pnpm build
+pnpm test:grafana        # alert rules + dashboard vs metric declarations (grafana/scripts)
 
 docker build -f docker/Dockerfile -t magick-agency-server .     # production server image
 docker build -f docker/web.Dockerfile -t magick-agency-web .     # nginx + both UIs
@@ -96,6 +97,8 @@ packages/contracts/  wire contract shared by server and UIs
 packages/domain/     pure dialer rules: leaf modules with no imports beyond contracts
 packages/db/         pg pool, shared repositories/models, the baseline migration
 packages/observability/  logger, OTel tracing (`@Traced`), metric declarations per module area
+grafana/             agency's alert rules + dashboard (Terraform root module, own state; routing comes
+                     from the Grafana stack's shared notification policy — see grafana/README.md)
 ```
 
 **Four module areas in one server**, each with its own config block, Fastify plugin and bootstrap:

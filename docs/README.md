@@ -23,7 +23,7 @@ Last full run: lint clean in 7 packages; server 6457 unit / 1172 integration; co
 super-admin 366; builds OK.
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
-Agency's dashboards and alert rules. The production image and compose file exist (`docker/`)
+Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
 but have not run on a real host. Nothing has run against a real carrier, a real Firebase sign-in or
 production data.
 

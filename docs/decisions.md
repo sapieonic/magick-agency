@@ -49,7 +49,7 @@ In one line each:
 - **B3** one Postgres (5436, two databases) and one Redis (6383, db 0 dev / db 1 test) for dev and test.
 - **B4** one file per module area for config, routes and background work.
 - **B5** the server keeps CommonJS runtime semantics (esbuild `format: cjs`).
-- **B6** dashboards and alert rules for agency's metrics are not set up yet; the OTel exporter they need now runs.
+- **B6** agency's alert rules and dashboard are a Terraform module in `grafana/`, with its own state; routing comes from the Grafana stack's shared policy.
 - **B7** two audit tables (`audit_logs` and `platform_audit_log`), written by one process.
 - **B8** DNC is one table: an indexed, fail-closed dial-time read and one transactional mark.
 - **B9** the campaign-management layer sits on top of the dialer domain and calls its repository in-process.
@@ -71,7 +71,7 @@ The full entries:
 | B3 | Dev and test share one Postgres container (5436) with two databases, and one Redis (6383) with db 0 for dev and db 1 for tests | Two ports that collide with no other local stack. The test harnesses refuse any other port, any database not named `magick_agency_test*`, and Redis db 0 |
 | B4 | Each module area (platform, agency, voice, analysis) has exactly one config block (`apps/server/src/config/blocks/<area>.ts`), one route plugin (`apps/server/src/api/<area>.plugin.ts`) and one bootstrap (`apps/server/src/bootstrap/<area>.ts`) | Each area's surface is in one place, and config blocks must declare disjoint top-level keys (checked at load and by a test). See `docs/seams.md` |
 | B5 | Server modules keep CommonJS runtime semantics (esbuild `format: cjs`) | Server code uses `__dirname` and CommonJS-shaped imports |
-| B6 | Dashboards and alert rules for agency's metrics are deferred until the OpenTelemetry SDK exports | They need agency's service name, its metric declarations and an exporter. The exporter now runs (rows "OTel export path" and "Unnamed exporter" below); the rules and dashboard are not part of this repo yet |
+| B6 | Agency's alert rules and dashboard live in this repo, in `grafana/`: a Terraform root module with its own local state, applied on its own. 13 `agy-*` rules select the service names `magick-agency(-.+)?` (production `magick-agency`, `magick-agency-Staging`, `magick-agency-Dedicated`) and carry the labels the Grafana stack's shared notification policy routes on, so they page the same PagerDuty service as the rest of the stack. The module manages no contact point, policy or mute timing. `pnpm test:grafana` checks every rule and panel against the metric declarations | Manas, 2026-10-09: "the alerts also should live in agency". The routing labels are a contract with the stack's policy, which this repo does not own (`grafana/README.md`). Metrics agency does not emit yet are listed there under "Known metric gaps" |
 | B7 | Two audit tables: `audit_logs` (dialer events, the "Dialer" half of a campaign's activity trail) and `platform_audit_log` (console and admin actions, the "Console" half) | The campaign activity trail merges the two, each with its own retention horizon. One process writes both |
 | B8 | DNC is one table, `dnc_entries`. The dial-time check is one indexed read (`idx_dnc_entries_tenant_phone`), widened by scope (tenant, account, campaign), and fails closed on a database error. An agent's mark writes `dnc_entries` in the same transaction as the attempt bookkeeping. No Redis copy, sync or versioning. `agency_dnc_outbox` exists in the schema, unused, reserved for mirroring DNC changes to the previous platform during a launch rollback window | One table and one transactional write leave no window in which a marked number can still be dialled. A database error halts the dial, and a halt aborts the whole claimed batch; both are tested |
 | B9 | Two layers in the agency domain: the dialer domain (pure rules in `packages/domain`, the agency repository, DNC) and, on top of it, campaign management (ingest, staffing, activity, agent identity, the spine, campaign config and wire shapes, stats enrichment), which calls the repository in-process | Campaign management depends on the repository, never the reverse |
@@ -108,7 +108,7 @@ Other rulings of 2026-10-09 (not numbered questions):
 | Analysis retention | `AGENCY_TRANSCRIPT_RETENTION_DAYS` defaults to 30 days (falls back to `DIALER_TRANSCRIPT_RETENTION_DAYS`), so the purge runs out of the box; `AGENCY_RETENTION_DAYS` (row deletion) stays unset by default; the `RETENTION_MIN_DAYS` floor (30) holds | **Decided — changed** |
 | Super-admin audit writes | Stay fire-and-forget, but a failed write is logged at ERROR with action, actor and target instead of being dropped silently | **Decided — changed** |
 | B7, B12, B13, B15 | As recorded above | **Decided — keep** |
-| B6 | Handled with the OpenTelemetry SDK. Service names `magick-agency` (production), `magick-agency-Staging`, `magick-agency-Dedicated`; agency's alerts page the same PagerDuty service as the rest of the Grafana stack | **Decided — changed** |
+| B6 | Handled with the OpenTelemetry SDK. Service names `magick-agency` (production), `magick-agency-Staging`, `magick-agency-Dedicated`; agency's alerts page the same PagerDuty service as the rest of the Grafana stack. Everything agency-related (rules, dashboard, agency copies of the liveness, runtime and cardinality rules) lives in this repo's `grafana/`, with its own state | **Decided — changed** |
 | Unnamed exporter | With `OTEL_ENABLED=true` but no `OTEL_SERVICE_NAME`, the SDK does not start and the server warns: the fallback name `magick-agency` is the production name alerts page on | **Decided** |
 | OTel export path | OTLP push only (http/protobuf, e.g. Grafana Cloud's OTLP gateway); there is no Prometheus scrape endpoint. See `src/instrumentation.ts` | **Decided** |
 | pg span parameters | `enhancedDatabaseReporting: true` stays on: pg spans carry query parameter values | **Decided — keep** |
@@ -127,7 +127,6 @@ Other rulings of 2026-10-09 (not numbered questions):
 | 1, 3–6 | Launch defaults | Built, pending ratification (§2) | Manas |
 | 2, 7, 8 | Launch open items | Existing numbers, launch style, domain / freeze / rollback window | Manas, at launch |
 | 9 | Metering | Out of v1; design not started | Manas |
-| B6 | Dashboards and alerts | The exporter now runs (`src/instrumentation.ts`); the rules and dashboard are still to build | Manas |
 | B15 | Roster supersede | Three schema changes plus a replace lock; `AGENCY_ROSTER_REPLACE_ENABLED` stays off until then | Manas |
 | B17 | Internal header names | `x-mgkvc-*` names are on the in-process wire only; renaming them is a follow-up | lead |
 | — | Gated items | Vendor setup; Playwright happy path (real Firebase sign-in); parity check against production data; dark pilot; a real VoiceLink call and a real recording analysed; launch | Manas |
