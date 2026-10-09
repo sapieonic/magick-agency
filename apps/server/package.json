@@ -31,6 +31,7 @@
     "firebase-admin": "^13.7.0",
     "ioredis": "^5.7.0",
     "jsonwebtoken": "^9.0.3",
+    "node-pg-migrate": "^8.0.4",
     "openai": "^4.104.0",
     "pg": "^8.13.1",
     "pino": "^9.9.0",

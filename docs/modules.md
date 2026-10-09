@@ -17,9 +17,9 @@ For how the pieces fit together, read [`architecture.md`](architecture.md); for 
 
 ### `apps/server/src/`
 
-Composition: `index.ts` (process start, signal handling, shutdown order), `app.ts` (`buildApp`: app-wide limiter, error handler and 5xx mask, probes, WebSocket plugin, the four area plugins), `app-context.ts` (what plugins and bootstraps receive).
+Composition: `index.ts` (process start, signal handling, shutdown order), `app.ts` (`buildApp`: app-wide limiter, error handler and 5xx mask, probes, WebSocket plugin, the four area plugins), `app-context.ts` (what plugins and bootstraps receive), `db-tls.ts` (the Postgres TLS decision shared by the server, migrations and the super-admin CLI), `migrate.ts` (the pre-boot migration step, bundled to `dist/migrate.js` and run by `docker/entrypoint.sh`).
 
-Files: `app-context.ts`, `app.ts`, `index.ts`
+Files: `app-context.ts`, `app.ts`, `db-tls.ts`, `index.ts`, `migrate.ts`
 
 | Test file | Cases |
 |---|---|
@@ -30,6 +30,7 @@ Files: `app-context.ts`, `app.ts`, `index.ts`
 | `apps/server/test/integration/app/trust-proxy.test.ts` | ~4 |
 | `apps/server/test/unit/app/max-param-length.test.ts` | 2 |
 | `apps/server/test/unit/app/request-id.test.ts` | 2 |
+| `apps/server/test/unit/deploy/migrate.test.ts` | 9 |
 
 ### `apps/server/src/agency/`
 
@@ -359,6 +360,7 @@ Files: `decode.ts`, `ensure-pcm-clip.ts`, `telephony-clip.ts`
 |---|---|
 | `apps/server/test/unit/audio/decode-missing-decoder.test.ts` | 3 |
 | `apps/server/test/unit/audio/decode.test.ts` | 63 |
+| `apps/server/test/unit/audio/decoder-toolchain-packaging.test.ts` | 6 |
 | `apps/server/test/unit/audio/ensure-pcm-clip.test.ts` | 17 |
 | `apps/server/test/unit/audio/telephony-clip.test.ts` | 16 |
 
@@ -731,6 +733,7 @@ Scenario, flow, guard and setup tests that span several modules.
 | `apps/server/test/integration/flows/tts-cache-sweep-scale.test.ts` | ~6 |
 | `apps/server/test/integration/scripts/create-super-admin.test.ts` | ~5 |
 | `apps/server/test/unit/branding/no-parent-brand.test.ts` | 5 |
+| `apps/server/test/unit/deploy/production-packaging.test.ts` | 15 |
 | `apps/server/test/unit/scenarios/feature-flag-rollout-scenarios.test.ts` | 3 |
 | `apps/server/test/unit/scenarios/stale-call-sweep-lifecycle-scenarios.test.ts` | 4 |
 | `apps/server/test/unit/scenarios/voicelink-config-factory-scenarios.test.ts` | 5 |

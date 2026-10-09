@@ -16,7 +16,11 @@ packages/contracts/  wire contract shared by server and UIs (lead-owned)
 packages/domain/     pure agency rules
 packages/db/         pg pool, repositories, the squashed baseline migration
 packages/observability/  logger, OTel, metric declarations
+docker/              dev Postgres + Redis; the production image, nginx and compose file
 ```
+
+Production: `docker/docker-compose.prod.yml`; see [`docs/operations.md`](docs/operations.md)
+("Production packaging").
 
 ## Dev setup
 

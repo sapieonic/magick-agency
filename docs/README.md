@@ -19,15 +19,16 @@ Mailjet, S3, Gemini / OpenAI, PostHog).
 (identity, tenancy, RBAC, invites, settings, super-admin, notifications, audit), the dialer domain
 and data, the voice engine, the dialer runtime, call analysis, the public API, the console and the
 super-admin console. Manas's 2026-10-09 rulings on the open questions and branding are implemented.
-Last full run: lint clean in 7 packages; server 6350 unit / 1172 integration; console 4367;
+Last full run: lint clean in 7 packages; server 6412 unit / 1172 integration; console 4367;
 super-admin 366; builds OK.
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
-No production Dockerfile or compose file. No OpenTelemetry metrics or trace export. Nothing has run
-against a real carrier, a real Firebase sign-in or production data.
+No OpenTelemetry metrics or trace export. The production image and compose file exist (`docker/`)
+but have not run on a real host. Nothing has run against a real carrier, a real Firebase sign-in or
+production data.
 
-**Needs Manas.** Ratify the launch defaults and Q3; `supervisor_hold`; shutdown grace (45 s
-recommended) and in-flight pacing ticks; B15 roster supersede; vendor setup; the gated checks (real
+**Needs Manas.** Ratify the launch defaults and Q3; `supervisor_hold`; shutdown grace (45 s,
+now in the production compose file) and in-flight pacing ticks; B15 roster supersede; vendor setup; the gated checks (real
 VoiceLink call, real recording analysed, Playwright happy path, parity check, dark pilot); launch
 decisions.
 

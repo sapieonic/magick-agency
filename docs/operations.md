@@ -7,15 +7,109 @@ follow the root [`README.md`](../README.md) ("Dev setup"); it is not repeated he
 below was read from `apps/server/src/config/blocks/*.ts` and `apps/server/.env.example` on
 2026-10-09. Anything not verified is marked.
 
-## There is no production packaging yet
+## Production packaging
 
-This repo has no production Dockerfile, compose file or deploy script; `docker/` holds only the
-dev Postgres and Redis. The server builds to `apps/server/dist/index.js` (`pnpm build`) and starts
-with `pnpm --filter @magick-agency/server start` (`node dist/index.js`); third-party dependencies
-are resolved from `apps/server/node_modules` at runtime. The UIs build to static files with Vite.
-A production image needs Node 22 plus `mpg123` and `sndfile-programs` for clip decoding (the
-decoders CI installs for the decode tests; the server does not use ffmpeg, so AAC/M4A clips are
-rejected). The exact image is unverified because none exists.
+Everything is in `docker/`, built from the repo root:
+
+| File | What it is |
+|---|---|
+| `docker/Dockerfile` | The server image: Node 22 (`node:22-slim`), the esbuild bundle plus the server's production `node_modules` (`pnpm deploy --prod`), `mpg123` and `sndfile-programs` for clip decoding, the migrations in `/app/migrations`. Runs as `node`, `NODE_ENV=production`, port 3021 |
+| `docker/entrypoint.sh` | Runs the migrations (`node dist/migrate.js migrations`), then `exec node … dist/index.js`. A failed migration stops the container |
+| `docker/web.Dockerfile`, `docker/nginx.conf` | nginx with both UIs: the console on :8080 and the super-admin on :8081. It is also the server's reverse proxy |
+| `docker/docker-compose.prod.yml` | `server`, `web` and `redis`, as compose project `magick-agency-prod`. No Postgres (see "Postgres TLS") |
+| `docker/.env.example` | The settings to fill in, copied to `docker/.env` (git-ignored) |
+
+```bash
+cp docker/.env.example docker/.env      # fill it in
+docker compose -f docker/docker-compose.prod.yml up -d --build
+```
+
+Compose reads `docker/.env` twice, both automatically. It loads it from the compose file's
+directory to fill the `${...}` values (the console build args and the published ports), and
+`env_file` passes it to the server as its environment. The compose file sets
+`NODE_ENV=production`, `PORT` and `REDIS_URL` itself. Compose parses the file, so put any value
+that may contain `$` or ` #` (passwords, secrets, `DATABASE_URL`) in single quotes. Unquoted,
+`pa$word` silently becomes `pa`.
+
+The project name differs from the dev stack's (`magick-agency`) on purpose. If they matched,
+`pnpm infra:up` or `infra:reset` on the same host would recreate or remove the production Redis
+with the dev settings.
+
+**No ffmpeg.** The decoder spawns only `mpg123` (mp3) and `sndfile-convert` (wav/ogg)
+(`apps/server/src/audio/decode.ts`), and upload rejects AAC/M4A, the one format that would need
+ffmpeg. ffmpeg would add about 395 MB to the image for a format the server does not accept, so the
+image leaves it out. `apps/server/test/unit/audio/decoder-toolchain-packaging.test.ts` asserts the
+decoder packages and the absence of ffmpeg.
+
+### What nginx serves
+
+The two UIs can't share an origin, because both own `/` and call the API on their own origin
+(`VITE_API_BASE_URL` empty). So each one gets its own server block:
+
+- **:8080, console and carrier.** The SPA, plus a proxy for the console's API prefixes (the dev
+  proxy's `API_PREFIXES`) and `/api/*`. `/api/*` is VoiceLink's surface: status webhooks, the PSTN
+  media WebSocket and recording playback. That makes `VOICELINK_WEBHOOK_BASE_URL` and
+  `CONSOLE_BASE_URL` this block's public https origin. `/healthz` and `/readyz` are proxied for
+  the TLS terminator's health check.
+  WebSocket upgrades pass through with a 1 h read timeout (station socket, media socket).
+  Request bodies up to 513 MB are streamed, not buffered, for the 512 MiB roster CSV.
+- **:8081, super-admin.** The SPA plus `/super-admin/`. The compose file publishes it on
+  `127.0.0.1` only, so reach it over SSH or a VPN (`SUPER_ADMIN_BIND` to change).
+
+**Proxy hops.** nginx serves plain HTTP, so a TLS terminator in front of :8080 is mandatory: a
+load balancer, or a host nginx or Caddy. Browsers need a secure origin for the station, and
+VoiceLink needs an https/wss base. That gives a fixed chain of client, TLS terminator, nginx,
+server, so `TRUST_PROXY_HOPS=2` (the value in `docker/.env.example`). Both directions of getting
+this wrong are silent:
+
+- **Set to 1 behind a terminator:** every client resolves to the terminator's address and shares
+  one 200/min bucket.
+- **:8080 reachable without going through the terminator:** a client chooses its own
+  `request.ip` by sending `X-Forwarded-For`.
+
+So the compose file publishes :8080 on `127.0.0.1` (`CONSOLE_BIND`) for a terminator on the same
+host. If the terminator runs on another machine, bind a private interface and firewall the port
+to that machine.
+
+The :8081 block **overwrites** `X-Forwarded-For` with the address it saw instead of appending to
+it, because it is reached directly over SSH or a VPN. A client-sent header therefore never
+reaches the server, and `POST /super-admin/login`'s 5/min limit holds for any hop count.
+
+`apps/server/test/unit/deploy/production-packaging.test.ts` checks four things:
+
+- every server route prefix is proxied from the right block (a missing prefix would get the
+  console's `index.html` from nginx);
+- the two header policies above;
+- the loopback binds;
+- the hop count in the example.
+
+nginx re-resolves `server` through Docker's DNS while it runs (`resolver 127.0.0.11`,
+`server … resolve`, nginx 1.27.3 or later), so a recreated server container is followed without
+restarting `web`.
+
+### Smoke-testing the image locally
+
+Production mode needs a Postgres with TLS and a certificate the server can verify. A throwaway CA
+covers that:
+
+```bash
+mkdir -p /tmp/pgtls && cd /tmp/pgtls
+openssl req -x509 -new -nodes -newkey rsa:2048 -keyout ca.key -out ca.crt -days 2 -subj /CN=smoke-ca
+openssl req -new -nodes -newkey rsa:2048 -keyout server.key -out server.csr -subj /CN=pg
+printf 'subjectAltName=DNS:pg\n' > ext.cnf
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 2 -extfile ext.cnf
+chmod 600 server.key && sudo chown 70:70 server.key server.crt    # postgres:16-alpine's uid
+```
+
+Next, add a `pg` service to a compose override: `postgres:16-alpine` with
+`-c ssl=on -c ssl_cert_file=… -c ssl_key_file=…` and the two files mounted. Make `server` depend
+on it. Then set `DATABASE_URL=postgresql://…@pg:5432/…`, `DB_SSL_CA` to `ca.crt`'s text with `\n`
+escapes, and placeholder Firebase and VoiceLink values, all in `docker/.env`. Run `up` with both
+files. The first boot
+logs `MIGRATION 0001_baseline (UP)`, then `migrations complete`, then `magick-agency listening`.
+Later boots log `No migrations to run!`. The server's Postgres sessions show `ssl = t` in
+`pg_stat_ssl`. Without `DB_SSL_CA`, the migration step fails with
+`unable to verify the first certificate` and the container exits.
 
 ## Configuration
 
@@ -85,18 +179,34 @@ Redis settings.
    `X-Forwarded-For` entries from the right and keys every IP rate-limit bucket. If the port is
    reachable directly, a client can set its own IP and evade the limits; if the real chain has a
    different number of proxies, set the count to match. Bind to loopback or a private interface,
-   or firewall port 3021. (Fastify 5.12 fails a numeric `trustProxy` closed, so the count is passed as a hop-count
-   function.)
+   or firewall port 3021. The production compose file publishes no server port. Its chain is the
+   TLS terminator plus nginx, so `TRUST_PROXY_HOPS=2` (see "What nginx serves"). (Fastify 5.12
+   fails a numeric `trustProxy` closed, so the count is passed as a hop-count function.)
 4. **TLS on only in production.** See "Postgres TLS" below.
-5. **Migrations before start.** See below.
+5. **Migrations before start.** The image does this on every start; see below.
+6. **Stop grace at least 45 s.** See "Shutdown and grace period".
 
 ## Shutdown and grace period
 
 On SIGTERM or SIGINT the server closes HTTP first, then stops analysis, agency (pacing first;
 in-flight campaign-completion mails get up to 30 s), voice (the bridge hangs up live calls and
 releases their slots) and platform (audit buffers flushed), then closes Redis and Postgres
-(`apps/server/src/index.ts`). Docker's default stop grace is 10 s, which would cut the 30 s drain.
-Recommendation pending Manas: `stop_grace_period: 45s` in the production compose file. Open
+(`apps/server/src/index.ts`). Docker's default stop grace is 10 s, which would cut the 30 s drain,
+so the production compose file sets `stop_grace_period: 45s` on the server. On any other runtime,
+give the container at least 45 s. `http closed` is logged once the HTTP close has succeeded, so
+the order can be read from the logs. Read it from each line's `time` field rather than the line
+order, because stdout flushed at exit can interleave a few lines:
+
+```
+shutting down
+http closed
+Agency dialer runtime stopped
+Shutting down audit logger, flushing buffer... / Audit logger shut down
+Database pool closed
+```
+
+Measured on the image with no calls in flight: `docker compose stop` took 0.7 s, the server exited
+0, and the sequence above took 7 ms. A drain that has mail to send can take up to 30 s. Open
 question: a pacing tick already parked past its `stopped` check can still finish after the drain;
 awaiting in-flight ticks in `stop()` would close it.
 
@@ -112,7 +222,12 @@ One migration, `packages/db/migrations/0001_baseline.sql`, run with node-pg-migr
 DATABASE_URL=postgresql://... pnpm migrate:up
 ```
 
-It does not read the server's `.env`. Nothing in this repo runs it automatically on deploy. Future
+It does not read the server's `.env`. In the image, `docker/entrypoint.sh` runs the migrations on
+every start, before the server, through `dist/migrate.js` (`apps/server/src/migrate.ts`). That is
+node-pg-migrate's runner with the server's own config and Postgres TLS settings (the CLI cannot
+verify TLS, because Q1 keeps TLS parameters out of `DATABASE_URL`). An invalid environment or a
+failed migration stops the container before the server starts. Same table (`pgmigrations`) as
+`pnpm migrate:up`. Future
 schema changes go in new numbered files; never edit or renumber an applied migration.
 
 ## Recordings
@@ -133,8 +248,17 @@ parameters inside `DATABASE_URL` (`ssl`, `sslmode`, `sslrootcert`, `sslcert`, `s
 
 ## First super-admin
 
-No admin is seeded. Create the first with `apps/server/scripts/create-super-admin.ts` (see the
-README); later admins are created in the super-admin UI.
+No admin is seeded. Create the first with `apps/server/scripts/create-super-admin.ts`, which the
+image also carries as `dist/create-super-admin.js`. Later admins are created in the super-admin UI.
+
+```bash
+docker compose -f docker/docker-compose.prod.yml exec -e SUPER_ADMIN_PASSWORD='…' server \
+  node dist/create-super-admin.js --email ops@example.com --name "Ops"
+```
+
+It reads only the base settings (`DATABASE_URL`, `NODE_ENV`, `DB_SSL_CA`,
+`DB_SSL_REJECT_UNAUTHORIZED`) and connects with the server's TLS decision. From a checkout, run
+`pnpm tsx scripts/create-super-admin.ts` with those set (see the README).
 
 ## Health
 

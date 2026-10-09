@@ -25,7 +25,7 @@ TypeScript source (B2); `tsc --noEmit` covers `src` and tests in each package (B
 | `packages/db` | pg pool (`connection.ts`), shared repositories and models, the baseline migration, `BASELINE.md` |
 | `packages/observability` | pino logger, log context, PII masking, OTel meter and `@Traced`, metric declarations per module area under `src/metrics/` |
 | `tooling/` | `test-env.ts` (per-worktree test database), the Vitest decorator transform |
-| `docker/` | Dev Postgres and Redis only (`docker-compose.dev.yml`) |
+| `docker/` | Dev Postgres and Redis (`docker-compose.dev.yml`); production: the server image (`Dockerfile`, `entrypoint.sh`), nginx with both UIs (`web.Dockerfile`, `nginx.conf`) and `docker-compose.prod.yml` (see [`operations.md`](operations.md)) |
 
 Inside `apps/server/src`, the module areas are: `api/` (plugins, routes, middleware), `auth/`,
 `rbac/`, `settings/`, `invites/`, `notifications/`, `audit/`, `cache/`, `feature-flags/` (the

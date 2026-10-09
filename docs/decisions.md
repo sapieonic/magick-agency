@@ -117,7 +117,7 @@ Other rulings of 2026-10-09 (not numbered questions):
 |---|---|---|---|
 | Q3 | Contract choices made during the build | (a) the session settings map is keyed by `account_id` across every account the caller's memberships reach; (b) there is no separate per-account dialer-analysis toggle: analysis is governed by `analyze_calls` alone; (c) usage counts carry seconds, windowed on `dialed_at`; (d) super-admin shapes for change role, revoke and add-to-account exist; (e) `tenant.update` / `account.update` are added only if a console page needs them | Manas (ratify) |
 | — | `supervisor_hold` | Declared in the wrap-up hold union, never produced by the server. Keep, remove or build a producer | Manas |
-| — | Shutdown grace | The completion-notice drain is 30 s and Docker's default stop grace is 10 s. Recommendation: `stop_grace_period: 45s` in the production compose file (none exists yet). Also: should `stop()` await an in-flight pacing tick? A tick parked past the `stopped` check can finish after the drain | Manas |
+| — | Shutdown grace | The completion-notice drain is 30 s and Docker's default stop grace is 10 s. Implemented, pending ratification: `stop_grace_period: 45s` in `docker/docker-compose.prod.yml`. Also: should `stop()` await an in-flight pacing tick? A tick parked past the `stopped` check can finish after the drain | Manas |
 | 1, 3–6 | Launch defaults | Built, pending ratification (§2) | Manas |
 | 2, 7, 8 | Launch open items | Existing numbers, launch style, domain / freeze / rollback window | Manas, at launch |
 | 9 | Metering | Out of v1; design not started | Manas |

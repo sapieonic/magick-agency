@@ -60,6 +60,9 @@ pnpm lint                # tsc --noEmit over src AND test, every package
 pnpm test                # unit, all packages
 pnpm test:integration    # real Postgres/Redis (needs infra:up); runs packages serially
 pnpm build
+
+docker build -f docker/Dockerfile -t magick-agency-server .     # production server image
+docker build -f docker/web.Dockerfile -t magick-agency-web .     # nginx + both UIs
 ```
 
 Run a package's tests from inside its directory (dotenv resolves from cwd):
