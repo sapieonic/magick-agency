@@ -1,10 +1,9 @@
 // ─── Call Analysis Profiles ─────────────────────────────────────────────
 //
-// A dialer call (webrtc_calls, the browser→PSTN human softphone) has no prompt
-// template, so it has nowhere to hang the operator-defined analysis dimensions
-// that AI calls carry on `prompt_templates.analytics_config`. A profile is the
-// dialer's first-class, reusable, defaultable answer: "what we measure" kept
-// separate from "what the AI says", selectable per call and versionable.
+// An agency call (`agency_calls`, a browser→PSTN agent leg) has no prompt
+// template, so it has nowhere else to hang the operator-defined analysis
+// dimensions. A profile is the first-class, reusable, defaultable answer:
+// "what we measure", selectable per call and versionable.
 
 // Reuse AnalyticsDimension from the prompt model — same shape, same validator bounds.
 import type { AnalyticsDimension } from './prompt.model.js';

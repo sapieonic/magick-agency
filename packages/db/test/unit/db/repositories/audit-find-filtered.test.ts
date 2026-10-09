@@ -150,7 +150,7 @@ describe('auditRepository.findFiltered', () => {
 
   /**
    * Default `true`, so every caller that predates the option is unchanged —
-   * which is what makes it safe to add to a live S2S contract.
+   * which is what makes it safe to add to a response shape callers already consume.
    */
   it('counts by default, and when asked explicitly', async () => {
     await auditRepository.findFiltered(SCOPE);

@@ -1,5 +1,5 @@
 // Only the analytics dimension types the analysis service, prompt builder and
-// call-analysis profiles import. There is no prompt template model (no AI calls).
+// call-analysis profiles import. There is no prompt template model.
 
 export type AnalyticsDimensionType = 'boolean' | 'string' | 'number' | 'enum';
 

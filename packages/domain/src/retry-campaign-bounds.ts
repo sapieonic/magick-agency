@@ -41,7 +41,7 @@
  * count and the cap and narrows the selector.
  *
  * If a tenant legitimately needs a larger retry the answer is chunking with
- * idempotency markers — the `agency_ingest_chunks` shape (077) the CSV path
+ * idempotency markers — the `agency_ingest_chunks` shape the CSV path
  * already uses — not raising this number. That is a follow-up (an open question), because the answer depends on real roster sizes.
  */
 export const RETRY_MAX_SEED_ROWS = 100_000;
@@ -119,7 +119,7 @@ export const RETRY_INHERITED_CONFIG_KEYS = [
 ] as const;
 
 /**
- * The shape a retry idempotency key must have to be accepted (migration 115).
+ * The shape a retry idempotency key must have to be accepted.
  *
  * ── Why there is a MINIMUM length at all ──────────────────────────────────
  *

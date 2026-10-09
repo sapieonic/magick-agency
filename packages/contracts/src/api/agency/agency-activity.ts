@@ -1,7 +1,7 @@
 /**
  * One campaign's audit trail, merged by the public API layer from BOTH audit stores.
  *
- * The two services keep separate databases with different schemas, so `source`
+ * The two audit stores have different schemas, so `source`
  * is not an implementation leak — it is the field that tells apart the two rows
  * a single Pause produces: the public API layer recorded that a supervisor pressed the button,
  * the dialer runtime recorded that the campaign actually transitioned. Rendering only one, or
@@ -29,11 +29,11 @@ export type ActivityActorType = string;
  * Every key is always present — `display` names whoever or whatever acted.
  *
  * ── `type` is the recorded fact; `system` is the rendering flag ─────────────
- * They agree on every row the public API layer has written since its migration 067. They
- * deliberately DISAGREE on an older one, and collapsing them is a trap the public API layer's
- * own contract calls out: a pre-067 row reports `type: 'unknown'` (nothing was
- * recorded) while `system` keeps the inference the trail made before the column
- * existed, so historical rows render exactly as they always have.
+ * They agree on every row that recorded an `actor_type`. They
+ * deliberately DISAGREE on a row without one, and collapsing them is a trap the public API layer's
+ * own contract calls out: such a row reports `type: 'unknown'` (nothing was
+ * recorded) while `system` keeps the inference the trail makes without the column,
+ * so those rows render as they always have.
  *
  * **So: read `system` to decide what to show, and `type` to know whether the
  * distinction was actually captured.** Rewriting a cell as `type === 'system'`
@@ -53,7 +53,7 @@ export interface ActivityActor {
    * Whether to render this row as having no human behind it.
    *
    * See the interface header before assuming this is `type === 'system'` — on a
-   * pre-067 row it is not.
+   * row with no recorded `actor_type` it is not.
    */
   system: boolean;
   user_id: string | null;
@@ -78,7 +78,7 @@ export type ActivityActorKind = 'system' | 'api_key' | 'client' | 'person';
  * Order is the contract, and each step is load-bearing:
  *
  *  1. **`system` first**, off the flag rather than off `type`. It is the only
- *     branch a pre-067 row can take, and taking it keeps that row rendering as
+ *     branch a row with no recorded `actor_type` can take, and taking it keeps that row rendering as
  *     it always has (see {@link ActivityActor}).
  *  2. **`api_key` next.** A key row is never `system`, so this cannot swallow
  *     one — and it must come before the `core` check even though it cannot occur

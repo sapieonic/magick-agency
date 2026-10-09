@@ -284,8 +284,6 @@ be attached as a partition until those rows are moved.
   the merged activity-trail query handles both.
 - `uq_agency_agent_live_tenant` (one live session per agent per tenant) is the session constraint;
   there is no per-campaign variant.
-- Some comments inside the migration describe an earlier, two-service design; a doc-only follow-up
-  migration can rewrite them without changing the schema.
 
 ## Open questions
 

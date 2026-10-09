@@ -8,8 +8,7 @@
  * `agency_campaigns.retry_selector`, and shipped on `AgencySessionBootstrap`. It
  * is deliberately not composed by the console from the raw selector: the copy the
  * agent reads and the query that actually produced the roster must not be able to
- * disagree, and only the internal handlers hold the selector that produced it. Migration 108's
- * header makes the same argument for the lifecycle columns — this is the
+ * disagree, and only the internal handlers hold the selector that produced it. This is the
  * campaign's own fact.
  *
  * A LEAF module: pure functions over the selector and a catalog, no I/O, no
@@ -33,8 +32,7 @@ import { RETRY_NO_OUTCOME } from '@magick-agency/contracts/agency';
  * from them, and the worst outcome is a banner reading "no answer" where the
  * Contacts tab says "No answer". That is a materially smaller failure than the
  * error-code union's, where a missing member destroys an explanation. Recorded
- * rather than hidden: if a sixth reader appears, this belongs in the S2S
- * fixture instead.
+ * rather than hidden: if a sixth reader appears, this belongs in a single shared definition instead.
  *
  * `Record<AgencyAttemptOutcome, string>` rather than a partial map, so an outcome
  * added to `contracts.ts` and forgotten here is a build error naming it — the same

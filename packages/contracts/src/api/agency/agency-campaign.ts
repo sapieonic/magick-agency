@@ -191,10 +191,8 @@ export interface AgencyRetryRule {
  * actually reach the public API layer.
  *
  * Everything else — including `agent_disconnected` and `orphaned` — matches
- * the public API layer's validator exactly. Those two were added here after the public API layer and the dialer runtime
- * already shipped them (the public API layer's `RETRY_POLICY_OUTCOMES`, the dialer runtime's
- * `DEFAULT_RETRY_POLICY` in `retry-policy.ts`) and a cross-repo seam audit found
- * this union had not followed. Both are genuinely produced — an agent's dropped
+ * the public API layer's validator exactly. Both are in the public API layer's `RETRY_POLICY_OUTCOMES` and the dialer runtime's
+ * `DEFAULT_RETRY_POLICY` in `retry-policy.ts`, so this union must carry them. Both are genuinely produced — an agent's dropped
  * station socket (`agent_disconnected`) and an attempt whose owning replica died
  * holding it (`orphaned`) — and both are OUR fault, not the customer's, which is
  * why the form labels them that way.
@@ -223,7 +221,7 @@ export type AgencyRetryPolicy = Partial<Record<AgencyRetryOutcome, AgencyRetryRu
 
 /** The campaign as the dialer runtime stores it, as far as the builder is concerned. */
 /**
- * The six values `ck_agency_campaign_status` permits (the dialer runtime migration 072).
+ * The six values `ck_agency_campaign_status` permits.
  *
  * `stopping` is a real, renderable state and not a transient the UI may collapse
  * into `stopped`: `POST /stop` answers 200 with `stopping`, and only the pacing
@@ -273,7 +271,7 @@ export type AgencyStall =
       code: 'auto_paused_abandonment';
       /**
        * The rate AS MEASURED when the guardrail fired — **frozen**, not live
-       * (the dialer runtime migration 089). Labelling it as a current rate is a lie that gets
+       * (the abandonment guardrail). Labelling it as a current rate is a lie that gets
        * worse the longer the campaign sits paused.
        */
       measured_pct: number;
@@ -373,7 +371,7 @@ export interface AgencySupervisorAgent {
    */
   session_id: string;
   /**
-   * The public API layer's user id for the person. The dialer runtime never resolves it (D3) — there is no
+   * The public API layer's user id for the person. The dialer runtime never resolves it — there is no
    * user table there. Also the fallback the tile renders when `agent_name` is
    * null, so it reaches the screen either way.
    */
@@ -490,8 +488,8 @@ export interface AgencyCampaignStats {
   concurrency_limit: number;
 
   /**
-   * Live utilisation against that ceiling, **account-wide** (the same Redis
-   * counter AI calls use), or `null` when Redis could not answer.
+   * Live utilisation against that ceiling, **account-wide** (the account's Redis
+   * counter), or `null` when Redis could not answer.
    *
    * `null` is "we don't know", never 0 and never saturated. Telling a supervisor
    * to contact support about a limit we merely failed to read is the wrong
@@ -567,7 +565,7 @@ export interface AgencyCampaignStats {
    * This is the supervisor's tuning input for the campaign's `wrapup_seconds`
    * window, which is precisely why the dialer runtime refuses to average the configured
    * column: doing so would hand the operator their own setting back as if it
-   * were evidence (the dialer runtime migration 088). The dialer runtime averages only wrap-ups that
+   * were evidence. The dialer runtime averages only wrap-ups that
    * concluded normally — `forced`, `agent_left` and `campaign_stopped` are
    * excluded, because a wrap-up someone else ended measures the ender.
    */
@@ -711,7 +709,7 @@ export interface AgencyCampaign {
   /**
    * ⚠️ **There is no `description`, and one must not be added back here.**
    *
-   * The dialer runtime's migration 072 declares no such column and
+   * `agency_campaigns` declares no such column and
    * `agencyCampaignRepository.update`'s `allowed` set does not list it, so the public API layer
    * — a unchanged body forwarder — passed it to a write that silently dropped it.
    * The settings page then re-seeded from the response, which is what made it
@@ -726,8 +724,8 @@ export interface AgencyCampaign {
    * throws rather than dialing without a pool. Optional here only because this
    * one interface serves reads, creates and patches.
    *
-   * Every entry must belong to `telephony_provider` (migration 072's column
-   * comment). A mixed pool dials successfully on some rotations and fails on
+   * Every entry must belong to `telephony_provider` (the `caller_ids`
+   * column comment). A mixed pool dials successfully on some rotations and fails on
    * others.
    */
   caller_ids?: string[];
@@ -751,7 +749,7 @@ export interface AgencyCampaign {
   /**
    * Whether the wrap-up window returns the agent to the pool on its own.
    *
-   * The dialer runtime defaults it to `true` (migration 072) and reads it in
+   * The dialer runtime defaults it to `true` (`wrapup_auto_return`) and reads it in
    * `wrapup-manager.ts`: `false` holds the agent until they click, and the
    * countdown is only started when there is BOTH a window and this flag. So it
    * decides whether an agent's shift is paced by a timer or by them.
@@ -760,7 +758,7 @@ export interface AgencyCampaign {
   record_calls?: boolean;
   /**
    * Which of a contact's uploaded CSV columns are rendered, and in what order
-   * (the dialer runtime migration 072).
+   * (`context_display`).
    *
    * The supervisor attempt views are the first surface outside the agent console to
    * render `context`. It is read there for its `hidden` list: the operator
@@ -939,7 +937,7 @@ export interface AgencyRetryCreateRequest {
    * a key generated per REQUEST, anywhere downstream, is a different value on the
    * second attempt and protects nothing. This one has to be stable across "the
    * response never arrived, so I pressed the button again", because there is no
-   * campaign delete route in either service — a duplicate retry is a cohort of
+   * campaign delete route — a duplicate retry is a cohort of
    * real customers dialled twice, and nothing in the product can undo it.
    */
   idempotency_key?: string;
@@ -990,7 +988,7 @@ export interface AgencyRetryCreateResponse {
  * They carry only a `code`, so the public API layer allow-lists all three in the
  * campaign-lifecycle block of its error mask — **not** in
  * `AGENCY_ACTION_ERROR_CODES`, which is attempt-action codes only and is pinned
- * in four places plus the S2S fixture. Widening that union is the mistake the
+ * in several places. Widening that union is the mistake the
  * agency build made three times.
  */
 export const AGENCY_RETRY_REFUSAL_CODES = [

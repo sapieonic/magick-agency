@@ -7,8 +7,8 @@
  * values together, so this file describes the shape and holds no copy of the
  * events themselves — no key union, no label table, no "which ones are
  * digests". That is deliberate and follows the audit log's `available_actions`:
- * the public API layer is not a dependency of this repo, nothing could check a copy, and the
- * copy is what drifts. A build of the public API layer with a new event lights it up here
+ * the server owns the catalog, a copy here would be a second list, and the copy
+ * is what drifts. A server build with a new event lights it up in the console
  * with no frontend change at all.
  *
  * So `key` and `category` are plain strings rather than unions. The page groups

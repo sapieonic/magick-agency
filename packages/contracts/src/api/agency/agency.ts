@@ -114,7 +114,7 @@ export interface AgencyDisposition {
 }
 
 /**
- * One entry in `agency_campaigns.break_reasons` (migration 078).
+ * One entry in `agency_campaigns.break_reasons`.
  *
  * Campaign config is the **sole authority** on accepted break codes — the dialer runtime
  * validates `POST /sessions/:id/break` against this list and answers
@@ -223,9 +223,7 @@ export interface AgencyRetryContext {
  * Live-uniqueness moved from `(campaign_id, agent_user_id)` to
  * `(tenant_id, agent_user_id)`: one human has one pair of ears, and two pacing
  * engines reserving the same person independently bridged two customers onto
- * them. The comment in migration 074 ("an agent working three clients …
- * three rows here, one per account's campaign") is the stale side of that
- * decision and was superseded deliberately.
+ * them.
  *
  * The console renders this as an **answer**, not a failure: it names the station
  * the agent is still joined to, and Leave station *there* is the way out. A
@@ -322,7 +320,7 @@ export type AgencyActionErrorCode =
   /**
    * `POST /sessions` refused: the agent already holds a live session on a
    * DIFFERENT campaign in this tenant (one live session per (tenant, agent)
-   * since the dialer runtime's migration 092). The only member that also sets `campaign_id` /
+   * by the dialer runtime). The only member that also sets `campaign_id` /
    * `campaign_name` / `state` — {@link AgencySessionConflict} narrows this shape
    * for it, which is why that interface pins the code as a literal discriminant
    * rather than using this union.
@@ -661,7 +659,7 @@ export interface AgencyStationReservedFrame {
 }
 
 /**
- * D5's 3-2-1 auto-connect countdown — **declared by the dialer runtime and emitted by nothing.**
+ * The 3-2-1 auto-connect countdown — **declared by the dialer runtime and emitted by nothing.**
  *
  * Kept in the union on purpose, with no console handler. The contract declares
  * this frame and there is **no `send` of it anywhere in the dialer runtime**:

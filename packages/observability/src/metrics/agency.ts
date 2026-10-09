@@ -524,7 +524,7 @@ export const agencyAttemptHoldSeconds = histogram<'tenant_id' | 'outcome'>(meter
  * tightly two answers can cluster, and that is this distribution's shape rather
  * than a flat `p` would assume.
  *
- * Deliberately NOT labelled by outcome. Under D1 a voicemail pickup is an answer
+ * Deliberately NOT labelled by outcome. Answering-machine detection is out of scope, so a voicemail pickup is an answer
  * like any other, so this measures the carrier's view, which is the same view the
  * abandonment predicate takes.
  */
@@ -607,7 +607,7 @@ export const agencyAbandonedReasonTotal = counter<
  * The supervisor view already averages this in SQL for the supervisor view, but there is
  * no time series — so "wrap-up is 18.5s mean against a 30s window" is a pilot
  * artefact nobody can re-check. `resolution` keeps it honest for the same reason
- * migration 088 records it: a `forced` or `agent_left` wrap-up is not evidence
+ * the wrap-up row records it: a `forced` or `agent_left` wrap-up is not evidence
  * about how long write-up work takes, and only `disposition_submitted`,
  * `auto_return` and `agent_returned` are.
  *

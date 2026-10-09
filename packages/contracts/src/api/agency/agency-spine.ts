@@ -21,7 +21,7 @@
 import type { AgencyAttemptOutcome, AgencyAttemptState } from './agency';
 
 /**
- * Contact lifecycle, mirrored from dialer runtime's `AgencyContactState` (migration 073).
+ * Contact lifecycle, mirrored from dialer runtime's `AgencyContactState`.
  *
  * Declared here rather than in `types/agency.ts` because this is the first
  * surface that renders it: the station socket deals in attempts, not roster

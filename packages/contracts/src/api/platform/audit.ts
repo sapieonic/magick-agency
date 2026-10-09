@@ -9,13 +9,13 @@ export interface AuditLogEntry {
   id: string;
   tenant_id: string;
   /**
-   * The HUMAN who acted — and only ever that, since the public API layer's migration 067.
+   * The HUMAN who acted — and only ever that.
    *
-   * ⚠️ It did not always mean that, which is why {@link AuditActorType} exists.
+   * ⚠️ Rows with no recorded `actor_type` may mean something else, which is why {@link AuditActorType} exists.
    * The public API layer's API-key branch loads `platform_api_keys.created_by` into the
-   * request user, so before 067 a key-authenticated action wrote this column
+   * request user, so a key-authenticated action without an `actor_type` wrote this column
    * with the id of whoever MINTED the credential, possibly years earlier — a row
-   * indistinguishable from that person acting in a browser. The public API layer now leaves it
+   * indistinguishable from that person acting in a browser. The public API layer leaves it
    * null for a key and records the credential in {@link api_key_id} instead.
    *
    * The consequence for this client: `user_id === null` no longer means "no
@@ -28,8 +28,8 @@ export interface AuditLogEntry {
    * Optional AND nullable, and the two absences mean different things:
    *
    *  - **absent** — an older public API layer that predates the column (the console and server deploy independently, so this client can run against one).
-   *  - **`null`** — a current public API layer serving a row written before its own
-   *    migration 067. The public API layer deliberately did not backfill: a historical row
+   *  - **`null`** — a current public API layer serving a row with no recorded
+   *    `actor_type`. The public API layer deliberately does not backfill: such a row
    *    carrying a `user_id` may be a person OR a creator-backed key, and that is
    *    not recoverable now, so stamping `'human'` on all of them would have made
    *    the trail assert something false.
@@ -103,9 +103,9 @@ export type AuditEntryActor =
 /**
  * How one row's actor cell should read.
  *
- * ── The rule this encodes, from public API layer's own contract ──────────────────────
+ * ── The rule this encodes, from the public API layer's own contract ──────────────────
  * **Never infer the actor from `user_id`.** `user_id === null ? 'System' : id`
- * is exactly what this page used to do, and after the public API layer's 067 it is a live
+ * is exactly what this page used to do, and it is a live
  * defect: a key-authenticated row now has a null `user_id`, so that reading
  * labels somebody's credential "System" — telling an operator nothing human was
  * involved in an action a credential performed. That is the opposite conclusion,
@@ -128,7 +128,7 @@ export type AuditEntryActor =
  * here one day. Sweeping it into the legacy branch would render it from
  * `user_id`: a `service_account` row with no user reads as "System", i.e. this
  * helper reinstating the exact inference it exists to remove, on a row where
- * the public API layer DID record the answer. Only `null`/`undefined` — the pre-067 shape —
+ * the public API layer DID record the answer. Only `null`/`undefined` — a row with no recorded `actor_type` —
  * may take the legacy reading; anything else is `unrecognized` and renders as
  * what the public API layer said.
  */
@@ -252,8 +252,8 @@ export interface AuditLogFilters {
   /**
    * One kind of principal.
    *
-   * A plain equality filter on the public API layer, so a row written before its migration 067
-   * (null `actor_type`) matches NO value — deliberately, and the page says so
+   * A plain equality filter on the public API layer, so a row with a
+   * null `actor_type` matches NO value — deliberately, and the page says so
    * rather than letting an operator read a short list as a complete one.
    */
   actor_type?: string;

@@ -1,27 +1,26 @@
 /**
- * Types for the WebRTC browser dialer (human → PSTN softphone).
+ * Types for the WebRTC browser dialer (agent → PSTN).
  *
  * The WebRTC human-calling feature (served through the public API layer's
  * `/proxy/webrtc-call/*`). Some response shapes are not fully pinned, so the API
  * layer normalizes defensively — see `src/api/webrtc-call.ts`.
  */
 
-// The dialer's summary payload is the SAME `CallAnalysisResult` an AI call
-// produces (the dialer runtime reuses the type unchanged), so the detail page can hand it to
-// the shared `AnalysisSection` with no adaptation.
+// The dialer's summary payload is the shared `CallAnalysisResult`, so the detail
+// page can hand it to the shared `AnalysisSection` with no adaptation.
 // `CallAnalysisResult` lives in `./shared`.
 import type { CallAnalysisResult } from './shared';
 
 // Only the parts an agency campaign call shows are declared here — the persisted
 // call record, its analysis lifecycle, transcript and recording outcome, as served
-// inside `AgencyAttemptCallDetail` (`./attempt-call`). The softphone surface does
-// not exist: the live-dialer lifecycle (`WebRtcCallStatus`, `TERMINAL_WEBRTC_STATUSES`,
+// inside `AgencyAttemptCallDetail` (`./attempt-call`). Not declared, because no
+// surface uses them: the live-dialer lifecycle (`WebRtcCallStatus`, `TERMINAL_WEBRTC_STATUSES`,
 // `KNOWN_WEBRTC_STATUSES`), carrier choice (`WebRtcTelephonyProvider`,
 // `WEBRTC_TELEPHONY_PROVIDERS` — VoBiz is out, VoiceLink is the only carrier),
 // the caller-ID picker (`WebRtcCallerId`, incl. BYOC `is_byoc` — BYOC is out of scope too, and
 // the agency caller-ID list, `GET /phone-numbers`, carries no `is_byoc`), call start
-// (`WebRtcCallStartInput` / `WebRtcCallStartResponse`) and the softphone call
-// history list (`WebRtcCallsListResponse`, `WebRtcCallListFilters`) are not declared.
+// (`WebRtcCallStartInput` / `WebRtcCallStartResponse`) and a call history list
+// (`WebRtcCallsListResponse`, `WebRtcCallListFilters`).
 
 /**
  * Persisted/historical status of a WebRTC call record (call history), as stored
@@ -73,7 +72,7 @@ export type DialerAnalysisStatus =
  */
 export type SentimentLabel = 'positive' | 'negative' | 'mixed' | 'neutral';
 
-/** Human↔human speaker roles. NOT the AI call's `assistant`/`user`. */
+/** Human↔human speaker roles. NOT the generic `assistant`/`user`. */
 export type DialerSpeakerRole = 'agent' | 'customer' | 'unknown';
 
 /** One transcribed turn of a dialer call. */
@@ -138,7 +137,7 @@ export interface TranscriptMeta {
 /**
  * A persisted WebRTC call record as returned by
  * `GET /proxy/webrtc-call` (list) and `GET /proxy/webrtc-call/:id` (detail).
- * Mirrors the dialer runtime's `webrtc_calls` row shape exactly (see migration 047/048).
+ * Mirrors the dialer runtime's `webrtc_calls` row shape exactly.
  *
  * NOTE the list/detail split: the LIST endpoint returns `analysis_status` only —
  * the three JSONB blobs (`call_analysis`, `conversation_log`, `transcript_meta`)
@@ -182,7 +181,7 @@ export interface WebRtcCallRecord {
    * when no sentiment applies.
    */
   analysis_sentiment_label?: SentimentLabel | null;
-  /** Detail-only. Same `CallAnalysisResult` shape AI calls use. */
+  /** Detail-only. The shared `CallAnalysisResult` shape. */
   call_analysis?: CallAnalysisResult | null;
   /** Detail-only. The diarized transcript. */
   conversation_log?: DialerTranscriptEntry[] | null;

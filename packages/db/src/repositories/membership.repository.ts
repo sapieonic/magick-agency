@@ -50,7 +50,7 @@ export interface TenantMemberWithUser {
    * `null` when the member's `users` row is missing.
    *
    * Unreachable while `memberships.user_id` stays `NOT NULL REFERENCES
-   * users(id) ON DELETE CASCADE` (migration 001) — a membership cannot outlive
+   * users(id) ON DELETE CASCADE` — a membership cannot outlive
    * its user. The LEFT JOIN and this arm are what keep a relaxed FK from
    * silently dropping a member off their own tenant's Team page rather than
    * showing them with no identity; the route has always carried the shape.

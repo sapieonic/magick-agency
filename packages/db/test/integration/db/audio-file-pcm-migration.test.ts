@@ -8,12 +8,12 @@ import { insertAudioFile } from '../setup/clip-factories.js';
 import { uuidFor } from '../setup/factories.js';
 
 /**
- * Migration 067 — decoded-PCM bookkeeping on `audio_files`.
+ * Decoded-PCM bookkeeping on `audio_files`.
  *
  * Pins the schema contract that makes VoiceLink audio-file announcements safe
  * for legacy rows: three nullable columns, no backfill, no NOT NULL, no index.
  */
-describe('audio-file PCM migration 067 (integration)', () => {
+describe('audio-file PCM columns (integration)', () => {
   beforeEach(truncateAll);
   afterAll(closeTestPool);
 

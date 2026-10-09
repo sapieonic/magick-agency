@@ -40,7 +40,7 @@ describe('the retry bound constants', () => {
   });
 
   it('bounds the idempotency key to the COLUMN, so an over-long key is a 400 and not a 22001', () => {
-    // `agency_campaigns.retry_idempotency_key` is `VARCHAR(64)` (migration 115).
+    // `agency_campaigns.retry_idempotency_key` is `VARCHAR(64)`.
     // Widening the constant past the column turns a validation decision into a
     // Postgres error surfacing as a 500 on a well-formed request.
     expect(RETRY_IDEMPOTENCY_KEY_MAX).toBeLessThanOrEqual(64);

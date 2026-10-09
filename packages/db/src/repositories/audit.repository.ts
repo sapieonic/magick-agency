@@ -90,7 +90,7 @@ export class AuditRepository {
    * the dialer's agency rows are not write-only.
    *
    * `campaignId` is stored in `event_data.campaign_id`, not a column. Filter
-   * via JSONB and the expression index in migration 094 — a sequential scan
+   * via JSONB and the expression index `idx_audit_logs_campaign_id` — a sequential scan
    * of a partitioned table is the shape to avoid.
    *
    * ── The order is `(timestamp, id)`, and the second column is load-bearing ──
@@ -125,8 +125,8 @@ export class AuditRepository {
    * the truncated one, the two would disagree *within* a millisecond and the
    * `limit + 1` prefix SQL returns would not be the prefix the merge expects.
    *
-   * The cost is that the ordering can no longer be served directly by migration
-   * 094's index (which ends `timestamp DESC` and carries no `id` anyway, so the
+   * The cost is that the ordering can no longer be served directly by
+   * that index (which ends `timestamp DESC` and carries no `id` anyway, so the
    * row-wise form could not drive it either). The filtered set is one campaign's
    * rows, so the sort is small; `from`/`to` still bind the raw column, which is
    * what partition pruning needs.

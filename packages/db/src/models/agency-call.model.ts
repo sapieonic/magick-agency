@@ -30,8 +30,8 @@ export const WEBRTC_NON_TERMINAL_STATUSES: readonly WebRtcCallStatus[] = [
 
 // ─── Dialer post-call analysis ──────────────────────────────────────────
 //
-// The dialer call is transcribed from its recording, then analysed by the same
-// (call-type-agnostic) post-call analysis service AI calls use. These types are
+// The dialer call is transcribed from its recording, then analysed by the
+// (call-type-agnostic) post-call analysis service. These types are
 // the persisted, human↔human-flavoured shapes; the durable job that produces
 // them lives in dialer-analysis-job.model.ts.
 
@@ -49,7 +49,7 @@ export type DialerAnalysisStatus =
   | 'expired'
   | 'deleted';
 
-/** Human↔human roles. NOT the AI call's assistant/user. */
+/** Human↔human roles. NOT the generic assistant/user. */
 export type DialerSpeakerRole = 'agent' | 'customer' | 'unknown';
 
 export interface DialerTranscriptEntry {
@@ -102,13 +102,13 @@ export interface WebRtcCallRecord {
   duration_seconds: number | null;
   /** Answer-anchored talk time — what billing rounds to minutes. */
   talk_time_seconds: number | null;
-  // ── Post-call analysis (migration 059) ──
+  // ── Post-call analysis ──
   /** Provenance of the analysis dimensions used (immutable after insert). */
   analysis_profile_id: string | null;
   /** Per-call transcription language override (immutable after insert). */
   analysis_language: string | null;
   analysis_status: DialerAnalysisStatus | null;
-  /** Same type as AI calls — the analysis service is call-type-agnostic. */
+  /** The analysis service's own type — it is call-type-agnostic. */
   call_analysis: CallAnalysisResult | null;
   conversation_log: DialerTranscriptEntry[] | null;
   transcript_meta: TranscriptMeta | null;
@@ -121,7 +121,7 @@ export interface WebRtcCallRecord {
   /** Durable consent record (immutable after insert). */
   analysis_consent: boolean | null;
   analysis_consent_at: Date | null;
-  // ── Agency dialer back-references (migration 076) ──
+  // ── Agency dialer back-references ──
   /**
    * The agency campaign this media leg was placed for; NULL for an ordinary
    * browser dialer call. Correlation only — no FK, and its *presence* is what

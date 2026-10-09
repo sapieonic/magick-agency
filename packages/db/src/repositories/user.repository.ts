@@ -68,8 +68,8 @@ export class UserRepository {
    * lookup and never has been. The ORDER BY makes "whichever row Postgres hands
    * back first" deterministic and puts the trustworthy row first: a flagged row
    * and a clean stub for one address is exactly what happens after an attacker
-   * poisons an address and an honest invite then writes a fresh stub beside it
-   * (migration 073), and the person arriving with a verified token for that
+   * poisons an address and an honest invite then writes a fresh stub beside it,
+   * and the person arriving with a verified token for that
    * address wants the stub, not the trap.
    *
    * Note which repair this is and is not. Adopting here clears the flag on the
@@ -108,7 +108,7 @@ export class UserRepository {
    * `victim@corp.test`, invites it into their own tenant as an `agent`, reads
    * the join link out of their own 201, claims it, and then waits for an honest
    * admin (or a super admin provisioning the real customer) to name that
-   * address and hand them the membership. Migration 073 has the full chain.
+   * address and hand them the membership.
    *
    * ── Three outcomes, not two, and the third is why this is not a plain find ──
    * A miss can mean two very different things, and collapsing them produced an
@@ -182,7 +182,7 @@ export class UserRepository {
    * address — `POST /auth/session` path 1, and nowhere else.
    *
    * ── Why this method has to exist ──────────────────────────────────────────
-   * Migration 073 flags a row whose identity was bound without proving its
+   * `users.email_unverified` flags a row whose identity was bound without proving its
    * address, and the flag bars the row from every by-address reuse path. The
    * repair was documented as "the rightful owner signing in repairs the row on
    * the way in" — through `adoptFirebaseIdentity`, which sets the column. That
@@ -383,8 +383,7 @@ export class UserRepository {
    * the common shape.
    *
    * ── A non-UUID `accountId` NARROWS, and deliberately does not widen ─────────
-   * The dialer's `account_id` is `VARCHAR(100)` with a `'default'` literal available
-   * (migration 072), so a value arriving from a dialer webhook may not be
+   * The dialer's `account_id` is `VARCHAR(100)` with a `'default'` literal available, so a value arriving from a dialer webhook may not be
    * UUID-shaped at all — the trap `normalizeSettlementAccountId` exists for.
    * Passing it to Postgres raises `22P02` from inside the read; guessing "then
    * everyone in the tenant" would mail people who cannot see the account.

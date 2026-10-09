@@ -35,11 +35,11 @@ export interface AuditLogRecord {
   account_id: string | null;
   user_id: string | null;
   /**
-   * What kind of principal acted. NULL on rows written before migration 067 —
+   * What kind of principal acted. NULL on rows with no recorded principal —
    * see {@link PlatformAuditActorType}. NULL is "unknowable", not a fourth value,
    * and no reader may collapse it into one: `normalizeMasterRow` bridges it to
-   * the inference the activity trail made before the column existed, so
-   * historical rows keep rendering as they always did.
+   * the inference the activity trail makes without the column, so
+   * those rows keep rendering as they always did.
    */
   actor_type: PlatformAuditActorType | null;
   action: string;

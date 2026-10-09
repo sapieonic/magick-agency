@@ -1,4 +1,4 @@
-// There is no `migration 067` shape describe here: the squashed baseline
+// There is no schema-shape describe here: the baseline
 // (packages/db/migrations/0001_baseline.sql) creates the three PCM columns nullable with no
 // DEFAULT inline, and the integration suite pins that. Ids stay non-UUID: the pool is mocked.
 import { describe, it, expect, vi, beforeEach } from 'vitest';

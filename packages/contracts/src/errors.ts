@@ -128,7 +128,7 @@ void _allRosterCodesListed;
 
 export type AgencyCampaignLifecycleErrorCode =
   /**
-   * D9's one-running-campaign-per-account rule surfacing as a 409 instead of a
+   * The one-running-campaign-per-account rule surfacing as a 409 instead of a
    * raw unique violation. The remedy is "pause the other campaign first".
    */
   | 'another_campaign_running'

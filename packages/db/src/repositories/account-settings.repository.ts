@@ -25,10 +25,9 @@ export class AccountSettingsRepository {
    * propagation lag on non-writing replicas; the writing replica is immediate
    * via the write-through above.
    *
-   * There are no `default_ai_pipeline` (AI pipeline selection) or
-   * `analyze_dialer_calls` (the softphone-only gate, decision Q3b) columns, so
-   * there are no readers for them; `webrtc_max_duration_seconds` is read through
-   * this cache by {@link getWebrtcMaxDurationSeconds}.
+   * There is no separate dialer-analysis toggle: `analyze_calls` alone governs
+   * analysis (decision Q3b). `webrtc_max_duration_seconds` is read through this
+   * cache by {@link getWebrtcMaxDurationSeconds}.
    */
   private cache = new TtlCache<AccountSettingsRecord | null>({
     ttlMs: CACHE_TTL_MS,

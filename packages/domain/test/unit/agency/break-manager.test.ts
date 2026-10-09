@@ -24,8 +24,8 @@ import {
 
 describe('resolveBreakReasons', () => {
   it('serves the built-ins when a campaign configures none', () => {
-    // `'[]'` means "the operator has no opinion", NOT "breaks are disabled". Every
-    // campaign created before migration 078 has an empty column, and a break menu
+    // `'[]'` means "the operator has no opinion", NOT "breaks are disabled". A
+    // campaign that never configured breaks has an empty column, and a break menu
     // with no entries is a control the agent cannot use.
     expect(resolveBreakReasons([])).toEqual([...DEFAULT_BREAK_REASONS]);
     expect(resolveBreakReasons(null)).toEqual([...DEFAULT_BREAK_REASONS]);
@@ -50,7 +50,7 @@ describe('resolveBreakReasons', () => {
     expect(resolveBreakReasons(mixed)).toEqual([{ code: 'ok', label: 'Fine' }]);
   });
 
-  it('carries no jurisdiction-specific or payroll assumptions in the defaults (D8)', () => {
+  it('carries no jurisdiction-specific or payroll assumptions in the defaults', () => {
     // The mechanism ships generic and operator-configured with NEUTRAL defaults.
     // `is_paid` is a payroll question no default can answer, so it is omitted
     // rather than guessed.

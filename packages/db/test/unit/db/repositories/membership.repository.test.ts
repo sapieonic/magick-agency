@@ -204,7 +204,7 @@ describe('MembershipRepository', () => {
     it('does not query AT ALL for an empty list, or one that is all junk', async () => {
       // `ANY('{}'::uuid[])` matches nothing, so the query would be correct and
       // pointless. The route reaches this whenever the handler returns a page of rows
-      // whose ids are all unusable, which is a real shape (R4's third state).
+      // whose ids are all unusable, which is a real shape (an id with no membership row at all).
       expect(await repo.findAnyByUsersAndTenant([], TENANT)).toEqual([]);
       expect(await repo.findAnyByUsersAndTenant(['nope', ''], TENANT)).toEqual([]);
       expect(mocks.pool.query).not.toHaveBeenCalled();

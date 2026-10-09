@@ -26,7 +26,7 @@ export type MembershipRole = Role;
 /**
  * Role hierarchy: higher number = more authority.
  *
- * `agent` (Agency Dialer, design D6) is deliberately placed at 5 — BELOW
+ * `agent` (Agency Dialer) is deliberately placed at 5 — BELOW
  * `viewer`. The hierarchy is linear and PERMISSION_MATRIX maps each permission
  * to a *minimum* role, so a floor of `viewer` (10) or higher is unreachable at
  * level 5. Every permission that predates the agency feature floors at `viewer`
@@ -97,7 +97,7 @@ export type Permission =
   // The tenant's assigned caller IDs (`GET /phone-numbers`, the campaign
   // builder's caller-ID picker).
   | 'agency.phone_numbers.read'
-  // Agency Dialer (design D6). The four agent-scoped permissions floor at
+  // Agency Dialer. The four agent-scoped permissions floor at
   // `agent`, so supervisors and admins inherit them and can take calls
   // themselves to cover or demo — desirable, not a leak.
   | 'agency.station.connect'
@@ -131,8 +131,8 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   'audit.read': 'account_admin',
   // ── The feature-flag map ─────────────────────────────────────────────────
   // Floored at `agent`, and the ONLY non-`agency.*` permission that is. Read the
-  // hierarchy comment above first: this is not a relaxation of D6's "four
-  // permissions and nothing else" rule, it is the read that rule overlooked.
+  // hierarchy comment above first: this is not a relaxation of the "four
+  // agent-scoped permissions and nothing else" rule, it is the read that rule overlooked.
   //
   // The route returns the client-exposed FLAG MAP, which the console must fetch before
   // it can render any flag-gated route. It used to carry `proxy.stats.read`
@@ -202,7 +202,7 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   // other, because the two directions are not symmetric risks:
   //
   //  - READ floors at `viewer`. The list is every customer who asked not to be
-  //    contacted; an agent has no reason to browse it, and D6 gives them exactly
+  //    contacted; an agent has no reason to browse it, and agents get exactly
   //    four permissions on purpose. Reading it is a supervisory act.
   //  - MANAGE floors at `account_admin` and covers ADD (bulk/arbitrary numbers)
   //    and DELETE. Delete is the compliance-dangerous direction: it makes a

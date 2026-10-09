@@ -165,7 +165,7 @@ export class AuditRepository {
     /**
      * Filter to one kind of principal.
      *
-     * Rows written before migration 067 carry a NULL `actor_type` and match NO
+     * Rows with no recorded principal carry a NULL `actor_type` and match NO
      * value here — deliberately, and it is the same rule the module applies to an
      * action the catalog does not know: this module cannot say what kind of principal
      * a row it never recorded one for belonged to, and folding those rows into
@@ -253,7 +253,7 @@ export class AuditRepository {
       conditions.push(`campaign_id = $${paramIndex++}`);
       values.push(options.campaignId);
     }
-    // `= $n`, so a NULL `actor_type` (a pre-067 row) matches nothing rather than
+    // `= $n`, so a NULL `actor_type` (a row with no recorded principal) matches nothing rather than
     // being swept into whichever value was asked for. See the option's doc.
     if (options.actorType) {
       conditions.push(`actor_type = $${paramIndex++}`);

@@ -8,8 +8,8 @@ import type { AgencyBreakReason } from '@magick-agency/contracts/agency';
  * break an agent asked for while they were still on a call.
  *
  * **A queued break is in-process, deliberately.** It is not a Redis key and not a
- * DB column, because it does not need to survive this process: D2 lands every
- * agent in `break` after a restart anyway, so a pending break that is lost to a
+ * DB column, because it does not need to survive this process: after a restart
+ * every agent lands in `break` anyway, so a pending break that is lost to a
  * crash resolves to the state the agent asked for. Persisting it would add a write
  * to the call-teardown path to achieve nothing the restart rule does not.
  */
@@ -19,9 +19,9 @@ import type { AgencyBreakReason } from '@magick-agency/contracts/agency';
  *
  * `'[]'` on the column means "the operator has no opinion" — NOT "breaks are
  * disabled". A break menu with no entries is a control the agent cannot use, and
- * every campaign created before migration 078 has an empty column.
+ * a campaign that never configured breaks has an empty column.
  *
- * Deliberately generic per D8: the mechanism ships operator-configured with neutral
+ * Deliberately generic: the mechanism ships operator-configured with neutral
  * defaults, so there are no jurisdiction-specific codes, no prescribed labels and
  * nothing that reads as a compliance claim. `is_paid` is omitted rather than
  * guessed — that is a payroll question no default can answer for an operator.

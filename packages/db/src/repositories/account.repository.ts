@@ -46,7 +46,7 @@ export class AccountRepository {
    *
    * **The tenant boundary is the property both lookups share and neither may
    * drop** — `account_credit_allocations.account_id` has no composite FK back
-   * to `tenant_id` (migration 002), so a naive existence check alone would
+   * to `tenant_id`, so a naive existence check alone would
    * still let a caller name a sibling tenant's account id. What this drops is
    * only the `status != 'deleted'` filter, and it exists for exactly one
    * caller: `POST /credits/deallocate`. An account can be soft-deleted with an

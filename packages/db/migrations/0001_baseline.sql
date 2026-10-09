@@ -790,8 +790,8 @@ COMMENT ON COLUMN agency_campaign_agents.unassigned_at IS
 -- ════════════════════════════════════════════════════════════════════════════
 
 -- Per-account settings, including the concurrency allocation mode/version. There
--- is no analyze_dialer_calls (decision Q3b: its only reader was the bridge's
--- softphone-only gate) and no default_ai_pipeline (AI only).
+-- is no separate dialer-analysis toggle (decision Q3b: analyze_calls alone governs
+-- analysis) and no AI pipeline selection.
 -- webrtc_max_duration_seconds is a per-account row (not a global feature flag).
 -- NULL = inherit the process default.
 CREATE TABLE account_settings (
@@ -1329,8 +1329,8 @@ END $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION agency_contact_stamp_root() IS
   'Stamps root_contact_id := id on any roster row inserted without one, so the '
   'agent''s lineage-scoped prior-attempt read is a single indexed equality with no '
-  'branch for the (overwhelmingly common) non-retry case. Fires for rows written '
-  'by pre-112 code too, which is what lets a later release tighten the column to '
+  'branch for the (overwhelmingly common) non-retry case. Fires for any insert '
+  'that omits it, which is what lets a later release tighten the column to '
   'NOT NULL without a second backfill.';
 
 CREATE TRIGGER trg_agency_contacts_root
@@ -1507,7 +1507,7 @@ CREATE INDEX idx_agency_session_events_agent
   ON agency_agent_session_events (agent_user_id, at);
 
 COMMENT ON TABLE agency_agent_session_events IS
-  'One row per agent state transition. The only durable record of time-in-state — agency_agent_sessions.state/state_since are a snapshot every transition overwrites. Occupancy is only meaningful from this migration forward: earlier sessions have no events and must read as zero, never as inferred.';
+  'One row per agent state transition. The only durable record of time-in-state — agency_agent_sessions.state/state_since are a snapshot every transition overwrites. Occupancy is only as good as the recorded events: a session with no events must read as zero, never as inferred.';
 COMMENT ON COLUMN agency_agent_session_events.agent_user_id IS
   'Denormalised from agency_agent_sessions so an occupancy query needs no join back to the session (the user id, opaque to the dialer runtime).';
 COMMENT ON COLUMN agency_agent_session_events.from_state IS
@@ -1789,7 +1789,7 @@ COMMENT ON COLUMN agency_dnc_outbox.campaign_id IS
 -- ════════════════════════════════════════════════════════════════════════════
 
 -- No sip_connection_id (SIP), telephony_credential_id (BYOC credentials) or
--- idx_webrtc_calls_tenant_dialer (softphone-only list).
+-- non-campaign call-list index.
 -- Column names keep their older `webrtc_` spelling where they had it; object
 -- names that embedded `webrtc_calls` are named for `agency_calls` (BASELINE.md).
 CREATE TABLE agency_calls (

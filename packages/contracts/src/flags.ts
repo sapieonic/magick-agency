@@ -39,54 +39,23 @@ export interface FlagDefinition<T = unknown> {
  */
 export const AGENCY_FLAGS = Object.freeze({
   /*
-   * The agency product's own analysis switch. Agency legs are `webrtc_calls` rows
-   * too, so before this flag existed the end-of-call gate applied
-   * `dialer_call_analysis` to them — which meant a tenant enabling softphone
-   * analysis silently started paying for transcription on every campaign call,
-   * and a tenant turning it off lost agency analysis it had bought separately.
-   * Two products, two switches.
+   * The agency analysis switch. Agency legs are `webrtc_calls` rows, and this flag
+   * gates end-of-call analysis (transcription and the analysis worker) for them.
    *
-   * Deliberately a sibling of `dialer_call_analysis` rather than a child: the
-   * `dialer_analysis_*` config block and the analysis worker are shared
-   * machinery, and an agency tenant that runs no softphone must be able to turn
-   * this on without turning that on.
+   * ── `default: false`, deliberately ─────────────────────────────────────────
    *
-   * ── `default: false` is right, and is NOT what makes the split a regression ─
-   *
-   * Do not "fix" this default to true. It looks like the thing that would
-   * silently turn agency analysis off on the day the split ships — every tenant
-   * whose agency calls were being analysed under `dialer_call_analysis` resolves
-   * a brand-new flag that has no override rows, so gate 2 returns, nothing is
-   * enqueued, and `analysis_status` stays NULL with no error anywhere. But
-   * flipping the default fixes that by enabling a metered, consent-sensitive
-   * feature for every tenant that never asked for it, including every tenant
-   * created afterwards. Analysis is a per-call transcription cost, so that blast
-   * radius is a bill.
-   *
-   * The existing state is carried forward as DATA instead, where it can be
-   * scoped, attributed and removed:
-   * `src/db/migrations/107_agency_call_analysis_backfill.sql` seeds this flag
-   * true at exactly the scopes where agency analysis was already running —
-   * tenants that have agency campaigns and whose `dialer_call_analysis` resolved
-   * true — and false where an operator had explicitly turned softphone analysis
-   * off. Every seeded row carries a `reason` saying so, so a super-admin reading
-   * it later knows why it exists and that deleting it is safe.
-   *
-   * The one layer that backfill cannot reach is this `envVar`. An environment
-   * with `FF_DIALER_CALL_ANALYSIS` set truthy resolves `dialer_call_analysis`
-   * true for every tenant with no override row for a migration to find, so
-   * `FF_AGENCY_CALL_ANALYSIS` has to be set alongside it there. The migration
-   * header carries that as a deploy obligation.
-   *
-   * There is no softphone and no `dialer_call_analysis` here, so the "two
-   * products" argument is historical. The `default: false` reasoning (metered,
-   * consent-sensitive) still holds.
+   * Do not "fix" this default to true. A tenant that never asked for analysis
+   * would otherwise get a metered, consent-sensitive feature, including every
+   * tenant created afterwards. Analysis is a per-call transcription cost, so that
+   * blast radius is a bill. With no override row the gate returns false, nothing
+   * is enqueued, and `analysis_status` stays NULL with no error anywhere — that is
+   * the intended off state. Turn it on per tenant or account with an override row,
+   * where it can be scoped, attributed and removed.
    */
   agency_call_analysis: {
     key: 'agency_call_analysis',
     type: 'boolean',
-    // Gated: costs money, consent-sensitive. Pre-split behaviour is preserved by
-    // migration 107's backfill, NOT by this default — see above.
+    // Gated: costs money, consent-sensitive — see above.
     default: false,
     envVar: 'FF_AGENCY_CALL_ANALYSIS', // staging: FF_AGENCY_CALL_ANALYSIS=true
     scopes: ['global', 'tenant', 'account'],
@@ -118,7 +87,7 @@ export const AGENCY_FLAGS = Object.freeze({
   // are delivered synchronously at the carrier answer — so a dial that rings out,
   // is busy, fails or finds an unreachable handset reaches the console as
   // *nothing*. A dial answered by VOICEMAIL still reaches the agent: the carrier
-  // reports it `answered` like any other, and D1 puts AMD out of scope, so
+  // reports it `answered` like any other, and answering-machine detection is out of scope, so
   // nothing can tell a machine from a human before the bind (see
   // `contracts.ts` on `AgencyAttemptOutcome`). Shortening that greeting is a
   // wrap-up problem, not a binding one.

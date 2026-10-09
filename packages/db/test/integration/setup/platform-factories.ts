@@ -42,7 +42,7 @@ export async function insertMembership(overrides: Record<string, unknown> = {}) 
 // ── Membership Invite ───────────────────────────────────────────────────────
 
 /**
- * One `membership_invites` row (migration 069).
+ * One `membership_invites` row.
  *
  * Defaults to an OUTSTANDING `agent` invite — unclaimed, unrevoked, a week of
  * TTL left — because that is the row `POST /users/invite` writes and the state

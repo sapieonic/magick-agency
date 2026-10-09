@@ -1,10 +1,9 @@
 /**
  * Call-analysis profiles — the dialer's reusable "what we measure" definition.
  *
- * A dialer (browser→PSTN human) call has no prompt template, so it has nowhere
- * to hang the operator-defined analysis dimensions that AI calls carry on
- * `prompt_templates.analytics_config`. A profile is that, standalone: nameable,
- * reusable, defaultable per account, selectable per call.
+ * An agency (browser→PSTN agent) call has no prompt template, so it has nowhere
+ * else to hang the operator-defined analysis dimensions. A profile is that,
+ * standalone: nameable, reusable, defaultable per account, selectable per call.
  *
  * Mirrors the `call_analysis_profiles` row, reached through the
  * `/proxy/call-analysis-profiles` passthrough (capability `calls.dialer.analytics`).

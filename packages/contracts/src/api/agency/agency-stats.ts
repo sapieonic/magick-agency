@@ -289,7 +289,7 @@ export interface AgencyStaffingHistory {
 // ── The roster contract, and the one place the console's copy differs ───────────
 // These match the frozen contract in `../../agency` field for field. The
 // difference is the public API layer's, and it is additive in exactly two places: `agent_name`
-// on every row (the dialer runtime has no user table — decision D3 — and can only ever serve a
+// on every row (the dialer runtime has no user table and can only ever serve a
 // uuid), and `inactive_omitted` at the top level (the dialer runtime cannot know who is still a
 // member). So {@link AgencyRosterAgentRow} is the dialer runtime's row unchanged,
 // {@link AgencyRosterAgentRowWithName} is what reaches a browser, and
@@ -352,7 +352,7 @@ export type AgencyRosterOrder = 'asc' | 'desc';
  * `0%` in a column of real percentages is indistinguishable from a bad shift.
  */
 export interface AgencyRosterAgentRow {
-  /** The public API layer's user id. Opaque to the dialer runtime (D3) and opaque to this client. */
+  /** The public API layer's user id. Opaque to the dialer runtime and opaque to this client. */
   agent_user_id: string;
   attempts: number;
   connected: number;
@@ -546,7 +546,7 @@ export interface AgencyRosterBenchmark {
   connect_rate: AgencyRosterPercentiles;
   success_rate: AgencyRosterPercentiles;
   /**
-   * Handling time's distribution — D10's second additive field.
+   * Handling time's distribution — an additive field.
    *
    * The benchmark had handle time only as the pooled scalar {@link aht_seconds},
    * so AHT was the one metric with a team figure and no band beside it: a
@@ -555,15 +555,14 @@ export interface AgencyRosterBenchmark {
    *
    * ── Which rows are in this pool, stated once and correctly ────────────────
    * `rates_reportable` **AND `connected >= 20`** AND a non-null `aht_seconds` —
-   * D10's ruling, and the SAME predicate `success_rate`'s pool uses rather than
+   * The SAME predicate `success_rate`'s pool uses rather than
    * a restatement of it. `aht_seconds` divides by `connected`, which is exactly
    * the denominator that second floor exists to protect.
    *
-   * An earlier version of this comment said "gated exactly as `success_rate`'s
-   * pool is — `rates_reportable` and a non-null value", and those two clauses
-   * disagree: the gloss after the dash is how `occupancy_pct`'s pool is gated,
-   * and the two differ for every row with `1 <= connected < 20`. Reading it and
-   * gating an AHT comparison on `rates_reportable` alone would flag a
+   * Do not read this as "gated exactly as `success_rate`'s
+   * pool is — `rates_reportable` and a non-null value": those two clauses
+   * disagree, since the gloss after the dash is how `occupancy_pct`'s pool is gated,
+   * and the two differ for every row with `1 <= connected < 20`. Gating an AHT comparison on `rates_reportable` alone would flag a
    * 400-dial/3-connect row against a band it was excluded from — the identical
    * defect already fixed for conversion rate, in `rosterFlag`.
    *
@@ -606,7 +605,7 @@ export interface AgencyRosterPage {
    * computed over.
    *
    * ── This is NOT the denominator of a "showing N of M" ──────────────────────
-   * The two services apply their rules in an order that makes the fraction
+   * The dialer runtime and the public API layer apply their rules in an order that makes the fraction
    * uncomputable: the dialer runtime scopes, ranks and cuts to `limit`, and **the public API layer then filters
    * the page it was handed**, dropping departed members and reporting the count in
    * {@link inactive_omitted}. So `rows.length` is "the top `limit`, minus whichever
@@ -644,7 +643,7 @@ export interface AgencyRosterPage {
 
   /**
    * Rows the public API layer dropped because it could not attribute them to a person at all —
-   * R4's third state: an id with no membership row of any status ("never in this
+   * The third state: an id with no membership row of any status ("never in this
    * tenant"), logged and dropped, deliberately never folded into
    * {@link inactive_omitted}.
    *
@@ -899,7 +898,7 @@ export interface AgencyGroupPage {
 
   /**
    * Groups the public API layer dropped because it could not attribute them to a person —
-   * R4's third state, and never part of {@link inactive_omitted}.
+   * The third state, and never part of {@link inactive_omitted}.
    *
    * Two consumers, both of them sentences that were false without it:
    * `contributionTruncationNote`, which compared `total_groups` against
@@ -935,7 +934,7 @@ export interface AgencyGroupPage {
    * returns that one: `windowRangeReadout` prints
    * `Intl.DateTimeFormat().resolvedOptions().timeZone`, which is correct for its
    * own caption (the window bounds really are cut from a local `Date`) and wrong
-   * for an hour axis. Two zones on one screen is the defect E3 exists to prevent,
+   * for an hour axis. Two zones on one screen is the defect this rule exists to prevent,
    * so everything that names or reasons about the heatmap's zone takes it as an
    * ARGUMENT — see `bestHoursZone` and `weekdayCoverage` in
    * `utils/agencyBestHours.ts`, neither of which may reach for `Intl`'s default.

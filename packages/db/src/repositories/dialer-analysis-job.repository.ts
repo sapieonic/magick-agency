@@ -107,7 +107,7 @@ export class DialerAnalysisJobRepository {
     return result.rows[0] ?? null;
   }
 
-  /** Support/internal listing (S2S "why is there no summary"). Scoped when tenant given. */
+  /** Support/internal listing ("why is there no summary"). Scoped when tenant given. */
   async list(opts: {
     tenant_id?: string;
     call_id?: string;

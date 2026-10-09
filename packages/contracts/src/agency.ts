@@ -79,7 +79,7 @@ export type AgencyContactState =
 
 /**
  * How an attempt finished, as classified from carrier events — never from AMD
- * (D1: AMD is out of scope, so the system can never classify an outcome as
+ * (answering-machine detection is out of scope, so the system can never classify an outcome as
  * `machine`; a call answered by voicemail is `connected` and the ONLY signal it
  * was a machine is the agent's disposition).
  *
@@ -104,19 +104,17 @@ export type AgencyContactState =
  * (`abandonment-predicate.ts`), whose `answeredAt === null` arm already excluded
  * every cancelled ring — so this separates two facts without moving a metric.
  *
- * **No migration is needed for it, and that is a property of the column rather
+ * **No schema change is needed for it, and that is a property of the column rather
  * than an oversight.** `agency_call_attempts.outcome` is a bare `VARCHAR(30)`
- * with NO CHECK constraint (`075_agency_attempts.sql:23`); the vocabulary appears
- * there only as a trailing `--` comment, which enforces nothing.
+ * with NO CHECK constraint; the vocabulary appears
+ * in the baseline schema only as a trailing `--` comment, which enforces nothing.
  *
  * ⚠️ **Do not read that comment as the vocabulary.** It says
  * `connected|no_answer|busy|failed|machine|invalid|abandoned` and is wrong in both
- * directions: it lists `machine`, which nothing can produce under D1, and omits
- * `agent_disconnected`, `orphaned` and now `canceled`, all three of which are
- * produced constantly. This union is the vocabulary. Recorded here rather than by
- * amending a shipped migration — a comment-only follow-up migration or a note at
- * the write site is preferred over an in-place edit of an applied migration.
- * Every gate on
+ * directions: it lists `machine`, which nothing can produce while
+ * answering-machine detection is out of scope, and omits
+ * `agent_disconnected`, `orphaned` and `canceled`, all three of which are
+ * produced constantly. This union is the vocabulary. Every gate on
  * this string is therefore TypeScript-side, and it is pinned in five places in
  * the server alone — `spine-filters.ts`'s `ATTEMPT_OUTCOMES` (the read surface's
  * inverted `Record` check), `retry-summary.ts`'s `OUTCOME_COPY`,
@@ -138,7 +136,7 @@ export type AgencyAttemptOutcome =
   | 'canceled';
 
 /**
- * WHY an abandoned attempt reached no agent (migration 119).
+ * WHY an abandoned attempt reached no agent (`agency_call_attempts.abandon_reason`).
  *
  * A companion to {@link AgencyAttemptOutcome}, deliberately NOT a member of it.
  * The outcome vocabulary already says `abandoned` and the retry policy already
@@ -243,13 +241,13 @@ export interface AgencyDisposition {
   terminal?: boolean;
   /** Contact is suppressed immediately (the `do_not_call` code's mechanism). */
   suppress?: boolean;
-  /** Disposition-driven retry — this is how voicemail retry works under D1. */
+  /** Disposition-driven retry — this is how voicemail retry works without answering-machine detection. */
   retry?: { delay_minutes?: number; max_attempts: number };
 }
 
 /**
  * Which of a contact's arbitrary CSV columns matter, and in what order
- * (`agency_campaigns.context_display`, migration 072).
+ * (`agency_campaigns.context_display`).
  *
  * The schema stores every non-phone CSV column unchanged and deliberately schemaless —
  * which is right for ingest and useless for rendering: a 41-column export gives
@@ -281,8 +279,8 @@ export interface AgencyContextDisplay {
  * (it is out of scope), but bootstrap advertises the catalog from day one so the console
  * builds the menu once rather than twice.
  *
- * **P2:** this list is campaign config (`agency_campaigns.break_reasons`, migration
- * 078) and is the *only* authority on which codes `POST /sessions/:id/break` will
+ * This list is campaign config (`agency_campaigns.break_reasons`)
+ * and is the *only* authority on which codes `POST /sessions/:id/break` will
  * accept — an unknown code is rejected with `unknown_break_reason` and the valid
  * set echoed back. A campaign that configures none is served a built-in default
  * list rather than an empty menu, because a break control with no reasons is a
@@ -332,7 +330,7 @@ export interface AgencyCreateSessionRequest {
   agent_user_id: string;
   /**
    * Optional resume hint. The dialer runtime rehydrates from `agency_agent_sessions` regardless
-   * (D2: a restart drops every socket, and sessions are rehydrated rather than
+   * (a restart drops every socket, and sessions are rehydrated rather than
    * recreated), so this only lets the client assert which session it thinks it had.
    */
   session_id?: string;
@@ -351,13 +349,13 @@ export interface AgencySessionBootstrap {
   session_id: string;
   campaign_id: string;
   campaign_name: string;
-  /** the public API layer's user id, echoed back — the dialer runtime never resolves it to a name (D3). */
+  /** the public API layer's user id, echoed back — the dialer runtime never resolves it to a name. */
   agent_user_id: string;
 
   /**
    * The agent's state as the dialer runtime sees it right now.
    *
-   * After a restart of the dialer runtime or the public API layer this is `break`, never `available` (D2) — the
+   * After a restart of the dialer runtime or the public API layer this is `break`, never `available` — the
    * engine must not dial into a pool that has not demonstrably re-attached, so the
    * agent clicks once to go available. On a first join it is `offline`.
    * **Phase 1 note:** `break` is not implemented as a transition an agent can
@@ -433,7 +431,7 @@ export interface AgencySessionBootstrap {
    * A one-line banner above the contact panel, plus the lineage-scoped
    * `prior_attempts` they already receive. NOT the parent's stats, connect rate,
    * roster counts or agent roster. The `agent` role is level 5 with exactly four
-   * `agency.*` permissions (RBAC decision D6) and this feature must not become
+   * `agency.*` permissions and this feature must not become
    * the reason someone raises it — every field here is campaign-descriptive copy
    * about the campaign the agent is joined to.
    */
@@ -450,7 +448,7 @@ export interface AgencyRetryContext {
   /**
    * The parent campaign's name.
    *
-   * `parent_campaign_id` is `ON DELETE SET NULL` (migration 111), so a campaign
+   * `parent_campaign_id` is `ON DELETE SET NULL`, so a campaign
    * can legitimately be a retry whose parent no longer exists. The dialer runtime serves a
    * neutral placeholder in that case rather than dropping the banner: "this is a
    * second pass over a selection" stays true and useful even when the campaign it
@@ -462,8 +460,7 @@ export interface AgencyRetryContext {
    *
    * Built here — not composed by the console from the raw selector — so the copy
    * the agent reads and the query that actually produced the roster cannot
-   * disagree. It is the campaign's own fact, exactly as migration 108's header
-   * argues for the lifecycle columns.
+   * disagree. It is the campaign's own fact, like the lifecycle columns.
    *
    * The rendering rules are fixed: the selected
    * `last_disposition` labels (from the PARENT's catalog where a label exists,
@@ -478,7 +475,7 @@ export interface AgencyRetryContext {
  * `POST /api/v1/agency/sessions`.
  *
  * Returned when the agent already holds a LIVE session on a **different**
- * campaign in the same tenant. Since migration 092 the database permits one live
+ * campaign in the same tenant. The database permits one live
  * session per (tenant, agent) — the reservation CAS key is per session
  * (`agency:agent:{sessionId}:state`) while a human has one pair of ears, so two
  * live sessions mean two pacing engines bridging two customers into one headset.
@@ -538,10 +535,10 @@ export interface AgencyStationIntervals {
   heartbeat_grace_ms: number;
   /** The `reserved`→dial lease. Design: 10s. Informational; the dialer runtime enforces it. */
   reservation_lease_ms: number;
-  /** D5's auto-connect countdown before audio bridges. Design: 3000. */
+  /** The auto-connect countdown before audio bridges. Design: 3000. */
   countdown_ms: number;
   /**
-   * **P2, new and required.** How long the dialer runtime holds a live call open after the
+   * **Required.** How long the dialer runtime holds a live call open after the
    * station socket drops, waiting for the same session to reconnect and re-adopt
    * it. Reconnect inside this window resumes the call with audio
    * intact; outside it the call has already been torn down with
@@ -803,7 +800,7 @@ export interface AgencyReservedAttempt {
  * ── The set this is drawn from is the LINEAGE, not the contact row ──────────
  *
  * Since retry campaigns landed, `prior_attempts` spans every campaign in the
- * contact's chain (`agency_contacts.root_contact_id`, migration 112), newest
+ * contact's chain (`agency_contacts.root_contact_id`), newest
  * first, capped at `PRIOR_ATTEMPT_LIMIT`. That is what makes the last three
  * fields necessary rather than decorative:
  *
@@ -840,7 +837,7 @@ export interface AgencyPriorAttempt {
   dialed_at: string | null;
 }
 
-/** D5's 3-2-1 auto-connect countdown. Emitted once per remaining second. */
+/** The 3-2-1 auto-connect countdown. Emitted once per remaining second. */
 export interface AgencyStationCountdownFrame {
   event: 'countdown';
   attempt_id: string;
@@ -895,7 +892,7 @@ export type AgencyReleaseReason =
   | 'failed'
   /** Number is not dialable — the contact is suppressed, not retried. */
   | 'invalid'
-  /** Answered with no agent to bridge to. Near-unreachable under D1. */
+  /** Answered with no agent to bridge to. Near-unreachable while answering-machine detection is out of scope. */
   | 'abandoned'
   /** The agent's own socket dropped mid-call and the carrier leg was torn down. */
   | 'agent_disconnected'
@@ -1083,8 +1080,8 @@ export type AgencyStationCloseCode =
 // at `/proxy/agency/attempts/:id/…` and gated at `agency.attempts.handle` /
 // `agency.attempts.dispose` / `agency.dnc.write`.
 //
-// These exist rather than reusing the generic call routes because D6 puts `agent`
-// at level 5, below every pre-existing permission floor — and because the dialer runtime can
+// These exist rather than reusing the generic call routes because `agent`
+// sits at level 5, below every pre-existing permission floor — and because the dialer runtime can
 // verify the caller **is the reserved agent for that attempt**, an ownership check
 // `/webrtc-call/:id/end` has no way to express. A caller who is not the reserved
 // agent gets 403 `not_your_attempt`, not 404.
@@ -1163,7 +1160,7 @@ export interface AgencyDispositionRequest extends AgencyActorFields {
   /** Required when the catalog entry sets `requires_note`. */
   notes?: string;
   /** ISO-8601. Required when the catalog entry sets `requires_datetime`.
-   *  Per D11 a callback re-enters the roster as an ordinary `pending` contact —
+   *  A callback re-enters the roster as an ordinary `pending` contact —
    *  whichever agent is available takes it. There is deliberately no
    *  `preferred_agent_user_id`: agent-facing copy must say "we'll call you back",
    *  never "I'll call you back". */
@@ -1199,8 +1196,8 @@ export interface AgencyDispositionResponse extends AgencyCampaignScoped {
    * policy-derived retry times. Honouring the datetime at all was Phase 2's one
    * piece of disposition semantics, and deliberately so: `requires_datetime` is
    * operator config that was already reachable, so capturing it and not acting on
-   * it would mean an agent tells a customer "we'll call you back Tuesday" (D11's
-   * copy rule) and nothing ever does.
+   * it would mean an agent tells a customer "we'll call you back Tuesday" (the
+   * agent-facing copy rule) and nothing ever does.
    *
    * One residual, recorded rather than solved: if the campaign's calling window
    * changes AFTER a callback is booked, the instant is recomputed correctly at dial
@@ -1427,7 +1424,7 @@ export type AgencyWrapupHoldReason =
  * per agent is a frame storm on a socket that also carries live audio. The console
  * renders `ends_at - now` locally and re-syncs whenever a new `wrapup` frame
  * arrives. (Contrast {@link AgencyStationCountdownFrame}, which *is* per-second —
- * that one is three frames total, is a D5 auto-connect cue rather than a timer,
+ * that one is three frames total, is an auto-connect cue rather than a timer,
  * and is the agent's warning that they are about to be on a live call.)
  */
 export interface AgencyWrapupState {
@@ -1496,7 +1493,7 @@ export interface AgencyStationWrapupFrame {
  * the two would let an agent skip every disposition by clicking "available".
  *
  * Forwarded at `/proxy/agency/sessions/:id/force-available` and gated at
- * `agency.supervise` (account_admin floor) — **not** reachable by an `agent` (D6).
+ * `agency.supervise` (account_admin floor) — **not** reachable by an `agent`.
  * The attempt is left `no_disposition` when one was outstanding, exactly as the
  * reaper's sweep would have, so forced and swept returns produce
  * one shape of data rather than two.
@@ -1528,7 +1525,7 @@ export interface AgencyForceReturnRequest {
  *  4. mismatch and `on_behalf` absent/false ⇒ 403 `not_your_attempt`.
  */
 export interface AgencyActorFields {
-  /** the public API layer's user id for the human performing the action (D3 — opaque to the dialer runtime). */
+  /** the public API layer's user id for the human performing the action (opaque to the dialer runtime). */
   agent_user_id?: string;
   /**
    * the public API layer sets this **only** when the caller holds `agency.supervise` and is not
@@ -1611,7 +1608,7 @@ export type AgencyActionErrorCode =
   | 'session_ended'
   /**
    * `POST /sessions` refused: the agent already holds a LIVE session on a
-   * DIFFERENT campaign in the same tenant. Since migration 092 there is one live
+   * DIFFERENT campaign in the same tenant. There is one live
    * session per (tenant, agent), because the reservation CAS key is per SESSION
    * (`agency:agent:{sessionId}:state`) while a human has one pair of ears — two
    * live sessions are two independently reservable agents and two customers
@@ -1637,7 +1634,7 @@ export type AgencyActionErrorCode =
    * Not a politeness. Leaving clears the lease and sets `left_at`, and a left row
    * no longer participates in `uq_agency_agent_live_tenant` — so an `on_call`
    * agent who left could join a second campaign and be bridged a second customer
-   * while the first call is still up. That is the double-bridge migration 092
+   * while the first call is still up. That is the double-bridge the one-live-session-per-agent rule
    * exists to prevent, reachable in one click, and the constraint cannot see it
    * because both rows satisfy the index once the first has left.
    *
@@ -1755,7 +1752,7 @@ export interface AgencySupervisorAgent {
    */
   session_id: string;
   /**
-   * The public API layer's user id for the person. **The dialer runtime never resolves it to a name** (D3) —
+   * The public API layer's user id for the person. **The dialer runtime never resolves it to a name** —
    * there is no user table here. Rendering an agent's display name needs the public API layer to
    * enrich this on the proxy hop; it is the only service that knows identity.
    */
@@ -1781,9 +1778,8 @@ export interface AgencySupervisorAgent {
    * Because there is no such timestamp to give. The obvious source,
    * `agency_agent_sessions.last_heartbeat`, is **never renewed** — the only writer,
    * `AgencyAgentSessionRepository.heartbeat()`, has no callers; the station ping
-   * renews the Redis key and never touches the row. Migration 074 states the rule
-   * outright ("Liveness does NOT come from this table. The authority is the Redis
-   * ownership key") and `reaper.ts` already declines to use the column for exactly
+   * renews the Redis key and never touches the row. Liveness does NOT come from this table — the authority is
+   * the Redis ownership key — and `reaper.ts` already declines to use the column for exactly
    * this reason.
    *
    * So serving it would have shipped well-formed ISO data meaning "when this shift
@@ -1900,7 +1896,7 @@ export const AGENCY_STALL_PRIORITY: readonly AgencyStallCode[] = [
 export type AgencyStall =
   | {
       code: 'auto_paused_abandonment';
-      /** The rate AS MEASURED when the guardrail fired — frozen, see migration 089. */
+      /** The rate AS MEASURED when the guardrail fired — frozen. */
       measured_pct: number;
       ceiling_pct: number;
       paused_at: string;
@@ -2036,7 +2032,7 @@ export interface AgencyCampaignStats {
   /**
    * Connects split by whether a HUMAN answered, derived from dispositions.
    *
-   * D1's stated consequence, and it is not cosmetic: AMD is out of scope, so agents
+   * Not cosmetic: answering-machine detection is out of scope, so agents
    * hear answering machines and disposition them by hand. Without the split, every
    * voicemail an agent sat through is counted as a connect and its duration inflates
    * AHT — the dashboard would report agents handling more calls, more slowly, and
@@ -2079,7 +2075,7 @@ export interface AgencyCampaignStats {
    * `is_success` — the campaign's conversions.
    *
    * **This is the first thing that has ever counted `is_success`.** The flag has
-   * been on {@link AgencyDisposition} since migration 072, is settable in the
+   * been on {@link AgencyDisposition}, is settable in the
    * campaign builder and is styled on the agent's disposition pad; until now its
    * only other reference in the dialer runtime was a type check in the config validator, i.e.
    * the platform confirmed the operator's answer was a boolean and then discarded
@@ -2129,9 +2125,8 @@ export interface AgencyCampaignStats {
    * Average wrap-up, in seconds — the supervisor's tuning input for
    * `wrapup_seconds`.
    *
-   * Averages `disposition_submitted`, `auto_return` and `agent_returned`; see 088 for
-   * why `forced`, `agent_left` and `campaign_stopped` are excluded. `null` until
-   * enough wrap-ups have concluded to say anything.
+   * Averages `disposition_submitted`, `auto_return` and `agent_returned`; `forced`, `agent_left` and
+   * `campaign_stopped` are excluded. `null` until enough wrap-ups have concluded to say anything.
    */
   avg_wrapup_seconds: number | null;
 
@@ -2168,7 +2163,7 @@ export interface AgencyCampaignStats {
   /**
    * Live utilisation against that ceiling, or `null` when it cannot be read.
    *
-   * **Account-wide, not campaign-wide** — the same Redis counter AI calls use, so
+   * **Account-wide, not campaign-wide** — the account's Redis counter, so
    * a supervisor seeing "4 of 5" is seeing their real headroom including traffic
    * this campaign knows nothing about. `null` rather than a substituted local
    * count when Redis is degraded: "4 of 5" and "we don't know" are different
@@ -2281,7 +2276,7 @@ export const AGENCY_CAMPAIGN_STATS_FIELDS: Record<keyof AgencyCampaignStats, tru
 // ─── Campaign lifecycle timestamps ─────────────────────────────────
 //
 // `started_at`, `ended_at` and `last_transition_by` are COLUMNS on
-// `agency_campaigns` (migration 108), written by the two statements that move a
+// `agency_campaigns`, written by the two statements that move a
 // campaign's status and by nothing else. They are deliberately NOT derived from
 // `GET /agency/campaigns/:id/activity`:
 //
@@ -2299,15 +2294,15 @@ export const AGENCY_CAMPAIGN_STATS_FIELDS: Record<keyof AgencyCampaignStats, tru
 /**
  * Who caused a campaign's CURRENT status.
  *
- * `user_id` is the public API layer's user id — opaque to the dialer runtime (D3), the same kind of value as
- * `agency_call_attempts.dispositioned_by_user_id` (migration 079) and
+ * `user_id` is the public API layer's user id — opaque to the dialer runtime, the same kind of value as
+ * `agency_call_attempts.dispositioned_by_user_id` and
  * `agency_agent_sessions.agent_user_id`.
  *
  * `name` is `string | null` rather than `string`, and the null is not laziness.
- * **The dialer runtime has no user table** (D3): there is nothing here to resolve an id to a
+ * **The dialer runtime has no user table**: there is nothing here to resolve an id to a
  * name against, so the only name the dialer runtime can serve is the one public API layer sent AT THE
  * MOMENT OF THE TRANSITION. A stored id with no name is therefore a real state —
- * an older public API layer, or a direct S2S caller that sent an id and no display name —
+ * a caller that sent an id and no display name —
  * and it is a different fact from "nobody caused this". The console renders the id
  * in that case; inventing a name from the id, or dropping the actor entirely
  * because half of it is missing, would both lose information the row is holding.
@@ -2316,7 +2311,7 @@ export const AGENCY_CAMPAIGN_STATS_FIELDS: Record<keyof AgencyCampaignStats, tru
  * the public API layer keeps their old name on transitions that already happened, which is the
  * correct reading for a historical record (it says who pressed the button as they
  * were known then) and the wrong one for a directory. Same choice, same reason, as
- * migration 079 storing `dispositioned_on_behalf` rather than re-deriving it.
+ * `dispositioned_on_behalf` being stored rather than re-derived.
  */
 export interface AgencyCampaignActor {
   user_id: string;
@@ -2741,10 +2736,10 @@ export type AgencyStatsBucketUnit = 'day' | 'week' | 'month';
 
 /**
  * Where an agent's time went, in seconds, derived from
- * `agency_agent_session_events` (migration 105).
+ * `agency_agent_session_events`.
  *
- * **Only meaningful from that migration forward.** Sessions that predate it have
- * no events, and the honest answer for them is every field at zero — never a
+ * **Only as good as the recorded events.** A session with
+ * no events has an honest answer of every field at zero — never a
  * duration reconstructed from `agency_agent_sessions.state_since`, which is a
  * snapshot every transition overwrites and would therefore attribute an agent's
  * entire history to whatever state they happen to be in now.
@@ -2778,7 +2773,7 @@ export interface AgencyAgentOccupancy {
    *
    * ⚠️ The consequence, recorded because it is the shape's one real cost: every
    * value at zero has THREE causes and this payload cannot separate them — the
-   * agent has no events (a session predating migration 105), the agent has events
+   * agent has no events (a session with no recorded transitions), the agent has events
    * but none inside the window, or the occupancy read itself failed and the record
    * was served without it (see `AgencyAgentStatsRepository.stats`, which warns).
    * Separating them needs a fourth state on the wire — a nullable block, or an
@@ -2864,7 +2859,7 @@ export interface AgencyAgentStatsTotals {
    *
    * Never the `wrapup_seconds` column, which is the allotment copied from the
    * campaign at wrap-up entry — averaging that hands the operator their own
-   * setting back as if it were measurement (migration 088).
+   * setting back as if it were measurement.
    */
   wrapup_seconds: number;
   /**
@@ -2928,7 +2923,7 @@ export interface AgencyAgentStatsTotals {
  * useful rows here: it is an agent who was on the floor and never dialled.
  */
 export interface AgencyAgentStats {
-  /** Echoed back — the public API layer's user id, opaque to the dialer runtime (D3). */
+  /** Echoed back — the public API layer's user id, opaque to the dialer runtime. */
   agent_user_id: string;
   /** Echoed so a consumer never has to infer the grouping from the labels. */
   bucket: AgencyStatsBucketUnit;
@@ -3019,7 +3014,7 @@ export type AgencyRosterSort =
  * cannot be checked, and an uncheckable rate is the one a supervisor acts on.
  */
 export interface AgencyRosterAgentRow {
-  /** the public API layer's user id, opaque to the dialer runtime (D3). The dialer runtime has no user table and can only ever serve a UUID; the public API layer adds the name. */
+  /** the public API layer's user id, opaque to the dialer runtime. The dialer runtime has no user table and can only ever serve a UUID; the public API layer adds the name. */
   agent_user_id: string;
   attempts: number;
   connected: number;
@@ -3058,7 +3053,7 @@ export interface AgencyRosterAgentRow {
    *
    * ⚠️ There are THREE ways to arrive at `shift_seconds: 0` and this payload
    * separates none of them, exactly as `AgencyAgentOccupancy.by_state` does not:
-   * the agent's sessions predate migration 105 and have no transition events; the
+   * the agent's sessions have no recorded transition events; the
    * agent has events but none inside the window; or **the occupancy read itself
    * failed and the roster was served without it** (the repository catches and
    * warns rather than 500ing the attempt totals — see
@@ -3331,8 +3326,8 @@ export interface AgencyRosterPage {
 //     or of hours is not a peer group, and a median over them would be a number
 //     with no meaning that a console would nonetheless render. Comparison stays on
 //     the roster.
-//   * **No `agent_user_id` filter**, on either service. Same reason as the roster:
-//     the dialer runtime has no user table, `agent_user_id` is an opaque string to it (D3), so
+//   * **No `agent_user_id` filter**. Same reason as the roster:
+//     the dialer runtime has no user table, `agent_user_id` is an opaque string to it, so
 //     the dialer runtime cannot validate tenancy on a caller-supplied id — the public API layer's `memberships`
 //     is the only place that boundary can exist. Filtering to a person is the
 //     per-agent record's job.
@@ -3365,7 +3360,7 @@ export type AgencyGroupDimension =
  * and a union of 21 combinations is a shape no consumer would narrow correctly.
  */
 export interface AgencyGroupKey {
-  /** the public API layer's user id, opaque to the dialer runtime (D3). the public API layer adds `agent_name` beside it. */
+  /** the public API layer's user id, opaque to the dialer runtime. the public API layer adds `agent_name` beside it. */
   agent_user_id?: string;
   campaign_id?: string;
   /**
@@ -3527,7 +3522,7 @@ export type AgencyGroupSort =
  * ── `total_groups`, `rows.length` and `inactive_omitted` are THREE independent
  * facts, and no "showing X of Y" fraction is derivable from them ─────────────
  *
- * The roster's R1 ruling applies here unchanged, because the mechanism is the
+ * The roster's rule (no "showing X of Y" fraction) applies here unchanged, because the mechanism is the
  * same: the dialer runtime applies `limit`, and only then does the public API layer drop rows whose agent has
  * no active membership. The public API layer therefore cannot produce a post-filter population
  * count — that would need the filter applied before the limit, i.e. the public API layer shipping
@@ -3587,8 +3582,8 @@ export interface AgencyGroupPage {
    * label an axis with a single zone.**
    *
    * The second half of that condition is the half that is easy to get wrong. A
-   * time dimension is legal on EITHER of D5's two remedies, and only one of them
-   * narrows the read to one zone: `group_by=campaign,hour_of_day` with no
+   * time dimension is legal two ways (filtering to a campaign, or grouping by
+   * `campaign`), and only the first narrows the read to one zone: `group_by=campaign,hour_of_day` with no
    * `campaign_id` is a legal 200 spanning every campaign in the account, each row
    * correctly cut in its own campaign's zone. That page has N zones and no single
    * label, so it reports `null`.
@@ -3637,8 +3632,8 @@ export interface AgencyGroupPage {
 
 // ─── Supervisor read surface — the attempt spine ────────────────────────────
 //
-// `agency_call_attempts` opens migration 075 with "the audit spine. One row per
-// dial", and without these pages nothing reads it: the campaign page served aggregate
+// `agency_call_attempts` is the audit spine, one row per
+// dial, and without these pages nothing reads it: the campaign page served aggregate
 // counters, `/agency/campaigns/:id/contacts` was an upload form despite the
 // name, and `/app/calls/dialer/history` — a CALL list — structurally cannot show
 // an attempt that never connected, a suppressed contact, or a disposition.
@@ -3728,8 +3723,8 @@ export interface AgencyAttemptRow {
   /**
    * The media leg, for the recording and the analysis.
    *
-   * **Deliberately not an FK** (migration 075: the attempt row "must outlive a
-   * purged call row"), so a non-null id here is NOT a promise the call still
+   * **Deliberately not an FK** (the attempt row must outlive a
+   * purged call row), so a non-null id here is NOT a promise the call still
    * exists. A client must degrade to "recording no longer available" rather than
    * rendering a broken link or a 404.
    */
@@ -3758,7 +3753,7 @@ export interface AgencyContactRow {
   /** `dnc` | `invalid` | `max_attempts` | `manual`, or NULL. */
   suppressed_reason: string | null;
   timezone: string | null;
-  /** Provenance: the row's line in the uploaded CSV. NULL on pre-085 rows. */
+  /** Provenance: the row's line in the uploaded CSV. NULL when the row was not uploaded from a CSV. */
   csv_line_number: number | null;
   created_at: string;
   updated_at: string;
@@ -3781,7 +3776,7 @@ export interface AgencyContactDetail extends AgencyContactRow {
  * A keyset page.
  *
  * **Keyset, not offset, and the difference is correctness rather than speed.**
- * Q-D is 1M contacts across 50 agents and new attempts land while a supervisor
+ * The target is 1M contacts across 50 agents, and new attempts land while a supervisor
  * pages. An OFFSET counts from the top of a result set that is still growing, so
  * a row inserted during pagination shifts every later page by one and the
  * failure looks like rows randomly missing. A keyset asks for "the rows after

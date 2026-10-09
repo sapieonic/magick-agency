@@ -192,7 +192,7 @@ describe('baseline schema — structure', () => {
     }
   });
 
-  // core:test/integration/agency/agency-migration.test.ts T-M1b
+  // See also apps/server/test/integration/agency/agency-migration.test.ts T-M1b
   it('agency_calls back-references exist and are NULLABLE', async () => {
     const cols = await columnsOf('agency_calls');
     for (const name of ['campaign_id', 'agency_attempt_id']) {
@@ -201,7 +201,7 @@ describe('baseline schema — structure', () => {
     }
   });
 
-  // core:test/integration/agency/agency-migration.test.ts T-M1c
+  // See also apps/server/test/integration/agency/agency-migration.test.ts T-M1c
   it('context and caller_ids have the shapes the engine assumes', async () => {
     const contacts = await columnsOf('agency_contacts');
     const campaigns = await columnsOf('agency_campaigns');
@@ -215,7 +215,7 @@ describe('baseline schema — structure', () => {
     expect(campaigns.get('context_display')!.data_type).toBe('jsonb');
   });
 
-  // core:test/unit/agency/retry-lineage-migrations.test.ts (111/112/114), as catalog facts
+  // The retry-lineage shape, as catalog facts.
   it('keeps the lineage shape: FK on the pointers, none on the grouping keys', async () => {
     const { rows } = await pool().query<{ conname: string; def: string }>(
       `SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint
@@ -240,7 +240,7 @@ describe('baseline schema — structure', () => {
     expect(await indexDef('idx_agency_campaigns_parent')).toContain('WHERE (parent_campaign_id IS NOT NULL)');
   });
 
-  // core:test/integration/agency/agency-duplicate-dial.test.ts T-D3b
+  // See also apps/server/test/integration/agency/agency-duplicate-dial.test.ts T-D3b
   it('uq_agency_attempt_live is defined exactly as the design specifies', async () => {
     expect(await indexDef('uq_agency_attempt_live')).toBe(
       'CREATE UNIQUE INDEX uq_agency_attempt_live ON public.agency_call_attempts ' +
@@ -248,7 +248,7 @@ describe('baseline schema — structure', () => {
     );
   });
 
-  // core:test/integration/agency/agency-dnc-campaign-scope.test.ts T-DNC8
+  // See also apps/server/test/integration/agency/agency-dnc-campaign-scope.test.ts T-DNC8
   it('agency_dnc_outbox.campaign_id is nullable and the digit-projection index exists', async () => {
     expect((await columnsOf('agency_dnc_outbox')).get('campaign_id')!.is_nullable).toBe('YES');
     const def = await indexDef('idx_agency_contacts_campaign_phone_digits');
@@ -256,7 +256,6 @@ describe('baseline schema — structure', () => {
     expect(def).toContain("regexp_replace((phone_e164)::text, '[^0-9]'::text, ''::text, 'g'::text)");
   });
 
-  // core:test/integration/db/audio-file-pcm-migration.test.ts
   it('audio_files carries the three PCM columns, nullable and unindexed', async () => {
     const cols = await columnsOf('audio_files');
     expect(cols.get('pcm_audio_hash')).toMatchObject({ data_type: 'character varying', is_nullable: 'YES' });
@@ -277,7 +276,7 @@ describe('baseline schema — structure', () => {
     expect(await indexDef('idx_agency_campaign_agents_campaign_active')).toContain('WHERE (unassigned_at IS NULL)');
   });
 
-  // master:test/integration/dnc/dnc-index-usage.test.ts ("guards the guard")
+  // See also apps/server/test/integration/dnc/dnc-index-usage.test.ts ("guards the guard").
   it('the DNC indexes exist', async () => {
     for (const name of ['uq_dnc_scope', 'idx_dnc_entries_tenant_phone', 'idx_dnc_entries_tenant_created']) {
       expect(await indexDef(name), name).toBeDefined();
@@ -346,7 +345,7 @@ describe('triggers', () => {
     }
   });
 
-  // core:test/integration/agency/agency-retry-seeding.test.ts "stamps root_contact_id on an ordinary ingest row"
+  // See also apps/server/test/integration/agency/agency-retry-seeding.test.ts "stamps root_contact_id on an ordinary ingest row"
   it('trg_agency_contacts_root stamps root_contact_id := id on an ordinary insert', async () => {
     const campaign = await insertCampaign();
     for (let i = 0; i < 5; i++) await insertContact(campaign.id, { phone_e164: `+1415555020${i}` });
@@ -357,8 +356,7 @@ describe('triggers', () => {
     expect(rows[0]!.n).toBe(5);
   });
 
-  // core:test/unit/agency/retry-lineage-migrations.test.ts "stamps the root only when the caller supplied none"
-  // + core:test/integration/agency/agency-retry-seeding.test.ts (root = the PARENT's row)
+  // See also apps/server/test/integration/agency/agency-retry-seeding.test.ts (root = the PARENT's row).
   it('trg_agency_contacts_root leaves a supplied root alone (the retry-copy path)', async () => {
     const parent = await insertCampaign();
     const child = await insertCampaign({ parent_campaign_id: parent.id, root_campaign_id: parent.id, retry_generation: 1 });
@@ -379,8 +377,8 @@ describe('triggers', () => {
     expect(rows[0]!.root_contact_id).toBeNull();
   });
 
-  // core:test/integration/agency/agency-retry-seeding.test.ts "113 is a no-op on a second run"
-  it('after the trigger, the 113 backfill predicate matches zero rows', async () => {
+  // See also apps/server/test/integration/agency/agency-retry-seeding.test.ts "the root_contact_id backfill is a no-op on a second run".
+  it('after the trigger, the root_contact_id backfill predicate matches zero rows', async () => {
     const campaign = await insertCampaign();
     await insertContact(campaign.id);
     const result = await pool().query('UPDATE agency_contacts SET root_contact_id = id WHERE root_contact_id IS NULL');
@@ -424,7 +422,7 @@ describe('triggers', () => {
 describe('the uniqueness constraints that carry the design (docs/architecture.md)', () => {
   beforeEach(() => truncateAll());
 
-  // core:test/integration/agency/agency-duplicate-dial.test.ts T-M5
+  // See also apps/server/test/integration/agency/agency-duplicate-dial.test.ts T-M5
   it('uq_agency_campaign_running — one running campaign per account', async () => {
     await insertCampaign({ status: 'running' });
     await expect(insertCampaign({ status: 'running' })).rejects.toMatchObject({
@@ -435,7 +433,7 @@ describe('the uniqueness constraints that carry the design (docs/architecture.md
     await expect(insertCampaign({ status: 'draft' })).resolves.toBeTruthy();
   });
 
-  // core:test/integration/agency/agency-duplicate-dial.test.ts T-M6
+  // See also apps/server/test/integration/agency/agency-duplicate-dial.test.ts T-M6
   it('uq_agency_agent_live_tenant — one live session per agent per TENANT, reusable after leaving', async () => {
     const agent = randomUUID();
     const campaign = await insertCampaign();
@@ -462,7 +460,7 @@ describe('the uniqueness constraints that carry the design (docs/architecture.md
     });
   });
 
-  // core:test/integration/agency/agency-duplicate-dial.test.ts T-D1/T-D2/T-D3
+  // Duplicate-dial guard: a contact may have at most one live attempt.
   it('uq_agency_attempt_live — every live-state pairing is rejected; an ended attempt frees the contact', async () => {
     const LIVE = ['queued', 'dialing', 'ringing', 'answered', 'bridged'];
     const campaign = await insertCampaign();
@@ -492,7 +490,7 @@ describe('the uniqueness constraints that carry the design (docs/architecture.md
     await expect(insertContact(campaign.id)).resolves.toBeTruthy();
   });
 
-  // core:test/integration/agency/agency-migration.test.ts T-M4b
+  // See also apps/server/test/integration/agency/agency-migration.test.ts T-M4b
   it('uq_agency_ingest_chunk — a real UNIQUE on (campaign_id, idempotency_key)', async () => {
     const campaign = await insertCampaign();
     const insert = (index: number) => pool().query(
@@ -526,7 +524,6 @@ describe('other uniqueness rules', () => {
     await expect(insertCampaign({ retry_idempotency_key: null })).resolves.toBeTruthy();
   });
 
-  // master:test/integration/repositories/agency-campaign-agents-schema.test.ts
   it('uq_agency_campaign_agent_active_campaign — per (tenant, user, campaign), closed rows accumulate', async () => {
     const tenant = await insertTenant();
     const user = await insertUser();
@@ -592,7 +589,6 @@ describe('other uniqueness rules', () => {
     });
   });
 
-  // core:test/integration/db/dialer-analysis-migration.test.ts
   it('call_analysis_profiles: partial active-name/default uniqueness, name reuse after soft delete', async () => {
     const profile = (o: Record<string, unknown>) => insertRow('call_analysis_profiles', { tenant_id: TENANT, account_id: ACCOUNT, ...o });
     const first = await profile({ name: 'Same', is_default: true });
@@ -615,7 +611,7 @@ describe('other uniqueness rules', () => {
 describe('checks, cascades and foreign keys', () => {
   beforeEach(() => truncateAll());
 
-  // core:test/integration/agency/agency-migration.test.ts T-M2..T-M2e
+  // See also apps/server/test/integration/agency/agency-migration.test.ts T-M2..T-M2e
   it('state machines accept every legal value and reject anything else', async () => {
     const statuses = ['draft', 'running', 'paused', 'stopping', 'completed', 'stopped'];
     for (const status of statuses) await insertCampaign({ status, account_id: randomUUID() });
@@ -660,7 +656,7 @@ describe('checks, cascades and foreign keys', () => {
     });
   });
 
-  // core:test/integration/agency/agency-migration.test.ts T-M3/T-M3b/T-M3c
+  // See also apps/server/test/integration/agency/agency-migration.test.ts T-M3/T-M3b/T-M3c
   it('deleting a campaign removes its whole execution subtree; attempts need a real session', async () => {
     const campaign = await insertCampaign();
     const contact = await insertContact(campaign.id);
@@ -693,7 +689,7 @@ describe('checks, cascades and foreign keys', () => {
     await expect(insertCall({ campaign_id: randomUUID(), agency_attempt_id: randomUUID() })).resolves.toBeTruthy();
   });
 
-  // core:test/integration/db/dialer-analysis-migration.test.ts (re-keyed onto agency_calls)
+  // Keyed on agency_calls.
   it('dialer_analysis_jobs: one job per call, status checks, cascade from agency_calls', async () => {
     const call = await insertCall();
     const job = () => insertRow('dialer_analysis_jobs', { call_id: call.id, tenant_id: TENANT, account_id: ACCOUNT });

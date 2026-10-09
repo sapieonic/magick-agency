@@ -1,6 +1,6 @@
 /**
  * Shapes the agency call-detail and analysis-profile files need from console type
- * modules (call scripts and AI calls are not part of Magick Agency v1).
+ * modules.
  *
  *   - `AnalyticsDimension` / `StoredAnalyticsDimension`, used by
  *     `call-analysis-profile.ts`;

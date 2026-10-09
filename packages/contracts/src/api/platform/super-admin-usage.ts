@@ -7,7 +7,7 @@
  *
  * | Field | Source row |
  * |---|---|
- * | `dials` | `agency_call_attempts` with `dialed_at` in the window (the `(dialed_at, campaign_id)` index from dialer runtime migration 081) |
+ * | `dials` | `agency_call_attempts` with `dialed_at` in the window (served by the `(dialed_at, campaign_id)` index) |
  * | `answered_calls` | the same attempts with `answered_at IS NOT NULL` (the carrier answered) |
  * | `connected_calls` | the same attempts with `bridged_at IS NOT NULL` (an agent was joined) |
  * | `talk_seconds` | Σ `agency_call_attempts.talk_seconds` over those attempts |

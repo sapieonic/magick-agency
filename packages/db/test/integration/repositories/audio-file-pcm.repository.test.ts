@@ -12,7 +12,7 @@ vi.mock('../../../src/connection.js', () => ({
 const { audioFileRepository } = await import('../../../src/repositories/audio-file.repository.js');
 
 /**
- * Real-DB round-trip for the migration-067 PCM columns through the repository
+ * Real-DB round-trip for the PCM columns through the repository
  * (create / find / scoped / list / delete). Unit tests cover SQL shape; this
  * pins that Postgres actually stores and returns the values with the right
  * coercions.

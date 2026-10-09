@@ -2,9 +2,8 @@ import { getPool } from '../connection.js';
 import type { AudioFileRecord, CreateAudioFileInput } from '../models/audio-file.model.js';
 
 /**
- * `duration_seconds` is NUMERIC(10,2), which node-pg returns as a STRING. The
- * column was never populated before migration 067, so the `number | null` on the
- * model was harmless; now that upload writes a real duration it would be a type
+ * `duration_seconds` is NUMERIC(10,2), which node-pg returns as a STRING. Left
+ * as that string, the `number | null` on the model would be a type
  * lie that reaches API responses and any arithmetic on it. Coerce here so every
  * read path agrees. (`pcm_sample_rate`/`pcm_channels` are INTEGER/SMALLINT, which
  * pg already returns as numbers. `size_bytes` is BIGINT and therefore also a

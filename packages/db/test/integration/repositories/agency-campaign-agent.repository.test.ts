@@ -21,11 +21,11 @@ import { insertAccount, insertTenant, insertUser } from '../setup/factories.js';
  * also satisfied by a database with no index on the table at all:
  *
  *  1. **A bare `ON CONFLICT DO NOTHING` matches any unique index**, which is what
- *     makes `assign()` correct under migration 060's `(tenant_id, user_id)` index
- *     AND under 064's `(tenant_id, user_id, campaign_id)`. Naming an arbiter
+ *     makes `assign()` correct under a `(tenant_id, user_id)` index
+ *     AND under the per-campaign `(tenant_id, user_id, campaign_id)` one. Naming an arbiter
  *     couples the statement to one shape and raises `42P10` against the other —
- *     a 500 on every staffing write, and exactly what a code rollback past 064
- *     would reintroduce.
+ *     a 500 on every staffing write, and exactly what a rollback to a different
+ *     index shape would reintroduce.
  *  2. **A partial index needs its predicate restated to be inferable at all.**
  *     Not what the code relies on any more, but it is the property that makes a
  *     named arbiter fragile, so it stays pinned.
@@ -33,9 +33,9 @@ import { insertAccount, insertTenant, insertUser } from '../setup/factories.js';
  * ── What this file no longer tests ─────────────────────────────────────────
  * A previous revision proved that unique indexes are checked PER STATEMENT rather
  * than deferred to COMMIT, "the entire reason the close must precede the insert".
- * Migration 064 removed the close: there is no move, no transaction and no
+ * The per-campaign index removed the close: there is no move, no transaction and no
  * ordering to get wrong. Those cases were deleted rather than adapted, because the
- * behaviour they protected is behaviour this release deliberately removes.
+ * behaviour they protected does not exist.
  */
 
 const hoisted = vi.hoisted(() => ({ poolOverride: null as pg.Pool | null }));
@@ -101,13 +101,12 @@ describe('AgencyCampaignAgentRepository (integration)', () => {
 
   describe('the arbiter is unnamed, and that is what makes the code index-agnostic', () => {
     /**
-     * ── What this block used to prove, and why it changed ────────────────────
-     * `assign()` used to name its arbiter — `ON CONFLICT (tenant_id, user_id)
+     * ── Why the arbiter is unnamed ───────────────────────────────────────────
+     * `assign()` once named its arbiter — `ON CONFLICT (tenant_id, user_id)
      * WHERE unassigned_at IS NULL` — and these cases proved that Postgres requires
      * a partial index's predicate to be restated for the index to be inferable.
      * True, and it stopped being the property that matters: naming ANY arbiter
-     * couples the statement to one index's exact shape, and migration 064 changes
-     * that shape. The named form raises `42P10` against the other index, which
+     * couples the statement to one index's exact shape, and that shape can change. The named form raises `42P10` against the other index, which
      * surfaces as a 500 on every staffing write rather than as anything a reader
      * could diagnose.
      *
@@ -145,15 +144,15 @@ describe('AgencyCampaignAgentRepository (integration)', () => {
       expect(result.rows).toHaveLength(1);
     });
 
-    it('the OLD two-column arbiter now fails to plan — the rollback hazard, pinned', async () => {
+    it('a two-column (tenant_id, user_id) arbiter fails to plan — the rollback hazard, pinned', async () => {
       /**
        * The reason `assign()` stopped naming an arbiter, demonstrated rather than
-       * asserted in a comment. Any release whose `assign()` names 060's arbiter
-       * breaks against this index — which is precisely what a code rollback past
-       * migration 064 does, since `git checkout` does not roll back the database.
+       * asserted in a comment. Any release whose `assign()` names a two-column arbiter
+       * breaks against this index — which is precisely what a code rollback does
+       * when the database keeps the per-campaign index, since `git checkout` does not
+       * roll back the database.
        *
-       * Migration 064's header carries the remediation (run the down migration
-       * first). This case is here so that if somebody ever reintroduces a named
+       * This case is here so that if somebody ever reintroduces a named
        * arbiter, the suite tells them what they have coupled themselves to.
        */
       await expect(
@@ -168,7 +167,7 @@ describe('AgencyCampaignAgentRepository (integration)', () => {
 
     it('naming the wide index explicitly also works, predicate and all', async () => {
       // Not what the code does, but it pins WHY the bare form was chosen over this
-      // one: both are valid here, and only the bare one is also valid under 060's
+      // one: both are valid here, and only the bare one is also valid under a per-tenant
       // index. A future reader tempted to "tidy" the bare form into this one should
       // find the trade-off recorded rather than re-derive it.
       await repo.assign(assignInput({ campaign_id: CAMPAIGN_A }));
@@ -234,14 +233,13 @@ describe('AgencyCampaignAgentRepository (integration)', () => {
 
   describe('assign — staffing someone onto a SECOND campaign', () => {
     /**
-     * ── Against real Postgres, the behaviour migration 064 changed ───────────
-     * These assertions used to read "MOVES: the old row is closed, a new one is
-     * inserted, exactly one is active". Under migration 060's per-tenant index
-     * that was the rule; staffing somebody onto an afternoon campaign closed
-     * their morning row, so an ordinary handover destroyed a supervisor's earlier
+     * ── Against real Postgres, the per-campaign behaviour ────────────────────
+     * These assertions would read "MOVES: the old row is closed, a new one is
+     * inserted, exactly one is active" under a per-tenant index, where staffing somebody onto an afternoon campaign
+     * would close their morning row, so an ordinary handover would destroy a supervisor's earlier
      * decision and the agent's landing page could only ever name one campaign.
      *
-     * Being live on one campaign at a time is unchanged — that is the session
+     * Being live on one campaign at a time is governed by the session
      * index, not this table.
      */
     it('KEEPS both: two rows, both active', async () => {
@@ -280,8 +278,8 @@ describe('AgencyCampaignAgentRepository (integration)', () => {
 
     it('does not reach across tenants', async () => {
       // The same person, staffed in two tenants. Both sets of rows are legitimate
-      // and neither may affect the other — the shared-services case migration 060's
-      // header calls out and 064 preserves.
+      // and neither may affect the other — the shared-services case
+      // the closed-row design is meant to keep working.
       await repo.assign(assignInput({ campaign_id: CAMPAIGN_A }));
       await repo.assign(
         assignInput({ tenant_id: otherTenant.id, account_id: null, campaign_id: CAMPAIGN_C }),
@@ -392,9 +390,7 @@ describe('AgencyCampaignAgentRepository (integration)', () => {
 
     it('closes ONLY the named campaign, leaving their other assignments alone', async () => {
       /**
-       * The campaign predicate used to be a guard against a stale console
-       * unstaffing somebody from the campaign they had since been MOVED to. Since
-       * migration 064 it does ordinary work on the ordinary path: an agent
+       * The campaign predicate does ordinary work on the ordinary path: an agent
        * genuinely holds several assignments, so unstaffing them from one must not
        * disturb the rest.
        */

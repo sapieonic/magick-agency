@@ -27,8 +27,8 @@ export interface AgencyAccountSettings {
   allow_recording: boolean;
   /** Whether campaign calls may be analysed. */
   analyze_calls: boolean;
-  // There is no `analyze_dialer_calls` setting: its only reader was the bridge's
-  // softphone-only gate, which agency calls already skip (docs/decisions.md Q3b).
+  // There is no separate dialer-analysis setting: `analyze_calls` alone governs
+  // analysis (docs/decisions.md Q3b).
   /**
    * The account's concurrency ceiling — a read-out on the supervisor surface
    * (`AgencyCampaignStats.concurrency_limit`), set by super-admins only.
