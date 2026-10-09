@@ -17,9 +17,11 @@ in the source's terms. Three kinds of citation appear:
 - **Port provenance**: "core `src/agency/x.ts:120`@4850d1d9", "master `src/index.ts:325`",
   "cusui @ ee5beb44". These name source *code* in the MagickVoice repos (core v1.123.2 `4850d1d9`,
   master v3.24.0 `a1f0756a`, cusui v2.96.0 `ee5beb44`); `PORTING.md` maps every file.
-- **Design references**: "`agency.md` §6.2", "`docs/agency-dialer-design.md` §7b", "master
-  CLAUDE.md RBAC rule 1". These were documents in the MagickVoice superproject and repos; verbatim
-  copies now live under [`reference/`](reference/README.md), and comments point there.
+- **Design references**: MagickVoice documents such as `agency.md`, `docs/agency-dialer-design.md`
+  and the source repos' `CLAUDE.md` files. Verbatim copies live under
+  [`reference/`](reference/README.md), and comments cite them by that path, e.g.
+  "`docs/reference/magickvoice-platform/agency.md` §6.2" or
+  "`docs/reference/magick-master/CLAUDE.md`'s RBAC rule 1". Section numbers match the copies.
 - **`PORT NOTE (magick-agency)`** marks a line changed from the source, with the reason; a
   `Q<n> (Manas, 2026-10-09)` comment marks a ruling.
 

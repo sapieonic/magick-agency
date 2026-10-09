@@ -44,6 +44,7 @@ Details and next steps: [`status.md`](status.md).
 | [`seams.md`](seams.md) | The path rule, lane-owned files, config keys per block, and the cross-lane seams; still the module boundaries |
 | [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count |
 | [`history/`](history/README.md) | The build record: how it was run, the frozen v4.2 plan, the build log, the agents' briefs |
+| [`reference/`](reference/README.md) | Verbatim copies of the MagickVoice design docs and agent guides that code comments cite (`agency.md`, `service-map.md`, the dialer design, the source repos' `CLAUDE.md`), each with its origin commit and how it maps here |
 | [`../README.md`](../README.md) | Dev setup (prerequisites, infra, env, migration, first super-admin, running everything) |
 | [`../CLAUDE.md`](../CLAUDE.md) | Rules for agents working in this repo |
 | [`../PORTING.md`](../PORTING.md) | The port ledger: one row per ported file, source → destination, verbatim / modified / deleted, and per-file test counts |
@@ -54,7 +55,7 @@ Details and next steps: [`status.md`](status.md).
 **A new engineer:** this page → [`intent-and-plan.md`](intent-and-plan.md) →
 [`architecture.md`](architecture.md) → the root [`README.md`](../README.md) to get it running →
 [`seams.md`](seams.md) before moving files or adding config → [`decisions.md`](decisions.md) when
-a comment cites an ID.
+a comment cites an ID → [`reference/`](reference/README.md) when a comment cites a MagickVoice doc.
 
 **A reviewer:** [`status.md`](status.md) → [`decisions.md`](decisions.md) (especially B7, B8, B15,
 B16, Q1, Q6, Q8, Q9) → [`architecture.md`](architecture.md) → `PORTING.md` for the files under
