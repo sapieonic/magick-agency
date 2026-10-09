@@ -16,6 +16,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      # Real decoders for apps/server/test/unit/audio/decode.test.ts, which fails
+      # (rather than skips) under CI when they are missing.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpg123 sndfile-programs
       - run: pnpm install --frozen-lockfile
       # lint = tsc --noEmit over src AND test in every package (tests are typechecked).
       - run: pnpm lint
