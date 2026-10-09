@@ -293,7 +293,7 @@ describe('the action filter', () => {
   });
 
   /**
-   * An older server, which deploy order permits.
+   * An older server that does not send the field.
    *
    * The filter goes away rather than falling back to a built-in list — that
    * fallback is the mirror this removed, and every stale entry in it would be a
@@ -1005,7 +1005,7 @@ describe('AgencyCampaignActivityPage — a key-authenticated row', () => {
    * history, from a change whose whole promise was that history renders
    * unchanged.
    */
-  it('still renders a pre-067 automatic row as Automatic', async () => {
+  it('still renders an automatic row with no recorded actor type as Automatic', async () => {
     mocks.getCampaignActivity.mockResolvedValue(page({
       rows: [{
         ...AUTO_PAUSE,

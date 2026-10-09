@@ -75,7 +75,7 @@ describe('BestHoursMatrix — the grid', () => {
 
   it('renders NO zone on the axis when the field did not arrive', () => {
     /**
-     * E3: absent means the matrix renders without an hour-axis zone label. It does not
+     * Absent means the matrix renders without an hour-axis zone label. It does not
      * guess, and it does not fall back to the reader's — the surface says the zone
      * could not be read instead (`BestHours.test.tsx` pins that sentence).
      */
@@ -84,7 +84,7 @@ describe('BestHoursMatrix — the grid', () => {
   });
 });
 
-describe('BestHoursMatrix — E5, a thin cell is off the ramp', () => {
+describe('BestHoursMatrix — a thin cell is off the ramp', () => {
   it('gives a measured cell a ramp step and a thin cell none', () => {
     /**
      * The mutation this case exists for: giving the thin cell `data-step="0"` to "keep
@@ -168,7 +168,7 @@ describe('BestHoursMatrix — E5, a thin cell is off the ramp', () => {
   });
 });
 
-describe('BestHoursMatrix — E4, absent is two different facts', () => {
+describe('BestHoursMatrix — absent is two different facts', () => {
   it('marks an out-of-window row on its header and empties its cells', () => {
     /**
      * A blank row beside a normal-weight weekday label reads as "we dialled Tuesday
@@ -212,7 +212,7 @@ describe('BestHoursMatrix — E4, absent is two different facts', () => {
   });
 });
 
-describe('BestHoursMatrix — E6, three views over the same grid', () => {
+describe('BestHoursMatrix — three views over the same grid', () => {
   it('shows a rate on the rate views and a count on the volume view', () => {
     const page = bestHoursPage({
       rows: [hourCell({ day: 1, hour: 10, attempts: 300, connected: 100, successes: 25 })],

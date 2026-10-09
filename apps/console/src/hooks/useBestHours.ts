@@ -115,7 +115,7 @@ export function useBestHours(filters: BestHoursFilters): UseBestHours {
       `campaign_id` — correctly, because a cleared selector's empty string would
       otherwise read as a filter matching nothing — and dropping it here would turn
       this into the POOLED read, which upstream answers `400 timezone_ambiguous`
-      because both time dimensions are grouped. E2 says the client must not send that
+      because both time dimensions are grouped. the client must not send that
       request at all, so it does not: the state is unreachable through the caller (the
       entry button only appears with a campaign in scope, and this surface's selector
       has no "all campaigns" option), and this makes it a refusal rather than a

@@ -164,7 +164,7 @@ export function AgencyRetryDialog({
    * At-most-once, minted ONCE PER OPENING and deliberately NOT per request.
    *
    * That distinction is the entire mechanism. There is no campaign delete route
-   * in either service, so a create whose RESPONSE is lost — a proxy timeout, a
+   * in the API, so a create whose RESPONSE is lost — a proxy timeout, a
    * pod eviction — leaves the supervisor looking at a failure over a campaign
    * that exists and is fully dialable. What they do next is press the button
    * again, and a key re-minted at that moment would collide with nothing and

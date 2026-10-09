@@ -85,7 +85,7 @@ describe('agencyCompareTray — the bounds', () => {
   });
 });
 
-describe('agencyCompareTray — E7, suppressed where a band is not a peer group', () => {
+describe('agencyCompareTray — suppressed where a band is not a peer group', () => {
   it('is suppressed entirely on the pooled all-campaigns read', () => {
     /**
      * The mutation this case exists for. `campaign_id: null` is the pooled read: every
@@ -181,7 +181,7 @@ describe('agencyCompareTray — the selection against the page', () => {
   });
 });
 
-describe('agencyCompareTray — E7, a withheld metric stays withheld', () => {
+describe('agencyCompareTray — a withheld metric stays withheld', () => {
   it('uses the roster’s own cell functions, identically', () => {
     /**
      * Not "produces the same output as" — IS. `COMPARE_METRICS` holds the roster's

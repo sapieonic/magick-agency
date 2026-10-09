@@ -357,8 +357,8 @@ function SurfaceNav() {
  * ── Why the destination goes through `WorkspaceExit` ───────────────────────
  * The `/app` above is deliberate and correct:
  * the platform zone — team and membership, credits, billing, the tenant audit
- * log, API keys, settings, tenant/account switching — is shared by both products
- * by design, so an agency surface linking there is not a boundary violation. The
+ * log, API keys, settings, tenant/account switching — is shared by every agency
+ * surface by design, so an agency surface linking there is not a boundary violation. The
  * violation to avoid is the *other* kind of `/app` link, the call-shaped deep
  * link that dumps a supervisor out of `AgencyLayout` and loses the campaign they
  * were reading.

@@ -1392,7 +1392,7 @@ describe('AgentAnalyticsSection — an all-departed page says ONE thing', () => 
     /**
      * ⚠️ `empty` keyed on `inactive_omitted` alone, so `{ rows: [],
      * unattributed_omitted: 3 }` — the server dropped three ids with no membership record
-     * of any status, R4's third state — took the empty arm and rendered "Nobody was
+     * of any status (the third state) — took the empty arm and rendered "Nobody was
      * handed a call in this window, so there is nothing to rank" directly above a
      * readout saying THREE AGENTS DIALLED. Two sentences from one payload,
      * contradicting each other, and the remedy the empty copy names (a longer window)
@@ -1765,7 +1765,7 @@ describe('AgentAnalyticsSection — the compare tray', () => {
 
   it('issues no further request when it is opened and used', async () => {
     /**
-     * E7's whole point, asserted where the reader actually meets the tray: it compares
+     * The tray's whole point, asserted where the reader actually meets the tray: it compares
      * people already on the page against the page's own benchmark. The roster read
      * count must not move.
      */

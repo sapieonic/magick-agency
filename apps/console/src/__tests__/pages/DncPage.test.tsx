@@ -13,8 +13,8 @@ import type { DncAddSummary, DncEntry } from '../../types/dnc';
  * There is a second class of the same
  * failure (decision Q2): a promise that is true but reads wider than it is. DNC is
  * **agency-only** — the API's dial-time gate lives in `agency/pre-dial-gates.ts`
- * and nothing in AI dispatch consults it — so copy presenting the list as
- * platform-wide compliance leaves an operator believing a customer who asked not
+ * and nothing else consults it — so copy presenting the list as
+ * compliance for every kind of call leaves an operator believing a customer who asked not
  * to be called is protected on surfaces that never check.
  */
 
@@ -107,7 +107,7 @@ describe('DNC — scope, and what actually suppresses a call', () => {
     const title = screen.getByTestId('dnc-scope-tenant').getAttribute('title') ?? '';
     // The only scope that may claim the dial-time block list.
     expect(title).toContain('Enforced for all agency dialing');
-    // Q2 OVER-claim guard, and the widest claim on the page. "Enforced
+    // OVER-claim guard, and the widest claim on the page. "Enforced
     // everywhere" is what this said, and everywhere is not what it is: the
     // dial-time set is read by the agency pacing engine alone.
     expect(title).not.toMatch(/enforced everywhere/i);
@@ -189,7 +189,7 @@ describe('DNC — scope, and what actually suppresses a call', () => {
   });
 });
 
-describe('DNC — agency-only, and the copy has to say so (Q2)', () => {
+describe('DNC — agency-only, and the copy has to say so', () => {
   it('says which product this list governs, and which it does not', async () => {
     render(<DncPage />);
     await screen.findByText('+919820041772');
@@ -197,8 +197,8 @@ describe('DNC — agency-only, and the copy has to say so (Q2)', () => {
     // Positive first, so the negative below cannot pass on a guide that simply
     // failed to render.
     expect(document.body.textContent).toMatch(/Agency campaigns don’t dial the numbers on this list/);
-    // The sentence a customer needs and the page never had: an AI call, a
-    // broadcast or a softphone dial does not consult this list.
+    // The sentence a customer needs and the page never had: what this list does
+    // NOT cover.
     expect(document.body.textContent).toMatch(
       /does not apply to AI calls, broadcasts or the Softphone/,
     );
@@ -333,7 +333,7 @@ describe('DNC — removal is permission-gated and consequence-aware', () => {
 
   it('keeps the scope in the toast, which is what stays on screen afterwards', async () => {
     /**
-     * Q2's over-claim survived the first pass on the one sentence that outlives
+     * The over-claim survived the first pass on the one sentence that outlives
      * the act. The dialog was narrowed to "agency campaigns will be able to dial
      * it again"; the toast that fires on confirm still said the number "can be
      * called again", full stop. That is the sentence the operator actually reads

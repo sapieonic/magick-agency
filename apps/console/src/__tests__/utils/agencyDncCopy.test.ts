@@ -112,7 +112,7 @@ describe('the outcome promises only what the response promised', () => {
   it('the tenant-wide mark narrows the claim to AGENCY dialing (Q2)', () => {
     // The unqualified "no campaign in this workspace will dial it again" is the
     // sentence `DncPage` narrowed away from: the dial-time gate lives in the API's
-    // `agency/pre-dial-gates.ts` and nothing in AI dispatch consults it, so the
+    // `agency/pre-dial-gates.ts` and nothing else consults it, so the
     // widest true claim is every agency campaign. This is the copy an AGENT reads
     // and may repeat to the customer, so it must be no wider than the page's.
     const copy = dncOutcomeCopy(response({ dnc_recorded: true }), 'tenant');

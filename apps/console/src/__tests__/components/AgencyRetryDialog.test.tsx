@@ -9,7 +9,7 @@ import type { AgencyRetrySelector } from '../../types/agency-spine';
  *
  * ── What is worth pinning here ─────────────────────────────────────────────
  * `POST .../retry` creates a campaign and seeds its roster in one transaction,
- * and there is no campaign delete route in either service. So everything below
+ * and there is no campaign delete route in the API. So everything below
  * is about what the supervisor is told BEFORE the button, and the two facts
  * that are most often missing when the number looks wrong:
  *

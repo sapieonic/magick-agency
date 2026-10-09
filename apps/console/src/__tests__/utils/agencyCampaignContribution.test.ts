@@ -375,7 +375,7 @@ describe('agencyCampaignContribution — three facts, and no fraction between th
 
   it('never renders a "showing N of M" fraction', () => {
     /**
-     * Uncomputable, because of the ORDER the two services apply their rules in:
+     * Uncomputable, because of the ORDER the server and the API apply their rules in:
      * The API scopes, groups, ranks and cuts to `limit`, and the API then filters the
      * page it was handed. So `rows.length` is "the top `limit`, minus whichever
      * departed members happened to be inside it", and the API never saw the groups

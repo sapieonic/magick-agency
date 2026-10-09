@@ -19,7 +19,7 @@
  */
 export const RETURN_PATH_PARAM = 'next';
 
-/** The primary application's sign-in page. */
+/** The generic sign-in path (see `App.tsx` for what it renders). */
 export const LOGIN_PATH = '/login';
 
 /**
@@ -46,8 +46,7 @@ export const LOGIN_PATH = '/login';
  *     address — silently lands in a private empty tenant of their own while the
  *     membership their supervisor created sits unclaimed. The agency door has no
  *     signup on it at all.
- *  2. **The pitch.** `/login` sells the AI voice product: a free-credits banner
- *     and four feature cards about outbound AI calling and IVR building. An agent
+ *  2. **The pitch.** A generic sign-in page is written for prospects. An agent
  *     being onboarded onto a dialer is staff, not a prospect.
  */
 export const AGENCY_LOGIN_PATH = '/agency/login';
@@ -100,7 +99,7 @@ const AGENCY_SURFACE_PREFIXES = ['/agency', '/dialer', '/station'] as const;
  * IS the destination, since a bare `/station` lands on "No campaign selected." —
  * survives the round trip. A boundary of `(?:/|$)` alone therefore failed to match
  * the one URL the agency door most needs to catch, and sent an agent bounced off a
- * live station to the primary app's page.
+ * live station to the generic `/login` door.
  *
  * Matched on a boundary rather than with `startsWith` so `/agencyfoo` — an
  * ordinary path that merely shares a prefix — is not swept in. Case-insensitive
@@ -385,7 +384,7 @@ export function sessionExpiredLoginUrl(): string {
    * The door is chosen from the CURRENT pathname rather than from `next`, because
    * `next` is absent in exactly the cases above — already on a login page, guard
    * refused, or the bare root — and an agent whose station URL failed the guard
-   * would then be handed the primary app's page. The pathname is available either
+   * would then be handed the generic `/login` door. The pathname is available either
    * way.
    */
   return `${loginPathFor(window.location.pathname)}?${params.toString()}`;

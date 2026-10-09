@@ -297,7 +297,7 @@ describe('rows the API refused on arrival', () => {
   });
 
   it('renders nothing rather than NaN for a job written before the API had the columns', () => {
-    // The API defaults these itself, but a row from before its migration 055 has
+    // The API defaults these itself, but a row from before it had these columns has
     // no key at all — and `NaN duplicates` over a real import is worse than
     // silence.
     const legacy = job();

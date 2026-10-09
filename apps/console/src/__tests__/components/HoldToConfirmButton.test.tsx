@@ -412,7 +412,7 @@ describe('the retry configuration — shortcutScope self, confirmation caller', 
     // RELEASE_TIMEOUT_MS and says "The campaign was not created. Nothing
     // changed." — which, on an awaited POST that creates a campaign and seeds a
     // roster in one transaction, is a claim about the world that may be false.
-    // There is no delete route in either service to make it true afterwards.
+    // There is no delete route in the API to make it true afterwards.
     const { onConfirm } = retry();
 
     fireEvent.keyDown(button(), { key: 'e' });

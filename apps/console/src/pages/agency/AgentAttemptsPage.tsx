@@ -14,14 +14,12 @@ import type { AgencyStaffingHistoryEntry } from '../../types/agency-stats';
  * "My calls" — one row per dial the signed-in person placed, at
  * `/dialer/attempts`.
  *
- * ── What this is, next to the two lists that already exist ────────────────
+ * ── What this is, next to the campaign's Attempts view ────────────────────
  * `/agency/campaigns/:id/attempts` is the same spine scoped to ONE campaign and
  * floored at `agency.supervise`, so an agent cannot read even their own rows
- * through it. `/app/calls/softphone/history` is a CALL list, so an attempt that
- * was abandoned because no agent was free, or that failed before it dialled, has
- * no row there at all — and it is `calls.dialer`-gated inside `AppLayout`, which a
- * dedicated agent cannot usefully render. This page is the third thing: CROSS-
- * campaign, scoped to the caller by the server, and built on the attempt table so
+ * through it. A CALL list would not do either: an attempt that was abandoned
+ * because no agent was free, or that failed before it dialled, has no call row
+ * at all. This page is CROSS-campaign, scoped to the caller by the server, and built on the attempt table so
  * the dials that never connected appear. It is the only surface that answers "what
  * did I actually do today" for somebody who worked Renewals in the morning and
  * Collections after lunch.

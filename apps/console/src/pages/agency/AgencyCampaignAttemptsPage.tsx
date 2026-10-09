@@ -54,13 +54,12 @@ const PAGE_SIZE = 50;
 /**
  * The campaign's Attempts view — one row per dial.
  *
- * ── Why this is not `/app/calls/softphone/history` ─────────────────────────
- * Agency legs do land in `webrtc_calls`, so that page can show the ones that
- * connected. It cannot show the ones that did not: being a CALL list, an
- * attempt that was abandoned because no agent was free, or that failed before
- * it dialed, has no row there at all. Those are the rows a compliance question
- * is usually about, and this page is built on the attempt table so they appear.
- * That page is also gated on `calls.dialer` and has no campaign filter.
+ * ── Why this is built on attempts, not calls ───────────────────────────────
+ * Agency legs do land in `agency_calls`, so a call list could show the ones that
+ * connected. It cannot show the ones that did not: an attempt that was abandoned
+ * because no agent was free, or that failed before it dialed, has no call row at
+ * all. Those are the rows a compliance question is usually about, and this page
+ * is built on the attempt table so they appear.
  *
  * ── A terminal campaign is the PRIMARY case ─────────────────────────────────
  * "What did this campaign do" is normally asked after the run. So nothing here

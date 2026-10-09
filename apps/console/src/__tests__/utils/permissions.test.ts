@@ -7,8 +7,8 @@ import type { Role } from '../../types/auth';
  * The console's `hasPermission` is the contract's (`@magick-agency/contracts/rbac`,
  * the matrix the server enforces). The permission LISTS here cover the
  * permissions agency has, under agency names (`agency.analysis_profiles.*`).
- * There are no rows for credits, API keys, tenant/account administration or an
- * AI product's keys, because those permissions do not exist. The
+ * There are no rows for credits, API keys or tenant/account administration,
+ * because those permissions do not exist. The
  * agency-specific floors are pinned in `agencyPermissionMirror.test.ts` and
  * `agentPermissions.test.ts`.
  */

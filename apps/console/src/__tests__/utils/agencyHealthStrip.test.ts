@@ -92,8 +92,8 @@ describe('stallCopy — each arm names its own evidence', () => {
 
     expect(copy.headline).toContain('3.4%');
     expect(copy.headline).toContain('3%');
-    // The figure is frozen at the instant the guardrail fired (the API migration
-    // 089). Calling it a current rate means a supervisor who has since staffed
+    // The figure is frozen at the instant the guardrail fired (`paused_at` /
+    // `pause_abandonment_rate_pct`). Calling it a current rate means a supervisor who has since staffed
     // up watches a number that cannot move and concludes the fix failed.
     expect(copy.evidence).toContain('«2026-08-15T09:30:00.000Z»');
     expect(copy.evidence).toMatch(/not a live rate/i);

@@ -44,10 +44,9 @@ describe('the agency station audio wire format', () => {
 
   describe('the frame ceiling is the API’s, not a guess', () => {
     /**
-     * **This is NOT a cross-repo check, and it cannot be one.** The API is a
-     * separate submodule with its own build; nothing here imports from it, and a
-     * test that read `webrtc-bridge-manager.ts` off disk would pass locally and
-     * fail in CI, where only this repo is checked out.
+     * **This is NOT a check against the server's constant.** Nothing here imports
+     * it, and a test that read `webrtc-bridge-manager.ts` off disk would couple
+     * this console's unit suite to the server's source layout.
      *
      * An earlier version asserted `MAX_AGENCY_MEDIA_PAYLOAD_CHARS === 64000 * 2`
      * — our literal against our other literal, arranged to look like a
@@ -58,7 +57,7 @@ describe('the agency station audio wire format', () => {
      *
      * So the assertions below pin the two things that are actually ours to
      * defend — the guard's boundary behaviour, and that real traffic is nowhere
-     * near it — and the cross-repo agreement is named as a manual obligation in
+     * near it — and the agreement with the server's constant is named as a manual obligation in
      * `agencyMedia.ts` rather than pretended at here.
      */
     it('is the transcribed value, re-checked by hand against the API', () => {
@@ -76,7 +75,7 @@ describe('the agency station audio wire format', () => {
 
     it('refuses a payload the API would silently drop', () => {
       // The API logs and returns. A frame we hand it over the ceiling is audio that
-      // vanishes two services away with nothing on this side to show for it.
+      // vanishes downstream with nothing on this side to show for it.
       expect(encodeAgencyMediaFrame('a'.repeat(MAX_AGENCY_MEDIA_PAYLOAD_CHARS + 1))).toBeNull();
       // And the boundary itself is accepted, so the guard is `>` and not `>=`.
       expect(encodeAgencyMediaFrame('a'.repeat(MAX_AGENCY_MEDIA_PAYLOAD_CHARS))).not.toBeNull();

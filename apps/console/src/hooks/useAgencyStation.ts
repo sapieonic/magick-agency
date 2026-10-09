@@ -1591,7 +1591,7 @@ export function useAgencyStation(
     const frame = encodeAgencyMediaFrame(payload);
     // `null` ⇒ the API would have dropped it for length. Dropping it here instead
     // means the ceiling is one number in one place rather than a silent discard
-    // two services away.
+    // downstream.
     if (frame === null) return false;
     socket.send(frame);
     return true;

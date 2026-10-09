@@ -63,14 +63,14 @@ export const AGENCY_MEDIA_FRAME_SAMPLES = 320;
  * Because this must match what the server **actually rejects**, not what it ought to.
  * A tighter bound here would reject frames the server accepts; a looser one would ship
  * frames into the server's silent drop. It is transcribed, and it must be re-checked
- * against `webrtc-bridge-manager.ts:182` whenever that file moves — there is no
- * build-time link between the repos that could catch it.
+ * against `webrtc-bridge-manager.ts:182` whenever that file moves — nothing
+ * at build time links the two values and could catch it.
  *
  * ── This is not a protective bound in practice ──────────────────────────────
  * A 20 ms frame is 640 bytes → **856 base64 characters**, 0.7% of this ceiling.
  * Nothing the capture graph produces can approach it. The check exists so that a
  * broken graph upstream fails visibly on this side rather than becoming audio
- * that never arrives two services away — not because normal traffic is near it.
+ * that never arrives at the dialer runtime — not because normal traffic is near it.
  */
 export const MAX_AGENCY_MEDIA_PAYLOAD_CHARS = 128000;
 

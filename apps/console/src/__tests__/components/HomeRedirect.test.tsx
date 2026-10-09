@@ -3,7 +3,7 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 /**
- * The app root, routed on entitlement (handoff E4).
+ * The app root, routed on entitlement.
  *
  * ── What is worth pinning ──────────────────────────────────────────────────
  * The two errors this component can make are not symmetrical, and every case

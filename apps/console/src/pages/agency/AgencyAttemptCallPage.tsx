@@ -45,8 +45,7 @@ import styles from './AgencyAttemptCallPage.module.css';
  *
  * The page that did not exist. Clicking a call inside the agency workspace used
  * to navigate to `/app/calls/dialer/history/:id` — out of `AgencyLayout`, into the
- * primary application's shell, gated on the primary application's `calls.dialer`
- * capability, with the campaign context and the list the reader was reading both
+ * `/app` zone, gated on a `calls.dialer` capability, with the campaign context and the list the reader was reading both
  * gone. The link pointed there because that was the only place the endpoint
  * existed.
  *
@@ -58,7 +57,7 @@ import styles from './AgencyAttemptCallPage.module.css';
  * ── The facts are the point, and the first version had none of them ────────
  *
  * This page fetched the attempt and used exactly one field off it
- * (`attempt_number`, for the breadcrumb leaf), then rendered the SOFTPHONE's
+ * (`attempt_number`, for the breadcrumb leaf), then rendered a generic call
  * facts card: Provider, and an `Initiated By` that on an agency leg is the
  * dialing session id (the API's `agency-dialer.ts` sets `initiatedBy:
  * cmd.sessionId`). So clicking a row in the attempts list landed the supervisor
@@ -69,7 +68,7 @@ import styles from './AgencyAttemptCallPage.module.css';
  * `identityFacts` / `identityCards` are that fixed. The words and the formatters
  * are the attempts list's own (`agencySpineCopy`, `types/agency-spine`), because
  * two screens one click apart describing the same row must not describe it
- * differently — and the softphone's Provider and Initiated By are simply not
+ * differently — and the generic Provider and Initiated By are simply not
  * passed, rather than shown as a UUID.
  *
  * ── The purged call is a first-class state, not an error ───────────────────
@@ -115,15 +114,15 @@ import styles from './AgencyAttemptCallPage.module.css';
  */
 
 /**
- * Speaker labels. Two humans, like the softphone — and unlike the AI call's
- * assistant/user, which is why this is passed rather than defaulted.
+ * Speaker labels. Two humans — unlike the view's default assistant/user, which is
+ * why this is passed rather than defaulted.
  */
 const AGENCY_ROLE_LABELS = { agent: 'Agent', customer: 'Customer' };
 
 /**
  * Summary-card copy. The reader here is a supervisor reviewing someone else's
- * conversation, so the wording is the same plain register the softphone uses —
- * shared by reuse of the vocabulary module, not by defaulting.
+ * conversation, so the wording is the shared vocabulary module's plain register —
+ * shared by reuse, not by defaulting.
  */
 const AGENCY_ANALYSIS_MESSAGES: Record<string, string> = {
   awaiting_recording: ANALYSIS_STATUS_MESSAGES.awaiting_recording!,
@@ -530,11 +529,11 @@ export default function AgencyAttemptCallPage() {
         subtitle={attemptOutcomeLabel(attempt.outcome)}
         // The names for this product's two legs. WHETHER to use them is the
         // view's decision, not this page's — it drops them itself on a failed
-        // diarization, for the softphone as well as here.
+        // diarization.
         roleLabels={AGENCY_ROLE_LABELS}
         identityFacts={identityFacts}
         identityCards={identityCards}
-        // The agency's OWN analytics entitlement, not the softphone's. The server
+        // The agency's OWN analytics entitlement. The server
         // withholds the transcript and summary fields for the same capability, so
         // this hides a section that would otherwise render empty.
         analysisEnabled={isEnabled(AGENCY_ANALYTICS_CAPABILITY)}

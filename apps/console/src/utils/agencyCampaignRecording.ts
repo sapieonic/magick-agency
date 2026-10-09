@@ -2,7 +2,7 @@
  * Campaign recording + call-summary opt-in.
  *
  * Two fields on an agency campaign — `record_calls` and `analysis_profile_id` —
- * were settable by nothing but curl. The server has read both since migration 072,
+ * were settable by nothing but curl. The server reads both,
  * the API's governance catalog has declared `agency.recording` / `agency.analytics`
  * since the catalog was written, and the API now actually
  * refuses them to a capability-off tenant. No UI offered either field to anyone,
@@ -40,8 +40,8 @@ export const AGENCY_RECORDING_CAPABILITY = 'agency.recording';
 export const AGENCY_ANALYTICS_CAPABILITY = 'agency.analytics';
 
 /*
- * There is no separate capability for READING the profile list. Agency has no
- * governance layer and no softphone: the list is gated on the
+ * There is no separate capability for READING the profile list: the list is
+ * gated on the
  * `agency.analysis_profiles.read` permission alone, so a tenant that may write
  * the field may always read the list.
  */

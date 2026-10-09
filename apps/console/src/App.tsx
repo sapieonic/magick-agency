@@ -164,7 +164,7 @@ export default function App() {
 
               {/*
                 The app root, routed on ENTITLEMENT rather than fixed at `/app`
-                (handoff E4). A pure-agency tenant used to sign in to an AI
+                A pure-agency tenant used to sign in to an AI
                 dashboard of numbers it does not generate; now the default shell
                 follows what the tenant has. See `HomeRedirect` for the predicate,
                 for why `calls` cannot be part of it, and for why the decision is
@@ -389,9 +389,8 @@ export default function App() {
                   rejected-rows export cannot have drifted in the move.
 
                   `campaigns/:id/attempts` is the other half: one row per dial,
-                  including the dials that never reached an agent — which is
-                  what `/app/calls/softphone/history`, being a CALL list, cannot
-                  show at all.
+                  including the dials that never reached an agent — which a CALL
+                  list cannot show at all.
 
                   No extra guard. The layout above already requires the `agency`
                   capability and the `agency_dialer_enabled` flag, and the server

@@ -27,12 +27,11 @@ import type { BuilderStepId } from '../pages/campaigns/agency/builderFlow';
  * All emitters delegate to `captureEvent`, which is a safe no-op when analytics
  * is disabled (no key configured).
  *
- * ── The product dimension is NOT declared here (E8) ─────────────────────────
- * The names in this catalog are flat and stay flat. The two products share one
- * PostHog project, so `webrtc_call_placed` from the Softphone had nothing
- * separating it from an agency station dial; the separator is a `product`
- * super-property — `'ai'` | `'agency'` — registered by whichever shell is
- * mounted (`useProductSurface`, called by `AppLayout` and `AgencyLayout`). Every
+ * ── The product dimension is NOT declared here ─────────────────────────
+ * The names in this catalog are flat and stay flat. The separator between shells
+ * is a `product` super-property — `'ai'` | `'agency'` — registered by whichever
+ * shell is mounted (`useProductSurface`, called by `AppLayout` for the `/app`
+ * zone and by `AgencyLayout`). Every
  * event below carries it without any emitter or call site knowing it exists, and
  * so do autocapture, pageviews and errors. Do NOT add a `product` property to an
  * emitter's shape: two sources for one dimension is how the two disagree.
@@ -40,14 +39,6 @@ import type { BuilderStepId } from '../pages/campaigns/agency/builderFlow';
  * Events fired outside both shells (login, onboarding, super-admin) deliberately
  * carry no `product` at all.
  */
-
-// There are no trackers for the AI product's surfaces — IVR workflows,
-// automations, prompts, call-script AutoPilot, recurring schedules, the
-// campaign (broadcast) composer and its concurrency/balance refusals, the
-// bulk-dispatch jobs list, the AI dashboard, the softphone (WebRTC dialer),
-// onboarding, messaging connections, credits, funnel extensions (dashboard
-// quick actions and trend range, composer steps, launch failures, softphone
-// failures), call follow-ups and the broadcast panel view.
 
 // --- Activation, setup, monetization, and reliability -------------------
 
@@ -825,7 +816,7 @@ export function trackAgencyBestHoursViewed(props: {
   cells: number;
   /** Cells with at least one dial. */
   cells_with_dials: number;
-  /** Cells the server said not to rate, so they carry no colour. The E5 number. */
+  /** Cells the server said not to rate, so they carry no colour. */
   withheld_cells: number;
   /** Cells never inside `[from, to)`. `0` when coverage could not be derived. */
   out_of_window_cells: number;

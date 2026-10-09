@@ -30,7 +30,7 @@ import styles from './BreakMenu.module.css';
  *
  * ── What bootstrap advertises is what we render ──────────────────────────────
  * `break_reasons: '[]'` means **"the operator has no opinion"**, not "breaks are
- * off": the API (`resolveBreakReasons`, migration 078) serves six neutral built-ins
+ * off": the API (`resolveBreakReasons`) serves six neutral built-ins
  * in that case, so bootstrap never in practice advertises an empty list. An older
  * description of the empty catalog said every break request is rejected —
  * **that is stale and this component is not built to it.** The disabled state below is kept as a defensive path for a list

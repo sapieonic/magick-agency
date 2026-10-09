@@ -87,10 +87,10 @@ const SCOPE_LABEL: Record<DncScopeKind, string> = {
 
 const SCOPE_TOOLTIP: Record<DncScopeKind, string> = {
   // "Enforced everywhere" is what this said, and it was the widest claim on the
-  // page — read as the platform honouring the number, which it does not. DNC is
-  // an agency-dialing suppression list (Q2): the dial-time gate lives in the API's
-  // `agency/pre-dial-gates.ts` and nothing in AI dispatch consults it. The
-  // widest true claim is every agency campaign in the workspace.
+  // page — read as every kind of call honouring the number. DNC is an
+  // agency-dialing suppression list: the dial-time gate lives in the API's
+  // `agency/pre-dial-gates.ts`. The widest true claim is every agency campaign in
+  // the workspace.
   tenant:
     'Enforced for all agency dialing: this number is in the dialer’s block list, so no agency '
     + 'campaign in this workspace will call it, and it is dropped from every roster import. It '
@@ -108,7 +108,7 @@ const SCOPE_TOOLTIP: Record<DncScopeKind, string> = {
 };
 
 /**
- * Where the entry came from — narrowed for `regulator` (Q2).
+ * Where the entry came from — narrowed for `regulator` (the list governs agency dialing only).
  *
  * `types/dnc.ts` mirrors the server's shapes and labels each source generically;
  * "Regulator list" beside a suppression on a platform screen reads as a
@@ -241,13 +241,12 @@ export function DncPage() {
     try {
       await removeDncEntry(entry.id, tenantId ?? undefined, accountId ?? undefined);
       /*
-        Q2, on the one sentence that outlives the act. "can be called again" was
+        The one sentence that outlives the act. "can be called again" was
         precisely the confirm dialog's over-claim — narrowed there to agency
         campaigns, then restated unqualified in the toast that stays on screen
         after Remove is pressed. This is the last thing the operator reads about
-        this number, so it is the one that most has to be right: nothing about an
-        AI call, a broadcast or a Softphone dial changed, because none of them
-        ever consulted this list.
+        this number, so it is the one that most has to be right: what changed is
+        that agency campaigns may dial it, and nothing else.
       */
       showToast(`${entry.phone_e164} removed — agency campaigns can dial it again.`, 'success');
       // Removing the only row on a later page would otherwise reload that same
@@ -267,10 +266,9 @@ export function DncPage() {
       <h1 className={styles.title}>Do Not Call</h1>
 
       {/*
-        Q2: this list is agency-only, and the copy has to say so. It stops
-        agency campaigns from dialing a number; it has no bearing on AI calls,
-        broadcasts or the Softphone, none of which consult it. Presenting it as
-        platform-wide compliance would leave an operator believing a customer
+        This list governs agency campaigns, and the copy has to say so. It stops
+        agency campaigns from dialing a number and nothing else. Presenting it as
+        compliance for every kind of call would leave an operator believing a customer
         who asked not to be called is protected everywhere — the one
         misunderstanding on this page that costs a customer something.
       */}

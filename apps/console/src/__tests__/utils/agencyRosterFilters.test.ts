@@ -44,7 +44,7 @@ describe('the round trip', () => {
   });
 
   it('uses repeated params, never a comma-joined value', () => {
-    // Both services accept repeated params; a comma-joined value would lose a
+    // The server accepts repeated params; a comma-joined value would lose a
     // disposition code containing a comma a second time, before the request is
     // even built.
     const params = rosterFiltersToParams({ last_disposition: ['a', 'b'] });

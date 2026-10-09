@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
  *
  * ── The bug this is the guard for ──────────────────────────────────────────
  * The agency workspace (`AgencyLayout`, everything under `/agency`, `/dialer` and
- * `/station`) and the primary AI application (`AppLayout`, everything under
+ * `/station`) and the platform zone (`AppLayout`, everything under
  * `/app`) are separate shells, and makes that a boundary rather than a
  * coincidence: *"A link that crosses shells is a bug even when the data it lands
  * on is correct, because it strands the reader outside the context they were
@@ -34,7 +34,7 @@ import { describe, expect, it } from 'vitest';
  * names three zones, not two, and the third is the one that gets misread.
  * Team and membership (including inviting agents), credits, billing and invoices,
  * the tenant audit log, API keys, settings, onboarding, and tenant/account
- * switching are **platform** surfaces, shared by both products by design. They
+ * switching are **platform** surfaces, shared by every agency surface by design. They
  * live at `/app`; linking to them from the agency shell is correct and must
  * survive. `AgencyLayout` holds no credits, no team and no settings on purpose,
  * because a pure-agency supervisor legitimately administers in `/app` and
@@ -199,7 +199,7 @@ function appRouteLiterals(): string[] {
 
 /*
  * There was a baseline here, holding the two "Open call" links on attempt rows
- * that pointed at the AI product's `calls.dialer`-gated call history. It was
+ * that pointed at a `calls.dialer`-gated call history under `/app`. It was
  * written to shrink and it has: both now point at
  * `/agency/campaigns/:id/attempts/:attemptId`, the agency's own call detail, and
  * the exemption is gone with them.

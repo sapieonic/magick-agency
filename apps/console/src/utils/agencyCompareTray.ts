@@ -37,8 +37,8 @@ import type {
  * route. The API's `proxy-agency-performance.routes.ts` holds ONE
  * `AGENT_STATS_QUERY_PARAMS` whitelist shared by `/my-stats` and its supervisory
  * twin, so adding `compare_to` to it would expose that param on the agent's own
- * scorecard **in the same edit** — and the cohort band is supervisor-only by user
- * ruling (M10). It would arrive as a change that reads like it only touches the
+ * scorecard **in the same edit** — and the cohort band is supervisor-only by
+ * design. It would arrive as a change that reads like it only touches the
  * supervisory surface. So: no `compare_to`, no new param, no server change. There
  * is nothing to gate, because nothing new is reachable.
  *
@@ -83,7 +83,7 @@ export const COMPARE_MAX_AGENTS = 4;
  * A reason rather than a boolean because the two are different situations and only
  * one of them is worth a sentence: `too_few_agents` is self-evident from a
  * one-row table, while `pooled_cohort` is a decision the reader might otherwise
- * look for the control of. Even so the tray renders NOTHING in both cases — E7 says
+ * look for the control of. Even so the tray renders NOTHING in both cases — the rule is
  * suppressed entirely, and `mixedCohortNote` above the table has already explained
  * the pooled case in the reader's own words. A second sentence naming a control
  * that is not there would be an invitation to go looking for it.

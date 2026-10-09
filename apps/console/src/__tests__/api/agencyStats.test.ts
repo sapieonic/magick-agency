@@ -107,7 +107,7 @@ describe('getMyAttempts and getAgentAttempts', () => {
   it('sends multi-value filters as REPEATED params', async () => {
     /**
      * Matching `agencySpine.ts`, because one convention across the two spines is
-     * worth having and both services accept this one.
+     * worth having and the server accepts this one.
      *
      * NOT because it makes a comma survive: the server's `forwardAllowedQuery` joins
      * the repeats with a comma and the server's `multiParam` splits on one, so a
@@ -260,7 +260,7 @@ describe('getAgencyRoster', () => {
     expect(query).toContain('sort=success_rate_pct');
     expect(query).toContain('order=asc');
     expect(query).toContain('limit=200');
-    // `true` literally, which is what R2 accepts. Anything else is a 400 rather than
+    // `true` literally, which is what the server accepts. Anything else is a 400 rather than
     // a coercion — coercion would hide departed agents while `inactive_omitted`
     // claimed the omission was requested.
     expect(query).toContain('include_inactive=true');
@@ -300,7 +300,7 @@ describe('getAgencyGroupedStats', () => {
   };
 
   it('sends the dimensions as ONE comma-separated param', async () => {
-    // What both services parse. The tuple type on the query is what keeps it to one
+    // What the server parses. The tuple type on the query is what keeps it to one
     // or two entries — upstream answers a third with a 400, because the row count is
     // the product of the dimensions' cardinalities.
     await getAgencyGroupedStats(GROUPED, TENANT, ACCOUNT);
@@ -351,7 +351,7 @@ describe('getAgencyGroupedStats', () => {
   });
 
   it('carries no agent id, on any call', async () => {
-    // Not an accepted filter on either service: the server has no user table, so it
+    // Not an accepted filter: the server has no user table, so it
     // cannot validate tenancy on a caller-supplied id, and the server's memberships is
     // the only place that boundary can exist.
     await getAgencyGroupedStats(GROUPED, TENANT, ACCOUNT);

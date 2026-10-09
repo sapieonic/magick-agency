@@ -110,8 +110,7 @@ export function formatTalkTime(seconds: number | null): string {
  * `null` on `agent_user_id` is the single most misreadable field on this view:
  * it looks like data we failed to load, and it is not — it is the defining
  * property of the rows this page exists to surface. An attempt that never
- * reached an agent is exactly what `/app/calls/softphone/history` structurally
- * cannot show.
+ * reached an agent is exactly what a call list structurally cannot show.
  */
 export function agentCellCopy(attempt: AgencyAttempt): { text: string; muted: boolean } {
   // The NAME when the API could resolve it. Falling back to the id is not

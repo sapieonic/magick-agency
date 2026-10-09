@@ -15,8 +15,8 @@ import { trackAgencyMicState } from '../analytics/events';
  * implementations of one wire format, and the second one would be the one
  * nobody exercised until a live shift.
  *
- * What genuinely differs is not the audio, it is the **lifetime**. The AI call
- * is one socket, one call, mic open from `start()` to hangup. The agency station
+ * What genuinely differs is not the audio, it is the **lifetime**. A single
+ * browser call is one socket, one call, mic open from `start()` to hangup. The agency station
  * is one socket for an eight-hour shift carrying a couple of hundred calls, and
  * across it the microphone must open and close per attempt. So the two hooks
  * were extended where they were short (mute, classified permission errors,

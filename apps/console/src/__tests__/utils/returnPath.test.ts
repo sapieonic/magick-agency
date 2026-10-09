@@ -421,7 +421,7 @@ describe('sessionExpiredLoginUrl', () => {
     // The agency door, because the session lapsed on an agency surface. This is
     // the entrance that matters most for the wrong-page failure: an agent
     // re-authenticating mid-shift with a customer waiting must not be met by the
-    // primary app's signup pitch.
+    // generic door's pitch.
     expect(url.pathname).toBe(AGENCY_LOGIN_PATH);
     expect(url.searchParams.get('session')).toBe('expired');
     expect(url.searchParams.get(RETURN_PATH_PARAM)).toBe('/station?campaign=camp-1');

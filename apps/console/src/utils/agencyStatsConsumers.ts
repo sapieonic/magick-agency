@@ -33,14 +33,11 @@ import type { AgencyCampaignStats } from '../types/agency-campaign';
  *
  * ── What this deliberately does NOT do ──────────────────────────────────────
  * It does not detect a field **the server added and this console never declared**. That
- * direction cannot be checked from inside this repo, and the obvious
- * implementation — scraping a sibling server checkout — is a
- * pattern already known to be broken: an equivalent guard that reads the
- * sibling's *working tree* has a result that depends on which branch someone else
- * has checked out, and it skips silently in CI where no sibling exists.
- * Building a second copy of that before the mechanism is settled would
- * double the maintenance and the false confidence. The
- * cross-repo direction is tracked separately; this half is the half that can be
+ * direction cannot be checked from inside the console, and the obvious
+ * implementation — scraping the server's source tree from a console test — would
+ * tie this suite to the server's file layout. Building that before the mechanism
+ * is settled would add maintenance and false confidence. The
+ * server-side direction is tracked separately; this half is the half that can be
  * enforced everywhere, including CI.
  */
 

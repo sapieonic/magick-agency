@@ -179,7 +179,7 @@ export function stallCopy(
       return diagnosis({
         headline: `Paused automatically — abandonment reached ${pct(stall.measured_pct)}, over your ${pct(stall.ceiling_pct)} limit.`,
         // "Measured at", never "currently": The server freezes this figure at the
-        // instant the guardrail fired (migration 089). Presenting a frozen
+        // instant the guardrail fired (`paused_at` / `pause_abandonment_rate_pct`). Presenting a frozen
         // number as a live one means a supervisor who has since staffed up sees
         // no improvement and concludes the fix did not work.
         facts: [

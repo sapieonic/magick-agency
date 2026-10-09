@@ -333,7 +333,7 @@ describe('the recording link stays inside the agency workspace', () => {
     expect(within(row).queryByText('Recorded — needs dialer access')).toBeNull();
   });
 
-  it('never points into the primary application', async () => {
+  it('never points into the /app zone', async () => {
     renderPage();
     const row = await screen.findByTestId('contact-attempt-attempt-1');
 

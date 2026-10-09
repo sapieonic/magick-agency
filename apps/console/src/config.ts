@@ -88,7 +88,7 @@ export const ENDPOINTS = {
   proxy: {
     // Only the two getters `api/calls.ts` needs (the shared call-detail
     // component's defaults; the agency attempt page overrides both). There are
-    // no AI call, bulk, concurrency or export routes.
+    // no bulk, concurrency or export call routes.
     calls: {
       get: (id: string) => `${API_BASE}/proxy/calls/${id}`,
       recording: (id: string) => `${API_BASE}/proxy/calls/${id}/recording`,
@@ -135,7 +135,7 @@ export const ENDPOINTS = {
        *
        * ── One fewer path segment than `agentStats`, deliberately ────────────
        * `agents/stats` sits beside `agents/:userId/stats` and is not a collision:
-       * both services route on segment COUNT first, so a two-segment path can
+       * the server routes on segment COUNT first, so a two-segment path can
        * never be read as a `:userId` of `"stats"`. The two are listed adjacently
        * so the difference is visible rather than something a reader has to
        * reconstruct — the contract tests assert it
@@ -227,7 +227,7 @@ export const ENDPOINTS = {
   },
 } as const;
 
-// There are no AI call languages or text-to-speech options (`LANGUAGES`,
+// There are no call languages or text-to-speech options (`LANGUAGES`,
 // `TtsVoice`, `TTS_LANGUAGES`, ...) in this console.
 
 export const ROLES = [

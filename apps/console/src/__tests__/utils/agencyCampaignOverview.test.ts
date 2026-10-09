@@ -685,7 +685,7 @@ describe('pulse rates honour the shared low-volume threshold', () => {
   campaign say anything about itself, and a terminal campaign is the primary
   case for this workspace. All three are optional-and-nullable on the wire, so
   the failures worth pinning are the ones that read as facts: a duration that
-  came out negative because two services stamped two clocks, an automatic
+  came out negative because two clocks disagreed, an automatic
   pause attributed to nobody at all, and a "Agents who worked it: 0" on a
   campaign the API never measured.
 */
@@ -700,7 +700,7 @@ describe('campaignRunLength', () => {
     expect(campaignRunLength(0)).toBe('0 seconds');
     expect(campaignRunLength(1)).toBe('1 second');
     expect(campaignRunLength(59)).toBe('59 seconds');
-    // A clock skew between two services is enough to produce this. It is not a
+    // A clock skew is enough to produce this. It is not a
     // duration, and "-4 seconds" is worse than a floor at zero.
     expect(campaignRunLength(-90)).toBe('0 seconds');
   });
@@ -812,7 +812,7 @@ describe('campaignTimeline', () => {
 
   it('drops a backwards duration but keeps both stamps', () => {
     /*
-      Two services stamping two clocks is enough to produce an end before a
+      Two writers stamping two clocks is enough to produce an end before a
       start. "Ran for -4 hours" is a number nobody can act on; the two instants
       are still facts and stay.
     */

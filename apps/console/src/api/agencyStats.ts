@@ -257,7 +257,7 @@ function groupQuery(query: AgencyGroupQuery): string {
   const qs = new URLSearchParams({
     from: query.from,
     to: query.to,
-    // Comma-separated, which is what both services parse. The tuple type above is
+    // Comma-separated, which is what the server parses. The tuple type above is
     // what keeps this to one or two entries.
     group_by: query.group_by.join(','),
   });
@@ -318,7 +318,7 @@ export async function getAgencyGroupedStats(
  * against. It is stated at the one place a reader would otherwise rely on the
  * false version.
  *
- * Repeats are still the right form: they are what both services accept, they are
+ * Repeats are still the right form: they are what the server accepts, they are
  * what `agencySpine.ts` sends, and one convention across the two spines is worth
  * having. Making a comma survive is a dialer-runtime-then-server change (a different
  * separator, or a repeat-preserving forward), not a change here.

@@ -35,7 +35,7 @@ import styles from './CampaignAgentAssignments.module.css';
  * comments protect explicitly.
  *
  * ── Several campaigns per person, one at a time, and no live session touched ──
- * The API enforces one active assignment per user per CAMPAIGN (its migration 064),
+ * The API enforces one active assignment per user per CAMPAIGN (the `uq_agency_campaign_agent_active_campaign` index),
  * so assigning someone already staffed elsewhere **adds** — it does not move them.
  * That is what lets an agency run Renewals in the morning and Collections after
  * lunch with the same people; under the previous per-tenant rule the second

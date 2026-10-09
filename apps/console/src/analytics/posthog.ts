@@ -195,9 +195,8 @@ export function identifyUser(params: IdentifyParams): void {
 }
 
 /**
- * Which product the mounted shell belongs to — `AppLayout` is the primary AI
- * application, `AgencyLayout` is Magick Agency
- * (two shells, one per product).
+ * Which shell is mounted — `'ai'` for `AppLayout` (the `/app` zone), `'agency'`
+ * for `AgencyLayout`.
  */
 export type ProductSurface = 'ai' | 'agency';
 

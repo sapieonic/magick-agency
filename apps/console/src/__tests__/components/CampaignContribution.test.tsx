@@ -496,7 +496,7 @@ describe('CampaignContribution — the four states', () => {
     /**
      * ⚠️ The roster's bug on this screen, and sharper here: `empty` keyed on
      * `inactive_omitted` alone, so `{ rows: [], unattributed_omitted: 3 }` — groups
-     * the server could not attribute to any member, R4's third state — took the empty arm
+     * the server could not attribute to any member (the third state) — took the empty arm
      * and said "Nobody was handed a call on Renewals in this window". Meanwhile the
      * campaign's own line is pinned in the footer and still counts their calls, so the
      * reader is told the whole team resigned while looking at the work they did.

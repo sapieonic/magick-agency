@@ -350,7 +350,7 @@ function AgentAnalyticsPanel({ campaigns }: { campaigns: readonly AgencyCampaign
    * selection could never survive to be pruned.
    *
    * Nothing about `useAgentRoster` changed to make this work. The tray is still
-   * mounted only on `ready` and still fetches nothing (E7); what moved is the
+   * mounted only on `ready` and still fetches nothing; what moved is the
    * ownership of two values whose whole purpose is to span a refetch.
    */
   const [compareOpen, setCompareOpen] = useState(false);

@@ -1044,7 +1044,7 @@ export interface CampaignTimeline {
  *
  * `now` is a parameter for the reason `periodRange`'s is: every boundary — a
  * campaign that started ninety seconds ago, one whose `ended_at` precedes its
- * `started_at` because two services disagree about the time — becomes a test
+ * `started_at` because two clocks disagree about the time — becomes a test
  * rather than something to reason about.
  *
  * `terminal` is passed in rather than re-derived from `campaign.status`, because
@@ -1114,14 +1114,14 @@ export function campaignTimeline(
   }
 
   /*
-    An end before the start is not a duration. Two services stamping two clocks
+    An end before the start is not a duration. Two writers stamping two clocks
     is enough to produce it, and "Ran for -4 hours" is worse than saying nothing
     — so the duration is dropped and the two stamps, which are still facts, stay.
   */
   const until = ended && ended.getTime() >= started.getTime() ? ended : terminal ? null : now;
   /*
     A start in the FUTURE gets the same treatment as an end before a start, and
-    for the same reason — both are clock skew between two services. Without this
+    for the same reason — both are clock skew. Without this
     `campaignRunLength` clamped the negative to zero and the header read "Running
     for 0 seconds" on a campaign that has been dialing all morning.
 

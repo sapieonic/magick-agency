@@ -16,7 +16,7 @@ import { MemoryRouter } from 'react-router-dom';
  *     agent was rescued by `AgentLanding`; a supervisor is not a dedicated agent.)
  *  2. **After signing out.** `logout()` clears `pendingEmailVerification`, which
  *     fires the guard, which went to `/` — `RequireAuth` with no user, i.e.
- *     `/login?next=%2F`: the primary app's page with its Sign Up tab, handed to
+ *     `/login?next=%2F`: the generic door, not the agency one, handed to
  *     exactly the person the agency door exists to keep off it. That one matters
  *     most, because signing up there is what puts an invited agent in a stray
  *     tenant while their real membership goes unclaimed.

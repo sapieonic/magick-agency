@@ -264,8 +264,8 @@ export function useAgentRoster(filters: AgentRosterFilters): UseAgentRoster {
 
           ── And `inactive_omitted` was only HALF the predicate ────────────────
           It keyed on that count alone, so `{ rows: [], unattributed_omitted: 3 }`
-          — the API dropped three ids it could not attribute to any member, R4's
-          third state — took the `empty` arm and rendered "Nobody was handed a
+          — the API dropped three ids it could not attribute to any member (the third
+          state) — took the `empty` arm and rendered "Nobody was handed a
           call in this window" directly beneath a readout saying three agents
           dialled. `allRowsHiddenReason` is the shared predicate over both counts,
           so the roster and the contribution screen cannot come to disagree about

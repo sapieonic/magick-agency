@@ -117,7 +117,7 @@ afterEach(() => {
 describe('inviteSignInUrl', () => {
   it('sends an agent to the agency door', () => {
     /* Not `/login?next=/dialer`, which is what this used to be. An `agent` never
-       wants the primary app's sign-in page: its Sign Up tab would put them in a
+       wants the generic sign-in door: a Sign Up tab there would put them in a
        private empty tenant of their own — `POST /auth/session` provisions one for
        an address the API does not recognise — while the membership their supervisor
        created sits unclaimed. */

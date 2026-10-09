@@ -200,8 +200,8 @@ function retryCadence(delayMinutes: number): string {
  *
  * `agent_disconnected` is an ordinary editable row: the API
  * accepts it, the server ships a real default, and the dialer runtime's dial path genuinely reads
- * the campaign's value. It was absent from this table until a cross-repo seam
- * audit found the gap.
+ * the campaign's value. It was absent from this table until an audit of the
+ * API/dialer seam found the gap.
  *
  * **`orphaned` is deliberately NOT listed, even though the API accepts it.**
  * The server validates the key and stores it, and ships a `DEFAULT_RETRY_POLICY`
@@ -458,7 +458,7 @@ export const DEFAULT_DISPOSITION_RETRY: AgencyRetryRule = { delay_minutes: 240, 
  * `builtInSemanticMismatches` flags exactly that flag's absence. The server's exported
  * `BUILT_IN_DISPOSITIONS` and the API's `DEFAULT_DISPOSITION_CATALOG` both
  * declare `{ suppress: true }` alone; this is the third copy agreeing with them.
- * The three repos cannot share a constant, so the test below is the only thing
+ * The server, the dialer runtime and this console cannot share a constant, so the test below is the only thing
  * keeping them from drifting again.
  */
 export const DEFAULT_DISPOSITIONS: AgencyDispositionEntry[] = [

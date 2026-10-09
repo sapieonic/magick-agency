@@ -30,7 +30,7 @@ const AGENCY_BASE = `${API_BASE}/proxy/agency`;
  * Filters → query string.
  *
  * Multi-value filters are sent as REPEATED params rather than a comma-joined
- * string, because that is the form both services accept and the one
+ * string, because that is the form the server accepts and the one
  * `agencyStats.ts` also sends — one convention across the two spines.
  *
  * **It does not make a comma inside a value survive**, which an earlier version
@@ -137,7 +137,7 @@ export interface AgencyAttemptCallDetail {
  * One attempt and its call — the agency's own call detail.
  *
  * **This is the endpoint that did not exist**, and whose absence is why the
- * agency workspace linked attempt rows into the primary application's shell. It
+ * agency workspace linked attempt rows out of `AgencyLayout` into the `/app` zone. It
  * is keyed on campaign + attempt rather than on a call id because the attempt is
  * what the reader clicked, it is campaign-scoped so the server can prove ownership from
  * the path, and it outlives the call.
@@ -175,8 +175,7 @@ export async function getAgencyAttemptCall(
  *  - **403** — the tenant does not hold `agency.recording`. The server refuses the
  *    route before it calls the server, so there is no code to read.
  *  - **404 `call_purged` / `call_never_placed`** — the call row aged out of
- *    retention (the attempt is un-FK'd on purpose and outlives it, the server
- *    migration 076), or there was never a call to record.
+ *    retention (the attempt is un-FK'd on purpose and outlives it), or there was never a call to record.
  *  - **404, anything else** — the call is there and carries no recording. The server's
  *    `no_recording` code comes from its recording-URL route, which the server does
  *    not proxy; the streaming route answers a bare `{ error, message }` with no
@@ -205,9 +204,7 @@ async function recordingRefusal(res: Response): Promise<RecordingOutcome> {
 /**
  * The attempt's recording as a blob URL, for playback in an `<audio>`.
  *
- * The softphone's `fetchWebRtcRecordingBlobUrl` cannot serve this: it is keyed on
- * a call id and hits `/proxy/webrtc-call/:id/recording`, whose reads the server pins to
- * the dialer scope and which 404s an agency leg by design. Same mechanism, its own
+ * Keyed on the attempt, not the call: the recording is served by the attempt's own
  * route.
  *
  * NOTE: the CALLER owns the object URL on a `ready` outcome and must revoke it.
@@ -251,7 +248,7 @@ export interface SpineCsvDownload {
 }
 
 /**
- * A header another service produced is not a guarantee.
+ * A header produced by the server is not a guarantee.
  *
  * `Number('abc')` is `NaN` and `NaN` is a `number`, so an unexpected header
  * would satisfy `rowLimit: number | null` and travel all the way to the toast as

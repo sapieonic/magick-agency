@@ -11,11 +11,11 @@ import type { AgencyAttemptCallDetail } from '../../api/agencySpine';
  * ── What this file exists to prevent ────────────────────────────────────────
  * "Renders the call" was already true of a version that used exactly ONE field
  * off the attempt it fetched (`attempt_number`, for the breadcrumb leaf) and
- * showed the softphone's facts card instead — Provider, plus an `Initiated By`
+ * showed a generic call facts card instead — Provider, plus an `Initiated By`
  * that on an agency leg is the dialing session id. So a supervisor clicking a row
  * in the attempts list landed on a page carrying less agency information than the
  * row they clicked, plus a raw UUID. It was also true of a version whose failed
- * summary offered a "Try again" wired to the AI product's endpoint, and whose
+ * summary offered a "Try again" wired to `/proxy/calls/:id/retry-analysis`, and whose
  * loading and error states dropped the trail back to the campaign.
  *
  * Every assertion below is one of those, stated as behaviour rather than as
@@ -41,10 +41,9 @@ vi.mock('../../api/agencySpine', () => ({
 }));
 vi.mock('../../api/agencyCampaigns', () => ({ getAgencyCampaign: mocks.getAgencyCampaign }));
 /*
- * The AI product's call client. Mocked so "this page never calls the other
- * product's retry endpoint" is an assertion rather than an import that happens
- * not to resolve — `AnalysisStatusCard` still defaults to it for its two
- * AI-call callers.
+ * The `api/calls` client. Mocked so "this page never calls
+ * `/proxy/calls/:id/retry-analysis`" is an assertion rather than an import that
+ * happens not to resolve — `AnalysisStatusCard` still defaults to it.
  */
 vi.mock('../../api/calls', () => ({
   retryAnalysis: mocks.retryAnalysis,
@@ -136,7 +135,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('the page carries the agency record, not the softphone’s', () => {
+describe('the page carries the agency record, not generic call facts', () => {
   it('shows who worked the call, how it was written up, and what they typed', async () => {
     renderPage();
 
@@ -153,7 +152,7 @@ describe('the page carries the agency record, not the softphone’s', () => {
     expect(screen.getByTestId('call-fact-Wrap-up').textContent).toContain('0:20');
   });
 
-  it('never renders the dialing session id, or any softphone-only field', async () => {
+  it('never renders the dialing session id, or any generic-only call field', async () => {
     renderPage();
     await screen.findByTestId('call-fact-Agent');
 

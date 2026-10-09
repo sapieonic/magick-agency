@@ -14,8 +14,8 @@ import type {
  * `reject()` that every other rejection calls (`agency-csv-ingest.ts`, the
  * `duplicate_phone` arm increments `duplicates` **and** `rejected`), and
  * `agency-ingest.service.ts` moves DNC-suppressed rows *across* from accepted to
- * rejected rather than counting them a third way, with migration 053 asserting
- * the invariant in the database.
+ * rejected rather than counting them a third way, and the `agency_ingest_jobs` schema documenting
+ * the invariant.
  *
  * **An earlier design sketch disagreed** — it shows four tiles said to
  * reconcile as `accepted + rejected + duplicates = rows read`. Built that way,
@@ -140,8 +140,8 @@ export function buildIngestSummary(job: AgencyIngestJob): IngestSummaryModel {
   const reconciles = accepted + rejected === rowsRead;
   const rejectionRatio = rowsRead > 0 ? rejected / rowsRead : 0;
 
-  // `?? 0` / `?? []`: The API serves these from migration 055 and defaults them
-  // itself, but a job row written before that migration landed has no key at
+  // `?? 0` / `?? []`: The API serves these and defaults them
+  // itself, but a job row written before these counters existed has no key at
   // all, and a summary that renders `NaN duplicates` over a real import is worse
   // than one that renders nothing.
   const coreRefused = job.core_rejected_duplicate_rows ?? 0;

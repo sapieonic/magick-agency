@@ -154,7 +154,7 @@ export function AnalysisSection({ analysis }: { analysis: CallAnalysisResult }) 
 
 /**
  * Roles that are "our side" of the conversation, styled as the assistant lane:
- * the AI agent on an AI call, the human agent on a dialer call. Everything else
+ * the generic `assistant` role, or the human `agent` on a dialer call. Everything else
  * (the person we called) uses the user lane.
  */
 const OUR_SIDE_ROLES: ReadonlySet<string> = new Set(['assistant', 'agent']);
@@ -174,8 +174,8 @@ function resolveRoleLabel(
 }
 
 /**
- * One transcript turn, generalized over both call types: an AI call speaks in
- * `assistant`/`user`, a dialer (human↔human) call in `agent`/`customer`/`unknown`.
+ * One transcript turn, generalized over both role vocabularies: the generic
+ * `assistant`/`user`, and a dialer (human↔human) call's `agent`/`customer`/`unknown`.
  */
 export interface TranscriptSectionEntry extends Omit<ConversationEntry, 'role'> {
   role: string;
@@ -188,7 +188,7 @@ interface TranscriptSectionProps {
   activeIndex?: number;
   /**
    * Display labels per raw role, e.g. `{ agent: 'Agent', customer: 'Customer' }`.
-   * Omit to fall back to the raw role (the AI call's `assistant`/`user` read fine
+   * Omit to fall back to the raw role (the generic `assistant`/`user` read fine
    * as-is). Pass NOTHING when diarization failed: every turn would be labelled
    * "Unknown", and a column of "Unknown" is worse than no labels at all.
    */
@@ -335,9 +335,9 @@ interface AnalysisStatusCardProps {
   callId: string;
   onRetryComplete: () => void;
   /**
-   * Override the retry action. Defaults to the AI-call `retryAnalysis` endpoint,
-   * which is what every existing caller wants; the dialer passes its own
-   * (`retryWebRtcAnalysis`, a different route on a different table).
+   * Override the retry action. Defaults to `retryAnalysis`
+   * (`POST /proxy/calls/:id/retry-analysis`, which reads the `calls` table); a
+   * caller with its own route passes it here.
    */
   onRetry?: () => Promise<void>;
   /** Card heading. Dialer surfaces use plainer wording ("Call summary"). */

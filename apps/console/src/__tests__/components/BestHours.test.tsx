@@ -14,12 +14,12 @@ import {
  * The best-hours surface's wiring — what it asks for, and what it says about the
  * answer.
  *
- * ── The two rulings this file exists to pin ───────────────────────────────
- *  - **E6: a view switch RE-RENDERS.** Every metric is on every cell of the one page
+ * ── The two rules this file exists to pin ───────────────────────────────
+ *  - **A view switch RE-RENDERS.** Every metric is on every cell of the one page
  *    in hand, so flipping the colour control must fire nothing. A switch that
  *    refetched would let the three views disagree about one campaign's week — two
  *    reads a second apart straddle a dial.
- *  - **E2/E3: one campaign, and the zone comes off the payload.** The read carries
+ *  - **One campaign, and the zone comes off the payload.** The read carries
  *    `campaign_id` always, no `limit`, no `sort`; and where `resolved_timezone` did not
  *    arrive the surface says the zone could not be read rather than labelling the axis
  *    with the reader's.
@@ -113,7 +113,7 @@ describe('BestHours — what it asks for', () => {
     await waitFor(() => expect(mocks.getAgencyGroupedStats).toHaveBeenCalledTimes(1));
     const [query] = queries();
     expect(query?.group_by).toEqual(['day_of_week', 'hour_of_day']);
-    // E2: required, not optional. A pooled read is a 400 upstream, because both time
+    // Required, not optional. A pooled read is a 400 upstream, because both time
     // dimensions are grouped and the zone is unambiguous only under one campaign.
     expect(query?.campaign_id).toBe('camp-1');
   });
@@ -144,7 +144,7 @@ describe('BestHours — what it asks for', () => {
 
   it('refuses a blank campaign rather than sending the POOLED read', async () => {
     /**
-     * E2: the client must not send this read without `campaign_id`. `groupQuery` drops
+     * The client must not send this read without `campaign_id`. `groupQuery` drops
      * a falsy one — correctly, because a cleared selector's empty string would read as
      * a filter matching nothing — so letting it through here would silently become the
      * pooled read that upstream answers `400 timezone_ambiguous`.
@@ -168,7 +168,7 @@ describe('BestHours — what it asks for', () => {
   });
 });
 
-describe('BestHours — E6, a view switch re-renders and never re-reads', () => {
+describe('BestHours — a view switch re-renders and never re-reads', () => {
   it('fires no request when the colour control moves', async () => {
     /**
      * The mutation this case exists for: making `view` an input to `useBestHours` (or
@@ -222,7 +222,7 @@ describe('BestHours — E6, a view switch re-renders and never re-reads', () => 
   });
 });
 
-describe('BestHours — E3, two zones on one screen and both are named', () => {
+describe('BestHours — two zones on one screen and both are named', () => {
   it('labels the hour axis with the campaign’s zone and the window with the reader’s', async () => {
     renderView();
     await waitFor(() => expect(screen.getByTestId('best-hours-matrix')).toBeTruthy());
@@ -250,7 +250,7 @@ describe('BestHours — E3, two zones on one screen and both are named', () => {
   });
 });
 
-describe('BestHours — E4 and E5, said out loud above the grid', () => {
+describe('BestHours — coverage and thin cells, said out loud above the grid', () => {
   it('names the weekdays that were never in the window', async () => {
     mocks.getAgencyGroupedStats.mockResolvedValue(
       bestHoursPage({
@@ -292,7 +292,7 @@ describe('BestHours — E4 and E5, said out loud above the grid', () => {
      * ⚠️ The visible shape of failing closed, end to end. The conversion gate used to
      * fall back to `rates_reportable` — dials — so a 20-dial/1-connect/1-conversion
      * cell painted its served `100%` as the darkest square on the map and set the
-     * ramp's upper end, which is E5's own failure at 168× scale.
+     * ramp's upper end, which is the thin-cell failure at 168× scale.
      *
      * On a server that predates `success_rate_reportable` the honest map is a hatched
      * one that says so, and the reader is told how many cells and what to do about
@@ -364,7 +364,7 @@ describe('BestHours — the four states', () => {
   });
 });
 
-describe('BestHours — E10, one event carrying the honesty state', () => {
+describe('BestHours — one event carrying the honesty state', () => {
   it('fires once with the zone, the cell count and the withheld count', async () => {
     mocks.getAgencyGroupedStats.mockResolvedValue(
       bestHoursPage({ rows: [hourCell({ day: 1, hour: 10, attempts: 300 }), thinHourCell()] }),
@@ -380,7 +380,7 @@ describe('BestHours — E10, one event carrying the honesty state', () => {
         zone_read: true,
         cells: 168,
         cells_with_dials: 2,
-        // The E5 number, derived once by the console rather than re-derived
+        // The withheld-cell count, derived once by the console rather than re-derived
         // downstream from three counts.
         withheld_cells: 1,
         coverage_known: true,

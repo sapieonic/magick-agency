@@ -57,7 +57,7 @@ const PAGE_SIZE = 50;
  * ── Every attempt, not every connected call ─────────────────────────────────
  * The list below is the contact's whole history: attempts that were abandoned
  * because no agent was free, ones that failed before dialing, and ones that
- * connected. `/app/calls/softphone/history` can only ever show the last kind.
+ * connected. A call list could only ever show the last kind.
  */
 export function AgencyContactDetailPage() {
   const { id, contactId } = useParams<{ id: string; contactId: string }>();

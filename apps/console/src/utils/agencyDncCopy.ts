@@ -102,16 +102,13 @@ export function dncOutcomeCopy(response: AgencyDncResponse, scope: DncScope): st
   }
   if (response.dnc_recorded) {
     /*
-      "No campaign in this workspace" was the unqualified sentence Q2's copy
-      obligation narrowed away from on `DncPage` — where the widest true claim is
-      now "no agency campaign in this workspace will call it, and it does not stop
-      AI calls or broadcasts", because the dial-time gate lives in the server's
-      `agency/pre-dial-gates.ts` and nothing in AI dispatch consults it. This is
-      the sentence an AGENT reads, and may read out loud to the customer who just
-      asked never to be called, so it has to be at most as wide as the page's.
-      The AI-calls exclusion is deliberately not appended: "broadcast" is not a
-      word this reader has, and that rule is to not OVERSTATE, which naming
-      the enforced scope satisfies.
+      "No campaign in this workspace" was the unqualified sentence `DncPage`'s copy
+      was narrowed away from — the widest true claim is "no agency campaign in
+      this workspace will call it", because the dial-time gate lives in the
+      server's `agency/pre-dial-gates.ts`. This is the sentence an AGENT reads,
+      and may read out loud to the customer who just asked never to be called, so
+      it has to be at most as wide as the page's. The rule is to not OVERSTATE,
+      which naming the enforced scope satisfies.
     */
     return `${response.phone_e164} is on your Do Not Call list. No agency campaign in this workspace will dial it again.`;
   }

@@ -374,7 +374,7 @@ describe('the recording link stays inside the agency workspace', () => {
    * ─── THE BUG THIS PAGE REPORTED ──────────────────────────────────────────
    *
    * This link used to point at `/app/calls/dialer/history/:id` — out of
-   * `AgencyLayout`, into the primary application's shell, onto a
+   * `AgencyLayout`, into the `/app` zone, onto a
    * `calls.dialer`-gated route, with the campaign context and this very list
    * gone. It pointed there because that
    * was the only place a call detail existed.
@@ -423,7 +423,7 @@ describe('the recording link stays inside the agency workspace', () => {
   });
 
   /** And the link is never a `/app` one, whatever the capability map says. */
-  it('never points into the primary application', async () => {
+  it('never points into the /app zone', async () => {
     renderPage();
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
 

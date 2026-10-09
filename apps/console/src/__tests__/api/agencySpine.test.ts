@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * Two things are pinned. The query builder, because a filter dropped on the way
  * out is a WIDER result set presented as a narrower one — and on this surface
  * the operator reads the result as a fact about the campaign. And the
- * truncation signal, because it is read out of headers another service writes
+ * truncation signal, because it is read out of response headers
  * and then shown to an operator unchanged.
  */
 
@@ -51,7 +51,7 @@ describe('query building', () => {
       'camp-1', { outcome: ['abandoned', 'no_answer'] }, {}, 't', 'a',
     );
     const url = mocks.apiFetch.mock.calls[0]![0] as string;
-    // The form both services accept, and the one `agencyStats.ts` sends. It does
+    // The form the server accepts, and the one `agencyStats.ts` sends. It does
     // NOT make a comma inside a value survive — the server joins the repeats with a
     // comma and the server splits on one — which is why that is asserted nowhere.
     expect(url).toContain('outcome=abandoned&outcome=no_answer');

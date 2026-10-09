@@ -27,10 +27,9 @@ import styles from './NotificationSettingsPage.module.css';
  * Everything rendered here — the events, their labels, their descriptions,
  * which are digests, what the defaults are — arrives from
  * `GET /notifications/preferences`. There is no local copy of any of it, which
- * is the same rule the audit log's `available_actions` follows: the server is not a
- * dependency of this repo, nothing could check a copy, and the copy is what
- * drifts. A server build with a new event lights it up here with no change on
- * this side.
+ * is the same rule the audit log's `available_actions` follows: the server owns
+ * the catalog, a copy here would be a second list, and the copy is what drifts.
+ * A server build with a new event lights it up here with no change on this side.
  *
  * The consequence to keep in mind while editing: `category` is an arbitrary
  * string. `CATEGORY_LABELS` is a presentation nicety with a humanising
@@ -67,8 +66,7 @@ function categoryLabel(category: string): string {
 /*
  * There is no digest preview: no `POST /notifications/digests/preview` call, no
  * modal and no Preview button on a digest row. Such a preview would render a
- * credits spend summary over AI calls and broadcasts; Magick Agency v1 has no
- * credits and no broadcasts, and no such route. The cadence controls for any
+ * credits spend summary; Magick Agency v1 has no credits and no such route. The cadence controls for any
  * digest-cadence event stay.
  */
 

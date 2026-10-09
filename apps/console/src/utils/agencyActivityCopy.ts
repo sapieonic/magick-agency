@@ -98,7 +98,7 @@ export function partialNotice(reason: string | null): string {
  * The export stopped at the server's ceiling — say so, and say what to do.
  *
  * The unknown-ceiling branch is not a formality. The row limit is a response
- * header, and a header another service writes can arrive as something this
+ * header, and a header can arrive as something this
  * client cannot read as a number — so "truncated, size unknown" is a real
  * runtime state (see `parseRowLimit` in `api/agencyActivity.ts`), not a
  * theoretical one. It gets its own sentence rather than a number-shaped hole in
@@ -177,10 +177,10 @@ export function activityDetailSummary(row: ActivityRow): string | null {
 /**
  * Where the row came from, in the operator's vocabulary.
  *
- * Both services record some of the same actions, and a Pause legitimately
- * produces two rows — the supervisor's press and the campaign's transition. The
- * labels say which is which instead of exposing service names, which mean
- * nothing to the person reading the trail.
+ * The console trail and the dialer trail record some of the same actions, and a
+ * Pause legitimately produces two rows — the supervisor's press and the
+ * campaign's transition. The labels say which is which instead of exposing the
+ * `source` wire values, which mean nothing to the person reading the trail.
  */
 export const ACTIVITY_SOURCE_LABEL: Record<string, string> = {
   master: 'Console',

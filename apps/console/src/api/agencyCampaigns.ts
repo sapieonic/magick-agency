@@ -289,7 +289,6 @@ export async function transitionAgencyCampaign(
 // ─── Retry campaigns ─────────────────────────────────────────────────────────
 //
 // Three routes, all browser → the server → the dialer runtime (`/proxy/*`).
-// **No new S2S seam**, so none of this touches `agency-s2s-contract.fixture.json`.
 //
 // The server's permissions, mirrored here only as a comment because the server's 403 is
 // the real enforcement and this client's job is to not offer what it cannot do:

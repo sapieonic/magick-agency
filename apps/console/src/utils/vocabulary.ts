@@ -170,8 +170,8 @@ export function getSentimentColor(label: string | null | undefined): string {
  * badge would fall back to the call-status copy ("completed" → "Successfully
  * finished") for what is really the summary stage.
  *
- * Covers both call types. AI calls produce `pending`/`completed`/`failed`/
- * `skipped`; dialer (human↔human) calls add two states only a carrier-delivered
+ * The base states are `pending`/`completed`/`failed`/`skipped`; dialer
+ * (human↔human) calls add two states only a carrier-delivered
  * recording can reach — `awaiting_recording` (the file hasn't arrived yet) and
  * `expired` (it never did) — plus `deleted` for a DSAR erasure. Reusing
  * `pending`/`failed` for those would have been a lie: "failed" implies we tried,

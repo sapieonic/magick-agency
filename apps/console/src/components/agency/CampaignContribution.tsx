@@ -145,7 +145,7 @@ export function CampaignContribution({
     ── And "hidden" has TWO causes here, exactly as it does on the roster ─────
     This was `rows.length === 0` and said everyone had left the team. The API also
     drops groups it could not attribute to a person at all (`unattributed_omitted`,
-    R4's third state), and those the toggle cannot bring back — `include_inactive`
+    the third state), and those the toggle cannot bring back — `include_inactive`
     widens a membership filter and these rows match no membership of any status. On
     this screen the misreading is sharper than on the roster: the campaign's own
     total is pinned in the footer and still counts their calls, so a reader is told

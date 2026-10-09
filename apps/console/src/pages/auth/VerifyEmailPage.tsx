@@ -28,7 +28,7 @@ export default function VerifyEmailPage() {
    *    agent and is not.)
    *  - **After signing out.** `logout()` clears `pendingEmailVerification`, which
    *    fires the guard below, which navigated to `/` — `RequireAuth` with no user,
-   *    i.e. `/login?next=%2F`: the primary app's page, Sign Up tab and all, handed
+   *    i.e. `/login?next=%2F`: the generic door, not the agency one, handed
    *    to exactly the person the agency door was built to keep off it.
    *
    * Both are fixed by the same value, because `loginPathReturningTo` picks the door

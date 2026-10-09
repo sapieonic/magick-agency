@@ -801,7 +801,7 @@ export function AgencyCampaignActivityPage() {
  * Keyed on {@link activityActorKind} rather than re-deriving, so the cell and
  * its styling cannot disagree about which of the four a row is — and so the
  * `system` branch keeps reading `actor.system` (the rendering flag) rather than
- * `actor.type`, which on a pre-067 row says `'unknown'`. See `ActivityActor`.
+ * `actor.type`, which on a row with no recorded actor type says `'unknown'`. See `ActivityActor`.
  */
 function actorClassName(row: ActivityRow): string | undefined {
   switch (activityActorKind(row)) {

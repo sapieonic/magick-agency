@@ -993,7 +993,7 @@ export function rosterCountReadout(page: AgencyRosterPage): string {
  *
  * ── There is deliberately NO "showing N of M" fraction here ────────────────
  * It is tempting and it is not computable. Three numbers on this payload are
- * related but independent, because of the ORDER the two services apply their
+ * related but independent, because of the ORDER the server and the API apply their
  * rules in:
  *
  *  - The server scopes, ranks, and cuts to `limit`; `total_agents` is its pre-`limit`
@@ -1033,7 +1033,7 @@ export function truncationNote(page: AgencyRosterPage): string | null {
   */
   if (typeof page.inactive_omitted !== 'number') return null;
   /*
-    And R4's third state is now COUNTED rather than reasoned about. The API drops an
+    And the third state (an id with no membership at all) is now COUNTED rather than reasoned about. The API drops an
     id with no membership row of any status ("never in this tenant") and reports it
     separately, because folding it into `inactive_omitted` would claim a person left
     a team they were never on. `total_agents` counts those rows and `rows` does not,
@@ -1079,7 +1079,7 @@ export function inactiveNote(page: AgencyRosterPage): string | null {
  *
  *  - `inactive_omitted` — a former member. Revealable: the toggle exists for it,
  *    and the sentence can name a remedy.
- *  - `unattributed_omitted` — R4's third state, an id with no membership row of
+ *  - `unattributed_omitted` — the third state, an id with no membership row of
  *    ANY status. **The toggle cannot bring these back**, because
  *    `include_inactive` widens the membership filter and these rows match no
  *    membership at all. Telling the reader to tick it is advice that does nothing.

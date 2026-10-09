@@ -4,11 +4,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
 
 /**
- * The `product` super-property (E8).
+ * The `product` super-property.
  *
- * The two products share one PostHog project and a flat event catalog, so
- * `webrtc_call_placed` from the Softphone had nothing separating it from an
- * agency station dial. The shell registers the dimension once for everything
+ * The event catalog is flat, so nothing in an event's name says which shell fired
+ * it. The shell registers the dimension once for everything
  * mounted under it — including autocapture, pageviews and errors, which have no
  * call site to thread a property through.
  *
@@ -177,7 +176,7 @@ describe('who calls it', () => {
     return readFileSync(resolve(process.cwd(), `src/components/layout/${name}`), 'utf8');
   }
 
-  it('AppLayout claims the AI product', () => {
+  it("AppLayout registers 'ai' for the /app zone", () => {
     expect(layout('AppLayout.tsx')).toContain("useProductSurface('ai')");
   });
 
