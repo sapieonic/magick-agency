@@ -192,7 +192,7 @@ describe('account.routes — GET /accounts/mine', () => {
     // tenantContextMiddleware; this asserts the handler threads it through to
     // BOTH the membership lookup AND the account lookup. The account lookup
     // matters independently: `memberships.account_id` has no composite FK
-    // back to the membership's own tenant_id (migration 001), so a
+    // back to the membership's own tenant_id, so a
     // cross-tenant membership row is possible upstream of this route (see
     // `accountRepository.findByIds`'s docstring and the `POST /users/invite`
     // fix in `user.routes.ts`) — this route's OWN defence is passing

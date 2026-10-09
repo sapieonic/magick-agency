@@ -6,7 +6,7 @@ import Fastify from 'fastify';
 // The four handlers are pure `transitionStatus` writes (no runtime call); `stopping → stopped`
 // is the pacing leader's and is not exercised here.
 //
-// The repository half of migration 108 is in
+// The repository half of the lifecycle stamps is in
 // `campaign-lifecycle-timestamps.test.ts` (the UPDATE's argument order, the
 // terminal CASE, the wire fold). This file is the ROUTE half, and it exists for
 // two assertions:

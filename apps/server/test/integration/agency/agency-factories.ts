@@ -81,7 +81,7 @@ export async function insertAgencyCampaign(overrides: Record<string, unknown> = 
     // ── An ALL-DAY, EVERY-DAY calling window, deliberately not the column
     //    defaults.
     //
-    // Migration 072 defaults to 09:00–20:00 Mon–Fri, and there is now a pre-dial
+    // The schema defaults to 09:00–20:00 Mon–Fri, and there is now a pre-dial
     // calling-hours gate. A fixture carrying those defaults makes every dialing
     // integration test depend on **what time of day and what day of the week the
     // suite runs** — green on a Tuesday afternoon, silently dialing nothing on a
@@ -141,11 +141,11 @@ export async function insertAgentSession(campaignId: string, overrides: Record<s
 }
 
 /**
- * One row of the agent state-transition log (migration 105).
+ * One row of the agent state-transition log (`agency_agent_session_events`).
  *
  * ── `at` is REQUIRED here, unlike in the table ──────────────────────────────
  *
- * Migration 105 gives `at` a `DEFAULT now()`, and the production writer never
+ * The table gives `at` a `DEFAULT now()`, and the production writer never
  * uses it: `recordTransitions` carries `clock_timestamp()` projected by the UPDATE
  * that performed the transition, because the log INSERT is a second statement and
  * two racing transitions can reach it in the opposite order to the one the

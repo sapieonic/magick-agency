@@ -122,7 +122,7 @@ beforeEach(() => {
 });
 
 describe('the agent is named, not just identified', () => {
-  // The internal handler has no user table (D3), so it serves `agent_user_id` — a UUID in
+  // The internal handler has no user table, so it serves `agent_user_id` — a UUID in
   // production. This surface once rendered that raw, which is a column a
   // supervisor can neither read nor filter by. The agent floor already does exactly this
   // enrichment.
@@ -702,7 +702,7 @@ describe('the CSV exports', () => {
     expect(res.headers['x-export-truncated-reason']).toBe('row_limit');
     expect(res.headers['x-export-row-limit']).toBe(String(SPINE_EXPORT_MAX_ROWS));
     expect(res.headers['x-export-rows']).toBe(String(SPINE_EXPORT_MAX_ROWS));
-    // Q-D is 1M contacts, so this is the ordinary outcome of an unfiltered
+    // A campaign can hold 1M contacts, so this is the ordinary outcome of an unfiltered
     // export rather than a rare one — the file has to say what to do next.
     expect(res.body).toContain('narrow the filters');
     // The audit row records that it was truncated: "50,000 of 1,000,000" is a

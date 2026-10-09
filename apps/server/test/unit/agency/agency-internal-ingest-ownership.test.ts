@@ -19,7 +19,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *    non-UUID id like `'camp-victim'` would never reach `findById`. Tenant/account ids are
  *    arbitrary strings: the repository is mocked, and the comparison is string equality.
  *
- * There is no HTTP route and no S2S token for this hand-off. The real-Postgres twin is
+ * There is no HTTP route for this hand-off. The real-Postgres twin is
  * test/integration/agency/agency-ingest-route-seam.test.ts.
  */
 
@@ -145,7 +145,7 @@ describe('internal roster ingest — campaign ownership', () => {
   });
 
   it("refuses a real account writing into a legacy 'default' campaign of its tenant", async () => {
-    // Migration 072's column default. The row is actually READ here (unlike the
+    // The column default. The row is actually READ here (unlike the
     // missing-account cases, which 400 first), so this pins that 'default' is an
     // ordinary value and not a tenant-wide wildcard.
     // (magick-agency: `account_id` is a UUID column in the baseline, so such a row cannot

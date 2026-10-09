@@ -412,9 +412,8 @@ describe('GET /my-assignments — the plural replacement', () => {
 
   it('CAPS the fan-out rather than bursting one request per assignment', async () => {
     /**
-     * Migration 064 removed the only thing that actually bounded this: under 060's
-     * index an agent held exactly one assignment, so the fan-out was 1 by
-     * construction. Now it is however many rows exist, on a route the agent's home
+     * Nothing in the schema bounds this: an agent can hold one assignment per
+     * campaign, so the fan-out is however many rows exist, on a route the agent's home
      * calls on every sign-in — and the agent is blocked on all of them before their
      * page renders.
      *
@@ -497,8 +496,8 @@ describe('GET /my-assignments — the plural replacement', () => {
 describe('GET /my-campaigns — the staffing HISTORY, closed rows included', () => {
   /**
    * ── The defect this route closes ─────────────────────────────────────────
-   * Migration 060 closes staffing rows (`unassigned_at`) rather than deleting
-   * them, and says why: *"who was staffed on this campaign in March" is a question
+   * Staffing rows are closed (`unassigned_at`) rather than deleted,
+   * and the schema says why: *"who was staffed on this campaign in March" is a question
    * supervisors and disputes actually ask, and a delete cannot answer it.* Every
    * reader on the table then filtered `unassigned_at IS NULL`, so the history was
    * being written and could not be read by anything.
@@ -643,7 +642,7 @@ describe('GET /my-campaigns — the staffing HISTORY, closed rows included', () 
      * That one reads ACTIVE rows and is self-limiting. This one reads closed rows
      * too, so it only ever grows: every reassignment adds a row, every offboarding
      * adds one per campaign (`closeAllForUser`, in a single statement), and nothing
-     * ever removes one — that is what migration 060 chose. It is reached by an
+     * ever removes one. It is reached by an
      * `agent`, the lowest-privileged role there is, on every visit to their own
      * console.
      *
@@ -990,17 +989,17 @@ describe('POST /campaigns/:id/agents', () => {
   });
 });
 
-describe('POST /campaigns/:id/agents — the pre-064 database', () => {
+describe('POST /campaigns/:id/agents — a database still on the one-assignment-per-agent index', () => {
   /**
    * ── Why this is a 409 and not a 500 ────────────────────────────────────────
    * `assign()` no longer names an `ON CONFLICT` arbiter, so it plans against
-   * migration 060's index as well as 064's. Under 060 a second assignment is not
+   * both the one-assignment-per-agent index and the per-campaign index. Under the former a second assignment is not
    * expressible, and the repository says so with a typed error rather than
    * exhausting its retry loop or — far worse — silently MOVING the agent, which
    * would make the result of one request depend on which migration had run.
    *
    * The route turns that into a 409 with a sentence a supervisor can act on. Only
-   * reachable between deploying this code and applying 064, or after a
+   * reachable between deploying this code and applying the per-campaign index, or after a
    * `migrate down`; it should never be seen in a settled deployment.
    */
   it('answers 409 with a code and an actionable message, not a 500', async () => {

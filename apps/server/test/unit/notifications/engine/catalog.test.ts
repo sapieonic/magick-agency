@@ -166,8 +166,8 @@ describe('the notification catalog', () => {
  * ── `isLiveEventKey`, and why "inert" is not "deleted" ────────────────────
  *
  * A stored `user_notification_preferences` row names its event as TEXT, not an
- * enum and not an FK (the governance overrides' reasoning, restated at
- * migration 072). So a build that has renamed or retired an event still meets
+ * enum and not an FK (the governance overrides' reasoning, restated on
+ * the table). So a build that has renamed or retired an event still meets
  * rows naming the old key. Such a row is INERT: never served, never validated
  * against, and — the half that is easy to "tidy up" — never deleted, because a
  * key removed by mistake and restored next release would have taken every

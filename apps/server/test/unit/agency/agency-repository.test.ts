@@ -178,9 +178,9 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
 
   /**
    * Drive the replay path (the marker insert conflicts), with control over what
-   * migration 084's columns hold on the already-applied marker row.
+   * the recorded-count columns hold on the already-applied marker row.
    *
-   * `recorded: null` models a chunk applied BEFORE 084 — the columns are NULL.
+   * `recorded: null` models a chunk applied before the counts were recorded — the columns are NULL.
    */
   function replayWith(recorded: { rejected: number; sourceRows: number[] } | null) {
     // Every query on this path runs on the ONE held client: the marker insert that
@@ -258,9 +258,9 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
     expect(client.query.mock.calls.map((c: any) => c[0])).not.toContain('COMMIT');
   });
 
-  it('says UNKNOWN, not zero, for a chunk applied before migration 084', async () => {
+  it('says UNKNOWN, not zero, for a chunk applied before its counts were recorded', async () => {
     // The one case where the number genuinely cannot be produced: the chunk landed
-    // before 084 existed, so nothing recorded what it refused — and it cannot be
+    // without its counts being recorded, so nothing recorded what it refused — and it cannot be
     // recomputed, because a row rejected by the fingerprint index leaves no residue
     // (the surviving contact is byte-identical to the one that was dropped).
     //
@@ -311,8 +311,8 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
   it('reports rows the roster already held instead of hiding them in `accepted: 0`', async () => {
     // Rows the roster already holds exactly are refused, and the roster client has to be
     // able to say so — before this, a bare `ON CONFLICT DO NOTHING` made "every
-    // row collided" and "this chunk had no valid rows" the same answer. Since
-    // 083 the collision means "you sent us these exact people again" rather than
+    // row collided" and "this chunk had no valid rows" the same answer. The
+    // collision means "you sent us these exact people again" rather than
     // "this campaign is already populated", which is the narrower and far more
     // reportable claim.
     client.query.mockImplementation(async (sql: string) => {
@@ -359,20 +359,19 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
     // (1) `source_row_number` is the per-FILE line number, so keying the
     // roster on it meant a second CSV's lines 2..N collided with the first's and
     // every row of a top-up was discarded — while the operator was told it worked.
-    // 083 moved the conflict target to `row_fingerprint`.
+    // The conflict target is `row_fingerprint`.
     //
     // (2) That was not enough, and this assertion used to say the opposite — it
     // required the column to still be WRITTEN ("it is what `duplicate_source_rows`
     // names back", which was simply wrong: the reported numbers come from the INPUT
-    // rows in the loop, never from a stored value). 073's
-    // `uq_agency_contacts_source_row` is still live and cannot be dropped until no
-    // pre-083 replica can serve a request, so writing the column left a top-up
+    // rows in the loop, never from a stored value). `uq_agency_contacts_source_row` is still live (PARTIAL on
+    // `source_row_number IS NOT NULL`), so writing the column left a top-up
     // file's row 2 colliding with the first file's row 2 — and now that the
     // inference names a different index, that 23505 aborts the chunk instead of
     // being swallowed. Both top-up arms of `agency-ingest-idempotency.test.ts`
     // failed on it against a real database.
     //
-    // The old index is PARTIAL on `source_row_number IS NOT NULL`, so 085's fix is
+    // The old index is PARTIAL on `source_row_number IS NOT NULL`, so the fix is
     // to leave the column out entirely and store the CSV line in the unindexed
     // `csv_line_number`. Asserted as an explicit absence in BOTH roles, because
     // either half coming back — as a conflict target or merely as a written column
@@ -396,7 +395,7 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
   });
 
   it('still reports the refused rows by their INPUT row number, with the column unwritten', async () => {
-    // The property that made 085 free, asserted rather than reasoned: what the
+    // The property that makes leaving the column out free, asserted rather than reasoned: what the
     // operator is shown is built from the submitted contact, so it is unaffected by
     // where — or whether — the line number is stored. If this ever started
     // reading the stored column it would return nothing but NULLs.
@@ -418,7 +417,7 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
 
   it('fingerprints the row from the SAME bound parameters it inserts', async () => {
     // Row identity has exactly one definition — `agency_contact_row_fingerprint`,
-    // shared by this INSERT and migration 083's backfill. It is computed in SQL
+    // shared by this INSERT and the baseline backfill. It is computed in SQL
     // from `$4/$5/$7` rather than handed in as an eighth parameter precisely so
     // the hashed values cannot drift from the stored ones: a fingerprint built
     // from anything other than the phone/context/timezone actually written would
@@ -647,7 +646,7 @@ describe('AgencyContactRepository.suppressByPhone — one number, every row of i
     await new AgencyContactRepository().suppressByPhone('camp-1', '+14155550100', 'dnc');
 
     const [sql, params] = selectCall();
-    // The prefilter, byte-identical to the expression migration 087 indexes. A
+    // The prefilter, byte-identical to the expression the index is built on. A
     // different spelling of the same regex costs the index silently, so the string
     // is pinned rather than the behaviour.
     expect(sql).toContain("regexp_replace(phone_e164, '[^0-9]', '', 'g')");

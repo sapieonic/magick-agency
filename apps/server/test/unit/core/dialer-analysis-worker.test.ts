@@ -4,7 +4,7 @@
  * Drives the worker's `sweepOnce` + poll lifecycle against a mocked job repo and
  * runner, asserting ordering + durability:
  *  - each tick runs promote → expire → claim → recover IN ORDER.
- *  - promotion runs before expiry (B1: a lost-wake job is rescued, not expired).
+ *  - promotion runs before expiry (a lost-wake job is rescued, not expired).
  *  - claim uses SKIP LOCKED (repo) and each claimed job goes through the runner.
  *  - crash recovery via stale heartbeat does NOT consume an attempt (repo does it; we
  *    assert recoverStale is called with the attempts_total ceiling).
@@ -121,7 +121,7 @@ describe('DialerAnalysisWorker.sweepOnce ordering', () => {
     expect(order).toEqual(['promote', 'expire', 'claim', 'recover']);
   });
 
-  it('promotion runs before expiry (B1 — rescues a lost-wake job)', async () => {
+  it('promotion runs before expiry (rescues a lost-wake job)', async () => {
     const calls: string[] = [];
     mockJobRepo.promoteRecordingReady.mockImplementation(async () => { calls.push('promote'); return 1; });
     mockJobRepo.expireAwaitingRecording.mockImplementation(async () => { calls.push('expire'); return []; });
@@ -148,7 +148,7 @@ describe('DialerAnalysisWorker.sweepOnce ordering', () => {
     expect(mockRunnerRun).toHaveBeenCalledTimes(2);
   });
 
-  it('recovery passes the attempts_total ceiling (M7, repo decrements attempts)', async () => {
+  it('recovery passes the attempts_total ceiling (repo decrements attempts)', async () => {
     await makeWorker().sweepOnce();
     expect(mockJobRepo.recoverStale).toHaveBeenCalledWith(expect.any(Date), CFG.maxAttemptsTotal);
   });

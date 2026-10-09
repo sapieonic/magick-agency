@@ -40,11 +40,11 @@ type DialCommand = import('../../../src/agency/dial-dispatcher.js').DialCommand;
 /**
  * ─── THE DOUBLE BRIDGE, DRIVEN THROUGH THE REAL RESERVATION PATH ────────────
  *
- * The defect migration 092 exists for, executed rather than reasoned about.
+ * The defect the tenant-wide live-session index exists for, executed rather than reasoned about.
  *
  * `AgentStateMachine.reserve` compare-and-swaps on `agency:agent:{sessionId}:state`
- * — a key derived from the SESSION. Under 074's `uq_agency_agent_live
- * (campaign_id, agent_user_id)` one human could hold two live sessions on two
+ * — a key derived from the SESSION. Under a per-campaign `uq_agency_agent_live
+ * (campaign_id, agent_user_id)` index one human could hold two live sessions on two
  * campaigns of the same tenant, so that human had TWO CAS keys, each perfect and
  * each independently winnable by the pacing tick of its own campaign. The CAS
  * protects a session; nothing protected the person. The result is two customers
@@ -64,10 +64,10 @@ type DialCommand = import('../../../src/agency/dial-dispatcher.js').DialCommand;
  *
  * ── The counterfactual is a test, not a comment ────────────────────────────
  *
- * `reproduces the double bridge under 074's index` restores the pre-092 schema
+ * `reproduces the double bridge under a per-campaign index` restores a per-campaign schema
  * and runs the identical sequence. It must dial the same human TWICE. Two things
  * follow from having it: the defect is documented as executable fact rather than
- * as a migration header's assertion, and every "exactly one dial" assertion in
+ * as a schema comment's assertion, and every "exactly one dial" assertion in
  * this file is proven load-bearing — they are literally the assertions that fail
  * against the old schema, in the same file, on the same fixture.
  */
@@ -77,9 +77,9 @@ const TENANT = DEFAULTS.tenantId; // UUID
  * TWO ACCOUNTS, one tenant — and that is forced rather than chosen.
  *
  * `uq_agency_campaign_running (tenant_id, account_id) WHERE status = 'running'`
- * (migration 072) allows one running campaign per ACCOUNT, so two campaigns
+ * allows one running campaign per ACCOUNT, so two campaigns
  * that can dial at the same moment are necessarily in two accounts of the tenant.
- * That is exactly the shape 092's header calls out: `account_id` is deliberately
+ * That is exactly the shape in question: `account_id` is deliberately
  * absent from the uniqueness key because "an agent moving between two accounts of
  * the same tenant is exactly the double-bridge case". An account-scoped index
  * would have left the entire reachable population of this defect unprotected.
@@ -90,11 +90,11 @@ const AGENT = uuidFor('agent-one-pair-of-ears'); // UUID
 const REPLICA = 'replica-A';
 
 /**
- * Put the schema back to 092 whatever a counterfactual case did to it.
+ * Put the schema back to the tenant-wide index whatever a counterfactual case did to it.
  *
- * The `UPDATE` is not incidental: a counterfactual has just created the rows 092
+ * The `UPDATE` is not incidental: a counterfactual has just created the rows the tenant-wide index
  * forbids, and `CREATE UNIQUE INDEX` cannot be built over them — which is the
- * whole reason the migration carries a dedupe step. Closing them wholesale is
+ * whole reason the index cannot simply be rebuilt over existing data. Closing them wholesale is
  * teardown, not a dedupe: every case truncates in `beforeEach`, so no case ever
  * observes what this leaves behind.
  */
@@ -107,7 +107,7 @@ async function restore092(): Promise<void> {
                       WHERE left_at IS NULL`);
 }
 
-/** The pre-092 world: 074's per-campaign index, which permits the second session. */
+/** The per-campaign world: a per-campaign index, which permits the second session. */
 const RESTORE_074 = `
   DROP INDEX IF EXISTS uq_agency_agent_live_tenant;
   CREATE UNIQUE INDEX IF NOT EXISTS uq_agency_agent_live
@@ -180,14 +180,12 @@ async function join(campaignId: string, accountId: string, agentUserId = AGENT) 
 }
 
 /**
- * `joinOrRehydrate` **as it shipped with 074**, exactly as the commit 092
- * replaces — the only difference is the ON CONFLICT arbiter's name.
+ * `joinOrRehydrate` **as it worked with a per-campaign index** — the only difference is the ON CONFLICT arbiter's name.
  *
  * The counterfactual cases need it because the two halves of this change are
- * coupled through that name, which is the whole subject of the migration's DEPLOY
- * ORDERING note: today's method names `(tenant_id, agent_user_id)` and cannot run
- * against 074's schema at all (asserted below, `42P10`). Reproducing the defect
- * therefore means running the code that was live when the defect was live, not the
+ * coupled through that name, which is the whole subject of the code/schema coupling: today's method names `(tenant_id, agent_user_id)` and cannot run
+ * against a per-campaign schema at all (asserted below, `42P10`). Reproducing the defect
+ * therefore means running the per-campaign join path, not the
  * current code with a different index underneath it.
  */
 async function joinPre092(campaignId: string, accountId: string, agentUserId = AGENT) {
@@ -230,12 +228,12 @@ describe('agency double reservation — one human, two campaigns (integration)',
     await closeTestPool();
   });
 
-  it('reproduces the double bridge under 074’s index — the defect, executed', async () => {
+  it('reproduces the double bridge under a per-campaign index — the defect, executed', async () => {
     // ── The counterfactual, and the reason every other case here means something.
     //
     // Nothing below is mocked into failing: this is the shipped join path, the
-    // shipped pacing tick and the shipped CAS, run against the schema this
-    // migration replaces. If it ever stops dialling twice, the rest of this file
+    // shipped pacing tick and the shipped CAS, run against a per-campaign
+    // schema. If it ever stops dialling twice, the rest of this file
     // is asserting a property that the fixture no longer has the power to break.
     const pool = getTestPool();
     await pool.query(RESTORE_074);
@@ -246,9 +244,9 @@ describe('agency double reservation — one human, two campaigns (integration)',
 
       const a = await joinPre092(campA.id, ACCOUNT);
       const b = await joinPre092(campB.id, ACCOUNT_2);
-      // 074 admits both: the pair is unique within each campaign, and nothing in
+      // A per-campaign index admits both: the pair is unique within each campaign, and nothing in
       // the schema knows the two rows are the same human.
-      expect(b.id, '074’s per-campaign index collapsed the two joins into one row — the counterfactual is no longer the pre-092 world').not.toBe(a.id);
+      expect(b.id, 'the per-campaign session index collapsed the two joins into one row — the counterfactual is no longer the per-campaign-only world').not.toBe(a.id);
       const { rows: live } = await pool.query(
         `SELECT id FROM agency_agent_sessions WHERE agent_user_id = $1 AND left_at IS NULL`, [AGENT],
       );
@@ -307,13 +305,12 @@ describe('agency double reservation — one human, two campaigns (integration)',
     }
   });
 
-  it('today’s join refuses to run against 074’s schema at all (DEPLOY ORDERING)', async () => {
-    // The migration's DEPLOY ORDERING note, asserted: `joinOrRehydrate` names its
+  it('today’s join refuses to run against a per-campaign schema at all (DEPLOY ORDERING)', async () => {
+    // The code/schema coupling, asserted: `joinOrRehydrate` names its
     // arbiter, so code and schema are coupled through that NAME and must ship —
     // and revert — together. The failure mode is worth pinning precisely because
     // it is the SAFE one: a loud `42P10` on every join, not a silent second live
-    // session. It is also the reason the down migration in 092 is real SQL rather
-    // than this repo's usual commented block.
+    // session. 
     const pool = getTestPool();
     await pool.query(RESTORE_074);
     try {
@@ -326,7 +323,7 @@ describe('agency double reservation — one human, two campaigns (integration)',
     }
   });
 
-  it('under 092 the same sequence dials the agent exactly ONCE', async () => {
+  it('under the tenant-wide index the same sequence dials the agent exactly ONCE', async () => {
     // The fix, on the fixture that just proved itself capable of failing.
     const world = await makeWorld();
     const campA = await dialableCampaign('A', ACCOUNT);
@@ -403,9 +400,8 @@ describe('agency double reservation — one human, two campaigns (integration)',
   });
 
   it('a LEFT session is invisible to the tick even while its Redis lease says `available`', async () => {
-    // The silently-dead agent, which migration 092's dedupe turns from exotic into
-    // routine: it closes sessions out from under agents whose consoles are still
-    // open and still renewing. Redis says `available`, the console renders a ready
+    // The silently-dead agent: a session closed out from under an agent whose
+    // console is still open and still renewing. Redis says `available`, the console renders a ready
     // agent — and `findLiveForCampaign` excludes left rows, so the phone never
     // rings. This is the state the route guards and the ping recheck exist to end,
     // and it is asserted here so the reason they exist is executable.

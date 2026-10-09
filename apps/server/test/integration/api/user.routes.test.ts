@@ -138,7 +138,7 @@ describe('user routes (integration)', () => {
 
     it('does NOT reuse a row flagged email_unverified', async () => {
       /**
-       * The invite half of migration 073's payoff: an attacker self-invites an
+       * The invite half of the `email_unverified` flag's payoff: an attacker self-invites an
        * address, claims it with an unverified Firebase account, and the row then
        * keys under an address they do not control. This route must not hand them
        * a membership in somebody else's workspace.

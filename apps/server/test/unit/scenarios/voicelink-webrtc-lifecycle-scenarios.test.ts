@@ -92,8 +92,8 @@ import { WebRtcBridgeManager } from '../../../src/core/webrtc-bridge-manager.js'
 import { parseVoicelinkWebhook } from '../../../src/telephony/voicelink/voicelink.webhook.js';
 
 // ── Real captured payloads (from experiment/captures/2026-07-11T06-39-57-498Z) ──
-// start frame (007), call.answered (005), call.ended (009), call.completed (012),
-// stop frame (008). Kept exactly as captured so a shape change on VoiceLink's side fails here.
+// start frame, call.answered, call.ended, call.completed and
+// stop frame. Kept exactly as captured so a shape change on VoiceLink's side fails here.
 // The `call.answered`/`call.ended` bodies carry `null`s the declared
 // `VoicelinkWebhookBody` type does not admit, so they are passed `as any` (type-only).
 const CARRIER_CALL_ID = 'fecdd5a7-5d14-415f-9222-a0f99b655cb0';

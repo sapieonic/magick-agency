@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
 /**
- * `/invites` — the token-bound invitation claim flow (migration 069).
+ * `/invites` — the token-bound invitation claim flow.
  *
  * ── The defect this feature removes, restated so the cases read as its parts ─
  * `POST /users/invite` writes a membership and, for an unknown address, a stub
@@ -959,7 +959,7 @@ describe('POST /invites/resend', () => {
 
   it('answers 409, not a masked 500, when a concurrent resend won the live slot', async () => {
     /**
-     * The loser of two resends landing together. Migration 069's partial unique
+     * The loser of two resends landing together. The partial unique
      * index refuses the second row, the repository turns that `23505` into
      * `LiveInviteConflictError`, and this route names what happened — left to
      * escape, `errorMaskHook` rewrites it into "contact support and quote this

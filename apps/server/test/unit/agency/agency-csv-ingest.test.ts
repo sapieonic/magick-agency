@@ -568,9 +568,9 @@ describe('ignored columns', () => {
   });
 });
 
-// ─── Timezone mapping (D4) ─────────────────────────────────────────────────
+// ─── Timezone mapping ─────────────────────────────────────────────────
 
-describe('timezone column (D4)', () => {
+describe('timezone column', () => {
   it('carries a mapped timezone through and leaves it undefined when blank', async () => {
     const csv = 'Mobile,TZ\n9876543210,Asia/Kolkata\n9123456780,\n';
     const { contacts } = await run(csv, { phoneColumn: 'Mobile', timezoneColumn: 'TZ' });

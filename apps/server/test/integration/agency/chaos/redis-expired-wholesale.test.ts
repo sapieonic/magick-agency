@@ -376,7 +376,7 @@ describe('Redis expired wholesale (chaos)', () => {
         replicaId: w.replicaId,
       });
       // Every agent here rejoins the campaign they were reaped from, so the
-      // per-tenant uniqueness added in migration 092 has nothing to refuse —
+      // per-tenant live-session uniqueness has nothing to refuse —
       // asserted rather than destructured blindly, because an `ok:false` would
       // mean the reaper left a live row somewhere else and the `break` assertion
       // below would then be reading a session this rejoin never touched.

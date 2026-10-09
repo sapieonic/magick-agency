@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * The pool is mocked, so nothing here observes which ROWS a predicate selects.
  * Assertions target what a mocked pool CAN see and what would otherwise break
  * silently: the `ON CONFLICT` target (it must name the columns of
- * `uq_user_notification_preferences`, migration 072), the `::uuid` casts and the
+ * `uq_user_notification_preferences`), the `::uuid` casts and the
  * guards that keep a bad id away from them, the bind parameters, the statement
  * count, and the row→value mapping. Anything that needs a real database — that
  * `user_id = ANY(...)` is actually served by the unique index's leading column,
@@ -253,7 +253,7 @@ describe('notificationPreferenceRepository.upsert', () => {
     // Two settings-page saves racing (two tabs, a double-click) would both see
     // "no row" and both INSERT, and one would take a `23505` that reaches the
     // customer as a masked 500 on a toggle. The conflict target must be exactly
-    // the unique constraint's four columns (migration 072); ON CONFLICT infers
+    // the unique constraint's four columns; ON CONFLICT infers
     // the index from the column set, so a missing column silently picks another
     // index or none at all.
     await notificationPreferenceRepository.upsert(pref() as UpsertNotificationPreferenceInput);
@@ -317,7 +317,7 @@ describe('notificationPreferenceRepository.findNotifiableMembers', () => {
     // by user) cannot be looked up, and no `account_id`, so a digest cannot be
     // scoped to the recipient's own account. Its DISTINCT on email also
     // collapses two people who share an address, which `users.email` permits
-    // because it carries only a NON-unique index (migration 069).
+    // because it carries only a NON-unique index.
     await notificationPreferenceRepository.findNotifiableMembers(TENANT);
 
     const { sql, params } = call();

@@ -38,7 +38,7 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
-// Only the agency flag exists here (the softphone's `dialer_call_analysis` is deleted).
+// Only the agency flag exists here.
 const { FLAG_DEFS } = vi.hoisted(() => ({
   FLAG_DEFS: {
     agency_call_analysis: { key: 'agency_call_analysis', type: 'boolean' },

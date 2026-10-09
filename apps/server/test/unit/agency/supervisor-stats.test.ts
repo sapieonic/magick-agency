@@ -173,7 +173,7 @@ describe('the connect split is gated on the bridge, not on the outcome', () => {
   it('splits the two halves on the voicemail disposition, bound as a parameter', async () => {
     await stats();
 
-    // AMD is out of scope (D1), so an agent's own write-up is the ONLY signal that
+    // AMD is out of scope, so an agent's own write-up is the ONLY signal that
     // a machine answered. The code is bound rather than inlined so the count, its
     // complement, both AHT variants and the previous-hour twins cannot come to
     // spell it differently.
@@ -222,7 +222,7 @@ describe('AHT measures the agent leg, not the persisted talk time', () => {
       sql.indexOf('AS aht_seconds_including_machine'),
     ));
 
-    // The whole point of the split (D1): a voicemail an agent sat through
+    // The whole point of the split: a voicemail an agent sat through
     // inflates AHT, so the headline excludes it and the hover figure does not.
     expect(excluding).toContain('disposition_code IS DISTINCT FROM $3');
     expect(including).not.toContain('disposition_code');
@@ -237,8 +237,8 @@ describe('average wrap-up is measured, and only from resolutions that mean it', 
     await stats();
     const sql = aggregateSql();
 
-    // `wrapup_seconds` is what was OWED — copied from the campaign at wrap-up entry
-    // (migration 088). Averaging it hands the operator their own setting back as
+    // `wrapup_seconds` is what was OWED — copied from the campaign at wrap-up entry.
+    // Averaging it hands the operator their own setting back as
     // though it were measurement, which is worse than an absent tile because it
     // always agrees with them.
     expect(sql).toContain('AVG(EXTRACT(EPOCH FROM (wrapup_ended_at - wrapup_started_at)))');

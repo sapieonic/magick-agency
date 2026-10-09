@@ -1146,7 +1146,7 @@ describe('agency staffing routes (integration)', () => {
 
     it('ADDS to someone already staffed elsewhere — it does not move them', async () => {
       /**
-       * This used to assert a MOVE, and the change is migration 064's. Under the
+       * This used to assert a MOVE, and the change is the per-tenant staffing index's. Under the
        * per-tenant index, staffing somebody onto a second campaign silently closed
        * their first — so a supervisor doing an ordinary afternoon handover destroyed
        * the morning's staffing decision without being told.
@@ -1346,8 +1346,8 @@ describe('agency staffing routes (integration)', () => {
     it('unstaffs ONLY the named campaign, leaving their other assignments alone', async () => {
       /**
        * The campaign predicate used to guard against a stale console unstaffing
-       * somebody from the campaign they had since been MOVED to. Since migration
-       * 064 it does ordinary work on the ordinary path: an agent genuinely holds
+       * somebody from the campaign they had since been MOVED to. Under the
+       * per-tenant index it does ordinary work on the ordinary path: an agent genuinely holds
        * several assignments, so removing one must not disturb the rest.
        */
       await seedAssignment({ campaignId: CAMPAIGN });

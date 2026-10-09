@@ -418,7 +418,7 @@ describe('offboarding closes agency staffing (integration)', () => {
     it('and the surviving OPEN staffing row grants nothing', async () => {
       /**
        * ── The property the whole "swallow the failure" decision rests on ───────
-       * Staffing is not authorization (migration 060's header). If it were, this
+       * Staffing is not authorization. If it were, this
        * failure mode would be a privilege leak — a departed agent with a live
        * staffing row still able to take calls — and swallowing the error would be
        * indefensible rather than correct.
@@ -607,8 +607,8 @@ describe('offboarding closes agency staffing (integration)', () => {
     it('does not reach the same person’s staffing in ANOTHER tenant', async () => {
       /**
        * A shared-services agent contracted to several tenants. Offboarding them
-       * from one must not end their shift at the other — migration 060 explicitly
-       * keeps that person working, and the tenant predicate is in the same
+       * from one must not end their shift at the other — staffing is per tenant,
+       * which keeps that person working, and the tenant predicate is in the same
        * statement as the write for exactly this reason.
        *
        * Only expressible with real rows: a mock asserting "called with

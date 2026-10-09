@@ -173,7 +173,7 @@ describe('disposition — actor attribution', () => {
     await app.close();
   });
 
-  it('does NOT set on_behalf for an agent — the whole point of the D6 floor', async () => {
+  it('does NOT set on_behalf for an agent — the whole point of the agent role floor', async () => {
     const app = await buildApp({ role: 'agent' });
     await app.inject({
       method: 'POST',
@@ -363,7 +363,7 @@ describe('disposition — where "another agent cannot" is actually enforced', ()
    * Worth stating because it is easy to assume otherwise: the public API layer's RBAC cannot
    * express acceptance (b). `agency.attempts.dispose` floors at `agent` (5), and
    * the hierarchy is linear over *minimum* roles, so **every** role at or above
-   * `agent` — viewer included — holds it. That is deliberate (D6: supervisors
+   * `agent` — viewer included — holds it. That is deliberate (supervisors
    * and admins can take calls themselves to cover or demo).
    *
    * So "another agent cannot disposition this attempt" is not a permission

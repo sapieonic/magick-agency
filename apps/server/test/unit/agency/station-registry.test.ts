@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Agent presence and replica ownership.
 //
 // The station socket is the anchor of ownership. The Redis key is written and
-// read from day one even though the runtime is single-replica (D2), so the invariant
+// read from day one even though the runtime is single-replica, so the invariant
 // "dial only on the owning replica" is exercised continuously rather than being
 // dead code that rots until someone needs it.
 // ---------------------------------------------------------------------------
@@ -327,7 +327,7 @@ describe('StationRegistry.connectedBySession', () => {
   });
 
   it('falls back to the in-process map when Redis is not configured', async () => {
-    // Truthful under D2: with one replica, the sockets this process holds ARE the
+    // Truthful for a single replica: with one replica, the sockets this process holds ARE the
     // live set. The fallback is the real answer here, not a degraded one.
     const reg = new StationRegistry(null, '', 'r1');
     await reg.attach({ sessionId: 's1', ws: fakeWs() as any, ...ENTRY });
@@ -427,7 +427,7 @@ describe('StationRegistry.stationPresence', () => {
   });
 
   it('treats a miss as absent, never unknown, when no Redis is configured', async () => {
-    // D2 / no-Redis: the in-process map IS the authority, so a miss is a real
+    // No Redis: the in-process map IS the authority, so a miss is a real
     // absence. Reporting `unknown` here would make every single-replica refusal
     // read as an infrastructure fault.
     const reg = new StationRegistry(null, '', 'r1');

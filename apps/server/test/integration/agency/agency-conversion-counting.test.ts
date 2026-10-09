@@ -28,7 +28,7 @@ const {
  *   1. **`EXISTS`, not a JOIN.** `jsonb_array_elements` is set-returning, so a
  *      catalog carrying the same `code` twice would produce two rows per attempt
  *      under a JOIN and **double the success count**. Nothing prevents the
- *      duplicate: migration 072 CHECKs only that the column is an array. A mocked
+ *      duplicate: the column's CHECK only requires an array. A mocked
  *      pool cannot fan out, so the choice is untested by construction.
  *   2. **`e->'is_success' = 'true'::jsonb`, never `(e->>'is_success')::boolean`.**
  *      The cast raises `22P02 invalid input syntax for type boolean` on a value
@@ -197,7 +197,7 @@ describe('conversion counting against a real disposition_catalog (integration)',
   it('a DUPLICATED catalog code does not double the count', async () => {
     // ── The correctness choice, exercised ────────────────────────────────────
     //
-    // Migration 072 CHECKs only `jsonb_typeof(disposition_catalog) = 'array'`, so
+    // The column's CHECK is only `jsonb_typeof(disposition_catalog) = 'array'`, so
     // nothing stops two entries sharing a code — a copy-paste in the builder, a
     // merge of two catalogs. `jsonb_array_elements` is set-returning, so joined
     // against the attempts each duplicate yields another row and the success count
@@ -293,7 +293,7 @@ describe('conversion counting against a real disposition_catalog (integration)',
 
   it('survives a catalog whose ELEMENTS are not objects at all', async () => {
     // The `jsonb_typeof(e) = 'object'` guard, which runs before `e->>'code'` is
-    // asked of anything. Migration 072 constrains the column to an array and says
+    // asked of anything. The CHECK constrains the column to an array and says
     // nothing about its elements, so a catalog written directly against the server — or
     // by a client that got the shape wrong — can hold any of these.
     // `resolveDisposition` is defensive in exactly this way so a malformed catalog
@@ -314,7 +314,7 @@ describe('conversion counting against a real disposition_catalog (integration)',
   });
 
   it('survives an EMPTY catalog, which is the column default', async () => {
-    // `'[]'` is what migration 072 defaults to, so this is every campaign that has
+    // `'[]'` is the column default, so this is every campaign that has
     // never had a catalog configured. `EXISTS` over an empty set is false, and the
     // statement must plan and run rather than divide by anything.
     const { campaignId, sessionId } = await seed([]);
@@ -422,8 +422,7 @@ describe('conversion counting against a real disposition_catalog (integration)',
     // opposite flags is the ordinary case once an operator copies a campaign, and
     // an unqualified join would score both by whichever row came back.
     const yes = await seed([entry('sale', true)]);
-    // Closed BEFORE the second is seeded: migration 093's
-    // `uq_agency_agent_live_tenant (tenant_id, agent_user_id) WHERE left_at IS NULL`
+    // Closed BEFORE the second is seeded: `uq_agency_agent_live_tenant (tenant_id, agent_user_id) WHERE left_at IS NULL`
     // refuses a second live session for one person in one tenant, so a fixture that
     // created both and closed one afterwards would fail on the index rather than
     // testing anything.

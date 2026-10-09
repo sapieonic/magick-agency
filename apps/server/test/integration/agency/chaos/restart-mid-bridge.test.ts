@@ -111,7 +111,7 @@ describe('replica restart mid-bridge (chaos)', () => {
     // than of the phase. The dialer marks a bridged contact
     // `connected` only when the campaign owes a write-up
     // (`requiresDisposition('connected', campaign.disposition_catalog)`); this world
-    // takes migration 072's column default of `'[]'`, so nothing is owed and the
+    // takes the column default of `'[]'`, so nothing is owed and the
     // contact holds the `in_flight` its claim gave it for the whole live call.
     //
     // Either state serves the ghost occupancy this scenario is about: both are

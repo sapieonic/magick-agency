@@ -192,7 +192,7 @@ describe('agency_dialer_enabled rollout — write → read through-line (integra
     await app.close();
   });
 
-  it('precedence: an explicit tenant OFF survives a global ON (most-specific wins, D1)', async () => {
+  it('precedence: an explicit tenant OFF survives a global ON (most-specific wins)', async () => {
     const app = buildApp();
     await app.ready();
 

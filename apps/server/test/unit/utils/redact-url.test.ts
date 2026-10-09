@@ -96,7 +96,7 @@ describe('redactUrl', () => {
      *
      * `patch` is in the verb list although this file registers none: a verb the
      * pattern omits is a route this audit stops deriving, which is silence, not
-     * a failure — the same blind spot the L2 gating audits close by deriving
+     * a failure — the same blind spot the gating audits close by deriving
      * their verbs from `PASSTHROUGH_METHODS`.
      */
     const source = SRC('api/routes/invites.routes.ts');

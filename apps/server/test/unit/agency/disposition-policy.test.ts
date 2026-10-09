@@ -38,7 +38,7 @@ describe('suppress > terminal > callback > retry', () => {
     const d = D(entry({ code: 'do_not_call', suppress: true }));
     expect(d.contactState).toBe('suppressed');
     expect(d.nextAttemptAt).toBeNull();
-    // Migration 073's column comment enumerates `dnc | invalid | max_attempts |
+    // The column comment enumerates `dnc | invalid | max_attempts |
     // manual`. `dnc`, not `manual`: an agent recording `do_not_call` on a live call
     // IS the DNC path's entry point, and `invalid` means the number does not work.
     expect(d.suppressedReason).toBe('dnc');
@@ -257,7 +257,7 @@ describe('the built-in codes carry their built-in semantics', () => {
     for (const d of BUILT_IN_DISPOSITIONS) expect(Object.isFrozen(d)).toBe(true);
   });
 
-  it('voicemail is retry-driven, because D1 makes an outcome rule impossible', () => {
+  it('voicemail is retry-driven, because AMD being out of scope makes an outcome rule impossible', () => {
     // With AMD off the carrier reports `connected` for a voicemail pickup, so there
     // is no `machine` outcome for a policy to key on — asserted here so the absence
     // is a pinned property rather than an omission someone "fixes".
@@ -471,7 +471,7 @@ describe('every outcome × every disposition', () => {
     // count change cannot quietly drop one of them.
     //
     // (a): `connected` is `max_attempts: 0` ⇒ `completed` by outcome, while a
-    // `voicemail` disposition schedules a retry. The exact cell D1 forces to exist.
+    // `voicemail` disposition schedules a retry. The exact cell that AMD being out of scope forces to exist.
     expect(disagreements).toContain('connected × retry — budget left');
     // The DNC arm on an outcome that would otherwise have retried.
     expect(disagreements).toContain('no_answer × suppress');
@@ -489,7 +489,7 @@ describe('every outcome × every disposition', () => {
     // The guard that makes "every outcome" true rather than aspirational: a value
     // added to `AgencyAttemptOutcome` without being added here would leave the
     // table silently partial. `machine` is in the union and deliberately absent
-    // from the retry policy (D1), so it is exactly the kind of member that gets
+    // from the retry policy (AMD is out of scope), so it is exactly the kind of member that gets
     // forgotten.
     expect(ALL_OUTCOMES).toHaveLength(9);
     expect(new Set(ALL_OUTCOMES).size).toBe(ALL_OUTCOMES.length);

@@ -203,7 +203,7 @@ beforeEach(() => {
 // ═══ PART A — startup, and the leak sweep's decision ════════════════════════
 
 describe('AgencyReaper startup', () => {
-  it('reaps EVERY non-terminal attempt regardless of age (D2)', async () => {
+  it('reaps EVERY non-terminal attempt regardless of age', async () => {
     repos.attempt.reapNonTerminal.mockResolvedValue([
       { id: 'a1', contact_id: 'c1' }, { id: 'a2', contact_id: 'c2' },
     ]);
@@ -250,7 +250,7 @@ describe('AgencyReaper startup', () => {
     repos.session.markAllOffline.mockResolvedValue(3);
     const result = await new AgencyReaper(noDeps()).reapOnStartup();
 
-    // They rehydrate into `break` on reconnect, never `available` (D2): the engine
+    // They rehydrate into `break` on reconnect, never `available`: the engine
     // must not dial into a pool that has not demonstrably re-attached.
     expect(repos.session.markAllOffline).toHaveBeenCalled();
     expect(result.agents).toBe(3);

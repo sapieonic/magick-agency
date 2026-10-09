@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// The agent state-transition log (migration 105).
+// The agent state-transition log.
 //
 // ── What this file is really guarding ──────────────────────────────────────
 //
@@ -26,7 +26,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //      or wedges a live call. That is why the insert is a second statement rather
 //      than a CTE on the first, and it is the last test in this file.
 //   3. **Each event carries the MUTATION's timestamp**, projected by the UPDATE
-//      that performed it, rather than being stamped by migration 105's `DEFAULT
+//      that performed it, rather than being stamped by the column's `DEFAULT
 //      now()` when the log INSERT runs. Property 2 is what creates the gap the
 //      timestamp has to close: two statements can complete in the opposite order
 //      to the order the database applied them, and `lead(at)` then differences the
@@ -125,7 +125,7 @@ describe('setState records the transition it just performed', () => {
     await agencyAgentSessionRepository.setState('sess-1', 'on_call');
     expect(eventCount()).toBe(1);
     expect(eventSql()).toContain('INSERT INTO agency_agent_session_events');
-    // Denormalised deliberately (migration 105): the occupancy read is per PERSON
+    // Denormalised deliberately: the occupancy read is per PERSON
     // and cross-campaign, so carrying `agent_user_id`/`campaign_id` here is what
     // lets it avoid a join back to the session for two immutable strings.
     expect(eventSql()).toContain('agent_user_id');
@@ -182,7 +182,7 @@ describe('setState records the transition it just performed', () => {
 describe('`at` comes from the statement that performed the transition', () => {
   it('projects clock_timestamp() from every mutation and inserts it unchanged', async () => {
     await agencyAgentSessionRepository.setState('sess-1', 'on_call');
-    // Migration 105 gives `at` a `DEFAULT now()`. Leaning on it would stamp the
+    // The table gives `at` a `DEFAULT now()`. Leaning on it would stamp the
     // event when the LOG write ran — a different statement, a different round
     // trip. `clock_timestamp()` rather than `now()` because `now()` is the
     // TRANSACTION's start instant, so the loser of a row-lock race can hold the
@@ -369,7 +369,7 @@ describe('joinOrRehydrate', () => {
     expect(eventParams()[6]).toEqual(['break']);
   });
 
-  it('logs a REHYDRATE as offline → break (D2)', async () => {
+  it('logs a REHYDRATE as offline → break', async () => {
     serve([session({ from_state: 'offline', state: 'break' })]);
     await agencyAgentSessionRepository.joinOrRehydrate(PARAMS);
     expect(eventParams()[5]).toEqual(['offline']);
@@ -401,9 +401,8 @@ describe('joinOrRehydrate', () => {
 describe('a failed event write never fails the transition', () => {
   const failEvents = (rows: unknown[]): void => {
     pool.query.mockImplementation((sql: unknown) => (isEventInsert(sql)
-      // The realistic shapes: the table absent because migration 105 has not run
-      // on this database yet, or its `to_state` CHECK refusing a state added to
-      // migration 074 and not to 105.
+      // The realistic shapes: the table absent on this database, or its `to_state` CHECK refusing a state added to
+      // `AgencyAgentState` and not to the CHECK.
       ? Promise.reject(new Error('relation "agency_agent_session_events" does not exist'))
       : Promise.resolve({ rows, rowCount: rows.length })));
   };
@@ -437,7 +436,7 @@ describe('a failed event write never fails the transition', () => {
 
   it('says so at warn, naming the transition it could not record', async () => {
     // The swallowed error is the ONLY symptom, and a CHECK violation naming the
-    // offending state is how the vocabulary drift in migration 105's header
+    // offending state is how the vocabulary drift between the CHECK and `AgencyAgentState`
     // becomes discoverable at all.
     failEvents([transition({ from_state: 'available', to_state: 'on_call' })]);
     await agencyAgentSessionRepository.setState('sess-1', 'on_call');

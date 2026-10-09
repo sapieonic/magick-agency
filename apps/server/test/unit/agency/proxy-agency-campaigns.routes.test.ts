@@ -203,7 +203,7 @@ describe('agency campaign proxy routes', () => {
   });
 
   /**
-   * `break_reasons` (internal handler migration 078).
+   * `break_reasons`.
    *
    * Campaign config is the **sole authority** on which break codes the internal handler will
    * accept, and it reaches the internal handler through this pass-through. The public API layer deliberately
@@ -574,7 +574,7 @@ describe('agency ingest routes', () => {
   /**
    * ── The ingest MODE, and the destructive branch's guards ──────────────────
    *
-   * The internal handler's 083 made a corrected re-upload merge instead of being refused, and
+   * A corrected re-upload merges instead of being refused, and
    * the internal handler cannot tell a correction from a top-up because the two are the same
    * request. The public API layer is the only service that holds the operator's intent, so it
    * is the only one that can carry a mode.
@@ -610,7 +610,7 @@ describe('agency ingest routes', () => {
 
       expect(res.json().mode).toBe('append');
       // Not passed through to the repository at all, so the column's own default
-      // applies and a pre-057 database still accepts the INSERT.
+      // applies and an INSERT that omits it still succeeds.
       expect(mocks.repo.create.mock.calls[0]![0].mode).toBeUndefined();
       await app.close();
     });
@@ -734,8 +734,8 @@ describe('agency ingest routes', () => {
       await app.close();
     });
 
-    it('reports append and null on a row written before migration 057', async () => {
-      // `SELECT *` against a pre-057 database returns a row with neither key.
+    it('reports append and null on a row that lacks the columns', async () => {
+      // `SELECT *` can return a row with neither key.
       // Append is both the historical truth and the fail-safe reading — a client
       // must never infer "this was a replace" from an absence.
       const preMigration = job();
@@ -1110,7 +1110,7 @@ describe('agency ingest routes', () => {
       // Same zero on the wire, opposite meanings. Without this field a summary
       // built from a chunk the internal handler could not account for renders identically to a
       // clean import, and the operator has no way to learn otherwise — which is
-      // the failure the internal handler's migration 084 and the public API layer's 056 exist to end.
+      // the failure the persisted chunk counts and the exact/lower-bound flag exist to end.
       mocks.repo.findById.mockResolvedValue(
         job({
           accepted: '5000',
@@ -1127,9 +1127,9 @@ describe('agency ingest routes', () => {
       await app.close();
     });
 
-    it('degrades cleanly when the columns are entirely absent (pre-migration-055 row)', async () => {
-      // Simulates a `SELECT *` against a database that hasn't run migration
-      // 055 yet (or a row from that ordering window) — the keys aren't
+    it('degrades cleanly when the columns are entirely absent (row without the columns)', async () => {
+      // Simulates a `SELECT *` returning a row that lacks the columns —
+      // the keys aren't
       // merely null, they don't exist on the object at all, which is what
       // Number(undefined) → NaN → JSON `null` actually requires to reproduce.
       const preMigrationJob = job();
@@ -1163,7 +1163,7 @@ describe('agency ingest routes', () => {
       await app.close();
     });
 
-    it('reports an exact zero as exact once migration 056 has landed', async () => {
+    it('reports an exact zero as exact once the flag column exists', async () => {
       // The counterpart, and the one that keeps the flag meaningful: with the
       // column present and false, the summary must read as a clean import rather
       // than warning on every ordinary job.
@@ -1443,7 +1443,7 @@ describe('agency ingest routes', () => {
   });
 
   /**
-   * The roster writes reach the internal handler over S2S, past the internal handler's `requireOwned`, and
+   * The roster writes reach the internal handler in-process, past the internal handler's `requireOwned`, and
    * the internal handler's internal contacts handler resolves the campaign by id alone — so
    * the public API layer has to prove ownership of a body-supplied `campaign_id` itself.
    */
@@ -1930,8 +1930,7 @@ describe('the campaign row\'s lifecycle provenance reaches the browser', () => {
    *  2. `null` stays `null` — never `0`, never `''`, never `{}`. `null` is an
    *     ANSWER on all three ("never started", "still live", "the platform did
    *     it"), and coercing it states something the data does not;
-   *  3. ABSENT is tolerated. An older internal handler does not serve them, and neither a
-   *     rollback of the internal handler nor the deploy order may 500 this read.
+   *  3. ABSENT is tolerated. A row that lacks them must not 500 this read.
    */
   const CAMPAIGN_ID = 'campaign-1';
 
@@ -2042,7 +2041,7 @@ describe('the campaign row\'s lifecycle provenance reaches the browser', () => {
     await app.close();
   });
 
-  it('tolerates all three being ABSENT — an older internal handler, or a rollback of the internal handler', async () => {
+  it('tolerates all three being ABSENT — a row that lacks them', async () => {
     const oldCore = { id: CAMPAIGN_ID, account_id: 'account-1', name: 'Q3 outbound', status: 'running' };
     mocks.proxyToCore.mockResolvedValue({ status: 200, body: oldCore, headers: new Headers() });
     const app = await buildApp();

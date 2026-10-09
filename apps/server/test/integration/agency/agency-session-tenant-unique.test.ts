@@ -4,7 +4,7 @@ import { insertAgencyCampaign, insertAgentSession } from './agency-factories.js'
 import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, uuidFor } from '../setup/factories.js';
 
 /**
- * ─── ONE LIVE SESSION PER AGENT PER TENANT (migration 093) ──────────────────
+ * ─── ONE LIVE SESSION PER AGENT PER TENANT ──────────────────
  *
  * The defect: `agency_agent_sessions` allowed one live session per (campaign,
  * agent), while the reservation CAS key in `src/agency/agent-state-machine.ts`
@@ -227,13 +227,8 @@ describe('agency agent sessions — one live session per tenant (integration)', 
 });
 
 /*
- * Cases that would exercise
- * MIGRATION 093 — its dedupe UPDATE (window function over pre-093 duplicate
- * sessions), its `-- Up Migration` marker and its `down` — by reading
- * `093_agency_agent_session_tenant_unique.sql` off disk. The baseline carries the
- * END state (`uq_agency_agent_live_tenant`, no dedupe: data migrations are not
- * carried) and there is no 093 file, so they do not exist here (the dedupe keep-`on_call` rule, the
- * same-priority tie-break, the two-contending-`on_call` case, idempotent re-run, the
- * up-marker check and the down-reversal check). The five
+ * Not covered: a dedupe step, an up-marker check or a down-reversal check. The
+ * baseline carries only the index (`uq_agency_agent_live_tenant`) and there is no
+ * existing duplicate data to dedupe. The five
  * join-path cases (the index's BEHAVIOUR) are what this file covers.
  */

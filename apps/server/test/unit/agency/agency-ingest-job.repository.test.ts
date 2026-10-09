@@ -206,7 +206,7 @@ describe('AgencyIngestJobRepository', () => {
       expect(params[14]).toEqual([2, 3, 4]);
     });
 
-    it('persists whether that count is exact or a lower bound (migration 056)', async () => {
+    it('persists whether that count is exact or a lower bound', async () => {
       // Without this column the terminal job row cannot tell "the dialer refused
       // nothing" from "the dialer could not tell us what it refused" — the same zero
       // on the wire, one a clean import and the other a summary that must not be
@@ -231,7 +231,7 @@ describe('AgencyIngestJobRepository', () => {
       expect(paramsOf()[15]).toBe(true);
     });
 
-    it('complete() also tolerates the pre-055 schema — reachable independently of updateProgress', async () => {
+    it('complete() also tolerates a schema without the dialer-count columns — reachable independently of updateProgress', async () => {
       // A dry run or a small file can reach complete() before the first
       // PROGRESS_INTERVAL_MS flush, so this is not updateProgress's fallback
       // exercised again by coincidence — it is the FIRST write against these
@@ -241,8 +241,8 @@ describe('AgencyIngestJobRepository', () => {
       );
       (undefinedColumnError as Error & { code: string }).code = '42703';
       // TWO rejections, because the ladder now has a middle rung: tier 0 names all
-      // three dialer-side columns, tier 1 names the two from 055, tier 2 names none. A
-      // pre-055 database rejects the first two.
+      // three dialer-side columns, tier 1 names the two exact-count columns, tier 2 names none. A
+      // database without them rejects the first two.
       mocks.query
         .mockRejectedValueOnce(undefinedColumnError)
         .mockRejectedValueOnce(undefinedColumnError)
@@ -278,8 +278,8 @@ describe('AgencyIngestJobRepository', () => {
        * fallback dropped all three dialer-side columns whenever ANY of them was missing —
        * so in this window an import where the dialer refused 5,000 rows recorded
        * `core_rejected_duplicate_rows = 0` (the column default, never written) and
-       * no flag: a confident wrong zero, which is precisely the failure migration
-       * 056 was added to end.
+       * no flag: a confident wrong zero, which is precisely the failure the exact/lower-bound flag
+       * exists to end.
        *
        * Only the trust bit is lost here, and the read path renders an absent bit
        * as `may_undercount: true` — so the summary says "we cannot vouch for this"
@@ -396,10 +396,10 @@ describe('AgencyIngestJobRepository', () => {
       expect(paramsOf()[9]).toBe(true);
     });
 
-    describe('pre-055 schema tolerance (migration-ordering hazard)', () => {
+    describe('missing-column schema tolerance (migration-ordering hazard)', () => {
       // `npm run migrate:up` is manual — nothing runs it automatically — so a
       // code-first rollout can have this process live against a database
-      // that hasn't seen migration 055 yet. Without a fallback, the FIRST
+      // that hasn't got the dialer-count columns yet. Without a fallback, the FIRST
       // progress flush of ANY ingest throws `column
       // "core_rejected_duplicate_rows" ... does not exist` (Postgres 42703)
       // and fails the whole import with an opaque error.
@@ -421,7 +421,7 @@ describe('AgencyIngestJobRepository', () => {
         return err;
       };
 
-      it('falls all the way back on a pre-055 schema and still writes everything else', async () => {
+      it('falls all the way back on a schema without the dialer-count columns and still writes everything else', async () => {
         // Two rejections to walk past the middle rung — see the ladder in
         // `writeWideningDown`.
         mocks.query
@@ -445,7 +445,7 @@ describe('AgencyIngestJobRepository', () => {
         expect(paramsOf(2)).toEqual(['job-1', 500, 500, 0, 0, 40, 1]);
       });
 
-      it('keeps the count when only migration 056 is missing', async () => {
+      it('keeps the count when only the lower-bound flag column is missing', async () => {
         // The rung that stops the window producing a confident wrong zero.
         mocks.query
           .mockRejectedValueOnce(undefinedColumnError())

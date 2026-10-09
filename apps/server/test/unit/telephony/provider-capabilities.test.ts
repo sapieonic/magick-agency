@@ -85,7 +85,7 @@ describe('TelephonyProvider capabilities — every adapter in the registry decla
 
   it('only voicelink queues outbound dials, and an undeclared adapter reads as dialling at once', () => {
     // A true here moves every dispatch-anchored deadline for the carrier to a
-    // pickup window (WS-static and AI calls alike), so a flip is a real change
+    // pickup window, so a flip is a real change
     // to call lifetimes and lease sizing — stated as a set, like cancelRinging.
     expect(ADAPTERS.filter((a) => queuesOutboundDials(a.provider)).map((a) => a.name)).toEqual(['voicelink']);
     expect(queuesOutboundDials({})).toBe(false);

@@ -164,7 +164,7 @@ const OCCUPANCY_ROWS = [
   { agent_user_id: 'u-bala', state: 'available', seconds: '5000' },
   { agent_user_id: 'u-bala', state: 'on_call', seconds: '4000' },
   { agent_user_id: 'u-bala', state: 'break', seconds: '1000' },
-  // u-chen has NO rows: an agent whose sessions predate migration 105.
+  // u-chen has NO rows: an agent whose sessions predate the transition log.
   { agent_user_id: 'u-dev', state: 'available', seconds: '4500' },
   { agent_user_id: 'u-dev', state: 'on_call', seconds: '500' },
   // 3000 + 900 + 100 = a 4000-second shift, which puts u-esi's occupancy at the
@@ -201,7 +201,7 @@ describe('the tenant AND account scope is in every statement', () => {
   it('binds both into both statements, and spells the predicate literally', async () => {
     // There is no path parameter on this route at all, so these two predicates are
     // the ONLY thing separating one account's floor from another's. `agent_user_id`
-    // is the console user's id, opaque to the voice engine (D3), which cannot tell a real one
+    // is the console user's id, opaque to the voice engine, which cannot tell a real one
     // from a guess or from another tenant's.
     await read();
     // The two statements bind the scope at DIFFERENT positions, and deliberately:
@@ -270,7 +270,7 @@ describe('the tenant AND account scope is in every statement', () => {
 describe('the occupancy read is driven by the agent ids the attempts read found', () => {
   it('binds exactly those ids, on BOTH event reads', async () => {
     // `idx_agency_session_events_agent` is `(agent_user_id, at)` and `session_id`
-    // is deliberately indexed by nothing (migration 105). Without a predicate on
+    // is deliberately indexed by nothing. Without a predicate on
     // the leading column the planner has nothing to drive the range on `at` from,
     // and the join falls back to a sequential scan of the table written on every
     // state transition. That is why the two reads are SEQUENTIAL here where the
@@ -861,7 +861,7 @@ describe('an occupancy failure never takes the roster with it', () => {
   /** Only the statement that reads the transition log rejects. */
   const failOccupancy = (): void => {
     pool.query.mockImplementation((sql: unknown) => (isOccupancy(sql)
-      // The realistic shape: migration 105 has not run on this database yet. It is
+      // The realistic shape: the transition-log table is absent on this database. It is
       // the same failure the WRITE path already swallows in `recordTransitions`.
       ? Promise.reject(new Error('relation "agency_agent_session_events" does not exist'))
       : Promise.resolve({ rows: ATTEMPT_ROWS })));
@@ -950,7 +950,7 @@ describe('an occupancy failure never takes the roster with it', () => {
   });
 });
 
-// ─── the two ADDITIVE benchmark fields (contract D10) ───────────────────────
+// ─── the two ADDITIVE benchmark fields ───────────────────────
 //
 // Additive, not changed: the roster payload is frozen so its
 // data source can be swapped under a console already built against it, and adding a field breaks
@@ -1132,7 +1132,7 @@ describe('benchmark.aht: percentiles for a metric the object had only as a poole
 
   it('leaves every pre-existing benchmark field exactly as it was', async () => {
     // ADDITIVE means additive. The three new fields must not have moved a number
-    // the console is already built against, so the whole pre-D10 shape is asserted
+    // the console is already built against, so the whole pre-existing shape is asserted
     // here in one place.
     const { benchmark } = await read();
     expect(benchmark).toMatchObject({

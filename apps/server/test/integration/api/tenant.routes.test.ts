@@ -233,13 +233,13 @@ describe('tenant routes (integration)', () => {
        * ── The regression the two-arm design shipped, cases 1–3 ──────────────
        *
        * An `agent` membership with a real Firebase uid and NO `membership_invites`
-       * row is not a hypothetical: it is every agent predating migration 069
-       * (the role dates from 051 and 069 ships no backfill), every membership
+       * row is not a hypothetical: it is every agent created without an invite
+       * (nothing backfills an invite row), every membership
        * `PUT /users/:id/role` re-roles to `agent`, and every one super-admin
        * creates directly. None of those paths writes an invite, so the claim
        * arm labelled all three populations `pending` forever. They are `active`.
        */
-      it('is active for an agent with a real uid and no invite row — the pre-069, re-role and super-admin cases', async () => {
+      it('is active for an agent with a real uid and no invite row — the pre-invite, re-role and super-admin cases', async () => {
         const tenant = await insertTenant();
         const user = await insertUser({ firebase_uid: `fb-real-${randomUUID()}` });
         await insertMembership({ user_id: user.id, tenant_id: tenant.id, role: 'agent' });
@@ -442,7 +442,7 @@ describe('tenant routes (integration)', () => {
        * worth pinning rather than asserting the opposite.
        *
        * `memberships.user_id` is `NOT NULL REFERENCES users(id) ON DELETE
-       * CASCADE` (migration 001), so hard-deleting the user takes the
+       * CASCADE`, so hard-deleting the user takes the
        * membership with it — the member does not appear with a null `user`,
        * they stop appearing at all. The old per-member
        * `userRepository.findById` could never have returned `null` either.

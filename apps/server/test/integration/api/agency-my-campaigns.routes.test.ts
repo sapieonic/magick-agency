@@ -31,7 +31,7 @@ import { initDbPool, closePool } from '@magick-agency/db';
  * end, and the dedupe that `SELECT *` over a re-staffed campaign makes possible.
  *
  * All four bounds exist for one reason, stated in the repository: this table only
- * ever GROWS. Migration 060 closes rows rather than deleting them, every
+ * ever GROWS. Staffing closes rows rather than deleting them, every
  * reassignment adds one, `closeAllForUser` manufactures one per campaign on every
  * offboarding, and nothing removes any. The route is reachable by an `agent` —
  * the lowest-privileged role there is — on their own console, and it spends an internal
@@ -237,7 +237,7 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
    * second live one.
    *
    * Rows are inserted CLOSED by default for the same reason: a history is mostly
-   * closed rows (that is why it is a history), and migration 064's index only
+   * closed rows (that is why it is a history), and the per-tenant staffing index only
    * constrains rows with `unassigned_at IS NULL`, so an arbitrary number of closed
    * rows per campaign is both legal and exactly what accumulates.
    */
@@ -286,7 +286,7 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
     const ids = Array.from({ length: n }, () => randomUUID());
     // 2026-01-01 + i days, so index 0 is the OLDEST. Every row is CLOSED a day
     // after it opened — a history is mostly closed rows, and only open rows are
-    // constrained by migration 064's partial index.
+    // constrained by the per-tenant staffing partial index.
     const assignedAt = ids.map((_, i) => new Date(Date.UTC(2026, 0, 1) + i * 86_400_000));
     await getTestPool().query(
       `INSERT INTO agency_campaign_agents

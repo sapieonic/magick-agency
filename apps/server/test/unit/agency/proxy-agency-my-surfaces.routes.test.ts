@@ -824,7 +824,7 @@ describe('the supervisory twins', () => {
   });
 });
 
-describe('M10: the cohort band is SUPERVISOR-ONLY, and today it holds for free', () => {
+describe('the cohort band is SUPERVISOR-ONLY, and today it holds for free', () => {
   /**
    * ── Why a property nothing implements gets a test ──────────────────────────
    * An agent may see every number about
@@ -1023,7 +1023,7 @@ describe('a request carrying NEITHER a key nor a user is refused, not answered',
    *
    * How the state arises at all: `sessionMiddleware`'s Firebase branch attaches
    * `request.user` only after `verifyIdToken` AND a successful DB load, and a
-   * future auth mode (an S2S caller, a signed internal hop, a middleware that
+   * future auth mode (a service-to-service caller, a signed internal hop, a middleware that
    * short-circuits on a cache miss) sets neither field. It is defence in depth
    * against a chain that changes, which is the reason to pin it rather than the
    * reason to remove it.

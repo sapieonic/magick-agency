@@ -88,7 +88,7 @@ describe('the campaign activity action vocabulary', () => {
   });
 
   /**
-   * `paused` and `stopped` are written by both services, and one action name is
+   * `paused` and `stopped` are written by more than one actor, and one action name is
    * one filter option — the two rows it selects are told apart by `source`, not
    * by a duplicated checkbox.
    */

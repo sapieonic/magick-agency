@@ -157,8 +157,8 @@ describe('the panel reads the CHAIN, not the contact row', () => {
   });
 
   it('falls back to the contact\'s own id when root_contact_id is not populated', async () => {
-    // Unreachable in practice — migrations run in the container entrypoint before
-    // the app boots, so 113's backfill has run — but a `null` would reach
+    // Unreachable in practice — trg_agency_contacts_root stamps every inserted
+    // contact — but a `null` would reach
     // `WHERE root_contact_id = $1` and match nothing, because NULL is never equal
     // to anything. The fallback degrades to "this contact's own history" rather
     // than silently to "no history".

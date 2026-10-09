@@ -315,7 +315,7 @@ describe('POST /sessions — agent already live on another campaign', () => {
 
   it('names a campaign in ANOTHER ACCOUNT of the same tenant', async () => {
     // The case the scoping decision is FOR, and the reason the filter is not the
-    // request's account: 092's index deliberately spans accounts, so the station an
+    // request's account: the unique index deliberately spans accounts, so the station an
     // agent has to be sent back to will often be in a different account of the
     // tenant. Filtering on the request's account would blank the name in exactly
     // the situation where the agent most needs it named.

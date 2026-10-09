@@ -83,7 +83,7 @@ import { FakeStationSocket, ScriptedBridge } from './chaos/harness.js';
  * (`POST /attempts/:id/disposition`) does not exist yet, so the only exit
  * from a held wrap-up an agent controls is unbuilt. The supervisor exit does
  * exist and is walked below (`/force-available`), which is what keeps the held
- * branch from being a state with no demonstrated exit at all. When `C-04` lands,
+ * branch from being a state with no demonstrated exit at all. When that exit is built,
  * the `disposition_submitted` exit belongs in this walk, and the campaign's
  * `disposition_catalog` here should stop being empty. Until then criterion 2 is
  * met for five of six exits from `wrapup` and that is stated rather than implied.

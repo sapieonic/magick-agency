@@ -6,8 +6,8 @@ import { DEFAULTS, OTHER_TENANT, insertWebrtcCall } from '../../../../../package
 
 /*
  * The `GET /api/v1/webrtc-recordings/:id` route on real Postgres 5436 and the REAL signing
- * code. The softphone's `GET /webrtc-call/:id/recording-url` route and the authenticated
- * `/recording` proxy are not served here, so the URL is minted with `signRecordingUrl`
+ * code. There is no `GET /webrtc-call/:id/recording-url` route or authenticated
+ * `/recording` proxy, so the URL is minted with `signRecordingUrl`
  * exactly as the agency attempt route will. No carrier credentials exist: the test asserts
  * NONE are sent. Also covered: off-list host / redirect refusal and the signed-URL TTL/path
  * checks on the real route.

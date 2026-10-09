@@ -282,7 +282,7 @@ describe('notificationDeliveryRepository (integration)', () => {
     });
 
     /**
-     * THE case migration 072 was corrected for, written out in full.
+     * THE case the delivery query was corrected for, written out in full.
      *
      * A consultant is `account_admin` in tenants A and B. Same event, same
      * period, same inbox — the only thing that differs is the workspace. With

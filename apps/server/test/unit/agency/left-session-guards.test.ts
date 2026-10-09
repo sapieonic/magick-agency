@@ -16,7 +16,7 @@ import websocket from '@fastify/websocket';
 // ---------------------------------------------------------------------------
 // A session that has LEFT must not be operable — and must stop renewing.
 //
-// ── The hole, which migration 092 turns from exotic into routine ───────────
+// ── The hole, which the one-live-session unique index makes routine ───────────
 //
 // `left_at` was checked in exactly two places: at the WebSocket upgrade, and in
 // `/station-token`. Every other session route operated on a left session happily,
@@ -35,9 +35,9 @@ import websocket from '@fastify/websocket';
 //     it and their contacts sit `in_flight` past the leak threshold — the exact
 //     harm the reaper exists to repair.
 //
-// Before 092 this needed a deliberate leave with the tab left open. After it, the
-// migration's dedupe closes sessions out from under whoever is holding them, so
-// the state is ordinary. Hence guards rather than comments.
+// Sessions are closed out from under whoever is holding them (one live
+// session per agent), so the state is ordinary, not a deliberate leave with the
+// tab left open. Hence guards rather than comments.
 //
 // ── And the other direction: leaving must not be free ─────────────────────
 //
@@ -46,7 +46,7 @@ import websocket from '@fastify/websocket';
 // path since the socket path got it. An `on_call` agent could therefore leave, join campaign
 // B (the row is left, so the upsert INSERTS rather than conflicting) and be
 // bridged a second customer with the first call still up. That is the double
-// bridge 092 exists to prevent, one click away, and the unique index cannot see it
+// bridge that index exists to prevent, one click away, and the unique index cannot see it
 // because both rows satisfy it once the first has left.
 //
 // FALSIFICATION: remove the `left_at` branch from `requireOwnedSession` and the
@@ -296,7 +296,7 @@ describe('a left session is not operable', () => {
   });
 
   it('still 404s a session in another ACCOUNT of this tenant, ahead of the left check', async () => {
-    // The account half of the same ordering. It matters more after 092 than before:
+    // The account half of the same ordering. It matters because
     // the constraint deliberately spans accounts, so a tenant's agents now routinely
     // hold sessions in an account other than the one on the request — and "this
     // session has ended" for a session in an account the caller cannot see would

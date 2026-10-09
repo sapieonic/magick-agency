@@ -353,7 +353,7 @@ describe('the Prometheus counter and the SQL table agree', () => {
       const { w } = await answeredIntoALostStation();
 
       expect(w.bridge.clipPlays, 'a clip was played with no announcement configured').toEqual([]);
-      // The accounting is the mechanism, the clip is the courtesy (migration 080).
+      // The accounting is the mechanism, the clip is the courtesy.
       expect((await attempts(w.campaignId))[0]!.outcome).toBe('abandoned');
       expect(await abandonedCount(w.campaignId)).toBe(1);
     });

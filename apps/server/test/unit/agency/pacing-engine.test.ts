@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //
 //   idle     = agents in `available` on this campaign  (busy agents excluded)
 //   occupied = ALL non-terminal attempts  (a bridged call still holds a slot)
-//   to_dial  = MAX(0, MIN(account max_concurrent_calls - occupied, idle))   -- D9
+//   to_dial  = MAX(0, MIN(account max_concurrent_calls - occupied, idle))
 //
 // The two terms bound different quantities: the account limit caps total
 // concurrency (so `occupied` counts against it), `idle` caps how many NEW dials
@@ -79,7 +79,7 @@ const CAMPAIGN = {
   status: 'running', caller_ids: ['+14155550100', '+14155550101'],
   calling_window_start: '00:00:00', calling_window_end: '24:00:00',
   calling_days: [1, 2, 3, 4, 5, 6, 7], default_timezone: 'UTC',
-  // Migration 089. A running campaign carries no pause metadata, and the fixture
+  // A running campaign carries no pause metadata, and the fixture
   // has to say so: the tick now reads `pause_reason` to tell a supervisor pause
   // from the abandonment guardrail's, and an absent key would make every
   // `{...CAMPAIGN, status: 'paused'}` in this file an unattributed pause that no
@@ -371,7 +371,7 @@ describe('PacingEngine reserve-before-dial', () => {
     await e.tickOnce('camp-1');
 
     // The agent is committed before the carrier is ever contacted — which is what
-    // makes "answered call with no agent" unreachable under D1.
+    // makes "answered call with no agent" unreachable (AMD is out of scope).
     expect(order).toEqual(['reserve', 'create-attempt', 'dispatch']);
   });
 
@@ -680,7 +680,7 @@ describe('PacingEngine finalization', () => {
 
     // No fourth argument. The lifecycle stamps (`ended_at`, and its legacy twin
     // `completed_at`) are derived from the TARGET STATUS inside `transitionStatus`
-    // since migration 108, so the leader carries no patch — which is the point of
+    // by the repository, so the leader carries no patch — which is the point of
     // moving them: a call site cannot get them wrong by omission when there is
     // nothing to omit. Asserted as an EXACT three-argument call rather than with a
     // trailing `expect.anything()`, so a patch quietly reappearing here is a
@@ -726,7 +726,7 @@ describe('PacingEngine finalization', () => {
 
     // No fourth argument. The lifecycle stamps (`ended_at`, and its legacy twin
     // `completed_at`) are derived from the TARGET STATUS inside `transitionStatus`
-    // since migration 108, so the leader carries no patch — which is the point of
+    // by the repository, so the leader carries no patch — which is the point of
     // moving them: a call site cannot get them wrong by omission when there is
     // nothing to omit. Asserted as an EXACT three-argument call rather than with a
     // trailing `expect.anything()`, so a patch quietly reappearing here is a
@@ -764,7 +764,7 @@ describe('PacingEngine finalization', () => {
 
     // No fourth argument. The lifecycle stamps (`ended_at`, and its legacy twin
     // `completed_at`) are derived from the TARGET STATUS inside `transitionStatus`
-    // since migration 108, so the leader carries no patch — which is the point of
+    // by the repository, so the leader carries no patch — which is the point of
     // moving them: a call site cannot get them wrong by omission when there is
     // nothing to omit. Asserted as an EXACT three-argument call rather than with a
     // trailing `expect.anything()`, so a patch quietly reappearing here is a

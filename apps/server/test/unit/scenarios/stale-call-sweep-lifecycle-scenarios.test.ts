@@ -261,7 +261,7 @@ describe('stale-call sweep lifecycle — dequeue, answer, and recovery', () => {
   }
 
   it('shutdown waits for an in-flight poll, and a poll re-armed mid-sweep cannot cancel that wait', async () => {
-    // The C1 half: `selfHealInFlight` was assigned unconditionally, so a timer
+    // First half: `selfHealInFlight` was assigned unconditionally, so a timer
     // re-armed by ordinary call activity could fire DURING a sweep and replace
     // the running poll's promise with its own. The second body returns almost
     // immediately (`runSelfHealSweep` refuses re-entry via `selfHealing`), and
@@ -322,7 +322,7 @@ describe('stale-call sweep lifecycle — dequeue, answer, and recovery', () => {
   });
 
   it('bounds that wait, so a wedged sweep cannot hold the whole shutdown open', async () => {
-    // The C2 half. The wait sits in FRONT of the 60s call drain, the fan-out
+    // Second half. The wait sits in FRONT of the 60s call drain, the fan-out
     // drain and `closePool()`, and the sweep's own work is `UPDATE ... LIMIT
     // 1000` against a pool with no `statement_timeout`. Unbounded, one stuck row
     // lock meant shutdown never reached the drain at all and was SIGKILLed with

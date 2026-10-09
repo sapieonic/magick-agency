@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
- * The agency campaign-completion notice (E10).
+ * The agency campaign-completion notice.
  *
  * ── What is actually worth pinning here ─────────────────────────────────────
  * Not "an email is composed" — that is the easy half and it is the same shape as
@@ -133,12 +133,11 @@ describe('the deep link', () => {
   });
 
   /**
-   * The one explicit requirement for this item. `/app/…` is the AI
-   * application's shell and `/admin/…` is where the bulk-dispatch mailer points
-   * (a path the console does not even route today) — neither may appear in an agency
-   * campaign notice, in either body.
+   * The one explicit requirement for this notice. `/app/…` is the platform zone
+   * and `/admin/…` is a path the console does not route — neither may appear in
+   * an agency campaign notice, in either body.
    */
-  it('never points into the primary application from either body', () => {
+  it('never points into the platform zone from either body', () => {
     const mail = renderAgencyCampaignCompletionEmail(completion, 'https://app.example.com');
     for (const body of [mail.textBody, mail.htmlBody]) {
       expect(body).toContain(`/agency/campaigns/${CAMPAIGN}`);

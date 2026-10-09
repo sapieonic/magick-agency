@@ -525,7 +525,7 @@ describe('everything else passes through byte-identically', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('P2: the internal handler’s new success fields reach the client untouched', () => {
+describe('the internal handler’s new success fields reach the client untouched', () => {
   /**
    * The internal handler's campaign-stats payload gains two members — `attempts_success` (a count)
    * and `success_rate_pct` (a percentage, **nullable**). The public API layer produces neither and

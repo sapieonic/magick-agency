@@ -9,15 +9,14 @@ import Fastify, { type FastifyInstance } from 'fastify';
  */
 
 // ---------------------------------------------------------------------------
-// Q3's reference check, at the route: a live agency campaign vetoes retiring the
+// The reference check, at the route: a live agency campaign vetoes retiring the
 // analysis profile it depends on.
 //
-// Analysis profiles stay a SHARED primitive (decision Q3) — the softphone attaches one per call, an agency campaign names one in its
-// config or names none and inherits the account default — but only the primary
-// app can author or retire one, and the public API layer gates PUT/DELETE on
-// `calls.dialer.analytics` ALONE. So a primary-app admin could take a running
-// campaign's analysis definition away, with nothing refusing them and nothing
-// telling anyone.
+// An agency campaign names an analysis profile in its config, or names none and
+// inherits the account default — but profiles are authored and retired on their
+// own surface (`/app/call-summaries`), not from the campaign. Without the check an
+// admin could take a running campaign's analysis definition away, with nothing
+// refusing them and nothing telling anyone.
 //
 // ── TWO dependency classes, and the rule over them is asymmetric ────────────
 //

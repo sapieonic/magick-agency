@@ -130,7 +130,7 @@ describe('network drop during the ring (chaos)', () => {
     const drop = await w.chaos.dropStation(sessionId);
     expect(drop.attemptId).toBe(attempt.id);
     // Armed, not hung up. `false` here would mean the bridge ended the call the
-    // instant the socket went — which is the pre-`C-07` behaviour.
+    // instant the socket went — which would be hanging up immediately.
     expect(drop.graceArmed, 'the drop hung the call up instead of holding it').toBe(true);
     expect(w.bridge.graceArmedFor(attempt.id)).toBe(true);
 

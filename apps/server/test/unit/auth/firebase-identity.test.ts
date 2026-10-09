@@ -260,7 +260,7 @@ describe('adoptFirebaseIdentity — what the bind writes', () => {
     expect(off.params()[7]).toBeNull();
 
     // `email_verified` is required for the write — see the verification case
-    // below, and migration 073 for why an unproven address may not key a row.
+    // below, for why an unproven address may not key a row.
     const on = recordingDb();
     await adoptFirebaseIdentity(on.db, USER, { ...IDENTITY, email_verified: true }, null, { adoptEmail: true });
     expect(on.params()[7]).toBe('personal@gmail.test');
@@ -275,7 +275,6 @@ describe('adoptFirebaseIdentity — what the bind writes', () => {
      * unproven string onto a row that can now sign in. `users.email` is the
      * reuse key for `POST /users/invite` and both super-admin provisioning
      * lookups, so such a row is a trap laid under somebody else's address.
-     * Migration 073 carries the chain.
      */
     const unverified = recordingDb();
     await adoptFirebaseIdentity(

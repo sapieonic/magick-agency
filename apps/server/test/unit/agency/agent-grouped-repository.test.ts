@@ -34,7 +34,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // two different denominators. `rates_reportable` floors `attempts` (which is
 // `connect_rate_pct`'s denominator) and `success_rate_reportable` floors
 // `connected` (which is `success_rate_pct`'s and `aht_seconds`'). This read still
-// has no percentile pools and no benchmark to gate a row OUT of (contract D4); the
+// has no percentile pools and no benchmark to gate a row OUT of; the
 // flags only say whether the rates it serves may be quoted as numbers.
 //
 // Both comparisons are `>=`, so each needs a fixture row sitting EXACTLY on its own
@@ -58,8 +58,7 @@ vi.mock('@magick-agency/observability', () => ({
 /**
  * The pool, plus a REGISTRY of the clients it has handed out.
  *
- * The zone lookup shares a transaction with the grouped statement (02b E3 +
- * review C2), so "which connection did this statement go out on" is now a
+ * The zone lookup shares a transaction with the grouped statement, so "which connection did this statement go out on" is now a
  * property worth asserting rather than an implementation detail: on two
  * connections the two reads are two READ COMMITTED snapshots and the page can
  * report a zone its buckets were never cut in.
@@ -250,7 +249,7 @@ describe('the tenant AND account scope is a predicate in the one statement', () 
     // fails any predicate on `s`, so every unreserved attempt would be dropped by
     // the WHERE clause instead of by the join and the LEFT join would be silently
     // undone. The attempt is the row being counted, its `tenant_id`/`account_id` are
-    // NOT NULL (migration 075), and it is the pair the billing sweep scopes on.
+    // NOT NULL, and it is the pair the billing sweep scopes on.
     //
     // Bound in the SAME ORDER as `rosterAttemptTotals` — from, to, tenant, account,
     // then the optional campaign — because that statement and this one share their
@@ -327,7 +326,7 @@ describe('the session join is LEFT unless `agent` is being attributed', () => {
   it('LEFT joins on every grouping that does NOT include `agent`', async () => {
     // The whole campaign-shaped vocabulary, including both best-hours dimensions.
     // A `campaign_id` is supplied wherever a zoned dimension is grouped because the
-    // parser would otherwise refuse the read (D5) — that is a different rule and it
+    // parser would otherwise refuse the read — that is a different rule and it
     // is pinned elsewhere; here it only has to not get in the way.
     for (const over of [
       { groupBy: ['campaign'] as const },
@@ -471,7 +470,7 @@ describe('the five metric expressions are the SHARED ones, byte for byte', () =>
     expect(text).not.toContain('SUM(a.talk_seconds)');
     // MEASURED wrap-up, never the allotment copied from the campaign at wrap-up
     // entry — averaging that hands the operator their own setting back as if it
-    // were evidence (migration 088).
+    // were evidence.
     expect(text).toContain('SUM(EXTRACT(EPOCH FROM (a.wrapup_ended_at - a.wrapup_started_at)))');
     expect(text).not.toContain('SUM(a.wrapup_seconds)');
   });
@@ -835,7 +834,7 @@ describe('the row key\'s members track `group_by`, and only `group_by`', () => {
 
 // ─── `disposition_code: null` is a GROUP ────────────────────────────────────
 
-describe('a null disposition is a real group, not a gap (contract D3)', () => {
+describe('a null disposition is a real group, not a gap ', () => {
   it('emits the member as null rather than dropping the row or the key', async () => {
     // `agency_call_attempts.disposition_code` is VARCHAR(50) NULL, and an attempt
     // with no disposition submitted is precisely the number a supervisor came to
@@ -1151,7 +1150,7 @@ describe('a rate over a zero denominator is null, never 0', () => {
   });
 });
 
-// ─── `resolved_timezone`: the zone the buckets were ACTUALLY cut in (02b E3) ──
+// ─── `resolved_timezone`: the zone the buckets were ACTUALLY cut in ──
 //
 // ⚠️ **What the mocked pool can and cannot prove here, because this field is the
 // one place on this read where the difference decides the test's worth.** It
@@ -1301,10 +1300,10 @@ describe('`resolved_timezone` is null exactly when the page has no single zone',
   it('is null for `campaign` + a time dimension with NO campaign filter', async () => {
     // ── The shape any future edit to this field will break ─────────────────
     //
-    // D5 accepts a time dimension on EITHER of two remedies and only one of them
+    // The zone rule accepts a time dimension on EITHER of two remedies and only one of them
     // narrows the read to one zone. This is the other one: a legal 200 spanning
     // every campaign in the account, each row correctly cut in its OWN campaign's
-    // zone (`default_timezone` is per campaign, migration 072:34, with no
+    // zone (`default_timezone` is per campaign, with no
     // account-level uniqueness). N zones, no page-level label.
     //
     // Two decoys, so this cannot pass merely because nothing answered. The zone
@@ -1359,7 +1358,7 @@ describe('`resolved_timezone` is null exactly when the page has no single zone',
   });
 
   it('issues the second statement ONLY on the single-campaign zoned read', async () => {
-    // The cost half of the same rule, and the one D4 cares about: an unconditional
+    // The cost half of the same rule, and the one the cost rule cares about: an unconditional
     // second round trip on every grouped read would be a second statement for the
     // ~all of them that have no zone to report.
     pool.query.mockClear();

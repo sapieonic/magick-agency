@@ -59,7 +59,7 @@ interface UserRow {
   display_name: string | null;
   avatar_url: string | null;
   status: 'active';
-  /** Migration 073 — an identity bound here without proving this address. */
+  /** An identity bound here without proving this address. */
   email_unverified: boolean;
   created_at: Date;
   updated_at: Date;
@@ -518,7 +518,7 @@ describe('a claim that proves NO address', () => {
    * Adopting that address would then key a signed-in row under an address
    * nobody controls — and `users.email` is the lookup for `POST /users/invite`
    * and both super-admin provisioning paths, so the next person to name it
-   * hands over the membership. Migration 073 carries the chain; the refusal to
+   * hands over the membership. The refusal to
    * reuse is pinned against real rows in
    * `test/integration/repositories/user-email-proof.test.ts`. What this file
    * adds is the half only a composition can see: what `/auth/session` does with

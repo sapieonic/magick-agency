@@ -7,7 +7,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC = resolve(__dirname, '../../../src');
 
 /**
- * T-CSV-R5 — the isolation between the new agency ingest and the existing
+ * The isolation between the new agency ingest and the existing
  * contact-list parser is the entire risk mitigation for this change, so it is a
  * test rather than a convention.
  *

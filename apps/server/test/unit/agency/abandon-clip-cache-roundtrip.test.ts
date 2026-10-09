@@ -367,7 +367,7 @@ async function waitUntil(pred: () => boolean, budgetMs = 4000): Promise<void> {
   await flush();
 }
 
-/** Dial, lose the agent mid-ring, let the customer answer. The only route to abandonment under D1. */
+/** Dial, lose the agent mid-ring, let the customer answer. The only route to abandonment (AMD is out of scope). */
 async function loseAgentThenAnswer(world: ReturnType<typeof makeWorld>) {
   const ws = new StationSocket();
   await world.stations.attach({

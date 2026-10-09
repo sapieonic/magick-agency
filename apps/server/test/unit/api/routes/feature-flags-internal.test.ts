@@ -1,8 +1,7 @@
 /*
  * The feature-flag handler bodies run in-process inside the super-admin routes
  * (`src/api/routes/super-admin-feature-flags.routes.ts`), so this suite drives them through
- * `/super-admin/feature-flags*` with a super-admin JWT ("S2S" in the describe names means the
- * super-admin bearer).
+ * `/super-admin/feature-flags*` with a super-admin JWT.
  *  - the actor is the authenticated super admin (`sa-1`), never a body `updated_by` (the field
  *    is not in the super-admin schema; zod strips it, so payloads still carry it harmlessly);
  *  - ids are UUIDs (`t1`, `tenant-1`, `a1` → T1 …): `feature_flag_overrides` id columns are UUID;
@@ -119,7 +118,7 @@ function req(
   return app.inject({ method, url: `/super-admin/${path}`, headers, payload: body as any });
 }
 
-describe('Internal S2S — Feature Flags', () => {
+describe('Super-admin — Feature Flags', () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
@@ -142,7 +141,7 @@ describe('Internal S2S — Feature Flags', () => {
     await app.close();
   });
 
-  describe('S2S auth', () => {
+  describe('super-admin auth', () => {
     it('401 without a Bearer token', async () => {
       const res = await req(app, 'GET', 'feature-flags', undefined, null);
       expect(res.statusCode).toBe(401);

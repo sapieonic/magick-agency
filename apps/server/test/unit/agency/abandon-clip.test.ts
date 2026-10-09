@@ -76,7 +76,7 @@ describe('resolveAbandonClip — the four ways there is no clip', () => {
   });
 
   it('reports `not_found` for a dangling id rather than throwing', async () => {
-    // Migration 080 ships NO foreign key, deliberately, so an operator deleting
+    // The schema has NO foreign key here, deliberately, so an operator deleting
     // an announcement leaves exactly this state. It has to be survivable.
     announcements.findActiveByIdScoped.mockResolvedValue(null);
     expect(await resolveAbandonClip('gone', SCOPE)).toEqual({ hash: null, reason: 'not_found' });

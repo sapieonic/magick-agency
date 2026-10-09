@@ -199,7 +199,7 @@ describe('refusal 4 — one abandoned call in too coarse a sample', () => {
     // campaign could NEVER be auto-paused — a compliance guardrail silently
     // disabled, found in an audit rather than by a test.
     //
-    // NOT a supported setting: migration 089 CHECKs `> 0` and the public API
+    // NOT a supported setting: the schema CHECKs `> 0` and the public API
     // layer's config validation rejects it. But `ceiling_pct` arrives from a LEFT JOIN and is
     // typed nullable, so this is defence against a value that cannot be stored
     // rather than against an operator choice — an earlier version of this test

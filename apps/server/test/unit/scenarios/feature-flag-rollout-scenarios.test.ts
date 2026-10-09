@@ -61,7 +61,7 @@ function row(partial: Partial<FeatureFlagOverrideRecord>): FeatureFlagOverrideRe
   };
 }
 
-/** Simulate an S2S upsert: replace any same-scope row, then invalidate the cache. */
+/** Simulate an upsert: replace any same-scope row, then invalidate the cache. */
 async function upsert(svc: FeatureFlagService, r: FeatureFlagOverrideRecord) {
   store = store.filter(
     (o) => !(o.flag_key === r.flag_key && o.scope_type === r.scope_type &&
@@ -92,7 +92,7 @@ describe('whatsapp_personal rollout through-line (service → cache → invalida
     svc = new FeatureFlagService(null, PREFIX);
   });
 
-  it('IE1–IE4: default-off → enable A → isolation → bulk → global flip with D1 keystone', async () => {
+  it('IE1–IE4: default-off → enable A → isolation → bulk → global flip with explicit-false keystone', async () => {
     // ── IE1. Default off: no override, env unset → resolve false AND the gate denies.
     expect(await svc.isEnabled(WA, { tenantId: 'A' })).toBe(false);
     expect(await gatePermits(svc, 'A')).toBe(false);
@@ -117,7 +117,7 @@ describe('whatsapp_personal rollout through-line (service → cache → invalida
     await upsert(svc, row({ scope_type: 'global', tenant_id: null, value: true }));
     expect(await svc.isEnabled(WA, { tenantId: 'D' })).toBe(true);
 
-    // …but the D1 keystone: a tenant with an explicit FALSE override STILL resolves
+    // …but the keystone: a tenant with an explicit FALSE override STILL resolves
     // false despite the global true (most-specific-wins), and the gate denies it.
     await upsert(svc, row({ scope_type: 'tenant', tenant_id: 'E', value: false }));
     expect(await svc.isEnabled(WA, { tenantId: 'E' })).toBe(false);

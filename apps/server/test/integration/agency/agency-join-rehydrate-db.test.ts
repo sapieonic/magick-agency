@@ -12,12 +12,12 @@ import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, uuidFor } from '../setup/factori
  * other half — every claim the method makes about the DATABASE:
  *
  *   * the `ON CONFLICT (tenant_id, agent_user_id) WHERE left_at IS NULL` arbiter
- *     really does match 092's PARTIAL index, and really does ignore left rows;
+ *     really does match the PARTIAL index `uq_agency_agent_live_tenant`, and really does ignore left rows;
  *   * `DO UPDATE … WHERE campaign_id = EXCLUDED.campaign_id` returns zero rows on
  *     a cross-campaign conflict AND leaves the other campaign's row byte-for-byte
  *     as it was;
  *   * the rehydrate preserves a live state and promotes only `offline`;
- *   * two accounts of ONE tenant conflict (the case 092 exists for) while two
+ *   * two accounts of ONE tenant conflict (the case the tenant-wide index exists for) while two
  *     tenants do not (the case it deliberately permits);
  *   * genuinely concurrent joins settle to exactly one live session.
  *
@@ -94,7 +94,7 @@ describe('joinOrRehydrate against real Postgres (integration)', () => {
 
   it('ignores LEFT rows — the arbiter matches the partial index, not a plain unique', async () => {
     // If the ON CONFLICT arbiter did not carry `WHERE left_at IS NULL` it would not
-    // match 092's index at all and every join would 500 (`42P10`). If the INDEX lost
+    // match that index at all and every join would 500 (`42P10`). If the INDEX lost
     // the predicate, this is what would break instead: an agent who has ever worked
     // in this tenant could never join again, because their closed sessions would
     // keep conflicting. Three of them, so "the newest closed row" is not what is
@@ -121,7 +121,7 @@ describe('joinOrRehydrate against real Postgres (integration)', () => {
     expect(Number(rows[0]!.n)).toBe(3);
   });
 
-  it('refuses a second ACCOUNT of the same tenant — the case 092 is scoped for', async () => {
+  it('refuses a second ACCOUNT of the same tenant — the case the tenant-wide index is scoped for', async () => {
     // `account_id` is deliberately absent from the uniqueness key. This is the
     // reachable population of the defect in a system that permits one RUNNING
     // campaign per account: the two campaigns an agent can be double-bridged

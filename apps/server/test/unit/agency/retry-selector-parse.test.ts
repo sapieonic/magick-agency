@@ -80,7 +80,7 @@ describe('parseRetrySelector — the frozen refusals', () => {
     // The most important refusal here. An empty `AgencyContactFilters` means "the
     // whole roster", which is the right default on a READ (the contacts page opens
     // unfiltered) and would here seed a second copy of an entire campaign from a
-    // request that named nothing — with no campaign delete route in either service
+    // request that named nothing — with no campaign delete route
     // to undo it with.
     const issues = issuesOf(parseRetrySelector({}, { catalog: CATALOG }));
     expect(issues['selector']).toBe(

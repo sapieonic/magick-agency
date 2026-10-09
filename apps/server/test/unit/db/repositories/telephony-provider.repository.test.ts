@@ -104,7 +104,7 @@ describe('TelephonyProviderRepository', () => {
   });
 
   // Pins the absence of every writer and of the live-transfer read, so a re-added `update` that writes
-  // migration 074's `live_transfer_enabled` — absent from the baseline — reds here
+  // `live_transfer_enabled` — absent from the baseline — reds here
   // rather than failing on real Postgres.
   it('exposes the reads only — create, update and findLiveTransferEnabledNames are deleted', () => {
     const methods = Object.getOwnPropertyNames(TelephonyProviderRepository.prototype)

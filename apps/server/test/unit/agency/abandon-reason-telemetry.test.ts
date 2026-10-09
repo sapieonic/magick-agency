@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// `abandon_reason` (migration 119) and the seat-time series, at the DIAL SITE.
+// `abandon_reason` and the seat-time series, at the DIAL SITE.
 //
 // `abandonment-predicate.test.ts` owns whether an attempt IS abandoned. This
 // file owns the question that had no answer at all before 2026-09-10: **why**.

@@ -304,7 +304,7 @@ describe('the counters are the SHARED metric expressions, not a re-derivation', 
     // Never the persisted `talk_seconds` (anchored on the carrier's answer, nonzero
     // even when no agent bridged) and never the `wrapup_seconds` ALLOTMENT copied
     // from the campaign at wrap-up entry — averaging that hands the operator their
-    // own setting back as if it were measurement (migration 088).
+    // own setting back as if it were measurement.
     expect(sql).not.toContain('SUM(a.talk_seconds)');
     expect(sql).not.toContain('SUM(a.wrapup_seconds)');
     expect(sql).toContain("a.wrapup_resolution IN ('disposition_submitted','auto_return','agent_returned')");

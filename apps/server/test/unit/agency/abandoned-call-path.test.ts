@@ -11,7 +11,7 @@ import { EventEmitter } from 'node:events';
 // plays nothing. So the real `WebRtcBridgeManager`, the real `StationRegistry`,
 // the real `AgentStateMachine` and the real pacer are wired together and driven
 // from a station socket dropping mid-ring, which is the only route to an
-// abandoned call under D1.
+// abandoned call (AMD is out of scope).
 //
 // The doubles are Redis, the announcement/audio repositories, and the clip
 // cache — everything that would otherwise be disk or Postgres.
@@ -387,7 +387,7 @@ async function waitUntil(pred: () => boolean, budgetMs = 4000): Promise<void> {
  *
  * The order is the scenario: the station socket dies while the phone is still
  * ringing, and the customer picks up afterwards. Nothing else reaches the
- * abandoned path under D1.
+ * abandoned path (AMD is out of scope).
  */
 async function loseAgentThenAnswer(world: ReturnType<typeof makeWorld>, campaign: any = CAMPAIGN) {
   const ws = new StationSocket();
@@ -404,7 +404,7 @@ async function loseAgentThenAnswer(world: ReturnType<typeof makeWorld>, campaign
   await world.dialer.executeDial(makeCmd(campaign));
 
   // The agent's laptop closes. The socket dies and the WS route detaches it —
-  // this is the reserved-agent loss D1 leaves as the only route to abandonment.
+  // this is the reserved-agent loss that is left as the only route to abandonment.
   ws.drop();
   await world.stations.detach('s1', ws as any);
   expect(world.stations.isLocallyOwned('s1')).toBe(false);
@@ -488,7 +488,7 @@ describe('agent loss during ring produces exactly this sequence', () => {
     //    the carrier's `answered` flag, which is TRUE here, so both the
     //    `completed` and `canceled` arms would otherwise return `connected` —
     //    reporting a call nobody spoke on as a successful conversation and
-    //    zeroing the numerator C-06's compliance rate is computed from.
+    //    zeroing the numerator the compliance rate is computed from.
     expect(endedWith()).toMatchObject({ outcome: 'abandoned' });
   });
 

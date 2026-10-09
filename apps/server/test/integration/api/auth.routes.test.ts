@@ -201,7 +201,7 @@ describe('auth routes (integration)', () => {
 
     describe('path 1 repairs a row flagged by an unverified invite claim', () => {
       /**
-       * Migration 073 flags a row whose identity was bound without proving its
+       * `users.email_unverified` flags a row whose identity was bound without proving its
        * address, and every by-address reuse path then refuses it. The repair was
        * documented as happening on path 2 — which the flagged population never
        * reaches, because the claim wrote their own `firebase_uid` onto the row,

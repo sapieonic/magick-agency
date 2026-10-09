@@ -584,7 +584,7 @@ describe('the sweep against real SQL', () => {
     ).toBe(true);
     expect(requiresDisposition('connected', [])).toBe(false);
 
-    // `disposition_catalog` is `JSONB NOT NULL DEFAULT '[]'` (072), so an
+    // `disposition_catalog` is `JSONB NOT NULL DEFAULT '[]'`, so an
     // unconfigured campaign is the ORDINARY case, not an edge case.
     const { attemptId, contactId } = await conversationAwaitingWrapup({
       endedSecondsAgo: 200, wrapupSeconds: 30,

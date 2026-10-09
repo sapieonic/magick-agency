@@ -4,7 +4,7 @@ import Fastify from 'fastify';
 // ---------------------------------------------------------------------------
 // Configuring the apology, at the route.
 //
-// Migration 080 and the dial-time resolver both landed before ANYTHING could
+// The abandon-clip column and the dial-time resolver existed before ANYTHING could
 // write `abandon_announcement_id`, so the whole clip half of the feature was
 // unreachable from outside while every test of the playback path passed. The property is "an operator can set an apology and only
 // their own", and neither half is observable below the route.
@@ -119,7 +119,7 @@ describe('POST /agency-campaigns · the apology can be set at creation', () => {
     expect(res.statusCode).toBe(201);
     expect(campaigns.create.mock.calls[0]![0].abandon_announcement_id).toBeNull();
     // Fail-quiet, not fail-closed: an operator who has not written an apology must
-    // not have their campaign refuse to dial (migration 080's rationale).
+    // not have their campaign refuse to dial.
     expect(announcementRepo.findActiveByIdScoped).not.toHaveBeenCalled();
   });
 

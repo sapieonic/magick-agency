@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * mail they asked for, and neither failure is visible from the outside. The two
  * collapse rules in particular (one user with several memberships; several users
  * with one address) exist because `memberships` permits both shapes and
- * `users.email` carries only a NON-unique index — migration 069 says so in as
+ * `users.email` carries only a NON-unique index — the baseline schema says so in as
  * many words.
  */
 

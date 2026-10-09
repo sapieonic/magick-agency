@@ -173,7 +173,7 @@ describe('calling hours', () => {
   });
 
   it('defers a New York contact to 09:00 New York, not 09:00 in the campaign zone', async () => {
-    // D4 end to end through the gate: 10:30 IST is 01:00 in New York.
+    // The contact's timezone end to end through the gate: 10:30 IST is 01:00 in New York.
     const decision = await evaluatePreDialGates(
       { campaign: CAMPAIGN, contact: { ...CONTACT, timezone: 'America/New_York' }, now: IN_HOURS }, deps,
     );

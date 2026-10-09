@@ -96,7 +96,7 @@ describe('resolveAgencyActor — on_behalf is decided on the capability alone', 
      * the same discipline `proxy-agency-my-surfaces.routes.test.ts` uses for its
      * four route floors.
      *
-     * `agent` (5) being BELOW `viewer` (10) is design D6 and is why the split
+     * `agent` (5) being BELOW `viewer` (10) is deliberate and is why the split
      * cannot be spelled "above agent": `operator` is above `agent` and still must
      * not cause `on_behalf`.
      */

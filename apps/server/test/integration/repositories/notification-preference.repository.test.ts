@@ -20,7 +20,7 @@
  *     real `memberships`/`users` rows — including the two shapes the schema
  *     permits and the engine has collapse rules for: one user with a
  *     tenant-level AND an account-scoped membership, and two users sharing one
- *     email (`users.email` carries only a NON-unique index, migration 069).
+ *     email (`users.email` carries only a NON-unique index).
  *   - **The `updated_at` trigger**, which is a schema object, not code.
  */
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
@@ -506,7 +506,7 @@ describe('notificationPreferenceRepository (integration)', () => {
       await insertMembership({ user_id: a.id, tenant_id: tenant.id, role: 'account_admin' });
       await insertMembership({ user_id: b.id, tenant_id: tenant.id, role: 'tenant_owner' });
 
-      // Migration 069 says in as many words that no unique index is added on
+      // No unique index is added on
       // `users.email`. A `SELECT DISTINCT u.email` would collapse these two and
       // lose one person's preferences entirely — which is exactly why this
       // engine cannot reuse `findAddressableMembersInAccount`.

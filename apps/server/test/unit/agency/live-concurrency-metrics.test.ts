@@ -349,7 +349,7 @@ describe('live concurrency · dials in flight vs conversations in progress', () 
 
 describe('live concurrency · a label value is owned by code, never by the column', () => {
   it('folds a state outside AGENCY_ATTEMPT_LIVE_STATES into one `unknown` bucket', async () => {
-    // Unreachable on today's schema — `ck_agency_attempt_state` (migration 075)
+    // Unreachable on today's schema — `ck_agency_attempt_state`
     // constrains the column to the six known values. What makes it reachable is one
     // line in a future migration, in a commit that touches no TypeScript, and
     // without this fold that commit would mint a permanent Prometheus series per

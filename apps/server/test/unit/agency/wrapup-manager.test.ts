@@ -525,7 +525,7 @@ describe('WrapupManager acceptance', () => {
 
   it('stop() clears timers without returning anyone to the pool', async () => {
     // Shutdown must not mark agents `available`: their sockets die with the
-    // process and D2 lands them in `break` on reconnect. Returning them here would
+    // process and a reconnect lands them in `break`. Returning them here would
     // be a lie the next boot inherits.
     const onReturn = vi.fn(async () => {});
     const w = new WrapupManager(fakeStations() as any, fakeAgents() as any, onReturn);

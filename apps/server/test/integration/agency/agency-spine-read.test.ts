@@ -124,7 +124,7 @@ describe('attempts: the rows a naive join drops', () => {
     });
     expect(page.rows.find((r) => r.id === s.bridged.id)!.webrtc_call_id)
       .toBe('99999999-9999-4999-8999-999999999999');
-    // Deliberately not an FK (migration 075) — the attempt outlives a purged
+    // Deliberately not an FK — the attempt outlives a purged
     // call — so a row with no media leg must still be served, not filtered out.
     expect(page.rows.find((r) => r.id === s.abandoned.id)!.webrtc_call_id).toBeNull();
   });

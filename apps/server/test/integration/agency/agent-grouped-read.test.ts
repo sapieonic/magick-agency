@@ -233,7 +233,7 @@ describe('the grouped read against Postgres (integration)', () => {
 
       const byDisposition = await read({ groupBy: ['disposition'], campaignId });
       // Neither attempt was dispositioned, so both land in the SAME null group —
-      // which is D3's "null is a real key value" holding in Postgres rather than in
+      // which is the rule that null is a real key value holding in Postgres rather than in
       // a fixture, and it is only visible because `GROUP BY` folds NULLs together
       // where a join would not.
       expect(byDisposition.rows).toHaveLength(1);
@@ -304,8 +304,7 @@ describe('the grouped read against Postgres (integration)', () => {
     const DIAL = new Date('2026-08-18T12:30:00Z');
 
     /**
-     * `agentUserId` is a parameter because `uq_agency_agent_live_tenant` (migration
-     * 093) makes one LIVE session per (tenant, agent) — so the two-campaign case
+     * `agentUserId` is a parameter because `uq_agency_agent_live_tenant` makes one LIVE session per (tenant, agent) — so the two-campaign case
      * below needs two people, not one person twice.
      */
     async function zonedCampaign(zone: string, agentUserId = AGENT) {
@@ -319,7 +318,7 @@ describe('the grouped read against Postgres (integration)', () => {
     it('reports the zone the buckets were actually cut in', async () => {
       // The baseline the snapshot test rests on: the hour is the CAMPAIGN's local
       // hour, and the page names that zone. 18:00 IST rather than 12:00 UTC — the
-      // six-column error D5 exists to prevent, here as an observation rather than as
+      // six-column error the page's zone label exists to prevent, here as an observation rather than as
       // a claim about a string.
       const campaignId = await zonedCampaign(KOLKATA);
       const page = await read({ groupBy: ['hour_of_day'], campaignId });
@@ -404,7 +403,7 @@ describe('the grouped read against Postgres (integration)', () => {
     });
 
     it('is null on a page with no single zone, and asks Postgres nothing extra', async () => {
-      // The cross-campaign remedy D5 names first: `campaign` + a time dimension with
+      // The cross-campaign case: `campaign` + a time dimension with
       // no filter is a legal 200 spanning campaigns whose zones genuinely differ, so
       // there is no page-level label. Two campaigns in two zones, each row cut in its
       // own — which is also the property that makes a single label wrong.

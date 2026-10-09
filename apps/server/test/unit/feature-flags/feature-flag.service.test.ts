@@ -256,9 +256,9 @@ describe('FeatureFlagService', () => {
       ]));
     });
 
-    // S2 — all-or-nothing snapshot pair. A partial failure (good global, failed
-    // tenant) must NOT resolve to the global value (that would invert D1 for an
-    // opted-in tenant); it falls to registry default instead.
+    // All-or-nothing snapshot pair. A partial failure (good global, failed
+    // tenant) must NOT resolve to the global value (that would override an
+    // opted-in tenant's explicit setting); it falls to registry default instead.
     it('tenant-read throws → does NOT resolve to global value, falls to registry default', async () => {
       // global says OFF, tenant override (would say ON) but the tenant read fails.
       mocks.findGlobal.mockResolvedValue([override({ scope_type: 'global', tenant_id: null, value: false })]);

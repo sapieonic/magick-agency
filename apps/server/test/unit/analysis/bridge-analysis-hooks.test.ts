@@ -147,7 +147,7 @@ describe('bridge analysis hooks — onCallFinalized gate', () => {
     });
   });
 
-  it('explicit analysis_profile_id (stamped on the row at dial time) wins over the account default (M1)', async () => {
+  it('explicit analysis_profile_id (stamped on the row at dial time) wins over the account default', async () => {
     mockRepo.findById.mockResolvedValue(callRow({ analysis_profile_id: 'prof-explicit', analysis_language: 'hi-IN' }));
     // The profile row carries its owner, which the hook checks (see the owned-by case below).
     mockProfileRepo.findById.mockResolvedValue({ id: 'prof-explicit', tenant_id: 't1', account_id: 'a1', context: 'renewals', custom_dimensions: [], language_hint: 'hi-IN' });
@@ -301,7 +301,7 @@ describe('bridge analysis hooks — agency gate 2 (product flag) and deleted gat
     expect(mockRepo.update).not.toHaveBeenCalledWith('call-1', { analysis_status: 'skipped' });
   });
 
-  it('never consults a softphone flag: the dialer flag cannot stop an agency job', async () => {
+  it('never consults dialer_call_analysis: that flag cannot stop an agency job', async () => {
     mockFlagService.isEnabled.mockImplementation(async (flag: { key?: string }) => flag?.key !== 'dialer_call_analysis');
     await hooks.onCallFinalized(facts());
     expect(checkedFlagKeys()).not.toContain('dialer_call_analysis');
@@ -334,7 +334,7 @@ describe('bridge analysis hooks — onRecordingReady', () => {
     expect(mockWorker.wake).toHaveBeenCalledOnce();
   });
 
-  it('a duplicate (nothing promoted) does not wake the worker (C3)', async () => {
+  it('a duplicate (nothing promoted) does not wake the worker', async () => {
     mockJobRepo.markRecordingReady.mockResolvedValue(null);
     await hooks.onRecordingReady('call-1');
     expect(mockWorker.wake).not.toHaveBeenCalled();

@@ -195,7 +195,7 @@ describe('remaining and retries-pending are reported separately', () => {
     await new AgencyCampaignRepository().stats('camp-1');
     const sql = sqlOf();
 
-    // Enumerated from the migration-073 CHECK constraint rather than from the
+    // Enumerated from the CHECK constraint rather than from the
     // payload, so adding a state without a bucket reds this rather than silently
     // shrinking the visible total.
     for (const state of ['pending', 'in_flight', 'completed', 'suppressed', 'exhausted']) {
@@ -374,7 +374,7 @@ describe('stopping drains before it stops', () => {
 
     // No fourth argument. The lifecycle stamps (`ended_at`, and its legacy twin
     // `completed_at`) are derived from the TARGET STATUS inside `transitionStatus`
-    // since migration 108, so the leader carries no patch — which is the point of
+    // by the repository, so the leader carries no patch — which is the point of
     // moving them: a call site cannot get them wrong by omission when there is
     // nothing to omit. Asserted as an EXACT three-argument call rather than with a
     // trailing `expect.anything()`, so a patch quietly reappearing here is a
@@ -395,7 +395,7 @@ describe('stopping drains before it stops', () => {
     // stopping a campaign that is running again.
     // No fourth argument. The lifecycle stamps (`ended_at`, and its legacy twin
     // `completed_at`) are derived from the TARGET STATUS inside `transitionStatus`
-    // since migration 108, so the leader carries no patch — which is the point of
+    // by the repository, so the leader carries no patch — which is the point of
     // moving them: a call site cannot get them wrong by omission when there is
     // nothing to omit. Asserted as an EXACT three-argument call rather than with a
     // trailing `expect.anything()`, so a patch quietly reappearing here is a

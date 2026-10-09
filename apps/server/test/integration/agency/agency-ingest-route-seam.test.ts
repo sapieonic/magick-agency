@@ -63,7 +63,7 @@ const SEAM_ACCOUNT = uuidFor('seam-account');
  *      persisted contacts still take the row's values. Asserted on the persisted
  *      contacts, so a route that hardcoded or mis-threaded them fails here.
  *   2. **`source_row_number` is a WIRE field that lands in a DIFFERENT COLUMN.**
- *      085 moved the CSV line to `csv_line_number` and leaves
+ *      The CSV line is stored in `csv_line_number`, which leaves
  *      `agency_contacts.source_row_number` NULL. The wire name did not move. A
  *      test that never crosses the boundary cannot notice the two diverging.
  *   3. **`roster_complete` / `missing_chunks`** are computed in the handler from
@@ -183,7 +183,7 @@ describe('agency roster ingest — the in-process handler body (integration)', (
     ['a sibling account', { tenant_id: SEAM_TENANT, account_id: uuidFor('sibling-account') }],
   ])('refuses a chunk from %s with 404 and writes nothing to the database', async (_label, identity) => {
     // Authenticated, well-formed, naming a real campaign —
-    // and still refused, because the S2S token proves who is calling, not which
+    // and still refused, because the internal-API credential proves who is calling, not which
     // campaign they may write to. Read back from Postgres: the roster and the
     // chunk ledger are both untouched, so a later retry by the real owner with
     // the same key is not mistaken for a replay.
@@ -248,8 +248,8 @@ describe('agency roster ingest — the in-process handler body (integration)', (
     for (const row of rows) {
       expect(row.tenant_id).toBe(SEAM_TENANT);
       expect(row.account_id).toBe(SEAM_ACCOUNT);
-      // 085: the wire field `source_row_number` is stored in `csv_line_number`,
-      // and the legacy column is left NULL so 073's still-live partial index
+      // The wire field `source_row_number` is stored in `csv_line_number`,
+      // and the legacy column is left NULL so `uq_agency_contacts_source_row`
       // cannot see these rows. Both halves asserted — a route that "tidied" the
       // column back in would pass an assertion on either one alone.
       expect(row.source_row_number).toBeNull();
@@ -314,7 +314,7 @@ describe('agency roster ingest — the in-process handler body (integration)', (
 
   it('a redelivered chunk key is answered from the ORIGINAL chunk’s recorded counts, not a fresh zero', async () => {
     // SQS at-least-once: the caller's own retry re-sends the identical chunk under
-    // the SAME job id, so the chunk-key layer fires. 084's point is that the
+    // the SAME job id, so the chunk-key layer fires. The point is that the
     // replay must answer with what the first application recorded, because a
     // rejected row leaves nothing behind to recount. Driven through the hand-off because
     // this response body IS the ingest summary.
@@ -348,7 +348,7 @@ describe('agency roster ingest — the in-process handler body (integration)', (
       accepted: 0,
       duplicate_chunk: true,
       // Read back from the marker, NOT invented. A confident zero here is the
-      // defect 084 fixed and it would undercount the ingest summary by
+      // defect the recorded counts exist to prevent, and it would undercount the ingest summary by
       // every row the roster refused.
       rejected_duplicate_rows: 5,
       duplicate_source_rows: [1, 2, 3, 4, 5],
@@ -400,13 +400,13 @@ describe('agency roster ingest — the in-process handler body (integration)', (
    * asserting it duplicates, to pin the hole as known.
    *
    * That was true of the earlier tree. It is not true of
-   * this one. Migration 083 re-keyed row identity onto
+   * this one. Row identity is keyed on
    * `uq_agency_contacts_row_fingerprint (campaign_id, row_fingerprint)`, where
    * `row_fingerprint = md5(phone + context + timezone)` — computed in SQL by
    * `agency_contact_row_fingerprint`, which does not reference the row number at
    * all and is NOT `STRICT`, so it returns a value even when `context` and
-   * `timezone` are both NULL. 085 then stopped writing
-   * `agency_contacts.source_row_number` entirely (the CSV line moved to
+   * `timezone` are both NULL. Nothing writes
+   * `agency_contacts.source_row_number` any more (the CSV line moved to
    * `csv_line_number`), so **every** row ingested today is NULL in the column
    * arm (b) is about, and every row is nonetheless covered by the fingerprint.
    *
@@ -436,8 +436,8 @@ describe('agency roster ingest — the in-process handler body (integration)', (
     expect(first.json()).toMatchObject({ accepted: 5, duplicate_chunk: false });
 
     // The mechanism, asserted at the row level: no row number stored anywhere
-    // (so 073's partial index cannot see these rows), yet every row carries a
-    // fingerprint (so 083's partial index CAN). This pair is the whole reason
+    // (so `uq_agency_contacts_source_row` cannot see these rows), yet every row carries a
+    // fingerprint (so `uq_agency_contacts_row_fingerprint` CAN). This pair is the whole reason
     // the replay below is refused, and it is what a mutation would break.
     const stored = await contactRows(campaign.id);
     expect(stored).toHaveLength(5);

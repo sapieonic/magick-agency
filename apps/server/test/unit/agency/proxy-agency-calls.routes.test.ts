@@ -5,9 +5,8 @@ import { PERMISSION_MATRIX, type MembershipRole } from '@magick-agency/contracts
 /**
  * ─── THE AGENCY CALL READ (`proxy-agency-calls.routes.ts`) ──────────────────
  *
- * The surface whose absence made the agency workspace link its attempt rows into
- * `/app/calls/dialer/history/:id` — the primary application's shell, gated on the
- * primary application's capability.
+ * The surface that keeps the agency workspace's attempt rows inside the agency
+ * shell, rather than linking them to a generic call page.
  *
  * ── What this file is actually for ─────────────────────────────────────────
  *
@@ -28,8 +27,8 @@ import { PERMISSION_MATRIX, type MembershipRole } from '@magick-agency/contracts
  *     recordings that predated the grant. Gating the write and not the playback
  *     is gating the wrong end.
  *  4. **A purged call is forwarded as a 200 with a marker.** The internal handler deliberately
- *     does not 404 it — the attempt outlives the call by design (migration
- *     076) — so this tier must not turn it into an error either.
+ *     does not 404 it — the attempt outlives the call by design —
+ *     so this tier must not turn it into an error either.
  *
  * Harness notes:
  *  - `callCore` (`src/api/core-dispatch.ts`, the in-process seam) is mocked as

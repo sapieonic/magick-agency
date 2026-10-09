@@ -775,7 +775,7 @@ describe('AgencyDialer queued break ', () => {
   });
 
   it('drops a pending break for an agent whose socket is gone', async () => {
-    // `offline` already keeps them out of the pool, and D2 rehydrates them into
+    // `offline` already keeps them out of the pool, and a reconnect rehydrates them into
     // `break` anyway — leaving the queue armed would apply a stale break to a
     // future shift.
     const stations = new StationRegistry(null, '', 'r1');

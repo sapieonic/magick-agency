@@ -784,7 +784,7 @@ describe('reapDecodeScratchDirs — crash-orphaned scratch dirs', () => {
 // ── Decode concurrency gate ──────────────────────────────────────────────────
 //
 // Each in-flight decode is a child process plus up to ~23MB of scratch, and this
-// process shares its CPU and event loop with live AI calls. Nothing upstream
+// process shares its CPU and event loop with live bridged calls. Nothing upstream
 // bounds the fleet — the upload route decodes synchronously in the request path
 // behind only a *request* rate limit, and ensurePcmClip's SingleFlight dedupes one
 // audio file, never N distinct ones — so the ceiling has to live in decodeToPcm16

@@ -181,7 +181,7 @@ describe('classifyAttemptOutcome — the truth table', () => {
     })).toBe('agent_disconnected');
   });
 
-  it('never produces `machine` — AMD is out of scope (D1)', () => {
+  it('never produces `machine` — AMD is out of scope', () => {
     // The carrier cannot tell us a machine answered, so voicemail is `connected`
     // and only the agent's disposition says otherwise. Inventing `machine` here
     // would be a lie the retry engine acts on.

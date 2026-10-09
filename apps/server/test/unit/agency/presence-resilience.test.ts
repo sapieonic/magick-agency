@@ -802,7 +802,7 @@ describe('the supersession guard is not the window ', () => {
 
   it('a borrowed call with no grace supplied still hangs up on close, as before', async () => {
     // The bridge chooses nothing. A caller that asks for no window gets the
-    // pre-C-07 behaviour byte for byte, which is what keeps this additive.
+    // unwindowed behaviour byte for byte, which is what keeps this additive.
     const world = makeWorld();
     const ws = new StationSocket();
     await world.bridge.createBridgedCall({

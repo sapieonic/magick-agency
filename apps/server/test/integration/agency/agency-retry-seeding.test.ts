@@ -457,7 +457,7 @@ describe('the commit delivers exactly what the preview promised', () => {
     });
     expect(result.status).toBe('empty');
     // Not merely "no contacts" — no campaign row either. There is no delete
-    // route in either service, so a draft nobody can start is unrecoverable.
+    // route, so a draft nobody can start is unrecoverable.
     const after = await getTestPool().query('SELECT count(*)::int AS n FROM agency_campaigns');
     expect(after.rows[0].n).toBe(before.rows[0].n);
   });
@@ -536,7 +536,7 @@ describe('the commit reports what it actually did', () => {
   });
 });
 
-describe('migration 112/113 lineage columns, as applied', () => {
+describe('lineage columns, as applied', () => {
   it('stamps root_contact_id on an ordinary ingest row', async () => {
     // The BEFORE INSERT trigger, exercised rather than read. A NULL here would
     // reach `WHERE root_contact_id = $1` in the dial path and match nothing,
@@ -549,7 +549,7 @@ describe('migration 112/113 lineage columns, as applied', () => {
     expect(rows[0]!.n).toBe(5);
   });
 
-  it('113 is a no-op on a second run, so updated_at is not restamped', async () => {
+  it('the root_contact_id backfill is a no-op on a second run, so updated_at is not restamped', async () => {
     // `migrate:up` runs on every container start and `agency_contacts` carries a
     // BEFORE UPDATE trigger; a non-idempotent backfill would report every
     // contact on the platform as freshly modified after each deploy.

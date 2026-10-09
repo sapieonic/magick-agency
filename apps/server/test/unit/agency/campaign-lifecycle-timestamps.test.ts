@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// Migration 108 — `started_at`, `ended_at` and `last_transition_by` on the
+// `started_at`, `ended_at` and `last_transition_by` on the
 // campaign row.
 //
 // ── The regression this suite exists to make un-shippable ──────────────────
 //
-// `started_at` has existed since 072 and was WRONG: the routes passed
+// `started_at` was WRONG: the routes passed
 // `{ started_at: new Date() }` on `/resume` as well as `/start`, and the UPDATE
 // said `COALESCE($n, started_at)` — new value FIRST — so every resume overwrote
 // it. A campaign that began at 09:00, paused for lunch and resumed at 14:05
@@ -204,7 +204,7 @@ describe('last_transition_by answers "who caused the CURRENT status"', () => {
       'camp-1', ['draft'], 'running',
       { last_transition_by: { user_id: 'u-supervisor', name: null } },
     );
-    // There is no user table in the voice engine (D3), so a name is only ever what the public API layer sent. NULL is
+    // There is no user table in the voice engine, so a name is only ever what the public API layer sent. NULL is
     // a real state — an id-only actor — and it is a different fact from "nobody
     // caused this".
     expect(paramsOf()[3]).toBe('u-supervisor');

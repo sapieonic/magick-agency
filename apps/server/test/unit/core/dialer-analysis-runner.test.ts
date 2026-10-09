@@ -10,8 +10,8 @@
  *  - analysis failure leaves the transcript intact (persist happened, no complete).
  *  - empty transcript ⇒ skipped, NOT failed (no charge, no retry).
  *  - role mapping agent→assistant, customer→user, unknown→user.
- *  - snapshot used, never a live profile lookup, even if the profile was deactivated (M1).
- *  - stale claim_generation write rejected: persist fence false ⇒ abandon (M9).
+ *  - snapshot used, never a live profile lookup, even if the profile was deactivated.
+ *  - stale claim_generation write rejected: persist fence false ⇒ abandon.
  *  - the runner NEVER throws.
  *
  * Mocking: vi.hoisted + vi.mock with ESM .js imports.
@@ -419,7 +419,7 @@ describe('DialerAnalysisRunner.run', () => {
     expect(mockJobRepo.markSkipped).toHaveBeenCalledWith('job-1', 'call-1', 5, 'TRANSCRIPTION_EMPTY', expect.any(String));
   });
 
-  it('uses the SNAPSHOT dimensions/context, never a live profile lookup (M1)', async () => {
+  it('uses the SNAPSHOT dimensions/context, never a live profile lookup', async () => {
     const analysisService = makeAnalysisService();
     const snapshot = { context: 'renewals', custom_dimensions: [{ key: 'renewed', description: 'd', type: 'boolean' as const }], language_hint: 'hi-IN' };
     const runner = new DialerAnalysisRunner({ transcriber: makeTranscriber() as never, analysisService: analysisService as never, config: CFG });
@@ -441,7 +441,7 @@ describe('DialerAnalysisRunner.run', () => {
     expect(transcriber.transcribe.mock.calls[0]![0].languageHint).toBe('te-IN');
   });
 
-  it('stale claim_generation: persist fence false ⇒ abandon (M9), no analyze/complete', async () => {
+  it('stale claim_generation: persist fence false ⇒ abandon, no analyze/complete', async () => {
     mockJobRepo.persistTranscript.mockResolvedValue(false);
     const analysisService = makeAnalysisService();
     const runner = new DialerAnalysisRunner({ transcriber: makeTranscriber() as never, analysisService: analysisService as never, config: CFG });
@@ -472,7 +472,7 @@ describe('DialerAnalysisRunner.run', () => {
     expect(mockJobRepo.markSkipped).toHaveBeenCalledWith('job-1', 'call-1', 5, 'ALREADY_ANALYSED', expect.any(String));
   });
 
-  it('rate-limited ⇒ requeue without consuming an attempt (M4)', async () => {
+  it('rate-limited ⇒ requeue without consuming an attempt', async () => {
     const transcriber = makeTranscriber({
       transcribe: vi.fn().mockRejectedValue(new TranscriptionError('RATE_LIMITED', '429')),
     });

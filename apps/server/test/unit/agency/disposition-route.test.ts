@@ -61,7 +61,7 @@ const { repos } = vi.hoisted(() => ({
       markState: vi.fn().mockResolvedValue(undefined),
       unclaim: vi.fn().mockResolvedValue(undefined),
       // Read to resolve the contact's own timezone before it
-      // schedules a callback (D4). A callback is scheduled in the CUSTOMER's
+      // schedules a callback. A callback is scheduled in the CUSTOMER's
       // window, so the route cannot answer from the campaign row alone.
       findById: vi.fn(),
     },
@@ -143,7 +143,7 @@ beforeEach(() => {
   flags.isEnabled.mockResolvedValue(true);
   repos.attempt.findById.mockResolvedValue(attemptRow());
   // An all-day, every-day window by default. These cases are about
-  // disposition semantics, and the migration-072 defaults (09:00–20:00 Mon–Fri)
+  // disposition semantics, and the schema defaults (09:00–20:00 Mon–Fri)
   // would make every callback assertion depend on what time the suite ran.
   repos.campaign.findById.mockResolvedValue({
     id: 'camp-1', disposition_catalog: CATALOG,
@@ -309,7 +309,7 @@ describe('POST /attempts/:id/disposition — callback_at is honoured, not just c
     expect(patch.next_attempt_at.toISOString()).toBe(FUTURE);
   });
 
-  it('binds the callback to nobody — it goes to the pool (D11)', async () => {
+  it('binds the callback to nobody — it goes to the pool', async () => {
     // The ratified decision. Nothing in the write may carry the originating
     // session, or agent-facing copy would have to say "I'll call you back".
     const app = await buildApp();
@@ -376,7 +376,7 @@ describe('POST /attempts/:id/disposition — callback_at is honoured, not just c
     });
 
     it('uses the CONTACT timezone, not the campaign default', async () => {
-      // D4 all the way through the callback path. 04:30Z is 10:00 IST — a Saturday
+      // The contact's timezone all the way through the callback path. 04:30Z is 10:00 IST — a Saturday
       // either way — but the next Monday 09:00 is a different instant in New York
       // than in Kolkata, and it is the customer's morning that matters.
       repos.contact.findById.mockResolvedValue({ id: 'contact-1', timezone: 'America/New_York' });
@@ -410,7 +410,7 @@ describe('POST /attempts/:id/disposition — callback_at is honoured, not just c
     it('still schedules when the contact row cannot be read', async () => {
       // A DB blip on the contact read must not fail an agent's disposition — the
       // conversation is over and the write is the record of it. The campaign
-      // default zone applies, which is D4's own fallback.
+      // default zone applies, which is the contact-timezone fallback.
       repos.contact.findById.mockRejectedValue(new Error('connection terminated'));
       const app = await buildApp();
       const res = await dispose(app, {
@@ -477,7 +477,7 @@ describe('POST /attempts/:id/disposition — precedence over the outcome policy'
   });
 
   it('(a) a `voicemail` retry beats `connected` being terminal by outcome policy', async () => {
-    // The ticket's headline case, and the one D1 forces to exist: with AMD off the
+    // The ticket's headline case, and the one that AMD being out of scope forces to exist: with AMD off the
     // carrier reports a voicemail pickup as `connected`, whose DEFAULT outcome rule
     // is `max_attempts: 0`. So the outcome policy's answer is "never call again"
     // and the agent's disposition's answer is "in four hours" — a cell where the

@@ -411,7 +411,7 @@ describe('roster-level exactly-once over a full run (chaos)', () => {
     // `connected`. Uniform on purpose: a mixed script would let a single stuck
     // contact hide inside a bucket that had other legitimate occupants.
     //
-    // Migration 072's `disposition_catalog JSONB NOT NULL DEFAULT '[]'` is left
+    // The `disposition_catalog JSONB NOT NULL DEFAULT '[]'` is left
     // alone rather than overridden — the empty catalog IS the case under test, and
     // it is also what every campaign in production currently has, since the public API layer
     // does not send the field.

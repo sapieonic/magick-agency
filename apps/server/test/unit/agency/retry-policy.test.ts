@@ -64,9 +64,9 @@ describe('the built-in default policy', () => {
       // spoke to, which is exactly that defect.
       canceled: { delay_minutes: 0, max_attempts: 3 },
     });
-    // D1: with AMD off the system can never classify an outcome as `machine`, so a
+    // With AMD off the system can never classify an outcome as `machine`, so a
     // key for it would be dead configuration that looks live. Voicemail retry is
-    // disposition-driven (C-02).
+    // disposition-driven.
     expect(DEFAULT_RETRY_POLICY).not.toHaveProperty('machine');
   });
 });
@@ -221,7 +221,7 @@ describe('degenerate policies never produce an unclaimable or hot-looping contac
     // the point of the fix, not a weakening of this one. `machine` is the honest
     // replacement and the ONLY remaining unmodelled key: it is declared in
     // `AgencyAttemptOutcome` because it is a legal column value, but
-    // with AMD off (D1) nothing can ever produce it. So this still exercises a
+    // with AMD off nothing can ever produce it. So this still exercises a
     // real declared outcome with no policy entry, rather than a fabricated one.
     const decision = resolveRetryDecision(null, 'machine', NOW, 1);
     expect(decision.contactState).toBe('completed');

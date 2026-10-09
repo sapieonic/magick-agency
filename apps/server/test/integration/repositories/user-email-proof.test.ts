@@ -35,7 +35,7 @@ const { adoptFirebaseIdentity } = await import('../../../src/auth/firebase-ident
 
 /**
  * `users.email_unverified` — the flag that stops an address nobody proved from
- * being reused as an identity (migration 073).
+ * being reused as an identity.
  *
  * ── The hole, restated as the cases below walk it ──────────────────────────
  * `POST /invites/:token/claim` accepts an UNVERIFIED Firebase email on purpose:
@@ -344,7 +344,7 @@ describe('users.email_unverified — an address nobody proved is never an identi
 
   describe('clearing the flag — the repair that was documented and unreachable', () => {
     /**
-     * Migration 073 said the flag clears "the moment somebody proves the
+     * The flag's original design said it clears "the moment somebody proves the
      * address", through `adoptFirebaseIdentity` on `/auth/session` path 2. For
      * the population that actually gets flagged that was false: the claim binds
      * the claimant's OWN `firebase_uid` onto the row, so every later sign-in of
@@ -820,7 +820,7 @@ describe('users.email_unverified — an address nobody proved is never an identi
 
     it('DOES still flag when the same statement is activating a stub', async () => {
       /**
-       * The counterpart, and the case migration 073 exists for. Narrowing the
+       * The counterpart, and the case the flag exists for. Narrowing the
        * flag to stub activation must not narrow it out of existence.
        */
       const stub = await poisonAddress(VICTIM_EMAIL);

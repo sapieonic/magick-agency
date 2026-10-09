@@ -9,7 +9,7 @@ import {
 import type { MembershipRole } from '@magick-agency/db/models/membership.model';
 
 /**
- * The `agent` role (Agency Dialer, design D6) is only safe because it sits
+ * The `agent` role (Agency Dialer) is only safe because it sits
  * BELOW `viewer` in a linear hierarchy whose permissions are all expressed as
  * minimum roles. That is a whole-matrix property, not a property of any one
  * permission — so these tests iterate the matrix rather than spot-checking, and

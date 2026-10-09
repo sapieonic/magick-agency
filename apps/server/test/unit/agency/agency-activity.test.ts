@@ -106,7 +106,7 @@ describe('normalizeMasterRow', () => {
   });
 
   /**
-   * ── Rows written before migration 067 must render exactly as they did ──────
+   * ── Rows without an actor type must render exactly as they did ──────
    *
    * `actor_type IS NULL` is "not recorded", and there is nothing to read. Those
    * rows fall back to the inference this function made before the column
@@ -162,7 +162,7 @@ describe('normalizeCoreRow', () => {
   });
 
   /**
-   * The dialer side has no user table (design D3), so a non-`system:` actor is an
+   * The dialer side has no user table so a non-`system:` actor is an
    * originator string, not an id. Reporting it as `user_id` would invite the
    * client to link it to a person who does not exist on that side.
    */

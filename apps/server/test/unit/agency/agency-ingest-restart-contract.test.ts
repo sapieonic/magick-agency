@@ -303,14 +303,14 @@ describe('the ingest service’s restart contract ', () => {
     it('produces IDENTICAL row numbers on a second run of the same file — the restart case', async () => {
       // Run 1 is killed after the dialer commits; run 2 streams the same file from the
       // beginning. The dialer's row-level index can only recognise run 2's rows as
-      // replays if run 2 numbers them the same way — and, since 083, only if the
+      // replays if run 2 numbers them the same way — and only if the
       // CONTENT is identical too, which is asserted alongside.
       const runOne = await runIngest(500);
       const runTwo = await runIngest(500);
 
       expect(runTwo.accepted.map((c) => c.source_row_number))
         .toEqual(runOne.accepted.map((c) => c.source_row_number));
-      // Content parity, not just number parity: since migration 083 the dialer keys
+      // Content parity, not just number parity: the dialer keys
       // row identity on md5(phone + context + timezone), so a re-upload that
       // renumbered identically but reshaped `context` would still duplicate.
       expect(runTwo.accepted).toEqual(runOne.accepted);
@@ -336,8 +336,8 @@ describe('the ingest service’s restart contract ', () => {
 
     it('declares source_row_number as REQUIRED on the wire type', () => {
       // The roster route types the field `source_row_number?: number` and its
-      // repository writes `?? null`, so a payload without it is accepted and — by
-      // way of migration 085 — stored with the CSV line NULL. Nothing duplicates
+      // repository writes `?? null`, so a payload without it is accepted and
+      // stored with the CSV line NULL. Nothing duplicates
       // (the dialer keys on the content fingerprint, asserted in
       // `test/integration/agency/agency-ingest-route-seam.test.ts`),
       // but the ingest's collision REPORT loses the ability to name which rows

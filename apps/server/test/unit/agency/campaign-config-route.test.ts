@@ -409,7 +409,7 @@ describe('the default path', () => {
   });
 
   it('refuses a window the COLUMN DEFAULT completes into start == end', async () => {
-    // Migration 072 defaults `calling_window_end` to '20:00'. A create sending
+    // The schema defaults `calling_window_end` to '20:00'. A create sending
     // only `calling_window_start: '20:00'` therefore stores 20:00–20:00 — a
     // campaign that can never dial — and a body-only validator sees one
     // well-formed time and nothing to complain about. This is the rule arriving

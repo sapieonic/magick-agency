@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 /**
- * ─── D1 — roster row identity, the properties that survive the squash ───────
+ * ─── roster row identity, the properties that survive the squash ───────
  *
  * These cases pin the REPOSITORY against the schema, and the baseline carries the same
  * objects: "hashes content only — never the row number" (read off the baseline's
@@ -28,7 +28,7 @@ describe('roster row identity — repository against the schema', () => {
     expect(fn).toMatch(/p_context/);
     expect(fn).toMatch(/p_timezone/);
     // Folding `source_row_number` back in would make every row of a SECOND file
-    // unique again and reinstate D1 in a form that looks like extra rigour.
+    // unique again and reinstate the defect in a form that looks like extra rigour.
     expect(fn).not.toMatch(/source_row_number/);
   });
 

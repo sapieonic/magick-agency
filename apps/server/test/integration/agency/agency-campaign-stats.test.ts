@@ -355,7 +355,7 @@ describe('agency supervisor stats — the agent floor (integration)', () => {
   it('attributes by SESSION, so a rejoining agent starts this shift at zero', async () => {
     // The "this shift" semantic, and it is structural rather than a filter:
     // `agency_call_attempts.reserved_agent_id` is a FK to `agency_agent_sessions`
-    // (migration 075), not to a user, so a session id cannot exist before its own
+    // not to a user, so a session id cannot exist before its own
     // `joined_at`. There is no date bound to get wrong — but there IS a way to lose
     // the property, by joining on `agent_user_id` instead, and that is what this
     // pins. The same human, yesterday's session left and today's live.

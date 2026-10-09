@@ -25,7 +25,7 @@ import type { FastifyInstance } from 'fastify';
  *
  * ── And the ordering property ───────────────────────────────────────────────
  * The membership change is authoritative and the staffing close is a tidy-up of a
- * navigation list — closing a row revokes nothing (migration 060's header). So a
+ * navigation list — closing a row revokes nothing. So a
  * staffing failure must leave the membership removed and the request successful.
  * That is the last describe block, and it is the one that would otherwise be a
  * comment nobody could check.

@@ -309,7 +309,7 @@ describe('a DNC suppression is never resurrected (integration)', () => {
     // NOT in `idx_agency_contacts_dialable`'s own predicate — narrowing it would
     // mean DROP + CREATE under ACCESS EXCLUSIVE inside the startup migration
     // transaction, blocking THE hot dialing query on up to 1M rows to remove a
-    // handful of them from an index (087 records why CONCURRENTLY is unavailable).
+    // handful of them from an index (CONCURRENTLY is unavailable inside the startup migration transaction).
     //
     // That decision is only safe if the extra conjunct does not make the index
     // UNUSABLE, so it is checked against the planner rather than argued.

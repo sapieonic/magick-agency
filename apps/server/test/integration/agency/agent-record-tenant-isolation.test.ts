@@ -138,7 +138,7 @@ describe('agent record tenant isolation (integration)', () => {
     // boundary in this platform (every resource is scoped by both), and the kind of
     // half-fix that passes a tenant-only test.
     const sibling = { tenantId: MINE.tenantId, accountId: uuidFor('account-sibling') };
-    // Seeded FIRST and closed immediately: migration 093's live-session index is
+    // Seeded FIRST and closed immediately: the live-session index is
     // per (tenant_id, agent_user_id) and takes no notice of the account, so two
     // live sessions for one agent in two accounts of ONE tenant are refused by the
     // database. Closing as we go is also what production looks like.

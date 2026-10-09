@@ -6,7 +6,7 @@ import Fastify from 'fastify';
 //
 // Two properties, and only one of them was already true.
 //
-// (c) recording is off by default. Migration 072's column DEFAULT is `false` and
+// (c) recording is off by default. The column DEFAULT is `false` and
 //     `AgencyCampaignRepository.create` COALESCEs to `false`; what is asserted
 //     here is the ROUTE half — that an omitted `record_calls` reaches the
 //     repository as "unset" rather than being coerced to anything truthy.
@@ -49,8 +49,8 @@ vi.mock('../../../src/api/middleware/auth.middleware.js', () => ({
 
 // THREE different flags run through one service here — `agency_dialer_enabled`
 // gates the route, `agency_call_analysis` gates the profile on this (agency)
-// surface, and `dialer_call_analysis` is present so a test can prove the softphone
-// flag is NOT what gates it. The mock must answer per flag or the cases below
+// surface, and a `dialer_call_analysis` flag is present so a test can prove a
+// non-agency flag is NOT what gates it. The mock must answer per flag or the cases below
 // would be indistinguishable.
 const { flagState, flags, FLAGS } = vi.hoisted(() => {
   const FLAGS = {
@@ -141,7 +141,7 @@ describe('POST /agency-campaigns · recording is off by default (c)', () => {
 
     expect(res.statusCode).toBe(201);
     // `undefined`, so the repository's `?? null` reaches `COALESCE($17,false)`
-    // and migration 072's DEFAULT applies. Anything else here — `false` included
+    // and the column DEFAULT applies. Anything else here — `false` included
     // — would be the route inventing a value the operator did not send.
     expect(campaigns.create.mock.calls[0]![0].record_calls).toBeUndefined();
   });
@@ -228,9 +228,9 @@ describe('POST /agency-campaigns · the analysis profile is preflighted (b)', ()
     expect(res.statusCode).toBe(403);
     expect(res.json().error).toBe('Feature Not Enabled');
     expect(res.json().code).toBe('analysis_not_enabled');
-    // Named for the product the operator is editing. "Dialer call analysis is not
-    // enabled" on an agency campaign sends them to the softphone's settings, which
-    // is not where the switch is.
+    // Named for what the operator is editing. "Dialer call analysis is not
+    // enabled" on an agency campaign sends them looking for a switch that is not
+    // where this one is.
     expect(res.json().message).toBe('Agency call analysis is not enabled for this account.');
     expect(campaigns.create).not.toHaveBeenCalled();
     // The flag decided it — no point spending the lookup.
@@ -246,7 +246,7 @@ describe('POST /agency-campaigns · the analysis profile is preflighted (b)', ()
    * "the flag was not consulted", because the shape that must not come back is the
    * refusal.
    */
-  it('does NOT consult the softphone flag: agency analysis on, dialer analysis off, campaign saves', async () => {
+  it('does NOT consult the dialer_call_analysis flag: agency analysis on, dialer analysis off, campaign saves', async () => {
     flagState.agency_call_analysis = true;
     flagState.dialer_call_analysis = false;
     const app = await makeApp();
@@ -263,7 +263,7 @@ describe('POST /agency-campaigns · the analysis profile is preflighted (b)', ()
   });
 
   /** And the PATCH, which is the surface an operator actually re-points a live campaign from. */
-  it('does not consult the softphone flag on the PATCH either', async () => {
+  it('does not consult the dialer_call_analysis flag on the PATCH either', async () => {
     flagState.agency_call_analysis = true;
     flagState.dialer_call_analysis = false;
     const app = await makeApp();

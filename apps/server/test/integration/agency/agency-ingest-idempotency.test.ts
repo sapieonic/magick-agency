@@ -25,9 +25,9 @@ const { agencyContactRepository } = await import(
  * that `uq_agency_attempt_live` cannot join (two different `contact_id`s).
  *
  * ── There are TWO mechanisms here and this file refuses to conflate them ───
- * Migration 077 introduces `agency_ingest_chunks`, keyed `{ingest_job_id}-
- * {chunk_index}`, and calls the row-level unique index "defence in depth beneath
- * that". A test that only asserts "the contact count did not change" passes
+ * `agency_ingest_chunks` is keyed `{ingest_job_id}-
+ * {chunk_index}`, with the row-level unique index as defence in depth beneath
+ * that. A test that only asserts "the contact count did not change" passes
  * whichever layer fired — and therefore proves nothing about either. Every arm
  * below states which layer it is falsifying, and the restart arm asserts on
  * `duplicate_chunk` specifically so that the answer to "which one caught it" is
@@ -40,12 +40,12 @@ const { agencyContactRepository } = await import(
  * fire for the restart case at all, and the row-level index is carrying it
  * alone. `it('re-upload after a caller restart …')` is where that is pinned.
  *
- * That index is `uq_agency_contacts_row_fingerprint` (083), not 073's
- * `uq_agency_contacts_source_row`. 073 keyed on the row's position in the file,
- * which made a second CSV's lines collide with the first's and silently
- * discarded every top-up; 083 keys on the row's CONTENT, which refuses the
- * same restart re-upload while letting a genuinely new file land. Read 083's
- * header before touching any arm here — "namespace it per ingest job" is the
+ * That index is `uq_agency_contacts_row_fingerprint`, not the legacy
+ * `uq_agency_contacts_source_row`. Keying on the row's position in the file
+ * would make a second CSV's lines collide with the first's and silently
+ * discard every top-up; the fingerprint keys on the row's CONTENT, which refuses the
+ * same restart re-upload while letting a genuinely new file land. Take care
+ * before touching any arm here — "namespace it per ingest job" is the
  * intuitive fix and it gives away exactly the guarantee this file exists for.
  *
  * ── Cleanup ───────────────────────────────────────────────────────────────
@@ -218,7 +218,7 @@ describe('agency roster-ingest idempotency (integration)', () => {
     // `uq_agency_contacts_row_fingerprint` + `ON CONFLICT DO NOTHING` swallowing
     // all ten rows one at a time — the re-uploaded file carries byte-identical
     // rows, which is exactly what the content key recognises. The count is
-    // protected; the mechanism 077 was written for is not participating.
+    // protected; the chunk-key mechanism is not participating.
     //
     // If the public API layer is ever changed to resume a job id across a restart, these two
     // flip to `true` and this test fails. That failure is GOOD — flip the
@@ -292,7 +292,7 @@ describe('agency roster-ingest idempotency (integration)', () => {
    * `rejected_duplicate_rows` + `duplicate_source_rows` alongside `accepted`, so
    * the public API layer can name the colliding rows to the operator.
    *
-   * **REOPENED, and re-answered differently, by migration 083.** "Refuse"
+   * **Re-answered by the content fingerprint.** "Refuse"
    * was never a product decision so much as a consequence of keying identity on
    * `source_row_number` — and that key also made `AgencyCampaignContactsPage`,
    * whose entire purpose is adding contacts to a live campaign, silently discard
@@ -301,7 +301,7 @@ describe('agency roster-ingest idempotency (integration)', () => {
    * the roster cannot tell a CORRECTION from a TOP-UP — only the public API layer knows which the
    * operator meant.
    *
-   * So 083 keys on the row's CONTENT and the answer here becomes "upsert": the
+   * So the fingerprint keys on the row's CONTENT and the answer here becomes "upsert": the
    * corrected rows land. The invariant below still holds — the caller is told
    * truthfully that 5 rows landed — but the *roster* is now half-corrected,
    * which rightly calls worse than an uncorrected one. That residual is
@@ -328,9 +328,9 @@ describe('agency roster-ingest idempotency (integration)', () => {
         'SELECT phone_e164 FROM agency_contacts WHERE campaign_id = $1',
         [campaign.id],
       );
-      // Any honest signal counts. Under 083 it is `accepted`: the corrected rows
+      // Any honest signal counts. With the fingerprint it is `accepted`: the corrected rows
       // genuinely landed and the count says so. What must NOT satisfy this is
-      // the pre-083 shape — a bare `accepted: 0` with no discriminator, which is
+      // the position-keyed shape — a bare `accepted: 0` with no discriminator, which is
       // "fresh, empty work" and is indistinguishable from success.
       const r = (result ?? {}) as Record<string, unknown>;
       const correctionLanded =
@@ -349,22 +349,21 @@ describe('agency roster-ingest idempotency (integration)', () => {
     // normalises to +91. They notice, fix the mapping, and
     // re-upload the same file.
     //
-    // Under 073's `(campaign_id, source_row_number)` every corrected row
-    // collided and the campaign kept its original numbers. Under 083's content
+    // Under a `(campaign_id, source_row_number)` key every corrected row
+    // collided and the campaign kept its original numbers. Under the content
     // key the corrected rows have different content, so they land ALONGSIDE the
     // uncorrected ones — ten rows where the operator has five people, five of
     // which dial the wrong country.
     //
-    // **It takes 083 AND 085 for this to be true, which this test is what proved.**
-    // With 083 alone it failed here with 23505 on `uq_agency_contacts_source_row`:
-    // the corrected rows reuse lines 1..5, that index is still live (it cannot be
-    // dropped until no pre-083 replica can serve a request), and the new INSERT
-    // infers the FINGERPRINT index so the violation is no longer swallowed. 085
-    // leaves `source_row_number` NULL — the old index is partial on NOT NULL — and
-    // moves the CSV line to `csv_line_number`.
+    // **It takes the fingerprint key AND a NULL `source_row_number` for this to be true.**
+    // With a populated `source_row_number` it would fail here with 23505 on `uq_agency_contacts_source_row`:
+    // the corrected rows reuse lines 1..5, that index is still live, and the
+    // INSERT infers the FINGERPRINT index so the violation is no longer swallowed.
+    // `source_row_number` stays NULL — the old index is partial on NOT NULL — and
+    // the CSV line goes to `csv_line_number`.
     //
     // This is asserted rather than left implicit because it is the price of
-    // 083 and somebody has to be able to see it in a test. It is NOT fixable in
+    // content keying and somebody has to be able to see it in a test. It is NOT fixable in
     // the roster: a corrected re-upload and a legitimate top-up are the same request,
     // and only the public API layer — which holds the file, the mapping and the operator's
     // intent — can tell them apart. The close is a confirmation step (or a
@@ -394,8 +393,8 @@ describe('agency roster-ingest idempotency (integration)', () => {
     expect(rows.filter((r) => r.phone_e164.startsWith('+91900'))).toHaveLength(5);
   });
 
-  it('a genuine top-up lands — the whole point of migration 083', async () => {
-    // The defect 083 exists for. `AgencyCampaignContactsPage` adds contacts to a
+  it('a genuine top-up lands — the whole point of content keying', async () => {
+    // The defect content keying exists for. `AgencyCampaignContactsPage` adds contacts to a
     // live campaign, and a second CSV starts at line 1 like every CSV — so under
     // `(campaign_id, source_row_number)` every one of its rows collided with a
     // row of the first file and was discarded, while the public API layer (which dropped the
@@ -404,11 +403,11 @@ describe('agency roster-ingest idempotency (integration)', () => {
     // Different people, same line numbers: that combination is the whole defect,
     // so the second file deliberately reuses rows 1..5.
     //
-    // And it is why 083 alone did not fix it. Reusing lines 1..5 collided on 073's
+    // And a fingerprint key alone is not enough. Reusing lines 1..5 collides on the
     // still-live `uq_agency_contacts_source_row`, and once the INSERT infers the
     // fingerprint index instead, that 23505 aborts the chunk rather than being
     // swallowed — so the defect changed shape (silent discard → 500) without going
-    // away. 085 is what makes this green in THIS release: new rows store NULL in
+    // away. What makes this green: new rows store NULL in
     // `source_row_number`, which is outside that partial index, and the CSV line
     // lives in `csv_line_number`.
     const campaign = await insertAgencyCampaign();
@@ -435,7 +434,7 @@ describe('agency roster-ingest idempotency (integration)', () => {
     // three rows. All three are now separable, and the partial case is asserted
     // explicitly because it is the one no count alone can catch.
     //
-    // Since 083 a discarded row is one the roster already holds EXACTLY, so
+    // A discarded row is one the roster already holds EXACTLY, so
     // the discarded arms below re-send the identical rows rather than
     // differently-numbered ones — that is what a replay looks like now, and a
     // corrected re-upload is no longer one (see the merge test above).
@@ -474,7 +473,7 @@ describe('agency roster-ingest idempotency (integration)', () => {
   // ── Layer 3: the chunk is all-or-nothing ────────────────────────────────
 
   it('a chunk that fails mid-insert leaves neither rows nor a marker', async () => {
-    // 077's header claims "the chunk marker and its rows are inserted in ONE
+    // The chunk marker and its rows are inserted in ONE
     // transaction, so partial application is impossible rather than merely
     // detectable". Asserted here rather than trusted, because the dangerous
     // shape is the inverse — a marker that committed without its rows, which

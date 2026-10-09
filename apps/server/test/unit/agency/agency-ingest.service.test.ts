@@ -229,7 +229,7 @@ describe('AgencyIngestService', () => {
     // This case used to be the honest ceiling of what the ingest could know: the dialer's
     // `applyIngestChunk` rolls back BEFORE re-running the per-row conflict check
     // on a replay, so it had no counts of its own and answered a confident zero
-    // it had no basis for. Migration 084 closed that — the counts are
+    // it had no basis for. The chunk marker closes that — the counts are
     // recorded inside the transaction that refused the rows and read back on
     // replay — so a replay reporting 0 with NO `rejection_counts_unavailable`
     // flag now genuinely means "that chunk refused nothing".
@@ -252,8 +252,8 @@ describe('AgencyIngestService', () => {
   });
 
   it('a chunk that could not report what it refused marks the whole total a lower bound', async () => {
-    // The residual case that cannot be fixed: a replay of a chunk applied BEFORE
-    // migration 084 recorded nothing, and a row refused by
+    // The residual case that cannot be fixed: a replay of a chunk whose marker
+    // carries no recorded counts has nothing to report, and a row refused by
     // `uq_agency_contacts_row_fingerprint` leaves no residue to recount. The dialer says
     // `rejection_counts_unavailable` rather than inventing a zero, and the ingest has
     // to carry that forward — otherwise the operator reads "0 refused" for an
@@ -503,7 +503,7 @@ describe('AgencyIngestService', () => {
 
       const { progress, rejected_by_reason } = mocks.repo.complete.mock.calls[0]![1];
       /**
-       * Migration 053 asserts this invariant explicitly — `duplicates` is a
+       * The invariant is explicit: `duplicates` is a
        * breakdown of `rejected`, never a fourth addend, "so an operator can
        * reconcile against their spreadsheet". A third addend for DNC would have
        * broken exactly that, so the suppressed rows move from accepted to
@@ -614,7 +614,7 @@ describe('AgencyIngestService', () => {
   /**
    * ── `mode: 'replace'` ──────────────────────────────────────────────────────
    *
-   * Migration 083 made a corrected re-upload MERGE rather than be
+   * A corrected re-upload MERGEs rather than being
    * refused, because the dialer cannot tell a correction from a top-up — the two are
    * the same request. Only the ingest holds the file, the mapping and the operator's
    * intent, so the resolution is a mode on the import, and its whole safety

@@ -5,8 +5,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //
 // ── The defect ─────────────────────────────────────────────────────────────
 //
-// `AgencyDisposition.is_success` has existed on every disposition-catalog entry
-// since migration 072. It is settable in the campaign builder and styled on the
+// `AgencyDisposition.is_success` has existed on every disposition-catalog entry.
+// It is settable in the campaign builder and styled on the
 // agent's disposition pad. **Nothing counted it.** Its only other reference was a type check in `campaign-config.ts`'s validation loop — the platform
 // confirmed the operator's answer was a boolean and then discarded it. An
 // operator could mark `Sale` a success, watch agents submit it all day, and find

@@ -228,7 +228,7 @@ describe('the seeding INSERT — what it writes and what it deliberately does no
   it('omits state, attempt_count, our_fault_attempts and the outcome columns so they take DB defaults', async () => {
     // A retry campaign is a FRESH allowance, which is the whole point of a
     // supervisor authoring one. Writing any of these explicitly would be a second
-    // copy of migration 073's defaults with nothing keeping the two in step —
+    // copy of the schema defaults with nothing keeping the two in step —
     // and writing the PARENT's values would carry a suppressed or exhausted state
     // onto a roster that has never been dialled.
     await new AgencyCampaignRepository().retryFromCampaign({
@@ -244,8 +244,8 @@ describe('the seeding INSERT — what it writes and what it deliberately does no
     }
   });
 
-  it('never writes source_row_number — 085 is why, and re-adding it re-breaks top-up', async () => {
-    // 073's `uq_agency_contacts_source_row` is still live and PARTIAL on NOT NULL,
+  it('never writes source_row_number — and re-adding it re-breaks top-up', async () => {
+    // `uq_agency_contacts_source_row` is still live and PARTIAL on NOT NULL,
     // so a row storing NULL sits outside it. Two seeded rows sharing a CSV line
     // number would collide on an index this INSERT does not name — a 23505 that
     // aborts the whole transaction rather than being swallowed by the ON CONFLICT.
@@ -274,7 +274,7 @@ describe('the seeding INSERT — what it writes and what it deliberately does no
     expect(sql).toContain('source_contact_id');
     expect(sql).toContain('root_contact_id');
     // The parent's ROOT, not the parent's id — that is what keeps a generation-3
-    // contact pointing at generation 0. Migration 112's trigger only fires when the
+    // contact pointing at generation 0. The root-contact trigger only fires when the
     // column arrives NULL, so passing it explicitly leaves these rows alone.
     expect(sql).toContain('c.root_contact_id');
   });
@@ -363,7 +363,7 @@ describe('a selection that cannot be seeded creates nothing at all', () => {
   it('rolls back before any INSERT when the selector matches zero seedable contacts', async () => {
     // Without this the supervisor holds a campaign they cannot start (`/start`
     // answers `409 campaign_roster_empty`) and cannot delete — there is no campaign
-    // delete route in either service. The refusal has to happen while a human is
+    // delete route. The refusal has to happen while a human is
     // present to be told.
     stubTransaction({ matched: 0, dnc: 14, invalid: 3 });
 
@@ -426,7 +426,7 @@ describe('a selection that cannot be seeded creates nothing at all', () => {
 
 describe('campaignLineage', () => {
   it('resolves the chain head with COALESCE on BOTH sides', async () => {
-    // Migration 111 leaves `root_campaign_id` NULL on a generation-0 campaign, so
+    // `root_campaign_id` stays NULL on a generation-0 campaign, so
     // spelling the COALESCE on only one side returns a chain of one for every
     // parent — the exact case the strip exists to show.
     pool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });

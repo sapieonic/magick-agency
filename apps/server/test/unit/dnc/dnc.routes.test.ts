@@ -130,8 +130,8 @@ describe('RBAC floors, exercised through the real permission matrix', () => {
   it('an AGENT cannot read the list', async () => {
     const { app } = await buildApp('agent');
 
-    // The list is every customer who asked not to be contacted. D6 gives an
-    // agent four permissions and this is not one of them.
+    // The list is every customer who asked not to be contacted. The agent role has
+    // four permissions and this is not one of them.
     const res = await app.inject({ method: 'GET', url: '/dnc/' });
     expect(res.statusCode).toBe(403);
     expect(mocks.list).not.toHaveBeenCalled();
@@ -407,7 +407,7 @@ describe('POST /dnc — attribution and scope', () => {
 
     it('404s when account_id does not belong to this tenant (cross-tenant write guard)', async () => {
       // `dnc_entries.account_id` has no composite FK back to `tenant_id`
-      // (migration 050) — same shape as invite/credits-allocate/phone-tags.
+      // — same shape as invite/credits-allocate/phone-tags.
       mocks.findAccountByIdInTenant.mockResolvedValue(null);
       const { app } = await buildApp('account_admin'); // tenant-wide, so scope alone would allow it
 

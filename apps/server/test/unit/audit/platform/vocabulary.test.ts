@@ -157,7 +157,7 @@ describe('the platform audit resource-type vocabulary', () => {
 });
 
 /**
- * The product axis (E9) — reserved before anyone asked to filter by it, so the
+ * The product axis — reserved before anyone asked to filter by it, so the
  * checks here are what stop it rotting while nothing reads it.
  *
  * The type system already forces every entry to declare a product (`product` is
@@ -202,17 +202,16 @@ describe('the audit product axis', () => {
    * The classification itself, spot-checked where getting it wrong would be
    * invisible.
    *
-   * `dnc_entry.*` is the case that matters: Q2 settled that do-not-call belongs
-   * to the agency offering alone, and the action name carries no `agency_`
-   * prefix — so a prefix-derived axis would file every DNC mark under the AI
-   * product. That is exactly why the mapping is stated per action.
+   * `dnc_entry.*` is the case that matters: do-not-call belongs to agency
+   * dialing alone, and the action name carries no `agency_` prefix — so a
+   * prefix-derived axis would file every DNC mark under `platform`. That is exactly why the mapping is stated per action.
    */
-  it('files DNC under agency (Q2), despite the AI-neutral action name', () => {
+  it('files DNC under agency, despite the product-neutral action name', () => {
     expect(auditProductForAction('dnc_entry.created')).toBe('agency');
     expect(auditProductForAction('dnc_entry.deleted')).toBe('agency');
   });
 
-  it('files the scheduler under the AI product and the campaign lifecycle under agency', () => {
+  it('files the campaign lifecycle and agent sessions under agency', () => {
     expect(auditProductForAction('agency_campaign.stopped')).toBe('agency');
     expect(auditProductForAction('agency_session.joined')).toBe('agency');
   });
@@ -254,7 +253,7 @@ describe('the actor-type vocabulary', () => {
   });
 
   /**
-   * Rows written before migration 067 carry a NULL `actor_type` and are not
+   * Rows with no recorded actor carry a NULL `actor_type` and are not
    * offerable as a filter: "not recorded" is an absence, and an option for it
    * would be a date range wearing a different name.
    */

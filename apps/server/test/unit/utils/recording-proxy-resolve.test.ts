@@ -45,8 +45,8 @@ describe('isDirectRecordingProvider — scope', () => {
 
 describe('resolveClientRecordingUrl — the proxy-path-agnostic form', () => {
   // The WebRTC surface passes its own streaming route. The direct-provider rule
-  // must be identical to AI calls' so a provider added to the allowlist takes
-  // effect on every playback surface at once.
+  // must be identical on every playback surface, so a provider added to the
+  // allowlist takes effect everywhere at once.
   const WEBRTC_PROXY = '/api/v1/webrtc-call/call-1/recording';
 
   it('returns null when there is no recording', () => {

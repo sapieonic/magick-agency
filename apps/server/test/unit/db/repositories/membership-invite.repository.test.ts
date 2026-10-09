@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
- * `MembershipInviteRepository` (migration 069).
+ * `MembershipInviteRepository`.
  *
  * ── What is asserted here, and what deliberately is not ────────────────────
  * The single-winner property of a concurrent double-claim is a property of
@@ -24,7 +24,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *     Two autocommit statements let two concurrent resends both revoke before
  *     either inserted, leaving two live links. The transaction is not sufficient
  *     on its own — the loser's revoke is correct in its own snapshot — so
- *     migration 069's partial unique index is what refuses the second row, and
+ *     the partial unique index (`uq_membership_invites_live`) is what refuses the second row, and
  *     what this file can pin is that its violation becomes a named error rather
  *     than an escaping `23505`.
  *
@@ -582,7 +582,7 @@ describe('MembershipInviteRepository', () => {
        * unverified Firebase email on purpose, so adopting one unconditionally
        * would write an address nobody proved onto a row that can now sign in —
        * which `POST /users/invite` and both super-admin provisioning lookups
-       * then resolve as an identity. Migration 073.
+       * then resolve as an identity.
        */
       mocks.client.query.mockImplementation(async (sql: string) => {
         if (String(sql).includes('UPDATE users')) {

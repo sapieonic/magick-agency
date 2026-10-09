@@ -180,7 +180,7 @@ async function coreRefuses(status: number, body: unknown): Promise<void> {
   mocks.proxyToCore.mockImplementation(async () => ({ status, body }));
 }
 
-// ─── Fixtures, in the internal handler's contract shape (D3/D4) ─────────────────────────────
+// ─── Fixtures, in the internal handler's contract shape ─────────────────────────────
 //
 // The eight metrics AND `rates_reportable` are always present, because the public API layer
 // SPREADS these rows: a fixture carrying only the fields the assertions read
@@ -375,7 +375,7 @@ function groupedBody(
   */
   const zoned = groupBy.some((dimension) => GROUPED_DIMENSIONS_NEEDING_A_ZONE.has(dimension));
   /*
-    Which reads the CLIENT makes. D5 offers two remedies and they are not
+    Which reads the CLIENT makes. The zone rule offers two remedies and they are not
     interchangeable: grouping by `campaign` keeps the read cross-campaign, while
     filtering narrows it to one. The console's zoned read is best hours, which
     spends both dimensions on time and therefore always filters.
@@ -561,8 +561,7 @@ describe('the query whitelist', () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ code: 'unknown_query_params' });
-    // `tz` is on this list deliberately: D5 rules that there is NO `tz` parameter
-    // in 02a — a time dimension is refused by the internal handler unless the zone is unambiguous
+    // `tz` is on this list deliberately: there is NO `tz` parameter — a time dimension is refused by the internal handler unless the zone is unambiguous
     // — so a client reaching for one must be told it does not exist rather than
     // have it silently dropped and get UTC buckets for an Asia/Kolkata campaign.
     expect(res.json().details.unknown).toEqual(['bucket', 'tz']);
@@ -572,7 +571,7 @@ describe('the query whitelist', () => {
 
   it('refuses agent_user_id — the tenancy boundary is the public API layer\'s memberships', async () => {
     /**
-     * Not accepted on either service. The internal handler has no user table, so `agent_user_id`
+     * Not accepted. The internal handler has no user table, so `agent_user_id`
      * is an opaque string it cannot tenancy-check, and the public API layer's `memberships` is
      * the only place that boundary can exist — which makes a caller-supplied
      * filter on it a tenancy decision taken from the query string. Filtering to
@@ -765,7 +764,7 @@ describe('the query whitelist', () => {
   });
 
   /**
-   * R2's wire encoding, pinned VALUE BY VALUE and by what each value MEANT.
+   * The wire encoding, pinned VALUE BY VALUE and by what each value MEANT.
    *
    * A 200 says only that the value parsed, not which way it was read, and the
    * dangerous failure is a `1` read as `false`: the request answers 200 with the
@@ -1067,7 +1066,7 @@ describe('when `agent` IS grouped, the public API layer filters and names the ro
 
   it('does NOT recompute total_groups, group_by or anything else the internal handler sent', async () => {
     /**
-     * R1 still binds: `total_groups` is the internal handler's pre-`limit`, post-scope count of
+     * `total_groups` is the internal handler's pre-`limit`, post-scope count of
      * groups, `rows.length` is what survived, and `inactive_omitted` is what
      * the public API layer hid. Three independent facts, and no "showing X of Y" fraction is
      * derivable from them — a default read legitimately returns 1 row,
@@ -1365,7 +1364,7 @@ describe('when `agent` is NOT grouped, the rows pass through untouched', () => {
   /**
    * The request has to match the fixture's own scope, or the case asserts a 200
    * over a body the internal handler would have answered 400 for: a zoned grouping needs exactly
-   * one campaign in scope (D5, E2), and `groupedBody` derives `campaign_id` from
+   * one campaign in scope, and `groupedBody` derives `campaign_id` from
    * `group_by` for that reason. `day_of_week,hour_of_day` is the entry this
    * applies to.
    */
@@ -1399,7 +1398,7 @@ describe('when `agent` is NOT grouped, the rows pass through untouched', () => {
   });
 
   it.each(NON_AGENT_PAGES)('%s: adds NO agent_name key', async (groupBy, echoed, rows) => {
-    // D9: `agent_name` is present iff `agent` is grouped. A `null` on a
+    // `agent_name` is present iff `agent` is grouped. A `null` on a
     // campaign-grouped row would be a claim that the row is about a person the public API layer
     // could not identify, which is a different and false statement.
     const body = groupedBody(echoed, rows);
@@ -1522,7 +1521,7 @@ describe('resolved_timezone: the additive page-level field, carried untouched', 
     for (const groupBy of [['day'], ['day_of_week', 'hour_of_day'], ['agent', 'day']]) {
       const page = groupedBody(groupBy, []);
       expect(page.resolved_timezone, `${groupBy} is cut in a zone`).toBe(RESOLVED_TIMEZONE);
-      // D5/E2: a zoned dimension is refused unless one campaign is in scope.
+      // A zoned dimension is refused unless one campaign is in scope.
       expect(page.campaign_id).toBe(CAMPAIGN);
     }
 
@@ -1579,7 +1578,7 @@ describe('resolved_timezone: the additive page-level field, carried untouched', 
   });
 
   it('survives the PASS-THROUGH branch — group_by=day_of_week,hour_of_day', async () => {
-    // The best-hours read itself (E1: one request, the default limit, 168 cells).
+    // The best-hours read itself (one request, the default limit, 168 cells).
     // No agent in any key, so the public API layer hands the internal handler's body over through
     // `withOmissionCounters` and never touches a row.
     mocks.proxyToCore.mockResolvedValue({
@@ -1636,7 +1635,7 @@ describe('resolved_timezone: the additive page-level field, carried untouched', 
   it('is NULL on the cross-campaign zoned read — a page with several zones has no one zone', async () => {
     /**
      * `group_by=campaign,hour_of_day` with NO `campaign_id`. This is a 200, not a
-     * 400: D5 offers two remedies for an ambiguous zone and they are not
+     * 400: the zone rule offers two remedies for an ambiguous zone and they are not
      * interchangeable — adding `campaign` to `group_by` keeps the read
      * cross-campaign (each row cut in its own campaign's zone), while filtering
      * `campaign_id` narrows it to one. `campaign` plus ONE time dimension fits
@@ -1720,7 +1719,7 @@ describe('resolved_timezone: the additive page-level field, carried untouched', 
      *
      * ⚠️ The fixture used to be `{ ...body, next_cursor: 12 }`, from when the gate
      * was `asSpinePage` — a page with perfectly walkable ROWS, refused over a
-     * PAGING field. That gate was the M7/M8 defect and is gone; a body reaches
+     * PAGING field. That gate was a defect and is gone; a body reaches
      * this branch only when it has no row array at all, which is what the fixture
      * now models.
      */
@@ -1928,7 +1927,7 @@ describe('BOTH omission counters are emitted on EVERY path', () => {
      * `n <= NaN`, which is `false` — so the note appears on a page that was never
      * truncated.
      *
-     * ⚠️ The FIXTURE here was itself the M7/M8 bug and is rewritten. It used to
+     * ⚠️ The FIXTURE here was itself the bug and is rewritten. It used to
      * be `{ ...agentGroupedBody(), next_cursor: 12 }` — a full agent-grouped page
      * with one unreadable paging field — called "the realistic refusal". It was
      * realistic, which is exactly why it must not reach this branch: the degrade
@@ -2056,7 +2055,7 @@ describe('the membership filter is gated on the ROWS, not on the paging fields',
     expect(mocks.findAnyByUsersAndTenant).toHaveBeenCalledTimes(1);
     // The name enrichment narrowed through the same rejected helper, so under the
     // old gate this page came back with no `agent_name` at all — on the branch
-    // whose contract (D9) is that the key is present iff `agent` was grouped.
+    // whose contract is that the key is present iff `agent` was grouped.
     expect(res.json().rows[0]).toHaveProperty('agent_name', 'Sam Okoro');
     for (const [key, value] of Object.entries(overrides)) {
       expect(res.json()[key]).toEqual(value);
@@ -2067,7 +2066,7 @@ describe('the membership filter is gated on the ROWS, not on the paging fields',
 
 describe('an agent-grouped page whose ids are unusable is still FILTERED', () => {
   /**
-   * ⚠️ M2/M11: the branch was chosen by the id EXTRACTOR
+   * ⚠️ The branch was chosen by the id EXTRACTOR
    * (`rows.some((r) => groupedRowAgentId(r) !== null)`), which conflates "was
    * `agent` grouped" with "is this id usable". A page whose only agent keys are
    * empty strings, nulls or numbers therefore looked NOT agent-grouped, took the
@@ -2411,7 +2410,7 @@ describe('the grouped row\'s agent id, and the filter over it, without a router'
 
   it('drops a row whose agent member is PRESENT but unusable, as unattributed', () => {
     /**
-     * The other half of the M2/M11 split, at the level of one row. The page is
+     * The other half of the id-extractor split, at the level of one row. The page is
      * agent-grouped by shape, so the filter runs; this row cannot be attributed to
      * anybody, so it is the third state (unattributable) — dropped under either flag and counted
      * apart from the departures. What must never happen is what used to: the row

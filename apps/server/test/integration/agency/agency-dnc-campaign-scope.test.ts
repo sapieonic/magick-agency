@@ -19,8 +19,8 @@ const { agencyContactRepository } = await import(
  * does not enter the tenant-flat set — which leaves the by-id write as the
  * only in-campaign enforcement there is.
  *
- * And the by-id write has a hole. Migration 073 refuses `UNIQUE (campaign_id,
- * phone_e164)` on purpose ("two people on one household landline, two contacts
+ * And the by-id write has a hole. The schema deliberately has no `UNIQUE (campaign_id,
+ * phone_e164)` ("two people on one household landline, two contacts
  * behind one company switchboard, a shared family mobile"), so one campaign
  * holding the same number twice is supported, ordinary data. Suppress only the
  * dialled row and the duplicate stays `pending` and gets claimed on the next tick:
@@ -317,9 +317,9 @@ describe('campaign-scoped DNC — every roster row with that number (integration
     expect(await readContact(duplicate.id)).toMatchObject({ state: 'suppressed' });
   });
 
-  // ── Migration 087 ────────────────────────────────────────────────────────
+  // ── Campaign-scope column and index ────────────────────────────────────────────────────────
 
-  it('T-DNC8: migration 087 shipped the column and the index the sweep depends on', async () => {
+  it('T-DNC8: the schema has the column and the index the sweep depends on', async () => {
     // The index is not a performance nicety here: without it this query is a scan
     // of every contact row in the database, on a path an agent triggers mid-call.
     // Asserted by NAME and by EXPRESSION — a renamed or re-spelled expression index

@@ -80,7 +80,7 @@ describe('AgencyLiveConcurrencyRepository.liveByState · the query shape', () =>
     // failures a mocked pool cannot otherwise see:
     //
     // 1. The predicate must match `uq_agency_attempt_live`'s partial-index
-    //    predicate (migration 075) byte for byte, or the planner cannot prove the
+    //    predicate byte for byte, or the planner cannot prove the
     //    index covers the query and this degrades to a scan of a table that grows
     //    for the life of the account. `$1` is opaque at plan time.
     // 2. A statement with no parameters cannot hit `42P08` — no `$n` exists to be

@@ -18,7 +18,7 @@ import Fastify from 'fastify';
 //    pass against a route that was never registered.
 //
 // 2. **A purged call is 200 with a marker, not 404.** The attempt→call link is
-//    deliberately un-FK'd (migration 076) and both sides purge on independent
+//    deliberately un-FK'd and both sides purge on independent
 //    windows, so an attempt routinely outlives its call. A 404 there would read
 //    as "this attempt never happened", which is false and destroys exactly the
 //    agency-side audit trail the un-FK'd link exists to protect.
@@ -74,9 +74,9 @@ vi.mock('@magick-agency/db/repositories/announcement.repository', () => ({
 const { proxySpy, signSpy } = vi.hoisted(() => ({
   proxySpy: vi.fn(async (_call: unknown, _req: unknown, reply: { send: (b: unknown) => unknown }) =>
     reply.send({ streamed: true })),
-  // A real Date, because the route formats it: the softphone twin sends
-  // `expiresAt.toISOString()` and this route mirrors that twin, so a stand-in
-  // string here would let the two shapes drift again unnoticed.
+  // A real Date, because the route formats it: the route sends
+  // `expiresAt.toISOString()`, so a stand-in string here would let the shape
+  // drift unnoticed.
   signSpy: vi.fn(() => ({
     path: '/api/v1/webrtc-recordings/call-1?sig=x',
     expiresAt: new Date('2026-08-24T12:00:00.000Z'),
@@ -269,9 +269,7 @@ describe('agency call read — scoping', () => {
 
   /**
    * The whole point of the repository's scope parameter. This surface reads the
-   * agency population; the softphone's plugin reads the other one. Asking for
-   * 'dialer' here would 404 every agency call — which is what the old cross-shell
-   * link effectively did.
+   * agency population; any other scope here would 404 every agency call.
    */
   it("reads the call under the 'agency' scope, with tenant and account bound", async () => {
     const app = await makeApp();
@@ -337,9 +335,8 @@ describe('agency call read — the three availability states', () => {
 
 describe('agency call read — the recording path it advertises', () => {
   /**
-   * The softphone's path would 404 for an agency leg, because that plugin's reads
-   * are pinned to the dialer scope. Handing the console a link into it is the
-   * cross-shell bug in miniature.
+   * The recording is advertised on the campaign attempt's own route, never on a
+   * generic `/webrtc-call` path, so the console never leaves the agency surface.
    */
   it('points recording_url at this campaign attempt, never at /webrtc-call', async () => {
     const app = await makeApp();
@@ -438,8 +435,8 @@ describe('agency call read — signed recording URL', () => {
 
   // A VoiceLink leg's recording is a public file on a host our egress cannot
   // reach, so a signed URL — which resolves back through our proxy — would 502 on
-  // a file the browser can fetch itself. Same branch as the softphone twin and AI
-  // calls; this asserts the agency minter did not get left behind.
+  // a file the browser can fetch itself. This asserts the agency minter takes the
+  // direct-provider branch too.
   const VOICELINK_URL =
     'https://voiceflowai.elisiontec.com/voiceapp-recordings/client_1150/2026-07-11/abc.mp3';
 

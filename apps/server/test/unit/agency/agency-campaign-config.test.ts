@@ -310,7 +310,7 @@ describe('the retry policy', () => {
     const message = messageFor({ retry_policy: { machine: { max_attempts: 2 } } }, 'retry_policy.machine');
 
     /**
-     * The highest-value rule in the file. With AMD off (D1) the system can never
+     * The highest-value rule in the file. With AMD off the system can never
      * classify an outcome as `machine` — a call answered by voicemail is
      * `connected`, because the carrier cannot tell us otherwise. So a `machine`
      * rule is not an ignored typo; it is a retry policy an operator configured,

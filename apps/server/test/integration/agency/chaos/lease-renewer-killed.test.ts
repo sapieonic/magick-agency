@@ -151,7 +151,7 @@ describe('lease renewer killed (chaos, slow)', () => {
     // **on this campaign**, and which of the two it is depends on the fixture
     // rather than on the phase. The `bridged` phase parks a contact
     // in `connected` only when the campaign owes a write-up; this world takes
-    // migration 072's column default of `disposition_catalog = '[]'`, so nothing
+    // the column default of `disposition_catalog = '[]'`, so nothing
     // is owed and the contact keeps the `in_flight` its claim gave it.
     //
     // The scenario is indifferent to which one, and that is worth stating rather
@@ -384,7 +384,7 @@ describe('lease renewer killed (chaos, slow)', () => {
     // The runtime half. It is standing and waiting: the deferred hangup itself
     // is not built yet, so today this samples every key the
     // live paths write and proves none of them carries the 8s window. When
-    // `C-07` ships, the same audit covers the new path with no edit — which is
+    // the deferred hangup is built, the same audit covers the new path with no edit — which is
     // the point of sampling the keyspace rather than enumerating call sites.
     const w = await withPoolOnLiveCalls(3, 9);
 

@@ -60,7 +60,7 @@ import Fastify from 'fastify';
 //      CAMPAIGN-SCOPED now, so the row no longer reaches the flat
 //      `dnc:{tenantId}` set and the dial-time `SISMEMBER` no longer backstops it.
 //      That backstop was the only thing stopping a SECOND roster row with the same
-//      number — legitimate, common data, per migration 073's deliberate refusal of
+//      number — legitimate, common data, given the deliberate absence of
 //      a phone-unique index — from being dialled after the first was marked.
 //
 //   2. The durable compliance record is `dnc_entries`, written by `markDnc` alone, and the
@@ -392,7 +392,7 @@ describe('the suppression EFFECT — the number stops being dialable', () => {
   });
 
   it('suppresses a contact that already has a retry scheduled at T+5', async () => {
-    // The exact M3 exit criterion, in the shape it actually occurs: the contact
+    // The exact case in the shape it actually occurs: the contact
     // is mid-call and already carries `next_attempt_at`. `suppressByPhone` keeps
     // `markState`'s COALESCE behaviour, so the instant SURVIVES — and asserting
     // its absence would be asserting a stale read. What makes the retry never

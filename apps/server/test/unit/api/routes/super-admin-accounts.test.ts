@@ -438,7 +438,7 @@ describe('super-admin account concurrency routes', () => {
  * concurrency guards are the seam. The provider breakdown also passes the routed-number
  * check, so every allocated provider has a route in `beforeEach`.
  */
-describe('Internal S2S — provider concurrency control plane', () => {
+describe('Super-admin — provider concurrency control plane', () => {
   let app: ReturnType<typeof Fastify>;
   const url = '/super-admin/tenants/t1/accounts/a1/concurrency';
 

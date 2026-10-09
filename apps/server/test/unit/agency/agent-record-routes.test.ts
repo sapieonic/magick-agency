@@ -636,7 +636,7 @@ describe('GET /stats — route precedence against /:agentUserId/stats', () => {
    *
    *   * If `/stats` were captured as `:agentUserId` it would answer **200** from
    *     the per-agent handler for `agentUserId = "stats"`, which is a well-formed
-   *     agent id as far as the voice engine can tell (`agent_user_id` is opaque, D3). A
+   *     agent id as far as the voice engine can tell (`agent_user_id` is opaque). A
    *     supervisor asking for the roster gets one non-existent agent's empty
    *     record, and every assertion about a 200 passes.
    *   * If `/stats` did not exist at all it would answer **404** — and an assertion that passes vacuously against a
@@ -964,7 +964,7 @@ describe('GET /grouped-stats — route precedence against its three siblings', (
 
   it('does not answer `/<uuid>/grouped-stats` — the read names no agent', async () => {
     // There is deliberately no per-agent grouped route: `agent_user_id` is opaque
-    // to the voice engine (D3), so it cannot validate tenancy on a caller-supplied id, and
+    // to the voice engine, so it cannot validate tenancy on a caller-supplied id, and
     // narrowing to a person is the per-agent record's job. A 404 here is the honest
     // answer, and asserting it stops a future `/:agentUserId/grouped-stats` from
     // appearing without the public-API-layer membership check that would have to come

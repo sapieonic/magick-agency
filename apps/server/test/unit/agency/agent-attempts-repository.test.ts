@@ -12,8 +12,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ── Why this file exists at all ────────────────────────────────────────────
 //
 // The route has no campaign in its path, so there is nothing to run
-// `requireOwned` against: `agent_user_id` is the console user's id, opaque to the voice engine
-// (D3), which cannot tell a real one from a guess. The tenant/account scope is
+// `requireOwned` against: `agent_user_id` is the console user's id, opaque to the voice engine,
+// which cannot tell a real one from a guess. The tenant/account scope is
 // therefore a PREDICATE on the session and nothing else enforces it — delete
 // `s.tenant_id` and `s.account_id` from the query and any tenant holding an API
 // key can read any other tenant's agent by supplying their user id: the whole

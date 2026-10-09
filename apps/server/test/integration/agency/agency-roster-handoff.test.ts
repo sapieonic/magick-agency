@@ -173,7 +173,7 @@ describe('sendRosterChunk (in-process)', () => {
   });
 
   it('carries the "these counts are unknown" flag through untouched', async () => {
-    // A chunk applied before migration 084: a marker with no recorded rejection counts.
+    // A chunk applied before rejection counts were recorded: a marker with no recorded rejection counts.
     await getTestPool().query(
       `INSERT INTO agency_ingest_chunks
          (campaign_id, ingest_job_id, chunk_index, idempotency_key, chunk_count, row_count)

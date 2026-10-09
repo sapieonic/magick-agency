@@ -84,7 +84,7 @@ describe('buildAnalysisPrompt', () => {
   });
 });
 
-describe('transcript provenance in the analysis input (L1 / R2)', () => {
+describe('transcript provenance in the analysis input', () => {
   const log: ConversationEntry[] = [
     { role: 'assistant', content: 'Namaste, this is a recorded introduction.', timestamp: 't0', source: 'intro_clip' },
     { role: 'user', content: 'haan boliye', timestamp: 't1' },
@@ -207,7 +207,7 @@ describe('maxConversationTurns counts spoken turns, not silent markers', () => {
   });
 });
 
-describe('interrupted lines in the analysis input (B1)', () => {
+describe('interrupted lines in the analysis input', () => {
   it('marks a line a barge-in cut off, and only that line', () => {
     const log: ConversationEntry[] = [
       { role: 'assistant', content: 'Aapka payment due hai', timestamp: 't0', interrupted: true },
