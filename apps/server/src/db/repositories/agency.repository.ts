@@ -1663,7 +1663,7 @@ export class AgencyCampaignRepository {
          (SELECT COUNT(*) FROM agency_call_attempts WHERE campaign_id = $1 AND state <> 'ended')::text AS attempts_live,
          (SELECT COUNT(*) FROM agency_call_attempts WHERE campaign_id = $1)::text AS attempts_total,
          (SELECT COUNT(*) FROM agency_call_attempts WHERE campaign_id = $1 AND outcome = 'connected')::text AS attempts_connected,
-         -- Dials that were NOT a contact's first (ClickUp 86d45k0bk item 3).
+         -- Dials that were NOT a contact's first.
          --
          -- A different question from retries_pending two lines up, and the pair
          -- is the one most likely to be read as one number: that counts contacts
@@ -1674,7 +1674,7 @@ export class AgencyCampaignRepository {
          -- everybody first time.
          --
          -- attempt_number is the attempts table's own counter, derived at insert
-         -- from MAX(attempt_number) over the contact's rows (AD-P2-C-12), NOT
+         -- from MAX(attempt_number) over the contact's rows, NOT
          -- from agency_contacts.attempt_count — the two were decoupled on
          -- purpose, and the consequence here is that an OUR-FAULT redial (a dropped
          -- station socket, a reaper requeue) is counted even though it never spent
@@ -1705,7 +1705,7 @@ export class AgencyCampaignRepository {
               AND answered_at > now() - ($2 || ' hours')::interval
               AND (${ABANDONED_ATTEMPT_PREDICATE_SQL}))::text AS abandoned_24h,
 
-         -- ── Flow, over the campaign's lifetime (AD-P4-C-01 §C.3) ───────────
+         -- ── Flow, over the campaign's lifetime ─────────────────────────────
          --
          -- bridged_at IS NOT NULL is the denominator gate throughout, NOT
          -- outcome = 'connected'. bridged_at is the instant media actually
@@ -1736,11 +1736,10 @@ export class AgencyCampaignRepository {
               AND bridged_at IS NOT NULL
               AND disposition_code = $3)::text AS machine_connects,
 
-         -- Conversions -- the is_success flag, counted for the first time. It
-         -- has existed on every catalog entry since migration 072 and NOTHING
-         -- read it: its only other reference in core is a type check in the
-         -- config validator, so the platform confirmed the operator's answer was
-         -- a boolean and then threw it away.
+         -- Conversions -- the is_success flag. It is on every catalog entry,
+         -- and its only other reader is a type check in the config validator:
+         -- without this count the operator's answer would be confirmed as a
+         -- boolean and then thrown away.
          --
          -- See successDispositionSql for the two shape decisions the predicate
          -- rests on: EXISTS rather than a JOIN (which would double-count a
@@ -1769,8 +1768,8 @@ export class AgencyCampaignRepository {
          -- AHT is ended_at - bridged_at: the AGENT's leg. Deliberately not the
          -- persisted talk_seconds, which is anchored on answered_at (the
          -- carrier's answer) and is nonzero even when no agent ever bridged —
-         -- an abandoned attempt settles carrying the apology clip's talk time
-         -- (MAG-119). Averaging that would fold ring-to-bridge latency and
+         -- an abandoned attempt settles carrying the apology clip's talk time.
+         -- Averaging that would fold ring-to-bridge latency and
          -- abandoned calls into the one number whose purpose is agent work.
          -- outcome <> 'orphaned' on both: the reaper settles a crash-orphaned
          -- attempt with ended_at = now() AT SWEEP TIME, so a conversation whose
@@ -1791,14 +1790,13 @@ export class AgencyCampaignRepository {
 
          -- Measured wrap-up, never the configured allotment. wrapup_seconds is
          -- what was OWED, copied from the campaign at wrap-up entry, so averaging
-         -- it hands the operator their own setting back as if it were evidence
-         -- (migration 088).
+         -- it hands the operator their own setting back as if it were evidence.
          (SELECT AVG(EXTRACT(EPOCH FROM (wrapup_ended_at - wrapup_started_at))) FROM agency_call_attempts
             WHERE campaign_id = $1
               AND wrapup_started_at IS NOT NULL
               AND wrapup_ended_at IS NOT NULL
               AND ${WRAPUP_MEASURED_RESOLUTIONS_SQL})::text AS avg_wrapup_seconds,
-         -- The campaign's own ceiling (AD-P4-C-02 (d)). A subquery rather than a
+         -- The campaign's own ceiling. A subquery rather than a
          -- join because every other line here is one, and the row is already in
          -- cache from the route's ownership check a moment earlier.
          (SELECT abandonment_ceiling_pct FROM agency_campaigns
@@ -2308,9 +2306,9 @@ export class AgencyCampaignRepository {
     const pausing = to === 'paused';
     const { rows } = await getPool().query<AgencyCampaignRecord>(
       `UPDATE agency_campaigns
-          -- The cast on the assignment is LOAD-BEARING, not decoration (AD-P4-C-02).
-          -- $3 is used twice over: as the value assigned to status (VARCHAR(20) per
-          -- 072, so Postgres deduces character varying) and in the five untyped
+          -- The cast on the assignment is LOAD-BEARING, not decoration.
+          -- $3 is used twice over: as the value assigned to status (VARCHAR(20) in
+          -- the baseline schema, so Postgres deduces character varying) and in the five untyped
           -- literal comparisons below, which deduce text. Without the cast the two
           -- deductions collide and the statement does not PARSE --
           -- 42P08 inconsistent types deduced for parameter $3, raised before any row
@@ -4408,8 +4406,8 @@ export class AgencyAttemptRepository {
       `SELECT a.*,
               c.disposition_catalog AS campaign_disposition_catalog,
               c.retry_policy        AS campaign_retry_policy,
-              -- The contact's retry BUDGET (AD-P3-C-01), not the attempt's own
-              -- attempt_number. The two were deliberately decoupled by AD-P2-C-12,
+              -- The contact's retry BUDGET, not the attempt's own
+              -- attempt_number. The two are deliberately decoupled,
               -- and the policy is evaluated against the budget. This path does NOT
               -- bump it (the attempt was counted when it ended), so the stored value
               -- is already the post-attempt count the policy is defined on.

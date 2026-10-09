@@ -147,7 +147,7 @@ CREATE TABLE membership_invites (
   -- `status = 'revoked'` and the row stays. The claim path checks that status
   -- itself and refuses a revoked membership.)
   membership_id       UUID NOT NULL REFERENCES memberships(id) ON DELETE CASCADE,
-  -- Carried, not joined. See the header.
+  -- Carried, not joined.
   tenant_id           UUID NOT NULL,
   email               TEXT NOT NULL,
   -- The Postgres ENUM `membership_role`, including `agent` -- NOT a
@@ -208,9 +208,8 @@ CREATE UNIQUE INDEX uq_membership_invites_live
 
 COMMENT ON TABLE membership_invites IS
   'Token-bound invitation claims. The TOKEN, not an email match, is what binds a '
-  'Firebase identity to a pre-created stub membership -- see the migration header for '
-  'the "signed up with a different address, landed in a private empty tenant" defect '
-  'this removes. Rows are never deleted: revoked and claimed invites are the record of '
+  'Firebase identity to a pre-created stub membership, which removes the "signed up '
+  'with a different address, landed in a private empty tenant" defect. Rows are never deleted: revoked and claimed invites are the record of '
   'what a recipient holding an old link is entitled to be told.';
 COMMENT ON COLUMN membership_invites.token_hash IS
   'sha256(token) as hex. The raw token exists exactly once, in the email that carried '
@@ -231,7 +230,7 @@ COMMENT ON COLUMN membership_invites.email IS
   'The address the invitation was ISSUED for, copied rather than joined. It is what an '
   'unauthenticated reader of GET /invites/:token is shown, and it must describe the '
   'invitation as sent. It is NOT the claim key -- the claim resolves through '
-  'membership_id, because users.email carries only a non-unique index (001:60).';
+  'membership_id, because users.email carries only a non-unique index.';
 
 -- No default super-admin is seeded: super-admins are created fresh
 -- (docs/decisions.md).
@@ -455,12 +454,12 @@ CREATE INDEX idx_audit_log_tenant_account
 COMMENT ON COLUMN platform_audit_log.actor_type IS
   'What KIND of principal performed this action: ''human'' (a signed-in user), '
   '''api_key'' (a platform API key — see api_key_id), or ''system'' (a background '
-  'write with no caller). NULL means the row predates this column (migration 067) '
-  'and the distinction is not recoverable — it is NOT a fourth value.';
+  'write with no caller). NULL means the row predates this column and the '
+  'distinction is not recoverable — it is NOT a fourth value.';
 
 COMMENT ON COLUMN platform_audit_log.user_id IS
   'The human who performed this action. Written ONLY when actor_type = ''human''. '
-  'Before migration 067 this also carried the CREATOR of an authenticating API '
+  'Before actor_type existed this also carried the CREATOR of an authenticating API '
   'key, which is why rows with a NULL actor_type cannot be read as "a person did '
   'this".';
 
@@ -686,26 +685,24 @@ CREATE TRIGGER agency_ingest_jobs_updated_at
 COMMENT ON COLUMN agency_ingest_jobs.core_rejected_duplicate_rows_may_undercount IS
   'TRUE when at least one chunk of this ingest could not report what it refused, so '
   'core_rejected_duplicate_rows is a LOWER BOUND rather than an exact figure. Set from '
-  'core''s rejection_counts_unavailable (a replay of a chunk applied before core '
-  'migration 084) — and, for every row that predates migration 059, set by that '
-  'migration''s backfill, because those jobs ran while master discarded core''s '
-  'rejection response entirely and their zero was never a measurement. FALSE means the '
+  'the dialer runtime''s rejection_counts_unavailable (a replay of a chunk whose '
+  'rejection counts were never recorded). FALSE means the '
   'total is exact — including an exact zero — and is the default for newly recorded jobs.';
 COMMENT ON COLUMN agency_ingest_jobs.mode IS
   'append (default, today''s behaviour: new rows are merged into the roster) or '
-  'replace (the campaign''s existing contacts are retired first, in core, and only '
-  'this import''s rows remain dialable). Recorded per import because only master '
-  'holds the operator''s intent — core cannot tell a correction from a top-up.';
+  'replace (the campaign''s existing contacts are retired first, by the dialer runtime, '
+  'and only this import''s rows remain dialable). Recorded per import because only the '
+  'upload holds the operator''s intent — the roster cannot tell a correction from a top-up.';
 COMMENT ON COLUMN agency_ingest_jobs.replace_superseded_contacts IS
-  'For mode=replace: how many contacts core retired for this job. NULL when the '
+  'For mode=replace: how many contacts the dialer runtime retired for this job. NULL when the '
   'question does not apply. Non-NULL on a FAILED job is the state that matters — '
   'the roster was already retired when the import died.';
 COMMENT ON COLUMN agency_ingest_jobs.replace_superseded_uncertain IS
-  'TRUE when a replace may have retired this campaign''s roster but master could not '
-  'confirm it — a retry whose earlier attempt might have committed, or core reporting '
+  'TRUE when a replace may have retired this campaign''s roster but the ingest could not '
+  'confirm it — a retry whose earlier attempt might have committed, or the dialer runtime reporting '
   'already_applied. Read WITH replace_superseded_contacts: (N, false) = exactly N '
   'retired; (NULL, false) = nothing retired; (NULL, true) = the roster may be gone and '
-  'the count is unknown. Never inferred — only set from a live core interaction.';
+  'the count is unknown. Never inferred — only set from a live answer of the dialer runtime.';
 
 CREATE TABLE agency_campaign_agents (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -777,17 +774,15 @@ COMMENT ON TABLE agency_campaign_agents IS
   'Supervisor-set agent-to-campaign staffing for the Agency Dialer. STAFFING ONLY: '
   'nothing consults this table to authorize a station join — that is agency.station.connect '
   'in src/rbac/roles.ts — it only decides which campaigns an agent may be sent to. An agent '
-  'may hold several active assignments (migration 064); being LIVE on one campaign at a time '
-  'is core''s session index, not this table.';
+  'may hold several active assignments; being LIVE on one campaign at a time '
+  'is the session index, not this table.';
 COMMENT ON COLUMN agency_campaign_agents.campaign_id IS
-  'Core-owned agency_campaigns.id. No FK: core runs on a separate database and master '
-  'keeps no campaign copy.';
+  'The agency_campaigns id. Deliberately no FK, and no campaign copy is kept here.';
 COMMENT ON COLUMN agency_campaign_agents.unassigned_at IS
   'NULL while the assignment is active; this is the predicate of '
   'uq_agency_campaign_agent_active_campaign (one active assignment per user per CAMPAIGN '
-  'per tenant — migration 064 widened this from the per-tenant rule in 060, because '
-  'staffing is not occupancy: being live on one campaign at a time is enforced by core''s '
-  'session index, not here) and of the campaign roster index. Rows are closed rather than '
+  'per tenant, because staffing is not occupancy: being live on one campaign at a time '
+  'is enforced by the session index, not here) and of the campaign roster index. Rows are closed rather than '
   'deleted so "who was staffed here in March" stays answerable.';
 
 -- ════════════════════════════════════════════════════════════════════════════
@@ -831,8 +826,7 @@ CREATE INDEX idx_account_settings_tenant ON account_settings (tenant_id);
 CREATE INDEX idx_account_settings_tenant_account ON account_settings (tenant_id, account_id);
 
 COMMENT ON COLUMN account_settings.webrtc_max_duration_seconds IS
-  'Per-account maximum duration of a bridged call, in seconds. Replaces core''s '
-  'webrtc_max_duration_seconds feature flag (Magick Agency plan §3.2). NULL = the '
+  'Per-account maximum duration of a bridged call, in seconds. NULL = the '
   'process default applies.';
 
 CREATE TABLE account_provider_concurrency_allocations (
@@ -1141,13 +1135,13 @@ CREATE TRIGGER trg_agency_campaigns_updated_at
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 COMMENT ON TABLE agency_campaigns IS
-  'Agency dialer campaign, execution side. Business config (RBAC, billing, CSV, DNC) lives in magick-master.';
+  'Agency dialer campaign, execution side: what the dialer runtime reads to place calls.';
 COMMENT ON COLUMN agency_campaigns.caller_ids IS
   'Caller-ID pool rotated round-robin at dial time; all entries must belong to telephony_provider.';
 COMMENT ON COLUMN agency_campaigns.abandon_announcement_id IS
-  'Announcement played to a customer on an abandoned call before hangup (AD-P2-C-05). NULL = hang up silently; the attempt is recorded abandoned either way.';
+  'Announcement played to a customer on an abandoned call before hangup. NULL = hang up silently; the attempt is recorded abandoned either way.';
 COMMENT ON COLUMN agency_campaigns.abandonment_ceiling_pct IS
-  'Rolling-24h abandonment rate (percent) at which this campaign auto-pauses (AD-P4-C-02). Defaults to DEFAULT_ABANDONMENT_CEILING_PCT.';
+  'Rolling-24h abandonment rate (percent) at which this campaign auto-pauses. Defaults to DEFAULT_ABANDONMENT_CEILING_PCT.';
 COMMENT ON COLUMN agency_campaigns.pause_reason IS
   'Why the campaign is paused: supervisor action, or the abandonment guardrail. NULL whenever the campaign is not paused.';
 COMMENT ON COLUMN agency_campaigns.paused_at IS
@@ -1155,15 +1149,15 @@ COMMENT ON COLUMN agency_campaigns.paused_at IS
 COMMENT ON COLUMN agency_campaigns.pause_abandonment_rate_pct IS
   'The abandonment rate as measured at the moment of an auto-pause, frozen. NULL for a supervisor pause. Never recomputed — the 24h window slides while the campaign is paused.';
 COMMENT ON COLUMN agency_campaigns.started_at IS
-  'FIRST transition into running, ever — first-write-wins in transitionStatus (COALESCE(started_at, now())). Never overwritten by a resume; see migration 108 for the bug this replaced.';
+  'FIRST transition into running, ever — first-write-wins in transitionStatus (COALESCE(started_at, now())). Never overwritten by a resume.';
 COMMENT ON COLUMN agency_campaigns.ended_at IS
   'Entry into a terminal status (completed or stopped). NULL = still live. Supersedes completed_at, which holds the same instant under a name that is wrong for a stopped campaign.';
 COMMENT ON COLUMN agency_campaigns.completed_at IS
   'LEGACY spelling of ended_at, written in lockstep with it. Retained only because it is already on a shipped payload; read ended_at.';
 COMMENT ON COLUMN agency_campaigns.last_transition_by_user_id IS
-  'master user id that caused the CURRENT status, or NULL for an automatic/unattributed transition (D3: opaque to core). Written unconditionally by every transition.';
+  'User id that caused the CURRENT status, or NULL for an automatic/unattributed transition (opaque to the dialer runtime). Written unconditionally by every transition.';
 COMMENT ON COLUMN agency_campaigns.last_transition_by_name IS
-  'Display name as master knew it AT the transition — a snapshot, never refreshed; core has no user table. NULL beside a non-null id means an id-only actor.';
+  'Display name as the public API layer knew it AT the transition — a snapshot, never refreshed and never joined. NULL beside a non-null id means an id-only actor.';
 COMMENT ON COLUMN agency_campaigns.parent_campaign_id IS
   'The campaign this one was retried FROM, or NULL when it is not a retry. A '
   'pointer, one hop — ON DELETE SET NULL, because a pointer to a deleted row '
@@ -1174,21 +1168,21 @@ COMMENT ON COLUMN agency_campaigns.root_campaign_id IS
   'lineage strip is one indexed read rather than a recursive walk. Carries NO '
   'foreign key (it is a grouping key, not a reference) and is deliberately NULL '
   'on generation-0 campaigns, so every reader must spell it '
-  'COALESCE(root_campaign_id, id). See migration 111''s header.';
+  'COALESCE(root_campaign_id, id).';
 COMMENT ON COLUMN agency_campaigns.retry_generation IS
-  '0 = not a retry (the default, so every pre-111 row is already correct). 1 = a '
+  '0 = not a retry (the default). 1 = a '
   'retry of an ordinary campaign, 2 = a retry of that, and so on. Bounded at the '
   'route by RETRY_MAX_GENERATION rather than by a CHECK, because the ceiling is a '
   'product rule that will be tuned and a CHECK would make tuning it a migration.';
 COMMENT ON COLUMN agency_campaigns.retry_selector IS
   'The contact filter that produced this campaign''s roster, frozen as sent. A '
-  'RECORD, NEVER RE-EXECUTED (DR-5): the parent keeps moving if it is resumed, so '
+  'RECORD, NEVER RE-EXECUTED: the parent keeps moving if it is resumed, so '
   're-running it later would produce a different set and make this roster '
   'non-reproducible from its own row. NULL when retry_generation = 0. Also the '
-  'source of the agent console''s retry banner copy, rendered core-side so the '
+  'source of the agent console''s retry banner copy, rendered server-side so the '
   'copy and the query cannot disagree.';
 COMMENT ON COLUMN agency_campaigns.retry_idempotency_key IS
-  'Client-minted key making POST /retry at-most-once per (tenant, account, key). Minted by the browser when the retry dialog opens and forwarded verbatim — a key generated per request protects nothing. NULL = an unkeyed create, which has no replay protection.';
+  'Client-minted key making POST /retry at-most-once per (tenant, account, key). Minted by the browser when the retry dialog opens and forwarded unchanged — a key generated per request protects nothing. NULL = an unkeyed create, which has no replay protection.';
 
 -- One definition of row identity, used by the INSERT in
 -- `agency.repository.ts#applyIngestChunk`, so the callers cannot drift into
@@ -1222,7 +1216,7 @@ $$ LANGUAGE sql STABLE;
 
 COMMENT ON FUNCTION agency_contact_row_fingerprint(VARCHAR, JSONB, VARCHAR) IS
   'Roster-row identity: md5 of phone + context + timezone. The one definition, '
-  'shared by the ingest INSERT and migration 083''s backfill.';
+  'shared by the ingest INSERT and any backfill of row_fingerprint.';
 
 CREATE TABLE agency_contacts (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1231,7 +1225,7 @@ CREATE TABLE agency_contacts (
   account_id        UUID NOT NULL,
 
   phone_e164        VARCHAR(20) NOT NULL,
-  -- Every non-phone CSV column, verbatim, original headers as keys. This is what
+  -- Every non-phone CSV column, as uploaded, original headers as keys. This is what
   -- the agent screen renders. Deliberately schemaless: arbitrary columns is a
   -- hard requirement and we will not migrate per customer.
   context           JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -1346,38 +1340,36 @@ CREATE TRIGGER trg_agency_contacts_root
 COMMENT ON TABLE agency_contacts IS
   'Agency dialer execution roster — one row per accepted CSV row. Claimed with FOR UPDATE SKIP LOCKED by the pacing tick.';
 COMMENT ON COLUMN agency_contacts.context IS
-  'Every non-phone CSV column verbatim, original headers as keys — what the agent screen renders.';
+  'Every non-phone CSV column as uploaded, original headers as keys — what the agent screen renders.';
 COMMENT ON COLUMN agency_contacts.our_fault_attempts IS
-  'AD-P3-C-09: redials caused by OUR faults (agent socket drop before bridge, '
+  'Redials caused by OUR faults (agent socket drop before bridge, '
   'reaper requeue after a crash). Deliberately separate from attempt_count, which '
   'is the customer''s retry allowance and must never be spent on our own failures. '
   'Bounded by OUR_FAULT_REDIAL_BOUND in src/agency/retry-policy.ts — a regulated '
   'repeat-dial limit, which is why the bound lives below the retry policy and no '
   'operator config can raise it.';
 COMMENT ON COLUMN agency_contacts.row_fingerprint IS
-  'D1: content identity of the roster row (phone + context + timezone), via '
+  'Content identity of the roster row (phone + context + timezone), via '
   'agency_contact_row_fingerprint(). Replaces (campaign_id, source_row_number) '
   'as the ingest-replay guard so a SECOND CSV can top up a live campaign while a '
-  're-upload of the SAME file after a master restart still refuses the rows that '
-  'already landed. NULL on rows written before migration 083 and on any row '
-  'whose content was already ambiguous — those sit outside the unique index.';
+  're-upload of the SAME file after a server restart still refuses the rows that '
+  'already landed. NULL on any row whose content was already ambiguous — those sit '
+  'outside the unique index.';
 COMMENT ON COLUMN agency_contacts.csv_line_number IS
-  'The row''s line number in the uploaded CSV (master''s `startLine`) — provenance '
-  'only, never identity: row identity is `row_fingerprint` (083). It lives here '
-  'rather than in `source_row_number` because 073''s unique index on '
-  '(campaign_id, source_row_number) is PARTIAL on NOT NULL and cannot be dropped '
-  'until every pre-083 replica is gone, so new rows leave that column NULL to sit '
-  'outside it and let a second CSV top up a live campaign. NULL on rows written '
-  'before migration 085. Never indexed — see 085''s header.';
+  'The row''s line number in the uploaded CSV (the ingest''s `startLine`) — provenance '
+  'only, never identity: row identity is `row_fingerprint`. It lives here '
+  'rather than in `source_row_number` because the unique index on '
+  '(campaign_id, source_row_number) is PARTIAL on NOT NULL, so new rows leave that '
+  'column NULL to sit outside it and let a second CSV top up a live campaign. '
+  'Never indexed.';
 COMMENT ON COLUMN agency_contacts.source_row_number IS
-  'LEGACY (073), no longer written. Superseded by `csv_line_number` (085) for '
-  'provenance and by `row_fingerprint` (083) for identity. NULL on every row '
-  'written since 085 — retained only because pre-085 rows carry values and because '
-  'uq_agency_contacts_source_row still enforces it for pre-083 replicas. Dropped, '
-  'with that index, in the phase-3 release — see 085''s DEPLOY ORDER block.';
+  'LEGACY, no longer written. Superseded by `csv_line_number` for provenance and by '
+  '`row_fingerprint` for identity. NULL on every row the current ingest writes; '
+  'uq_agency_contacts_source_row still enforces it where it is set. A candidate to '
+  'drop, with that index.';
 COMMENT ON COLUMN agency_contacts.source_contact_id IS
   'The parent campaign''s roster row this one was copied from when a retry '
-  'campaign was created (DR-2), or NULL for an ordinary ingested row. Provenance, '
+  'campaign was created, or NULL for an ordinary ingested row. Provenance, '
   'one hop — ON DELETE SET NULL, because a pointer to a deleted row should become '
   'NULL rather than lie. Do NOT walk this to build history; that is what '
   'root_contact_id exists to avoid (the read is on the dial hot path).';
@@ -1390,19 +1382,18 @@ COMMENT ON COLUMN agency_contacts.root_contact_id IS
   'grouping key, and campaign_id is ON DELETE CASCADE, so an FK here would either '
   'cascade a parent''s deletion into a live child campaign or block the delete. A '
   'dangling root returns fewer history rows, which is the honest answer. Nullable '
-  'only until 113''s backfill has run everywhere (see 085 for the same shape).';
+  'at the column level; the BEFORE INSERT trigger is what fills it.';
 COMMENT ON INDEX idx_agency_contacts_campaign_phone_digits IS
   'Prefilter for AgencyContactRepository.suppressByPhone: every row in one campaign carrying one number, whatever formatting the roster stored. A deliberately LOOSER projection than normalizeE164 — never use it as the normalizer.';
 COMMENT ON INDEX idx_agency_contacts_reporting IS
-  'Supervisor roster read (MAG-159) — keyset on (created_at DESC, id DESC) within one campaign.';
+  'Supervisor roster read — keyset on (created_at DESC, id DESC) within one campaign.';
 COMMENT ON INDEX idx_agency_contacts_phone_suffix IS
-  'Trailing-digit contact search (MAG-159) — suffix on the number is prefix on its reverse.';
+  'Trailing-digit contact search — suffix on the number is prefix on its reverse.';
 COMMENT ON INDEX idx_agency_contacts_root IS
   'Serves the agent panel''s lineage-scoped prior-attempt read '
   '(findPriorForContactLineage), which runs synchronously inside the dial tick '
-  'BEFORE the dial. Not partial and not covering — see migration 114''s header, '
-  'including the note that a deployment with a large agency_contacts should build '
-  'this CONCURRENTLY out of band before running migrate:up.';
+  'BEFORE the dial. Not partial and not covering. A deployment with a large '
+  'agency_contacts should build this CONCURRENTLY out of band before running migrate:up.';
 
 -- The live-session uniqueness is per TENANT (uq_agency_agent_live_tenant).
 --
@@ -1460,9 +1451,9 @@ CREATE TRIGGER trg_agency_agent_sessions_updated_at
 COMMENT ON TABLE agency_agent_sessions IS
   'An agent''s durable session on a campaign. Liveness is the Redis ownership key, not this row.';
 COMMENT ON COLUMN agency_agent_sessions.agent_user_id IS
-  'magick-master user id — opaque to core; there is no identity model here (D3).';
+  'The agent''s user id — opaque to the dialer runtime, which keeps no identity model of its own.';
 COMMENT ON INDEX uq_agency_agent_live_tenant IS
-  'One live session per agent per tenant. Supersedes 074''s per-campaign uq_agency_agent_live: the reservation CAS key in agent-state-machine.ts is per SESSION, so two live sessions for one human are two independently reservable agents and one pair of ears.';
+  'One live session per agent per tenant, rather than per campaign: the reservation CAS key in agent-state-machine.ts is per SESSION, so two live sessions for one human are two independently reservable agents and one pair of ears.';
 
 CREATE TABLE agency_agent_session_events (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1477,12 +1468,12 @@ CREATE TABLE agency_agent_session_events (
   tenant_id       UUID NOT NULL,
   account_id      UUID NOT NULL,
 
-  -- Denormalised from the session — see the header. Immutable at the source, so
-  -- the copy cannot drift.
+  -- Denormalised from the session. Immutable on the session row, so the copy
+  -- cannot drift.
   campaign_id     UUID NOT NULL,
   agent_user_id   UUID NOT NULL,   -- the user id, opaque to the dialer runtime
 
-  -- NULL for the first transition into a session; see the header.
+  -- NULL for the first transition into a session.
   from_state      VARCHAR(20),
   to_state        VARCHAR(20) NOT NULL,
 
@@ -1518,9 +1509,9 @@ CREATE INDEX idx_agency_session_events_agent
 COMMENT ON TABLE agency_agent_session_events IS
   'One row per agent state transition. The only durable record of time-in-state — agency_agent_sessions.state/state_since are a snapshot every transition overwrites. Occupancy is only meaningful from this migration forward: earlier sessions have no events and must read as zero, never as inferred.';
 COMMENT ON COLUMN agency_agent_session_events.agent_user_id IS
-  'Denormalised from agency_agent_sessions so an occupancy query needs no join back to the session (D3: master''s user id, opaque to core).';
+  'Denormalised from agency_agent_sessions so an occupancy query needs no join back to the session (the user id, opaque to the dialer runtime).';
 COMMENT ON COLUMN agency_agent_session_events.from_state IS
-  'NULL for the first transition into a session — the join upsert creates the row in break (D2) and there is no prior state to name.';
+  'NULL for the first transition into a session — the join upsert creates the row in break and there is no prior state to name.';
 
 -- One row per dial. `webrtc_call_id` is the back-reference to the media leg, an
 -- `agency_calls.id` (the column keeps its older name).
@@ -1644,23 +1635,23 @@ CREATE TRIGGER trg_agency_call_attempts_updated_at
 COMMENT ON TABLE agency_call_attempts IS
   'One row per dial — the agency dialer audit spine. uq_agency_attempt_live is the duplicate-dial backstop.';
 COMMENT ON COLUMN agency_call_attempts.dispositioned_by_user_id IS
-  'master user id that recorded the disposition — NOT necessarily the reserved agent (AD-P2-C-04 step 3).';
+  'User id that recorded the disposition — NOT necessarily the reserved agent.';
 COMMENT ON COLUMN agency_call_attempts.wrapup_started_at IS
   'When wrap-up actually began, stamped by WrapupManager. Deliberately not inferred from ended_at.';
 COMMENT ON COLUMN agency_call_attempts.wrapup_ended_at IS
-  'When wrap-up actually ended. NULL = never concluded on an observed path (or predates migration 088).';
+  'When wrap-up actually ended. NULL = never concluded on an observed path.';
 COMMENT ON COLUMN agency_call_attempts.wrapup_resolution IS
-  'How wrap-up ended (WrapupResolution). AD-P4-C-01 averages disposition_submitted, auto_return and agent_returned.';
+  'How wrap-up ended (WrapupResolution). The measured wrap-up average reads disposition_submitted, auto_return and agent_returned.';
 COMMENT ON COLUMN agency_call_attempts.abandon_reason IS
   'Why an abandoned attempt reached no agent: station_lost | bind_failed | bridge_late | unattributed. NULL = not an abandoned attempt. AgencyAbandonReason also declares no_agent_available, which nothing can produce while pacing is 1:1. Diagnosis only — the compliance numerator reads ABANDONED_ATTEMPT_PREDICATE_SQL, never this column.';
 COMMENT ON INDEX idx_agency_attempts_billing IS
-  'Hourly dial-attempt billing sweep (AD-P2-C-09). dialed_at MUST lead: the 60s sweep is a time range across all campaigns and has no campaign_id to filter on.';
+  'Hourly dial-attempt billing sweep. dialed_at MUST lead: the 60s sweep is a time range across all campaigns and has no campaign_id to filter on.';
 COMMENT ON INDEX idx_agency_attempts_agent_bridged IS
-  'Supervisor roster calls_handled roll-up (AD-P4-C-01, MAG-153). Matches supervisorAgents()''s join predicate exactly — reserved_agent_id filtered on bridged_at IS NOT NULL, with no state filter, so it is deliberately NOT a widening of idx_agency_attempts_agent (migration 075), which serves a different, state-scoped caller.';
+  'Supervisor roster calls_handled roll-up. Matches supervisorAgents()''s join predicate exactly — reserved_agent_id filtered on bridged_at IS NOT NULL, with no state filter, so it is deliberately NOT a widening of idx_agency_attempts_agent, which serves a different, state-scoped caller.';
 COMMENT ON INDEX idx_agency_attempts_keyset IS
-  'Supervisor attempt read (MAG-159) — keyset on (created_at DESC, id DESC) within one campaign.';
+  'Supervisor attempt read — keyset on (created_at DESC, id DESC) within one campaign.';
 COMMENT ON INDEX idx_agency_attempts_agent_dialed IS
-  'The agent stats aggregate (GET /agency-agents/:id/stats): (reserved_agent_id, dialed_at DESC) over dialled attempts only. Not used by the sibling /attempts spine, which bounds created_at and must return attempts with a NULL dialed_at. Deliberately NOT a widening of idx_agency_attempts_agent (075, live-only) or idx_agency_attempts_agent_bridged (090, no time key) — a date-ranged historical aggregate is a third shape and gets its own index.';
+  'The agent stats aggregate (GET /agency-agents/:id/stats): (reserved_agent_id, dialed_at DESC) over dialled attempts only. Not used by the sibling /attempts spine, which bounds created_at and must return attempts with a NULL dialed_at. Deliberately NOT a widening of idx_agency_attempts_agent (live-only) or idx_agency_attempts_agent_bridged (no time key) — a date-ranged historical aggregate is a third shape and gets its own index.';
 
 CREATE TABLE agency_ingest_chunks (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1705,15 +1696,14 @@ CREATE INDEX idx_agency_ingest_chunks_job
 COMMENT ON TABLE agency_ingest_chunks IS
   'Roster-ingest idempotency markers. Inserted in the same transaction as their contact rows, so a chunk is all-or-nothing.';
 COMMENT ON COLUMN agency_ingest_chunks.rejected_duplicate_rows IS
-  'Rows this chunk carried that the roster already held verbatim, recorded at apply '
+  'Rows this chunk carried that the roster already held unchanged, recorded at apply '
   'time so a REPLAY of the chunk can report the same number the original response '
-  'did. NULL means the chunk was applied before migration 084 and the count was '
-  'never recorded — deliberately NOT 0, because a replay must be able to say '
-  '"unknown" rather than silently undercount (see the header).';
+  'did. NULL means the count was never recorded — deliberately NOT 0, because a '
+  'replay must be able to say "unknown" rather than silently undercount.';
 COMMENT ON COLUMN agency_ingest_chunks.duplicate_source_rows IS
   'Capped sample (MAX_REPORTED_DUPLICATE_ROWS = 20) of the source_row_numbers behind '
   'rejected_duplicate_rows, for the same replay-fidelity reason. A sample, not the '
-  'set, exactly as the API field of the same name. NULL means not recorded (pre-084).';
+  'set, exactly as the API field of the same name. NULL means not recorded.';
 
 CREATE TABLE agency_dnc_outbox (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1792,7 +1782,7 @@ CREATE TRIGGER trg_agency_dnc_outbox_updated_at
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 COMMENT ON COLUMN agency_dnc_outbox.campaign_id IS
-  'The SCOPE of this DNC record, as a value. An id = campaign-scoped: forwarded to master, which names the campaign; the row does not enter the flat dnc:{tenant} set. NULL = tenant-wide: the field is omitted on the forward, master writes the unscoped entry, it reaches the flat set and blocks the number in every campaign. NULL is never "unknown" — it is an explicit tenant-wide escalation, or a row enqueued before campaign scoping shipped, which was created tenant-wide. Never backfill this column.';
+  'The SCOPE of this DNC record, as a value. An id = campaign-scoped: forwarded to the DNC registry, which names the campaign; the row does not enter the flat dnc:{tenant} set. NULL = tenant-wide: the field is omitted on the forward, the DNC registry writes the unscoped entry, it reaches the flat set and blocks the number in every campaign. NULL is never "unknown" — it is an explicit tenant-wide escalation, or a row enqueued before campaign scoping shipped, which was created tenant-wide. Never backfill this column.';
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- 10. agency_calls — the browser↔PSTN media leg (formerly `webrtc_calls`)
