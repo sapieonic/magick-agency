@@ -1,10 +1,9 @@
 /**
- * Create a super-admin — the only way the first one exists (decision #6: super
- * admins are created fresh, master's rows are not copied; no seeded credentials).
+ * Create a super-admin — the only way the first one exists (launch decision 6:
+ * super-admins are created fresh, not imported; no seeded credentials).
  *
- * NEW (magick-agency, no source). Master seeded its first admin in migration 007
- * with a known password; agency's baseline seeds none, so a fresh database has no
- * one who can log in to `/super-admin` until this runs. Every later admin is
+ * The baseline migration seeds no admin, so a fresh database has no one who can
+ * log in to `/super-admin` until this runs. Every later admin is
  * created from the console (`POST /super-admin/admins`), which this mirrors:
  * the same body schema (`createSuperAdminSchema`), the same bcrypt cost (10), the
  * same "email already registered" refusal, and a `super_admin_audit_log` row.
@@ -16,7 +15,7 @@
  *   echo '…' | pnpm tsx scripts/create-super-admin.ts --email ops@example.com --name "Ops"
  *
  * `--system` marks the admin `is_system` (cannot be removed, reactivated or have
- * its password reset by another admin), the protection master's seeded admin had.
+ * its password reset by another admin).
  */
 import bcrypt from 'bcryptjs';
 import { initDbPool, closePool } from '@magick-agency/db';
@@ -26,7 +25,7 @@ import type { SafeSuperAdminRecord } from '@magick-agency/db/models/super-admin.
 import { getPool } from '@magick-agency/db';
 import { createSuperAdminSchema } from '../src/api/validators/super-admin.validator.js';
 
-/** master `super-admin.routes.ts` `BCRYPT_ROUNDS`. */
+/** Same cost as `super-admin.routes.ts`' `BCRYPT_ROUNDS`. */
 const BCRYPT_ROUNDS = 10;
 
 export interface CreateSuperAdminArgs {

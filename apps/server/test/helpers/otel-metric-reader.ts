@@ -10,14 +10,10 @@ import {
 import type { MetricData } from '@opentelemetry/sdk-metrics';
 
 /**
- * PORT NOTE (magick-agency, Phase 6): core `test/helpers/otel-metric-reader.ts`@4850d1d9,
- * verbatim below the inlined block. Core imported `ScrapeMetricReader` from
- * `src/utils/otel-sdk-config.ts` (the `:9090` scrape and the OTLP SDK wiring), which is
- * not ported — agency has no OTel SDK at runtime yet. The reader class and its gauge
- * temporality rule are copied here verbatim from that file (`:242-245`, `:268-272`,
- * `:320-331`) so the suites read metrics through the same SDK aggregation core's did.
- * `@opentelemetry/sdk-metrics` is an `apps/server` devDependency for this helper (core
- * declares `^2.6.0`).
+ * A test-only OpenTelemetry metric reader: the server starts no OTel SDK yet, so the
+ * suites install this reader on a fresh MeterProvider and read metrics through the SDK's
+ * real aggregation. Gauges use DELTA temporality so each collection sees the latest value.
+ * `@opentelemetry/sdk-metrics` is an `apps/server` devDependency for this helper.
  */
 const GAUGE_INSTRUMENT_TYPES: ReadonlySet<InstrumentType> = new Set([
   InstrumentType.OBSERVABLE_GAUGE,

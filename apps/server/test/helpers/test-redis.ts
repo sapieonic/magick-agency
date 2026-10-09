@@ -5,7 +5,8 @@ import { DEFAULT_TEST_REDIS_URL } from '../../../../tooling/test-env.js';
  * Agency test Redis: port 6383, a NON-ZERO db (1 by default; per-worktree via
  * tooling/test-env.ts). db 0 is dev. `flushTestRedis` refuses anything else.
  * FLUSHDB ignores key prefixes, so the guard is the only protection a dev
- * Redis has; core's suite once wiped master's this way.
+ * Redis has (a test suite pointed at the wrong Redis has flushed another stack's
+ * data before).
  */
 export const TEST_REDIS_URL = process.env['TEST_REDIS_URL'] ?? DEFAULT_TEST_REDIS_URL;
 

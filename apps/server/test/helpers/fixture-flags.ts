@@ -1,12 +1,11 @@
 import type { FlagDefinition } from '../../src/feature-flags/registry.js';
 
 /**
- * PORT NOTE (magick-agency): UNREGISTERED copies of core flag definitions
- * (`magic-voice-core/src/feature-flags/registry.ts@4850d1d9`, verbatim fields)
- * that the ported service/snapshot suites use as test subjects.
+ * UNREGISTERED flag definitions that the flag service and snapshot suites use as
+ * test subjects.
  *
  * Agency's registry holds only the three agency flags, all boolean and all
- * scoped global+tenant+account. Core's suites exercise the RESOLVER's mechanics
+ * scoped global+tenant+account. The suites exercise the RESOLVER's mechanics
  * through flags of other shapes — a number flag, a flag with no account scope, a
  * flag whose registry default is `true` — and those mechanics are the service's,
  * not the flags'. `getValue`, `isEnabled` and `snapshot()` resolve from the
