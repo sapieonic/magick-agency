@@ -8,18 +8,16 @@ import {
 } from './headers.js';
 
 /*
- * PORT NOTE (magick-agency): ported from magic-voice-core/src/api/middleware/auth.middleware.ts
- * @4850d1d9. Core's handler modules (`agency*.routes.ts`) read the tenant and account
- * through the getters below, verbatim. They now run only on the private in-process
- * instance behind `api/core-dispatch.ts` (decision B16), where the headers are set by
- * master's handler from the authenticated session (lane A's session → tenant-context →
- * RBAC chain), never by a browser.
+ * The tenancy guard of the internal handler instance. The agency handler modules
+ * (`agency*.routes.ts`) read the tenant and account through the getters below. They run
+ * only on the private in-process instance behind `api/core-dispatch.ts` (decision B16),
+ * where the headers are set by the public API layer's handler from the authenticated
+ * session (the session → tenant-context → RBAC chain), never by a browser.
  *
- * `authMiddleware` keeps only its header half: a request without a tenant or an account
- * is still a 400 with core's body (master forwarded `request.accountId`, the optional
- * `X-Account-Id`, so a console request without one met exactly this refusal). Deleted:
- * the API-key and JWT branches (no core API keys, decision #5; the caller is in-process)
- * and PostHog's `identifyTenantAccount` (not carried by lane C).
+ * `authMiddleware` checks only the headers: a request without a tenant or an account is a
+ * 400. The public layer passes `request.accountId` (from the optional `X-Account-Id`), so a
+ * console request without one meets exactly this refusal. There is no API-key or JWT
+ * branch: the caller is in-process.
  */
 
 // Re-exported for backward compatibility — the canonical definitions live in

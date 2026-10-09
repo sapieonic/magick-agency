@@ -415,7 +415,7 @@ export function useAudioCapture(options: AudioCaptureOptions = {}): AudioCapture
        * On the agency console that window is `reserved` → `bridged`: the whole
        * time the customer's phone is ringing. Staging measured it directly —
        * 565 surplus frames on a call whose arm-to-bridge gap was 11.38 s, i.e.
-       * 11.3 s of the agent's room tone delivered to core the moment the
+       * 11.3 s of the agent's room tone delivered to the API the moment the
        * customer said hello, transcoded, and handed to the carrier, which plays
        * it out at real time. Everything the agent then said sat behind it for
        * the rest of the call. Inbound audio was unaffected (49.9 fps, exactly

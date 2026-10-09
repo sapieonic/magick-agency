@@ -6,10 +6,8 @@
  *   - ProviderConcurrencyGuard.releaseAll — the composite path of releaseTelephonyLease
  *   - ProviderConcurrencyGuard.extendAll  — queued-dial, transfer, WS-static extensions
  *
- * PORT NOTE (magick-agency): ported from core test/unit/core/group-lease-hooks.test.ts@4850d1d9.
- * The group lease hooks are stripped from the guards, so every hook case is
- * deleted; the one case pinning the hookless release ("makes exactly the call it
- * always made") is kept. Mock specifiers changed to the agency packages.
+ * The guards carry no group lease hooks; the one case here pins the hookless
+ * release ("makes exactly the call it always made").
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 

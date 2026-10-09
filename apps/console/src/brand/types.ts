@@ -49,9 +49,8 @@ export interface Brand {
   /** Optional marketing tagline. */
   tagline?: string;
   /*
-   * PORT NOTE (magick-agency, decision B17): cusui's `promotions` flag is
-   * removed. It gated the parent product's promotional UI (the login "free
-   * credits" banner), none of which is in this console.
+   * Decision B17: there is no `promotions` flag; the console has no
+   * promotional UI (such as a login "free credits" banner).
    */
   /** Optional non-color style levers (corner radius, elevation, etc.). */
   style?: BrandStyle;

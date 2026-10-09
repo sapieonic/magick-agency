@@ -4,7 +4,7 @@ import type { AgencyIngestFailureCode } from './agency-csv-ingest.js';
 /**
  * Postgres `42703 undefined_column` — the SQLSTATE for "this column doesn't
  * exist," which is exactly what a write against `core_rejected_duplicate_rows`
- * / `core_duplicate_source_rows` throws when migration 055 hasn't landed yet.
+ * / `core_duplicate_source_rows` throws against a schema that lacks them.
  * Narrow on purpose: any other error (a real constraint violation, a
  * connection drop) must still propagate rather than being silently
  * downgraded to "maybe it's just the migration."
@@ -17,12 +17,12 @@ function isUndefinedColumnError(err: unknown): boolean {
 export type AgencyIngestJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 /**
- * Everything that can land in `agency_ingest_jobs.error_code` (`MAG-154`).
+ * Everything that can land in `agency_ingest_jobs.error_code`.
  *
  * A superset of {@link AgencyIngestFailureCode}: the file-level codes the wizard
  * renders copy for, **plus** the ones only the ingest SERVICE can raise, because
- * they are about the hop to core or the job's own preconditions rather than
- * about the file. cusui types the field `AgencyIngestFailureCode | string |
+ * they are about applying the roster or the job's own preconditions rather than
+ * about the file. The console types the field `AgencyIngestFailureCode | string |
  * null`, so these fall through to its generic branch by design.
  *
  * ── Why this type exists at all ─────────────────────────────────────────────
@@ -35,9 +35,9 @@ export type AgencyIngestJobStatus = 'pending' | 'running' | 'completed' | 'faile
  *
  * `replace_${...}` is a template literal type on purpose, and it is the cheapest
  * pin here: the call site builds the code as `` `replace_${err.code}` `` from
- * `RosterSupersedeError.code`, so the day core grows a fifth supersede refusal,
- * that expression stops being assignable and this list has to be extended in the
- * same commit. Spelling the four out by hand would have been the same drift one
+ * `RosterSupersedeError.code`, so the day that union grows a fifth supersede
+ * refusal, that expression stops being assignable and this list has to be
+ * extended in the same commit. Spelling the four out by hand would have been the same drift one
  * level down.
  *
  * NOTE `AgencyIngestJobRecord.error_code` stays `string | null`: it is READ back
@@ -49,9 +49,9 @@ export type AgencyIngestJobFailureCode =
   | AgencyIngestFailureCode
   /** A real (non-dry-run) import arrived without a campaign to import into. */
   | 'no_campaign'
-  /** Core answered the final chunk saying it never received some earlier one. */
+  /** The final chunk's completeness check found some earlier chunk never applied. */
   | 'roster_incomplete'
-  /** Core refused one chunk outright (`RosterChunkError`). */
+  /** One chunk was refused outright (`RosterChunkError`). */
   | 'core_rejected_chunk'
   /** The catch-all arm, deliberately distinguishable in logs and dashboards. */
   | 'unexpected_error'
@@ -64,19 +64,20 @@ export type AgencyIngestJobFailureCode =
 /**
  * What this import means to do to the campaign's existing roster.
  *
- * - `append` — today's behaviour. New rows are merged in; rows core already
- *   holds verbatim are refused by `uq_agency_contacts_row_fingerprint` and
- *   reported back as `core_rejected_duplicate_rows`.
- * - `replace` — the campaign's existing contacts are RETIRED first (in core, and
- *   only in core), so afterwards only this import's rows are dialable.
+ * - `append` — today's behaviour. New rows are merged in; rows the roster
+ *   already holds exactly are refused by `uq_agency_contacts_row_fingerprint`
+ *   and reported back as `core_rejected_duplicate_rows`.
+ * - `replace` — the campaign's existing contacts are RETIRED first
+ *   (`supersedeRoster`), so afterwards only this import's rows are dialable. Not
+ *   implemented: it fails `replace_unsupported` (decision B15).
  *
- * There is deliberately no third value and no `merge`/`upsert`: core cannot
- * update a contact in place — an edited person hashes differently and is a new
- * row — so "correct my file" is expressible only as replace.
+ * There is deliberately no third value and no `merge`/`upsert`: a contact cannot
+ * be updated in place — an edited person hashes differently and is a new row —
+ * so "correct my file" is expressible only as replace.
  */
 export type AgencyIngestMode = 'append' | 'replace';
 
-/** Mirrors migration 057's CHECK, so an invalid mode fails before the database. */
+/** Mirrors `ck_agency_ingest_mode`, so an invalid mode fails before the database. */
 export const AGENCY_INGEST_MODES: readonly AgencyIngestMode[] = ['append', 'replace'];
 
 export interface AgencyIngestJobRecord {
@@ -94,14 +95,14 @@ export interface AgencyIngestJobRecord {
   dedupe_phones: boolean;
   dry_run: boolean;
   /**
-   * `undefined` — not merely `'append'` — on a row read back during the pre-057
-   * ordering window, because `create()` does not name the column for an append
-   * (see its docstring). Every reader must therefore treat anything that is not
-   * exactly `'replace'` as an append, which is also the fail-safe reading.
+   * `undefined` — not merely `'append'` — on a row read back from a schema
+   * without the `mode` column, because `create()` does not name the column for an
+   * append (see its docstring). Every reader must therefore treat anything that
+   * is not exactly `'replace'` as an append, which is also the fail-safe reading.
    */
   mode: AgencyIngestMode;
   /**
-   * For `mode: 'replace'`: how many contacts core retired for this job, as a
+   * For `mode: 'replace'`: how many contacts were retired for this job, as a
    * BIGINT string. NULL when the question does not apply — an append, or a
    * replace that failed before it got that far.
    *
@@ -112,8 +113,8 @@ export interface AgencyIngestJobRecord {
    */
   replace_superseded_contacts: string | null;
   /**
-   * TRUE when a replace may have retired the roster but master could not confirm
-   * it. Read together with the count above — see migration 058:
+   * TRUE when a replace may have retired the roster but the ingest could not
+   * confirm it. Read together with the count above:
    *
    *   (N, false)    exactly N contacts were retired
    *   (NULL, false) nothing was retired; the campaign is as it was
@@ -136,18 +137,18 @@ export interface AgencyIngestJobRecord {
   rejected_row_count: number;
   rejected_truncated: boolean;
   /**
-   * Rows master sent that core's `ON CONFLICT (campaign_id, row_fingerprint)`
-   * refused because the roster already held them **verbatim** — the same people
-   * sent again, summed across every chunk. Independent of `accepted`/`rejected`
-   * (see migration 055): those count what master decided to send, this counts
-   * what core actually refused on arrival.
+   * Rows the ingest sent that `ON CONFLICT (campaign_id, row_fingerprint)`
+   * refused because the roster already held them **exactly** — the same people
+   * sent again, summed across every chunk. Independent of `accepted`/`rejected`:
+   * those count what the ingest decided to send, this counts what the contact
+   * table actually refused on arrival.
    */
   core_rejected_duplicate_rows: string;
   /** A capped sample of the colliding `source_row_number`s, across all chunks. */
   core_duplicate_source_rows: number[];
   /**
    * TRUE when the count above is a LOWER BOUND rather than an exact figure —
-   * see migration 056 and `IngestProgress`'s field of the same name.
+   * see the column's comment and `IngestProgress`'s field of the same name.
    */
   core_rejected_duplicate_rows_may_undercount: boolean;
   error_code: string | null;
@@ -180,7 +181,7 @@ export interface CreateIngestJobInput {
 /**
  * How stale (no progress heartbeat) a `pending`/`running` job's `updated_at`
  * must be before boot-time reap treats it as orphaned rather than live on
- * another replica. Mirrors core's `KbIngestRecovery` staleness window.
+ * another replica.
  */
 export const AGENCY_INGEST_JOB_STALE_MINUTES = 10;
 
@@ -200,30 +201,27 @@ export interface IngestProgress {
    * otherwise**, and when it does say otherwise this is a LOWER BOUND — it can
    * undercount, never overcount.
    *
-   * The hazard, since it is not visible from here: `sendRosterChunk` retries on
-   * a 5xx or a transport timeout, which includes the case where core COMMITTED
-   * a real application (with a genuine `rejected_duplicate_rows` count) and the
-   * response carrying that count was lost before master saw it. The retry lands
-   * on core's replay path (`duplicate_chunk: true`), which rolls back before the
-   * per-row conflict check and so has no counts of its own. Core's migration 084
-   * closed that by recording the counts inside the transaction that refused the
-   * rows and reading them back on replay — so the number below is now exact for
-   * every chunk applied from 084 onward, INCLUDING an exact zero. The one
-   * residual case is a replay of a chunk applied before 084, where nothing was
-   * recorded and nothing can be reconstructed; core reports
+   * The hazard, since it is not visible from here: a replay of a chunk
+   * (`duplicate_chunk: true`) rolls back before the per-row conflict check and so
+   * has no counts of its own. `applyIngestChunk` records the counts inside the
+   * transaction that refused the rows and reads them back on replay — so the
+   * number below is exact for every chunk whose counts were recorded, INCLUDING
+   * an exact zero. The one residual case is a replay of a chunk whose counts were
+   * never recorded (`agency_ingest_chunks.rejected_duplicate_rows IS NULL`),
+   * where nothing can be reconstructed; the repository reports
    * `rejection_counts_unavailable` there rather than a confident zero, and that
    * is the ONLY thing that raises the flag field below.
    *
-   * A non-zero value is always real — core never invents a collision.
+   * A non-zero value is always real — the repository never invents a collision.
    */
   core_rejected_duplicate_rows: number;
   /**
    * Capped sample of the colliding `source_row_number`s (see
    * `agency-ingest.service.ts`'s `MAX_CORE_DUPLICATE_SAMPLE`).
    *
-   * **Skewed toward the earliest chunks, not a random cross-section.** Core
-   * caps each chunk's own `duplicate_source_rows` at 20
-   * (`MAX_REPORTED_DUPLICATE_ROWS` in core's `agency.repository.ts`), and this
+   * **Skewed toward the earliest chunks, not a random cross-section.** Each
+   * chunk's own `duplicate_source_rows` is capped at 20
+   * (`MAX_REPORTED_DUPLICATE_ROWS` in `src/db/repositories/agency.repository.ts`), and this
    * sample stops accepting new rows once it reaches the same cap — so on a
    * heavily-colliding re-upload (the common case this field exists for),
    * chunk 0 alone typically fills the cap and every later chunk's collisions
@@ -234,24 +232,20 @@ export interface IngestProgress {
    */
   core_duplicate_source_rows: number[];
   /**
-   * **Sticky**: true once any chunk of this ingest came back with core's
+   * **Sticky**: true once any chunk of this ingest came back with
    * `rejection_counts_unavailable`, and never cleared by a later chunk that
    * reported cleanly. It qualifies the WHOLE-JOB total above, so one unknown
    * chunk makes the total a lower bound no matter how many exact chunks
    * surround it — a flag that flickered off on the next good chunk would
    * describe the last chunk rather than the import.
    *
-   * **One flag, not two.** The retry/timeout undercount this module used to
-   * document at length and core's pre-084 replay case are the same hazard
-   * observed at two moments: after 084 the only way a replay fails to report
-   * its true count IS the pre-084 case, and that case is exactly what core
-   * flags. Two overlapping "this might be short" signals would leave an
-   * operator arithmetic to do that neither service can do for them.
+   * **One flag, not two.** The only way a replay fails to report its true
+   * count is the never-recorded case, and that case is exactly what the
+   * repository flags. Two overlapping "this might be short" signals would leave
+   * an operator arithmetic to do that nothing here can do for them.
    *
    * `false` is the fail-safe and is never inferred — only a live response
-   * saying so raises it. Against a core older than 084 the flag never arrives
-   * and the old undercount is live and unsignalled, which is why platform
-   * deploy order is core → master.
+   * saying so raises it.
    */
   core_rejected_duplicate_rows_may_undercount: boolean;
 }
@@ -259,19 +253,18 @@ export interface IngestProgress {
 export class AgencyIngestJobRepository {
   /**
    * `mode` is named in the INSERT **only for a replace**, and that asymmetry is
-   * the pre-057 tolerance rather than an oversight.
+   * a tolerance for a schema without the `mode` column rather than an oversight.
    *
-   * `npm run migrate:up` is manual (nothing in the Dockerfile, compose file or
-   * CI runs it), so a code-first rollout can have this process live against a
-   * database with no `mode` column — the same ordering hazard `updateProgress`
-   * documents at length. The usual try/catch-and-retry-without-the-column shape
+   * Nothing in this repo runs `migrate:up` on deploy, so a code-first rollout can
+   * have this process live against a database whose schema has not caught up —
+   * the same ordering hazard `updateProgress` documents at length. The usual try/catch-and-retry-without-the-column shape
    * is WRONG here and dangerously so: retrying a replace without its mode would
    * insert a job that then behaves as an append, which is a silent
    * reinterpretation of a destructive instruction.
    *
    * Splitting on the value instead gives the right outcome on both sides: an
    * append never names the column (so it inserts fine either way, and the column
-   * defaults to `'append'` once 057 lands), while a replace names it and fails
+   * defaults to `'append'` where it exists), while a replace names it and fails
    * loudly against a schema that cannot record it. A replace that cannot be
    * recorded must not run.
    */
@@ -308,9 +301,9 @@ export class AgencyIngestJobRepository {
   }
 
   /**
-   * Record how many contacts core retired for a replace.
+   * Record how many contacts a replace retired.
    *
-   * Written the moment core answers and **before the first chunk is sent**, so
+   * Written the moment the supersede answers and **before the first chunk is sent**, so
    * that a process killed mid-import still leaves the number behind. A count
    * recorded at completion would be missing from exactly the runs where it is
    * the only thing the operator needs to know.
@@ -324,8 +317,8 @@ export class AgencyIngestJobRepository {
   }
 
   /**
-   * Record that a replace may have retired the roster without master learning how
-   * many (migration 058).
+   * Record that a replace may have retired the roster without the ingest learning
+   * how many.
    *
    * Deliberately a separate method from {@link recordReplaceSuperseded} rather
    * than an extra parameter: the two are written on mutually exclusive paths and
@@ -346,7 +339,7 @@ export class AgencyIngestJobRepository {
    * Tenant-scoped by construction: an ingest job id is not a capability, and
    * a job carries the operator's file contents in its counters and export.
    *
-   * `accountId` is the ACCOUNT axis (ClickUp `14ygtkj8rvv`): pass the caller's
+   * `accountId` is the ACCOUNT axis: pass the caller's
    * own `membership.account_id` when that membership is account-scoped, and the
    * statement adds `AND account_id = $3`. Without it, an account-scoped viewer
    * of account B who knew a job id from sibling account A could poll A's job,
@@ -400,20 +393,23 @@ export class AgencyIngestJobRepository {
    * Run the widest statement the live schema will accept.
    *
    * ── Why a LADDER and not one fallback ──────────────────────────────────────
-   * `npm run migrate:up` is manual — nothing in the Dockerfile, compose file or CI
-   * runs it — so a code-first rollout can have this process live against a
-   * database missing 055, or 056, or both. A single all-or-nothing fallback
-   * collapsed all of those into "write none of the core columns", which produced
-   * the exact failure migration 056 exists to prevent: in the 055-applied /
-   * 056-missing window an import where core refused 5,000 rows recorded
-   * `core_rejected_duplicate_rows = 0` (the column default, never written) and no
-   * flag — a confident wrong zero.
+   * The baseline creates every column named here, so on a migrated database the
+   * first tier always succeeds. The narrower tiers are for a database missing
+   * the duplicate-count columns (`core_rejected_duplicate_rows`,
+   * `core_duplicate_source_rows`), or only the trust bit
+   * (`core_rejected_duplicate_rows_may_undercount`) — nothing in this repo runs
+   * `migrate:up` on deploy, so code can be live against a schema that has not
+   * caught up. A single all-or-nothing fallback would collapse those into "write
+   * none of the count columns", which is the exact failure the trust bit exists
+   * to prevent: with the counts present and the bit missing, an import where 5,000
+   * rows were refused would record `core_rejected_duplicate_rows = 0` (the column
+   * default, never written) and no flag — a confident wrong zero.
    *
    * Tiers are ordered widest-first and each drops exactly the columns the previous
    * tier could have been rejected for, so every window records as much as its
-   * schema can hold. The 056 window keeps the count; only the trust bit is lost,
-   * and the read path reports an absent bit as `may_undercount: true` precisely
-   * because master could not write it.
+   * schema can hold. Without the trust bit the count is kept; only the bit is
+   * lost, and the read path reports an absent bit as `may_undercount: true`
+   * precisely because it could not be written.
    *
    * Self-healing by construction: no tier result is cached, so the very next call
    * after a migration lands writes the full row again with no restart.
@@ -428,20 +424,19 @@ export class AgencyIngestJobRepository {
         await pool.query(tier.sql, tier.values);
         return;
       } catch (err) {
-        // The last tier names only columns that have existed since migration 053,
-        // so a 42703 there is a real schema problem and must surface.
+        // The last tier names only the table's original columns, so a 42703
+        // there is a real schema problem and must surface.
         if (!isUndefinedColumnError(err) || i === tiers.length - 1) throw err;
       }
     }
   }
 
   /**
-   * Tolerates running against the pre-055 schema — the ordering hazard being
-   * guarded against.
+   * Tolerates running against a schema without the duplicate-count columns —
+   * the ordering hazard being guarded against.
    *
-   * `npm run migrate:up` is manual: nothing in the Dockerfile, compose file,
-   * or CI workflow runs it, so a code-first rollout can have this process
-   * live against a database that hasn't seen migration 055 yet. Without this
+   * Nothing in this repo runs `migrate:up` on deploy, so a code-first rollout
+   * can have this process live against a database that lacks them. Without this
    * guard, the FIRST progress flush of any ingest (`PROGRESS_INTERVAL_MS` =
    * 1s after `run()` starts streaming) throws `column
    * "core_rejected_duplicate_rows" of relation "agency_ingest_jobs" does not
@@ -467,17 +462,17 @@ export class AgencyIngestJobRepository {
    * cancel/fail, but the sample of WHICH rows collided did not — an operator
    * would see "250 collided" with an empty examples list. Both fields now
    * ride the same heartbeat, so they go stale (or survive) together, and
-   * `core_rejected_duplicate_rows_may_undercount` (migration 056) rides it for
+   * `core_rejected_duplicate_rows_may_undercount` rides it for
    * the same reason: a cancelled job whose total is a lower bound must still
    * say so.
    *
-   * That third column widens the fallback's blast radius by one deploy window
-   * and it is worth naming: with 055 applied but 056 not, the `42703` drops
-   * ALL THREE core columns for that call rather than only the new one, so the
-   * total stops advancing until 056 lands. That is the pre-055 behaviour, not a
-   * new failure mode, and it self-heals on the next call exactly as above —
-   * whereas a per-column ladder would triple this method's SQL to shorten a
-   * window that a single `npm run migrate:up` closes.
+   * The ladder below has three tiers rather than one per column: with the
+   * count columns present and the trust bit missing, the middle tier keeps the
+   * count and loses only the bit; with the count columns missing too, the last
+   * tier writes only the original counters, so the total stops advancing until
+   * the schema catches up. That self-heals on the next call exactly as above,
+   * and a finer ladder would multiply this method's SQL to shorten a window that
+   * a single `migrate:up` closes.
    */
   async updateProgress(id: string, progress: IngestProgress): Promise<void> {
     const base = [
@@ -506,9 +501,9 @@ export class AgencyIngestJobRepository {
           progress.core_rejected_duplicate_rows_may_undercount,
         ],
       },
-      // 055 applied, 056 missing: keep the COUNT, lose only the trust bit. The
-      // read path turns that absence into `may_undercount: true`, so the summary
-      // is honest rather than confidently wrong.
+      // Count columns present, trust bit missing: keep the COUNT, lose only the
+      // bit. The read path turns that absence into `may_undercount: true`, so the
+      // summary is honest rather than confidently wrong.
       {
         sql: `UPDATE agency_ingest_jobs
             SET ${BASE_SET},
@@ -520,7 +515,7 @@ export class AgencyIngestJobRepository {
           progress.core_duplicate_source_rows,
         ],
       },
-      // Pre-055: only columns migration 053 created.
+      // No count columns: only the table's original counters.
       { sql: `UPDATE agency_ingest_jobs SET ${BASE_SET} WHERE id = $1`, values: base },
     ]);
   }
@@ -537,7 +532,7 @@ export class AgencyIngestJobRepository {
       rejected_truncated: boolean;
     },
   ): Promise<void> {
-    // Same pre-055/056 tolerance as `updateProgress` above, through the same
+    // Same schema tolerance as `updateProgress` above, through the same
     // ladder — see `writeWideningDown`. A dry run or a small file can reach
     // `complete()` before the first `PROGRESS_INTERVAL_MS` progress flush, so this
     // is not `updateProgress`'s fallback repeated defensively; it is independently
@@ -682,20 +677,17 @@ export class AgencyIngestJobRepository {
    * Fail every job left `running` (or `pending`) by a restart — but ONLY the
    * ones that are actually orphaned, not merely running somewhere else.
    *
-   * ── The bug this replaces ──────────────────────────────────────────────────
-   * The original version failed every non-terminal row unconditionally, on the
-   * premise that "master's ingest runs in-process, so a job in `running` at boot
-   * has no worker and will never progress." That premise holds for a lone
-   * process but not for this service's actual topology: master runs multiple
-   * replicas behind a load balancer (see root CLAUDE.md — cache invalidation,
-   * rate limiting, and the lane scheduler all exist *because* there is more than
-   * one instance). A `POST /agency-campaigns/:id/roster` request lands on
-   * whichever replica the balancer picks, and that replica's in-process ingest
-   * keeps running for however long the file takes — minutes, for a 1M-row CSV.
-   * A rolling deploy boots replica B while replica A is still mid-ingest for a
-   * different job; B's unconditional reap on startup marked A's live job
-   * `failed` out from under it, mid-file, with rows already streamed to core
-   * that the operator's UI now reports as an error.
+   * ── Why not every non-terminal row ─────────────────────────────────────────
+   * Failing every non-terminal row unconditionally rests on the premise that
+   * "the ingest runs in-process, so a job in `running` at boot has no worker and
+   * will never progress." That holds for a lone process but not once more than
+   * one replica is live, which a rolling deploy always produces. A roster upload
+   * lands on whichever replica the balancer picks, and that replica's in-process
+   * ingest keeps running for however long the file takes — minutes, for a
+   * 1M-row CSV. A rolling deploy boots replica B while replica A is still
+   * mid-ingest for a different job; an unconditional reap on B's startup would
+   * mark A's live job `failed` out from under it, mid-file, with rows already
+   * applied that the operator's UI then reports as an error.
    *
    * ── The fix: scope by heartbeat staleness, not by boot event ───────────────
    * `updated_at` is already a heartbeat with no new column needed: every
@@ -707,10 +699,9 @@ export class AgencyIngestJobRepository {
    * the instant that happens, so its `updated_at` ages past any reasonable
    * threshold long before a human would investigate. Gating the reap on
    * `updated_at < NOW() - staleMinutes` therefore reaps true orphans on any
-   * replica's boot while leaving another replica's live job alone — the same
-   * "no worker will ever advance this" test the original comment intended,
-   * applied per-row instead of per-table. Mirrors core's `KbIngestRecovery`
-   * stale-heartbeat threshold (10 minutes) rather than inventing a new
+   * replica's boot while leaving another replica's live job alone — the
+   * "no worker will ever advance this" test, applied per-row instead of
+   * per-table. A 10-minute stale-heartbeat threshold rather than a new
    * owner/instance column — the schema already carries what's needed.
    */
   async reapStaleJobs(staleMinutes = AGENCY_INGEST_JOB_STALE_MINUTES): Promise<number> {

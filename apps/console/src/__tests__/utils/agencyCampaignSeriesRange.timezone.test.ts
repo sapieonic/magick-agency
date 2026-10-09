@@ -3,7 +3,7 @@
  *
  * ── Why this file exists separately ────────────────────────────────────────
  * The main suite is pinned `TZ=UTC` (`vite.config.ts`, at module scope, on the
- * main thread — see CLAUDE.md "Testing Patterns"). A non-UTC assertion written
+ * main thread — see the test config). A non-UTC assertion written
  * into an ordinary test file silently reads UTC and passes whatever the code
  * does, which is worse than no test. `*.timezone.test.ts` files form a second
  * vitest project on `pool: 'forks'`, the only place `process.env.TZ` actually

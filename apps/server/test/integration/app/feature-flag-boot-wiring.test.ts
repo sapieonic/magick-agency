@@ -1,9 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 /**
- * NEW (magick-agency, lead): `buildApp` with a real context initialises the
- * feature-flag service with the shared Redis, as core did at boot
- * (`call-manager.ts:677@4850d1d9`). Without it `getFeatureFlagService()` falls back
+ * `buildApp` with a real context initialises the
+ * feature-flag service with the shared Redis. Without it `getFeatureFlagService()` falls back
  * to a Redis-less instance and a flag read never writes its snapshot to Redis.
  * Real Postgres (5436) and Redis (6383, this worktree's db).
  */

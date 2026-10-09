@@ -4,7 +4,7 @@ import { useServerClock } from '../../hooks/useServerClock';
 import { formatDuration } from '../../utils/agencyClock';
 
 /**
- * `useServerClock` (§A.13.2 / §A.13.10) — acceptance criterion (b).
+ * `useServerClock` — acceptance criterion (b).
  *
  * **Every assertion here names an exact string or an exact number.** That is not
  * pedantry: the predecessor's own harness bug — advancing `setSystemTime` *and*
@@ -143,7 +143,7 @@ describe('the enabled gate', () => {
   });
 
   it('repaints on the 250ms boundary and not before it', () => {
-    // §A.13.2 picks 250ms over 1s deliberately: at 1s the visible digit can lag
+    // picks 250ms over 1s deliberately: at 1s the visible digit can lag
     // the true boundary by nearly the whole one-second tolerance, spent on repaint
     // alone. So the cadence is a real requirement and worth pinning at its edge.
     //

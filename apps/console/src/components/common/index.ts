@@ -1,8 +1,4 @@
-// PORT NOTE (magick-agency): cusui's barrel also exported AdvancedSection,
-// BatchConfirmModal, DeprecationNotice, DirectionBadge, ExportColumnsModal,
-// PersonalizeField, ProviderIcon, ProviderSegmentedControl, StatCard and
-// WorkspacePanel. No ported page uses them (they served the AI product), so they
-// are not ported.
+// Shared components used by the agency pages.
 export { StatusBadge } from './StatusBadge';
 export { EmptyState } from './EmptyState';
 export { LoadingSpinner } from './LoadingSpinner';

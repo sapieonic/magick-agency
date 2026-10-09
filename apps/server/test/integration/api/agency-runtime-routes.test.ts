@@ -1,34 +1,34 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * NEW (magick-agency, Phase 8): the runtime routes through the REAL app (`buildApp` with a real
+ * The runtime routes through the REAL app (`buildApp` with a real
  * context: the agency runtime, real Redis 6383 / this worktree's db, real Postgres 5436), with
- * lane A's real session → tenant-context → RBAC chain (Firebase's token check is the one stub),
- * master's `proxy-agency-agent.routes.ts` and core's `agency.routes.ts` bodies behind `callCore`.
+ * the real session → tenant-context → RBAC chain (Firebase's token check is the one stub),
+ * the public `proxy-agency-agent.routes.ts` handlers and the internal `agency.routes.ts`
+ * handlers behind `callCore`.
  *
- * What it pins (lead rulings and review findings, Phase 8):
- *  1. **Ownership (access control).** The actor core checks is the AUTHENTICATED user — master's
- *     `resolveAgencyActor` overwrites any `agent_user_id` / `on_behalf` in the body, and the
- *     private core instance is reachable only through `callCore`. Agent A cannot disposition,
+ * What it pins:
+ *  1. **Ownership (access control).** The actor the internal handler checks is the AUTHENTICATED
+ *     user — the public layer's `resolveAgencyActor` overwrites any `agent_user_id` / `on_behalf`
+ *     in the body, and the internal handler instance is reachable only through `callCore`. Agent A cannot disposition,
  *     hang up, write notes on, or DNC-with-disposition agent B's attempt (403
  *     `not_your_attempt`, nothing written); a session or attempt of another tenant or a sibling
  *     account is a 404; a supervisor may act on behalf.
- *  2. **Session ownership (Q8, Manas 2026-10-09).** Core's `requireOwnedSession` checked tenant
- *     + account + `left_at` only and master passed no actor, so an agent could act on another
- *     agent's session in the SAME account (mint its station token, open its station socket).
- *     Pinned as CURRENT BEHAVIOR until the ruling; now master sends the actor and core refuses a
- *     non-owner with the not-found 404 (supervisors only on `force-available`). The flipped cases
- *     below assert the refusal, the owner's success and the supervisor's reach.
+ *  2. **Session ownership (decision Q8).** An agent must not act on another agent's session in
+ *     the SAME account (mint its station token, open its station socket): the public layer sends
+ *     the actor and `requireOwnedSession` refuses a non-owner with the not-found 404
+ *     (supervisors only on `force-available`). The cases below assert the refusal, the owner's
+ *     success and the supervisor's reach.
  *  3. **The CONTRACT-DIFF fields are produced**, with real values: `intervals.deferred_hangup_ms`
- *     on the session bootstrap (core's `DEFERRED_HANGUP_MS`) and `callback_requested_at` on a
+ *     on the session bootstrap (`DEFERRED_HANGUP_MS`) and `callback_requested_at` on a
  *     callback disposition (the instant the agent asked for).
  *  4. **Decision B8, one transaction:** the agent's DNC mark writes the roster suppression, the
  *     optional disposition and the `dnc_entries` row together — a genuine failure of the DNC
  *     insert (a trigger raising inside it) rolls back the suppression and the disposition.
- *     Mutation-checked (see PORTING §8): running the three writes outside the shared client
+ *     Mutation-checked: running the three writes outside the shared client
  *     leaves the contact suppressed and reds case 4.
  *  5. **The station socket at the console's path** refuses a tokenless upgrade (4401), a token
- *     minted for a different session (4401, core's single-use token is bound to its session),
+ *     minted for a different session (4401, the single-use token is bound to its session),
  *     and a path-escaping id (1008).
  */
 
@@ -69,7 +69,7 @@ const CATALOG = JSON.stringify([
 let app: FastifyInstance;
 
 /**
- * Q7/Q9 (Manas, 2026-10-09): the app now trusts `TRUST_PROXY_HOPS` proxies, so `request.ip`
+ * Decisions Q7/Q9: the app trusts `TRUST_PROXY_HOPS` proxies, so `request.ip`
  * (the rate limiter's key) reads `raw.socket.remoteAddress` through proxy-addr. `injectWS`
  * builds its upgrade request as a bare object with NO `socket` (a real upgrade always has
  * one), which proxy-addr dereferences — a 500 before the route. The upgrade context supplies
@@ -206,7 +206,7 @@ async function dncCount(): Promise<number> {
 
 describe('runtime routes through the real app (integration)', () => {
   describe('the session bootstrap', () => {
-    it('produces intervals.deferred_hangup_ms (core DEFERRED_HANGUP_MS) and a console-path station URL; the actor is the session user, never the body', async () => {
+    it('produces intervals.deferred_hangup_ms (DEFERRED_HANGUP_MS) and a console-path station URL; the actor is the session user, never the body', async () => {
       const res = await post('/proxy/agency/sessions', w.agentA, {
         campaign_id: w.campaign, agent_user_id: w.agentB.id, on_behalf: true,
       });
@@ -244,7 +244,7 @@ describe('runtime routes through the real app (integration)', () => {
       expect(await dncCount()).toBe(0);
     });
 
-    it('a body naming agent B as the actor changes nothing: master overwrites it with the session user', async () => {
+    it('a body naming agent B as the actor changes nothing: the public layer overwrites it with the session user', async () => {
       const res = await post(`/proxy/agency/attempts/${w.attemptB}/disposition`, w.agentA, {
         disposition_code: 'interested', agent_user_id: w.agentB.id, on_behalf: true,
       });
@@ -307,7 +307,7 @@ describe('runtime routes through the real app (integration)', () => {
     });
   });
 
-  describe('Q8 (Manas, 2026-10-09): session routes act only for the session\'s own agent', () => {
+  describe('decision Q8: session routes act only for the session\'s own agent', () => {
     async function sessionRow(id: string) {
       const { rows } = await getTestPool().query('SELECT state, left_at FROM agency_agent_sessions WHERE id = $1', [id]);
       return rows[0];
@@ -412,7 +412,7 @@ describe('runtime routes through the real app (integration)', () => {
 
     it('refuses a tokenless upgrade with 4401 and a path-escaping id with 1008', async () => {
       expect(await closeCode(`/proxy/agency/station/${w.sessionB}`)).toBe(4401);
-      // `%2E%2E` decodes to `..`, a traversal segment once interpolated into the core path.
+      // `%2E%2E` decodes to `..`, a traversal segment once interpolated into the internal path.
       expect(await closeCode('/proxy/agency/station/%2E%2E?token=t')).toBe(1008);
     });
 

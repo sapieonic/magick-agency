@@ -1,24 +1,23 @@
 import type { AgencyStall, AgencyStallCode } from '../types/agency-campaign';
 
 /**
- * The supervisor health strip (§C.2) and the two read-outs beside it (§C.3,
- * CR-2) — as pure functions, because every sentence here is derived from wire
+ * The supervisor health strip and the two read-outs beside it — as pure functions, because every sentence here is derived from wire
  * evidence and every derivation is a place to be confidently wrong.
  *
  * ── Why a module and not JSX ────────────────────────────────────────────────
  * The strip's whole value is that it names the campaign's own numbers back to
  * the supervisor. That makes the copy a *function of the payload*, not a
- * template — and §C.2's ranking decides which single sentence they read at all.
+ * template — and the ranking decides which single sentence they read at all.
  * Both are testable propositions, so they are tested rather than eyeballed.
  *
  * ── One diagnosis ───────────────────────────────────────────────────────────
- * Core sends one `stall` plus the codes that also matched. A supervisor reading
+ * The server sends one `stall` plus the codes that also matched. A supervisor reading
  * five simultaneous problems acts on none of them, so the strip shows the top
  * one and files the rest behind a count.
  */
 
 /**
- * Priority order, first match wins — mirrored from core's
+ * Priority order, first match wins — mirrored from the server's
  * `AGENCY_STALL_PRIORITY` (`src/agency/contracts.ts`).
  *
  * The ranking is by **what a supervisor should do about it**, not by severity: a
@@ -26,7 +25,7 @@ import type { AgencyStall, AgencyStallCode } from '../types/agency-campaign';
  * because acting on the wrong one wastes the minutes the strip exists to save.
  *
  * This is the console's own copy of the order and it is used to SORT
- * `other_stalls` rather than trusting the array's arrival order. Core does send
+ * `other_stalls` rather than trusting the array's arrival order. The server does send
  * them ranked; relying on that would mean a producer-side reorder silently
  * changes what a supervisor reads, with nothing here going red.
  */
@@ -37,8 +36,8 @@ export const AGENCY_STALL_PRIORITY: readonly AgencyStallCode[] = [
   'concurrency_saturated',
   'outside_calling_hours',
   'list_exhausted_retries_pending',
-  // PORT NOTE (magick-agency): `credits_low` (core's priority 7) is removed — no
-  // credits in v1 (extraction plan §3.3); it comes back with metering.
+  // There is no `credits_low` stall code: there are no credits yet, and it comes
+  // back with metering.
   'elevated_failure_rate',
 ] as const;
 
@@ -54,12 +53,12 @@ export const AGENCY_STALL_LABELS: Record<AgencyStallCode, string> = {
 };
 
 /**
- * Sort codes into §C.2's order and drop anything unrecognised.
+ * Sort codes into the priority order and drop anything unrecognised.
  *
  * Unknown codes are dropped rather than appended: a code this build has no label
  * for renders as nothing useful, and a supervisor counting "3 more issues" and
  * finding two names would trust the strip less than one that says two. A newer
- * core adding a ninth condition is a cusui change, not a runtime surprise.
+ * server adding a ninth condition is a console change, not a runtime surprise.
  */
 export function sortStallCodes(codes: readonly AgencyStallCode[]): AgencyStallCode[] {
   const rank = new Map(AGENCY_STALL_PRIORITY.map((code, index) => [code, index]));
@@ -179,8 +178,8 @@ export function stallCopy(
       const pausedAt = formatInstant(stall.paused_at);
       return diagnosis({
         headline: `Paused automatically — abandonment reached ${pct(stall.measured_pct)}, over your ${pct(stall.ceiling_pct)} limit.`,
-        // "Measured at", never "currently": core freezes this figure at the
-        // instant the guardrail fired (migration 089). Presenting a frozen
+        // "Measured at", never "currently": The server freezes this figure at the
+        // instant the guardrail fired (`paused_at` / `pause_abandonment_rate_pct`). Presenting a frozen
         // number as a live one means a supervisor who has since staffed up sees
         // no improvement and concludes the fix did not work.
         facts: [
@@ -242,7 +241,7 @@ export function stallCopy(
         facts: [
           { text: 'The limit is account-wide, so other calls in this workspace count against it too.' },
         ],
-        // D10: there is no tenant-facing setter, so the honest advice names who
+        // `shift_seconds`: there is no tenant-facing setter, so the honest advice names who
         // can change it rather than implying the supervisor can.
         advice: 'Calls resume as lines free up. Raising the limit is a support request.',
       });
@@ -275,9 +274,9 @@ export function stallCopy(
           : 'No retry time is set — add contacts if you need this campaign dialing now.',
       });
 
-    // PORT NOTE (magick-agency): the `credits_low` arm ("Credit is running low.",
-    // "Top up before the balance runs out…") is removed with the stall code —
-    // extraction plan §3.3.
+    // There is no `credits_low` arm ("Credit is running low.", "Top up before
+    // the balance runs out…"): there is no such stall code while there are no
+    // credits yet.
 
     case 'elevated_failure_rate':
       return diagnosis({
@@ -294,9 +293,9 @@ export function stallCopy(
 }
 
 /**
- * The concurrency read-out (CR-2).
+ * The concurrency read-out (display only).
  *
- * **Read-only, per D10** — the supervisor sees it and cannot set it, so this
+ * **Read-only, ** — the supervisor sees it and cannot set it, so this
  * returns text and never an editable value.
  *
  * `inUse === null` means Redis could not answer. That is `unknown`, and it is
@@ -361,7 +360,7 @@ export function concurrencyReadout(
 }
 
 /**
- * The abandonment read-out (§C.3) — the measured 24h rate against **this
+ * The abandonment read-out — the measured 24h rate against **this
  * campaign's own ceiling**, not a platform constant.
  *
  * Drawing it against the campaign's configured ceiling is the point: the
@@ -371,7 +370,7 @@ export function concurrencyReadout(
 export interface AbandonmentReadout {
   value: string;
   detail: string;
-  /** Amber at 75% of the ceiling, per §C.3. `false` whenever the rate is unknown. */
+  /** Amber at 75% of the ceiling. `false` whenever the rate is unknown. */
   nearCeiling: boolean;
   over: boolean;
   /**
@@ -439,7 +438,7 @@ export function abandonmentReadout(
       ceilingLabel,
     };
   }
-  // Null is core's "no answered calls in the window", which is not zero
+  // Null is the server's "no answered calls in the window", which is not zero
   // abandonment — it is no measurement. A reassuring 0.0% here is how a
   // guardrail gets trusted before it has measured anything.
   if (ratePct === null) {
@@ -457,7 +456,7 @@ export function abandonmentReadout(
   const known = typeof ceilingPct === 'number';
   const over = known && ratePct >= ceilingPct;
   /**
-   * Whether core's guardrail will actually pause on this reading.
+   * Whether the server's guardrail will actually pause on this reading.
    *
    * It will not when a SINGLE abandoned call sits in a sample too small for one
    * call to clear the ceiling — `breachedRows`'s fourth refusal
@@ -477,9 +476,9 @@ export function abandonmentReadout(
    * pause is the norm and the suppression is the exception, so an absent
    * denominator falls back to the promise rather than to the caveat.
    *
-   * ⚠️ **`over` is `>=` here and core breaches on `>`, and that boundary is
+   * ⚠️ **`over` is `>=` here and the server breaches on `>`, and that boundary is
    * inherited by this branch because `over` is its first conjunct.** The
-   * mismatch predates this function (core has an explicit test that a rate
+   * mismatch predates this function (the server has an explicit test that a rate
    * exactly AT the ceiling does not breach), and it is safe rather than
    * tolerated: with a single abandoned call, landing exactly on the ceiling
    * requires `answered === 100 / ceiling`, which is precisely

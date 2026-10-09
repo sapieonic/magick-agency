@@ -1,34 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): ported from core test/unit/agency/agency-call-read-routes.test.ts@4850d1d9.
- * Mock paths re-pointed only (logger → a partial `@magick-agency/observability` mock;
- * announcement / call / account-settings / profile repositories → `@magick-agency/db/repositories/*`;
- * leaf modules → `@magick-agency/domain/*`; `contracts.js` → `@magick-agency/contracts/agency`).
- * Cases verbatim unless noted here. MODIFIED: the config mock gains `voicelinkRecording.allowedHosts`, and "streams through the
- * authenticated proxy when the call is there" also asserts the allow-list handed to lane D's
- * `proxyCallRecording` (the route's one change).
- */
-
 // ---------------------------------------------------------------------------
 // The agency-native call read —
 // `GET /agency-campaigns/:id/attempts/:attemptId{,/recording,/recording-url}`.
 //
 // This is the surface whose absence made the agency workspace link its attempt
-// rows into `/app/calls/dialer/history/:id` — the other product's shell, gated on
-// the other product's capability. Design §7b.
+// rows into `/app/calls/dialer/history/:id` — a different shell, gated on
+// a different capability.
 //
 // ── Two assertions this file exists for ────────────────────────────────────
 //
-// 1. **The middleware actually runs.** Core registers auth PER ROUTE PLUGIN, not
+// 1. **The middleware actually runs.** Auth is registered PER ROUTE PLUGIN, not
 //    globally, and that mistake has already shipped here once (the roster-ingest
 //    route). Asserted by spying on the middleware rather than on a status code —
 //    a route that does not exist also answers 404, so a status assertion would
 //    pass against a route that was never registered.
 //
 // 2. **A purged call is 200 with a marker, not 404.** The attempt→call link is
-//    deliberately un-FK'd (migration 076) and both sides purge on independent
+//    deliberately un-FK'd and both sides purge on independent
 //    windows, so an attempt routinely outlives its call. A 404 there would read
 //    as "this attempt never happened", which is false and destroys exactly the
 //    agency-side audit trail the un-FK'd link exists to protect.
@@ -40,9 +30,8 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
   createChildLogger: () => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }));
 
-// PORT NOTE (magick-agency): `voicelinkRecording.allowedHosts` added — the recording
-// route now hands lane D's `proxyCallRecording` the allow-list from config (core's
-// proxy read it itself). Asserted in "streams through the authenticated proxy…".
+// `voicelinkRecording.allowedHosts`: the recording route hands `proxyCallRecording`
+// the allow-list from config. Asserted in "streams through the authenticated proxy…".
 const { RECORDING_HOSTS } = vi.hoisted(() => ({ RECORDING_HOSTS: ['recordings.voicelink.test'] }));
 vi.mock('../../../src/config/index.js', () => ({
   config: { redis: { keyPrefix: '' }, telephony: {}, voicelinkRecording: { allowedHosts: RECORDING_HOSTS } },
@@ -85,9 +74,9 @@ vi.mock('@magick-agency/db/repositories/announcement.repository', () => ({
 const { proxySpy, signSpy } = vi.hoisted(() => ({
   proxySpy: vi.fn(async (_call: unknown, _req: unknown, reply: { send: (b: unknown) => unknown }) =>
     reply.send({ streamed: true })),
-  // A real Date, because the route formats it: the softphone twin sends
-  // `expiresAt.toISOString()` and this route mirrors that twin, so a stand-in
-  // string here would let the two shapes drift again unnoticed.
+  // A real Date, because the route formats it: the route sends
+  // `expiresAt.toISOString()`, so a stand-in string here would let the shape
+  // drift unnoticed.
   signSpy: vi.fn(() => ({
     path: '/api/v1/webrtc-recordings/call-1?sig=x',
     expiresAt: new Date('2026-08-24T12:00:00.000Z'),
@@ -280,9 +269,7 @@ describe('agency call read — scoping', () => {
 
   /**
    * The whole point of the repository's scope parameter. This surface reads the
-   * agency population; the softphone's plugin reads the other one. Asking for
-   * 'dialer' here would 404 every agency call — which is what the old cross-shell
-   * link effectively did once Phase 1a landed.
+   * agency population; any other scope here would 404 every agency call.
    */
   it("reads the call under the 'agency' scope, with tenant and account bound", async () => {
     const app = await makeApp();
@@ -348,9 +335,8 @@ describe('agency call read — the three availability states', () => {
 
 describe('agency call read — the recording path it advertises', () => {
   /**
-   * The softphone's path would 404 for an agency leg, because that plugin's reads
-   * are pinned to the dialer scope. Handing the console a link into it is the
-   * cross-shell bug in miniature.
+   * The recording is advertised on the campaign attempt's own route, never on a
+   * generic `/webrtc-call` path, so the console never leaves the agency surface.
    */
   it('points recording_url at this campaign attempt, never at /webrtc-call', async () => {
     const app = await makeApp();
@@ -389,9 +375,8 @@ describe('agency call read — recording streaming', () => {
     expect(res.statusCode).toBe(200);
     expect(proxySpy).toHaveBeenCalledTimes(1);
     expect((proxySpy.mock.calls[0]![0] as { id: string }).id).toBe('call-1');
-    // PORT NOTE (magick-agency): the configured allow-list is the one handed over, by
-    // identity — not a copy, not a default (lane D's proxy refuses every host on an
-    // empty list).
+    // The configured allow-list is the one handed over, by identity — not a copy,
+    // not a default (`proxyCallRecording` refuses every host on an empty list).
     expect((proxySpy.mock.calls[0] as unknown[])[3]).toBe(RECORDING_HOSTS);
     await app.close();
   });
@@ -450,8 +435,8 @@ describe('agency call read — signed recording URL', () => {
 
   // A VoiceLink leg's recording is a public file on a host our egress cannot
   // reach, so a signed URL — which resolves back through our proxy — would 502 on
-  // a file the browser can fetch itself. Same branch as the softphone twin and AI
-  // calls; this asserts the agency minter did not get left behind.
+  // a file the browser can fetch itself. This asserts the agency minter takes the
+  // direct-provider branch too.
   const VOICELINK_URL =
     'https://voiceflowai.elisiontec.com/voiceapp-recordings/client_1150/2026-07-11/abc.mp3';
 

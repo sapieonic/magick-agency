@@ -36,11 +36,11 @@ export type AccountResolution = 'loading' | 'ready' | 'degraded' | 'error';
  * A 403 from `requirePermission('account.read')` is a *correct* refusal for a role
  * below `viewer`, and `/accounts/mine` is then the right and complete answer for
  * that user — nothing is missing and there is nothing to warn about. Any other
- * failure (502, 504, a dropped connection during a master restart, a masked 500)
+ * failure (502, 504, a dropped connection during a server restart, a masked 500)
  * says nothing about the caller's permissions, so the narrower list is a
  * *degraded* view of someone who should see more.
  *
- * The trade-off the reviewer is owed explicitly: master masks internal error
+ * The trade-off the reviewer is owed explicitly: the server masks internal error
  * detail, so a status code is a weaker signal than it looks. This design is built
  * to survive that being wrong in the direction that matters. Masking replaces the
  * *body*, not the status (`utils/errors.ts`), and an RBAC 403 is one of the "our
@@ -115,14 +115,14 @@ export function TenantProvider({ children }: { children: ReactNode }) {
    * for only once the permissioned route has said no.
    *
    * The fallback runs on **any** failure of the first call, not on a 403
-   * specifically: master masks upstream errors, so keying off a status code makes
+   * specifically: the server masks upstream errors, so keying off a status code makes
    * recovery depend on a detail the error contract does not promise to preserve —
    * and a second attempt at a cheaper route costs one request on a path that has
    * already failed.
    *
    * ── But narrowing is now CLASSIFIED, which it was not ───────────────────────
    * Falling back on any failure is right for recovery and was wrong for honesty.
-   * An `account_admin` signing in during a master restart or a timeout got
+   * An `account_admin` signing in during a server restart or a timeout got
    * `/accounts/mine` — only their own memberships, without `slug`/`settings`/
    * `status` — while `accountResolution` said `'ready'`. No warning, no retry
    * offered, the narrowed selection written to `localStorage`, and
@@ -225,10 +225,9 @@ export function TenantProvider({ children }: { children: ReactNode }) {
 
         // Validate stored accountId belongs to this tenant's accounts
         const validStored = storedAccountId && fetchedAccounts.some(a => a.id === storedAccountId);
-        // PORT NOTE (magick-agency): cusui's middle branch — the session's
-        // `default_account` — is removed. Master produced that field only on
-        // session path 4 (a brand-new tenant), which agency refuses with 403
-        // `no_membership` (plan §3.1), so it was always absent here.
+        // There is no session `default_account` fallback: that field exists only
+        // on session path 4 (a brand-new tenant), which agency refuses with 403
+        // `no_membership`.
         if (validStored) {
           setActiveAccountIdState(storedAccountId);
         } else if (fetchedAccounts.length > 0) {
@@ -264,7 +263,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
    * one. The selection made from a narrowed list is a real account the user can
    * work in, so it is fine *for this session* — but writing it to storage makes it
    * the value the next session restores, and the restore path validates only that
-   * the id is present in whatever list came back. A five-second master restart
+   * the id is present in whatever list came back. A five-second the server restart
    * would otherwise pin an `account_admin` to one account across reloads, with the
    * evidence of why long gone.
    */

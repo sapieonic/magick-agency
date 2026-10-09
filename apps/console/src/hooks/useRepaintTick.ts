@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { CLOCK_REPAINT_MS } from '../utils/agencyClock';
 
 /**
- * Drives the console's countdowns and elapsed times (§A.13.2).
+ * Drives the console's countdowns and elapsed times.
  *
  * **The interval is a repaint trigger, never a time source.** This hook returns a
  * monotonically increasing tick and nothing else — deliberately not a time, so a

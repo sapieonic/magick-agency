@@ -33,8 +33,7 @@ beforeEach(() => {
 });
 
 /**
- * PORT NOTE (magick-agency): NEW. Replaces the scaffold's one-line shell test.
- * The routes sit at the root (`/tenants`, not cusui's `/super-admin/tenants`)
+ * The routes sit at the root (`/tenants`, not `/super-admin/tenants`)
  * so the dev proxy and a static host never mistake a page load for an API call.
  */
 describe('App routing', () => {

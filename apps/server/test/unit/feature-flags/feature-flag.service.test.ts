@@ -28,27 +28,16 @@ import { logger } from '@magick-agency/observability';
 import { FIXTURE_FLAGS } from '../../helpers/fixture-flags.js';
 
 /*
- * PORT NOTE (magick-agency): ported from core
- * test/unit/feature-flags/feature-flag.service.test.ts@4850d1d9. Subject: the
- * resolver, its Redis read-through cache, degraded mode and the fail-safe arms —
- * all unchanged. Changes, in PORTING.md:
- *  - core's subject flag `whatsapp_personal` (boolean, default false,
- *    client-exposed) is replaced by the registered `agency_dialer_enabled`
- *    (same three properties; env `FF_AGENCY_DIALER`) so the multi-flag resolves
- *    still find it in the real registry. ONE case depends on `whatsapp_personal`
- *    having NO account scope, which no agency flag lacks; it uses an
- *    UNREGISTERED copy of core's definition (`test/helpers/fixture-flags.ts`).
- *    The non-boolean `isEnabled` subject is an unregistered copy of
- *    `prewarm_ring_delay_ms`.
- *  - DELETED with the methods (AI-only): the "resolvePrewarm wrapper" and
- *    "resolveCallerActivity wrapper" describes, "rejected flag values are logged"
- *    (it tests the deleted `exactBoolean`/`boundedNumber` guards), and the two
- *    corrupt-cache cases about pre-warm values ("resolves the ringing hot path to
- *    vetted values", "cannot exempt a tenant from the fleet kill switch").
- *  - MODIFIED: every other case that drove a read through `resolvePrewarm(t)`
- *    drives it through `resolveAllWithSource({ tenantId: t })` — the exact call
- *    `resolvePrewarm` made, so the snapshot-pair read under test is identical;
- *    assertions on the pre-warm result read the agency flag's entry instead.
+ * Subject: the resolver, its Redis read-through cache, degraded mode and the
+ * fail-safe arms.
+ *  - The subject flag is the registered `agency_dialer_enabled` (boolean, default
+ *    false, client-exposed; env `FF_AGENCY_DIALER`), so the multi-flag resolves find
+ *    it in the real registry. ONE case needs a flag with NO account scope, which no
+ *    agency flag lacks; it uses an UNREGISTERED fixture flag `whatsapp_personal`
+ *    (`test/helpers/fixture-flags.ts`). The non-boolean `isEnabled` subject is an
+ *    unregistered fixture copy of `prewarm_ring_delay_ms`.
+ *  - Reads that need the snapshot-pair path drive it through
+ *    `resolveAllWithSource({ tenantId: t })`; assertions read the agency flag's entry.
  */
 
 const warnings = (): Record<string, unknown>[] =>
@@ -143,7 +132,7 @@ describe('FeatureFlagService', () => {
       // whatsapp_personal does not permit account scope, so use a synthetic account-scoped flag.
       // Here we assert account precedence on a flag whose scopes include account by checking
       // that a flag WITHOUT account scope ignores account rows (next test).
-      // PORT NOTE: the unregistered whatsapp_personal copy — no agency flag lacks account scope.
+      // Uses the unregistered whatsapp_personal fixture — no agency flag lacks account scope.
       mocks.findByTenant.mockResolvedValue([
         override({ flag_key: 'whatsapp_personal', scope_type: 'tenant', value: false }),
         override({ flag_key: 'whatsapp_personal', scope_type: 'account', account_id: 'acc-1', value: true }),
@@ -267,9 +256,9 @@ describe('FeatureFlagService', () => {
       ]));
     });
 
-    // S2 — all-or-nothing snapshot pair. A partial failure (good global, failed
-    // tenant) must NOT resolve to the global value (that would invert D1 for an
-    // opted-in tenant); it falls to registry default instead.
+    // All-or-nothing snapshot pair. A partial failure (good global, failed
+    // tenant) must NOT resolve to the global value (that would override an
+    // opted-in tenant's explicit setting); it falls to registry default instead.
     it('tenant-read throws → does NOT resolve to global value, falls to registry default', async () => {
       // global says OFF, tenant override (would say ON) but the tenant read fails.
       mocks.findGlobal.mockResolvedValue([override({ scope_type: 'global', tenant_id: null, value: false })]);
@@ -359,7 +348,6 @@ describe('FeatureFlagService', () => {
       const svc = new FeatureFlagService(cachedRedis(cached), PREFIX);
 
       // Every one of these threw `tenant.find is not a function` before the fix.
-      // PORT NOTE: core also called resolvePrewarm / resolveCallerActivity here (removed).
       await expect(svc.resolveAll(CTX)).resolves.toBeDefined();
       await expect(svc.resolveClientExposed(CTX)).resolves.toBeDefined();
       await expect(svc.resolveAllWithSource(CTX)).resolves.toBeDefined();

@@ -2,31 +2,27 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 /*
- * PORT NOTE (magick-agency): master @ a1f0756a `test/unit/agency/proxy-agency-campaign-retry.routes.test.ts`.
- *  - Governance → the per-account settings row (plan §3.2), judged by lane A's REAL
+ *  - The capability gates are the per-account settings row, judged by the REAL
  *    `campaign-behavioral-settings.ts`; only `accountSettingsRepository.findByTenantAndAccount`
- *    is supplied as data (`governance(...)` now writes `allow_recording` / `analyze_calls`).
- *  - The target account is the PARENT's own `tenant_id` / `account_id` (lane A interface
- *    change 1), so `parentCampaign()` and the slim parent bodies carry `tenant_id` — core's
- *    formatter spreads the whole row, which has it.
- *  - Deleted: "the section capability still gates the whole surface when `agency` itself is
- *    off" (no section `agency` gate).
- *  - Modified: "REFUSES a platform API key…" — keys are deleted (decision #5); the
- *    `missing_actor` refusal it pinned is re-expressed for a request with no session user.
- *  - New: the settings row judged is the parent's account, not the request header's.
+ *    is supplied as data (`governance(...)` writes `allow_recording` / `analyze_calls`).
+ *  - The target account is the PARENT's own `tenant_id` / `account_id`, so `parentCampaign()`
+ *    and the slim parent bodies carry `tenant_id` — the internal handler's formatter spreads
+ *    the whole row, which has it.
+ *  - The `missing_actor` refusal is pinned for a request with no session user.
+ *  - The settings row judged is the parent's account, not the request header's.
  */
 
 /**
- * **Retry campaigns at the proxy boundary — the four obligations master carries
- * on the create** (`MagickVoice-platform/docs/agency-campaign-retry-wire-contract.md` §6).
+ * **Retry campaigns at the proxy boundary — the four obligations the public API layer carries
+ * on the create**.
  *
  * ── The obligation this file exists for ────────────────────────────────────
- * A retry INHERITS its parent's config (DR-10). Core copies seventeen columns
- * onto the child, two of which are gated by governance capabilities master owns
- * — `record_calls` by `agency.recording`, `analysis_profile_id` by
+ * A retry INHERITS its parent's config. The internal handler copies seventeen columns
+ * onto the child, two of which are gated by account-level capabilities the public API layer
+ * owns — `record_calls` by `agency.recording`, `analysis_profile_id` by
  * `agency.analytics`. The request body names neither.
  *
- * So the MAG-138 guard, applied here in its existing shape, would be handed a
+ * So the behavioural guard, applied to the request body alone, would be handed a
  * body that says nothing and pass every single time — a gate whose only input is
  * the one on which it cannot fail. A tenant whose `agency.recording` was revoked
  * after the parent campaign was authored would get human↔human recording
@@ -34,17 +30,16 @@ import Fastify, { type FastifyInstance } from 'fastify';
  * two-party consent. Nothing would be red anywhere: the create would 201, the
  * child would dial, and the recordings would exist.
  *
- * That is what the first block below pins, and it is why master reads the parent
+ * That is what the first block below pins, and it is why the public API layer reads the parent
  * campaign at all rather than proxying the create straight through.
  *
- * ── Why the governance stack is REAL here ─────────────────────────────────
+ * ── Why the capability gate is REAL here ──────────────────────────────────
  * The same argument `proxy-agency-campaign-behavioral-capabilities.routes.test.ts`
  * makes at length: the defect class is a capability that is DECLARED and not
- * ENFORCED, and a test that stubs `require-capability.js` to a no-op passes
+ * ENFORCED, and a test that stubs the gate to a no-op passes
  * identically before and after the fix, because the thing it mocks away IS the
- * fix. So `require-capability.ts`, `governance.service.ts`, `resolver.ts` and
- * `catalog.ts` all run for real, and only the two I/O edges — the Redis cache and
- * the override repository — are supplied as data.
+ * fix. So `campaign-behavioral-settings.ts` runs for real, and only the I/O
+ * edge — the account-settings repository — is supplied as data.
  *
  * RBAC is stubbed open, and the two permissions this route carries are asserted
  * by execution next door in `proxy-agency-campaign-retry-rbac.routes.test.ts`.
@@ -83,9 +78,9 @@ vi.mock('../../../src/rbac/rbac.middleware.js', () => ({
   requirePermission: () => async () => {},
 }));
 vi.mock('../../../src/config/index.js', () => ({ config: mocks.config }));
-// The name lookup is master's `users ⋈ memberships` read. Mocked at the ONE
+// The name lookup is the public API layer's `users ⋈ memberships` read. Mocked at the ONE
 // binding the repository has for it (`resolveAgentNames`'s own docstring is
-// about there being exactly one), so a test can say what master knows this
+// about there being exactly one), so a test can say what the public API layer knows this
 // person is called without standing up a database.
 vi.mock('../../../src/agency/agency-agent-identity.js', async () => {
   const actual = await vi.importActual<
@@ -117,9 +112,8 @@ import type { AgencyCampaignWire } from '../../../src/agency/agency-campaign-wir
 const PREFIX = '/proxy/agency';
 
 /**
- * PORT NOTE (magick-agency): master's `tenantOverride` / `governance` wrote override rows;
- * this writes the account's settings row. An omitted key is a NULL column ("off"), as an
- * absent override was the catalog's `default: false`. `agency` is accepted and ignored.
+ * Writes the account's settings row. An omitted key is a NULL column ("off").
+ * `agency` is accepted and ignored.
  */
 function governance(opts: { agency?: boolean; recording?: boolean; analytics?: boolean }): void {
   mocks.findByTenantAndAccount.mockResolvedValue({
@@ -129,14 +123,14 @@ function governance(opts: { agency?: boolean; recording?: boolean; analytics?: b
 }
 
 /**
- * The PARENT campaign as core serves it. Typed against master's wire shape so a
+ * The PARENT campaign as the internal handler serves it. Typed against the public API layer's wire shape so a
  * field renamed here is a `tsc --noEmit` failure rather than a fixture that
  * quietly stops describing the thing under test — which on this route would mean
  * the capability check reading `undefined` and passing.
  */
-// PORT NOTE (magick-agency): typed as the wire shape plus `tenant_id` and an open record —
-// the window cases pass `calling_window_*`, columns `AgencyCampaignWire` deliberately does not
-// declare. Agency's `pnpm lint` typechecks this file and rejected the excess properties.
+// Typed as the wire shape plus `tenant_id` and an open record — the window cases pass
+// `calling_window_*`, columns `AgencyCampaignWire` deliberately does not declare, and
+// `pnpm lint` typechecks this file and rejects excess properties.
 type ParentWire = AgencyCampaignWire & { tenant_id: string } & Record<string, unknown>;
 
 function parentCampaign(
@@ -144,7 +138,7 @@ function parentCampaign(
 ): ParentWire {
   return {
     id: PARENT,
-    // PORT NOTE (magick-agency): the gate's target (core's formatter spreads the row).
+    // The gate's target (the internal handler's formatter spreads the row).
     tenant_id: TENANT,
     account_id: ACCOUNT,
     name: 'Q3 Winback',
@@ -160,7 +154,7 @@ function parentCampaign(
 }
 
 /**
- * Wire `proxyToCore` up as core would answer this route's two calls: the parent
+ * Wire `proxyToCore` up as the internal handler would answer this route's two calls: the parent
  * read, then the create. Anything else 404s, so a hop nobody meant to add shows
  * up as a failure rather than as a silent 200.
  */
@@ -194,7 +188,7 @@ function coreAnswers(opts: {
   });
 }
 
-/** Did the CREATE hop happen? Distinct from "any core call happened". */
+/** Did the CREATE hop happen? Distinct from "any internal handler call happened". */
 function createCalls(): { method: string; path: string; body?: unknown }[] {
   return mocks.proxyToCore.mock.calls
     .map((call) => call[0] as { method: string; path: string; body?: unknown })
@@ -209,11 +203,7 @@ async function buildApp(opts: { apiKey?: boolean; noUser?: boolean } = {}): Prom
     const r = request as unknown as Record<string, unknown>;
     r['tenantId'] = TENANT;
     r['accountId'] = ACCOUNT;
-    // A creator-backed key carries BOTH `apiKeyTenantId` and a `user` — which is
-    // the whole point of `isPlatformApiKeyCaller` and the reason the actor case
-    // below models it this way rather than by deleting `request.user`.
-    // PORT NOTE (magick-agency): `apiKey` no longer means anything (decision #5); `noUser`
-    // models the one request the `missing_actor` refusal still answers.
+    // `noUser` models the one request the `missing_actor` refusal answers.
     if (!opts.noUser) r['user'] = { id: USER };
     r['membership'] = { role: 'account_admin' };
     if (opts.apiKey) r['apiKeyTenantId'] = TENANT;
@@ -243,8 +233,8 @@ describe('the capability-copy trap — a retry must not re-enable a revoked capa
      * way to catch this is to check the config the child would actually be
      * created with.
      *
-     * Asserted on the CREATE hop specifically, not on "core was never called":
-     * master has to read the parent to know any of this, so a bare
+     * Asserted on the CREATE hop specifically, not on "the internal handler was never called":
+     * the public API layer has to read the parent to know any of this, so a bare
      * `not.toHaveBeenCalled()` would be false for the right reason and would pass
      * just as well if the guard were deleted and the read left behind.
      */
@@ -348,15 +338,15 @@ describe('the capability-copy trap — a retry must not re-enable a revoked capa
     await app.close();
   });
 
-  it('FAILS CLOSED when core\'s parent payload omits record_calls entirely', async () => {
+  it('FAILS CLOSED when the internal handler\'s parent payload omits record_calls entirely', async () => {
     // The hole the gate had left. The argument for passing an absent key was
-    // "a core that does not report `record_calls` does not serve `/retry`
-    // either" — true only of a core with NEITHER, and the dependency here is a
-    // core that DOES serve it. A slimmer GET DTO, a `{ campaign: … }` wrapper,
-    // a projection that drops two columns: any of those and master silently
-    // stops asserting while core happily copies recording off the parent row.
+    // "an internal handler that does not report `record_calls` does not serve `/retry`
+    // either" — true only of an internal handler with NEITHER, and the dependency here is an
+    // internal handler that DOES serve it. A slimmer GET DTO, a `{ campaign: … }` wrapper,
+    // a projection that drops two columns: any of those and the public API layer silently
+    // stops asserting while the internal handler happily copies recording off the parent row.
     //
-    // Unreachable against today's core, whose formatter spreads the whole
+    // Unreachable against today's internal handler, whose formatter spreads the whole
     // campaign row. Pinned so that a change to that serializer costs a 403
     // somebody reports rather than a consent gate nobody notices stopped
     // running.
@@ -431,13 +421,10 @@ describe('the capability-copy trap — a retry must not re-enable a revoked capa
     await app.close();
   });
 
-  // PORT NOTE (magick-agency): DELETED — "the section capability still gates the whole
-  // surface when `agency` itself is off": there is no section `agency` gate (plan §3.2).
-
   /*
-   * NEW (magick-agency, lane A interface change 1): the settings row judged is the one of
+   * The settings row judged is the one of
    * the account that OWNS the parent (and so will own the child), read off the parent row —
-   * not the request header's. Core's `requireOwned` on the parent read makes the two equal
+   * not the request header's. The internal handler's `requireOwned` on the parent read makes the two equal
    * in production; the stub makes them differ to pin WHICH one is read.
    */
   it('judges the PARENT\'s account settings, not the request header\'s', async () => {
@@ -458,7 +445,7 @@ describe('the capability-copy trap — a retry must not re-enable a revoked capa
   });
 });
 
-describe('the actor is master\'s fact, never the body\'s', () => {
+describe('the actor is the public API layer\'s fact, never the body\'s', () => {
   it('sends the SESSION user, ignoring a body that names someone else', async () => {
     /**
      * The `sessionCreate` seam's rule, on a different route. A browser that could
@@ -502,7 +489,7 @@ describe('the actor is master\'s fact, never the body\'s', () => {
   });
 
   it('OMITS actor_name rather than sending an empty one when the directory has no name', async () => {
-    // Core reads `''`, `'system'` and `'unknown'` as real actors, so an
+    // The internal handler reads `''`, `'system'` and `'unknown'` as real actors, so an
     // unresolvable name has to be an absent field, not a placeholder. The retry
     // still happens: a name is an improvement on the id, never a precondition.
     mocks.resolveAgentNames.mockResolvedValue(new Map());
@@ -542,17 +529,11 @@ describe('the actor is master\'s fact, never the body\'s', () => {
     /**
      * The deliberate difference from `/start` and `/stop` on this same plugin,
      * which proceed unattributed rather than lose the off button. Authoring a
-     * campaign is not an emergency control and core's request requires the actor,
-     * so the alternatives are master's 400 now or core's one round trip later.
+     * campaign is not an emergency control and the internal handler's request requires the actor,
+     * so the alternatives are the public API layer's 400 now or the internal handler's one round trip later.
      *
-     * Modelled as a CREATOR-BACKED key — `apiKeyTenantId` set AND `request.user`
-     * present — because that is the shape `if (!request.user?.id)` waves through,
-     * and the shape that would otherwise attribute the retry to whoever minted
-     * the credential.
-     *
-     * PORT NOTE (magick-agency): MODIFIED. There are no platform API keys (decision #5), so
-     * a key-shaped request cannot exist. What the refusal still guards is a request that
-     * names nobody: no session user ⇒ 400 `missing_actor`, before any core call.
+     * What the refusal guards is a request that names nobody: no session user ⇒
+     * 400 `missing_actor`, before any internal handler call.
      */
     const app = await buildApp({ noUser: true });
 
@@ -569,13 +550,13 @@ describe('the actor is master\'s fact, never the body\'s', () => {
   });
 });
 
-describe('what master forwards, and what it refuses before core sees it', () => {
-  it('forwards the selector verbatim and never validates its vocabulary', async () => {
-    // DR-3: the selector's vocabulary is core's, validated against the PARENT
-    // campaign's disposition catalog, which master does not hold. A dimension
-    // master has never heard of has to reach core so core can refuse it with the
-    // catalog echoed — master refusing it first would be a second vocabulary, and
-    // master's copy is the one that drifts.
+describe('what the public API layer forwards, and what it refuses before the internal handler sees it', () => {
+  it('forwards the selector unchanged and never validates its vocabulary', async () => {
+    // The selector's vocabulary is the internal handler's, validated against the PARENT
+    // campaign's disposition catalog, which the public API layer does not hold. A dimension
+    // the public API layer has never heard of has to reach the internal handler so the internal handler can refuse it with the
+    // catalog echoed — the public API layer refusing it first would be a second vocabulary, and
+    // the public API layer's copy is the one that drifts.
     const app = await buildApp();
     const exotic = { last_disposition: ['voicemail'], some_future_dimension: 'x' };
 
@@ -590,7 +571,7 @@ describe('what master forwards, and what it refuses before core sees it', () => 
     await app.close();
   });
 
-  it('400s a config_overrides shape POST /campaigns would have refused, before any core call', async () => {
+  it('400s a config_overrides shape POST /campaigns would have refused, before any internal handler call', async () => {
     // Obligation 2. An override is a campaign config field by another name, so it
     // goes through the create route's validator — otherwise the retry route is a
     // way around every rule that validator enforces.
@@ -611,10 +592,10 @@ describe('what master forwards, and what it refuses before core sees it', () => 
     await app.close();
   });
 
-  it('forwards core\'s 404 for a campaign in another tenant rather than answering itself', async () => {
+  it('forwards the internal handler\'s 404 for a campaign in another tenant rather than answering itself', async () => {
     // The parent read doubles as the ownership probe: `requirePermission` proves
-    // the caller's ROLE and never looks at the target row. Core's status is
-    // forwarded verbatim so a cross-tenant id and a nonexistent one stay
+    // the caller's ROLE and never looks at the target row. The internal handler's status is
+    // forwarded unchanged so a cross-tenant id and a nonexistent one stay
     // indistinguishable.
     coreAnswers({
       parentStatus: 404,
@@ -633,8 +614,8 @@ describe('what master forwards, and what it refuses before core sees it', () => 
     await app.close();
   });
 
-  it('relays core\'s 409 refusal body untouched', async () => {
-    // `retry_selection_empty` and its two siblings are core's to raise; master
+  it('relays the internal handler\'s 409 refusal body untouched', async () => {
+    // `retry_selection_empty` and its two siblings are the internal handler's to raise; the public API layer
     // neither counts the match nor pre-empts the refusal. That the BODY survives
     // the error mask is pinned separately, in
     // `test/unit/api/middleware/error-mask.retry-campaigns.test.ts`.
@@ -663,7 +644,7 @@ describe('what master forwards, and what it refuses before core sees it', () => 
 describe('the idempotency key — forwarded, never invented (obligation 3a)', () => {
   const KEY = 'b3f1c0de-0000-4000-8000-000000000001';
 
-  it('forwards the key VERBATIM', async () => {
+  it('forwards the key unchanged', async () => {
     // The opposite rule to `agent_user_id`, and for the opposite reason: the
     // actor must come from the session because the body cannot be trusted to say
     // who is acting; the key must come from the body because only the client
@@ -704,14 +685,14 @@ describe('the idempotency key — forwarded, never invented (obligation 3a)', ()
     // The case the suite was missing, and it is the dangerous one.
     //
     // `z.string().optional()` accepts `""`. A truthiness check on the way out
-    // treats `""` as absent, so core receives a LEGAL UNKEYED CREATE — and a
+    // treats `""` as absent, so the internal handler receives a LEGAL UNKEYED CREATE — and a
     // client that sends an empty key (an empty form field, a defaulted string,
     // a retry of a failed parse) gets no protection at all. Press the button
     // twice and there are two campaigns over one cohort, dialling the same
     // customers. Protection-shaped, and none.
     //
     // `null` is already a 400 here (the field is not `.nullable()`); `""` was
-    // the only value that fell through. Forwarded, it reaches core's 16–64 rule
+    // the only value that fell through. Forwarded, it reaches the internal handler's 16–64 rule
     // and comes back a 400 with `details.idempotency_key`.
     coreAnswers({
       createStatus: 400,
@@ -734,11 +715,11 @@ describe('the idempotency key — forwarded, never invented (obligation 3a)', ()
     await app.close();
   });
 
-  it('leaves the SHAPE to core — a key master thinks is wrong still reaches it', async () => {
-    // Core owns the bounds (16..64, a bounded alphabet) and answers a 400 with
+  it('leaves the SHAPE to the internal handler — a key the public API layer thinks is wrong still reaches it', async () => {
+    // The internal handler owns the bounds (16..64, a bounded alphabet) and answers a 400 with
     // field-level `details` that survive the error mask. A second copy of those
     // bounds here is a second thing to keep in step, and the direction it would
-    // fail in is a retry refused by master for a rule core no longer has.
+    // fail in is a retry refused by the public API layer for a rule the internal handler no longer has.
     coreAnswers({
       createStatus: 400,
       createBody: { error: 'Validation failed', details: { idempotency_key: 'must be 16-64 characters' } },
@@ -758,7 +739,7 @@ describe('the idempotency key — forwarded, never invented (obligation 3a)', ()
   });
 
   it('files NO activity row on a replay, and still relays the campaign', async () => {
-    // Core answers 200 + `idempotent_replay: true` when the key had already
+    // The internal handler answers 200 + `idempotent_replay: true` when the key had already
     // created a campaign. A second `agency_campaign.retry_created` on the
     // parent's trail would assert that a cohort was selected and re-dialled
     // twice — into the very store a compliance reviewer opens to establish that
@@ -789,7 +770,7 @@ describe('the idempotency key — forwarded, never invented (obligation 3a)', ()
 
   it('files the row on an ordinary create, so the replay guard is not a blanket mute', async () => {
     // The mirror of the case above. Without it, `!replayed` inverted — or an
-    // older core omitting the flag being read as a replay — would silently stop
+    // older internal handler omitting the flag being read as a replay — would silently stop
     // the parent's trail recording retries at all, and nothing would be red.
     const app = await buildApp();
 
@@ -807,7 +788,7 @@ describe('the idempotency key — forwarded, never invented (obligation 3a)', ()
 describe('the calling window is validated on the MERGED view (obligation 2)', () => {
   it('REFUSES a one-sided end override that closes a valid parent window', async () => {
     // The hole in the override-only pass. `calling_window_start ===
-    // calling_window_end` is PERMANENTLY CLOSED at core — `nextOpenAt` returns
+    // calling_window_end` is PERMANENTLY CLOSED at the internal handler — `nextOpenAt` returns
     // null — so the child is saveable and never dials, a support ticket whose
     // cause is invisible on every screen. `POST /campaigns` cannot produce one
     // because both sides are in the same body; a retry can, because only `end`
@@ -886,7 +867,7 @@ describe('the calling window is validated on the MERGED view (obligation 2)', ()
     // Obligation 2's actual rule. A parent whose stored config predates a
     // validation rule must stay retryable — the retry dialog offers no
     // affordance to fix it, so refusing here strands the campaign entirely.
-    // Only an OVERRIDE that makes the merged pair invalid is master's business.
+    // Only an OVERRIDE that makes the merged pair invalid is the public API layer's business.
     coreAnswers({ parent: parentCampaign({
       calling_window_start: '09:00:00', calling_window_end: '09:00:00',
     }) });
@@ -905,9 +886,9 @@ describe('the calling window is validated on the MERGED view (obligation 2)', ()
 });
 
 describe('the selector on the compliance trail is BOUNDED', () => {
-  it('clips a huge value rather than storing it verbatim, and marks the clip', async () => {
+  it('clips a huge value rather than storing it whole, and marks the clip', async () => {
     // This file already paid for an unbounded caller-controlled value once:
-    // `boundedFilters` exists because a 200KB filter landed verbatim, repeatably,
+    // `boundedFilters` exists because a 200KB filter landed unchanged, repeatably,
     // on the one trail a compliance reader depends on. The retry row is written
     // on every successful create, must outlive the child, and lives in
     // partitions that drop only by age.
@@ -969,7 +950,7 @@ describe('the activity row (obligation 4)', () => {
   it('files `agency_campaign.retry_created` against the PARENT, with the link across', async () => {
     /**
      * A row carries one `campaign_id`. The child's own creation is already
-     * recorded on the child by core; what nothing else records is that a cohort
+     * recorded on the child by the internal handler; what nothing else records is that a cohort
      * of THIS campaign's results was selected and re-dialled — which is the fact
      * a compliance reviewer opens the parent's trail to find.
      */
@@ -1001,8 +982,8 @@ describe('the activity row (obligation 4)', () => {
     await app.close();
   });
 
-  it('does not throw out of the audit call when core\'s body is not the shape master expects', async () => {
-    // `MAG-70`'s rule: master keeps no campaign schema, so core's body is untyped
+  it('does not throw out of the audit call when the internal handler\'s body is not the shape the public API layer expects', async () => {
+    // The rule here: the public API layer keeps no campaign schema, so the internal handler's body is untyped
     // here and every field is narrowed defensively. A malformed response must
     // never take a successful create down with it — the campaign exists either
     // way, and losing the 201 would send the operator to create a second one.
@@ -1050,7 +1031,7 @@ describe('a roster smaller than the preview promised', () => {
       payload: { selector: SELECTOR },
     });
 
-    // Relayed verbatim — master reshapes no part of core's success body.
+    // Relayed unchanged — the public API layer reshapes no part of the internal handler's success body.
     expect(res.json().duplicates_collapsed).toBe(3);
     expect(mocks.auditLog.mock.calls[0]![0].details).toMatchObject({
       contacts_seeded: 809,
@@ -1083,8 +1064,8 @@ describe('the preview and the lineage read', () => {
   });
 
   it('forwards every selector param, comma-joining repeats', async () => {
-    // Both spellings are core's (wire contract §1), so a client may use either
-    // and master does not have to pick one for them.
+    // Both spellings are the internal handler's (the wire contract), so a client may use either
+    // and the public API layer does not have to pick one for them.
     const app = await buildApp();
 
     await app.inject({
@@ -1102,11 +1083,11 @@ describe('the preview and the lineage read', () => {
     await app.close();
   });
 
-  it('forwards a dimension master has never heard of, so CORE refuses it', async () => {
-    // The deliberate opposite of the spine reads' allow-list. Master refusing
-    // first would answer with a message about master's list instead of core's —
+  it('forwards a dimension the public API layer has never heard of, so the internal handler refuses it', async () => {
+    // The deliberate opposite of the spine reads' allow-list. The public API layer refusing
+    // first would answer with a message about the public API layer's list instead of the internal handler's —
     // which for `last_disposition` has to echo the parent campaign's catalog,
-    // something master does not hold.
+    // something the public API layer does not hold.
     const app = await buildApp();
 
     await app.inject({

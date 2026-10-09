@@ -1,8 +1,3 @@
-/*
- * PORT NOTE (magick-agency): ported from core test/unit/api/routes/feature-flags-client.test.ts@4850d1d9
- * (3 cases → 3) against the collapsed route. Changes: the auth mocks (see below),
- * the prefix, and the fixture flag (`whatsapp_personal` is not an agency flag).
- */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -11,11 +6,9 @@ const mocks = vi.hoisted(() => ({
   resolveClientExposed: vi.fn(),
 }));
 
-// PORT NOTE (magick-agency): core's route read the tenant/account from the
-// `x-mgkvc-*` headers its `authMiddleware` validated (`getTenantId` /
-// `getAccountId`). The collapsed route reads them from the request decorations
-// lane A's `sessionMiddleware` → `tenantContextMiddleware` chain sets, gated by
-// `requirePermission` — so those three are mocked, and the two getters survive as
+// The route reads the tenant/account from the request decorations the
+// `sessionMiddleware` → `tenantContextMiddleware` chain sets, gated by
+// `requirePermission` — so those three are mocked, and the two getters are
 // the source of the values the middleware stub assigns.
 vi.mock('../../../../src/auth/session.middleware.js', () => ({
   sessionMiddleware: vi.fn().mockImplementation(async () => {}),
@@ -40,7 +33,6 @@ import { featureFlagsRoutes } from '../../../../src/api/routes/feature-flags.rou
 
 async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
-  // PORT NOTE (magick-agency): core's prefix `/api/v1/feature-flags` → `/feature-flags`.
   await app.register(featureFlagsRoutes, { prefix: '/feature-flags' });
   await app.ready();
   return app;

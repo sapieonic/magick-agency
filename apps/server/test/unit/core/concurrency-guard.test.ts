@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock logger
-// PORT: the guards import `Traced` from the same package as `logger`; core's suite used
-// the real tracing module, so the factory forwards the real decorator.
+// The guards import `Traced` from the same package as `logger`, so the factory
+// forwards the real tracing decorator.
 vi.mock('@magick-agency/observability', async () => ({
   Traced: (await import('@magick-agency/observability/tracing')).Traced,
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },

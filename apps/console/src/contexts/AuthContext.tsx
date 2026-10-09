@@ -30,26 +30,23 @@ import { sessionRefusalCode } from '../utils/sessionRefusal';
 import type { AgencyAccountSettingsMap } from '@magick-agency/contracts/api/platform/settings';
 
 /**
- * PORT NOTE (magick-agency), what changed in this provider against cusui's
- * `src/contexts/AuthContext.tsx` @ ee5beb44:
+ * Notes on this provider's state:
  *
- *  1. `governance` → `settings`. The session payload carries the per-account
- *     settings map (extraction plan §3.2, `SessionResponse.settings`, keyed by
- *     account id) instead of master's governance map; `GovernanceContext`
- *     derives its capability map from it.
- *  2. `defaultAccount`, `isNew` and `needsPhone` are gone from the state, with
- *     `signUpEmail`, `updatePhone` and the `magick-pending-phone` stash. All of
- *     them existed for session path 4 — the brand-new user master provisioned a
- *     tenant, a pooled number and signup credits for — and agency REFUSES path 4
- *     with 403 `no_membership` (plan §3.1). There is no self-serve sign-up.
- *  3. `sessionRefusal`: NEW. When `POST /auth/session` answers 403 with a
+ *  1. `settings`. The session payload carries the per-account settings map
+ *     (`SessionResponse.settings`, keyed by account id);
+ *     `GovernanceContext` derives its capability map from it.
+ *  2. There is no `defaultAccount`, `isNew` or `needsPhone` state, nor
+ *     `signUpEmail`, `updatePhone` or a `magick-pending-phone` stash. Those
+ *     belong to session path 4 — a brand-new user provisioned a tenant, a pooled
+ *     number and signup credits — and agency REFUSES path 4 with 403
+ *     `no_membership`. There is no self-serve sign-up.
+ *  3. `sessionRefusal`: When `POST /auth/session` answers 403 with a
  *     {@link SessionRefusalCode}, the code is kept on the state, so the sign-in
  *     door can show "we don't recognise that account" — including after a reload,
  *     when the refusal came from the listener rather than a button press — and
  *     never a sign-up. See `utils/sessionRefusal.ts`.
- *  4. `clearConcurrencyLimitsCache()` is no longer called on sign-out: the cache
- *     fed the AI broadcast composer's "Simultaneous calls" field, which is not
- *     ported.
+ *  4. Sign-out clears no concurrency-limits cache: there is no AI broadcast
+ *     composer "Simultaneous calls" field to feed.
  */
 
 
@@ -228,7 +225,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * the whole auth state.
    *
    * Extracted out of `syncSession` when `claimInvite` arrived, rather than
-   * copied into it. Both produce the identical `SessionResponse` — master answers
+   * copied into it. Both produce the identical `SessionResponse` — the server answers
    * `POST /invites/:token/claim` with `POST /auth/session`'s body, byte for byte,
    * which is its contract and not a coincidence — and the thing that must not
    * diverge is what "signed in" MEANS here. There is exactly one other copy of
@@ -539,7 +536,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * invite flow exists to remove, and does it invisibly: the provider's own
    * `onAuthStateChanged` listener below fires on the credential, and for a Google
    * user (always `emailVerified`) it runs `syncSession` → `POST /auth/session` →
-   * master's path 4 → **a brand-new tenant provisioned for the address they just
+   * the server's path 4 → **a brand-new tenant provisioned for the address they just
    * signed in with**. The stray tenant would be created while the page was
    * sitting on its own address-mismatch confirmation, before the agent had
    * pressed anything.
@@ -632,7 +629,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * `signInEmail` refuses an unverified address outright and sends a verification
    * mail; every other path into a session inherits that through
    * `onAuthStateChanged`. This path deliberately does not, and the divergence is
-   * master's, not this client's: possession of the emailed single-use token
+   * the server's, not this client's: possession of the emailed single-use token
    * ALREADY proves control of the inbox, which is the only thing verifying the
    * address would establish. Requiring it as well would mean an invited agent
    * receives two emails to open in order, and the second one is the step where
@@ -641,7 +638,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * `door` dimension exists to watch exactly that drop-off).
    *
    * So do not "fix" this by adding a verification check. The claim is authorized
-   * by the token; the address is corroboration master no longer needs.
+   * by the token; the address is corroboration the server no longer needs.
    *
    * Adopted through {@link adoptSession}, so a claimed invite and an ordinary
    * sign-in produce state that is identical field for field. The clock is cleared
@@ -655,7 +652,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * important screen — the address-mismatch confirmation — is an explicit PAUSE
    * for a human to read two addresses and decide; a coffee, a phone call or a
    * "let me ask my supervisor" is enough for the captured token to be expired by
-   * the time they press the button, and master answers a stale one with a 401 the
+   * the time they press the button, and the server answers a stale one with a 401 the
    * visitor can do nothing about. `getIdToken()` returns the cached token and
    * refreshes it only when it is close to expiring, so this costs nothing in the
    * ordinary case. Taking it as a parameter at all was the hazard: every caller

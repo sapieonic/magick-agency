@@ -2,31 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 
 /**
- * `GET /phone-numbers` merges the tenant's own carrier (BYOC) numbers into the
- * platform assignment list.
- *
- * Those numbers live in core, not in master's `phone_numbers` inventory, so
- * without the merge the SPA cannot list them, cannot badge them, and cannot
- * offer them in a caller-ID picker. Two properties are pinned: the projection is
- * by NAME (core's rows are joined to the credential table, so "whatever core
- * sent" is not safe to hand a tenant), and the BYOC half DEGRADES rather than
- * failing the whole list.
- *
- * PORT NOTE (magick-agency, Phase 8): ported from master
- * `test/unit/api/routes/phone-numbers-byoc-merge.test.ts`@a1f0756a. BYOC is out of scope
- * (plan "Decided" #3), so the route has no BYOC half (see the route file's PORT NOTE).
- *  - DELETED (6): "appends BYOC numbers with is_byoc:true…", "fetches core WITHOUT a provider
- *    filter…", "degrades to platform numbers when core answers nothing", "never lets an
- *    unexpected core field reach the tenant", "prefers the platform row when the same number
- *    appears on both sides", "does not ask for account tags on a BYOC number" — each is about
- *    the core read that no longer exists.
- *  - MODIFIED (3): "stamps is_byoc:false on every platform row" → no row carries `is_byoc`
- *    (the contracts' `TenantPhoneAssignment` removed it); the two account-scope cases lose
- *    their `listByocCallerIds` expectation (no such call), keeping the assignment-query half.
- *  - Mocks: the BYOC service, inbound-config service, core client and key resolver mocks are
- *    gone with the modules; the logger mock targets `@magick-agency/observability`; the
- *    permission is the agency name (`agency.phone_numbers.read`), asserted below.
- * The file keeps master's name so the ledger row maps one to one.
+ * `GET /phone-numbers` returns the platform phone-number assignments. BYOC (the tenant's
+ * own carrier numbers) is out of scope, so the route has no BYOC half and no row carries
+ * `is_byoc` (the contracts' `TenantPhoneAssignment` has no such field). The two
+ * account-scope cases pin the assignment query, and the permission is
+ * `agency.phone_numbers.read`.
  */
 
 const mocks = vi.hoisted(() => ({

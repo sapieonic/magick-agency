@@ -1,7 +1,7 @@
 import type { DialerSpeakerRole, DialerTranscriptEntry } from '@magick-agency/db/models/agency-call.model';
 
 /**
- * The transcription seam (spec §6, D3). A dialer call has no live STT — the
+ * The transcription seam. A dialer call has no live STT — the
  * recording is transcribed after the fact into `DialerTranscriptEntry[]`, which
  * the (unchanged, call-type-agnostic) `PostCallAnalysisService` then analyses.
  *
@@ -16,7 +16,7 @@ export interface TranscriptionRequest {
   languageHint?: string;
   /**
    * Set when the audio is multi-channel with a known leg per channel. When present
-   * the transcriber MUST use it and skip diarization entirely (M3). Forward-looking:
+   * the transcriber MUST use it and skip diarization entirely. Forward-looking:
    * today's carrier recording is likely a single mixed (mono) track, so in practice
    * the LLM-diarization path is primary and this is the deterministic fast path for
    * when a dual-channel recording becomes available.
@@ -35,7 +35,7 @@ export interface TranscriptionResult {
 }
 
 /**
- * Awaited after each transcription window so the runner can heartbeat (M9). A
+ * Awaited after each transcription window so the runner can heartbeat. A
  * 45-minute call is several sequential windows; heartbeating per window keeps a
  * healthy long job from tripping the stale-heartbeat recovery sweep mid-run.
  * `secondsDone` is the window end. Optional — Sarvam (single-shot) ignores it.
@@ -56,7 +56,7 @@ export type TranscriptionErrorCode =
   | 'TIMEOUT'
   /**
    * 429 / RESOURCE_EXHAUSTED. Retried with longer jittered backoff and does NOT
-   * consume an attempt — we were never given a chance to succeed (M4).
+   * consume an attempt — we were never given a chance to succeed.
    */
   | 'RATE_LIMITED';
 

@@ -16,7 +16,6 @@ vi.mock('../../contexts/ThemeContext', () => ({ useTheme: mocks.useTheme }));
 // Sibling top-bar widgets have their own data dependencies, irrelevant here.
 vi.mock('../../components/layout/TenantSwitcher', () => ({ TenantSwitcher: () => null }));
 vi.mock('../../components/layout/AccountSwitcher', () => ({ AccountSwitcher: () => null }));
-// PORT NOTE (magick-agency): cusui also stubbed `CreditBadge`, which is not ported.
 
 import { TopBar } from '../../components/layout/TopBar';
 
@@ -28,7 +27,7 @@ function renderTopBar({
   accountId = ACCOUNT_ID as string | null,
 } = {}) {
   mocks.useAuth.mockReturnValue({
-    user: { display_name: 'Manas Nilorout', email: 'manas@example.com', avatar_url: null },
+    user: { display_name: 'Test Supervisor', email: 'supervisor@example.com', avatar_url: null },
     logout: vi.fn(),
   });
   mocks.useTenant.mockReturnValue({ tenantId, accountId });
@@ -41,7 +40,7 @@ function renderTopBar({
 }
 
 function openMenu() {
-  fireEvent.click(screen.getByText('Manas Nilorout'));
+  fireEvent.click(screen.getByText('Test Supervisor'));
 }
 
 describe('TopBar — tenant/account IDs in user menu', () => {
@@ -115,8 +114,7 @@ describe('TopBar — tenant/account IDs in user menu', () => {
     expect(screen.queryByText('Tenant ID')).toBeNull();
     expect(screen.queryByText('Account ID')).toBeNull();
     // The rest of the menu still renders.
-    // PORT NOTE (magick-agency): cusui asserted the `Settings` item, which is
-    // removed with the AI tenant settings page; `Sign Out` is the item left.
+    // There is no `Settings` item; `Sign Out` is the item left.
     expect(screen.getByText('Sign Out')).toBeTruthy();
   });
 

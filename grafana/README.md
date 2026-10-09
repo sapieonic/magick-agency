@@ -1,16 +1,16 @@
 # Grafana: agency's alert rules and dashboard
 
 Agency's alerting and dashboard, as a Terraform root module with its own state.
-It is applied on its own and shares no resources with the MagickVoice platform's
-module (`MagickVoice-platform/grafana/terraform/`). The platform module still owns
-the stack's routing; see [Routing](#routing-owned-by-the-platform).
+It is applied on its own and shares no resources with any other Terraform that
+manages the same Grafana Cloud stack. The stack's routing is managed outside this
+repo; see [Routing](#routing-managed-outside-this-repo).
 
 | Path | What it is |
 |---|---|
 | [`terraform/`](terraform/) | The root module: the folder **Magick Agency Alerts** (uid `magick-agency-alerts`), the alert rules, the dashboard |
 | [`terraform/alert-rules.tf`](terraform/alert-rules.tf) | The 13 `agy-*` rules, as data |
 | [`terraform/alerting.tf`](terraform/alerting.tf) | The folder, `local.agency` (the selector), the routing labels, and the one `grafana_rule_group` resource |
-| [`terraform/dashboard.tf`](terraform/dashboard.tf) | The dashboard resource (app-platform `grafana_apps_dashboard_dashboard_v1beta1`, as the platform uses) |
+| [`terraform/dashboard.tf`](terraform/dashboard.tf) | The dashboard resource (app-platform `grafana_apps_dashboard_dashboard_v1beta1`) |
 | [`dashboards/magick-agency-overview.json`](dashboards/magick-agency-overview.json) | The dashboard (uid `magick-agency-overview`, classic model) |
 | [`scripts/`](scripts/) | The validators, `pnpm test:grafana` |
 
@@ -24,11 +24,10 @@ terraform init && terraform plan && terraform apply
 ```
 
 **State is local and separate.** This module keeps its own `terraform.tfstate`
-(gitignored, like `.terraform/` and `*.tfvars`). It is a different state from
-the platform module's, so the two are planned and applied separately and never
-see each other's resources. Apply from the machine that holds this state, or
-copy it, or `terraform import` each resource first, as the platform documents
-for its own state. Optional overrides are in `terraform.tfvars.example`.
+(gitignored, like `.terraform/` and `*.tfvars`), so it is planned and applied
+separately from anything else on the stack and never sees other resources.
+Apply from the machine that holds this state, or copy it, or `terraform import`
+each resource first. Optional overrides are in `terraform.tfvars.example`.
 
 The dashboard is locked in the UI unless `allow_ui_updates = true`. To change it,
 edit in the UI, **Export → classic JSON**, commit it to `dashboards/`, run
@@ -58,22 +57,22 @@ selects is routed as production.
 The dashboard's `service_name` variable lists only these names: its All value is
 the same regex, and the validators keep the two equal.
 
-## Routing (owned by the platform)
+## Routing (managed outside this repo)
 
 **This module manages no contact point, notification policy, mute timing or
 message template, and must not.** The stack has one notification policy (a
-Grafana singleton), owned by the platform module together with AlertInSlack,
-AlertInPagerDuty and the nightly mute timings. Applying a policy from here would
-replace the platform's whole routing tree.
+Grafana singleton), managed outside this repo together with the AlertInSlack and
+AlertInPagerDuty contact points and the nightly mute timings. Applying a policy
+from here would replace the stack's whole routing tree.
 
 Agency's alerts reach Slack and PagerDuty only because they carry the labels
-that policy routes on. That makes the labels a contract with the platform
-module. If the platform changes its routing labels, this module must follow:
+that policy routes on. That makes the labels a contract with the stack's
+routing. If its routing labels change, this module must follow:
 
-| Label | Value | Used by the platform policy for |
+| Label | Value | Used by the notification policy for |
 |---|---|---|
 | `severity` | `critical` / `warning` | `critical` pages (production, dedicated) and is reminded hourly; warnings go to Slack |
-| `deployment` | templated from `service_name`: `-Staging` → `staging`, `-Dedicated` → `dedicated`, else `production` | staging goes to Slack only; production and dedicated criticals page. The template is byte-identical to the platform's `local.deployment_label` |
+| `deployment` | templated from `service_name`: `-Staging` → `staging`, `-Dedicated` → `dedicated`, else `production` | staging goes to Slack only; production and dedicated criticals page. The template text is pinned by the routing test |
 | `nightly_window` | `mute` (only on `agy-service-not-reporting` and `agy-error-log-volume`) | the staging and dedicated nightly mute timings |
 | `service` | `agency` | the PagerDuty incident's component |
 | `component` | the rule group | the PagerDuty incident's class |
@@ -82,49 +81,45 @@ The policy groups by `grafana_folder`, `alertname` and `deployment`. The routing
 test in `scripts/validate-alerts.test.mjs` pins all of this:
 - the label set and the `deployment` template text;
 - that rules add no label but `nightly_window = "mute"`;
-- that no `.tf` file here declares a platform-only resource.
+- that no `.tf` file here declares a routing resource.
 
 ## Rules
 
-Every expression selects `${local.agency}` and nothing else. `for`, thresholds,
-windows and new-series guards are copied from the platform rules named; the
-rationale comments stay in the platform's files.
+Every expression selects `${local.agency}` and nothing else.
 
-| uid | Reads | From |
-|---|---|---|
-| `agy-dnc-unavailable` | `agency_predial_gate_total{gate="dnc_unavailable"}` | `vao-agency-dnc-unavailable` (here the halt is a failed Postgres read of `dnc_entries`, decision B8) |
-| `agy-telephony-lease-release-failure` | `telephony_lease_release_total{outcome=~"failure\|partial"}` | `vao-telephony-lease-release-failure` |
-| `agy-telephony-lease-release-fallback` | `telephony_lease_release_total`, `fallback` share | `vao-telephony-lease-release-fallback` |
-| `agy-rate-limit-infra-rejected` | `rate_limit_rejected_total{bucket_kind=~"webhook\|carrier_media\|internal"}` | `vao-rate-limit-infra-rejected` |
-| `agy-rate-limit-ip-rejected` | `rate_limit_rejected_total{bucket_kind="ip"}` | `vao-rate-limit-tenant-rejected` (no `tenant` bucket: no API keys, decision #5) |
-| `agy-firebase-auth-rejected` | `auth_attempts_total{method="firebase"}` | `mst-firebase-auth-rejected` |
-| `agy-invite-email-failures` | `invite_emails_total{result="failed"}` | `mst-invite-email-failures` |
-| `agy-campaign-mail-failures` | `agency_campaign_notifications_total{result=~"failed\|threw\|claim_unavailable"}` | `mst-agency-campaign-mail-failures` |
-| `agy-invite-claim-identity-conflicts` | `invite_claims_total` | `mst-invite-claim-identity-conflicts` |
-| `agy-error-log-volume` | Loki, ERROR/FATAL lines | `mst-error-log-volume` |
-| `agy-service-not-reporting` | `nodejs_eventloop_utilization_ratio`, present in 7d, absent in 10m | `plat-service-not-reporting` |
-| `agy-event-loop-delay-p99` | `nodejs_eventloop_delay_p99_seconds` | `plat-event-loop-delay-p99` |
-| `agy-metric-cardinality-overflow` | `{otel_metric_overflow="true"}` | `plat-metric-cardinality-overflow` |
+| uid | Reads |
+|---|---|
+| `agy-dnc-unavailable` | `agency_predial_gate_total{gate="dnc_unavailable"}` (the halt is a failed Postgres read of `dnc_entries`, decision B8) |
+| `agy-telephony-lease-release-failure` | `telephony_lease_release_total{outcome=~"failure\|partial"}` |
+| `agy-telephony-lease-release-fallback` | `telephony_lease_release_total`, `fallback` share |
+| `agy-rate-limit-infra-rejected` | `rate_limit_rejected_total{bucket_kind=~"webhook\|carrier_media\|internal"}` |
+| `agy-rate-limit-ip-rejected` | `rate_limit_rejected_total{bucket_kind="ip"}` (no `tenant` bucket: no API keys, decision #5) |
+| `agy-firebase-auth-rejected` | `auth_attempts_total{method="firebase"}` |
+| `agy-invite-email-failures` | `invite_emails_total{result="failed"}` |
+| `agy-campaign-mail-failures` | `agency_campaign_notifications_total{result=~"failed\|threw\|claim_unavailable"}` |
+| `agy-invite-claim-identity-conflicts` | `invite_claims_total` |
+| `agy-error-log-volume` | Loki, ERROR/FATAL lines |
+| `agy-service-not-reporting` | `nodejs_eventloop_utilization_ratio`, present in 7d, absent in 10m |
+| `agy-event-loop-delay-p99` | `nodejs_eventloop_delay_p99_seconds` |
+| `agy-metric-cardinality-overflow` | `{otel_metric_overflow="true"}` |
 
-**Re-baseline `agy-error-log-volume` after the pilot.** It starts at master's bar
-(10+ ERROR/FATAL lines in 15m) because agency has no production history. Read
+**Re-baseline `agy-error-log-volume` after the pilot.** It starts at 10+
+ERROR/FATAL lines in 15m because agency has no production history. Read
 the per-15m peaks of the pilot's first weeks, then move the threshold. Use
 count − 1, since `count_over_time` is exact.
 
-**Not carried:**
-- Billing (decision S6): `mst-agency-attempt-settlement-failures` and
-  `vao-settlement-*` have no agency copy. The validators red if agency declares
+**No rules for:**
+- Billing (decision S6): there is none. The validators red if agency declares
   `agency_attempt_batches_total`, `agency_attempt_batch_attempts_total`,
   `agency_attempt_settlement_failures_total`, `settlement_dispatch_total` or
   `webhook_fanout_abandoned_total`.
 - DNC sync and outbox (B8).
 - API keys (#5).
 - Purchased-concurrency sync.
-- `mst-notification-send-failures`: `notification_sends_total` is declared but
-  nothing increments it.
-- The platform's S2S rules: agency has no hop to core or master.
-- The Grafana Cloud stack rules: they watch the stack, not a service, and stay
-  in the platform module.
+- Notification sends: `notification_sends_total` is declared but nothing
+  increments it.
+- The Grafana Cloud stack itself (usage, ingestion limits): that watches the
+  stack, not a service, and is managed outside this repo.
 
 ## Dashboard
 
@@ -151,9 +146,8 @@ metric in `packages/observability/src/metrics/` first:
 - `call_dial_failures_total`: no carrier dial-failure rule.
 - `webhook_signature_rejected_total`: no carrier signature-refusal rule.
 - `media_stream_connect_timeouts_total`: no media-timeout rule.
-- DNC registry writes: core's DNC outbox and sync metrics have no agency
-  counterpart. The rollback-window mirror to master that will use
-  `agency_dnc_outbox` is not built yet.
+- DNC registry writes: nothing counts them. The rollback-window DNC mirror that
+  will use `agency_dnc_outbox` is not built yet.
 - `notification_sends_total` is declared but never incremented.
 - `websocket_connections_active` counts only the bridge's carrier leg
   (`webrtc_pstn`); the browser leg and the station socket are not instrumented.
@@ -183,5 +177,4 @@ an OTel instrument created outside the facades.
 - the routing contract above.
 
 `validate-dashboard.test.mjs` checks the dashboard the same way, plus the 1m Min
-step and 5m windows the 60s OTLP export needs, and agency-only scoping. Both are
-ported from the platform's validators (`PORTING.md`, "Grafana alerting (B6)").
+step and 5m windows the 60s OTLP export needs, and agency-only scoping.

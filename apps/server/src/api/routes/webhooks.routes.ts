@@ -1,11 +1,7 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/src/api/routes/webhooks.routes.ts@4850d1d9
-// (4,901 lines), subset. Kept verbatim: the plugin-scoped form-urlencoded content-type
-// parser and `POST /voicelink/webrtc-status/:callId` (the only webhook the bridge depends
-// on: VoiceLink posts every lifecycle event of a bridge leg here, token-gated by the
-// purpose-bound webhook token). Not carried: every AI-call, static, IVR, inbound,
-// escalation, recording and WS-static webhook, the Telnyx/Twilio signature hooks (those
-// carriers are not carried), and the three VoBiz WebRTC routes (`/vobiz/webrtc-answer`,
-// `/vobiz/webrtc-status`, `/vobiz/webrtc-recording` — VoBiz deleted, plan §5).
+// Carrier webhooks: the plugin-scoped form-urlencoded content-type parser and
+// `POST /voicelink/webrtc-status/:callId`, the only webhook the bridge depends on
+// (VoiceLink posts every lifecycle event of a bridge leg here, token-gated by the
+// purpose-bound webhook token). No other carrier's webhooks are served.
 import querystring from 'node:querystring';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
@@ -21,16 +17,15 @@ export async function webhooksRoutes(
 ): Promise<void> {
   const { webrtcBridge } = opts;
 
-  // Twilio, Plivo and Telnyx send webhooks as application/x-www-form-urlencoded.
-  // Register a content-type parser scoped to this plugin so Fastify can parse them.
+  // Carrier webhooks can arrive as application/x-www-form-urlencoded. Register a
+  // content-type parser scoped to this plugin so Fastify can parse them.
   //
-  // The undecoded string is stashed on the request as well as parsed. Telnyx
-  // signs `${telnyx-timestamp}|${rawBody}`, and a signature check over a
-  // re-serialised body is not a signature check: `querystring.parse` +
+  // The undecoded string is stashed on the request as `rawBody` as well as
+  // parsed, for a signature check over the exact bytes: `querystring.parse` +
   // `stringify` does not round-trip byte-for-byte (parameter order, `+` vs
-  // `%20`, and the array-on-repeated-key collapse all move), so every valid
-  // request would fail verification. Capturing it costs one property assignment
-  // on a route family that is already parsing the string.
+  // `%20`, and the array-on-repeated-key collapse all move), so a check over a
+  // re-serialised body would fail every valid request. Nothing reads `rawBody`
+  // today.
   app.addContentTypeParser(
     'application/x-www-form-urlencoded',
     { parseAs: 'string' },
@@ -43,8 +38,7 @@ export async function webhooksRoutes(
   // ─── VoiceLink WebRTC human-bridge webhook ───────────────────────────────
   // VoiceLink has no answer XML — the PSTN leg connects to the pstn-stream WS
   // (URL baked into the add_lead dial request), so lifecycle arrives only here.
-  // Distinct from the AI-call /voicelink/status route above: owned by the
-  // WebRtcBridgeManager, not CallManager. Terminal events also carry the
+  // Owned by the WebRtcBridgeManager. Terminal events also carry the
   // carrier-managed recording URL, which the bridge persists for playback and
   // optional post-call analysis.
   // POST /api/v1/webhooks/voicelink/webrtc-status/:callId?token=<webhook token>

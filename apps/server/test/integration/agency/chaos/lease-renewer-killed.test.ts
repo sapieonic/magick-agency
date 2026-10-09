@@ -1,24 +1,22 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 /*
- * PORT NOTE (magick-agency, Phase 6): ported from core
- * test/integration/agency/chaos/lease-renewer-killed.test.ts@4850d1d9 — 5 cases, all kept. Modified only in
- * harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
+ * Harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
  * `/connection` entry, which packages/db's repositories import); the config stub
- * drops `telephony.vobiz` (VoBiz deleted, plan §5); import specifiers per the path
+ * carries no carrier config; import specifiers per the path
  * rule (domain leaves, `@magick-agency/contracts/agency`).
  */
 import { readFile } from 'node:fs/promises';
 import { readdirSync } from 'node:fs';
 import { closeTestPool, getTestPool, truncateAll } from '../../setup/test-utils.js';
 
-// PORT NOTE: core mocked `src/db/connection.js`; agency's pool lives in `@magick-agency/db`
+// The DB pool lives in `@magick-agency/db`
 // (the server's repositories import its root, packages/db's repositories `./connection`).
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
 vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
 vi.mock('../../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: {}, // PORT NOTE: core stubbed `telephony.vobiz` (VoBiz deleted, plan §5)
+    telephony: {}, // no carrier config is needed
   },
 }));
 
@@ -64,7 +62,7 @@ async function contactsQuiescent(campaignId: string): Promise<boolean> {
 }
 
 /**
- * ─── AD-P2-X-01 · SCENARIO 3 — LEASE RENEWER KILLED, AT SCENARIO LEVEL ──────
+ * ─── SCENARIO 3 — LEASE RENEWER KILLED, AT SCENARIO LEVEL ──────
  *
  * T-L3 already proves the single-attempt case: one agent, one lease, stop
  * renewing, watch it lapse. What it cannot show is what a *pool* does when the
@@ -92,7 +90,7 @@ async function contactsQuiescent(campaignId: string): Promise<boolean> {
  * bug it exists to catch. ~30s total.
  */
 
-describe('AD-P2-X-01 · lease renewer killed (chaos, slow)', () => {
+describe('lease renewer killed (chaos, slow)', () => {
   let world: World;
 
   beforeEach(truncateAll);
@@ -151,9 +149,9 @@ describe('AD-P2-X-01 · lease renewer killed (chaos, slow)', () => {
     const sessionsBefore = await agentSessionStates(w.campaignId);
     // `in_flight` is the stranded state a mid-bridge replica death leaves behind
     // **on this campaign**, and which of the two it is depends on the fixture
-    // rather than on the phase. Since MAG-88 the `bridged` phase parks a contact
+    // rather than on the phase. The `bridged` phase parks a contact
     // in `connected` only when the campaign owes a write-up; this world takes
-    // migration 072's column default of `disposition_catalog = '[]'`, so nothing
+    // the column default of `disposition_catalog = '[]'`, so nothing
     // is owed and the contact keeps the `in_flight` its claim gave it.
     //
     // The scenario is indifferent to which one, and that is worth stating rather
@@ -187,7 +185,7 @@ describe('AD-P2-X-01 · lease renewer killed (chaos, slow)', () => {
     // ── Property 2: Postgres is untouched. ────────────────────────────────
     // The lease lapsing is the signal; the reaper is the recovery. If the TTL
     // expiring also mutated durable rows, the two mechanisms would overlap and
-    // §6.2's whole argument for a startup reaper would be unsound.
+    // the whole argument for a startup reaper would be unsound.
     expect(await attempts(w.campaignId)).toEqual(attemptsBefore);
     expect(await contactStates(w.campaignId)).toEqual(contactsBefore);
     expect(await agentSessionStates(w.campaignId)).toEqual(sessionsBefore);
@@ -265,13 +263,13 @@ describe('AD-P2-X-01 · lease renewer killed (chaos, slow)', () => {
       if (!orphanedContactIds.includes(id)) expect(n).toBe(1);
     }
 
-    // ── The recovery completes (AD-P2-C-12) ────────────────────────────────
+    // ── The recovery completes ────────────────────────────────
     // Each requeued contact carries exactly TWO attempts — the orphaned one and
     // one real retry — and the roster drains. Asserted as a partition rather
     // than as a total of 12, because a total of 12 is also produced by one
     // contact being dialed four times.
     //
-    // This is the case that found `AD-P2-C-12`. Before the fix these contacts
+    // This is the case that found the defect. Before the fix these contacts
     // carried one attempt each and sat `pending` forever, claimed and unclaimed
     // every tick, while the roster looked healthy. Regression coverage for the
     // numbering itself lives in `attempt-number-collision.test.ts`; what this
@@ -311,8 +309,8 @@ describe('AD-P2-X-01 · lease renewer killed (chaos, slow)', () => {
     // straight to `PEXPIRE` without passing through `AGENT_LEASE_MS` at all.
     //
     // Keying on the ORIGIN of the value rather than on forbidden numbers is what
-    // keeps this correct as `timers.ts` grows — `AD-P2-C-02` has already put
-    // wrap-up timing there, and the next business duration will not be on
+    // keeps this correct as `timers.ts` grows — wrap-up timing already lives
+    // there, and the next business duration will not be on
     // anyone's forbidden list.
     const dir = new URL('../../../../src/agency/', import.meta.url);
     const files = readdirSync(dir).filter((f) => f.endsWith('.ts'));
@@ -340,7 +338,7 @@ describe('AD-P2-X-01 · lease renewer killed (chaos, slow)', () => {
       // `AGENT_LEASE_MS` member. `OWNERSHIP_TTL_MS` in `station-registry.ts` is
       // the one documented exception — it is the station ownership key, a
       // liveness detector in its own right renewed by the socket heartbeat, and
-      // §13.10 has an open question about whether it and the agent lease should
+      // has an open question about whether it and the agent lease should
       // be one key. It is allow-listed BY NAME so a new constant cannot slip in
       // beside it.
       const ttlArgs = [...src.matchAll(/['"]PX['"]\s*,\s*([A-Za-z_][\w.]*)/g)].map((m) => m[1]!);
@@ -349,14 +347,12 @@ describe('AD-P2-X-01 · lease renewer killed (chaos, slow)', () => {
         // beside one of these. Each is a liveness or credential window rather
         // than a business duration:
         //   OWNERSHIP_TTL_MS   — station ownership, renewed by the socket
-        //                        heartbeat (§13.10 asks whether it and the agent
-        //                        lease should be one key; either way it detects
-        //                        a dead owner, it does not time a business step)
+        //                        heartbeat
         //   LEADER_LEASE_MS    — campaign leadership, renewed at a third of its
         //                        length by the leader itself
         //   STATION_TOKEN_TTL_MS — authenticates ONE WebSocket upgrade, not a
         //                        shift. It gates neither dialing nor agent
-        //                        liveness, so §6.1's invariant does not reach
+        //                        liveness, so the invariant does not reach
         //                        it; it is listed so the scan stays strict.
         const ok = arg.startsWith('AGENT_LEASE_MS.')
           || arg === 'OWNERSHIP_TTL_MS'
@@ -386,9 +382,9 @@ describe('AD-P2-X-01 · lease renewer killed (chaos, slow)', () => {
 
   it('T-L4c runtime — no observed agency TTL is ever the deferred-hangup window', async () => {
     // The runtime half. It is standing and waiting: the deferred hangup itself
-    // is `AD-P2-C-07` and has not landed, so today this samples every key the
+    // is not built yet, so today this samples every key the
     // live paths write and proves none of them carries the 8s window. When
-    // `C-07` ships, the same audit covers the new path with no edit — which is
+    // the deferred hangup is built, the same audit covers the new path with no edit — which is
     // the point of sampling the keyspace rather than enumerating call sites.
     const w = await withPoolOnLiveCalls(3, 9);
 

@@ -9,11 +9,9 @@ import type {
 import { usageCountsQuerySchema } from '../validators/super-admin.validator.js';
 
 /**
- * `GET /super-admin/usage` — read-only usage counts (plan §3.3).
+ * `GET /super-admin/usage` — read-only usage counts.
  *
- * PORT NOTE (magick-agency): NEW. It replaces master's
- * `super-admin-usage.routes.ts` (credits and fleet usage proxied from core,
- * deleted with credits). Dials, answered and connected calls, talk seconds and
+ * Dials, answered and connected calls, talk seconds and
  * analysis audio seconds per tenant and account over `[from, to)` on the
  * attempt's `dialed_at` (`usageCountsRepository`). It charges nothing and writes
  * nothing, so it writes no audit row either.

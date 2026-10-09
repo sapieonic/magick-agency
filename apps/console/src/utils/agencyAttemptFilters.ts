@@ -13,7 +13,7 @@ import type { AgencyAttempt, AgencyAttemptFilters } from '../types/agency-spine'
  *
  * ── THE DATE RANGE HERE IS NOT THE DATE RANGE ON THE PERFORMANCE PAGE ───────
  * These two screens sit one link apart, are about the same person's shift, and
- * take date ranges with **different semantics**. That is deliberate on core's
+ * take date ranges with **different semantics**. That is deliberate on the server's
  * side, it is not going to be unified, and a maintainer who "fixes" either one
  * silently changes which rows an agent sees.
  *
@@ -69,9 +69,9 @@ export const ATTEMPT_RANGE_NOTE =
  *
  * ── Why a sentence rather than a comment ───────────────────────────────────
  * A code containing a comma is unfilterable end to end and no client-side
- * spelling changes that: master's `forwardAllowedQuery` joins a repeated param's
- * values with a comma and core's `multiParam` splits on one, so `Not interested,
- * will call back` reaches core as two codes, matches no row, and returns **an
+ * spelling changes that: The API's `forwardAllowedQuery` joins a repeated param's
+ * values with a comma and the server's `multiParam` splits on one, so `Not interested,
+ * will call back` reaches the server as two codes, matches no row, and returns **an
  * empty list**. Empty is exactly the answer that reads as a fact about the
  * person — "you have no calls written up that way" — rather than as a fact about
  * the encoding, which is the failure this whole screen's honesty rules exist to
@@ -90,7 +90,7 @@ export const DISPOSITION_COMMA_NOTE =
 export type DayString = string;
 
 /**
- * The two day pickers turned into the instants master expects.
+ * The two day pickers turned into the instants the API expects.
  *
  * `to` is the last instant of the chosen day — the inclusive end. The off-by-one
  * this closes is not cosmetic: `T00:00:00` on the `to` day drops every call made
@@ -99,7 +99,7 @@ export type DayString = string;
  *
  * Local, not UTC, for the same reason the timestamps in the table are formatted
  * in the viewer's zone: somebody picking "3 August" means their own 3rd of
- * August. Master takes ISO-8601 instants and does the rest.
+ * August. The API takes ISO-8601 instants and does the rest.
  *
  * ── Why the end is derived and not written down ─────────────────────────────
  * It used to be `new Date(\`${to}T23:59:59.999\`)`, and that literal is
@@ -153,7 +153,7 @@ function noon(day: DayString): Date {
 /**
  * A range whose end is before its start.
  *
- * Caught before it is sent, not because master fails to refuse it — it answers
+ * Caught before it is sent, not because the API fails to refuse it — it answers
  * 400 — but because telling somebody their two dates are the wrong way round is
  * the difference between a correction and a support ticket. `AgencyCampaignAttemptsPage`
  * does the same, and string comparison is sound on `yyyy-mm-dd`.
@@ -187,7 +187,7 @@ export function isAttemptFiltered(
     /*
       `phone` IS counted, and the reason is worth keeping because it inverted.
       It used to be excluded here on the grounds that the agent routes did not
-      forward the param: master's whitelist dropped it silently, so the control
+      forward the param: The API's whitelist dropped it silently, so the control
       returned an unfiltered list presented as a search result, and counting it
       would have made an empty page read as "your search matched nothing" when no
       search happened. Both halves have since landed — `phone` is in

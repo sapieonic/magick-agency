@@ -184,7 +184,7 @@
 /*
   A weekday that was never in the window, marked on the ROW HEADER as well as in
   its cells. The cells are blank by design, and a blank row with a normal-weight
-  label beside it is exactly the thing E4 is about: it reads as a weekday that
+  label beside it is exactly the misreading the coverage state exists to prevent: it reads as a weekday that
   connected nobody.
 */
 .dayHead[data-covered='false'] {

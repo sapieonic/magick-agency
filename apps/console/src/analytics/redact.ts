@@ -5,7 +5,7 @@ import { AGENCY_JOIN_PATH } from '../utils/returnPath';
  *
  * ── The defect this closes ─────────────────────────────────────────────────
  * `/agency/join/:token` is the only route in this app whose URL PARAMETER is a
- * secret: possession of it claims a membership, and master's claim endpoint reads
+ * secret: possession of it claims a membership, and the server's claim endpoint reads
  * the token rather than the address, so whoever holds it *is* the invitee for the
  * seven days it lives. posthog-js attaches `$current_url`, `$pathname` and `$host`
  * to **every** capture, so the token travelled in the envelope of the `$pageview`,
@@ -25,7 +25,7 @@ import { AGENCY_JOIN_PATH } from '../utils/returnPath';
  * `api/error-analytics.ts` already carries `isHighEntropyTokenLikeSegment`, and
  * this deliberately does not reuse it. That predicate exists to GUESS at paths
  * whose shape is unknown, and it answers "this segment looks like an id" — it
- * requires a digit, which a base64url token legitimately need not contain (master
+ * requires a digit, which a base64url token legitimately need not contain (the server
  * mints 32 random bytes; roughly one token in 1,500 has no digit at all). Here the
  * shape is known: whatever follows `/agency/join/` IS the token, always, and a
  * rule keyed on the path cannot miss the token that happens to look like a word.

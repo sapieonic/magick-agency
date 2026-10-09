@@ -1,5 +1,5 @@
 /**
- * Notification subscriptions — master's wire shapes.
+ * Notification subscriptions — the public API layer's wire shapes.
  *
  * ── The catalog is SERVED, never mirrored here ────────────────────────────
  *
@@ -7,8 +7,8 @@
  * values together, so this file describes the shape and holds no copy of the
  * events themselves — no key union, no label table, no "which ones are
  * digests". That is deliberate and follows the audit log's `available_actions`:
- * master is not a dependency of this repo, nothing could check a copy, and the
- * copy is what drifts. A build of master with a new event lights it up here
+ * the server owns the catalog, a copy here would be a second list, and the copy
+ * is what drifts. A server build with a new event lights it up in the console
  * with no frontend change at all.
  *
  * So `key` and `category` are plain strings rather than unions. The page groups
@@ -57,19 +57,14 @@ export interface NotificationPreferenceUpdate {
   frequency?: NotificationFrequency | null;
 }
 
-// PORT NOTE (magick-agency): cusui's `DigestPreviewOperation`,
-// `DigestPreviewCampaign` and `DigestPreviewResponse` (the
-// `POST /notifications/digests/preview` body) are removed. They render master's
-// `usage.digest` — a credits-spend digest (`millicredits`, `consumed_millicredits`,
-// `added_millicredits`) over AI-call operations and bulk-dispatch campaigns — and
-// Magick Agency v1 has no credits and no broadcasts (plan §3.3, §3.5).
+// There is no digest-preview shape (`POST /notifications/digests/preview`): a
+// credits-spend digest has no meaning when v1 has no credits and no broadcasts.
 //
-// Agency-relevant events (plan §3.5): the served catalog keeps this file's
-// "no key union" rule, and of master's catalog
-// (`src/notifications/engine/catalog.ts`) only `agency.campaign.completed`
+// Agency-relevant events: the served catalog keeps this file's
+// "no key union" rule, and only `agency.campaign.completed`
 // (category `agency`, cadence `immediate`, audience: role floor
 // `agency.supervise`) is an agency event. The agent invite email is sent on
 // every invite and is not a preference. `campaign.dispatched`,
-// `campaign.completed` (broadcasts) and `usage.digest` are not ported.
+// `campaign.completed` (broadcasts) and `usage.digest` do not exist.
 // `NotificationCadence` / `NotificationFrequency` stay because they are part of
 // the served preference shape; with no digest event, `frequency` is always null.

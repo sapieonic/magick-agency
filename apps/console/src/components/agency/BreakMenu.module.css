@@ -1,4 +1,4 @@
-/* No new design tokens (§0.1 principle 5, §1). The focus ring is the global
+/* No new design tokens ( principle 5). The focus ring is the global
    `button:focus-visible` rule and is NOT overridden here — criterion (d) is
    asserted on a visible ring, so overriding it would quietly fail the criterion
    while every test still passed. */
@@ -36,7 +36,7 @@
   cursor: default;
 }
 
-/* Discoverability without a tutorial (§A.9): agents who never press `?` still
+/* Discoverability without a tutorial: agents who never press `?` still
    learn `B` from looking at the button for a week. */
 .shortcut {
   font-family: var(--font-mono);
@@ -67,7 +67,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  /* No entry animation. §A.3 allows exactly one looping animation on this screen
+  /* No entry animation. allows exactly one looping animation on this screen
      and it is the rail's pulse dot; a popover that animates in also delays the
      moment the focus ring is legible. */
 }

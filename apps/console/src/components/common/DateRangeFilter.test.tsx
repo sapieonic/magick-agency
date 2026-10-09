@@ -279,7 +279,7 @@ describe('DateRangeFilter — custom range commit', () => {
 describe('DateRangeFilter — inverted range guard', () => {
   it('refuses to emit when the start date is after the end date', () => {
     // Regression: min/max only discourage inversion (the browser still reports
-    // the typed value), core 400s on from > to, and the pages replace the whole
+    // the typed value), the API 400s on from > to, and the pages replace the whole
     // filter bar with an error — removing the inputs needed to undo it.
     const onApply = vi.fn();
     render(<Harness onApply={onApply} />);

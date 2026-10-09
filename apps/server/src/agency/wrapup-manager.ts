@@ -14,14 +14,14 @@ export type WrapupResolution =
   /**
    * The agent went available themselves, before the window ran out.
    *
-   * Added by `AD-P4-C-01`. It is genuinely distinct from `disposition_submitted`:
+   * It is genuinely distinct from `disposition_submitted`:
    * submitting a disposition already resolves the wrap-up (see `submitDisposition`),
    * so by the time the go-available route runs, this arm is reached only when NO
    * disposition was submitted and none was required — an agent finishing early and
    * saying so.
    *
-   * It exists because these are the FASTEST wrap-ups, and they used to be the ones
-   * that vanished: `cancel()` recorded nothing, so the average would have been built
+   * It exists because these are the FASTEST wrap-ups, and without it they would be
+   * the ones that vanished: `cancel()` would record nothing, so the average would be built
    * from `auto_return` (agents who used the entire window) and little else, and
    * would have argued for a longer allotment on evidence that excluded everyone who
    * needed less time.
@@ -60,10 +60,10 @@ interface WrapupEntry {
 
 /**
  * Wrap-up: the window after a conversation in which the agent is out of the pool,
- * writing up the call (`AD-P2-C-02`).
+ * writing up the call.
  *
  * **The countdown is an in-process timer plus the attempt row. It is never a Redis
- * TTL, and §6.1 is not negotiable on this.** The `wrapup` lease is the flat 15s
+ * TTL, and the lease rule is not negotiable on this.** The `wrapup` lease is the flat 15s
  * heartbeat lease, byte-identical to `available`, and its expiry means *the process
  * died* — not that wrap-up finished. A TTL cannot tell those apart, and if wrap-up
  * expiry were a TTL then a campaign configured with a 60-minute wrap-up would also
@@ -72,8 +72,8 @@ interface WrapupEntry {
  *
  * The durable half is `agency_call_attempts.wrapup_seconds` alongside `ended_at`:
  * together they say what was owed and from when, which is what lets the
- * `no_disposition` sweep (`AD-P2-C-08`) finish a wrap-up this process is no longer
- * around to finish. Deliberately not resumed after a restart — D2 lands every
+ * reaper's `no_disposition` sweep finish a wrap-up this process is no longer
+ * around to finish. Deliberately not resumed after a restart — a restart lands every
  * returning agent in `break`, so there is no live socket to run a countdown for,
  * and the sweep is the thing that closes the attempt.
  */
@@ -101,24 +101,22 @@ export class WrapupManager {
    * Put an agent into wrap-up after a conversation.
    *
    * Returns false when there is nothing to hold the agent for, which the caller
-   * must treat as "send them straight back to `available`" — acceptance (a).
+   * must treat as "send them straight back to `available`".
    * Deliberately reported rather than silently handled here: the caller owns the
    * agent's return path, and a wrap-up manager that sometimes returned agents
    * itself and sometimes did not would be two code paths for one transition.
    *
    * ── `wrapup_seconds = 0` WITH a required disposition ────────────────────────
-   * **`wrapup_seconds = 0` means "no timer", not "no wrap-up".** The two
-   * acceptance criteria read as contradictory in this one combination — (a) says
-   * zero returns the agent immediately, (c) says an outstanding required
-   * disposition must not auto-return — and (c) is the one that wins, because (a)
-   * was written without contemplating dispositions while (c) is stated
-   * unconditionally.
+   * **`wrapup_seconds = 0` means "no timer", not "no wrap-up".** Two rules read as
+   * contradictory in this one combination — zero returns the agent immediately,
+   * and an outstanding required disposition must not auto-return — and the second
+   * is the one that wins, because it is stated unconditionally.
    *
    * The alternative is not a race a fast agent loses; it is structural data loss.
    * With no window there is nothing protecting the disposition: the attempt ends,
    * the agent is `available`, the tick reserves them within 250ms, and the record
    * of what was said to a customer is never captured. Worse, it fails silently
-   * *and* poisons the retry policy — `AD-P2-C-08`'s sweep would stamp
+   * *and* poisons the retry policy — the reaper's lapsed-wrap-up sweep would stamp
    * `no_disposition` on every single attempt of such a campaign.
    *
    * So a required disposition opens a **timerless** wrap-up: held from the instant
@@ -130,7 +128,7 @@ export class WrapupManager {
    *
    * Rejecting the combination at campaign config was the other candidate. It would
    * have made a legitimate and desirable setup impossible, and it needed the same
-   * validation duplicated in master's CRUD to be worth anything.
+   * validation duplicated in the campaign-config surface to be worth anything.
    */
   async enter(params: {
     sessionId: string;
@@ -208,13 +206,12 @@ export class WrapupManager {
     // The durable half: what was owed, and from when.
     //
     // `wrapup_started_at` is stamped HERE rather than read off `ended_at`, even
-    // though the two are equal today (`AD-P4-C-01`). `ended_at` is written by
-    // whoever settles the attempt, through a patch this call does not send, so
-    // treating it as the wrap-up anchor is an inference about two writers agreeing —
-    // and `AD-P2-C-11` already cost this project exactly that, when `answered_at`
-    // written from `bridgedAt` made the abandonment predicate vacuous while its test
-    // passed for months. The average wrap-up the supervisor tunes against measures
-    // this anchor, so it owns one.
+    // though the two are equal today. `ended_at` is written by whoever settles the
+    // attempt, through a patch this call does not send, so treating it as the wrap-up
+    // anchor is an inference about two writers agreeing — the abandonment predicate
+    // once went vacuous exactly that way, when `answered_at` written from `bridgedAt`
+    // made it read 0 while its test passed. The average wrap-up the supervisor tunes
+    // against measures this anchor, so it owns one.
     const attempt = await agencyAttemptRepository.setState(params.attemptId, 'ended', {
       wrapup_seconds: params.wrapupSeconds,
       wrapup_started_at: new Date(),
@@ -231,11 +228,10 @@ export class WrapupManager {
      * until this method creates it — so a disposition submitted before the call
      * ended found no entry, returned false, and was discarded. Filling the form
      * and *then* hanging up is an ordinary agent habit, so this is not an edge
-     * case: staging, 2026-08-13, session `3bd865d4` dispositioned at 06:49:35,
-     * hung up at 06:49:38, and 60 s later `onExpiry` found `dispositionSubmitted`
-     * false and **held the agent demanding a disposition the system had already
-     * accepted**. The only ways out of that hold are a supervisor force or
-     * re-submitting; that agent took no further calls.
+     * case: an agent who dispositioned and hung up three seconds later would, 60 s
+     * later, have `onExpiry` find `dispositionSubmitted` false and **be held,
+     * demanded a disposition the system had already accepted**. The only ways out of
+     * that hold are a supervisor force or re-submitting.
      *
      * Read from the attempt row rather than an in-process record of early
      * submissions, for two reasons. It is the **durable** fact — `setDisposition`
@@ -252,7 +248,7 @@ export class WrapupManager {
      *
      * ── Known residual: the agent does not see the release copy ────────────────
      * Returning here skips both the `agent_state{wrapup}` frame and the `wrapup`
-     * frame below. Traced through cusui and the client handles the truncated
+     * frame below. Traced through the console, and the client handles the truncated
      * sequence cleanly — `released` clears `live`, the following `agent_state`
      * clears `wrapup`/`retainedAttempt`, the pad re-locks, notes reset. What is
      * lost is cosmetic: the "Call ended." / "The customer hung up." headline is
@@ -280,7 +276,7 @@ export class WrapupManager {
     }
 
     // ── Announce the transition, not just the wrap-up's contents. ─────────────
-    // `wrapup` is a real state in §5.1's machine and every OTHER entry into it is
+    // `wrapup` is a real state in the agent state machine and every OTHER entry into it is
     // announced (`AgencyStationAgentStateFrame` is the console's only authorised
     // source — "the console must not infer state"). This one was not, so the
     // console's disposition pad — which unlocks on `agent_state === 'wrapup'` —
@@ -324,9 +320,9 @@ export class WrapupManager {
   /**
    * The timer fired.
    *
-   * Either the agent goes back to the pool (acceptance (b) — exactly once, because
+   * Either the agent goes back to the pool — exactly once, because
    * the entry is removed before anything awaits) or they are **held** with a reason
-   * the console can render (acceptance (c) — an agent whose countdown hits zero and
+   * the console can render — an agent whose countdown hits zero and
    * whose screen does not change concludes the app has hung).
    */
   private async onExpiry(sessionId: string): Promise<void> {
@@ -345,12 +341,12 @@ export class WrapupManager {
     await this.resolve(sessionId, 'auto_return');
   }
 
-  /** A disposition landed for this attempt (called by `AD-P2-C-04`). */
+  /** A disposition landed for this attempt (called by the disposition route). */
   async noteDisposition(sessionId: string, attemptId: string): Promise<boolean> {
     const entry = this.entries.get(sessionId);
     if (!entry || entry.attemptId !== attemptId) return false;
     entry.dispositionSubmitted = true;
-    // §5.1: `wrapup → available` on a submitted disposition. The agent is done —
+    // The agent state machine: `wrapup → available` on a submitted disposition. The agent is done —
     // holding them for the remainder of a 60s window they no longer need is time
     // the pool cannot use.
     await this.resolve(sessionId, 'disposition_submitted');
@@ -367,8 +363,8 @@ export class WrapupManager {
   /**
    * Resolve exactly once.
    *
-   * The entry is deleted **before** the first await, which is what makes acceptance
-   * (b)'s "exactly once" true rather than likely: a disposition landing in the same
+   * The entry is deleted **before** the first await, which is what makes "exactly
+   * once" true rather than likely: a disposition landing in the same
    * tick as the timer firing would otherwise return the agent twice, and the second
    * return would move an agent who had already been reserved for a new call back to
    * `available` — putting two attempts on one agent.
@@ -400,7 +396,7 @@ export class WrapupManager {
   }
 
   /**
-   * Record that a wrap-up ended, and how (`AD-P4-C-01`).
+   * Record that a wrap-up ended, and how.
    *
    * Never throws. Every caller is on a path whose real job is returning an agent to
    * the pool, and an agent stranded out of the pool because a stats column could not
@@ -409,10 +405,9 @@ export class WrapupManager {
    *
    * The pairing with `wrapup_started_at` is what makes the duration measurable;
    * `wrapup_resolution` is what keeps it honest, because a `forced` or `agent_left`
-   * wrap-up is not evidence about how long wrap-up work takes. Migration 088 has the
-   * full argument, and `AD-P4-C-01` averages `disposition_submitted`,
-   * `auto_return` and `agent_returned` — the three that are evidence of how long
-   * wrap-up work actually takes.
+   * wrap-up is not evidence about how long wrap-up work takes. The supervisor view
+   * averages `disposition_submitted`, `auto_return` and `agent_returned` — the three
+   * that are evidence of how long wrap-up work actually takes.
    */
   private async persistEnd(
     attemptId: string,
@@ -428,15 +423,15 @@ export class WrapupManager {
      * The duration series, observed here because this is the ONE function both
      * exit paths (`resolve` and `cancel`) already share.
      *
-     * `AD-P4-C-01` averages this in SQL for the supervisor view, but there was no
-     * time series — so "wrap-up is 18.5s mean against a 30s window" stayed a
-     * one-pilot artefact nobody could re-check. `resolution` keeps it honest for
-     * the same reason migration 088 records it: a `forced` or `agent_left` wrap-up
-     * measures an interruption, not how long write-up work takes.
+     * The supervisor view averages this in SQL; the time series is what lets a
+     * number like "18.5s mean against a 30s window" be re-checked over time.
+     * `resolution` keeps it honest for the same reason `wrapup_resolution` is
+     * recorded: a `forced` or `agent_left` wrap-up measures an interruption, not how
+     * long write-up work takes.
      *
-     * It is also the only measurement of the disposition-speed work. The pilot
-     * filed ZERO of 32 dispositions by keyboard; any drop in the
-     * `disposition_submitted` series after a hotkey ships is the whole result.
+     * It is also the only measurement of disposition speed: a change to how fast
+     * dispositions are filed (a hotkey, say) shows up in the `disposition_submitted`
+     * series.
      *
      * ⚠️ **Observed BEFORE the write below, and that is deliberate — it is not
      * the rule the retirement counter follows one module over.** That counter

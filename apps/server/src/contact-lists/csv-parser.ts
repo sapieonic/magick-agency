@@ -6,7 +6,7 @@ const MAX_COLUMNS = 50;
 const MAX_ERRORS = 10;
 
 // Permissive email shape check — mirrors the intent of phone validation without
-// rejecting unusual-but-valid addresses. Format is ultimately owned by core.
+// rejecting unusual-but-valid addresses.
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function isValidEmail(raw: string): boolean {

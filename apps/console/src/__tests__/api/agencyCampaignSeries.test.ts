@@ -5,16 +5,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *
  * ── The three things this wrapper can get wrong ────────────────────────────
  *  1. **`X-Account-Id`.** `apiFetch` takes it as the fourth argument, so omitting
- *     it is silent at every layer that could catch it and surfaces only at core
- *     as `400 Missing required header: x-mgkvc-account`, masked by master and
- *     naming nothing in cusui. That is how the whole agency surface once shipped
+ *     it is silent at every layer that could catch it and surfaces only at the server
+ *     as `400 Missing required header: x-mgkvc-account`, masked by the server and
+ *     naming nothing in the console. That is how the whole agency surface once shipped
  *     non-functional, so it is asserted here rather than assumed.
  *  2. **The path.** This is the only campaign-scoped route in
  *     `ENDPOINTS.proxy.agency`, and it sits beside four `agents/…` routes that
  *     look nothing like it. A path built by concatenation elsewhere is the one
  *     that breaks quietly, which is why the assertion is against `ENDPOINTS`
  *     rather than against a string typed twice.
- *  3. **The id reaching the URL raw.** Core owns the campaign id format. It is
+ *  3. **The id reaching the URL raw.** The server owns the campaign id format. It is
  *     encoded, and an id with a slash in it must not silently address a
  *     different route.
  */
@@ -64,7 +64,7 @@ describe('getAgencyCampaignSeries', () => {
       version checked `not.toContain('agent_user_id')` against a URL built from a
       `URLSearchParams` with three literal keys — it could not fail for any
       implementation of this function, including one that threaded a subject
-      through. Master answers an unknown query param with a 400 rather than
+      through. The server answers an unknown query param with a 400 rather than
       dropping it, so an extra key here is a broken screen, not a silent no-op.
     */
     await getAgencyCampaignSeries(CAMPAIGN, QUERY, TENANT, ACCOUNT);

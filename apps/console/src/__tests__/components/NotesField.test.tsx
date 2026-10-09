@@ -4,7 +4,7 @@ import { NotesField } from '../../components/agency/NotesField';
 import { notesStatus, NOTES_FOREIGN_WRITE_COPY, type NotesStatusInput } from '../../utils/agencyNotes';
 
 /**
- * `NotesField` (§A.13.7).
+ * `NotesField`.
  *
  * The status-line rules are unit-tested in `agencyNotes`; what is only observable
  * here is that the tone reaches the DOM as a *distinction* and that `Esc` does not
@@ -164,7 +164,7 @@ describe('the status line carries the distinction in colour AND weight', () => {
   });
 
   it('escalates weight with tone, so colour is never the only channel', () => {
-    // §A.11. A colour-blind agent, or a badly-calibrated agency-floor monitor,
+    // A colour-blind agent, or a badly-calibrated agency-floor monitor,
     // must still see the difference.
     const weights = (['muted', 'warning', 'danger'] as const).map((tone) => {
       cleanup();

@@ -20,19 +20,13 @@ import {
 /**
  * ─── WHO MAY READ AND ACT ON THE AGENCY AGENT SURFACES ──────────────────────
  *
- * **Modelled on two existing suites, and it needs both.** The mock set, the
- * governance stub and the `proxyToCore`/`resolveCoreApiKey` doubles come from
- * `test/integration/api/agency-staffing.routes.test.ts`. The auth arrangement
- * comes from `test/integration/api/platform-api-key-auth.test.ts`: the REAL
- * `sessionMiddleware` → `tenantContextMiddleware` → `requirePermission` chain,
- * with a real `platform_api_keys` row and a real hashed key, because the whole
- * point of this file is that the guard cannot be tested against a stub of the
- * thing it guards against. The one seam is Firebase, which is unreachable here —
- * see the dispatching `sessionMiddleware` mock below, which delegates to the
- * genuine implementation whenever `X-Platform-Key` is present and only fakes the
- * token path.
+ * The auth arrangement is the REAL `tenantContextMiddleware` → `requirePermission` chain
+ * against real `memberships` / `accounts` rows, because the guards cannot be tested against
+ * a stub of the thing they guard against. The one seam is Firebase, which is unreachable
+ * here: the `sessionMiddleware` mock below only fakes the token path. The mock set
+ * otherwise follows `test/integration/api/agency-staffing.routes.test.ts`.
  *
- * ── The three questions here, and why each needs the real chain ─────────────
+ * ── The questions here, and why each needs the real chain ───────────────────
  *
  * **1. The membership lookup on the supervisory twins is status-INCLUSIVE.**
  * `assertAgentInTenant` uses `findAnyByUserAndTenant`, which does not filter
@@ -43,99 +37,51 @@ import {
  * roster. "A revoked row is still a row" is a claim about a SELECT, and only a
  * real revoked row can make it.
  *
- * **2. The API-key guards.** The defect was a false sentence — "a platform API
- * key carries a tenant and no user" — and it is false because
- * `sessionMiddleware` loads `platform_api_keys.created_by` into `request.user`.
- * A test that fabricates `request.apiKeyTenantId` on a synthetic request is
- * therefore asserting against its own model of the thing that was wrong. Here the
- * key is a real row, the `created_by` is a real supervisor, the hash is computed
- * by the real `hashApiKey`, and the user on the request arrives because the real
- * middleware put it there. That is the only arrangement in which "only a
- * NULL-`created_by` system key was ever refused" could have been discovered.
- *
- * **3. Tenancy and RBAC.** `X-Account-Id` naming an account outside the tenant is
+ * **2. Tenancy and RBAC.** `X-Account-Id` naming an account outside the tenant is
  * refused by `tenantContextMiddleware` against the real `accounts` table — a
  * mocked middleware assigns the header verbatim, which is precisely the bug that
- * was there before. And a supervisor in tenant A reading an agent in tenant B is
+ * a stub hides. And a supervisor in tenant A reading an agent in tenant B is
  * a `memberships` query with a tenant predicate.
  *
- * ── WHAT THE FIRST REAL RUN FOUND, AND WHY IT COST A WHOLE ROUND ───────────
- * This file was written where no Docker daemon exists (`/var/run/docker.sock` is
- * absent, so `npm run test:integration` cannot bring the test stack up) and its
- * header used to say it had never executed. Its first real run failed **26 of 39
- * cases**, and not one failure was a guard: every one was
- * `403 X-Account-Id does not belong to this tenant`, produced by this file's OWN
- * mock of `tenant-name-resolver.js`, which stubbed `getCachedAccountRecord` to
- * `null` — the read behind `accountBelongsToTenant` in
- * `tenant-context.middleware.ts`. A stub taken for a display-name decoration was
- * in fact an authorization dependency, and it refused every request in the file
- * before any route ran. See that mock's docstring.
- *
- * Three things are now built into the file rather than written down.
+ * ── Built into the file ─────────────────────────────────────────────────────
  *
  *  1. **Mock sets are spread from the real module** (`importOriginal`) instead of
- *     listed by hand — here for `tenant-name-resolver` and for `config` — so an
- *     authorization read cannot be nulled by omission.
- *  2. **Every status assertion carries the response body**, via `seen()` from the
- *     integration harness. Five layers on these routes answer 403 with five
- *     different messages; 26 failures reading `expected 200, received 403` and
- *     nothing else is what turned a one-line mock bug into a source-reading
- *     round trip. If a case here fails again, read the `body` in the diff — it
- *     names the layer.
- *  3. The cross-tenant-headers case names a **caller**. It used to send tenant
- *     B's headers with no `x-user-id` at all, so it was answered `401 User
- *     context not found` and could not tell a missing tenant predicate from a
- *     missing header. See that case.
+ *     listed by hand — here for `tenant-name-resolver` — so an authorization read
+ *     (`getCachedAccountRecord`, the read behind `accountBelongsToTenant`) cannot be
+ *     nulled by omission. See that mock's docstring.
+ *  2. **Every status assertion carries the response body**, via `seen()`. Five layers on
+ *     these routes answer 403 with five different messages; a bare
+ *     `expected 200, received 403` does not say which layer refused. If a case here
+ *     fails, read the `body` in the diff — it names the layer.
+ *  3. The cross-tenant-headers case names a **caller**: without an `x-user-id` it would be
+ *     answered `401 User context not found` and could not tell a missing tenant predicate
+ *     from a missing header.
  *
- * It has since been run to green against a real Postgres 16 and Redis 7 on the
- * ports `docker/test-docker-compose.yml` publishes. What backs it when the stack
- * is unavailable: it type-checks under `npm run lint:test`
- * (the non-gating report); both harnesses are copied rather than invented,
- * module path for module path; the key is minted through the same
- * `generatePlatformApiKey`/`hashApiKey`/`insertPlatformApiKey` trio the
- * platform-key suite already uses successfully; and each refusal asserted here
- * has a mutation-verified unit twin, so this file is checking the guard survives
- * the real chain rather than discovering what the guard does.
- *
- * Still worth watching: the negative controls (`the key is not simply broken`,
- * `an account_admin is admitted on both twins`) depend on the credential
- * authenticating successfully somewhere, so if the whole file goes red at once,
- * suspect the fixtures and the mocks before the guards — which is exactly what
+ * If the whole file goes red at once, suspect the fixtures and the mocks before the guards.
+ */
 
 /*
- * PORT NOTE (magick-agency): ported from master
- * `test/integration/api/agency-performance-access.test.ts`@a1f0756a, on agency's test
- * database (Postgres 5436). Master's header above is kept as the record; what changed:
+ * Runs on the test database (Postgres 5436).
  *
- *  - **The core hop runs core's REAL handler.** Master mocked `proxyToCore` to answer 200 for
- *    everything. Here `callCore` (decision B16) is spied under master's name
- *    `mocks.proxyToCore` and delegates to the real `callCore` → core's
- *    `agency-agents.routes.ts` handlers on the private core instance (`buildCoreHandlers`),
- *    with `agency_dialer_enabled` on for the tenant. So a 200 is core's real answer over real
- *    rows, and every "core really was asked" assertion is still on the spy's arguments. The
- *    stats reads carry a window (`STATS_WINDOW`) because core's real handler requires `from`
- *    and `to` — master's mock answered 200 without them.
- *  - **The auth chain is the same split master used:** `sessionMiddleware` is a seam (no
- *    Firebase here; `x-user-id` becomes `request.user`), while `tenantContextMiddleware` and
- *    `requirePermission` are the REAL modules against real `memberships` / `accounts` rows
- *    (the Redis cache always misses; only the courtesy name resolver is stubbed — master's
- *    reasoning for both is kept below). `src/db/connection.js` → `initDbPool` on the test DB;
- *    the `config` / governance / metrics / Firebase mocks are gone (no governance, no key
- *    branch to reach Firebase or the auth metric).
- *  - **Platform API keys are gone (decision #5):** section 2 (14 cases) and the four key
- *    cases of section 3 are DELETED; `createKey`, `insertPlatformApiKey` and the
- *    `x-platform-key` dispatch with them.
- *  - **Section 3's two signed-in cases** ("but a SIGNED-IN supervisor is allowed, and does
- *    carry on_behalf", "and a signed-in AGENT is allowed WITHOUT on_behalf") assert
- *    `proxy-agency-agent.routes.ts` (the agent-actions family, a runtime route after Phase 6),
- *    which is not this family's file and is not registered here. They are listed for that
- *    family's port in PORTING.md; nothing about them is changed.
- *  - **NEW:** a malformed `:userId` answers the route's own 400 before any SQL (the 22P02
- *    carry-forward, one case per family), and a sibling ACCOUNT's work for the same agent
- *    never reaches a supervisor of this account (the exit gate's account isolation, which
- *    only real rows can show).
- *  - `seen` is master's integration helper, copied verbatim (agency's shared test-utils is
- *    lead-owned and does not carry it).
+ *  - **The internal hop runs the REAL handler.** `callCore` (decision B16) is spied as
+ *    `mocks.proxyToCore` and delegates to the real `callCore` → the internal
+ *    `agency-agents.routes.ts` handlers on the private handler instance (`buildCoreHandlers`),
+ *    with `agency_dialer_enabled` on for the tenant. So a 200 is the real answer over real
+ *    rows, and every "the internal handler really was asked" assertion is on the spy's
+ *    arguments. The stats reads carry a window (`STATS_WINDOW`) because the real handler
+ *    requires `from` and `to`.
+ *  - **The auth chain is split:** `sessionMiddleware` is a seam (no Firebase here; `x-user-id`
+ *    becomes `request.user`), while `tenantContextMiddleware` and `requirePermission` are the
+ *    REAL modules against real `memberships` / `accounts` rows (the Redis cache always misses;
+ *    only the courtesy name resolver is stubbed — the reasoning for both is below).
+ *  - **There are no platform API keys:** the only credential is a session, so there are no
+ *    key-guard cases and no `x-platform-key` dispatch.
+ *  - The agent-actions routes (`proxy-agency-agent.routes.ts`, `resolveAgencyActor` on
+ *    `POST /attempts/:id/disposition`) are not registered here; they are covered by
+ *    `agency-runtime-routes.test.ts`.
+ *  - A malformed `:userId` answers the route's own 400 before any SQL (one case per family),
+ *    and a sibling ACCOUNT's work for the same agent never reaches a supervisor of this
+ *    account (account isolation, which only real rows can show).
  */
 
 const mocks = vi.hoisted(() => ({
@@ -147,7 +93,7 @@ const mocks = vi.hoisted(() => ({
 initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
 
 // The in-process seam (decision B16). Everything else in the module is the real one, so
-// `setCoreHandlers` (below) installs the private core instance the real `callCore` runs.
+// `setCoreHandlers` (below) installs the private handler instance the real `callCore` runs.
 vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/api/core-dispatch.js')>();
   mocks.realCallCore = actual.callCore as (...args: unknown[]) => Promise<unknown>;
@@ -157,10 +103,8 @@ vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) => {
 /**
  * ── `sessionMiddleware`: the one irreducible seam ──────────────────────────
  *
- * PORT NOTE (magick-agency): master's stub was a DISPATCHER — real implementation when
- * `X-Platform-Key` was present, `x-user-id` otherwise. The key branch is gone with platform
- * keys (decision #5), so only the Firebase stand-in remains: attach `x-user-id` as the session
- * user, which is what a verified Firebase token would have produced.
+ * The stub attaches `x-user-id` as the session user, which is what a verified Firebase token
+ * would have produced.
  *
  * Note what is NOT seamed: `tenantContextMiddleware` and `requirePermission` are
  * the real modules, so every tenancy and RBAC decision below is made against real
@@ -193,7 +137,7 @@ vi.mock('../../../src/cache/redis-cache.js', () => ({
     set: vi.fn().mockResolvedValue(undefined),
     del: vi.fn().mockResolvedValue(undefined),
     delByPattern: vi.fn().mockResolvedValue(undefined),
-    // Q5 (Manas, 2026-10-09): revocation deletes forward to `del` and report success.
+    // decision Q5: revocation deletes forward to `del` and report success.
     async delForRevocation(this: { del: (...k: string[]) => unknown }, ...k: string[]) { await this.del(...k); return true; },
   },
 }));
@@ -201,7 +145,7 @@ vi.mock('../../../src/cache/redis-cache.js', () => ({
 /**
  * ── ONE function stubbed here, and the other two MUST stay real ────────────
  *
- * `resolveTenantAccountNames` is best-effort courtesy on the way to core (it
+ * `resolveTenantAccountNames` is best-effort courtesy on the way to the internal handler (it
  * decorates a request, it never fails one) and has its own tests, so it is
  * stubbed to keep its reads and its PostHog group call out of the assertions
  * below.
@@ -253,9 +197,9 @@ const { getFeatureFlagService } = await import('../../../src/feature-flags/index
 const PREFIX = '/proxy/agency';
 const CAMPAIGN = '44444444-4444-4444-8444-444444444444';
 /**
- * PORT NOTE (magick-agency): core's real stats handler REQUIRES `from` and `to` (a defaulted
- * aggregate window would be worse than a refusal — `agent-record.ts` `parseAgentStatsQuery`).
- * Master's mocked core answered 200 without them, so the stats reads here carry one.
+ * The real stats handler REQUIRES `from` and `to` (a defaulted aggregate window would be
+ * worse than a refusal — `agent-record.ts` `parseAgentStatsQuery`), so the stats reads here
+ * carry one.
  */
 const STATS_WINDOW = 'from=2026-08-01T00:00:00.000Z&to=2026-08-23T00:00:00.000Z';
 
@@ -265,7 +209,7 @@ interface SeenResponse {
   body: unknown;
 }
 
-/** master `test/integration/setup/test-utils.ts` `seen`, verbatim. */
+/** A response's status and parsed body, so assertions carry the body. */
 function seen(res: { statusCode: number; body: string }): SeenResponse {
   return { status: res.statusCode, body: parseBody(res.body) };
 }
@@ -294,8 +238,7 @@ function twinUrl(userId: string, suffix: 'stats' | 'attempts'): string {
  * is the one most likely to be forgotten in a guard change and the one an
  * attacker would reach for.
  *
- * PORT NOTE (magick-agency): `/my-stats` carries {@link STATS_WINDOW} (core's real handler
- * requires it).
+ * `/my-stats` carries {@link STATS_WINDOW} (the real handler requires it).
  */
 const MY_ROUTES = [
   `/my-stats?${STATS_WINDOW}`,
@@ -317,7 +260,7 @@ describe('agency agent surfaces — access control through the REAL chain (integ
   let agent: { id: string };
 
   beforeAll(async () => {
-    // Core's agency handler modules on their private instance, exactly as `agencyPlugin`
+    // The internal agency handler modules on their private instance, exactly as `agencyPlugin`
     // builds them. Only `/agency-agents/*` (and staffing's `GET /agency-campaigns/:id`) are
     // reached from these plugins, and neither reads the runtime deps.
     core = await buildCoreHandlers({
@@ -354,16 +297,14 @@ describe('agency agent surfaces — access control through the REAL chain (integ
     await insertMembership({
       user_id: agent.id, tenant_id: tenant.id, account_id: account.id, role: 'agent',
     });
-    // Core's `agency_dialer_enabled` gate (every `/agency-agents/*` handler's `gate`) — on for
+    // The `agency_dialer_enabled` gate (every `/agency-agents/*` handler's `gate`) — on for
     // both tenants, so no refusal below can be the flag's.
     await enableDialer(tenant.id);
     await enableDialer(otherTenant.id);
 
     app = Fastify({ logger: false });
-    // PORT NOTE (magick-agency): master registered all three plugins on the shared prefix
-    // (`proxyAgencyAgentRoutes`, staffing, performance). The agent-actions plugin is another
-    // family's port (a runtime route after Phase 6) and is not registered; its two cases are
-    // listed in PORTING.md.
+    // The agent-actions plugin (`proxyAgencyAgentRoutes`) is not registered here; it is
+    // covered by `agency-runtime-routes.test.ts`.
     await app.register(proxyAgencyStaffingRoutes, { prefix: PREFIX });
     await app.register(proxyAgencyPerformanceRoutes, { prefix: PREFIX });
     await app.ready();
@@ -397,7 +338,7 @@ describe('agency agent surfaces — access control through the REAL chain (integ
     return user;
   }
 
-  /** A tenant-scoped `agency_dialer_enabled = true` override (core's handler gate). */
+  /** A tenant-scoped `agency_dialer_enabled = true` override (the handler gate). */
   async function enableDialer(tenantId: string) {
     await getTestPool().query(
       `INSERT INTO feature_flag_overrides (flag_key, scope_type, tenant_id, value)
@@ -433,7 +374,7 @@ describe('agency agent surfaces — access control through the REAL chain (integ
 
   /**
    * One dialled, connected attempt by `agentUserId` in the given account, dated inside
-   * {@link STATS_WINDOW}. A real campaign, contact, session and attempt — what core's
+   * {@link STATS_WINDOW}. A real campaign, contact, session and attempt — what the
    * agent reads join.
    */
   async function seedWork(agentUserId: string, owner: { tenantId: string; accountId: string }) {
@@ -485,7 +426,7 @@ describe('agency agent surfaces — access control through the REAL chain (integ
       });
 
       expect(seen(res)).toMatchObject({ status: 200 });
-      // And core really was asked — a 200 the route invented would prove nothing.
+      // And the internal handler really was asked — a 200 the route invented would prove nothing.
       expect(mocks.proxyToCore).toHaveBeenCalledWith(
         expect.objectContaining({ path: `/agency-agents/${departed.id}/${suffix}` }),
       );
@@ -516,10 +457,10 @@ describe('agency agent surfaces — access control through the REAL chain (integ
 
     it.each(twins)('agents/:userId/%s: 404 — never 403 — for an agent in ANOTHER tenant', async (suffix) => {
       /**
-       * Rule 3 of CLAUDE.md's RBAC section: a cross-tenant id and a nonexistent one
+       * RBAC rule: a cross-tenant id and a nonexistent one
        * must be indistinguishable, or the response is a user-id oracle. This is the
-       * boundary core CANNOT enforce on master's behalf — `agent_user_id` is an
-       * opaque string to core, with no user table and no FK behind it (D3), so it
+       * boundary the internal handler CANNOT enforce on the public layer's behalf — `agent_user_id` is an
+       * opaque string to it, with no user table and no FK behind it, so it
        * would happily return that person's attempts and talk time.
        */
       const foreign = await asUser('agent', { tenantId: otherTenant.id, accountId: null });
@@ -584,31 +525,11 @@ describe('agency agent surfaces — access control through the REAL chain (integ
     });
   });
 
-  // ═══ 2. The API-key guards ════════════════════════════════════════════════
-  //
-  // PORT NOTE (magick-agency): DELETED with platform API keys (decision #5) — master's
-  // describe "a platform API key is refused on every my-* route", 14 cases:
-  //  - "%s: refuses a CREATOR-BACKED key with missing_actor" × 5 (MY_ROUTES)
-  //  - "%s: refuses a SYSTEM key EARLIER — no membership, no access" × 5 (MY_ROUTES)
-  //  - "refuses BOTH key shapes and lets neither reach core"
-  //  - "never names the key CREATOR in the refusal"
-  //  - "the key is not simply broken — it reaches a SUPERVISORY route fine"
-  //  - "a key for ANOTHER tenant cannot name this tenant"
-  // No credential other than a session exists, and `tenantContextMiddleware` /
-  // `requirePermission` have no key branch left to reach.
+  // No credential other than a session exists, so there are no API-key guard cases:
+  // `tenantContextMiddleware` / `requirePermission` have no key branch to reach. The agency
+  // WRITE actions' actor rules (`resolveAgencyActor`) live in `agency-runtime-routes.test.ts`.
 
-  // ═══ 3. The same guard on the agency WRITE actions ════════════════════════
-  //
-  // PORT NOTE (magick-agency): master's describe "a platform API key is refused on the agency
-  // WRITE actions too", 6 cases, none kept here:
-  //  - "$name: refused with missing_actor, and nothing reaches core" × 4 (disposition, station
-  //    join, mark-DNC, notes): DELETED with platform API keys (decision #5);
-  //  - "but a SIGNED-IN supervisor is allowed, and does carry on_behalf" and "and a signed-in
-  //    AGENT is allowed WITHOUT on_behalf": they assert `proxy-agency-agent.routes.ts`
-  //    (`resolveAgencyActor` on `POST /attempts/:id/disposition`), the agent-actions family —
-  //    a runtime route after Phase 6, not registered here. Carried to that family's port.
-
-  // ═══ 4. RBAC and tenancy through the real middleware chain ════════════════
+  // ═══ 2. RBAC and tenancy through the real middleware chain ════════════════
 
   describe('RBAC on the supervisory twins, against roles read from the memberships table', () => {
     it.each(['agent', 'viewer', 'operator'])('a %s is refused on both twins', async (role) => {
@@ -653,10 +574,8 @@ describe('agency agent surfaces — access control through the REAL chain (integ
        * change is caught by behaviour and not only by the matrix assertions in the
        * unit suite.
        *
-       * PORT NOTE (magick-agency): master stubbed core's campaign answer
-       * (`{ id, name: 'Q3 Renewals', status: 'running' }`); here the campaign is a real row
-       * owned by the caller's account, which the staffing routes' in-process
-       * `GET /agency-campaigns/:id` reads.
+       * The campaign is a real row owned by the caller's account, which the staffing
+       * routes' in-process `GET /agency-campaigns/:id` reads.
        */
       await insertAgencyCampaign({
         id: CAMPAIGN, tenant_id: tenant.id, account_id: account.id, name: 'Q3 Renewals', status: 'running',
@@ -679,7 +598,7 @@ describe('agency agent surfaces — access control through the REAL chain (integ
        * tenant-wide membership fallback (`m.account_id === null`) grants access to
        * every account IN THAT TENANT and has no account to compare against, so
        * naming a foreign account satisfied it — and the resolved display name then
-       * went to core as `x-mgkvc-account-name`, which is a read leak.
+       * went to the internal handler as `x-mgkvc-account-name`, which is a read leak.
        *
        * Only expressible against the real middleware and a real `accounts` row: a
        * mocked tenant-context assigns the header, which IS the bug.
@@ -697,7 +616,7 @@ describe('agency agent surfaces — access control through the REAL chain (integ
     });
 
     it('refuses a foreign account on a my-* route as well', async () => {
-      // The `my-*` half. These routes forward `request.accountId` to core, so a
+      // The `my-*` half. These routes forward `request.accountId` to the internal handler, so a
       // foreign one reaching them is the same leak one route over.
 
       const res = await app.inject({
@@ -788,16 +707,15 @@ describe('agency agent surfaces — access control through the REAL chain (integ
     });
   });
 
-  // ═══ 5. NEW in the port: what only an in-process core over real rows can show ═══
+  // ═══ 3. What only the in-process internal handler over real rows can show ═══
 
-  describe('malformed ids and account isolation, in-process (new in the port)', () => {
+  describe('malformed ids and account isolation, in-process', () => {
     it('a malformed :userId is the route’s own 400 on both twins, before any SQL', async () => {
       /**
-       * PORT NOTE (magick-agency): NEW (B1/B2 22P02 carry-forward, one case per family).
        * `memberships.user_id` and `agency_agent_sessions.agent_user_id` are UUID columns, so
-       * a non-UUID reaching either is Postgres `22P02`. Master's `agentParamsSchema`
-       * (`z.string().uuid()`) refuses it first with `400 Validation Error` — the answer kept
-       * here — so neither the membership read nor core is reached.
+       * a non-UUID reaching either is Postgres `22P02`. The `agentParamsSchema`
+       * (`z.string().uuid()`) refuses it first with `400 Validation Error`,
+       * so neither the membership read nor the internal handler is reached.
        */
       for (const suffix of ['stats', 'attempts'] as const) {
         const res = await app.inject({
@@ -812,10 +730,9 @@ describe('agency agent surfaces — access control through the REAL chain (integ
 
     it('a sibling ACCOUNT’s work for the same agent never reaches this account’s supervisor', async () => {
       /**
-       * PORT NOTE (magick-agency): NEW (Phase 8 exit gate: tenant/account isolation on real
-       * Postgres). `assertAgentInTenant` is a TENANT check, so an agent who also works in a
+       * Tenant/account isolation on real Postgres. `assertAgentInTenant` is a TENANT check, so an agent who also works in a
        * sibling account of this tenant is admitted as a subject — and what keeps the sibling
-       * account's numbers out is core's account predicate (`s.account_id = …` on the session),
+       * account's numbers out is the internal handler's account predicate (`s.account_id = …` on the session),
        * reached in-process with this request's `X-Account-Id`. Seeded on BOTH sides, so an
        * empty answer cannot be an empty fixture: the sibling account's own admin sees the work.
        */

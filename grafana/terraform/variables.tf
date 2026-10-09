@@ -25,7 +25,7 @@ variable "folder_uid" {
 
 variable "folder_title" {
   type        = string
-  description = "Title of that folder. Platform's notification policy groups by grafana_folder, so this appears in alert notifications."
+  description = "Title of that folder. The stack's notification policy groups by grafana_folder, so this appears in alert notifications."
   default     = "Magick Agency Alerts"
 }
 

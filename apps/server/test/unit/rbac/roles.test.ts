@@ -1,18 +1,3 @@
-/*
- * PORT NOTE (magick-agency): ported from master test/unit/rbac/roles.test.ts@a1f0756a
- * (38 cases), run against the ONE matrix in `@magick-agency/contracts/rbac`. The
- * contract narrows the permission set (plan §3.1) and renames
- * `proxy.prompts.read|write` → `agency.analysis_profiles.read|write`. Assertions on
- * a REMOVED permission are deleted line by line (they would not typecheck); a case
- * left with none is deleted whole and named below; renamed lines are re-pointed.
- *
- * Deleted whole (19): 'should require operator for call/static_call creation',
- * viewer 'should deny operator-and-above permissions', viewer 'should deny
- * tenant_admin permissions', account_admin 'should deny tenant_admin permissions',
- * both 'boundary conditions' cases (they used proxy.calls.create / account.update /
- * tenant.update), and the 13 'RBAC — messaging permissions' cases
- * (proxy.messaging.*, proxy.analytics.read).
- */
 import { describe, it, expect } from 'vitest';
 import {
   ROLE_HIERARCHY,
@@ -60,7 +45,7 @@ describe('PERMISSION_MATRIX', () => {
     expect(PERMISSION_MATRIX['user.remove']).toBe('tenant_admin');
   });
 
-  it('should require account_admin for audit.read — MAG-157 floor, mirrored in cusui', () => {
+  it('should require account_admin for audit.read — floor mirrored in the console', () => {
     expect(PERMISSION_MATRIX['audit.read']).toBe('account_admin');
   });
 });

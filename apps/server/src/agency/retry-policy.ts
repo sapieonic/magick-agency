@@ -2,50 +2,52 @@ import type { AgencyRetryPolicy } from '../db/models/agency.model.js';
 import type { AgencyAttemptOutcome, AgencyContactState } from '@magick-agency/contracts/agency';
 
 /**
- * ─── AGENCY DIALER — THE OUTCOME RETRY POLICY (§2.4, `AD-P3-C-01`) ───────────
+ * ─── AGENCY DIALER — THE OUTCOME RETRY POLICY ───────────────────────────────
  *
- * §2.4 fixes the precedence rule this module implements one half of:
+ * The retry-policy design fixes the precedence rule this module implements one
+ * half of:
  *
  * > a disposition's `retry`/`terminal`/`suppress` always overrides the outcome
  * > policy; the outcome policy applies only when no disposition was recorded —
  * > **every non-answered call, plus the reaper's `no_disposition`**.
  *
- * **This module is the outcome half only.** The disposition half is `AD-P3-C-02`,
+ * **This module is the outcome half only.** The disposition half is `disposition-policy.ts`,
  * and it *wins* where both apply — so nothing here may be written in a way that a
  * disposition cannot override.
  *
  * Pure: no clock beyond an injected `now`, no I/O, no repository. `now` is a
  * parameter rather than `new Date()` because a delay computed off an ambient clock
- * cannot be asserted with an exact value, and §16.6 wants exact values on anything
- * clock-derived.
+ * cannot be asserted with an exact value, and anything clock-derived is asserted
+ * exactly.
  *
- * There is deliberately **no `machine` key** anywhere here. With AMD off (D1) the
+ * There is deliberately **no `machine` key** anywhere here. With AMD off the
  * system can never classify an outcome as `machine`: a call answered by voicemail is
  * `outcome='connected'`, and the only signal it was a machine is the agent's
- * disposition. Voicemail retry is therefore disposition-driven and belongs to C-02.
+ * disposition. Voicemail retry is therefore disposition-driven and belongs to
+ * `disposition-policy.ts`.
  */
 
 /**
- * Core's built-in outcome policy — §2.4's block, verbatim.
+ * The built-in outcome policy.
  *
- * ⚠️ **This default is load-bearing, and shipping without it would have made the
- * whole ticket inert.** `agency_campaigns.retry_policy` is `JSONB NOT NULL DEFAULT
- * '{}'` (migration 072) and **nothing in either repo seeds it** — core's `create`
- * COALESCEs a missing value to `'{}'` and master never sends the field at all. So
- * the empty policy is the *ordinary* case, not an edge case, and reading an absent
+ * ⚠️ **This default is load-bearing; without it the whole retry policy would be
+ * inert.** `agency_campaigns.retry_policy` is `JSONB NOT NULL DEFAULT '{}'` and
+ * **nothing seeds it** — the repository's `create` COALESCEs a missing value to
+ * `'{}'` and the create path's `withCampaignConfigDefaults` deliberately leaves
+ * it out. So the empty policy is the *ordinary* case, not an edge case, and reading an absent
  * key as "no retry" would mean every campaign in existence retries nothing while
  * every test that passed an explicit policy stayed green. That is the
  * `heartbeat()`-with-zero-callers shape: correct-looking code, green suite, dead in
  * production.
  *
- * The precedent for resolving it this way is already in the codebase — migration
- * 078's `break_reasons` is documented as *"Empty ⇒ core's built-ins"* — so an
- * absent key falling back to the documented default is the house convention rather
- * than an invention here.
+ * The precedent for resolving it this way is already in the codebase —
+ * an empty `break_reasons` falls back to a built-in default list
+ * (`resolveBreakReasons`) — so an absent key falling back to the documented default
+ * is the house convention rather than an invention here.
  *
  * Fallback is **per key**, not all-or-nothing: a campaign that configures only
  * `busy` still gets the defaults for the rest. An operator who genuinely wants an
- * outcome never retried writes `max_attempts: 0`, exactly as §2.4's own block does
+ * outcome never retried writes `max_attempts: 0`, exactly as the defaults below do
  * for `invalid` and `connected`.
  */
 export const DEFAULT_RETRY_POLICY: AgencyRetryPolicy = {
@@ -54,21 +56,21 @@ export const DEFAULT_RETRY_POLICY: AgencyRetryPolicy = {
   failed: { delay_minutes: 120, max_attempts: 2 },
   abandoned: { delay_minutes: 5, max_attempts: 2 },
   // Never retried: a bad number does not become good, and a connected call is
-  // terminal unless the agent's disposition says otherwise (C-02).
+  // terminal unless the agent's disposition says otherwise (`disposition-policy.ts`).
   invalid: { max_attempts: 0 },
   connected: { max_attempts: 0 },
-  // ── `AD-P3-C-09` / MAG-97: OUR faults get defaults too ───────────────────
+  // ── OUR faults get defaults too ──────────────────────────────────────────
   //
   // Both of these are genuinely produced — `agency-dialer.ts` settles an agent's
   // dropped station socket `agent_disconnected`, and `reaper.ts` writes
-  // `orphaned` for an attempt its owning replica died holding — and both used to
-  // be ABSENT here. An absent key falls to `no_policy_for_outcome`, which marks
-  // the contact `completed`: a customer nobody ever spoke to, retired by our own
-  // network fault or our own restart.
+  // `orphaned` for an attempt its owning replica died holding. Were they ABSENT
+  // here, an absent key falls to `no_policy_for_outcome`, which marks the contact
+  // `completed`: a customer nobody ever spoke to, retired by our own network
+  // fault or our own restart.
   //
   // Leaving them absent and requiring an operator to configure the key is the
-  // failure mode this file's header already warns about one paragraph up. Master
-  // never sends `retry_policy` at all, so `{}` is the ordinary case — a fix that
+  // failure mode this file's header already warns about one paragraph up. The
+  // create path never sets `retry_policy`, so `{}` is the ordinary case — a fix that
   // only works when a key is set would be green in every configured test and
   // inert on every real campaign.
   //
@@ -79,7 +81,7 @@ export const DEFAULT_RETRY_POLICY: AgencyRetryPolicy = {
   // spend a customer's allowance on our failure.
   agent_disconnected: { delay_minutes: 5, max_attempts: 3 },
   orphaned: { delay_minutes: 0, max_attempts: 3 },
-  // ── `canceled` — A FAIL-SAFE, NOT A LIVE RULE (pilot 2026-09-08) ─────────
+  // ── `canceled` — A FAIL-SAFE, NOT A LIVE RULE ────────────────────────────
   //
   // ⚠️ **Read this before treating the entry below as a peer of the two above
   // it.** Those are live: an `agent_disconnected` after bridging and an
@@ -121,7 +123,7 @@ export const DEFAULT_RETRY_POLICY: AgencyRetryPolicy = {
   //
   // This file argues the opposite way about `machine` — deliberately no key at
   // all — and the distinction is which kind of silence each absence buys.
-  // `machine` is **unproducible**: with AMD off (D1) nothing can classify an
+  // `machine` is **unproducible**: with AMD off nothing can classify an
   // outcome as `machine`, so a key would be dead configuration that looks live,
   // and its absence costs nothing because the lookup never happens. `canceled`
   // is produced **constantly** and merely routed elsewhere, so its absence is a
@@ -136,7 +138,7 @@ export const DEFAULT_RETRY_POLICY: AgencyRetryPolicy = {
 };
 
 /**
- * ─── THE OUR-FAULT REDIAL BOUND (`AD-P3-C-09` criterion 3) ──────────────────
+ * ─── THE OUR-FAULT REDIAL BOUND ─────────────────────────────────────────────
  *
  * How many times OUR OWN failures may put one contact's number back on the
  * roster. Deliberately a module constant and **not** a campaign setting.
@@ -189,12 +191,12 @@ export type RetryReason =
   | 'max_attempts_reached'
   /** `max_attempts: 0` — this outcome is never retried, so nothing was "used up". */
   | 'outcome_not_retryable'
-  /** An unreachable number. Suppressed rather than exhausted (§5.3). */
+  /** An unreachable number. Suppressed rather than exhausted. */
   | 'invalid_number'
-  /** No policy entry and no built-in default — an outcome §2.4 does not model. */
+  /** No policy entry and no built-in default — an outcome the policy does not model. */
   | 'no_policy_for_outcome'
   /**
-   * `AD-P3-C-09`: our own failures have redialled this contact as many times as
+   * Our own failures have redialled this contact as many times as
    * {@link OUR_FAULT_REDIAL_BOUND} permits. Distinct from `max_attempts_reached`
    * because the customer's allowance is UNTOUCHED — we simply may not keep
    * dialling one number to work around a fault on our side.
@@ -210,12 +212,12 @@ export interface RetryDecision {
   /**
    * Written to `agency_contacts.suppressed_reason`, or null.
    *
-   * Only ever set alongside `contactState: 'suppressed'`. Note migration 073's
-   * column comment lists `max_attempts` as a possible value, but §5.3's state
-   * diagram makes running out of attempts its own STATE (`exhausted`) and reserves
-   * `suppressed` for *"DNC / invalid / manual"*. The state carries that fact, so
-   * writing the reason too would put one fact in two columns that can disagree.
-   * The enum value in that comment is unused; the diagram wins.
+   * Only ever set alongside `contactState: 'suppressed'`. Note the column comment
+   * lists `max_attempts` as a possible value, but the contact state machine makes
+   * running out of attempts its own STATE (`exhausted`) and reserves `suppressed`
+   * for DNC / invalid / manual. The state carries that fact, so writing the reason
+   * too would put one fact in two columns that can disagree. The enum value in that
+   * comment is unused; the state machine wins.
    */
   suppressedReason: 'invalid' | 'dnc' | null;
   reason: RetryReason;
@@ -250,8 +252,9 @@ export function resolveRetryDecision(
   attemptsUsed: number,
 ): RetryDecision {
   // An unreachable number is suppressed regardless of what any policy says, and
-  // BEFORE the attempts arithmetic: §5.3 routes `invalid` to `suppressed`, not to
-  // `exhausted`, because "this number does not work" and "we ran out of tries" are
+  // BEFORE the attempts arithmetic: the contact state machine routes `invalid` to
+  // `suppressed`, not to `exhausted`, because "this number does not work" and "we
+  // ran out of tries" are
   // different facts to an operator cleaning a list.
   if (outcome === 'invalid') {
     return {
@@ -264,7 +267,7 @@ export function resolveRetryDecision(
 
   const rule = (outcome ? policy?.[outcome] : undefined) ?? (outcome ? DEFAULT_RETRY_POLICY[outcome] : undefined);
 
-  // An outcome §2.4 does not model, or none at all. `completed` rather than
+  // An outcome the policy does not model, or none at all. `completed` rather than
   // `pending`: a contact left `pending` with no scheduled retry is claimable
   // immediately and would be re-dialed in a tight loop, and one left `in_flight`
   // blocks its campaign from ever completing.
@@ -297,7 +300,7 @@ export function resolveRetryDecision(
 
   // A missing `delay_minutes` means "as soon as the roster reaches it" — 0, not a
   // fabricated default. `claimDialable`'s predicate is `next_attempt_at <= now()`,
-  // so this is re-claimable on the very next tick, which is §4.2's stated behaviour
+  // so this is re-claimable on the very next tick, which is the pacing tick's stated behaviour
   // for a retry with no delay.
   const delayMinutes = Number.isFinite(rule.delay_minutes) ? Math.max(0, rule.delay_minutes!) : 0;
   return {
@@ -310,11 +313,11 @@ export function resolveRetryDecision(
 
 /**
  * Decide what happens to a contact whose attempt died of OUR fault before it ever
- * reached them (`AD-P3-C-09`, MAG-97).
+ * reached them.
  *
  * Applies to an agent's station socket dropping with `bridged_at IS NULL`, to the
- * reaper requeueing an attempt its owning replica died holding, and — since the
- * 2026-09-08 pilot — to a `canceled` attempt: a dial WE stopped before anyone
+ * reaper requeueing an attempt its owning replica died holding, and to a
+ * `canceled` attempt: a dial WE stopped before anyone
  * picked up. In all three the customer was never spoken to, so this function is
  * the one place that decides how many times our own failures may put their
  * number back on the roster.
@@ -332,8 +335,8 @@ export function resolveRetryDecision(
  *
  * `attemptsUsed` is NOT passed here. This function reads `ourFaultAttemptsUsed`
  * — `agency_contacts.our_fault_attempts`, a column that exists precisely so our
- * failures cannot spend `attempt_count`. Keeping them separate is what makes
- * criterion 3's "independent of `max_attempts`" a structural property rather
+ * failures cannot spend `attempt_count`. Keeping them separate is what makes the
+ * bound's independence from `max_attempts` a structural property rather
  * than a naming convention: no arithmetic here can retire a customer, and no
  * `max_attempts` change can loosen the repeat-dial bound.
  *
@@ -348,7 +351,7 @@ export function resolveRetryDecision(
  *
  * @param policy   the campaign's `retry_policy`; consulted ONLY for a stricter
  *                 cap and for the delay. `null`/`{}`/a missing key are the
- *                 ordinary case — master never sends the field.
+ *                 ordinary case — the create path never sets the field.
  * @param outcome  the our-fault outcome, used to find the policy entry.
  * @param now      injected clock — the base for `nextAttemptAt`.
  * @param ourFaultAttemptsUsed our-fault redials consumed INCLUDING this one.
@@ -369,14 +372,14 @@ export function resolveOurFaultRedial(
     : OUR_FAULT_REDIAL_BOUND;
 
   if (ourFaultAttemptsUsed >= effectiveBound) {
-    // Terminal and OBSERVABLE, not a silent stall (criterion 3). `exhausted`
+    // Terminal and OBSERVABLE, not a silent stall. `exhausted`
     // rather than `completed` because the list was genuinely worked; the caller
     // writes `last_outcome` to the our-fault outcome, so a supervisor querying
     // `state = 'exhausted' AND last_outcome = 'agent_disconnected'` can separate
     // "we ran out of tries on the customer" from "we ran out of tolerance for our
     // own faults" — two different operational problems with the same state.
     //
-    // Note `suppressedReason` stays null: §5.3 reserves `suppressed` for
+    // Note `suppressedReason` stays null: the contact state machine reserves `suppressed` for
     // DNC/invalid/manual, and putting a reason on a non-suppressed row would put
     // one fact in two columns that can disagree.
     return {

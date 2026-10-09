@@ -1,4 +1,3 @@
-// PORT NOTE (magick-agency): ported from core src/telephony/voicelink/voicelink-token-manager.ts@4850d1d9; only the logger import specifier changed.
 import { createChildLogger } from '@magick-agency/observability';
 import type { VoicelinkConfig, VoicelinkLoginResponse } from './voicelink.types.js';
 
@@ -8,7 +7,7 @@ const log = createChildLogger({ component: 'voicelink-token-manager' });
  * VoiceLink issues Laravel-Sanctum-style bearer tokens. No expiry was observed
  * in the reverse-engineering captures, but Sanctum tokens CAN expire, so we keep
  * a conservative proactive-refresh margin and always retain the refresh-on-401
- * path (mirrors z99). ~8 h leaves comfortable headroom for even the longest call.
+ * path. ~8 h leaves comfortable headroom for even the longest call.
  */
 const REFRESH_MARGIN_MS = 8 * 60 * 60 * 1000;
 

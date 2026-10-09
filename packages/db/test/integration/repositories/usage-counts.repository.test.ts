@@ -5,7 +5,7 @@ import { getTestPool, closeTestPool, truncateAll } from '../setup/test-utils.js'
 import { insertAccount, insertTenant, insertWebrtcCall } from '../setup/factories.js';
 
 /*
- * NEW (magick-agency, plan §3.3, no source): `usageCountsRepository` on the real
+ * `usageCountsRepository` on the real
  * baseline. Pins every rule its docstring states — one half-open `[from, to)`
  * window on the ATTEMPT's `dialed_at` for every column, analysis seconds
  * attributed to the dial they analysed, tenant/account narrowing, an attempt

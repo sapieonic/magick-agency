@@ -1,22 +1,17 @@
 /**
  * Call-analysis profiles — the dialer's reusable "what we measure" definition.
  *
- * A dialer (browser→PSTN human) call has no prompt template, so it has nowhere
- * to hang the operator-defined analysis dimensions that AI calls carry on
- * `prompt_templates.analytics_config`. A profile is that, standalone: nameable,
- * reusable, defaultable per account, selectable per call.
+ * An agency (browser→PSTN agent) call has no prompt template, so it has nowhere
+ * else to hang the operator-defined analysis dimensions. A profile is that,
+ * standalone: nameable, reusable, defaultable per account, selectable per call.
  *
- * Mirrors core's `call_analysis_profiles` row (magic-voice-core
- * `src/db/models/call-analysis-profile.model.ts`), reached through master's
- * `/proxy/call-analysis-profiles` passthrough (capability `calls.dialer.analytics`,
- * RBAC `proxy.prompts.read` / `.write`).
+ * Mirrors the `call_analysis_profiles` row, reached through the
+ * `/proxy/call-analysis-profiles` passthrough (capability `calls.dialer.analytics`).
  */
 
-// The dimension shape is IDENTICAL to a prompt template's — core lifted one
-// shared `analyticsDimensionSchema` for both — so reuse the existing type rather
-// than declaring a near-duplicate that could drift.
-// PORT NOTE (magick-agency): `./prompt` is not ported; the two dimension types
-// are carried verbatim in `./shared`.
+// One shared `analyticsDimensionSchema` governs the dimension shape, so reuse the
+// existing type (in `./shared`) rather than declaring a near-duplicate that could
+// drift.
 import type { AnalyticsDimension, StoredAnalyticsDimension } from './shared';
 
 export type { AnalyticsDimension, StoredAnalyticsDimension };
@@ -68,5 +63,5 @@ export interface UpdateCallAnalysisProfileInput {
   is_default?: boolean;
 }
 
-/** Upper bound on dimensions per profile — matches core's validator (max 20). */
+/** Upper bound on dimensions per profile — matches the dialer runtime's validator (max 20). */
 export const MAX_ANALYSIS_DIMENSIONS = 20;

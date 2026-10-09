@@ -4,11 +4,10 @@ import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js'
 import { uuidFor } from '../setup/factories.js';
 
 /*
- * PORT NOTE (magick-agency): ported from core test/integration/repositories/call-analysis-profile.repository.test.ts
- * @4850d1d9 (5 cases -> 6), real Postgres 5436. Tenant/account labels go through `uuidFor`
- * (the baseline types them UUID). The same-lineage successor case now passes the caller's
- * tenant/account to `findActiveSuccessor` (SECURITY deviation from core, which took the id
- * alone) and a new case proves a foreign tenant / account resolves nothing.
+ * Real Postgres. Tenant/account labels go through `uuidFor` (the baseline types
+ * them UUID). The same-lineage successor case passes the caller's tenant/account to
+ * `findActiveSuccessor` (it never resolves by id alone), and a further case proves
+ * a foreign tenant / account resolves nothing.
  */
 const T1 = uuidFor('tenant-1');
 const T2 = uuidFor('tenant-2');

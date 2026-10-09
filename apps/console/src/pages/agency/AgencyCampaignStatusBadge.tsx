@@ -6,7 +6,7 @@ import type { AgencyCampaignStatus } from '../../types/agency-campaign';
  *
  * `stopping` gets its own label rather than collapsing into "Stopped", because
  * it is a state a supervisor genuinely sits in: `POST /stop` answers 200 with
- * `stopping`, and only core's pacing leader writes `stopped`, once in-flight
+ * `stopping`, and only the API's pacing leader writes `stopped`, once in-flight
  * attempts drain. Showing "Stopped" while calls are still connected would be
  * telling them the opposite of what is happening on the phones.
  */
@@ -48,8 +48,8 @@ function isKnown(status: string): status is AgencyCampaignStatus {
 }
 
 export function AgencyCampaignStatusBadge({ status }: { status: string }) {
-  // An unrecognised status is shown verbatim rather than mapped to a default.
-  // Core's CHECK constraint is the authority on this column; if it grows a value
+  // An unrecognised status is shown as-is rather than mapped to a default.
+  // The API's CHECK constraint is the authority on this column; if it grows a value
   // this build has never heard of, showing it raw is honest and showing
   // "Draft" would be a fabrication.
   if (!isKnown(status)) {

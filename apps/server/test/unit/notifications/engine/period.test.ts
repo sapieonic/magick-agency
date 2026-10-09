@@ -15,13 +15,7 @@ import { describe, it, expect } from 'vitest';
  * value with the same arithmetic it is testing asserts nothing.
  */
 
-// PORT NOTE (magick-agency): `period.ts` is trimmed to the cadence vocabulary
-// (its window arithmetic served only the credits usage digest, plan §3.5), so
-// the 33 window/label/ISO-date cases of master's suite are deleted with it:
-// `resolvePeriodWindow` (daily 5, weekly 5, +2), `previousWindow` (2),
-// `formatPeriodLabel` (2), `toIsoDate` (1), calendar edges (5), the Sunday
-// offset (2), `previousWindow` across boundaries (4), month names (5).
-// The four `isDigestFrequency` cases are kept verbatim.
+// `period.ts` holds only the cadence vocabulary, so only `isDigestFrequency` is covered.
 import {
   DIGEST_FREQUENCIES,
   isDigestFrequency,

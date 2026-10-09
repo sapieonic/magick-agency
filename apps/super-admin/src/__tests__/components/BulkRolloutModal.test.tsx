@@ -16,7 +16,7 @@ function entry(over: Partial<FeatureFlagCatalogEntry> = {}): FeatureFlagCatalogE
 }
 
 const WA = entry();
-const ND = entry({ key: 'new_dialer', owner: 'core' });
+const ND = entry({ key: 'new_dialer', owner: 'dialer' });
 const NUM = entry({ key: 'max_threads', type: 'number' });           // non-boolean → excluded
 const GLOBAL_ONLY = entry({ key: 'kill_switch', scopes: ['global'] }); // not tenant → excluded
 const ALL = [WA, ND, NUM, GLOBAL_ONLY];

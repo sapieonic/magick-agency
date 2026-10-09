@@ -6,8 +6,8 @@ import { ingestAgencyCsv } from '../../../src/agency/agency-csv-ingest.js';
  * C20 — proving the ingest actually streams.
  *
  * A row-count assertion does not prove it: the synchronous parser would also
- * produce the right count given enough heap. The test plan asks for three
- * assertions together, and each one independently falsifies "it buffers".
+ * produce the right count given enough heap. Three
+ * assertions are made together, and each one independently falsifies "it buffers".
  *
  * The source is generated lazily rather than read from a fixture file on disk,
  * which makes the test both faster and stronger — a `Readable` that mints rows
@@ -69,7 +69,7 @@ describe('C20 — streaming proof', () => {
     'holds memory well under the file size, emits row 1 early, and honours back-pressure',
     async () => {
       const source = makeCsvSource(ROWS);
-      // ~40MB, matching the fixture size the test plan specifies.
+      // ~40MB, a realistic upload size.
       expect(source.totalBytes).toBeGreaterThan(30 * 1024 * 1024);
 
       const heapBefore = process.memoryUsage().heapUsed;

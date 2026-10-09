@@ -210,7 +210,7 @@ describe('analytics/posthog', () => {
  *
  * ── The defect ────────────────────────────────────────────────────────────
  * `/agency/join/:token` is the only route in the app whose URL parameter is a
- * secret: master's claim endpoint reads the TOKEN rather than the address, so for
+ * secret: the server's claim endpoint reads the TOKEN rather than the address, so for
  * the seven days it lives, whoever holds it is the invitee. posthog-js attaches
  * `$current_url`, `$pathname` and `$host` to every capture, so the token rode in
  * the envelope of the `$pageview`, of every autocapture click, rage click and
@@ -250,18 +250,18 @@ describe('analytics/posthog — the invite token never leaves the browser', () =
       uuid: 'e1',
       event: '$pageview',
       properties: {
-        $current_url: `https://app.magickvoice.com/agency/join/${TOKEN}?utm=mail`,
+        $current_url: `https://app.example.com/agency/join/${TOKEN}?utm=mail`,
         $pathname: `/agency/join/${TOKEN}`,
-        $host: 'app.magickvoice.com',
+        $host: 'app.example.com',
       },
     }) as { properties: Record<string, string> };
 
     expect(out.properties.$current_url).toBe(
-      'https://app.magickvoice.com/agency/join/:token?utm=mail',
+      'https://app.example.com/agency/join/:token?utm=mail',
     );
     expect(out.properties.$pathname).toBe('/agency/join/:token');
     // The rest of the envelope is untouched — this redacts, it does not blank.
-    expect(out.properties.$host).toBe('app.magickvoice.com');
+    expect(out.properties.$host).toBe('app.example.com');
     expect(JSON.stringify(out)).not.toContain(TOKEN);
   });
 
@@ -285,9 +285,9 @@ describe('analytics/posthog — the invite token never leaves the browser', () =
       event: '$autocapture',
       properties: {
         $event_type: 'click',
-        $current_url: 'https://app.magickvoice.com/team',
+        $current_url: 'https://app.example.com/team',
         $elements: [
-          { tag_name: 'span', $el_text: `https://app.magickvoice.com/agency/join/${TOKEN}` },
+          { tag_name: 'span', $el_text: `https://app.example.com/agency/join/${TOKEN}` },
           { tag_name: 'button', $el_text: 'Copy invitation link' },
         ],
       },
@@ -306,7 +306,7 @@ describe('analytics/posthog — the invite token never leaves the browser', () =
       uuid: 'e3',
       event: '$identify',
       properties: { $current_url: `/agency/join/${TOKEN}` },
-      $set_once: { $initial_current_url: `https://app.magickvoice.com/agency/join/${TOKEN}` },
+      $set_once: { $initial_current_url: `https://app.example.com/agency/join/${TOKEN}` },
     });
 
     expect(JSON.stringify(out)).not.toContain(TOKEN);
@@ -334,7 +334,7 @@ describe('analytics/posthog — the invite token never leaves the browser', () =
 
   it('leaves an ordinary event alone', async () => {
     const send = await beforeSend();
-    const properties = { $current_url: 'https://app.magickvoice.com/app/calls', count: 3 };
+    const properties = { $current_url: 'https://app.example.com/app/calls', count: 3 };
 
     const out = send({ uuid: 'e5', event: 'call_placed', properties }) as {
       properties: Record<string, unknown>;
@@ -399,7 +399,7 @@ describe('analytics/posthog — the invite page carries no element text out', ()
       properties: {
         $event_type: 'click',
         $pathname: pathname,
-        $current_url: `https://app.magickvoice.com${pathname}`,
+        $current_url: `https://app.example.com${pathname}`,
         $elements: [{ tag_name: 'p', $el_text: text, attr__class: 'address' }],
         $elements_chain: `p.address:text="${text}"`,
       },

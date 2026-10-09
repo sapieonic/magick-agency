@@ -3,19 +3,19 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 
 /**
- * NEW (magick-agency, Phase 8 exit gate): tenant and account isolation across the agency
+ * Tenant and account isolation across the agency
  * route families, through the REAL app (`buildApp`) on real Postgres (5436).
  *
- * Real: lane A's session middleware (Firebase's token check is the one stub — there is no
- * Firebase here), lane A's tenant-context middleware and RBAC against real `memberships`
- * rows, every master handler, `callCore` and core's handler bodies on the private instance,
+ * Real: the session middleware (Firebase's token check is the one stub — there is no
+ * Firebase here), the tenant-context middleware and RBAC against real `memberships`
+ * rows, every public handler, `callCore` and the internal handlers on the private instance,
  * every repository. So the answers below are the production chain's, not a mock's.
  *
- * Properties (lead rulings: "tenancy from lane A's context only, never client headers"; the
- * brief's exit gate: "another tenant's or account's campaign is a 404, never data"):
+ * Properties (tenancy comes from the session context only, never client headers; another
+ * tenant's or account's campaign is a 404, never data):
  *  1. `X-Tenant-Id` naming a tenant the caller has no membership in is refused, with no data;
- *  2. core's own identity headers (`x-mgkvc-tenant` / `x-mgkvc-account`) sent by a client
- *     change nothing — the context's tenant is the one core's handler sees;
+ *  2. the internal identity headers (`x-mgkvc-tenant` / `x-mgkvc-account`) sent by a client
+ *     change nothing — the context's tenant is the one the internal handler sees;
  *  3. another tenant's campaign, attempt, DNC entry or analysis profile, named by id under the
  *     caller's own tenant, is a 404 on every family, never its data, and a write leaves it as
  *     it was;
@@ -158,7 +158,7 @@ describe('agency API tenant/account isolation through the real app (integration)
     }
   });
 
-  it("core's own identity headers sent by a client change nothing: the context's tenant is the one served", async () => {
+  it("the internal identity headers sent by a client change nothing: the context's tenant is the one served", async () => {
     const spoof = { 'x-mgkvc-tenant': w.tenantB, 'x-mgkvc-account': w.accountB1 };
     const list = await app.inject({ method: 'GET', url: '/proxy/agency/campaigns', headers: headers(spoof) });
     expect(list.statusCode).toBe(200);
@@ -228,7 +228,7 @@ describe('agency API tenant/account isolation through the real app (integration)
     expectNoForeignData(named.body);
   });
 
-  it('a malformed id on any family is a 4xx, never a 500 (B1/B2 carry-forward through the real chain)', async () => {
+  it('a malformed id on any family is a 4xx, never a 500 (through the real chain)', async () => {
     for (const url of [
       '/proxy/agency/campaigns/not-a-uuid',
       '/proxy/agency/campaigns/not-a-uuid/stats',
@@ -238,7 +238,7 @@ describe('agency API tenant/account isolation through the real app (integration)
       '/proxy/agency/agents/not-a-uuid/stats',
       '/proxy/call-analysis-profiles/not-a-uuid',
       // ids in the QUERY reach `uuid` / `uuid[]` casts too (tenant, account and agent ids are
-      // UUID columns here; core compared text and matched nothing).
+      // UUID columns here, so a malformed id must be refused rather than reach the cast).
       '/proxy/agency/agents/stats?campaign_id=not-a-uuid',
       '/proxy/agency/agents/grouped-stats?campaign_id=not-a-uuid&group_by=agent',
       `/proxy/agency/campaigns/${w.campaignA1}/attempts?agent_user_id=not-a-uuid`,
@@ -263,7 +263,7 @@ describe('agency API tenant/account isolation through the real app (integration)
     expect(res.json()).toEqual(foreign.json());
   });
 
-  // ── Tests review (Phase 8): the remaining read families, foreign tenant AND sibling account ──
+  // ── The remaining read families, foreign tenant AND sibling account ──
   describe('ingest jobs, the recording and the CSV exports', () => {
     async function job(tenantId: string, accountId: string | null): Promise<string> {
       const { rows } = await getTestPool().query<{ id: string }>(

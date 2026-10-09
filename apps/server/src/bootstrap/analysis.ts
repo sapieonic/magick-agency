@@ -9,11 +9,10 @@ import { resetBridgeAnalysisHooks, setBridgeAnalysisHooks } from '../seams/bridg
 import { runRetentionPurge } from '../maintenance/retention-purge.js';
 
 /**
- * Lane D's background work (workers, sweeps, timers). Returns a stop
+ * The analysis background work (worker, retention purge timers). Returns a stop
  * function the process awaits on shutdown.
  *
- * Ported from core `src/index.ts:535-549` (worker wiring) and `:846-848`
- * (graceful shutdown). Only wired when DIALER_ANALYSIS_ENABLED and both a
+ * The worker is only wired when DIALER_ANALYSIS_ENABLED and both a
  * transcriber and the analysis service are constructible — otherwise a total
  * no-op (the worker handle stays null and the bridge hooks stay the seam's no-op).
  */
@@ -52,7 +51,7 @@ export async function startAnalysis(ctx: AppContext): Promise<() => Promise<void
   }
 
   // Retention: the agency purge. Runs only when a window is configured — which, since the
-  // transcript window defaults to core's 30 days (Manas, 2026-10-09), is every parsed config.
+  // transcript window defaults to 30 days (Manas, 2026-10-09), is every parsed config.
   const { agencyRetentionDays, agencyTranscriptRetentionDays, purgeIntervalMs } = config.retention;
   if (agencyRetentionDays !== undefined || agencyTranscriptRetentionDays !== undefined) {
     const tick = (): void => {
@@ -61,9 +60,8 @@ export async function startAnalysis(ctx: AppContext): Promise<() => Promise<void
     };
     const timer = setInterval(tick, purgeIntervalMs);
     timer.unref?.();
-    // Also once shortly after boot. Core had no timer (a Lambda POSTed the purge);
-    // with only the interval, a process restarted more often than the interval
-    // (the nightly redeploy) would never purge. Lead, after the lane D review.
+    // Also once shortly after boot: with only the interval, a process restarted more
+    // often than the interval (a nightly redeploy) would never purge.
     const bootTimer = setTimeout(tick, BOOT_PURGE_DELAY_MS);
     bootTimer.unref?.();
     stops.push(async () => { clearTimeout(bootTimer); clearInterval(timer); });

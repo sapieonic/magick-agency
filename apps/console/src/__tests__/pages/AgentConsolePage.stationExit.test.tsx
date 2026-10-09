@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 /**
  * The way OUT of the station, and the way it can refuse to let you IN
- * (`MAG-160`, §A.1/§A.13.3).
+ * .
  *
  * Two defects are covered here and they are the same defect from either end:
  * there was no `Leave station` — `leaveAgencySession` had existed since Phase 1
@@ -148,7 +148,7 @@ async function mounted() {
   return view;
 }
 
-/** Whatever state core last said the agent is in. The menu keys off nothing else. */
+/** Whatever state the API last said the agent is in. The menu keys off nothing else. */
 async function inState(state: string) {
   await act(async () => {
     if (state === 'on_call') {
@@ -167,7 +167,7 @@ describe('AgentConsolePage — the station menu', () => {
   it('lives in the header beside cue settings, never in the action bar', async () => {
     await mounted();
 
-    // §A.13.9 fixes the action bar's sequence as a tab-order guarantee: an item
+    // The action bar's sequence is a tab-order guarantee: an item
     // inserted there moves controls an agent reaches by muscle memory, and the
     // neighbour is the one that hangs up on a person.
     const trigger = screen.getByRole('button', { name: 'Station options' });
@@ -266,7 +266,7 @@ describe('AgentConsolePage — the station menu', () => {
   /**
    * The asymmetry, at the surface an agent actually touches.
    *
-   * Exit closes the socket and leaves the session live, and core's 45s
+   * Exit closes the socket and leaves the session live, and the API's 45s
    * `available` lease is renewed by that socket's heartbeat alone while the
    * pacing engine reserves off Redis. So Exit in `available` leaves a dialable
    * agent with no console attached for up to 45 seconds — an answered call with
@@ -438,7 +438,7 @@ describe('AgentConsolePage — the station menu', () => {
       for (const link of [performance, calls]) {
         /*
           `_blank` is not decoration. A same-tab link closes the station socket,
-          and for up to 45 seconds core still has the agent in the dialable pool
+          and for up to 45 seconds the API still has the agent in the dialable pool
           with no console attached — the "answered call with no agent" that Exit's
           `available` refusal exists to prevent. A new tab leaves this document,
           its socket and its heartbeat exactly as they are.
@@ -557,7 +557,7 @@ describe('AgentConsolePage — the station menu', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Leave station' }));
 
     // Navigating away on a leave that did not land would have the agent believe
-    // they had stopped receiving calls while core still had them in the pool.
+    // they had stopped receiving calls while the API still had them in the pool.
     await screen.findByText(/your station is still open/i);
     expect(screen.queryByTestId('where')).toBeNull();
   });
@@ -568,7 +568,7 @@ describe('AgentConsolePage — the station menu', () => {
    * `ConfirmDialog`'s `disabled` guards the confirm button only: Escape and a
    * click on the overlay call `onCancel` unconditionally. Cancelling mid-flight
    * therefore used to unmount the dialog, and the rejection then set the failure
-   * on a surface nobody could see — the agent believed they had left while core
+   * on a surface nobody could see — the agent believed they had left while the API
    * still had them in the pool, which is the exact outcome the navigation path
    * refuses to produce.
    */
@@ -722,9 +722,9 @@ describe('AgentConsolePage — the join conflict', () => {
     );
   });
 
-  it('falls back to core’s sentence when the conflict body does not fully read', async () => {
+  it('falls back to the API’s sentence when the conflict body does not fully read', async () => {
     // The parser stays strict — no campaign id, no conflict screen, because one
-    // that names no campaign reads as broken. But core sends a `message` on this
+    // that names no campaign reads as broken. But the API sends a `message` on this
     // 409, and its sentence is a better thing to show than "Could not join the
     // campaign." (Both the fallback and `ApiError`'s own message extraction land
     // on the same string today; what is asserted is what the agent reads.)

@@ -26,8 +26,6 @@ import {
  * globalSetup has already dropped the schema and applied every migration, so the
  * fact that this file runs at all is the "migrates on a throwaway Postgres" check.
  *
- * Assertions ported from the source suites cite their origin as
- * `core:<path>` / `master:<path>` (magic-voice-core v1.123.2, magick-master v3.24.0).
  */
 
 const pool = () => getTestPool();
@@ -36,24 +34,24 @@ afterAll(closeTestPool);
 
 /** Every table the baseline owns (partitions excluded). */
 const EXPECTED_TABLES = [
-  // identity (master)
+  // identity
   'tenants', 'accounts', 'users', 'memberships', 'membership_invites',
   'super_admins', 'super_admin_audit_log',
-  // phone inventory (master)
+  // phone inventory
   'telephony_providers', 'phone_numbers', 'tenant_phone_assignments', 'phone_account_tags',
-  // notifications (master)
+  // notifications
   'user_notification_preferences', 'notification_deliveries',
-  // audit (master + core, B7)
+  // audit (console and dialer halves, B7)
   'platform_audit_log', 'audit_logs',
-  // master agency
+  // agency campaign management
   'dnc_entries', 'agency_ingest_jobs', 'agency_campaign_agents',
-  // settings / guard / flags (core)
+  // settings / guard / flags
   'account_settings', 'account_provider_concurrency_allocations', 'feature_flag_overrides',
-  // clips (core)
+  // clips
   'audio_files', 'announcements',
-  // analysis (core)
+  // analysis
   'call_analysis_profiles', 'dialer_analysis_jobs',
-  // core agency
+  // agency dialer runtime
   'agency_campaigns', 'agency_contacts', 'agency_agent_sessions', 'agency_agent_session_events',
   'agency_call_attempts', 'agency_ingest_chunks', 'agency_dnc_outbox', 'agency_calls',
 ].sort();
@@ -114,7 +112,7 @@ describe('baseline schema — structure', () => {
   });
 
   it('has exactly one up marker and one down marker, so node-pg-migrate splits it correctly', () => {
-    // core 093's header: node-pg-migrate's sqlMigration splits on
+    // node-pg-migrate's sqlMigration splits on
     // /^\s*--[\s-]*(up|down)\s+migration/im, and a stray comment line that matches
     // moves the split silently.
     const sql = readFileSync(resolve(MIGRATIONS_DIR, '0001_baseline.sql'), 'utf8');
@@ -149,7 +147,7 @@ describe('baseline schema — structure', () => {
     }
   });
 
-  it("drops core's 'default' account_id defaults — they cannot be UUIDs", async () => {
+  it("has no 'default' account_id defaults — they cannot be UUIDs", async () => {
     for (const table of ['agency_campaigns', 'agency_calls', 'call_analysis_profiles', 'dialer_analysis_jobs']) {
       const col = (await columnsOf(table)).get('account_id');
       expect(col!.is_nullable, table).toBe('NO');
@@ -177,7 +175,7 @@ describe('baseline schema — structure', () => {
     for (const [table, column] of absent) {
       expect((await columnsOf(table)).has(column), `${table}.${column} should not exist`).toBe(false);
     }
-    // ...while the metering facts plan §3.3 keeps are still there.
+    // ...while the metering facts kept for metering are still there.
     expect((await columnsOf('dialer_analysis_jobs')).has('analysis_audio_seconds')).toBe(true);
     expect(await indexDef('idx_agency_attempts_billing')).toBeDefined();
   });
@@ -194,7 +192,7 @@ describe('baseline schema — structure', () => {
     }
   });
 
-  // core:test/integration/agency/agency-migration.test.ts T-M1b
+  // See also apps/server/test/integration/agency/agency-migration.test.ts T-M1b
   it('agency_calls back-references exist and are NULLABLE', async () => {
     const cols = await columnsOf('agency_calls');
     for (const name of ['campaign_id', 'agency_attempt_id']) {
@@ -203,7 +201,7 @@ describe('baseline schema — structure', () => {
     }
   });
 
-  // core:test/integration/agency/agency-migration.test.ts T-M1c
+  // See also apps/server/test/integration/agency/agency-migration.test.ts T-M1c
   it('context and caller_ids have the shapes the engine assumes', async () => {
     const contacts = await columnsOf('agency_contacts');
     const campaigns = await columnsOf('agency_campaigns');
@@ -217,7 +215,7 @@ describe('baseline schema — structure', () => {
     expect(campaigns.get('context_display')!.data_type).toBe('jsonb');
   });
 
-  // core:test/unit/agency/retry-lineage-migrations.test.ts (111/112/114), as catalog facts
+  // The retry-lineage shape, as catalog facts.
   it('keeps the lineage shape: FK on the pointers, none on the grouping keys', async () => {
     const { rows } = await pool().query<{ conname: string; def: string }>(
       `SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint
@@ -242,7 +240,7 @@ describe('baseline schema — structure', () => {
     expect(await indexDef('idx_agency_campaigns_parent')).toContain('WHERE (parent_campaign_id IS NOT NULL)');
   });
 
-  // core:test/integration/agency/agency-duplicate-dial.test.ts T-D3b
+  // See also apps/server/test/integration/agency/agency-duplicate-dial.test.ts T-D3b
   it('uq_agency_attempt_live is defined exactly as the design specifies', async () => {
     expect(await indexDef('uq_agency_attempt_live')).toBe(
       'CREATE UNIQUE INDEX uq_agency_attempt_live ON public.agency_call_attempts ' +
@@ -250,7 +248,7 @@ describe('baseline schema — structure', () => {
     );
   });
 
-  // core:test/integration/agency/agency-dnc-campaign-scope.test.ts T-DNC8
+  // See also apps/server/test/integration/agency/agency-dnc-campaign-scope.test.ts T-DNC8
   it('agency_dnc_outbox.campaign_id is nullable and the digit-projection index exists', async () => {
     expect((await columnsOf('agency_dnc_outbox')).get('campaign_id')!.is_nullable).toBe('YES');
     const def = await indexDef('idx_agency_contacts_campaign_phone_digits');
@@ -258,7 +256,6 @@ describe('baseline schema — structure', () => {
     expect(def).toContain("regexp_replace((phone_e164)::text, '[^0-9]'::text, ''::text, 'g'::text)");
   });
 
-  // core:test/integration/db/audio-file-pcm-migration.test.ts
   it('audio_files carries the three PCM columns, nullable and unindexed', async () => {
     const cols = await columnsOf('audio_files');
     expect(cols.get('pcm_audio_hash')).toMatchObject({ data_type: 'character varying', is_nullable: 'YES' });
@@ -270,8 +267,7 @@ describe('baseline schema — structure', () => {
     expect(rows).toEqual([]);
   });
 
-  // master:test/integration/repositories/agency-campaign-agents-schema.test.ts
-  it('staffing: the 064 per-campaign index exists and the 060 index is gone', async () => {
+  it('staffing: the per-campaign index exists and the per-tenant index is gone', async () => {
     expect(await indexDef('uq_agency_campaign_agent_active_campaign')).toBe(
       'CREATE UNIQUE INDEX uq_agency_campaign_agent_active_campaign ON public.agency_campaign_agents ' +
       'USING btree (tenant_id, user_id, campaign_id) WHERE (unassigned_at IS NULL)',
@@ -280,14 +276,14 @@ describe('baseline schema — structure', () => {
     expect(await indexDef('idx_agency_campaign_agents_campaign_active')).toContain('WHERE (unassigned_at IS NULL)');
   });
 
-  // master:test/integration/dnc/dnc-index-usage.test.ts ("guards the guard")
+  // See also apps/server/test/integration/dnc/dnc-index-usage.test.ts ("guards the guard").
   it('the DNC indexes exist', async () => {
     for (const name of ['uq_dnc_scope', 'idx_dnc_entries_tenant_phone', 'idx_dnc_entries_tenant_created']) {
       expect(await indexDef(name), name).toBeDefined();
     }
   });
 
-  it('agency.md §2 uq_agency_agent_live is superseded by core 093 — only the tenant index exists', async () => {
+  it('uq_agency_agent_live is superseded — only the tenant index exists', async () => {
     expect(await indexDef('uq_agency_agent_live')).toBeUndefined();
     expect(await indexDef('uq_agency_agent_live_tenant')).toBe(
       'CREATE UNIQUE INDEX uq_agency_agent_live_tenant ON public.agency_agent_sessions ' +
@@ -297,7 +293,7 @@ describe('baseline schema — structure', () => {
 });
 
 describe('membership_role enum', () => {
-  it("has master's six values in master's declared order (051 appended agent last)", async () => {
+  it("has the six values in their declared order (agent last)", async () => {
     const { rows } = await pool().query<{ v: string }>(
       `SELECT unnest(enum_range(NULL::membership_role))::text AS v`,
     );
@@ -349,7 +345,7 @@ describe('triggers', () => {
     }
   });
 
-  // core:test/integration/agency/agency-retry-seeding.test.ts "stamps root_contact_id on an ordinary ingest row"
+  // See also apps/server/test/integration/agency/agency-retry-seeding.test.ts "stamps root_contact_id on an ordinary ingest row"
   it('trg_agency_contacts_root stamps root_contact_id := id on an ordinary insert', async () => {
     const campaign = await insertCampaign();
     for (let i = 0; i < 5; i++) await insertContact(campaign.id, { phone_e164: `+1415555020${i}` });
@@ -360,8 +356,7 @@ describe('triggers', () => {
     expect(rows[0]!.n).toBe(5);
   });
 
-  // core:test/unit/agency/retry-lineage-migrations.test.ts "stamps the root only when the caller supplied none"
-  // + core:test/integration/agency/agency-retry-seeding.test.ts (root = the PARENT's row)
+  // See also apps/server/test/integration/agency/agency-retry-seeding.test.ts (root = the PARENT's row).
   it('trg_agency_contacts_root leaves a supplied root alone (the retry-copy path)', async () => {
     const parent = await insertCampaign();
     const child = await insertCampaign({ parent_campaign_id: parent.id, root_campaign_id: parent.id, retry_generation: 1 });
@@ -382,8 +377,8 @@ describe('triggers', () => {
     expect(rows[0]!.root_contact_id).toBeNull();
   });
 
-  // core:test/integration/agency/agency-retry-seeding.test.ts "113 is a no-op on a second run"
-  it('after the trigger, the 113 backfill predicate matches zero rows', async () => {
+  // See also apps/server/test/integration/agency/agency-retry-seeding.test.ts "the root_contact_id backfill is a no-op on a second run".
+  it('after the trigger, the root_contact_id backfill predicate matches zero rows', async () => {
     const campaign = await insertCampaign();
     await insertContact(campaign.id);
     const result = await pool().query('UPDATE agency_contacts SET root_contact_id = id WHERE root_contact_id IS NULL');
@@ -404,7 +399,7 @@ describe('triggers', () => {
     expect(rows[0]!.vol).toBe('s');
   });
 
-  // core 083's contract: the fingerprint is what the ingest INSERT writes, and the
+  // The contract: the fingerprint is what the ingest INSERT writes, and the
   // unique index refuses a byte-identical row in the same campaign.
   it('row fingerprints written through the function collide exactly on identical content', async () => {
     const campaign = await insertCampaign();
@@ -424,10 +419,10 @@ describe('triggers', () => {
   });
 });
 
-describe('the uniqueness constraints that carry the design (agency.md §2)', () => {
+describe('the uniqueness constraints that carry the design (docs/architecture.md)', () => {
   beforeEach(() => truncateAll());
 
-  // core:test/integration/agency/agency-duplicate-dial.test.ts T-M5
+  // See also apps/server/test/integration/agency/agency-duplicate-dial.test.ts T-M5
   it('uq_agency_campaign_running — one running campaign per account', async () => {
     await insertCampaign({ status: 'running' });
     await expect(insertCampaign({ status: 'running' })).rejects.toMatchObject({
@@ -438,7 +433,7 @@ describe('the uniqueness constraints that carry the design (agency.md §2)', () 
     await expect(insertCampaign({ status: 'draft' })).resolves.toBeTruthy();
   });
 
-  // core:test/integration/agency/agency-duplicate-dial.test.ts T-M6
+  // See also apps/server/test/integration/agency/agency-duplicate-dial.test.ts T-M6
   it('uq_agency_agent_live_tenant — one live session per agent per TENANT, reusable after leaving', async () => {
     const agent = randomUUID();
     const campaign = await insertCampaign();
@@ -465,7 +460,7 @@ describe('the uniqueness constraints that carry the design (agency.md §2)', () 
     });
   });
 
-  // core:test/integration/agency/agency-duplicate-dial.test.ts T-D1/T-D2/T-D3
+  // Duplicate-dial guard: a contact may have at most one live attempt.
   it('uq_agency_attempt_live — every live-state pairing is rejected; an ended attempt frees the contact', async () => {
     const LIVE = ['queued', 'dialing', 'ringing', 'answered', 'bridged'];
     const campaign = await insertCampaign();
@@ -495,7 +490,7 @@ describe('the uniqueness constraints that carry the design (agency.md §2)', () 
     await expect(insertContact(campaign.id)).resolves.toBeTruthy();
   });
 
-  // core:test/integration/agency/agency-migration.test.ts T-M4b
+  // See also apps/server/test/integration/agency/agency-migration.test.ts T-M4b
   it('uq_agency_ingest_chunk — a real UNIQUE on (campaign_id, idempotency_key)', async () => {
     const campaign = await insertCampaign();
     const insert = (index: number) => pool().query(
@@ -529,7 +524,6 @@ describe('other uniqueness rules', () => {
     await expect(insertCampaign({ retry_idempotency_key: null })).resolves.toBeTruthy();
   });
 
-  // master:test/integration/repositories/agency-campaign-agents-schema.test.ts
   it('uq_agency_campaign_agent_active_campaign — per (tenant, user, campaign), closed rows accumulate', async () => {
     const tenant = await insertTenant();
     const user = await insertUser();
@@ -576,7 +570,7 @@ describe('other uniqueness rules', () => {
     });
   });
 
-  it('idx_accounts_tenant_slug_active — a deleted account frees its slug (master 025)', async () => {
+  it('idx_accounts_tenant_slug_active — a deleted account frees its slug', async () => {
     const tenant = await insertTenant();
     const first = await insertAccount(tenant.id, { slug: 'main' });
     await expect(insertAccount(tenant.id, { slug: 'main' })).rejects.toMatchObject({
@@ -595,7 +589,6 @@ describe('other uniqueness rules', () => {
     });
   });
 
-  // core:test/integration/db/dialer-analysis-migration.test.ts
   it('call_analysis_profiles: partial active-name/default uniqueness, name reuse after soft delete', async () => {
     const profile = (o: Record<string, unknown>) => insertRow('call_analysis_profiles', { tenant_id: TENANT, account_id: ACCOUNT, ...o });
     const first = await profile({ name: 'Same', is_default: true });
@@ -618,7 +611,7 @@ describe('other uniqueness rules', () => {
 describe('checks, cascades and foreign keys', () => {
   beforeEach(() => truncateAll());
 
-  // core:test/integration/agency/agency-migration.test.ts T-M2..T-M2e
+  // See also apps/server/test/integration/agency/agency-migration.test.ts T-M2..T-M2e
   it('state machines accept every legal value and reject anything else', async () => {
     const statuses = ['draft', 'running', 'paused', 'stopping', 'completed', 'stopped'];
     for (const status of statuses) await insertCampaign({ status, account_id: randomUUID() });
@@ -663,7 +656,7 @@ describe('checks, cascades and foreign keys', () => {
     });
   });
 
-  // core:test/integration/agency/agency-migration.test.ts T-M3/T-M3b/T-M3c
+  // See also apps/server/test/integration/agency/agency-migration.test.ts T-M3/T-M3b/T-M3c
   it('deleting a campaign removes its whole execution subtree; attempts need a real session', async () => {
     const campaign = await insertCampaign();
     const contact = await insertContact(campaign.id);
@@ -687,7 +680,7 @@ describe('checks, cascades and foreign keys', () => {
     await expect(insertAttempt(c2.id, k2.id, { reserved_agent_id: randomUUID() })).rejects.toMatchObject({ code: '23503' });
   });
 
-  it('the attempt spine and the call correlation ids carry NO foreign keys (core 075/076)', async () => {
+  it('the attempt spine and the call correlation ids carry NO foreign keys', async () => {
     const campaign = await insertCampaign();
     const contact = await insertContact(campaign.id);
     // A dangling media-leg id is legal on the attempt...
@@ -696,7 +689,7 @@ describe('checks, cascades and foreign keys', () => {
     await expect(insertCall({ campaign_id: randomUUID(), agency_attempt_id: randomUUID() })).resolves.toBeTruthy();
   });
 
-  // core:test/integration/db/dialer-analysis-migration.test.ts (re-keyed onto agency_calls)
+  // Keyed on agency_calls.
   it('dialer_analysis_jobs: one job per call, status checks, cascade from agency_calls', async () => {
     const call = await insertCall();
     const job = () => insertRow('dialer_analysis_jobs', { call_id: call.id, tenant_id: TENANT, account_id: ACCOUNT });
@@ -743,7 +736,7 @@ describe('checks, cascades and foreign keys', () => {
     await expect(pool().query('DELETE FROM account_settings WHERE tenant_id = $1', [tenant])).rejects.toMatchObject({ code: '23503' });
   });
 
-  it('clips: audio-only announcements; deleting a file un-links inactive announcements (core 031)', async () => {
+  it('clips: audio-only announcements; deleting a file un-links inactive announcements', async () => {
     const audio = await insertAudioFile();
     const announce = (o: Record<string, unknown>) => insertRow('announcements', { tenant_id: TENANT, account_id: ACCOUNT, name: `a-${randomUUID()}`, ...o });
     await expect(announce({ type: 'tts' })).rejects.toMatchObject({ code: '23514', constraint: 'announcements_type_check' });
@@ -768,7 +761,7 @@ describe('checks, cascades and foreign keys', () => {
     }
   });
 
-  it('lead decisions: no dnc_sync_state, no analyze_dialer_calls, VoiceLink defaults (B8, Q3b)', async () => {
+  it('decided defaults: no dnc_sync_state, no analyze_dialer_calls, VoiceLink defaults (B8, Q3b)', async () => {
     const { rows: t } = await pool().query(`SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'dnc_sync_state'`);
     expect(t).toHaveLength(0);
     const { rows: c } = await pool().query(
@@ -832,7 +825,7 @@ describe('audit partitions', () => {
     expect((await insert('2025-12-31T23:59:59Z')).rows[0]!.part).toBe('audit_logs_default');
   });
 
-  it('the parent indexes exist (core 094 campaign expression index included)', async () => {
+  it('the parent indexes exist (campaign expression index included)', async () => {
     for (const name of [
       'idx_audit_log_tenant_created', 'idx_audit_log_action', 'idx_audit_log_tenant_resource',
       'idx_audit_log_tenant_campaign', 'idx_audit_log_tenant_account',

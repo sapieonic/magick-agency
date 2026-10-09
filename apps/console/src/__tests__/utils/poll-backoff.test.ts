@@ -43,7 +43,7 @@ describe('retryAfterSecondsFromUnknown', () => {
     )).toBe(15);
   });
 
-  it('reads core\'s retryAfter body field', () => {
+  it('reads the API\'s retryAfter body field', () => {
     expect(retryAfterSecondsFromUnknown(429, { retryAfter: 22 })).toBe(22);
   });
 

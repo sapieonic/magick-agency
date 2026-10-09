@@ -1,53 +1,42 @@
 ###############################################################################
 # magick-agency alert rules
 #
-# magick-agency is one Fastify process (single replica) carrying four lanes:
-# platform (identity, invites, notifications — from master), agency (campaigns,
-# pacing, DNC — from core's src/agency/), voice (WebRTC bridge, carrier
-# webhooks, concurrency, rate limiting — from core) and analysis. It reports
-# under its own service_name (var.agency_service_name_regex: magick-agency,
-# magick-agency-Staging, magick-agency-Dedicated), which no MagickVoice
-# platform rule selects; these are the platform's agency-relevant rules,
-# re-scoped to agency. Source: the MagickVoice superproject's
-# grafana/terraform/alert-rules-{core,master,platform}.tf @e32a5db (PORTING.md,
-# "Grafana alerting (B6)").
+# magick-agency is one Fastify process (single replica) carrying four module
+# areas: platform (identity, invites, notifications), agency (campaigns,
+# pacing, DNC), voice (WebRTC bridge, carrier webhooks, concurrency, rate
+# limiting) and analysis. It reports under its own service_name
+# (var.agency_service_name_regex: magick-agency, magick-agency-Staging,
+# magick-agency-Dedicated).
 #
 # Every expression selects ${local.agency} and nothing else
-# (grafana/scripts/validate-alerts.test.mjs pins it). The `for`, thresholds,
-# windows and new-series guards are copied verbatim from the core (vao-*),
-# master (mst-*) and platform (plat-*) rules named on each rule — their
-# rationale comments are not repeated here, read them there. The new-series
-# guard is explained at the top of the platform's alert-rules-master.tf. The
-# descriptions are rewritten for agency: no master → core S2S, no core webhooks
-# into master, no Redis DNC set, no DNC outbox.
+# (grafana/scripts/validate-alerts.test.mjs pins it).
 #
-# Transition. The old path stays intact as the rollback (docs/decisions.md,
-# open #8 for the rollback window). Through the pilot and that window core
-# keeps its agency rules on the platform's ${local.core} (vao-agency-*, and
-# master's agency rules on ${local.master}), and these run alongside them. A
-# tenant lives in exactly one system at a time, so the two sets never fire for
-# the same campaign.
+# The new-series guard. Sparse counters (mail, invite claims) are created by
+# their first failure, and increase() over a series with no earlier sample
+# reads 0, so the first failure ever would never fire. The guard adds a second
+# arm, `(x unless x offset W) and on (service_name) group by (service_name)
+# (nodejs_eventloop_utilization_ratio offset W)`: a series that did not exist W
+# ago counts with its current value, but only when the service itself was
+# already reporting W ago, so a restart does not fire on every fresh series.
 #
-# Not carried, and why:
-#   * Billing is removed (docs/decisions.md S6): no attempt batches, no attempt
-#     settlement, no settlement fan-out. mst-agency-attempt-settlement-failures,
-#     vao-settlement-dispatch-failed, -fanout-abandoned, -fanout-wedged and
-#     -unconfigured have no agency copy; they stay on core/master and go silent
-#     for a tenant after its cutover, by design. The validators red if agency
-#     ever declares one of their series again.
-#   * The DNC set and its sync (docs/decisions.md B8): the pre-dial gate reads
-#     the dnc_entries table directly, so there is no agency_dnc_synced gauge,
-#     no master → core publish and no outbox metric — no copy of
-#     vao-agency-dnc-unsynced, -unpropagated, -abandoned or of mst-dnc-*.
-#   * No platform API keys (docs/decisions.md #5): no mst-api-key-auth-errors.
-#   * No master-side purchased concurrency: no mst-provider-concurrency-unsynced.
-#   * mst-notification-send-failures: agency declares notification_sends_total
-#     (metrics/platform.ts) but nothing increments it — the digest engine that
-#     did was not ported — so a rule over it could never fire.
-#   * The platform's S2S and webhook-signature rules (plat-core-*, plat-master-*):
-#     agency has no hop to core or master.
-#   * The Grafana Cloud stack rules (plat-metrics-samples-discarded, ...): they
-#     watch the stack, not a service, and stay in the platform module.
+# Transition. Through the pilot and the rollback window (docs/decisions.md,
+# open item 8) a tenant lives in exactly one system at a time, so these rules
+# and the previous platform's own alerts never fire for the same campaign.
+#
+# No rule, and why:
+#   * Billing (docs/decisions.md S6): no attempt batches, settlement or
+#     settlement fan-out. The validators red if agency ever declares one of
+#     those series.
+#   * DNC sync and outbox (docs/decisions.md B8): the pre-dial gate reads the
+#     dnc_entries table directly, so there is no sync gauge and no outbox
+#     metric.
+#   * API keys (docs/decisions.md #5) and purchased-concurrency sync: neither
+#     exists here.
+#   * Notification sends: notification_sends_total is declared
+#     (metrics/platform.ts) but nothing increments it, so a rule over it could
+#     never fire.
+#   * The Grafana Cloud stack itself (discarded samples, usage): that watches
+#     the stack, not a service, and is managed outside this repo.
 #   * Known coverage gaps (../README.md): no api_requests_total /
 #     api_request_duration_seconds, no call_dial_failures_total, no
 #     webhook_signature_rejected_total, no media_stream_connect_timeouts_total
@@ -61,9 +50,9 @@ locals {
       {
         uid  = "agy-dnc-unavailable"
         name = "Agency campaign halted — DNC registry unreadable"
-        # From vao-agency-dnc-unavailable. The pre-dial gate fails CLOSED: when it
+        # The pre-dial gate fails CLOSED: when it
         # cannot confirm a number is not on the Do-Not-Call list it halts the
-        # whole campaign rather than dial unchecked. Under agency's B8 (docs/decisions.md) that check
+        # whole campaign rather than dial unchecked. Under B8 (docs/decisions.md) that check
         # is one indexed read of the dnc_entries table (DncRegistry.check), and
         # it answers `unavailable` only when that read throws — Postgres, not
         # Redis. A halted campaign places no calls and looks idle, not broken,
@@ -84,10 +73,9 @@ locals {
       {
         uid  = "agy-telephony-lease-release-failure"
         name = "Telephony concurrency lease release failing"
-        # From vao-telephony-lease-release-failure: a RATE, not any occurrence;
-        # `partial` folded in, `noop` deliberately excluded; not grouped by
-        # `source`. The release code is core's, ported verbatim
-        # (apps/server/src/core/telephony-release.ts).
+        # A RATE, not any occurrence; `partial` folded in, `noop` deliberately
+        # excluded; not grouped by `source`. The release code is
+        # apps/server/src/core/telephony-release.ts.
         expr          = "sum by (service_name) (rate(telephony_lease_release_total{outcome=~\"failure|partial\",${local.agency}}[10m]))"
         op            = "gt"
         threshold     = 0
@@ -100,7 +88,7 @@ locals {
       {
         uid  = "agy-telephony-lease-release-fallback"
         name = "Telephony lease release stuck on the slow path"
-        # From vao-telephony-lease-release-fallback: a latched-degraded guard
+        # A latched-degraded guard
         # never returns to Redis for the life of the process, and a sustained
         # `fallback` majority is its only outside symptom.
         expr          = "sum by (service_name) (rate(telephony_lease_release_total{outcome=\"fallback\",${local.agency}}[15m])) / clamp_min(sum by (service_name) (rate(telephony_lease_release_total{${local.agency}}[15m])), 0.001)"
@@ -116,14 +104,14 @@ locals {
 
     # ── API edge / rate limiting ──────────────────────────────────────────
     #
-    # Core's limiter, ported (apps/server/src/api/middleware/rate-limit.middleware.ts),
-    # minus the `tenant` bucket: agency has no API keys (its docs/decisions.md #5), so every
+    # The limiter (apps/server/src/api/middleware/rate-limit.middleware.ts) has no
+    # `tenant` bucket: agency has no API keys (docs/decisions.md #5), so every
     # client that is not a carrier or the control plane is in the `ip` bucket.
     "api-edge" = [
       {
         uid  = "agy-rate-limit-infra-rejected"
         name = "Rate limiter is rejecting carrier or internal traffic"
-        # From vao-rate-limit-infra-rejected: these clients cannot back off, so
+        # These clients cannot back off, so
         # any sustained rejection is data loss. Threshold 0 with `for` 15m
         # strictly longer than the 10m window; grouped by both labels.
         expr          = "sum by (service_name, bucket_kind, route_class) (rate(rate_limit_rejected_total{bucket_kind=~\"webhook|carrier_media|internal\",${local.agency}}[10m]))"
@@ -138,8 +126,8 @@ locals {
       {
         uid  = "agy-rate-limit-ip-rejected"
         name = "Client traffic sustained over its rate limit"
-        # From vao-rate-limit-tenant-rejected: warning, 1/s for 30m. Only `ip`
-        # here — agency has no `tenant` bucket — so this is the console, the
+        # Warning, 1/s for 30m. Only `ip` — there is no `tenant` bucket — so
+        # this is the console, the
         # agent stations, super-admin and any unauthenticated caller, keyed by
         # client IP.
         expr          = "sum by (service_name, bucket_kind, route_class) (rate(rate_limit_rejected_total{bucket_kind=\"ip\",${local.agency}}[15m]))"
@@ -153,12 +141,12 @@ locals {
       },
     ]
 
-    # ── Identity (master's session auth, ported) ──────────────────────────
+    # ── Identity (console session auth) ──────────────────────────────────
     "identity" = [
       {
         uid  = "agy-firebase-auth-rejected"
         name = "Most console sign-ins are being rejected"
-        # From mst-firebase-auth-rejected: a ratio, half of all attempts, with a
+        # A ratio, half of all attempts, with a
         # 20-rejection floor — expired tokens are routine and refreshed.
         expr          = "(sum by (service_name) (rate(auth_attempts_total{method=\"firebase\",status=\"invalid_token\",${local.agency}}[15m])) / sum by (service_name) (rate(auth_attempts_total{method=\"firebase\",${local.agency}}[15m]))) and on (service_name) (sum by (service_name) (increase(auth_attempts_total{method=\"firebase\",status=\"invalid_token\",${local.agency}}[15m])) >= 20)"
         op            = "gt"
@@ -173,13 +161,12 @@ locals {
 
     # ── Mail the product depends on ────────────────────────────────────────
     #
-    # From master's group of the same name: these paths succeed whatever the mail
-    # does, so only these counters see a failure, and all are sparse, so all
-    # carry the new-series guard (alert-rules-master.tf, header).
+    # These paths succeed whatever the mail does, so only these counters see a
+    # failure, and all are sparse, so all carry the new-series guard (header).
     "notifications" = [
       {
         uid = "agy-invite-email-failures"
-        # From mst-invite-email-failures: 2+ in 6h (threshold 1.5, N-0.5).
+        # 2+ in 6h (threshold 1.5, N-0.5).
         name          = "Invite emails failing"
         expr          = "sum by (service_name, role) (((invite_emails_total{result=\"failed\",${local.agency}} unless invite_emails_total{result=\"failed\",${local.agency}} offset 6h) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 6h)) or increase(invite_emails_total{result=\"failed\",${local.agency}}[6h]))"
         op            = "gt"
@@ -192,8 +179,7 @@ locals {
       },
       {
         uid = "agy-campaign-mail-failures"
-        # From mst-agency-campaign-mail-failures: failed, threw and
-        # claim_unavailable, grouped by result. In agency the notice is sent in
+        # failed, threw and claim_unavailable, grouped by result. In agency the notice is sent in
         # process when the pacing engine finalizes a campaign (no webhook).
         name          = "Agency campaign-completion emails failing"
         expr          = "sum by (service_name, tenant_id, result) (((agency_campaign_notifications_total{result=~\"failed|threw|claim_unavailable\",${local.agency}} unless agency_campaign_notifications_total{result=~\"failed|threw|claim_unavailable\",${local.agency}} offset 6h) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 6h)) or increase(agency_campaign_notifications_total{result=~\"failed|threw|claim_unavailable\",${local.agency}}[6h]))"
@@ -207,7 +193,7 @@ locals {
       },
       {
         uid = "agy-invite-claim-identity-conflicts"
-        # From mst-invite-claim-identity-conflicts: cross_tenant_identity >= 2/h
+        # cross_tenant_identity >= 2/h
         # and identity_already_bound >= 5/h, each arm a comparison filter, so
         # the threshold is 0.
         name          = "Burst of invite claims bound to the wrong identity"
@@ -228,10 +214,10 @@ locals {
         name          = "Agency error log volume high"
         datasource    = "loki"
         range_seconds = 900
-        # Master's bar (10+ per 15m, mst-error-log-volume), not core's 15+: agency
-        # has no production baseline yet. Re-read it after the pilot's first
-        # weeks and move it. count_over_time is an exact count, so 9 = "10+".
-        # `nightly_window`: see vao-error-log-volume.
+        # 10+ per 15m: agency has no production baseline yet. Re-read it after
+        # the pilot's first weeks and move it. count_over_time is an exact
+        # count, so 9 = "10+". `nightly_window`: muted with staging's and
+        # dedicated's nightly shutdown, like agy-service-not-reporting.
         expr          = "sum by (service_name) (count_over_time({service_name=~\"${var.agency_service_name_regex}\"} | severity_number >= 17 [15m]))"
         op            = "gt"
         threshold     = 9
@@ -240,26 +226,21 @@ locals {
         no_data_state = "OK"
         labels        = { nightly_window = "mute" }
         summary       = "10 or more agency error logs in 15 minutes"
-        description   = "{{ $labels.service_name }} logged 10+ ERROR/FATAL lines in the last 15m (count_over_time, severity_number >= 17). There is no baseline for agency yet, so read the burst before assuming an outage. Open Explore on {service_name=\"{{ $labels.service_name }}\"} | severity_number >= 17 and read the `component` field — it usually names the lane (pacing engine, dialer, bridge, invites) whose own alert is about to fire."
+        description   = "{{ $labels.service_name }} logged 10+ ERROR/FATAL lines in the last 15m (count_over_time, severity_number >= 17). There is no baseline for agency yet, so read the burst before assuming an outage. Open Explore on {service_name=\"{{ $labels.service_name }}\"} | severity_number >= 17 and read the `component` field — it usually names the part (pacing engine, dialer, bridge, invites) whose own alert is about to fire."
       },
     ]
 
     # ── Liveness, process health, metrics pipeline ────────────────────────
     #
-    # Agency copies of the platform's ${local.all_services} rules
-    # (plat-service-not-reporting, plat-event-loop-delay-p99,
-    # plat-metric-cardinality-overflow), on agency's selector only. The
-    # platform's copies select core and master; neither module's rule sees the
-    # other's services.
+    # On agency's selector only, like every rule here.
     "liveness" = [
       {
         uid = "agy-service-not-reporting"
-        # From plat-service-not-reporting: "reported in the last 7 days, but not
-        # in the last 10 minutes", keyed on the runtime gauge agency allow-lists
-        # (RUNTIME_METRIC_ALLOW_LIST in apps/server/src/utils/otel-sdk-config.ts),
-        # observed on every export. NOT target_info (see the platform rule).
-        # `nightly_window`: staging and dedicated go dark overnight; the
-        # platform's mute timings silence them, production is never muted.
+        # "Reported in the last 7 days, but not in the last 10 minutes", keyed on
+        # the runtime gauge agency allow-lists (RUNTIME_METRIC_ALLOW_LIST in
+        # apps/server/src/utils/otel-sdk-config.ts), observed on every export.
+        # `nightly_window`: staging and dedicated go dark overnight;
+        # the stack's mute timings silence them, production is never muted.
         name          = "Agency has stopped reporting telemetry"
         expr          = "group by (service_name) (max_over_time(nodejs_eventloop_utilization_ratio{${local.agency}}[7d])) unless on (service_name) group by (service_name) (max_over_time(nodejs_eventloop_utilization_ratio{${local.agency}}[10m]))"
         op            = "gt"
@@ -269,14 +250,14 @@ locals {
         no_data_state = "OK"
         labels        = { nightly_window = "mute" }
         summary       = "An agency deployment has sent no telemetry for 15 minutes"
-        description   = "{{ $labels.service_name }} reported to Grafana Cloud in the last 7 days and has sent nothing for ~15 minutes: the process is down, crash-looping, or cannot reach the OTLP endpoint. Check the process manager's logs first. Agency has no container entrypoint: migrations run separately (pnpm migrate:up, node-pg-migrate, ledger table pgmigrations in agency's own Postgres), so a failed migration shows up there, not as a crash here. The SDK starts only with OTEL_ENABLED exactly true AND OTEL_EXPORTER_OTLP_ENDPOINT AND OTEL_SERVICE_NAME set — a deploy that dropped one of them exports nothing and logs a warning at boot. If logs are still arriving in Loki but metrics are not, it is the OTLP metrics exporter, not the service. A deployment switched off on purpose stops firing 7 days after its last push; silence it (service_name={{ $labels.service_name }}) until then."
+        description   = "{{ $labels.service_name }} reported to Grafana Cloud in the last 7 days and has sent nothing for ~15 minutes: the process is down, crash-looping, or cannot reach the OTLP endpoint. Check the server container's logs first: docker/entrypoint.sh runs the migrations before the server starts, and a failed migration stops the container there (ledger table pgmigrations in agency's own Postgres). The SDK starts only with OTEL_ENABLED exactly true AND OTEL_EXPORTER_OTLP_ENDPOINT AND OTEL_SERVICE_NAME set — a deploy that dropped one of them exports nothing and logs a warning at boot. If logs are still arriving in Loki but metrics are not, it is the OTLP metrics exporter, not the service. A deployment switched off on purpose stops firing 7 days after its last push; silence it (service_name={{ $labels.service_name }}) until then."
       },
     ]
 
     "runtime" = [
       {
         uid = "agy-event-loop-delay-p99"
-        # From plat-event-loop-delay-p99: nodejs.eventloop.delay.p99 from
+        # nodejs.eventloop.delay.p99 from
         # instrumentation-runtime-node (reset each collection, so one sample is
         # one 60s interval's p99); max by service_name, 0.5s for 10m.
         name          = "Agency event-loop delay p99 high"
@@ -291,7 +272,7 @@ locals {
       },
       {
         uid = "agy-metric-cardinality-overflow"
-        # From plat-metric-cardinality-overflow: the OTel SDK folds an
+        # The OTel SDK folds an
         # instrument's excess attribute sets into ONE series labelled
         # otel_metric_overflow="true" (SDK default 2000 per instrument here).
         # label_replace copies the name into a plain `metric` label with any

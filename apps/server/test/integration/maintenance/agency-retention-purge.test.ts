@@ -4,13 +4,12 @@ import { TEST_DB_URL, closeTestPool, getTestPool, truncateAll } from '../../../.
 import { DEFAULTS, insertWebrtcCall } from '../../../../../packages/db/test/integration/setup/factories.js';
 
 /*
- * PORT NOTE (magick-agency): ported from core test/integration/db/dialer-retention-purge.test.ts
- * @4850d1d9 (2 cases -> 6), real Postgres 5436, against the agency slice of the purge
+ * Real Postgres 5436, against the agency slice of the purge
  * (`runRetentionPurge()` reads `AGENCY_RETENTION_DAYS` / `AGENCY_TRANSCRIPT_RETENTION_DAYS`).
- * The Phase 7 exit gate is here: the transcript (`conversation_log` AND `transcript_meta`)
+ * The transcript (`conversation_log` AND `transcript_meta`)
  * is nulled at the transcript-retention day while the analysis (`call_analysis`,
  * `analysis_status`) survives to row expiry, and a LATER purge at the row window then
- * deletes the row and its job. Same two cases as core, plus the unset-window,
+ * deletes the row and its job. Also covers the unset-window,
  * dry-run, and batch cases.
  */
 const cfg = vi.hoisted(() => ({

@@ -2,20 +2,17 @@ import { createHash, randomUUID } from 'node:crypto';
 import { getTestPool } from './test-utils.js';
 
 /**
- * PORT NOTE (magick-agency): the subset of core's
- * `test/integration/setup/factories.ts` that the shared-infrastructure suites
- * use (`insertAccountSettings`, `insertWebrtcCall`). Plan-required changes:
- *  - tenant/account ids are UUIDs (the baseline types them UUID; core used
- *    `'test-tenant'` / `'test-account'`);
+ * Factories for the shared-infrastructure suites (`insertAccountSettings`,
+ * `insertWebrtcCall`):
+ *  - tenant/account ids are UUIDs (the baseline types them UUID);
  *  - `insertWebrtcCall` writes `agency_calls` (the renamed `webrtc_calls`),
- *    defaults `provider` to `'voicelink'` (VoBiz deleted) and sets a
+ *    defaults `provider` to `'voicelink'` and sets a
  *    `campaign_id`, because every agency call is a campaign call and the
  *    repository's only scope (`'agency'`) is `campaign_id IS NOT NULL`. Pass
  *    `campaign_id: null` to build the row the scope must refuse.
  *
- * Plus master's `insertTenant` / `insertAccount` / `insertUser` (and its
- * `insertRow` helper) from master `test/integration/setup/factories.ts@a1f0756a`,
- * verbatim, for the ported staffing suites. Master's ids were already UUIDs.
+ * Plus `insertTenant` / `insertAccount` / `insertUser` (and the `insertRow`
+ * helper) for the staffing suites.
  */
 export const DEFAULTS = {
   tenantId: '11111111-1111-4111-8111-111111111111',
@@ -23,7 +20,7 @@ export const DEFAULTS = {
   campaignId: '33333333-3333-4333-8333-333333333333',
 } as const;
 
-/** A second tenant / account for isolation assertions (core: 'other-tenant' / 'other-account'). */
+/** A second tenant / account for isolation assertions . */
 export const OTHER_TENANT = '44444444-4444-4444-8444-444444444444';
 export const OTHER_ACCOUNT = '55555555-5555-4555-8555-555555555555';
 
@@ -83,7 +80,7 @@ export async function insertWebrtcCall(overrides: Record<string, unknown> = {}) 
   return rows[0];
 }
 
-// ── master test/integration/setup/factories.ts (verbatim) ────────────────────
+// ── Tenant / account / user factories ────────────────────────────────────────
 
 /** Generic INSERT helper — builds a parameterized INSERT from a key/value map. */
 async function insertRow(table: string, overrides: Record<string, unknown>, defaults: Record<string, unknown>) {

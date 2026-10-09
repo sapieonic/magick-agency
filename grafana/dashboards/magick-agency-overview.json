@@ -297,7 +297,7 @@
           "refId": "D"
         }
       ],
-      "description": "Answered vs abandoned, plus why the pacing engine dialed nothing on a tick. (Core's billing-batch series is not here: agency has no billing.)"
+      "description": "Answered vs abandoned, plus why the pacing engine dialed nothing on a tick. (No billing series: agency has no billing.)"
     },
     {
       "datasource": {
@@ -739,7 +739,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "How long wrap-up actually takes, by how it ended. `AD-P4-C-01` already averages this in SQL for the supervisor view, but there was no time series — so 'wrap-up is 18.5s mean against a 30s window' stayed a one-pilot artefact nobody could re-check.\n\n`resolution` keeps it honest, for the same reason migration 088 records it: a `forced` or `agent_left` wrap-up measures an interruption, not how long write-up work takes. Only `disposition_submitted`, `auto_return` and `agent_returned` are evidence.\n\nTHIS IS THE ONLY MEASUREMENT OF THE DISPOSITION-SPEED WORK. The pilot filed ZERO of 32 dispositions by keyboard; any drop in the `disposition_submitted` series after a hotkey or keyboard map ships is the entire result. Note most wrap-ups are TIMERLESS — held on an outstanding required disposition rather than a countdown — so this measures how fast agents file, not how long a window was configured.",
+      "description": "How long wrap-up actually takes, by how it ended. The supervisor view already averages this in SQL, but there was no time series — so 'wrap-up is 18.5s mean against a 30s window' stayed a one-pilot artefact nobody could re-check.\n\n`resolution` keeps it honest, for the same reason the attempt row records `wrapup_resolution`: a `forced` or `agent_left` wrap-up measures an interruption, not how long write-up work takes. Only `disposition_submitted`, `auto_return` and `agent_returned` are evidence.\n\nTHIS IS THE ONLY MEASUREMENT OF THE DISPOSITION-SPEED WORK. The pilot filed ZERO of 32 dispositions by keyboard; any drop in the `disposition_submitted` series after a hotkey or keyboard map ships is the entire result. Note most wrap-ups are TIMERLESS — held on an outstanding required disposition rather than a countdown — so this measures how fast agents file, not how long a window was configured.",
       "fieldConfig": {
         "defaults": {
           "color": {

@@ -6,21 +6,19 @@ const log = createChildLogger({ component: 'audit-partition-maintenance' });
 
 /**
  * Runtime maintenance of the two monthly range-partitioned audit tables
- * (plan §3.5; build decision B7 keeps both):
+ * (decision B7 keeps both):
  *
- *  - `audit_logs` (core's "Dialer" half), partition key `timestamp`;
- *  - `platform_audit_log` (master's "Console" half), partition key `created_at`.
+ *  - `audit_logs` (written by `audit/audit-logger.ts`), partition key `timestamp`;
+ *  - `platform_audit_log` (written by `audit/platform/*`), partition key `created_at`.
  *
  * The baseline creates 2026-01..2027-12 plus a DEFAULT partition and states that
- * extending and ageing them is a runtime job owned by lane A
- * (`packages/db/migrations/0001_baseline.sql` §4). Two halves:
+ * extending and ageing them is a runtime job
+ * (`packages/db/migrations/0001_baseline.sql`). Two halves:
  *
- * 1. **Create** the next `monthsAhead` months — NEW. Neither source had a
- *    runtime creator: both relied on migrations (core 003/038, master 005/034)
- *    and a DEFAULT partition as the safety net, which is exactly the "inserts
- *    land in DEFAULT forever once the window passes" state the DEFAULT exists to
- *    survive rather than to live in. Partition names follow the baseline's
- *    `<table>_YYYY_MM`.
+ * 1. **Create** the next `monthsAhead` months. Without a runtime creator, once
+ *    the baseline's window passes every insert lands in DEFAULT forever — the
+ *    state the DEFAULT exists to survive rather than to live in. Partition names
+ *    follow the baseline's `<table>_YYYY_MM`.
  *
  *    A month whose range already has rows in DEFAULT (the job did not run for a
  *    while) cannot simply be created: Postgres refuses `CREATE TABLE … PARTITION
@@ -30,17 +28,13 @@ const log = createChildLogger({ component: 'audit-partition-maintenance' });
  *    no-op. ATTACH builds the partitioned indexes on the new table.
  *
  * 2. **Drop** partitions entirely older than the retention cutoff and
- *    batch-delete old rows from DEFAULT — PORTED verbatim from
- *    `purgeAuditPartitions` in core `src/maintenance/retention-purge.ts:483-540`
- *    (`audit_logs`) and master `src/maintenance/retention-purge.ts:348-400`
- *    (`platform_audit_log`); the two bodies differ only in table and timestamp
- *    column, so they are one function parameterised by both. In the sources the
- *    cutoff came from the retention Lambda's `RETENTION_DAYS`; here it is
- *    `config.auditPartitions.retentionDays` (default 85, floor 30 — the Lambda's
- *    policy and `RETENTION_MIN_DAYS`).
+ *    batch-delete old rows from DEFAULT ({@link purgeAuditPartitions}). The two
+ *    tables differ only in name and timestamp column, so one function serves
+ *    both. The cutoff is `config.auditPartitions.retentionDays` (default 85,
+ *    floor 30).
  */
 
-/** core/master `retention-purge.ts:9`. */
+/** Rows per DEFAULT-partition delete batch. */
 const BATCH_SIZE = 5000;
 
 export interface AuditTableSpec {
@@ -141,8 +135,7 @@ export async function ensureFuturePartitions(
  * from the DEFAULT partition. Rows in a partially-aged partition survive until
  * the whole month passes the cutoff — at most ~1 month of slack.
  *
- * PORT NOTE (magick-agency): core's and master's `purgeAuditPartitions`,
- * verbatim, with the table name and timestamp column as parameters.
+ * The table name and timestamp column are parameters, from {@link AUDIT_TABLES}.
  */
 export async function purgeAuditPartitions(
   spec: AuditTableSpec,

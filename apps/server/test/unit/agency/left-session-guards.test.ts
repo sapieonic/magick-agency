@@ -3,27 +3,20 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 
 /*
- * PORT NOTE (magick-agency, Phase 8): ported from core test/unit/agency/left-session-guards.test.ts@4850d1d9
- * (source 30 → ported 30: 25 `it(` literals plus the 5-row `for…of` over the session paths).
- * Harness changes only:
- *   - logger mock re-pointed from `src/utils/logger.js` to a partial `@magick-agency/observability` mock;
- *   - core's `agencyRoutes` also registered the station WebSocket (`GET /station/:sessionId` +
- *     `handleStationSocket`); both moved verbatim to `src/agency/station-socket.ts`, so
- *     `registerStationSocket(app, runtime)` is mounted on the same instance, same prefix, beside
- *     `agencyRoutes`. The socket path the ping cases open is unchanged.
- * Every other mock path and every case is verbatim. No case DELETED, MODIFIED or NEW.
+ * The station WebSocket (`GET /station/:sessionId`, `registerStationSocket` in
+ * `src/agency/station-socket.ts`) is mounted on the same instance and prefix beside
+ * `agencyRoutes`; the socket path the ping cases open is `/api/v1/agency/station/:sessionId`.
  *
- * Q8 (Manas, 2026-10-09): `requireOwnedSession` now requires the actor master sends (the
+ * Q8: `requireOwnedSession` requires the actor the public API layer sends (the
  * session's agent, or a supervisor on `force-available`). `post` therefore sends the owning
- * agent's `agent_user_id` — what master's handlers send for that agent — so every ported case
- * still exercises the route body it was written for. Seven NEW cases at the end pin the
- * identity check itself (source 30 → 37 here).
+ * agent's `agent_user_id`, so every case still exercises the route body it was written for.
+ * The cases at the end pin the identity check itself.
  */
 
 // ---------------------------------------------------------------------------
 // A session that has LEFT must not be operable — and must stop renewing.
 //
-// ── The hole, which migration 092 turns from exotic into routine ───────────
+// ── The hole, which the one-live-session unique index makes routine ───────────
 //
 // `left_at` was checked in exactly two places: at the WebSocket upgrade, and in
 // `/station-token`. Every other session route operated on a left session happily,
@@ -40,20 +33,20 @@ import websocket from '@fastify/websocket';
 //     console tab is still open renews forever, so
 //     `AgencyReaper.isAgentHeldSomewhere` keeps skipping attempts that point at
 //     it and their contacts sit `in_flight` past the leak threshold — the exact
-//     harm `AD-P2-C-08` exists to repair.
+//     harm the reaper exists to repair.
 //
-// Before 092 this needed a deliberate leave with the tab left open. After it, the
-// migration's dedupe closes sessions out from under whoever is holding them, so
-// the state is ordinary. Hence guards rather than comments.
+// Sessions are closed out from under whoever is holding them (one live
+// session per agent), so the state is ordinary, not a deliberate leave with the
+// tab left open. Hence guards rather than comments.
 //
 // ── And the other direction: leaving must not be free ─────────────────────
 //
 // `/leave` clears the lease, sets `left_at` and detaches — with no live-attempt
 // check, while `releaseStationOnClose` has had exactly that check for the socket
-// path since `AD-P2-C-07`. An `on_call` agent could therefore leave, join campaign
+// path since the socket path got it. An `on_call` agent could therefore leave, join campaign
 // B (the row is left, so the upsert INSERTS rather than conflicting) and be
 // bridged a second customer with the first call still up. That is the double
-// bridge 092 exists to prevent, one click away, and the unique index cannot see it
+// bridge that index exists to prevent, one click away, and the unique index cannot see it
 // because both rows satisfy it once the first has left.
 //
 // FALSIFICATION: remove the `left_at` branch from `requireOwnedSession` and the
@@ -70,7 +63,7 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: { vobiz: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/vobiz' } },
+    telephony: { vobiz: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/vobiz' } },
   },
 }));
 
@@ -107,8 +100,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
 }));
 
 import { agencyRoutes } from '../../../src/api/routes/agency.routes.js';
-// PORT NOTE: core registered the station socket inside `agencyRoutes`; it moved verbatim to
-// `agency/station-socket.ts`, so it is mounted beside the routes on the same instance (below).
+// The station socket lives in `agency/station-socket.ts` and is mounted beside the routes on the same instance (below).
 import { registerStationSocket } from '../../../src/agency/station-socket.js';
 
 const LIVE = {
@@ -214,7 +206,7 @@ async function harness(): Promise<Harness> {
   });
   await app.register(websocket);
   await app.register((a) => agencyRoutes(a as never, runtime as never), { prefix: '/api/v1/agency' });
-  // PORT NOTE: the station socket core's `agencyRoutes` registered, mounted on the same
+  // The station socket, mounted on the same
   // instance under the same prefix (`/api/v1/agency/station/:sessionId`). GET-only, so the
   // `onRoute` POST list above is unchanged by it.
   await app.register(async (a) => registerStationSocket(a as never, runtime as never), { prefix: '/api/v1/agency' });
@@ -234,7 +226,7 @@ beforeEach(async () => {
 
 afterEach(async () => { await h.app.close(); });
 
-// Q8: the actor master's handler sends for the session's own agent (`resolveAgencyActor`).
+// Q8: the actor the public API layer's handler sends for the session's own agent (`resolveAgencyActor`).
 const post = (path: string, payload: Record<string, unknown> = {}) =>
   h.app.inject({
     method: 'POST', url: `/api/v1/agency/sessions/sess-1${path}`, headers: HEADERS,
@@ -304,7 +296,7 @@ describe('a left session is not operable', () => {
   });
 
   it('still 404s a session in another ACCOUNT of this tenant, ahead of the left check', async () => {
-    // The account half of the same ordering. It matters more after 092 than before:
+    // The account half of the same ordering. It matters because
     // the constraint deliberately spans accounts, so a tenant's agents now routinely
     // hold sessions in an account other than the one on the request — and "this
     // session has ended" for a session in an account the caller cannot see would
@@ -358,7 +350,7 @@ describe('leaving a station mid-attempt', () => {
 
     // Still refused, still the same code — allowing the leave would manufacture
     // an abandoned call the moment the carrier answered, and a new error code
-    // would be rewritten by master's error mask into "contact support".
+    // would be rewritten by the public API layer's error mask into "contact support".
     expect(res.statusCode).toBe(409);
     expect(res.json().code).toBe('agent_on_live_call');
     expect(res.json().message).toMatch(/being placed/i);
@@ -529,7 +521,7 @@ describe('a station socket outliving its session', () => {
 //
 // Suppressed rather than softened — `state` is authoritative by contract, so a
 // state we know to be false is worse than no frame at all. Nothing is lost: the
-// HTTP response still carries the pending break (the only fields cusui reads),
+// HTTP response still carries the pending break (the only fields the console reads),
 // `ready.pending_state` covers a mid-ring reconnect, and `releaseAgent` sends
 // the authoritative frame when the dial resolves.
 //
@@ -664,10 +656,10 @@ describe('a break queued behind an UNANNOUNCED dial', () => {
   });
 });
 
-// ─── Q8 (Manas, 2026-10-09): the session must be the caller's ──────────────────
+// ─── decision Q8: the session must be the caller's ──────────────────
 //
-// NEW (magick-agency). Core's `requireOwnedSession` checked tenant + account + `left_at`
-// only; an agent holding a colleague's session id could mint its station token, set it
+// `requireOwnedSession` checks the actor as well as tenant + account + `left_at`;
+// without that check an agent holding a colleague's session id could mint its station token, set it
 // available or on break, or make it leave. Table-driven over the ROUTER's list, for the
 // same reason as the `left_at` case above: a session route added later inherits the rule
 // or turns this red.

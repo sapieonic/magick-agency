@@ -1,15 +1,10 @@
-/*
- * PORT NOTE (magick-agency): ported from master test/unit/api/routes/account.routes.test.ts@a1f0756a
- * (14 cases → 10). The 4 PUT/DELETE cases are deleted with those routes.
- */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
 /**
- * Route-level tests for `GET /accounts/mine` — the fix for MAG-agent-account
- * (agency happy-path item 3): an `agent`-role user can never resolve their
+ * Route-level tests for `GET /accounts/mine`: an `agent`-role user can never resolve their
  * account via `GET /accounts` (floors at `account.read` = `viewer`, and
- * `agent` sits below `viewer` in ROLE_HIERARCHY by design), so cusui's
+ * `agent` sits below `viewer` in ROLE_HIERARCHY by design), so the console's
  * `TenantContext` never sets an active account and the feature-flag context
  * spins forever. `/mine` is authentication-only — no `requirePermission` call
  * — and returns exactly the caller's own memberships resolved to accounts,
@@ -61,10 +56,6 @@ vi.mock('@magick-agency/db/repositories/account.repository', () => ({
 vi.mock('@magick-agency/db/repositories/membership.repository', () => ({
   membershipRepository: mocks.membershipRepository,
 }));
-// PORT NOTE (magick-agency): master's `tenant-name-resolver`, `metadata-cache` and
-// core account-settings sync mocks are removed — the route no longer imports
-// them (they served only the deleted POST/PUT/DELETE).
-
 import Fastify from 'fastify';
 import { accountRoutes } from '../../../../src/api/routes/account.routes.js';
 
@@ -184,8 +175,8 @@ describe('account.routes — GET /accounts/mine', () => {
     await app.close();
   });
 
-  // PORT NOTE (magick-agency): there are no platform API keys (decision #5); the
-  // route keeps master's `!request.user` guard verbatim, and this pins it.
+  // There are no platform API keys (decision #5); the route keeps its `!request.user`
+  // guard, and this pins it.
   it('degrades to an empty list under pure API-key auth with no associated user', async () => {
     const app = await buildApp({ user: undefined });
     const res = await app.inject({ method: 'GET', url: '/accounts/mine' });
@@ -201,7 +192,7 @@ describe('account.routes — GET /accounts/mine', () => {
     // tenantContextMiddleware; this asserts the handler threads it through to
     // BOTH the membership lookup AND the account lookup. The account lookup
     // matters independently: `memberships.account_id` has no composite FK
-    // back to the membership's own tenant_id (migration 001), so a
+    // back to the membership's own tenant_id, so a
     // cross-tenant membership row is possible upstream of this route (see
     // `accountRepository.findByIds`'s docstring and the `POST /users/invite`
     // fix in `user.routes.ts`) — this route's OWN defence is passing
@@ -224,10 +215,6 @@ describe('account.routes — GET /accounts/mine', () => {
     await app.close();
   });
 });
-
-// PORT NOTE (magick-agency): master's 'account-scope enforcement on PUT/DELETE
-// (sibling-account IDOR)' block (4 cases) is deleted with `PUT /accounts/:id` and
-// `DELETE /accounts/:id` (no `account.update|delete` in the contract).
 
 describe('account.routes — GET /accounts account-scope enforcement (sibling-account enumeration)', () => {
   beforeEach(() => {

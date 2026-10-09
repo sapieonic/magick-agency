@@ -116,17 +116,8 @@ describe('the notification catalog', () => {
     });
   });
 
-  // PORT NOTE (magick-agency): master's `defaults` block (2 cases) is deleted.
-  // 'the usage digest is on, weekly, and floored at account_admin' pins the
-  // credits usage digest, and 'campaign notices are addressed explicitly, not by
-  // role' pins the two broadcast-campaign events — none of the three events is in
-  // agency's catalog (plan §3.5). 'has exactly the one event this build ships'
-  // below pins their absence.
-
   describe('lookup', () => {
     it('resolves a known key', () => {
-      // PORT NOTE (magick-agency): master asserts on `usage.digest`, which is not
-      // in agency's catalog; the same assertions on the one live key.
       expect(findNotificationEvent('agency.campaign.completed')?.key).toBe('agency.campaign.completed');
       expect(isNotificationEventKey('agency.campaign.completed')).toBe(true);
     });
@@ -175,8 +166,8 @@ describe('the notification catalog', () => {
  * ── `isLiveEventKey`, and why "inert" is not "deleted" ────────────────────
  *
  * A stored `user_notification_preferences` row names its event as TEXT, not an
- * enum and not an FK (the governance overrides' reasoning, restated at
- * migration 072). So a build that has renamed or retired an event still meets
+ * enum and not an FK (the governance overrides' reasoning, restated on
+ * the table). So a build that has renamed or retired an event still meets
  * rows naming the old key. Such a row is INERT: never served, never validated
  * against, and — the half that is easy to "tidy up" — never deleted, because a
  * key removed by mistake and restored next release would have taken every
@@ -235,9 +226,8 @@ describe('catalog lookup is a Map, asserted directly', () => {
     // `USAGE.DIGEST` would let two spellings of one event be stored as two rows
     // under the unique index, and only one of them would ever be read back.
     //
-    // PORT NOTE (magick-agency): master spells variants of `usage.digest`, which
-    // agency's catalog does not hold (so they would be undefined for the wrong
-    // reason); the same four variants of the one live key.
+    // The variants are of the one live key, so they are undefined for the right
+    // reason rather than because the key is absent.
     expect(findNotificationEvent('AGENCY.CAMPAIGN.COMPLETED')).toBeUndefined();
     expect(findNotificationEvent('Agency.Campaign.Completed')).toBeUndefined();
     expect(findNotificationEvent(' agency.campaign.completed')).toBeUndefined();
@@ -312,9 +302,8 @@ describe('catalog shape invariants', () => {
     // a renderer, and this is the line that makes the addition visible in a
     // diff rather than arriving as a silent fifth toggle on the settings page.
     //
-    // PORT NOTE (magick-agency): master pins four events; agency keeps only
-    // `agency.campaign.completed` (plan §3.5). This is the deletion test for
-    // `campaign.dispatched`, `campaign.completed` and `usage.digest`.
+    // The catalog keeps only `agency.campaign.completed`; this also pins the
+    // absence of `campaign.dispatched`, `campaign.completed` and `usage.digest`.
     expect(NOTIFICATION_EVENT_KEYS).toEqual([
       'agency.campaign.completed',
     ]);

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// Retry campaigns — the repository half (design §4.3, wire contract §2).
+// Retry campaigns — the repository half.
 //
 // These pin the DECISIONS, not the SQL text: which rows are seeded, which
 // columns are deliberately absent from the INSERT, what is written to
@@ -144,9 +144,9 @@ beforeEach(() => {
   pool.query.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 
-// ── DR-4: the DNC/invalid exclusion is not a checkbox ──────────────────────
+// ── DNC and invalid contacts are never seeded into a retry: not a checkbox ─
 
-describe('the DR-4 exclusion is unconditional', () => {
+describe('the DNC/invalid exclusion is unconditional', () => {
   it('excludes dnc and invalid even when the selector explicitly asks for suppressed contacts', async () => {
     // The decision this file exists for. `parseRetrySelector` refuses a selector
     // that NAMES `dnc`, but that refusal is the explanation and this is the
@@ -220,15 +220,15 @@ describe('the DR-4 exclusion is unconditional', () => {
   });
 });
 
-// ── DR-2: the copy resets the allowance ────────────────────────────────────
+// ── A retry copies contacts, and the copy resets the allowance ─────────────
 
 describe('the seeding INSERT — what it writes and what it deliberately does not', () => {
   beforeEach(() => stubTransaction());
 
   it('omits state, attempt_count, our_fault_attempts and the outcome columns so they take DB defaults', async () => {
-    // DR-2: a retry campaign is a FRESH allowance, which is the whole point of a
+    // A retry campaign is a FRESH allowance, which is the whole point of a
     // supervisor authoring one. Writing any of these explicitly would be a second
-    // copy of migration 073's defaults with nothing keeping the two in step —
+    // copy of the schema defaults with nothing keeping the two in step —
     // and writing the PARENT's values would carry a suppressed or exhausted state
     // onto a roster that has never been dialled.
     await new AgencyCampaignRepository().retryFromCampaign({
@@ -244,8 +244,8 @@ describe('the seeding INSERT — what it writes and what it deliberately does no
     }
   });
 
-  it('never writes source_row_number — 085 is why, and re-adding it re-breaks top-up', async () => {
-    // 073's `uq_agency_contacts_source_row` is still live and PARTIAL on NOT NULL,
+  it('never writes source_row_number — and re-adding it re-breaks top-up', async () => {
+    // `uq_agency_contacts_source_row` is still live and PARTIAL on NOT NULL,
     // so a row storing NULL sits outside it. Two seeded rows sharing a CSV line
     // number would collide on an index this INSERT does not name — a 23505 that
     // aborts the whole transaction rather than being swallowed by the ON CONFLICT.
@@ -274,7 +274,7 @@ describe('the seeding INSERT — what it writes and what it deliberately does no
     expect(sql).toContain('source_contact_id');
     expect(sql).toContain('root_contact_id');
     // The parent's ROOT, not the parent's id — that is what keeps a generation-3
-    // contact pointing at generation 0. Migration 112's trigger only fires when the
+    // contact pointing at generation 0. The root-contact trigger only fires when the
     // column arrives NULL, so passing it explicitly leaves these rows alone.
     expect(sql).toContain('c.root_contact_id');
   });
@@ -318,7 +318,7 @@ describe('the child campaign row', () => {
     }
   });
 
-  it('stores retry_selector as sent — a record, not a query (DR-5)', async () => {
+  it('stores retry_selector as sent — a record, not a query', async () => {
     // Re-running the selector later would produce a different set (the parent keeps
     // moving if it is resumed) and would make the child's roster non-reproducible
     // from its own row. So what is frozen is the operator's INTENT.
@@ -340,7 +340,7 @@ describe('the child campaign row', () => {
     // "Copy the config columns" applied naively carries a stale auto-pause record,
     // a start time and a terminal status onto a campaign that has never dialled.
     // `status` is absent from the column list entirely rather than written as
-    // 'draft' (DR-9): 072's DEFAULT already says draft, and naming it here would be
+    // 'draft': the column's DEFAULT already says draft, and naming it here would be
     // a second copy of that default.
     stubTransaction();
     await new AgencyCampaignRepository().retryFromCampaign({
@@ -363,7 +363,7 @@ describe('a selection that cannot be seeded creates nothing at all', () => {
   it('rolls back before any INSERT when the selector matches zero seedable contacts', async () => {
     // Without this the supervisor holds a campaign they cannot start (`/start`
     // answers `409 campaign_roster_empty`) and cannot delete — there is no campaign
-    // delete route in either service. The refusal has to happen while a human is
+    // delete route. The refusal has to happen while a human is
     // present to be told.
     stubTransaction({ matched: 0, dnc: 14, invalid: 3 });
 
@@ -426,7 +426,7 @@ describe('a selection that cannot be seeded creates nothing at all', () => {
 
 describe('campaignLineage', () => {
   it('resolves the chain head with COALESCE on BOTH sides', async () => {
-    // Migration 111 leaves `root_campaign_id` NULL on a generation-0 campaign, so
+    // `root_campaign_id` stays NULL on a generation-0 campaign, so
     // spelling the COALESCE on only one side returns a chain of one for every
     // parent — the exact case the strip exists to show.
     pool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
@@ -466,8 +466,8 @@ describe('campaignLineage', () => {
 
 describe('findPriorForContactLineage', () => {
   it('keys on root_contact_id and orders by ended_at, not attempt_number', async () => {
-    // `attempt_number` is per contact ROW and resets in every retry campaign
-    // (DR-2), so ordering by it interleaves two passes into nonsense: the parent's
+    // `attempt_number` is per contact ROW and resets in every retry campaign,
+    // so ordering by it interleaves two passes into nonsense: the parent's
     // attempt 3 would sort above the child's attempt 1 even though the child's is
     // more recent. `NULLS LAST` keeps a never-ended attempt (reaped, orphaned) at
     // the bottom rather than at the top, where a NULL sorts first under DESC.

@@ -5,19 +5,17 @@ import { PERMISSION_MATRIX, type MembershipRole } from '@magick-agency/contracts
 /**
  * ─── THE AGENCY CALL READ (`proxy-agency-calls.routes.ts`) ──────────────────
  *
- * The surface whose absence made the agency workspace link its attempt rows into
- * `/app/calls/dialer/history/:id` — the primary application's shell, gated on the
- * primary application's capability (`docs/agency-dialer-design.md` §7b).
+ * The surface that keeps the agency workspace's attempt rows inside the agency
+ * shell, rather than linking them to a generic call page.
  *
  * ── What this file is actually for ─────────────────────────────────────────
  *
  * Four properties, each of which fails silently if it is only asserted by a
  * status code somewhere else:
  *
- *  1. **The plugin's three hooks run.** Session, tenant context and the `agency`
- *     entitlement gate are the three things a unit test cannot exercise for real,
- *     and also the three whose DELETION from the plugin would change nothing any
- *     other case here can see. So the doubles record that they ran and the
+ *  1. **The plugin's hooks run.** Session and tenant context are the two things a
+ *     unit test cannot exercise for real, and also the two whose DELETION from the
+ *     plugin would change nothing any other case here can see. So the doubles record that they ran and the
  *     assertion is on the double being invoked, never on a status.
  *  2. **`agency.supervise` is the floor, and it is `account_admin`.** One notch
  *     too low turns a supervisory read into peer surveillance: any agent could
@@ -28,35 +26,21 @@ import { PERMISSION_MATRIX, type MembershipRole } from '@magick-agency/contracts
  *     tenant who had never been granted recording could still listen to
  *     recordings that predated the grant. Gating the write and not the playback
  *     is gating the wrong end.
- *  4. **A purged call is forwarded as a 200 with a marker.** Core deliberately
- *     does not 404 it — the attempt outlives the call by design (core migration
- *     076) — so this tier must not turn it into an error either.
+ *  4. **A purged call is forwarded as a 200 with a marker.** The internal handler deliberately
+ *     does not 404 it — the attempt outlives the call by design —
+ *     so this tier must not turn it into an error either.
  *
- * PORT NOTE (magick-agency): ported from magick-master@a1f0756a
- * `test/unit/agency/proxy-agency-calls.routes.test.ts` (32 `it` + 8 `it.each` = 66
- * cases). Changes:
- *  - `proxyToCore` is `callCore` (`src/api/core-dispatch.ts`, the in-process seam),
- *    mocked under the old variable name so the assertions stay byte-identical; the
- *    `resolveCoreApiKey` mock is gone with the key. Where a case asserted the key was
- *    never decrypted ("raised before the credential is decrypted"), it now asserts the
- *    owning account's campaign and settings were never read — the same "refused before
- *    anything is resolved" property on what this route now resolves.
- *  - governance is gone (plan §3.2): the `agency` section gate is deleted, and
- *    `requireCapability('agency.recording')` / `isCapabilityEnabled` became the
- *    settings row (`allow_recording` / `analyze_calls`) of the campaign's OWNING
- *    account. The doubles are now `agencyCampaignRepository.findById` (the owner) and
- *    `accountSettingsRepository.findByTenantAndAccount` (its row); `setGrants` replaces
- *    every `isCapabilityEnabled` implementation one for one.
- *  - Modified, named: "runs session, tenant context and the agency gate, in that
- *    order" (now "runs session and tenant context, in that order") and "runs them on
- *    the recording route too" (two hooks, the gate is gone); the 12 traversal rows and
- *    the 2 "appends" rows (credential assertion → no campaign/settings read); "asks for
- *    agency.recording on the media route" (the owner's row is read before core),
- *    "does not require it for the detail read" (recording off still 200s the detail),
- *    "refuses the media route when the capability gate refuses" (the row says off →
- *    master's 403 body); the field-strip cases only change how the grant is set.
- *  - NEW: the `owning-account settings` describe at the end (the PORT NOTE function's
- *    own cases: ownership, NULL/no row, failures, no account context).
+ * Harness notes:
+ *  - `callCore` (`src/api/core-dispatch.ts`, the in-process seam) is mocked as
+ *    `mocks.proxyToCore`; there is no API key to resolve. Where a case asserts a request is
+ *    "refused before anything is resolved", it asserts the owning account's campaign and
+ *    settings were never read.
+ *  - The capability grants are the settings row (`allow_recording` / `analyze_calls`) of the
+ *    campaign's OWNING account. The doubles are `agencyCampaignRepository.findById` (the
+ *    owner) and `accountSettingsRepository.findByTenantAndAccount` (its row); `setGrants`
+ *    sets them.
+ *  - The `owning-account settings` describe at the end holds the cases for ownership,
+ *    NULL/no row, failures and no account context.
  */
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
@@ -71,8 +55,7 @@ const mocks = vi.hoisted(() => ({
   /** What the plugin-level hooks did, in order, on the last request. */
   hooksRan: [] as string[],
   /**
-   * PORT NOTE (magick-agency): the campaign row the gates read the OWNER from
-   * (replaces the governance doubles).
+   * The campaign row the gates read the OWNER from.
    */
   findCampaign: vi.fn<
     (id: string) => Promise<{ id: string; tenant_id: string; account_id: string } | null>
@@ -103,7 +86,7 @@ vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
   accountSettingsRepository: { findByTenantAndAccount: mocks.findSettings },
 }));
 
-/** PORT NOTE (magick-agency): the owner's two settings — what `isCapabilityEnabled` answered. */
+/** The owner's two settings, which gate recording and analytics. */
 function setGrants(grants: { recording: boolean; analytics: boolean }): void {
   mocks.findSettings.mockResolvedValue({
     allow_recording: grants.recording,
@@ -121,7 +104,7 @@ const RECORDING = `${DETAIL}/recording`;
 
 async function buildApp(
   role: MembershipRole = 'account_admin',
-  // PORT NOTE (magick-agency): an absent account context is a fail-closed case now
+  // An absent account context fails closed
   // (`null` here = no `request.accountId`; `undefined` would take the default).
   accountId: string | null = ACCOUNT,
 ): Promise<FastifyInstance> {
@@ -139,7 +122,7 @@ async function buildApp(
   return app;
 }
 
-/** Core's envelope for an attempt whose call is still there. */
+/** The internal handler's envelope for an attempt whose call is still there. */
 function availableBody() {
   return {
     attempt: {
@@ -154,7 +137,7 @@ function availableBody() {
       id: 'call-1',
       destination_phone: '+14155550199',
       status: 'completed',
-      // Core's own address space — master must repoint this at itself.
+      // The internal handler's own address space — the public API layer must repoint this at itself.
     recording_url: `/api/v1/agency-campaigns/${CAMPAIGN}/attempts/${ATTEMPT}/recording`,
       analysis_status: 'completed',
       call_analysis: { summary: 'customer declined' },
@@ -165,7 +148,7 @@ function availableBody() {
   };
 }
 
-/** Core's envelope once the call row has aged out of retention. */
+/** The internal handler's envelope once the call row has aged out of retention. */
 function purgedBody() {
   return {
     attempt: { ...availableBody().attempt },
@@ -189,7 +172,6 @@ describe('the plugin-level hooks actually run', () => {
    * only thing that can distinguish "registered" from "absent" is the double
    * being invoked.
    */
-  // PORT NOTE (magick-agency): the `agency` section gate is gone (plan §3.2), so two hooks.
   it('runs session and tenant context, in that order', async () => {
     const app = await buildApp();
     await app.inject({ method: 'GET', url: DETAIL });
@@ -210,47 +192,47 @@ describe('the plugin-level hooks actually run', () => {
   });
 });
 
-describe('a path-escaping param never reaches core', () => {
+describe('a path-escaping param never reaches the internal handler', () => {
   /**
    * ─── WHAT THIS GUARD ACTUALLY CLOSES ──────────────────────────────────────
    *
    * find-my-way routes on the ENCODED path and hands the handler a
    * percent-DECODED param, so `%2F` arrives as a real `/`. Both routes here
-   * interpolate `:id` and `:attemptId` into a core path.
+   * interpolate `:id` and `:attemptId` into an internal handler path.
    *
    * **The `..` traversal was already closed upstream** and these cases are not
    * claiming otherwise: `proxyToCore` refuses any path that does not survive a
    * WHATWG parse unchanged (`src/proxy/safe-core-path.ts`), which covers `..`,
    * `%2e%2e`, `.%2e`, `#` and `\\`. They are kept because this route's own guard
-   * has to refuse them too — the refusal must be raised BEFORE the tenant's core
-   * API key is decrypted, and before the proxy client records anything.
+   * has to refuse them too — the refusal must be raised BEFORE the owning account is
+   * resolved, and before the proxy client records anything.
    *
    * What the parse check allows, correctly, is a BARE EXTRA SLASH. That is the
    * live risk on this plugin, because `:attemptId` is the terminal segment of the
-   * detail route's core path: `attemptId = a%2Frecording` builds core's media
+   * detail route's internal handler path: `attemptId = a%2Frecording` builds the internal handler's media
    * path and reaches it through the detail route, which is floored at
    * `agency.supervise` but deliberately does not carry
    * `requireCapability('agency.recording')` — the one capability this plugin was
    * added to enforce.
    *
-   * ── Why each case asserts core was never called ───────────────────────────
+   * ── Why each case asserts the internal handler was never called ───────────────────────────
    *
    * A 4xx alone is not proof: with the guard gone, `proxyToCore` itself answers
    * 400 for a dot-segment path, so a status-only assertion would pass against the
-   * bug. Asserting that `proxyToCore` and `resolveCoreApiKey` were never touched
-   * is what makes the refusal provably THIS route's, raised before the credential
-   * is decrypted.
+   * bug. Asserting that `proxyToCore` and the campaign/settings reads were never touched
+   * is what makes the refusal provably THIS route's, raised before anything is
+   * resolved.
    */
   const TRAVERSALS: Array<[string, string]> = [
-    ['campaign id escaping into another core surface', `${PREFIX}/campaigns/x%2F..%2F..%2Fknowledge-bases/attempts/${ATTEMPT}`],
-    ['attempt id escaping into core internals', `${PREFIX}/campaigns/${CAMPAIGN}/attempts/a%2F..%2F..%2F..%2Finternal%2Faudit-logs`],
+    ['campaign id escaping into another internal handler surface', `${PREFIX}/campaigns/x%2F..%2F..%2Fknowledge-bases/attempts/${ATTEMPT}`],
+    ['attempt id escaping into internal handler internals', `${PREFIX}/campaigns/${CAMPAIGN}/attempts/a%2F..%2F..%2F..%2Finternal%2Faudit-logs`],
     ['a bare encoded slash in the campaign id', `${PREFIX}/campaigns/a%2Fb/attempts/${ATTEMPT}`],
     ['a query truncation in the attempt id', `${PREFIX}/campaigns/${CAMPAIGN}/attempts/a%3Fadmin=1`],
     ['a fragment truncation in the attempt id', `${PREFIX}/campaigns/${CAMPAIGN}/attempts/a%23frag`],
     ['a backslash in the campaign id', `${PREFIX}/campaigns/a%5Cb/attempts/${ATTEMPT}`],
   ];
 
-  it.each(TRAVERSALS)('detail: refuses %s without calling core', async (_label, url) => {
+  it.each(TRAVERSALS)('detail: refuses %s without calling the internal handler', async (_label, url) => {
     const app = await buildApp();
 
     const res = await app.inject({ method: 'GET', url });
@@ -258,14 +240,13 @@ describe('a path-escaping param never reaches core', () => {
     expect(res.statusCode).toBeGreaterThanOrEqual(400);
     expect(res.statusCode).toBeLessThan(500);
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
-    // PORT NOTE (magick-agency): was `resolveCoreApiKey` (no key now) — refused before
-    // the owning account is resolved.
+    // Refused before the owning account is resolved.
     expect(mocks.findCampaign).not.toHaveBeenCalled();
     expect(mocks.findSettings).not.toHaveBeenCalled();
     await app.close();
   });
 
-  it.each(TRAVERSALS)('recording: refuses %s without calling core', async (_label, url) => {
+  it.each(TRAVERSALS)('recording: refuses %s without calling the internal handler', async (_label, url) => {
     mocks.proxyToCore.mockResolvedValue({
       status: 200, body: Buffer.from('audio'), headers: new Headers(),
     });
@@ -276,8 +257,7 @@ describe('a path-escaping param never reaches core', () => {
     expect(res.statusCode).toBeGreaterThanOrEqual(400);
     expect(res.statusCode).toBeLessThan(500);
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
-    // PORT NOTE (magick-agency): was `resolveCoreApiKey` (no key now) — refused before
-    // the owning account is resolved.
+    // Refused before the owning account is resolved.
     expect(mocks.findCampaign).not.toHaveBeenCalled();
     expect(mocks.findSettings).not.toHaveBeenCalled();
     await app.close();
@@ -286,12 +266,12 @@ describe('a path-escaping param never reaches core', () => {
   /**
    * The bare-slash case named in this block's header, isolated because it is the
    * one the upstream parse check would have let through: a segment appended to
-   * `:attemptId` reaches core's media route through the detail route, which does
+   * `:attemptId` reaches the internal handler's media route through the detail route, which does
    * not carry `agency.recording`.
    */
   it.each([
     ['the recording route, bypassing agency.recording', 'a%2Frecording'],
-    ['a deeper core subpath', 'a%2Fnotes'],
+    ['a deeper internal handler subpath', 'a%2Fnotes'],
   ])('refuses an attempt id that appends %s', async (_label, attemptId) => {
     const app = await buildApp();
 
@@ -301,8 +281,7 @@ describe('a path-escaping param never reaches core', () => {
 
     expect(res.statusCode).toBe(400);
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
-    // PORT NOTE (magick-agency): was `resolveCoreApiKey` and the governance trace; the
-    // owning account's row is now what the media gate reads, and it was never read.
+    // The owning account's row is what the media gate reads, and it was never read.
     expect(mocks.findCampaign).not.toHaveBeenCalled();
     // The detail route never asked for the media capability, which is exactly why
     // the id must not be able to walk onto the media path.
@@ -347,7 +326,7 @@ describe('a path-escaping param never reaches core', () => {
   });
 
   /**
-   * The recording path master hands back is built from the request's own params,
+   * The recording path the public API layer hands back is built from the request's own params,
    * so it must not be possible to get a traversed segment INTO that string
    * either — a `recording_url` carrying `../..` would be a link the console
    * follows back into this service. Covered by the same guard, asserted
@@ -430,8 +409,8 @@ describe('agency.recording gates hearing the call', () => {
     const app = await buildApp();
     const res = await app.inject({ method: 'GET', url: RECORDING });
 
-    // PORT NOTE (magick-agency): the gate is the OWNING account's settings row, read
-    // from the campaign before core is called.
+    // The gate is the OWNING account's settings row, read
+    // from the campaign before the internal handler is called.
     expect(res.statusCode).toBe(200);
     expect(mocks.findCampaign).toHaveBeenCalledWith(CAMPAIGN);
     expect(mocks.findSettings).toHaveBeenCalledWith(TENANT, ACCOUNT);
@@ -447,9 +426,8 @@ describe('agency.recording gates hearing the call', () => {
    * bought recording.
    */
   it('does not require it for the detail read', async () => {
-    // PORT NOTE (magick-agency): the detail route reads the row too (for the field
-    // strip, as master's `isCapabilityEnabled` did), so "not required" is now: with
-    // recording OFF the detail read still answers 200.
+    // The detail route reads the row too (for the field strip), so "not required"
+    // means: with recording OFF the detail read still answers 200.
     setGrants({ recording: false, analytics: true });
     const app = await buildApp();
     const res = await app.inject({ method: 'GET', url: DETAIL });
@@ -460,7 +438,7 @@ describe('agency.recording gates hearing the call', () => {
   });
 
   it('refuses the media route when the capability gate refuses', async () => {
-    // PORT NOTE (magick-agency): the owner's `allow_recording` is false.
+    // The owner's `allow_recording` is false.
     setGrants({ recording: false, analytics: true });
     const app = await buildApp();
 
@@ -472,7 +450,7 @@ describe('agency.recording gates hearing the call', () => {
   });
 });
 
-describe('forwarding to core', () => {
+describe('forwarding to the internal handler', () => {
   it('forwards the campaign and attempt ids on the attempt path', async () => {
     const app = await buildApp();
     await app.inject({ method: 'GET', url: DETAIL });
@@ -500,7 +478,7 @@ describe('forwarding to core', () => {
     await app.close();
   });
 
-  it('copies content-type and length off core’s response and streams the bytes', async () => {
+  it('copies content-type and length off the internal handler’s response and streams the bytes', async () => {
     const audio = Buffer.from('RIFFfake');
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
@@ -518,7 +496,7 @@ describe('forwarding to core', () => {
     await app.close();
   });
 
-  it('passes a core 404 through rather than masking it as a 200', async () => {
+  it('passes an internal handler 404 through rather than masking it as a 200', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 404, body: { error: 'Not Found', code: 'attempt_not_found' },
     });
@@ -531,14 +509,14 @@ describe('forwarding to core', () => {
   });
 
   /**
-   * ─── A CORE 4xx ON THE MEDIA ROUTE IS JSON, NOT OPAQUE BYTES ──────────────
+   * ─── AN INTERNAL-HANDLER 4xx ON THE MEDIA ROUTE IS JSON, NOT OPAQUE BYTES ──────────────
    *
    * The case above is the DETAIL route, whose body arrives as a plain object.
    * The media route asks for `rawResponse`, and `proxyToCore` buffers every
-   * status — so before this was fixed a core 404 was forwarded as a `Buffer`,
+   * status — so before this was fixed an internal handler 404 was forwarded as a `Buffer`,
    * which Fastify types `application/octet-stream`. Nothing leaked (the error
    * mask's `parseJsonPayload` reads Buffers), but a console branching on content
-   * type could not parse the one refusal §7b makes load-bearing: `call_purged`
+   * type could not parse the one refusal that is load-bearing: `call_purged`
    * is what lets it say "this recording has aged out" rather than "the platform
    * is broken", and `no_recording` is a different sentence again.
    *
@@ -546,8 +524,8 @@ describe('forwarding to core', () => {
    * survived the old behaviour and the content type is what did not — a test that
    * only read `res.json()` would have passed against the Buffer.
    */
-  describe('a core refusal on the media route', () => {
-    /** As core sends it: `rawResponse` hands the route the bytes, not an object. */
+  describe('an internal handler refusal on the media route', () => {
+    /** As the internal handler sends it: `rawResponse` hands the route the bytes, not an object. */
     function coreErrorBytes(status: number, code: string, message: string) {
       return {
         status,
@@ -573,11 +551,11 @@ describe('forwarding to core', () => {
     });
 
     /**
-     * Core's own scope refusal, which is a 403 rather than a 404 — the same decode
+     * The internal handler's own scope refusal, which is a 403 rather than a 404 — the same decode
      * has to apply to it, or the status a console can act on arrives with a body
      * it cannot read.
      */
-    it('forwards a core 403 as JSON too', async () => {
+    it('forwards an internal handler 403 as JSON too', async () => {
       mocks.proxyToCore.mockResolvedValue(
         coreErrorBytes(403, 'unauthorized', 'This attempt is not on this campaign'),
       );
@@ -640,7 +618,7 @@ describe('forwarding to core', () => {
 describe('the purged call is forwarded as a 200, not an error', () => {
   /**
    * The attempt→call link is un-FK'd on purpose and both sides purge on
-   * independent windows, so an attempt routinely outlives its call. Core answers
+   * independent windows, so an attempt routinely outlives its call. The internal handler answers
    * 200 with `call_availability: 'purged'`; turning that into a 404 here would
    * tell the reader the attempt never happened, which is false and destroys the
    * audit trail the un-FK'd link exists to protect.
@@ -712,14 +690,14 @@ describe('agency.analytics gates the transcript and the summary as fields', () =
    * work, so a field-strip entry nothing asserts is exactly the wrong thing to
    * leave here.
    *
-   * Core does not send it on this path today. It is on the list because it is a
-   * scalar core projects OUT of `call_analysis`: were that projection ever to
+   * The internal handler does not send it on this path today. It is on the list because it is a
+   * scalar the internal handler projects OUT of `call_analysis`: were that projection ever to
    * reach this read, a sentiment label would survive a strip of the very blob it
    * was derived from. The fixture therefore adds the field the strip is written
    * for, rather than asserting the current payload — which is what makes this
    * assertion able to fail when the entry is removed.
    */
-  it('nulls analysis_sentiment_label too, though core does not send it here yet', async () => {
+  it('nulls analysis_sentiment_label too, though the internal handler does not send it here yet', async () => {
     setGrants({ recording: true, analytics: false });
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
@@ -741,15 +719,15 @@ describe('agency.analytics gates the transcript and the summary as fields', () =
    * ─── THE FIELD STRIP FAILS CLOSED ON A SCHEMA ADDITION ────────────────────
    *
    * The envelope check made an unrecognised SHAPE fail closed. This is the same
-   * defect one level in: the withheld response used to be a SPREAD of core's
-   * whole call object with four known keys nulled, so the day core adds another
+   * defect one level in: the withheld response used to be a SPREAD of the internal handler's
+   * whole call object with four known keys nulled, so the day the internal handler adds another
    * transcript- or summary-derived field inside the same envelope — a
    * `call_summary`, a `sentiment_score`, a `redaction_report` — it would reach a
    * tenant without `agency.analytics` untouched, and nothing here would go red.
    *
    * The withheld response is now PROJECTED through an allow-list of
-   * non-analytics fields, so a field master has not judged is simply not
-   * forwarded. These fixtures add fields core does not send today, which is what
+   * non-analytics fields, so a field the public API layer has not judged is simply not
+   * forwarded. These fixtures add fields the internal handler does not send today, which is what
    * makes the assertion able to fail: a test written against the current payload
    * could not distinguish a projection from a spread.
    */
@@ -758,7 +736,7 @@ describe('agency.analytics gates the transcript and the summary as fields', () =
     ['a scalar score', 'sentiment_score', -0.82],
     ['a nested analysis blob', 'redaction_report', { pii_spans: [{ text: 'ACME Corp' }] }],
     ['a renamed transcript', 'conversation_turns', [{ role: 'agent', text: 'hello' }]],
-  ])('withholds %s core adds later, without an entry for it', async (_label, field, value) => {
+  ])('withholds %s the internal handler adds later, without an entry for it', async (_label, field, value) => {
     setGrants({ recording: true, analytics: false });
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
@@ -770,7 +748,7 @@ describe('agency.analytics gates the transcript and the summary as fields', () =
     const call = res.json().call;
 
     expect(res.statusCode).toBe(200);
-    // Absent, not null: master cannot claim a field exists that it has never
+    // Absent, not null: the public API layer cannot claim a field exists that it has never
     // seen. Only the four KNOWN analytics keys get an explicit null.
     expect(field in call).toBe(false);
     // And nothing of it survives anywhere in the payload.
@@ -782,7 +760,7 @@ describe('agency.analytics gates the transcript and the summary as fields', () =
   /**
    * The other half of the projection, and the one that would break the surface if
    * the allow-list were wrong: everything a tenant without analytics is still
-   * entitled to has to survive. Pinned field by field against core's
+   * entitled to has to survive. Pinned field by field against the internal handler's
    * `formatWebRtcCallResponse`, because a missed entry here is a blank cell in the
    * console rather than a failure anybody notices.
    */
@@ -853,10 +831,10 @@ describe('agency.analytics gates the transcript and the summary as fields', () =
 
   /**
    * The asymmetry, stated as a test so it is not read as an oversight. An
-   * entitled tenant receives core's object AS SENT — an allow-list on that path
+   * entitled tenant receives the internal handler's object AS SENT — an allow-list on that path
    * would hide new fields from precisely the tenants who bought all of them.
    */
-  it('does forward an unknown core field to a tenant that has analytics', async () => {
+  it('does forward an unknown internal-handler field to a tenant that has analytics', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
       body: {
@@ -929,7 +907,7 @@ describe('agency.analytics gates the transcript and the summary as fields', () =
     });
 
     /**
-     * A non-JSON content type makes the core client fall back to `response.text()`,
+     * A non-JSON content type makes the internal handler client fall back to `response.text()`,
      * so a string body is genuinely reachable and not a hypothetical.
      */
     it('502s even when the tenant is fully entitled, because the URL rewrite needs the shape too', async () => {
@@ -950,7 +928,7 @@ describe('agency.analytics gates the transcript and the summary as fields', () =
    * as a pass.
    */
   it('withholds the transcript when governance resolution fails', async () => {
-    // PORT NOTE (magick-agency): the settings read fails (was the governance resolve).
+    // The settings read fails.
     mocks.findSettings.mockRejectedValue(new Error('redis down'));
     const app = await buildApp();
 
@@ -973,29 +951,29 @@ describe('agency.analytics gates the transcript and the summary as fields', () =
   });
 
   /**
-   * Core names a path in ITS address space (`/api/v1/...`), which a browser cannot
-   * reach — it only ever talks to master. So the field has to be repointed, and
+   * The internal handler names a path in ITS address space (`/api/v1/...`), which a browser cannot
+   * reach — it only ever talks to the public API layer. So the field has to be repointed, and
    * the old assertion here proved nothing: it checked that a fixture the test
    * itself had set to an agency path did not mention `/webrtc-call`. The subject
    * was the fixture, not the code.
    */
-  it('repoints recording_url at this service, not core’s own path', async () => {
+  it('repoints recording_url at this service, not the internal handler’s own path', async () => {
     const app = await buildApp();
     const res = await app.inject({ method: 'GET', url: DETAIL });
 
     expect(res.json().call.recording_url)
       .toBe(`/proxy/agency/campaigns/${CAMPAIGN}/attempts/${ATTEMPT}/recording`);
-    // Core's path must not survive: it is unreachable from a browser.
+    // The internal handler's path must not survive: it is unreachable from a browser.
     expect(res.json().call.recording_url).not.toContain('/api/v1/');
     await app.close();
   });
 
   /**
-   * Built from the request's own params, never by rewriting core's string, so a
-   * malformed or hostile value upstream cannot become a URL master hands a
-   * browser. Core's value is a presence flag only.
+   * Built from the request's own params, never by rewriting the internal handler's string, so a
+   * malformed or hostile value upstream cannot become a URL the public API layer hands a
+   * browser. The internal handler's value is a presence flag only.
    */
-  it('ignores whatever core actually put in recording_url', async () => {
+  it('ignores whatever the internal handler actually put in recording_url', async () => {
     mocks.proxyToCore.mockResolvedValue({
       status: 200,
       body: {
@@ -1026,16 +1004,14 @@ describe('agency.analytics gates the transcript and the summary as fields', () =
 });
 
 /**
- * ─── NEW (magick-agency): the owning-account settings that replaced governance ──
+ * ─── The owning-account settings that gate recording and analytics ──
  *
- * `agency.recording` / `agency.analytics` were governance capabilities resolved for
- * the request's tenant/account. Here they are `allow_recording` / `analyze_calls` on
- * the settings row of the account that OWNS the campaign (plan §3.2; lane A's
- * `campaign-behavioral-settings.ts` interface change 1), read by
+ * `agency.recording` / `agency.analytics` are `allow_recording` / `analyze_calls` on
+ * the settings row of the account that OWNS the campaign, read by
  * `resolveOwningAccountGrants` in the route file. These are that function's own cases:
  * whose row is read, NULL / no row = off, and every failure fails closed.
  */
-describe('owning-account settings (PORT NOTE: replaces governance)', () => {
+describe('owning-account settings', () => {
   function audio() {
     mocks.proxyToCore.mockResolvedValue({
       status: 200, body: Buffer.from('audio'), headers: new Headers({ 'content-type': 'audio/wav' }),
@@ -1045,7 +1021,7 @@ describe('owning-account settings (PORT NOTE: replaces governance)', () => {
   it.each([
     ['another account in the same tenant', { tenant_id: TENANT, account_id: 'account-2' }],
     ['another tenant', { tenant_id: '99999999-9999-4999-8999-999999999999', account_id: ACCOUNT }],
-  ])('media: a campaign owned by %s answers core\'s 404 without reaching core or reading any row', async (_label, owner) => {
+  ])('media: a campaign owned by %s answers the internal handler\'s 404 without reaching the internal handler or reading any row', async (_label, owner) => {
     audio();
     mocks.findCampaign.mockImplementation(async (id: string) => ({ id, ...owner }));
     const app = await buildApp();
@@ -1059,7 +1035,7 @@ describe('owning-account settings (PORT NOTE: replaces governance)', () => {
     await app.close();
   });
 
-  it('media: an unknown campaign answers the same 404 without reaching core', async () => {
+  it('media: an unknown campaign answers the same 404 without reaching the internal handler', async () => {
     audio();
     mocks.findCampaign.mockResolvedValue(null);
     const app = await buildApp();
@@ -1104,9 +1080,9 @@ describe('owning-account settings (PORT NOTE: replaces governance)', () => {
     await app.close();
   });
 
-  // MODIFIED (Phase 8 review): core's observed 400 for the missing account header, not a 403
-  // (master's capability resolved at tenant level and core's authMiddleware refused).
-  it("media: no account context answers core's 400 without reading anything", async () => {
+  // A missing account header gets the internal handler's 400, not a 403
+  // (the internal handler's authMiddleware refuses it).
+  it("media: no account context answers the internal handler's 400 without reading anything", async () => {
     audio();
     const app = await buildApp('account_admin', null);
 
@@ -1120,7 +1096,7 @@ describe('owning-account settings (PORT NOTE: replaces governance)', () => {
     await app.close();
   });
 
-  it('detail: judges the fields by the campaign row\'s owner, read after core answered', async () => {
+  it('detail: judges the fields by the campaign row\'s owner, read after the internal handler answered', async () => {
     const app = await buildApp();
 
     const res = await app.inject({ method: 'GET', url: DETAIL });
@@ -1128,14 +1104,14 @@ describe('owning-account settings (PORT NOTE: replaces governance)', () => {
     expect(res.statusCode).toBe(200);
     expect(mocks.findCampaign).toHaveBeenCalledWith(CAMPAIGN);
     expect(mocks.findSettings).toHaveBeenCalledWith(TENANT, ACCOUNT);
-    // Resolved after the core call, as master's `isCapabilityEnabled` was: these gate
+    // Resolved after the internal handler call: these gate
     // fields on a successful response, not access.
     expect(mocks.proxyToCore.mock.invocationCallOrder[0]!)
       .toBeLessThan(mocks.findSettings.mock.invocationCallOrder[0]!);
     await app.close();
   });
 
-  it('detail: a core refusal is forwarded without reading any settings', async () => {
+  it('detail: an internal handler refusal is forwarded without reading any settings', async () => {
     mocks.proxyToCore.mockResolvedValue({ status: 404, body: { error: 'Not Found', code: 'campaign_not_found' } });
     const app = await buildApp();
 
@@ -1150,7 +1126,7 @@ describe('owning-account settings (PORT NOTE: replaces governance)', () => {
   it.each([
     ['no settings row', () => mocks.findSettings.mockResolvedValue(null)],
     ['NULL columns', () => mocks.findSettings.mockResolvedValue({ allow_recording: null, analyze_calls: null })],
-    ['the campaign no longer the caller\'s (deleted after core answered)', () => mocks.findCampaign.mockResolvedValue(null)],
+    ['the campaign no longer the caller\'s (deleted after the internal handler answered)', () => mocks.findCampaign.mockResolvedValue(null)],
     ['a settings read that throws', () => mocks.findSettings.mockRejectedValue(new Error('db down'))],
     ['no account context', () => undefined],
   ])('detail: %s withholds both the analysis content and the recording link', async (label, arrange) => {

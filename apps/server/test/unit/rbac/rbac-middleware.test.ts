@@ -1,20 +1,8 @@
-/*
- * PORT NOTE (magick-agency): ported from master test/unit/rbac/rbac-middleware.test.ts@a1f0756a
- * (19 cases → 7). Deleted: the 3 'API key auth (no user context)' and 6 'API key
- * scopes narrow, never widen' cases (decision #5, no platform API keys; the scope
- * gate is gone from the middleware), and 3 cases whose permission has no contract
- * equivalent at its floor: 'viewer tries to create calls' and 'operator creates
- * calls' (`proxy.calls.create`, no operator-floored permission remains) and
- * 'tenant_admin manages API keys' (`api_keys.manage`). Three cases are re-pointed
- * to a contract permission with the same floor; each is marked.
- */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { requirePermission } from '../../../src/rbac/rbac.middleware.js';
 import type { MembershipRole } from '@magick-agency/db/models/membership.model';
 
 function makeRequest(overrides: Record<string, unknown> = {}) {
-  // PORT NOTE (magick-agency): master's `apiKeyTenantId: undefined` default is
-  // removed with platform API keys (decision #5).
   return {
     user: undefined,
     membership: undefined,
@@ -71,8 +59,7 @@ describe('requirePermission', () => {
   describe('insufficient role', () => {
 
     it('should include permission name in error message', async () => {
-      // PORT NOTE (magick-agency): master used `credit.allocate` (no credits in
-      // v1); `user.update_role` has the same `tenant_admin` floor.
+      // `user.update_role` is floored at `tenant_admin`.
       const handler = requirePermission('user.update_role');
       const req = makeRequest({
         user: { id: 'user-1' },
@@ -89,8 +76,7 @@ describe('requirePermission', () => {
     });
 
     it('should return 403 when account_admin tries tenant_admin permission', async () => {
-      // PORT NOTE (magick-agency): master used `tenant.update` (not in the
-      // contract); `user.remove` has the same `tenant_admin` floor.
+      // `user.remove` is floored at `tenant_admin`.
       const handler = requirePermission('user.remove');
       const req = makeRequest({
         user: { id: 'user-1' },
@@ -119,8 +105,7 @@ describe('requirePermission', () => {
     });
 
     it('should pass when tenant_owner uses any permission', async () => {
-      // PORT NOTE (magick-agency): `tenant.update`, `credit.allocate` and
-      // `api_keys.manage` are not in the contract; `audit.read` is the survivor.
+      // `audit.read` is the only permission checked here.
       const permissions = ['audit.read'] as const;
       for (const perm of permissions) {
         const handler = requirePermission(perm);

@@ -10,17 +10,17 @@ import type { AgencyDisposition } from '../../types/agency';
 import styles from './DispositionPad.module.css';
 
 /**
- * The disposition pad (§A.7.2 visual, §A.13.6 behaviour).
+ * The disposition pad.
  *
  * Pure assembly: every rule lives in `agencyDispositionForm` (validation),
  * `agencyDispositionSubmit` (outcome classification), `agencyStaleResponse` (the
  * cross-contact guard) and `agencyCatalogSync` (the `allowed_codes` rebuild). The
- * submit path itself is frozen at core `606d3cb` and this component adds nothing
+ * submit path itself is frozen at the API `606d3cb` and this component adds nothing
  * to it.
  *
  * ── The two things this component must not do ────────────────────────────────
  * **It never re-sorts the catalog.** `1`–`9` map to the first nine entries in the
- * order core delivered them. A client-side sort — by label, by success flag,
+ * order the API delivered them. A client-side sort — by label, by success flag,
  * anything — silently remaps every agent's muscle memory the moment an admin
  * renames a code, and it is invisible in review because both orders look
  * perfectly reasonable.
@@ -30,20 +30,20 @@ import styles from './DispositionPad.module.css';
  * error path is allowed to spend it.
  *
  * ── Where the submit button is, and why not here ─────────────────────────────
- * In the action bar (§A.13.6), with the block reason beside it. The pad is the
+ * In the action bar, with the block reason beside it. The pad is the
  * *selection* surface; putting the submit inside it would put "Save disposition"
  * in a scrolling region, and a control that can scroll out of reach during a live
- * call is the one thing §A.10 refuses for this column.
+ * call is the one thing this column must never do.
  */
 
 /** How many entries the number keys reach. Beyond this: arrows and pointer only. */
 export const NUMBER_KEY_COUNT = 9;
 
-/** §A.13.6, verbatim. Names the cause, not the symptom. */
+/** Names the cause, not the symptom. */
 export const CATALOG_CHANGED_COPY = "This campaign's outcomes changed. Pick one of these.";
 
 /**
- * §A.13.6 / §0.2 CR-1. The entire mitigation for D11: a callback re-enters the
+ * The entire mitigation for a callback surprise: a callback re-enters the
  * roster as an ordinary pending contact and **whichever agent is available takes
  * it**, so "I'll call you back" is a promise the product breaks. Sited next to the
  * time picker because that is the moment the agent decides what to say.
@@ -51,14 +51,14 @@ export const CATALOG_CHANGED_COPY = "This campaign's outcomes changed. Pick one 
 export const CALLBACK_GROUND_TRUTH_COPY =
   'The callback goes back into the campaign queue. It may not be you who makes it.';
 
-/** §A.13.6: the pad's own labels are the only trustworthy guide after a re-sync. */
+/** the pad's own labels are the only trustworthy guide after a re-sync. */
 export const KEYS_REMAPPED_COPY = 'The number keys have moved. Read the labels for this one.';
 
 /**
  * Whose clock the picker is on.
  *
- * `AD-P3-U-03` acceptance (a) asks for the callback to be captured *in the
- * contact's timezone*. **The console is not given one.** Core's
+ * the requirement asks for the callback to be captured *in the
+ * contact's timezone*. **The console is not given one.** The API's
  * `AgencyReservedAttempt` carries no contact timezone and the bootstrap carries
  * no campaign default, so the chips and the picker are necessarily in the
  * agent's browser zone. Naming that is the honest half of "displayed
@@ -77,14 +77,14 @@ export interface DispositionPadProps {
   form: DispositionFormState;
   onChange: (next: DispositionFormState) => void;
   /**
-   * Frame-bound (§A.13.1): rendered from `reserved` but disabled, enabled by
+   * Frame-bound: rendered from `reserved` but disabled, enabled by
    * `bridged`, kept enabled through a `released` needing a disposition, disabled
    * again on `agent_state` leaving wrap-up after a successful submit.
    */
   enabled: boolean;
   /** Visible stated reason while disabled. A bare greyed pad reads as a permission error. */
   disabledReason?: string | null;
-  /** Inline rejection copy, rendered **inside** the pad. Never a toast (§A.8.7). */
+  /** Inline rejection copy, rendered **inside** the pad. Never a toast. */
   rejection?: string | null;
   /** True when an `allowed_codes` rebuild moved something a number key is bound to. */
   keysRemapped?: boolean;
@@ -98,7 +98,7 @@ export interface DispositionPadProps {
 
 export interface DispositionPadHandle {
   /**
-   * §A.13.9's `C`: select the callback disposition and focus the time row.
+   * The `C` shortcut: select the callback disposition and focus the time row.
    *
    * Both halves, in one call, deliberately. Selecting without moving focus is a
    * shortcut that half-works — worse than one that is absent, because the agent
@@ -167,7 +167,7 @@ export function DispositionPad({
     if (!enabled || catalog.length === 0) return;
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
     event.preventDefault();
-    // Selection is immediate on arrow (§A.13.9) — there is no separate commit, so
+    // Selection is immediate on arrow — there is no separate commit, so
     // there is no state where the highlight and the value disagree.
     const from = selectedIndex < 0 ? -1 : selectedIndex;
     const next =
@@ -223,7 +223,7 @@ export function DispositionPad({
               }}
               type="button"
               className={styles.option}
-              // Colour is never the only channel (§A.11): the edge is paired with
+              // Colour is never the only channel: the edge is paired with
               // the label, and `data-*` keeps the mapping assertable.
               data-success={entry.is_success ? 'true' : undefined}
               data-suppress={entry.suppress ? 'true' : undefined}
@@ -231,7 +231,7 @@ export function DispositionPad({
               aria-pressed={isSelected}
               /**
                * `aria-disabled`, not `disabled`. The pad is re-rendered whenever an
-               * `agent_state` frame lands (§A.13.9 names it as one of the four
+               * `agent_state` frame lands (one of four
                * places this bites), and a real `disabled` arriving under a focused
                * option blurs it in a browser — with re-enabling NOT restoring
                * focus. A keyboard agent would be dropped to `<body>` by a frame
@@ -260,7 +260,7 @@ export function DispositionPad({
       </div>
 
       {/*
-        The callback row lives INSIDE the pad (§A.7.2) rather than in a modal: the
+        The callback row lives INSIDE the pad rather than in a modal: the
         overwhelming majority of callbacks are one of three times, and a dialog
         would cost two interactions for a chip press.
       */}
@@ -296,7 +296,7 @@ function atLocalTime(ms: number, dayOffset: number, hour: number): number {
  *
  * The chips are computed in the **agent's browser timezone**, which is not
  * necessarily the customer's — contact-timezone handling is Phase 3
- * (`AD-P3-C-05`). Naming the zone is cheap and it stops an agent promising a time
+ *. Naming the zone is cheap and it stops an agent promising a time
  * they have silently converted.
  */
 function formatResolved(ms: number): string {
@@ -333,7 +333,7 @@ function CallbackRow({
 
   return (
     <div className={styles.callback}>
-      {/* CR-1: "we", never "I" — and the question is asked in the plural too. */}
+      {/* Callback copy: "we", never "I" — and the question is asked in the plural too. */}
       <p className={styles.callbackTitle}>When should we call back?</p>
       <div className={styles.chips}>
         {chips.map((chip, index) => (

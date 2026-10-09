@@ -5,51 +5,42 @@ import { proxyCallRecording } from '../../utils/recording-proxy.js';
 import { createChildLogger } from '@magick-agency/observability';
 
 /*
- * PORT NOTE (magick-agency): ported from core `src/api/routes/webrtc-recordings.routes.ts`
- * (v1.123.2). The token check, tenant/account re-check and 403/404 bodies are
- * core's, verbatim. Changes (PORTING.md): `proxyCallRecording` takes the VoiceLink
- * recording-host allow-list (`allowedHosts` option; empty = refuse every proxy);
- * the prose below describes core's three minters - agency has the third only (the
- * attempt recording-url route, lane B / Phase 8), the softphone minter is deleted.
+ * `proxyCallRecording` takes the VoiceLink recording-host allow-list (`allowedHosts`
+ * option; empty = refuse every proxy).
  */
 
 const log = createChildLogger({ component: 'webrtc-recordings-routes' });
 
 /**
  * Unauthenticated WebRTC recording playback endpoint, protected by a signed query
- * token. The WebRTC analogue of `recordings.routes.ts` (AI calls): the signed URL
- * is issued by the authenticated `GET /api/v1/webrtc-call/:id/recording-url` route,
- * so the raw VoiceLink recording URL can be played directly in an
- * `<audio src>` without forwarding tenant/account headers from the browser. The
- * proxy streams the carrier-hosted MP3 (no upstream credentials).
+ * token. The signed URL is issued by the authenticated
+ * `GET /api/v1/agency-campaigns/:id/attempts/:attemptId/recording-url` route, so
+ * the raw VoiceLink recording URL can be played directly in an `<audio src>`
+ * without forwarding tenant/account headers from the browser. The proxy streams
+ * the carrier-hosted MP3 (no upstream credentials).
  *
  * ── Why this route is deliberately scope-agnostic ──────────────────────────
  *
- * It uses the unscoped `findById`, so on its own it would serve an agency
- * power-dialer leg's recording as readily as a softphone call's. That is correct,
- * and the invariant that makes it safe is: **the signed token IS the
- * authorization, and every route that mints one is scope-gated.**
+ * It uses the unscoped `findById`, so on its own it would serve any leg's
+ * recording, whatever its scope. That is correct, and the invariant that makes it
+ * safe is: **the signed token IS the authorization, and every route that mints
+ * one is scope-gated.**
  *
- * There are exactly THREE minters — `signRecordingUrl` is called only from:
+ * There is exactly ONE minter — `signRecordingUrl` is called only from
+ * `agency-campaigns.routes.ts`'s `GET /:id/attempts/:attemptId/recording-url`,
+ * which reaches its record through the campaign's own ownership check and
+ * `findByIdScoped(…, 'agency')`.
  *
- *   1. `calls.routes.ts` — AI calls, a different table entirely.
- *   2. `webrtc-call.routes.ts`'s `GET /:id/recording-url` — reaches its record
- *      through `findByIdScoped(…, 'dialer')`, so it 404s an agency row.
- *   3. `agency-campaigns.routes.ts`'s
- *      `GET /:id/attempts/:attemptId/recording-url` — reaches its record through
- *      the campaign's own ownership check and `findByIdScoped(…, 'agency')`.
- *
- * Each is scope-gated, and the token is bound to one call id (the id is inside
+ * It is scope-gated, and the token is bound to one call id (the id is inside
  * the HMAC — see `signRecordingUrl`), so a token cannot be replayed against
  * another row. This route additionally re-checks the record's tenant and account
  * against the token's principal below.
  *
- * So do NOT pin a scope here. This is the shared playback surface every
- * product's signed URLs point at; pinning `'dialer'` would break agency playback
- * while adding no security the minters do not already provide. **If you add a
- * fourth minter, gate it, and update the list above** — the exhaustiveness of
- * that list is the whole argument for leaving an unauthenticated route unscoped,
- * so a stale list is a silently weakened one.
+ * So do NOT pin a scope here: this is the shared playback surface signed URLs
+ * point at, and a pinned scope adds no security the minter does not already
+ * provide. **If you add a second minter, gate it, and update the list above** —
+ * the exhaustiveness of that list is the whole argument for leaving an
+ * unauthenticated route unscoped, so a stale list is a silently weakened one.
  */
 export interface WebrtcRecordingsRoutesOptions {
   /** VoiceLink recording hosts the proxy may fetch from (`voicelinkRecording.allowedHosts`). */

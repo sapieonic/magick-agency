@@ -1,10 +1,6 @@
 /*
- * PORT NOTE (magick-agency): ported from core `src/transcription/recording-fetcher.ts`
- * (v1.123.2) and REWORKED (plan §4): `telephony_credential_id` credential resolution
- * (`buildUpstreamHeaders` / `resolveRecordingAuthSource`) is dropped; the fetch is
- * unauthenticated and gated by the VoiceLink recording-host allow-list. Everything
- * from the response onward (status mapping, byte cap, streaming, mime inference) is
- * core's, verbatim.
+ * The recording fetch is unauthenticated and gated by the VoiceLink recording-host
+ * allow-list.
  */
 import { createChildLogger } from '@magick-agency/observability';
 import { fetchWithAllowedRedirects, RecordingHostRefusedError } from '../utils/recording-proxy.js';
@@ -13,12 +9,12 @@ import { TranscriptionError } from './types.js';
 const log = createChildLogger({ component: 'recording-fetcher' });
 
 export interface FetchRecordingOptions {
-  /** Hard cap on buffered bytes — the stream is aborted the moment it's exceeded (C4). */
+  /** Hard cap on buffered bytes — the stream is aborted the moment it's exceeded. */
   maxBytes: number;
   /** Overall request timeout (ms). */
   timeoutMs: number;
   /**
-   * VoiceLink recording hosts this fetch may touch (plan §4). The URL's PARSED
+   * VoiceLink recording hosts this fetch may touch. The URL's PARSED
    * hostname must be exact-or-subdomain of an entry; an empty list refuses every
    * fetch. Required rather than defaulted: a default that type-checks everywhere
    * audits nowhere, and the wrong default here is an SSRF.
@@ -34,13 +30,11 @@ export interface FetchedRecording {
 /**
  * Download a call recording's bytes for transcription.
  *
- * Nothing in the repo downloads recording bytes today — every existing path
- * *streams* to a client (`proxyCallRecording` returns `upstream.body`). This is
- * the first buffering consumer, so it must be defensive (spec C4):
+ * Every other recording path *streams* to a client (`proxyCallRecording` returns
+ * `upstream.body`). This is the one buffering consumer, so it must be defensive:
  *
  *  - Sends NO credentials: a VoiceLink recording is a public carrier-hosted MP3.
- *    Core resolved a per-call carrier credential here (`telephony_credential_id`);
- *    that is gone with BYOC. In its place the URL's parsed hostname must be on the
+ *    Instead, the URL's parsed hostname must be on the
  *    configured VoiceLink recording-host allow-list — `recording_url` is persisted
  *    from an unauthenticated carrier webhook, so it is attacker-reachable and an
  *    unchecked fetch would be an SSRF. A host off the list is a PERMANENT failure.

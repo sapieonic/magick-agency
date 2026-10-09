@@ -117,7 +117,7 @@ export interface UseRosterIngestOptions {
  *    already terminal when the 202 arrives must render its real counters, not a
  *    fabricated all-zero summary.
  *  - **Counters are never invented locally.** Every number rendered comes from a
- *    job master actually served, so a poll failure reports lost contact rather
+ *    job the API actually served, so a poll failure reports lost contact rather
  *    than claiming the import died — the ingest is still running server-side.
  */
 export function useRosterIngest(
@@ -142,8 +142,8 @@ export function useRosterIngest(
   optionsRef.current = options;
 
   /**
-   * The limits the operator is told must be the REAL ones (§B.2), so they come
-   * from master rather than from a constant here that would go stale.
+   * The limits the operator is told must be the REAL ones, so they come
+   * from the API rather than from a constant here that would go stale.
    */
   useEffect(() => {
     let cancelled = false;

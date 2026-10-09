@@ -3,11 +3,8 @@ import { vi } from 'vitest';
 import { getTestPool, closeTestPool, truncateAll } from '../setup/test-utils.js';
 import { insertAccountSettings, uuidFor } from '../setup/factories.js';
 
-// PORT NOTE (magick-agency): ported from core
-// test/integration/scenarios/account-settings-concurrency.test.ts@4850d1d9.
-// Only changes: tenant/account labels are wrapped in `uuidFor` (UUID columns),
-// the one inline-literal SQL check binds them as parameters, and the unused
-// `getTestRedis` / `flushTestRedis` imports are dropped (no Redis in this package).
+// Tenant/account labels are wrapped in `uuidFor` (UUID columns), and the one
+// inline-literal SQL check binds them as parameters.
 
 vi.mock('../../../src/connection.js', () => ({
   getPool: () => getTestPool(),

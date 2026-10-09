@@ -3,10 +3,9 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 /**
- * NEW (magick-agency): `/app`'s index. cusui's was the AI dashboard; the console's
- * lands the platform zone on a real page, and — the property that matters most —
- * never redirects into `/agency`, which would bounce the workspace's own exit
- * straight back in (cusui's `HomeRedirect` docstring, §7b).
+ * `/app`'s index. It lands the platform zone on a real page, and — the property
+ * that matters most — never redirects into `/agency`, which would bounce the
+ * workspace's own exit straight back in.
  */
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),

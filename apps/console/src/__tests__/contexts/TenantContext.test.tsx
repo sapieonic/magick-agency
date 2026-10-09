@@ -22,7 +22,7 @@ import { TenantProvider, useTenant } from '../../contexts/TenantContext';
 import { ApiError } from '../../api/client';
 
 /**
- * The refusal core/master actually sends for a role below `account.read`'s
+ * The refusal the server actually sends for a role below `account.read`'s
  * `viewer` floor, thrown the way `apiFetch` actually throws it.
  *
  * A real `ApiError` and not `new Error('Forbidden')`, because the **status is now
@@ -357,8 +357,8 @@ describe('account resolution', () => {
      * **The gap between "you are allowed less" and "we are broken."**
      *
      * The fallback fires on any rejection — deliberately, so recovery never depends
-     * on a status code master might mask. What was missing is that it reported
-     * `'ready'` either way. An `account_admin` signing in during a master restart
+     * on a status code the server might mask. What was missing is that it reported
+     * `'ready'` either way. An `account_admin` signing in during a server restart
      * got `/accounts/mine`: their own memberships only, no `slug`/`settings`/
      * `status`, no warning, no retry offered, the narrowed pick written to
      * `localStorage`, and `accountsLoadedForTenant` set so the effect never fired
@@ -382,7 +382,7 @@ describe('account resolution', () => {
 
     it('treats an unrecognisable failure as degraded, not as legitimate narrowing', async () => {
       /**
-       * The masking trade-off, pinned. Master replaces error *bodies*, so a status
+       * The masking trade-off, pinned. The server replaces error *bodies*, so a status
        * code is a weaker signal than it looks — and this is the direction the design
        * has to fail in. An unknown failure warns an agent who may not have needed it;
        * the opposite default silently narrows an admin, which is the defect.

@@ -8,10 +8,9 @@
  *
  * ── The defect this closes ──────────────────────────────────────────────────
  *
- * `AgencyDisposition.is_success` has existed on every disposition-catalog entry
- * since migration 072, is settable in the campaign builder, and is styled on the
- * agent's disposition pad. **Nothing counted it.** Its only other reference in
- * core was a type check in `campaign-config.ts`'s validation loop — i.e. the
+ * `AgencyDisposition.is_success` has existed on every disposition-catalog entry,
+ * is settable in the campaign builder, and is styled on the
+ * agent's disposition pad. **Nothing counted it.** Its only other reference was a type check in `campaign-config.ts`'s validation loop — i.e. the
  * platform verified the operator's answer was a boolean and then threw it away.
  * An operator could mark `Sale` as a success, watch agents submit it all day, and
  * find no number anywhere that had noticed. A declared-but-dead contract field is
@@ -39,8 +38,8 @@
  * ── Defensive on shape, exactly as `resolveDisposition` is ──────────────────
  *
  * The column's only constraint is `jsonb_typeof(disposition_catalog) = 'array'`
- * (migration 072). **Its ELEMENTS are unconstrained**, so a catalog written
- * directly against core — or by a client that got the shape wrong — can hold
+ * (`ck_agency_campaign_dispositions`). **Its ELEMENTS are unconstrained**, so a catalog written
+ * directly against the internal handlers — or by a client that got the shape wrong — can hold
  * strings, numbers, nulls or nested arrays. `resolveDisposition` filters elements
  * to objects with a non-empty string `code` for precisely this reason: a malformed
  * catalog must not 500 an agent's submission. The same rule applies here, one step

@@ -73,7 +73,7 @@ describe('agencyPersona', () => {
   });
 
   it('is null for a role this mirror has never heard of', () => {
-    // A role added in master before it is mirrored here scores 0 in
+    // A role added in the API before it is mirrored here scores 0 in
     // `hasPermission`, so it reaches neither arm — which is the safe direction:
     // no persona means no landing decision, rather than a guessed one.
     expect(agencyPersona('galactic_overlord' as Role)).toBeNull();
@@ -164,9 +164,8 @@ describe('isDedicatedAgent — the predicate that may take navigation away', () 
      * evicting a role that has something to lose, and this case says so.
      */
     expect(PERMISSION_MIN_ROLE['agency.station.connect']).toBe('agent');
-    // PORT NOTE (magick-agency): cusui pinned `proxy.calls.read` (AI calls, not
-    // ported); `tenant.read` — the team page's read — is agency's pre-dialer
-    // viewer-floored permission in its place.
+    // `tenant.read` — the team page's read — is agency's pre-dialer
+    // viewer-floored permission.
     expect(PERMISSION_MIN_ROLE['tenant.read']).toBe('viewer');
     expect(PERMISSION_MIN_ROLE['account.read']).toBe('viewer');
   });

@@ -1,7 +1,3 @@
-// PORT NOTE (magick-agency, Phase 6): ported from core
-// test/unit/agency/dial-dispatcher.test.ts@4850d1d9 (7 cases), verbatim except the
-// logger mock specifier (`../../../src/utils/logger.js` → `@magick-agency/observability`,
-// the path rule). No case deleted or modified.
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('@magick-agency/observability', () => ({
@@ -47,7 +43,7 @@ describe('LocalDialDispatcher', () => {
     const execute = vi.fn();
     const dispatcher = new LocalDialDispatcher('r1', execute);
 
-    // Unreachable while core is single-replica, and deliberately loud rather than
+    // Unreachable while the dialer runtime is single-replica, and deliberately loud rather than
     // dialing anyway: the bridge session, the agent's socket and the carrier
     // socket must end up in one process, and dialing elsewhere produces a
     // customer connected to nobody.
@@ -62,9 +58,9 @@ describe('LocalDialDispatcher', () => {
     await expect(dispatcher.dispatch(cmd('r1'))).rejects.toThrow('carrier down');
   });
 
-  // ── The pre-dial clearance guard (`AD-P3-C-06`) ───────────────────────────
+  // ── The pre-dial clearance guard ───────────────────────────
   //
-  // §4.2 puts the compliance gates in the pacing tick, so this is the choke point
+  // The compliance gates sit in the pacing tick, so this is the choke point
   // that stops a FUTURE dial path from placing calls no gate ever saw. The brand
   // makes the omission a compile error; these three cases cover what a type
   // cannot see.

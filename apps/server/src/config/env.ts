@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-/** Ported from magic-voice-core/src/config/schema.ts `envBoolean` semantics. */
+/** An env flag is true unless unset, empty, `false`, `0` or `no` (case-insensitive). */
 export function isEnvTrue(value: string | undefined): boolean {
   if (value === undefined) return false;
   return !['false', '0', 'no', ''].includes(value.toLowerCase().trim());

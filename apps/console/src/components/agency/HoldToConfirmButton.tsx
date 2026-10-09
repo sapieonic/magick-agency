@@ -3,7 +3,7 @@ import { trackAgencyHoldAbandoned } from '../../analytics/events';
 import styles from './HoldToConfirmButton.module.css';
 
 /**
- * Hang up, with a deliberate second signal (§A.7.1.1, `AD-P2-U-02`).
+ * Hang up, with a deliberate second signal.
  *
  * Phase 1 shipped a plain button, which means the most destructive control on the
  * screen — sitting in the corner an agent's cursor rests in — fired on a single
@@ -34,9 +34,9 @@ import styles from './HoldToConfirmButton.module.css';
  * *same fill element*, in reverse, so the fill always means one thing: **an
  * end-call gesture is in progress**, whichever hand started it.
  *
- * ── One re-decision against §A.7.1.1, deliberately ──────────────────────────
+ * ── One re-decision against, deliberately ──────────────────────────
  * The spec says the button is "disabled" after firing and while ending. It is
- * **`aria-disabled`, never `disabled`**. §A.13.9 measured what `disabled` does to a
+ * **`aria-disabled`, never `disabled`**. measured what `disabled` does to a
  * focused control in a real browser: focus drops to `<body>`, and **re-enabling
  * does not restore it**. An agent who fired this with `E`,`E` has focus on this
  * button by definition, so a real `disabled` would strand them at the top of the
@@ -45,7 +45,7 @@ import styles from './HoldToConfirmButton.module.css';
  * the handler guard.
  */
 
-/** Fixed by §A.7.1.1. Not configurable — see the note above. */
+/** Fixed by Not configurable — see the note above. */
 export const HOLD_MS = 500;
 /** The `E`,`E` window. Also fixed. */
 export const DOUBLE_KEY_MS = 1500;
@@ -100,7 +100,7 @@ export interface HoldToConfirmCopy {
   /**
    * Where the `E`,`E` keydown listener lives.
    *
-   * **`window`** for the console: `E` is a global shortcut (§A.9) and an agent
+   * **`window`** for the console: `E` is a global shortcut and an agent
    * whose focus is in the contact panel still has to be able to end a call.
    *
    * **`self`** everywhere else, and it is not a lesser option — a page-wide key
@@ -157,7 +157,7 @@ export interface HoldToConfirmButtonProps {
    * `confirmation: 'caller'` that is the only thing that returns it to `idle`.
    */
   attemptId: string | null;
-  /** False from `reserved` onward is never correct — live from `reserved` (§A.7.1). */
+  /** False from `reserved` onward is never correct — live from `reserved`. */
   enabled: boolean;
   /** Visible stated reason when there is nothing to hang up. */
   disabledReason?: string | null;
@@ -259,12 +259,12 @@ export function HoldToConfirmButton({
     setPhase('ending');
     onConfirm();
     // The button must not pretend the call is over. `released` is the
-    // authoritative end (§A.3.1) — never `ended`, never `status: 'completed'`.
+    // authoritative end — never `ended`, never `status: 'completed'`.
     //
     // This said "the hangup frame is fire-and-forget on the socket", which was
     // the wrong reason for the right behaviour: nothing read that frame, so the
     // timeout below was the only thing that ever fired and `failed` was the true
-    // outcome of every hang-up (`MAG-112`). The reason now is that the HTTP
+    // outcome of every hang-up. The reason now is that the HTTP
     // response acknowledges the request while the terminal state still arrives on
     // the socket — so waiting for `released` remains correct.
     //
@@ -322,7 +322,7 @@ export function HoldToConfirmButton({
   };
 
   /**
-   * `E` is a global shortcut (§A.9), so the listener is on the window rather than
+   * `E` is a global shortcut, so the listener is on the window rather than
    * the button — an agent whose focus is in the contact panel still needs it. The
    * suppression rule lives here too: **all single-key shortcuts are suppressed
    * while focus is inside a text input**, because a note containing the letter "e"
@@ -347,7 +347,7 @@ export function HoldToConfirmButton({
         return;
       }
       if (inTextInput || event.ctrlKey || event.metaKey || event.altKey) {
-        // Focus entering a text input is itself a cancel (§A.7.1.1): an agent who
+        // Focus entering a text input is itself a cancel: an agent who
         // has gone to type is no longer ending a call.
         if (inTextInput && phaseRef.current === 'armed') cancel();
         return;
@@ -399,7 +399,7 @@ export function HoldToConfirmButton({
         onPointerLeave={cancel}
         onPointerCancel={cancel}
         onKeyDown={(event) => {
-          // `Esc` on the button cancels the hold (§A.9) without bubbling into a
+          // `Esc` on the button cancels the hold without bubbling into a
           // page-level handler that might also close something.
           //
           // Gated on there being a gesture to cancel. Unconditionally, this
@@ -439,7 +439,7 @@ export function HoldToConfirmButton({
       {/*
         Inline, in the action bar, and the console NEVER retries automatically: a
         retry landing after a new `reserved` hangs up a different customer. The same
-        shape §A.13.6 forbids for a stale disposition response, written twice
+        shape forbids for a stale disposition response, written twice
         because the two are implemented in different files.
       */}
       {phase === 'failed' ? (

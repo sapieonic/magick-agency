@@ -15,8 +15,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
  * ── And it must arrive at the RIGHT sign-in page ───────────────────────────
  * Since the Agency Dialer got a door of its own, carrying the path is only half
  * the job: an agent bounced off `/station` has to come back through
- * `/agency/login`, not through the primary app's page with its Sign Up tab and
- * its free-credits banner. `RequireAuth` does not choose that itself — it hands
+ * `/agency/login`, not through the generic `/login` door. `RequireAuth` does not choose that itself — it hands
  * the requested path to `loginPathReturningTo`, which picks the door from the
  * destination — so what these cases pin is that the destination survives the
  * handoff intact and reaches the door the surface belongs to.

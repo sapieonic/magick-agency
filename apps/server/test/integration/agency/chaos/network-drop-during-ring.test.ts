@@ -1,22 +1,20 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 /*
- * PORT NOTE (magick-agency, Phase 6): ported from core
- * test/integration/agency/chaos/network-drop-during-ring.test.ts@4850d1d9 — 7 cases, all kept. Modified only in
- * harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
+ * Harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
  * `/connection` entry, which packages/db's repositories import); the config stub
- * drops `telephony.vobiz` (VoBiz deleted, plan §5); import specifiers per the path
+ * carries no carrier config; import specifiers per the path
  * rule (domain leaves, `@magick-agency/contracts/agency`).
  */
 import { closeTestPool, getTestPool, truncateAll } from '../../setup/test-utils.js';
 
-// PORT NOTE: core mocked `src/db/connection.js`; agency's pool lives in `@magick-agency/db`
+// The DB pool lives in `@magick-agency/db`
 // (the server's repositories import its root, packages/db's repositories `./connection`).
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
 vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
 vi.mock('../../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: {}, // PORT NOTE: core stubbed `telephony.vobiz` (VoBiz deleted, plan §5)
+    telephony: {}, // no carrier config is needed
   },
 }));
 
@@ -31,9 +29,9 @@ const { DEFERRED_HANGUP_MS } = await import('@magick-agency/domain/timers');
 type World = Awaited<ReturnType<typeof createChaosWorld>>;
 
 /**
- * ─── AD-P2-X-01 · SCENARIO 4 — THE NETWORK DROPS DURING THE RING ────────────
+ * ─── SCENARIO 4 — THE NETWORK DROPS DURING THE RING ────────────
  *
- * Held on `AD-P2-C-07` (§15.9) and now unblocked. The moment under test is the
+ * Previously blocked on the deferred-hangup work; now enabled. The moment under test is the
  * narrowest one in the whole feature: the customer's phone is ringing, the
  * carrier has not answered, and the agent's wifi goes away. Nothing has been
  * said, nobody is in conversation, and the attempt exists only as a `dialing`
@@ -51,7 +49,7 @@ type World = Awaited<ReturnType<typeof createChaosWorld>>;
  *
  * ── The pair, asserted separately ──────────────────────────────────────────
  *
- * §15.9 is explicit that the expected end state is a **pair** the 8s window makes
+ * is explicit that the expected end state is a **pair** the 8s window makes
  * distinct, and that asserting one proves neither:
  *
  *   - **inside the window** — the same session re-attaching re-adopts the attempt;
@@ -65,7 +63,7 @@ type World = Awaited<ReturnType<typeof createChaosWorld>>;
  *
  * ── `T-B7`'s warning, which applies here directly ──────────────────────────
  *
- * The supersession guard at `webrtc-bridge-manager.ts:900` (`session.browserWs
+ * The supersession guard at `webrtc-bridge-manager.ts` (`session.browserWs
  * !== ws`) is **not** the window. It decides which of two *simultaneously open*
  * sockets owns a call; it says nothing about a socket that is simply gone, which
  * is every real network drop. A scenario that conflated them would pass with the
@@ -74,7 +72,7 @@ type World = Awaited<ReturnType<typeof createChaosWorld>>;
  * from a call that happened to survive.
  */
 
-describe('AD-P2-X-01 · network drop during the ring (chaos)', () => {
+describe('network drop during the ring (chaos)', () => {
   let world: World;
 
   beforeEach(truncateAll);
@@ -88,7 +86,7 @@ describe('AD-P2-X-01 · network drop during the ring (chaos)', () => {
    * One agent, one contact, parked **mid-ring**.
    *
    * The preconditions are asserted rather than assumed, and that is not
-   * ceremony: §15.3's first draft passed because the pool was fully occupied for
+   * ceremony: the first draft passed because the pool was fully occupied for
    * reasons unrelated to the chaos. Here the equivalent trap is a call that
    * quietly answered — every assertion below about a mid-ring drop would then be
    * describing an ordinary connected call, and the scenario would prove nothing
@@ -132,7 +130,7 @@ describe('AD-P2-X-01 · network drop during the ring (chaos)', () => {
     const drop = await w.chaos.dropStation(sessionId);
     expect(drop.attemptId).toBe(attempt.id);
     // Armed, not hung up. `false` here would mean the bridge ended the call the
-    // instant the socket went — which is the pre-`C-07` behaviour.
+    // instant the socket went — which would be hanging up immediately.
     expect(drop.graceArmed, 'the drop hung the call up instead of holding it').toBe(true);
     expect(w.bridge.graceArmedFor(attempt.id)).toBe(true);
 
@@ -214,7 +212,7 @@ describe('AD-P2-X-01 · network drop during the ring (chaos)', () => {
     // abandoned call in the regulator's sense: nobody was ever on the line.
     expect(settled.answered_at).toBeNull();
     expect(settled.bridged_at).toBeNull();
-    // §10's cross-check, both halves. An `agent_disconnected` on a ringing call is
+    // the cross-check, both halves. An `agent_disconnected` on a ringing call is
     // our fault but it is NOT an abandoned call in the regulator's sense — nobody
     // was ever on the line — and this row is the sharpest test of that, because its
     // `bridged_at IS NULL` arm is true while its `answered_at IS NOT NULL` arm is
@@ -224,9 +222,9 @@ describe('AD-P2-X-01 · network drop during the ring (chaos)', () => {
 
     // The contact left `in_flight` — nothing is stranded, which is the property
     // that keeps the campaign finishable. WHERE it went is a separate claim and it
-    // is not what §15.9 expects; see the standing case below.
+    // is not what expects; see the standing case below.
     //
-    // Barriered for the same reason §15.9 is: this read has always been the same
+    // Barriered for the same reason is: this read has always been the same
     // race, and it passed only because the two queries above gave the contact write
     // time to land. Relying on that is relying on the box being slow.
     await releasedContact(settled.contact_id);
@@ -235,7 +233,7 @@ describe('AD-P2-X-01 · network drop during the ring (chaos)', () => {
     expect(states['connected'] ?? 0).toBe(0);
     expect(await contactsWithConcurrentLiveAttempts(w.campaignId)).toEqual([]);
 
-    // The agent is out of the pool, and never `available` (D2): their socket is
+    // The agent is out of the pool, and never `available`: their socket is
     // gone and nothing has demonstrably re-attached.
     //
     // Barriered on the mirror for the same reason the contact read above is: the
@@ -247,9 +245,9 @@ describe('AD-P2-X-01 · network drop during the ring (chaos)', () => {
   });
 
   /**
-   * ── RESOLVED by `AD-P3-C-09` / MAG-97. The wrapper is gone; the test is not ──
+   * ── RESOLVED by. The wrapper is gone; the test is not ──
    *
-   * This stood as `it.fails` through two sessions. §15.9 states the past-the-window
+   * This stood as `it.fails` through two sessions. states the past-the-window
    * end state as *"the attempt settles `agent_disconnected` **and the contact is
    * requeued**"*. The first half always held; the second did not, because the
    * dialer marked every non-`connected` outcome `completed` with
@@ -278,7 +276,7 @@ describe('AD-P2-X-01 · network drop during the ring (chaos)', () => {
    * `attempt-number-collision.test.ts`, where a reaper-requeued contact is redialed
    * with a derived, gapless `attempt_number` over five crash cycles.
    */
-  it('§15.9: past the window the contact is REQUEUED, not retired with an attempt spent', async () => {
+  it('past the window the contact is REQUEUED, not retired with an attempt spent', async () => {
     const { w, sessionId, attempt } = await ringingAttempt();
     await w.chaos.dropStation(sessionId);
     expect(await w.bridge.expireGrace(attempt.id)).toBe(true);
@@ -328,7 +326,7 @@ describe('AD-P2-X-01 · network drop during the ring (chaos)', () => {
   });
 
   /**
-   * The bridge's own refusal — `agency-dialer.ts:550`, the one guard the case above
+   * The bridge's own refusal — `agency-dialer.ts`, the one guard the case above
    * cannot reach.
    *
    * The window lapses and the bridge's session dies, but the `ended` lifecycle
@@ -355,16 +353,16 @@ describe('AD-P2-X-01 · network drop during the ring (chaos)', () => {
   });
 
   /**
-   * `AD-P2-C-07`'s own regression, at the tier where it bit.
+   * the own regression, at the tier where it bit.
    *
-   * `cf55996` fixed a bootstrap that seeded Redis from `agency_agent_sessions` —
+   * The fix was to a bootstrap that seeded Redis from `agency_agent_sessions` —
    * and because `joinOrRehydrate` preserves any non-`offline` state, that row
    * genuinely can read `available`. An agent reloading their console mid-call had
    * `available` written over a live `on_call` lease **and the pacing tick reserved
    * them for a second customer while they were still talking to the first.**
    *
    * The unit tier pins `rehydrateAgent`'s return value. What it cannot show is the
-   * consequence, which is the whole reason the bug mattered: §16.6 question 2 —
+   * consequence, which is the whole reason the bug mattered: question 2 —
    * *is the property true where it is consumed?* It is consumed by `tickOnce`, so
    * the assertion is on what the tick does, against a row deliberately made to
    * say `available`.
@@ -401,7 +399,7 @@ describe('AD-P2-X-01 · network drop during the ring (chaos)', () => {
 
     // ── The consumption assertions, and which of them actually discriminate ──
     //
-    // Falsified by reverting `cf55996` (rehydration trusting the durable row). What
+    // Falsified by reverting the rehydration fix (rehydration trusting the durable row). What
     // reddens is the pair above and the binding below — NOT the attempt count. The
     // reason is worth writing down rather than discovering twice: with one agent
     // on one live call there is no IDLE agent, so `planTick` returns early on
@@ -422,7 +420,7 @@ describe('AD-P2-X-01 · network drop during the ring (chaos)', () => {
     // So the tick is still run and still asserted — a regression that *did* get
     // past occupancy would be caught — but the honest claim of this case is the
     // one the assertions above make: **the live lease and its attempt binding
-    // survive a reconnect.** That is the defect `cf55996` fixed; the second
+    // survive a reconnect.** That is the defect that fix addressed; the second
     // reservation was its downstream consequence, reachable once capacity frees.
     await w.tick();
 

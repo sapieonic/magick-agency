@@ -11,7 +11,7 @@ import type { UploadPhase } from '../../../hooks/useRosterIngest';
  * This flow is sequential for the operator and re-enterable for the same
  * reason the old page was: state lives on the page, not in the step. A
  * completed ingest can be revisited; a mapping mistake does not wipe the
- * name. The only hard gate is basics — core refuses a campaign with no
+ * name. The only hard gate is basics — the API refuses a campaign with no
  * name or an empty caller-ID pool, so later steps stay closed until those
  * two exist.
  */

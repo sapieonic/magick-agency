@@ -1,13 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify from 'fastify';
 
-/*
- * PORT NOTE (magick-agency, Phase 8): ported from core test/unit/agency/campaign-stats-series-route.test.ts@4850d1d9.
- * Mock paths re-pointed only (logger → a partial `@magick-agency/observability` mock;
- * announcement / call / account-settings / profile repositories → `@magick-agency/db/repositories/*`;
- * leaf modules → `@magick-agency/domain/*`; `contracts.js` → `@magick-agency/contracts/agency`).
- * Cases verbatim unless noted here.
- */
 import type { FastifyReply } from 'fastify';
 
 // ---------------------------------------------------------------------------
@@ -15,14 +8,14 @@ import type { FastifyReply } from 'fastify';
 //
 // ── The two assertions this file exists for ────────────────────────────────
 //
-// 1. **AUTH.** Core registers auth middleware PER ROUTE PLUGIN, not globally
-//    (root CLAUDE.md), and this repository has already shipped that mistake
-//    once: `agencyInternalRoutes` was mounted as a sibling of `internalRoutes`,
+// 1. **AUTH.** Auth middleware is registered PER ROUTE PLUGIN, not globally,
+//    and an earlier defect shipped exactly that mistake:
+//    `agencyInternalRoutes` was mounted as a sibling of `internalRoutes`,
 //    inherited none of its hooks, and left the roster-ingest route reachable
-//    unauthenticated (MAG-89). So the test asserts the middleware actually RUNS
+//    unauthenticated. So the test asserts the middleware actually RUNS
 //    and that a refusal from it short-circuits the handler — deliberately not a
 //    status-code assertion, because a route that does not exist also answers 404
-//    (the MAG-106 trap).
+//    (a route that does not exist passes a status-only check).
 //
 // 2. **PRECEDENCE.** `/:id/stats/series` sits one segment below `/:id/stats`.
 //    Fastify's radix tree separates them, and nothing about that is asserted by
@@ -154,11 +147,11 @@ beforeEach(() => {
 
 // ─── the wiring ─────────────────────────────────────────────────────────────
 
-describe('the route is behind core auth and the dialer flag', () => {
+describe('the route is behind the auth middleware and the dialer flag', () => {
   it('runs authMiddleware — asserted on the SPY, not on a status code', async () => {
     await get(WINDOW);
-    // A route that does not exist also answers 404, which is what made the previous
-    // version of this assertion vacuous in this repository (MAG-106). The middleware
+    // A route that does not exist also answers 404, which is what made a status-code
+    // version of this assertion vacuous. The middleware
     // having been CALLED is the fact that matters.
     expect(authSpy).toHaveBeenCalledTimes(1);
   });
@@ -328,7 +321,7 @@ describe('the bucket vocabulary', () => {
 });
 
 describe('the payload', () => {
-  it('serves the repository\'s series verbatim — no rates added on the way out', async () => {
+  it('serves the repository\'s series unchanged — no rates added on the way out', async () => {
     const res = await get(WINDOW);
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual(SERIES);

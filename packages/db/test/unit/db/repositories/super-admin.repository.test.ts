@@ -1,4 +1,3 @@
-// PORT NOTE (magick-agency): ported from master test/unit/db/repositories/super-admin.repository.test.ts@a1f0756a (7 cases → 7) — verbatim except import specifiers (master `src/db/connection.js` / `src/db/repositories/` → this package's `src/connection.js` / `src/repositories/`).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ pool: { query: vi.fn() } }));

@@ -11,7 +11,7 @@ import {
 import type { AgencyStall, AgencyStallCode } from '../../types/agency-campaign';
 
 /**
- * The health strip's derivations (§C.2, §C.3, CR-2).
+ * The health strip's derivations.
  *
  * Everything here is a claim made to a supervisor about a live campaign, so the
  * cases that matter are the ones where being wrong sends them after the wrong
@@ -23,8 +23,8 @@ import type { AgencyStall, AgencyStallCode } from '../../types/agency-campaign';
 const at = (iso: string) => `«${iso}»`;
 
 describe('stall priority', () => {
-  it('is exactly core’s AGENCY_STALL_PRIORITY, in order', () => {
-    // Mirrored by hand from `magic-voice-core/src/agency/contracts.ts`. Pinned
+  it('is exactly the API’s AGENCY_STALL_PRIORITY, in order', () => {
+    // Mirrored by hand from the server's stall-priority contract. Pinned
     // literally rather than derived, because the whole point of the constant is
     // that a reorder is a decision someone made — it should break a test, not
     // quietly change which diagnosis a supervisor sees.
@@ -35,7 +35,7 @@ describe('stall priority', () => {
       'concurrency_saturated',
       'outside_calling_hours',
       'list_exhausted_retries_pending',
-      // PORT NOTE (magick-agency): `credits_low` (priority 7) removed — plan §3.3.
+      // There is no `credits_low` stall code: agency has no credits.
       'elevated_failure_rate',
     ]);
   });
@@ -49,10 +49,9 @@ describe('stall priority', () => {
 
 describe('sortStallCodes', () => {
   it('sorts by priority, NOT by the order the array arrived in', () => {
-    // Core does send `other_stalls` ranked. This asserts the console does not
+    // The API does send `other_stalls` ranked. This asserts the console does not
     // depend on that: reversed input must come back in priority order.
-    // PORT NOTE (magick-agency): cusui's fixture carried `credits_low`, which is
-    // no longer a stall code; `outside_calling_hours` takes its slot.
+    // `credits_low` is not a stall code; `outside_calling_hours` takes its slot.
     const scrambled: AgencyStallCode[] = [
       'elevated_failure_rate',
       'no_agents_available',
@@ -75,7 +74,6 @@ describe('sortStallCodes', () => {
   });
 
   it('does not mutate its input', () => {
-    // PORT NOTE (magick-agency): `credits_low` → `elevated_failure_rate` (removed code).
     const input: AgencyStallCode[] = ['elevated_failure_rate', 'dnc_unavailable'];
     sortStallCodes(input);
     expect(input).toEqual(['elevated_failure_rate', 'dnc_unavailable']);
@@ -94,8 +92,8 @@ describe('stallCopy — each arm names its own evidence', () => {
 
     expect(copy.headline).toContain('3.4%');
     expect(copy.headline).toContain('3%');
-    // The figure is frozen at the instant the guardrail fired (core migration
-    // 089). Calling it a current rate means a supervisor who has since staffed
+    // The figure is frozen at the instant the guardrail fired (`paused_at` /
+    // `pause_abandonment_rate_pct`). Calling it a current rate means a supervisor who has since staffed
     // up watches a number that cannot move and concludes the fix failed.
     expect(copy.evidence).toContain('«2026-08-15T09:30:00.000Z»');
     expect(copy.evidence).toMatch(/not a live rate/i);
@@ -152,7 +150,7 @@ describe('stallCopy — each arm names its own evidence', () => {
   it('concurrency_saturated names the numbers and says who can change the limit', () => {
     const copy = stallCopy({ code: 'concurrency_saturated', limit: 5, in_use: 5 }, at);
     expect(copy.headline).toContain('5 of 5');
-    // D10: read-only. The advice must not imply the supervisor can raise it.
+    // `shift_seconds`: read-only. The advice must not imply the supervisor can raise it.
     expect(copy.advice).toMatch(/support/i);
   });
 
@@ -197,11 +195,10 @@ describe('stallCopy — each arm names its own evidence', () => {
   });
 
   it('credits_low is GONE — no label, dropped from a disclosure, no "top up" copy anywhere (magick-agency)', () => {
-    // PORT NOTE (magick-agency): cusui's case was "credits_low renders even though
-    // core never emits it" (master inserted the arm from its balance). Agency v1
-    // has no credits, and plan §3.3 removes the code from the union AND the
-    // console's health-strip copy, because a declared-but-unproducible code is the
-    // pattern `agency.md` warns about. This is that deletion's test.
+    // A `credits_low` stall must never render, even though an API could in
+    // principle insert the arm from a balance. Agency v1 has no credits, so the
+    // code is absent from the union AND the console's health-strip copy, because
+    // a declared-but-unproducible code is a trap. This is that absence's test.
     const removed = 'credits_low' as AgencyStallCode;
     expect(AGENCY_STALL_PRIORITY).not.toContain(removed);
     expect(Object.keys(AGENCY_STALL_LABELS)).not.toContain('credits_low');
@@ -222,7 +219,7 @@ describe('stallCopy — each arm names its own evidence', () => {
   });
 });
 
-describe('concurrencyReadout — CR-2', () => {
+describe('concurrencyReadout — read-only advice', () => {
   it('renders the live count against the ceiling', () => {
     const out = concurrencyReadout(5, 3);
     expect(out.value).toBe('3 of 5');
@@ -260,7 +257,7 @@ describe('concurrencyReadout — CR-2', () => {
   });
 });
 
-describe('abandonmentReadout — §C.3', () => {
+describe('abandonmentReadout', () => {
   it('draws the rate against THIS campaign’s ceiling, not a constant', () => {
     const out = abandonmentReadout(2.4, 3);
     expect(out.value).toBe('2.4%');
@@ -276,7 +273,7 @@ describe('abandonmentReadout — §C.3', () => {
   });
 
   it('renders a null rate as “no data”, never as 0%', () => {
-    // Core sends null when no calls were answered in the window. "No calls
+    // The API sends null when no calls were answered in the window. "No calls
     // answered yet" and "no calls abandoned" are different facts, and rendering
     // the first as a reassuring 0.0% is how a guardrail gets trusted before it
     // has measured anything.
@@ -295,7 +292,7 @@ describe('abandonmentReadout — §C.3', () => {
 
   it('shows the denominator, so a tiny sample cannot read as a trend', () => {
     // `2 of 5` and `40 of 100` are the same 40%. Only one of them is news, and
-    // it is not the one a supervisor should restaff over (MAG-151).
+    // it is not the one a supervisor should restaff over.
     const out = abandonmentReadout(40, 50, { abandoned: 2, answered: 5 });
     expect(out.detail).toContain('2 of 5 answered calls');
   });
@@ -401,7 +398,7 @@ describe('the meters', () => {
   });
 
   it('clamps an over-limit count rather than overflowing the track', () => {
-    // Core's count is account-wide and can exceed the campaign's view of the
+    // The API's count is account-wide and can exceed the campaign's view of the
     // limit; a 120% bar is a rendering bug, not a fact worth drawing.
     expect(concurrencyReadout(5, 6).fill).toBe(1);
   });
@@ -431,7 +428,7 @@ describe('the meters', () => {
   });
 
   it('never draws or bands a rate that was not measured', () => {
-    // The null-not-zero rule, in the meter: `null` is core's "no answered calls
+    // The null-not-zero rule, in the meter: `null` is the API's "no answered calls
     // in the window", and a reassuring empty green bar is exactly the reading
     // this field exists to prevent.
     const noData = abandonmentReadout(null, 3);
@@ -462,9 +459,9 @@ describe('the meters', () => {
   });
 });
 
-describe('abandonmentReadout when core will not act on the breach', () => {
+describe('abandonmentReadout when the API will not act on the breach', () => {
   /*
-    Core's guardrail gained a fourth refusal on 2026-09-11: a breach whose
+    The API's guardrail gained a fourth refusal on 2026-09-11: a breach whose
     numerator is a SINGLE call and whose denominator is below `ceil(100/ceiling)`
     does not pause the campaign, because before that `1 of 1` read 100% and paused
     campaigns permanently.
@@ -475,8 +472,8 @@ describe('abandonmentReadout when core will not act on the breach', () => {
     campaign that is visibly still dialing does not read as a small-sample nuance,
     it reads as a broken guardrail, and the next move is to stop it by hand.
   */
-  it('stops promising a pause that core will not perform', () => {
-    // 1 of 1 = 100%, and core leaves this running.
+  it('stops promising a pause that the API will not perform', () => {
+    // 1 of 1 = 100%, and the API leaves this running.
     const readout = abandonmentReadout(100, 3, { abandoned: 1, answered: 1 });
     expect(readout.detail).not.toContain('pauses itself above it');
     expect(readout.detail).toContain('keeps dialing');
@@ -487,8 +484,8 @@ describe('abandonmentReadout when core will not act on the breach', () => {
     expect(readout.detail).toContain('pauses itself once');
   });
 
-  it('holds at the boundary core uses, not one of its own', () => {
-    // 1 of 33 = 3.03%: over a 3% ceiling, and suppressed by core.
+  it('holds at the boundary the API uses, not one of its own', () => {
+    // 1 of 33 = 3.03%: over a 3% ceiling, and suppressed by the API.
     expect(abandonmentReadout(3.03, 3, { abandoned: 1, answered: 33 }).detail)
       .toContain('keeps dialing');
     // A 1% ceiling needs 100 answered calls before one abandon can clear it, so
@@ -499,8 +496,8 @@ describe('abandonmentReadout when core will not act on the breach', () => {
       .toContain('pauses itself above it');
   });
 
-  it('keeps the promise wherever core WILL pause', () => {
-    // Two abandoned calls: core pauses however small the sample, so the original
+  it('keeps the promise wherever the API WILL pause', () => {
+    // Two abandoned calls: the API pauses however small the sample, so the original
     // sentence is true and must survive.
     expect(abandonmentReadout(100, 3, { abandoned: 2, answered: 2 }).detail)
       .toContain('pauses itself above it');

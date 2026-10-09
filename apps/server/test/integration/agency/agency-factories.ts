@@ -5,13 +5,11 @@ import { TEST_DB_URL } from '../../../../../packages/db/test/helpers/test-db.js'
 import { DEFAULTS as DB_DEFAULTS } from '../../../../../packages/db/test/integration/setup/factories.js';
 
 /*
- * PORT NOTE (magick-agency, lane B1): ported from core
- * test/integration/agency/agency-factories.ts@4850d1d9. Recorded changes:
- *  - tenant/account defaults are the shared UUIDs (core used 'test-tenant' /
- *    'test-account'; the baseline types every tenant/account/agent id UUID);
- *  - `agent_user_id` defaults to a fresh UUID (was `agent-<hex>`);
- *  - campaign `telephony_provider` 'vobiz' → 'voicelink' (VoBiz deleted);
- *  - `createContentionPool` reads the agency harness URL (5436), never core's 5433.
+ *  - tenant/account defaults are the shared UUIDs (the baseline types every
+ *    tenant/account/agent id UUID);
+ *  - `agent_user_id` defaults to a fresh UUID;
+ *  - campaign `telephony_provider` defaults to 'voicelink';
+ *  - `createContentionPool` reads the agency harness URL (5436), never a dev database.
  */
 
 /**
@@ -28,7 +26,7 @@ const DEFAULTS = {
 } as const;
 
 /**
- * Reaper deps meaning **"nothing on this replica is alive"** (`AD-P2-C-08`).
+ * Reaper deps meaning **"nothing on this replica is alive"**.
  *
  * `AgencyReaper` requires its liveness deps, and every caller here wants the same
  * answer: these suites drive recovery from rows in Postgres, with no live dialer
@@ -38,7 +36,7 @@ const DEFAULTS = {
  * ── Why the constructor has no default, given every caller here passes this ───
  * Because an inert default is indistinguishable from a working guard at the point
  * it matters. `activeAttemptIds: () => []` + `ownerOf: async () => null` means
- * "reap everything", which is precisely the defect `AD-P2-C-08` fixed — the sweep
+ * "reap everything", which is precisely the defect that was fixed — the sweep
  * used to consult no liveness signal at all and hung up on live conversations. A
  * default would hand that behaviour to any future caller who forgot the deps, in
  * silence.
@@ -81,9 +79,9 @@ export async function insertAgencyCampaign(overrides: Record<string, unknown> = 
     telephony_provider: 'voicelink',
     status: 'draft',
     // ── An ALL-DAY, EVERY-DAY calling window, deliberately not the column
-    //    defaults (`AD-P3-C-06`).
+    //    defaults.
     //
-    // Migration 072 defaults to 09:00–20:00 Mon–Fri, and there is now a pre-dial
+    // The schema defaults to 09:00–20:00 Mon–Fri, and there is now a pre-dial
     // calling-hours gate. A fixture carrying those defaults makes every dialing
     // integration test depend on **what time of day and what day of the week the
     // suite runs** — green on a Tuesday afternoon, silently dialing nothing on a
@@ -143,11 +141,11 @@ export async function insertAgentSession(campaignId: string, overrides: Record<s
 }
 
 /**
- * One row of the agent state-transition log (migration 105).
+ * One row of the agent state-transition log (`agency_agent_session_events`).
  *
  * ── `at` is REQUIRED here, unlike in the table ──────────────────────────────
  *
- * Migration 105 gives `at` a `DEFAULT now()`, and the production writer never
+ * The table gives `at` a `DEFAULT now()`, and the production writer never
  * uses it: `recordTransitions` carries `clock_timestamp()` projected by the UPDATE
  * that performed the transition, because the log INSERT is a second statement and
  * two racing transitions can reach it in the opposite order to the one the
@@ -238,7 +236,7 @@ export function createContentionPool(max: number): pg.Pool {
   return new pg.Pool({ connectionString: TEST_DB_URL, max, idleTimeoutMillis: 5_000 });
 }
 
-/** The §4.1 claim query, verbatim, for tests that must drive it by hand. */
+/** The claim query, as the dialer runs it, for tests that must drive it by hand. */
 export const CLAIM_SQL = `
   UPDATE agency_contacts SET state = 'in_flight', updated_at = now()
     WHERE id IN (

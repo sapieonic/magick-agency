@@ -1,7 +1,3 @@
-/*
- * PORT NOTE (magick-agency): ported from master test/unit/api/routes/tenant.routes.test.ts@a1f0756a
- * (11 cases → 9). The 2 `PUT /tenants/:id` cases are deleted with the route.
- */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
@@ -25,9 +21,6 @@ vi.mock('../../../../src/api/middleware/tenant-context.middleware.js', () => ({
 vi.mock('../../../../src/rbac/rbac.middleware.js', () => ({
   requirePermission: () => async () => {},
 }));
-// PORT NOTE (magick-agency): master's `tenant.repository`, `tenant-name-resolver`,
-// `metadata-cache` and core account-settings sync mocks are removed — the route
-// imports none of them now (they served only `GET /` and `PUT /:id`).
 vi.mock('@magick-agency/db/repositories/membership.repository', () => ({
   membershipRepository: {
     findByTenantIdWithUser: mocks.findByTenantIdWithUser,
@@ -63,9 +56,6 @@ describe('tenant.routes — path id must match the proven tenant', () => {
     mocks.findByTenantIdWithUser.mockResolvedValue([]);
   });
 
-  // PORT NOTE (magick-agency): master's 'PUT /tenants/:id' block (2 cases) is
-  // deleted with the route (no `tenant.update` in the contract).
-
   describe('GET /tenants/:id/members', () => {
     it('lists members of the proven tenant when the path matches', async () => {
       mocks.findByTenantIdWithUser.mockResolvedValue([]);
@@ -79,7 +69,7 @@ describe('tenant.routes — path id must match the proven tenant', () => {
     });
 
     /**
-     * The response item's exact shape: the membership row spread verbatim, the
+     * The response item's exact shape: the membership row spread as is, the
      * four user fields named one by one, and `invite_state`.
      *
      * `firebase_uid` is the reason the user object is built rather than spread —

@@ -1,5 +1,5 @@
 /**
- * The super-admin console's wire shapes (extraction plan §3.4).
+ * The super-admin console's wire shapes.
  *
  * A separate login (its own JWT and `super_admins` table, never Firebase), and a
  * deliberately narrow surface: tenants, users, phone numbers for agency's one
@@ -8,17 +8,7 @@
  * super-admin audit trail, and read-only usage counts (`./super-admin-usage`).
  * Left out: credits, telephony providers, SIP, bulk dispatch, dispatch lanes.
  *
- * Sources (cusui v2.96.0 ee5beb44…, master v3.24.0 a1f0756a…):
- *   - `magick-comms-cusui/src/types/super-admin.ts` — verbatim except where
- *     marked `PORT NOTE`;
- *   - `magick-comms-cusui/src/api/super-admin.ts:271-349` — the concurrency
- *     shapes cusui declares inline in its API module;
- *   - `magick-comms-cusui/src/types/phone-number.ts:18-64` — inventory and
- *     assignment rows;
- *   - request bodies from `magick-master/src/api/validators/super-admin.validator.ts`
- *     and the route handlers in `src/api/routes/super-admin*.ts`.
- * Shapes marked **NEW** have no MagickVoice producer and are this package's
- * proposal for Lane A.
+ * Shapes marked **NEW** are specific to Magick Agency.
  */
 
 import type { Membership, Tenant } from './auth';
@@ -41,13 +31,13 @@ export interface SuperAdminLoginResponse {
   admin: Pick<SuperAdmin, 'id' | 'email' | 'name'>;
 }
 
-/** `POST /super-admin/login` — master `superAdminLoginSchema`. Rate-limited 5/min. */
+/** `POST /super-admin/login` — `superAdminLoginSchema`. Rate-limited 5/min. */
 export interface SuperAdminLoginBody {
   email: string;
   password: string;
 }
 
-/** `POST /super-admin/admins` — master `createSuperAdminSchema` (password ≥ 8, name 1..100). */
+/** `POST /super-admin/admins` — `createSuperAdminSchema` (password ≥ 8, name 1..100). */
 export interface CreateSuperAdminBody {
   email: string;
   password: string;
@@ -62,8 +52,7 @@ export interface SuperAdminListResponse {
 // ─── Tenants ────────────────────────────────────────────────────────────────
 
 /**
- * PORT NOTE (magick-agency): cusui's `credit_balance` and `credit_reserved`
- * (pg BIGINT millicredits as strings) are removed — no credits in v1.
+ * There is no `credit_balance` / `credit_reserved`: v1 has no credits.
  */
 export interface SuperAdminTenant {
   id: string;
@@ -93,9 +82,7 @@ export interface SuperAdminTenantMember {
 /**
  * `GET /super-admin/tenants/:id`.
  *
- * PORT NOTE (magick-agency): cusui's `credits` (`{ balance, reserved }`) and
- * `credit_cache` (`SuperAdminCreditCache`, the Postgres-vs-Redis drift read) are
- * removed with the credit ledger.
+ * There is no `credits` block or credit-cache drift read: v1 has no credit ledger.
  */
 export interface SuperAdminTenantDetail {
   tenant: SuperAdminTenant;
@@ -107,7 +94,7 @@ export interface SuperAdminTenantsResponse {
   tenants: SuperAdminTenant[];
 }
 
-/** `POST /super-admin/tenants` — master `createTenantSchema` (name 1..200, owner_name 1..100). */
+/** `POST /super-admin/tenants` — `createTenantSchema` (name 1..200, owner_name 1..100). */
 export interface CreateTenantBody {
   name: string;
   owner_email: string;
@@ -117,14 +104,10 @@ export interface CreateTenantBody {
 /**
  * The 201 body.
  *
- * PORT NOTE (magick-agency): master answers
- * `{ tenant, owner_email, core_key_provisioned, phone_auto_assigned }`
- * (`super-admin.routes.ts:454`). `core_key_provisioned` (a per-tenant core API
- * key) and `phone_auto_assigned` (a number from the signup pool) are removed:
- * there is no core and no pooled number (plan §3.4 "writes a `pending_` owner
- * stub, as master does, but no pooled number"). `tenant` is the raw tenant row
- * master returns — typed `Tenant`, not cusui's `SuperAdminTenant`, which it is
- * not (no `member_count`).
+ * The body is `{ tenant, owner_email }`. There is no per-tenant internal-handler
+ * API key and no pooled number, so creation writes a `pending_` owner stub and
+ * nothing else. `tenant` is the raw tenant row — typed `Tenant`, not
+ * `SuperAdminTenant`, which it is not (no `member_count`).
  */
 export interface CreateTenantResponse {
   tenant: Tenant;
@@ -158,11 +141,10 @@ export interface SuperAdminUsersResponse {
 }
 
 /**
- * `POST /super-admin/tenants/:id/users` — master `addUserToTenantSchema`.
+ * `POST /super-admin/tenants/:id/users` — `addUserToTenantSchema`.
  *
- * PORT NOTE (magick-agency): `account_id` is NEW (plan §3.4 "add a user to a
- * tenant **or account** with a role"); master's schema has no account and always
- * writes a tenant-wide membership. Absent ⇒ tenant-wide, as today. The write
+ * `account_id` is optional: a user can be added to a tenant **or account** with a
+ * role. Absent ⇒ tenant-wide. The write
  * creates a `pending_` stub plus membership and sends an invite; the person is
  * later matched by session path 2 (verified email) or by claiming the invite.
  */
@@ -173,16 +155,15 @@ export interface AddUserToTenantBody {
   account_id?: string;
 }
 
-/** The 201 body — master `super-admin.routes.ts:702`. */
+/** The 201 body. */
 export interface AddUserToTenantResponse {
   membership: Membership;
 }
 
 /**
  * **NEW** — `PUT /super-admin/tenants/:id/memberships/:membershipId/role`.
- * Plan §3.4 "Super-admins can also change roles"; master has no super-admin
- * route for it (the tenant-side `PUT /users/:id/role` floors at
- * `user.update_role`).
+ * Super-admins can also change roles (the tenant-side `PUT /users/:id/role`
+ * floors at `user.update_role`).
  */
 export interface ChangeMembershipRoleBody {
   role: Role;
@@ -196,8 +177,8 @@ export interface ChangeMembershipRoleResponse {
 
 /**
  * **NEW** — `DELETE /super-admin/tenants/:id/memberships/:membershipId`.
- * Plan §3.4 "…and revoke memberships"; offboarding closes the person's campaign
- * staffing in the same place (plan §3.1, master `user.routes.ts:772,869`).
+ * Super-admins can also revoke memberships; offboarding closes the person's
+ * campaign staffing in the same place.
  */
 export interface RevokeMembershipResponse {
   /** The row after the write; `status` is `'revoked'`. */
@@ -239,14 +220,12 @@ export interface SuperAdminAuditListResponse {
 
 // ─── Phone numbers (agency's one VoiceLink account) ─────────────────────────
 //
-// From `magick-comms-cusui/src/types/phone-number.ts`. Campaign `caller_ids` are
-// validated against this inventory when a campaign is saved (plan §3.4),
-// replacing core's call to master (`master-client.ts:51,83`).
+// Campaign `caller_ids` are validated against this inventory when a campaign is
+// saved.
 
 /**
- * PORT NOTE (magick-agency): verbatim except `pool_eligible` is removed — it
- * marked a number as eligible for the signup pool that auto-assigned a number to
- * every new tenant, and Magick Agency has no pooled number. `provider_*` is kept
+ * There is no `pool_eligible` flag: Magick Agency has no signup pool and no
+ * pooled number. `provider_*` is kept
  * (it is how the row names its carrier) although only VoiceLink can appear.
  */
 export interface PhoneNumber {
@@ -267,8 +246,8 @@ export interface PhoneNumber {
 }
 
 /**
- * PORT NOTE (magick-agency): verbatim except `is_byoc` is removed — bring-your-own
- * carrier is out of scope (VoiceLink is the only carrier, plan Decided #3).
+ * There is no `is_byoc`: bring-your-own carrier is out of scope (VoiceLink is
+ * the only carrier).
  */
 export interface TenantPhoneAssignment {
   id: string;
@@ -293,15 +272,14 @@ export interface PhoneNumbersResponse {
   phone_numbers: PhoneNumber[];
 }
 
-/** `GET /super-admin/phone-numbers/:id` — cusui `api/super-admin.ts:592`. */
+/** `GET /super-admin/phone-numbers/:id`. */
 export interface PhoneNumberDetailResponse {
   phone_number: PhoneNumber;
   assignments: Array<{ tenant_id: string; tenant_name: string; is_default: boolean; assigned_at: string }>;
 }
 
 /**
- * `POST /super-admin/phone-numbers` — cusui `api/super-admin.ts:596-604`.
- * PORT NOTE (magick-agency): `pool_eligible` removed (see {@link PhoneNumber}).
+ * `POST /super-admin/phone-numbers`.
  */
 export interface CreatePhoneNumberBody {
   phone_number: string;
@@ -313,8 +291,7 @@ export interface CreatePhoneNumberBody {
 }
 
 /**
- * `PUT /super-admin/phone-numbers/:id` — cusui `api/super-admin.ts:611-616`.
- * PORT NOTE (magick-agency): `pool_eligible` removed.
+ * `PUT /super-admin/phone-numbers/:id`.
  */
 export interface UpdatePhoneNumberBody {
   label?: string;
@@ -322,7 +299,7 @@ export interface UpdatePhoneNumberBody {
   max_concurrent_calls?: number;
 }
 
-/** `POST /super-admin/phone-numbers/:id/assign` — cusui `api/super-admin.ts:635`. */
+/** `POST /super-admin/phone-numbers/:id/assign`. */
 export interface AssignPhoneNumberBody {
   tenant_id: string;
   is_default?: boolean;
@@ -335,10 +312,8 @@ export interface TenantPhoneNumbersResponse {
 
 // ─── Per-account concurrency limits ─────────────────────────────────────────
 //
-// From `magick-comms-cusui/src/api/super-admin.ts:271-349`. Agency is now both
-// system of record and enforcer (plan §1: "master pushes concurrency allocations
-// to core → agency is both"), and the guard keeps its global, account and
-// provider scopes (plan §5).
+// Agency is both system of record and enforcer of concurrency allocations, and
+// the guard keeps its global, account and provider scopes.
 
 export type ConcurrencyAllocationMode = 'legacy_total' | 'provider_breakdown';
 
@@ -375,11 +350,9 @@ export interface AccountConcurrencyUtilization {
 /**
  * `GET /super-admin/tenants/:id/accounts/:accountId/concurrency`.
  *
- * PORT NOTE (magick-agency): cusui's `providers` (the telephony-provider catalog
- * with `tenant_enabled` / `core_supported`), `entitlements` (master's purchased
- * quantities — a commercial record) and `synchronization` (the master→core push
- * status) are removed: there is one carrier, no billing, and no second service
- * to sync to.
+ * There is no provider catalog, no purchased-quantity `entitlements` and no
+ * `synchronization` status: there is one carrier, no billing, and no second
+ * service to sync to.
  */
 export interface AccountConcurrencyDetail {
   allocation: AccountConcurrencyAllocation;
@@ -398,14 +371,13 @@ export interface TenantAccountWithConcurrency {
 }
 
 /**
- * `PUT /super-admin/tenants/:id/accounts/:accountId/concurrency` — master's two
- * accepted bodies (`super-admin.routes.ts:1332-1352`): the legacy flat total
+ * `PUT /super-admin/tenants/:id/accounts/:accountId/concurrency` — the public API layer's two
+ * accepted bodies: the legacy flat total
  * (1..1000), or the versioned allocation (`legacy_total` / `provider_breakdown`,
  * optimistic-lock `version`, `change_reason` 3..1000 chars).
  *
- * PORT NOTE (magick-agency): `force_migration` (master's legacy→breakdown
- * migration switch) is kept verbatim; candidate deletion with the provider
- * breakdown if agency settles on one carrier for good.
+ * `force_migration` (the legacy→breakdown migration switch) is a candidate for
+ * deletion with the provider breakdown if agency settles on one carrier for good.
  */
 export type UpdateAccountConcurrencyBody =
   | { max_concurrent_calls: number }
@@ -424,12 +396,12 @@ export type FlagScopeType = 'global' | 'tenant' | 'account';
 export type FlagValueType = 'boolean' | 'number' | 'string' | 'json';
 
 /**
- * Master's handling policy for a flag that needs more than a toggle
- * (magick-master `src/feature-flags/flag-policies.ts`). Present only on the
- * few flags that have one — today `ai_turn_transcript_logging`. Master also
+ * The public API layer's handling policy for a flag that needs more than a toggle
+ * (the flag-policies registry). Present only on the
+ * few flags that have one — today `ai_turn_transcript_logging`. The public API layer also
  * ENFORCES it (bulk refused, enable without a reason refused); the UI reads it
  * so the warning and the missing bulk affordance come from data, not a second
- * hand-kept list. Absent from an older master: render the flag as ordinary.
+ * hand-kept list. Absent from an older public API layer: render the flag as ordinary.
  */
 export interface FeatureFlagPolicy {
   /** Operator-facing warning shown next to every control for the flag. */
@@ -451,7 +423,7 @@ export interface FeatureFlagCatalogEntry {
   owner: string;
   description: string;
   global_override: unknown;
-  /** Added by master for flags with a handling policy; absent otherwise. */
+  /** Added by the public API layer for flags with a handling policy; absent otherwise. */
   policy?: FeatureFlagPolicy;
 }
 
@@ -474,7 +446,7 @@ export interface FeatureFlagOverride {
   updated_at: string;
 }
 
-/** Which layer a resolved value came from (core's /resolve `source`). */
+/** Which layer a resolved value came from (the server's /resolve `source`). */
 export type FlagResolutionSource = 'account' | 'tenant' | 'global' | 'env' | 'default' | 'rollout';
 
 /** Effective resolution for a tenant/account (GET …/feature-flags/resolve). */

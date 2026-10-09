@@ -3,16 +3,13 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 /**
- * PORT NOTE (magick-agency): the capability map is now derived from the
- * session's per-account settings (`GovernanceContext`); the guard is unchanged.
- * The RequireCapability cases drive `agency.recording` instead of cusui's
- * `messaging` (not a capability agency has, and no longer a known gate), and the
- * two Sidebar cases drive the one capability-gated entry the console's Sidebar
- * keeps — Call Summaries, on `agency.analytics` — instead of the MESSAGING
- * section, which is not ported.
+ * The capability map is derived from the session's per-account settings
+ * (`GovernanceContext`). The RequireCapability cases drive `agency.recording`,
+ * and the two Sidebar cases drive the one capability-gated entry the console's
+ * Sidebar has — Call Summaries, on `agency.analytics`.
  *
  * End-user governance gating — RequireCapability (in-place CapabilityUnavailable,
- * no redirect) + Sidebar MESSAGING section hide. useGovernance/useTenant/
+ * no redirect) + the Sidebar's capability-gated entry hidden. useGovernance/useTenant/
  * useFeatureFlags are mocked so each test drives the capability map directly
  * (mirrors WebRtcNavGating.test.tsx).
  */

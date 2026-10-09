@@ -7,10 +7,9 @@ import { closeTestRedis, flushTestRedis, getTestRedis } from '../../helpers/test
 import { FLAGS, FeatureFlagService, getFeatureFlagService, initFeatureFlagService } from '../../../src/feature-flags/index.js';
 
 /**
- * NEW (magick-agency, no source). Core tests `FeatureFlagService` only over a
- * mocked repository and a mocked Redis (its route-level rollout suite,
- * `test/integration/flows/feature-flag-rollout.test.ts`, belongs to lane A with
- * the override routes). This runs the REAL service over the REAL repository on
+ * The unit tests exercise `FeatureFlagService` only over a
+ * mocked repository and a mocked Redis (the route-level rollout suite is
+ * `test/integration/flows/feature-flag-rollout.test.ts`). This runs the REAL service over the REAL repository on
  * Postgres 5436 and the REAL test Redis (6383 db 1): precedence from stored rows,
  * the shared cache key it writes, invalidation, the singleton, and the fail-safe
  * arm (a failed snapshot read resolves the REGISTRY default, never the env one).

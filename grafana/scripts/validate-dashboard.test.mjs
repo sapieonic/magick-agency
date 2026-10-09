@@ -9,14 +9,12 @@
  * against agency's declarations (`metric-declarations.mjs`): every metric name,
  * label matcher, label list and `{{legend}}` placeholder must resolve, every
  * query must survive the 60s OTLP export interval, and every query must be
- * scoped to agency's deployments only.
+ * scoped to agency's deployments only: every selector must carry
+ * `$service_name`, whose All value is agency's regex.
  *
- * PORT NOTE (magick-agency, B6): ported from the MagickVoice superproject's
- * `scripts/validate-grafana-dashboard.test.mjs`@e32a5db (and its B6 branch),
- * cut to one service: the cross-service label intersection (`oneSided`,
- * `label!=""` opt-ins) is gone, and the scoping checks are stricter — every
- * selector must carry `$service_name`, whose All value is agency's regex. See
- * PORTING.md, "Grafana alerting (B6)".
+ * Product names in titles and descriptions (B17) are the repo-wide branding
+ * guard's job (`apps/server/test/unit/branding/no-external-references.test.ts`
+ * scans this JSON too).
  *
  *   pnpm test:grafana
  */
@@ -316,11 +314,8 @@ describe('agency Grafana dashboard', () => {
     assert.deepEqual(problems, [], `queries that can reach beyond agency:\n  ${problems.join('\n  ')}`);
   });
 
-  test('every visualisation panel carries a description, and no title or description says MagickVoice (B17)', () => {
-    const d = loadDashboard();
-    const panels = allPanels(d);
+  test('every visualisation panel carries a description', () => {
+    const panels = allPanels(loadDashboard());
     assert.deepEqual(panels.filter((p) => p.type !== 'row' && !p.description).map((p) => p.title), [], 'panels without a description');
-    const branded = [d, ...panels].filter((p) => /magick\s*voice/i.test(`${p.title} ${p.description ?? ''}`)).map((p) => p.title);
-    assert.deepEqual(branded, [], 'user-facing text names MagickVoice');
   });
 });

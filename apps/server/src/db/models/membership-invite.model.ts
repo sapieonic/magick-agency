@@ -1,7 +1,7 @@
 import type { MembershipRole } from '@magick-agency/db/models/membership.model';
 
 /**
- * One row of `membership_invites` (migration 069) — a token that binds a
+ * One row of `membership_invites` — a token that binds a
  * Firebase identity to a membership that already exists.
  *
  * ── Why the row carries `email` and `role` rather than joining for them ─────
@@ -13,10 +13,9 @@ import type { MembershipRole } from '@magick-agency/db/models/membership.model';
  *
  * ── `email` is NOT the claim key, and that is the whole point ───────────────
  * The claim resolves the user through `membership_id → memberships.user_id`.
- * `users.email` carries only a non-unique index (`001_initial_schema.sql:60`),
+ * `users.email` carries only a non-unique index,
  * so an email lookup can return the wrong row — and matching on the address is
- * exactly the mechanism whose failure this table exists to remove (see the
- * migration header). The invited address survives here as something to SHOW and
+ * exactly the mechanism whose failure this table exists to remove. The invited address survives here as something to SHOW and
  * to AUDIT against, never to resolve by.
  */
 export interface MembershipInviteRecord {

@@ -1,10 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 /*
- * PORT NOTE (magick-agency, Phase 6): ported from core
- * test/integration/agency/agency-context-ordering.test.ts@4850d1d9 — 9 cases, all kept. Modified only in
- * harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
+ * Harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
  * `/connection` entry, which packages/db's repositories import); the config stub
- * drops `telephony.vobiz` (VoBiz deleted, plan §5); import specifiers per the path
+ * carries no carrier config; import specifiers per the path
  * rule (domain leaves, `@magick-agency/contracts/agency`).
  */
 import { EventEmitter } from 'node:events';
@@ -24,7 +22,7 @@ import {
   insertAgentSession,
 } from './agency-factories.js';
 
-// PORT NOTE: core mocked `src/db/connection.js`; agency's pool lives in `@magick-agency/db`
+// The DB pool lives in `@magick-agency/db`
 // (the server's repositories import its root, packages/db's repositories `./connection`).
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
 vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
@@ -35,7 +33,7 @@ vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() })
 vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
-    telephony: {}, // PORT NOTE: core stubbed `telephony.vobiz` (VoBiz deleted, plan §5)
+    telephony: {}, // no carrier config is needed
   },
 }));
 
@@ -73,7 +71,7 @@ function dialerWith(bridge: unknown, stations: never, agents: InstanceType<typeo
 }
 
 /**
- * T-P — the context-panel ordering guarantee (§9), at the integration tier.
+ * T-P — the context-panel ordering guarantee, at the integration tier.
  *
  * The customer requirement is that the contact's full CSV row is on the agent's
  * screen BEFORE or SIMULTANEOUSLY WITH audio connect, never after. That reads
@@ -142,14 +140,14 @@ function scriptedBridge(mode: AnswerMode, delayMs = 0) {
    * The carrier's answer and the media bridge are TWO events with two instants,
    * and this fake has to reproduce that or the suite lies about the product.
    *
-   * It originally emitted `bridged` alone with `answered: true`, which predates
-   * core's `e4ec019` widening `WebRtcLifecycleEvent.phase` to include
+   * It originally emitted `bridged` alone with `answered: true`, which predates the
+   * widening of `WebRtcLifecycleEvent.phase` to include
    * `'answered'`. The consequence was T-P2c asserting `answered_at IS NOT NULL`
    * against a bridge that never supplied an answer instant — so the case failed
    * on its setup rather than on its subject, and the defect it exists to catch
    * became unobservable behind a red that looked like the defect.
    *
-   * `answeredAt` is deliberately EARLIER than the bridge instant. §10.1's whole
+   * `answeredAt` is deliberately EARLIER than the bridge instant. the whole
    * finding was that collapsing the two makes the abandonment predicate vacuous;
    * a fake that collapses them re-creates that vacuity inside the test suite,
    * where nothing would notice.
@@ -190,12 +188,12 @@ function scriptedBridge(mode: AnswerMode, delayMs = 0) {
   // NOT `as never`. `dialerWith` already takes `unknown` and casts at the
   // constructor, so the cast here bought nothing and cost the caller its own
   // fake: `never` erased `trace` and `timers`, and `for (const t of bridge.timers)`
-  // in the cleanup below stopped type-checking (AD-PLATFORM-01's `lint:test` found
+  // in the cleanup below stopped type-checking (the test typecheck found
   // it). A widening cast on a test double is worth suspecting on sight — it hides
   // exactly the harness surface the scenarios read.
 }
 
-/** The 43-column context row the panel has to render verbatim. */
+/** The 43-column context row the panel has to render exactly as stored. */
 function wideContext(): Record<string, string> {
   const ctx: Record<string, string> = {
     'First Name': 'Priya',
@@ -332,7 +330,7 @@ describe('agency context-panel ordering (integration)', () => {
   });
 
   it('T-P2c: the attempt ROW agrees with the frame after a synchronous answer', async () => {
-    // ── KNOWN DEFECT (agency-dialer.ts:162) ──────────────────────────────
+    // ── KNOWN DEFECT (agency-dialer.ts) ──────────────────────────────
     // `executeDial` writes the panel, dials, and then unconditionally runs
     //
     //     await agencyAttemptRepository.setState(attemptId, 'dialing',
@@ -350,7 +348,7 @@ describe('agency context-panel ordering (integration)', () => {
     // SCOPE, stated precisely rather than dramatically. `setState` COALESCEs
     // every timestamp, so `answered_at` and `bridged_at` SURVIVE the clobber —
     // only `state` is overwritten unconditionally. Therefore:
-    //   - The §10 abandonment predicate is NOT affected. T-P2d asserts that
+    //   - The abandonment predicate is NOT affected. T-P2d asserts that
     //     directly, and it passes. This is not a compliance defect.
     //   - The attempt is NOT stranded: the `ended` lifecycle branch still
     //     terminates it normally.
@@ -358,7 +356,7 @@ describe('agency context-panel ordering (integration)', () => {
     //     of a live conversation. The agent console shows a bridged call while
     //     the database disagrees, the supervisor's in-flight/by-state views
     //     misreport it, and any future logic branching on `state === 'bridged'`
-    //     (Phase 4 dashboards, wrap-up) silently takes the wrong branch.
+    //     (dashboards, wrap-up) silently takes the wrong branch.
     //
     // The window is not exclusive to a synchronous answer: any answer landing
     // between `createBridgedCall` resolving and line 162 executing is clobbered,
@@ -383,7 +381,7 @@ describe('agency context-panel ordering (integration)', () => {
     dialer.stop();
   });
 
-  it('T-P2d: a bridged attempt is never counted as abandoned by the §10 predicate', async () => {
+  it('T-P2d: a bridged attempt is never counted as abandoned by the predicate', async () => {
     // The compliance-facing check, asserted against the exact query the
     // abandonment metric and auto-pause guardrail use. It PASSES today, and it
     // is here to bound T-P2c's blast radius: the state clobber does not reach
@@ -420,7 +418,7 @@ describe('agency context-panel ordering (integration)', () => {
     dialer.stop();
   });
 
-  it('T-P3: the reserved frame carries the FULL context row, verbatim', async () => {
+  it('T-P3: the reserved frame carries the FULL context row, unchanged', async () => {
     // A frame carrying a SUBSET satisfies the ordering claim and still violates
     // the customer requirement, so completeness is asserted independently.
     const ctx = wideContext();
@@ -474,8 +472,8 @@ describe('agency context-panel ordering (integration)', () => {
     const attempt = await agencyAttemptRepository.create({
       campaignId: campaign.id, contactId: contact.id,
       tenantId: campaign.tenant_id, accountId: campaign.account_id,
-      // No `attemptNumber`: `a868a16` made the repository derive it from the
-      // attempts table — a caller-supplied number WAS the `AD-P2-C-12` defect —
+      // No `attemptNumber`: the repository derives it from the
+      // attempts table — a caller-supplied number WAS the defect —
       // and removed the parameter. The `DialCommand` below still carries one, and
       // correctly so: that field is the dialer's, not the repository's.
       callerId: '+919000000001', reservedAgentId: session.id,
@@ -496,7 +494,7 @@ describe('agency context-panel ordering (integration)', () => {
   });
 
   it('T-P4: nothing is fetched over HTTP between reserved and bridged', async () => {
-    // §9 claims "context is never fetched over HTTP at bridge time". This keeps
+    // claims "context is never fetched over HTTP at bridge time". This keeps
     // that true after someone adds a "just re-read the latest notes" feature —
     // which would reintroduce exactly the race the ordering design removes.
     const originalFetch = globalThis.fetch;
@@ -541,13 +539,13 @@ describe('agency context-panel ordering (integration)', () => {
     );
     expect(rows[0]!.state).toBe('pending');
 
-    // ── Zero abandonment, by the §10 predicate. ───────────────────────────
+    // ── Zero abandonment, by the predicate. ───────────────────────────
     //
     // This assertion was VACUOUS as written. It destructured `{ rows: ab }` and
     // then tested `ab.rows === undefined` — `ab` is the array, so `ab.rows` is
     // always `undefined`, the ternary always took the `0` branch, and the whole
     // line reduced to `expect(0).toBe(0)`. It could not have observed an
-    // abandonment however many the query returned. §16.6 question 1, in the file
+    // abandonment however many the query returned. question 1, in the file
     // that exists to prove abandonment is not manufactured.
     //
     // Only `npm run lint:test` saw it (`TS2339: Property 'rows' does not exist

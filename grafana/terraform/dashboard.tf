@@ -3,8 +3,7 @@
 #
 # The source of truth is ../dashboards/magick-agency-overview.json (the classic
 # dashboard model, covered by grafana/scripts/validate-dashboard.test.mjs).
-# Grafana Cloud runs v13, so this uses the app-platform dashboard resource, as
-# the platform module does for its own dashboard.
+# Grafana Cloud runs v13, so this uses the app-platform dashboard resource.
 ###############################################################################
 
 locals {

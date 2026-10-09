@@ -49,7 +49,7 @@ import styles from './AgencyCampaignRosterPage.module.css';
 const PAGE_SIZE = 50;
 
 /**
- * The campaign's contact roster (MAG-159).
+ * The campaign's contact roster.
  *
  * ── This page's URL used to be an upload form ───────────────────────────────
  * `/agency/campaigns/:id/contacts` rendered "Add contacts" — its own heading
@@ -71,7 +71,7 @@ const PAGE_SIZE = 50;
  * A supervisor authoring a retry is already looking at the set they mean, so
  * **Retry these contacts** carries the filters on screen straight into the
  * dialog — which is why the applied filters live in the URL rather than in this
- * component (`agencyRosterFilters.ts`): retry design DR-3 says the query string
+ * component (`agencyRosterFilters.ts`): the query string
  * the supervisor was already looking at BECOMES the selector, and that is only
  * literally true if there is one representation of it.
  *
@@ -119,7 +119,7 @@ export function AgencyCampaignRosterPage() {
   const canExport = hasPermission(role, 'agency.supervise');
   const canUpload = hasPermission(role, 'agency.campaigns.write');
   /*
-    Master names BOTH permissions on the retry create: the act is creating a
+    The server names BOTH permissions on the retry create: the act is creating a
     campaign (`agency.campaigns.write`) and acting on another campaign's call
     results (`agency.supervise`). They share an `account_admin` floor today, and
     naming both here is what keeps this affordance correct if either moves —
@@ -256,7 +256,7 @@ export function AgencyCampaignRosterPage() {
 
   /*
     ── The disposition filter's vocabulary ───────────────────────────────────
-    The campaign's own catalog, plus the three built-in codes — core's rule for
+    The campaign's own catalog, plus the three built-in codes — the API's rule for
     `last_disposition` exactly (`disposition_catalog` ∪ `BUILT_IN_DISPOSITION_CODES`),
     so a code offered here is a code the retry preview will accept.
 
@@ -294,7 +294,7 @@ export function AgencyCampaignRosterPage() {
 
       {/*
         The campaign workspace's section bar, in the same slot on every one of
-        its screens (`MAG-166`). These four sections used to be reachable only
+        its screens. These four sections used to be reachable only
         as secondary buttons on the detail page's header row — the same row
         that carries Stop — so getting from Contacts to Call attempts meant
         going back through the campaign first.
@@ -356,7 +356,7 @@ export function AgencyCampaignRosterPage() {
             ── Retry these contacts ──────────────────────────────────────────
             This is where the feature is DISCOVERED: the supervisor is already
             looking at the set they mean, and the filters on screen become the
-            selector (retry design DR-3). It sits beside Export because the two
+            selector. It sits beside Export because the two
             answer the same question about the same rows — "take this filtered
             set and do something with it" — and unlike Export it needs the
             campaign loaded, because the child inherits that campaign's config

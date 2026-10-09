@@ -1,4 +1,3 @@
-// PORT NOTE (magick-agency): ported from master test/unit/db/repositories/user.repository.test.ts@a1f0756a — verbatim, import specifiers remapped only.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ pool: { query: vi.fn() } }));

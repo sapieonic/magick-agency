@@ -13,14 +13,14 @@ const { agencyContactRepository } = await import(
  * ── The defect this file is the evidence for ───────────────────────────────
  *
  * An agent's mark-DNC used to do two things: suppress ONE contact row by id, and
- * have master write a TENANT-WIDE `dnc_entries` row that reached core's flat
+ * have the public API layer write a TENANT-WIDE `dnc_entries` row that reached a flat
  * `dnc:{tenantId}` set and blocked the number at dial time in every campaign.
  * Making the mark campaign-scoped removes the second half — a campaign-scoped row
- * does not enter the tenant-flat set (§2.3) — which leaves the by-id write as the
+ * does not enter the tenant-flat set — which leaves the by-id write as the
  * only in-campaign enforcement there is.
  *
- * And the by-id write has a hole. Migration 073 refuses `UNIQUE (campaign_id,
- * phone_e164)` on purpose ("two people on one household landline, two contacts
+ * And the by-id write has a hole. The schema deliberately has no `UNIQUE (campaign_id,
+ * phone_e164)` ("two people on one household landline, two contacts
  * behind one company switchboard, a shared family mobile"), so one campaign
  * holding the same number twice is supported, ordinary data. Suppress only the
  * dialled row and the duplicate stays `pending` and gets claimed on the next tick:
@@ -37,9 +37,8 @@ const { agencyContactRepository } = await import(
  * assertions below read the ROWS BACK, and the strongest one runs `claimDialable`
  * afterwards and requires it to return nothing at all.
  *
- * ⚠️ NOT RUNNABLE LOCALLY. Core's integration stack binds 5433/6380, which are
- * magick-master's DEV Postgres and Redis, and `test-utils.ts` calls `flushdb()` —
- * so this suite is written blind and owed to CI. That is a real cost and it has
+ * ⚠️ Written without a local run: `test-utils.ts` calls `flushdb()`, so check which
+ * Redis it points at before running it, and treat it as owed to CI. That is a real cost and it has
  * already been paid back once: on its first CI run T-DNC6 failed and had found a
  * genuine defect in `suppressByPhone` (an inert `COALESCE` relabelling every swept
  * row `dnc`) that 9,342 green unit tests could not see, because the defect was in
@@ -93,7 +92,7 @@ describe('campaign-scoped DNC — every roster row with that number (integration
 
   it('T-DNC2: and the campaign has nothing left to dial — the effect, not the write', async () => {
     // The assertion that would have caught the defect even if `state` were spelled
-    // some other way: `claimDialable` is the §4.1 predicate the dialer actually
+    // some other way: `claimDialable` is the predicate the dialer actually
     // runs, and after the mark it must find nothing. Against a by-contact-id
     // suppression this returns the duplicate and the customer is dialled again.
     const campaign = await insertAgencyCampaign();
@@ -173,7 +172,7 @@ describe('campaign-scoped DNC — every roster row with that number (integration
     // `next_attempt_at` and this method preserves that by omitting the column —
     // the STATE is what takes a contact off the roster, and a compliance route
     // quietly nulling a column an export reads is an untracked change
-    // (AD-P3-C-04 owns clearing it). And a disposition is a statement about ONE
+    // (clearing it belongs to a separate change). And a disposition is a statement about ONE
     // call with ONE person: stamping it on the housemate's row because they share
     // a landline invents a conversation.
     const campaign = await insertAgencyCampaign();
@@ -318,9 +317,9 @@ describe('campaign-scoped DNC — every roster row with that number (integration
     expect(await readContact(duplicate.id)).toMatchObject({ state: 'suppressed' });
   });
 
-  // ── Migration 087 ────────────────────────────────────────────────────────
+  // ── Campaign-scope column and index ────────────────────────────────────────────────────────
 
-  it('T-DNC8: migration 087 shipped the column and the index the sweep depends on', async () => {
+  it('T-DNC8: the schema has the column and the index the sweep depends on', async () => {
     // The index is not a performance nicety here: without it this query is a scan
     // of every contact row in the database, on a path an agent triggers mid-call.
     // Asserted by NAME and by EXPRESSION — a renamed or re-spelled expression index

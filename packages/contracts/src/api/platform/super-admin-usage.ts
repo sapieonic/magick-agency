@@ -1,5 +1,5 @@
 /**
- * **NEW** — the super-admin usage-counts view (extraction plan §3.3).
+ * **NEW** — the super-admin usage-counts view.
  *
  * Read-only and charges nothing. v1 has no metering; this view exists so the
  * facts metering will need are visible from day one, and it reads only rows
@@ -7,7 +7,7 @@
  *
  * | Field | Source row |
  * |---|---|
- * | `dials` | `agency_call_attempts` with `dialed_at` in the window (the `(dialed_at, campaign_id)` index from core migration 081) |
+ * | `dials` | `agency_call_attempts` with `dialed_at` in the window (served by the `(dialed_at, campaign_id)` index) |
  * | `answered_calls` | the same attempts with `answered_at IS NOT NULL` (the carrier answered) |
  * | `connected_calls` | the same attempts with `bridged_at IS NOT NULL` (an agent was joined) |
  * | `talk_seconds` | Σ `agency_call_attempts.talk_seconds` over those attempts |
@@ -27,7 +27,7 @@
  *    abandoned population (answered, never bridged), and which one a future
  *    meter charges is undecided.
  *  - `talk_seconds` is the persisted column, which is anchored on `answered_at`
- *    and so includes an abandoned attempt's apology-clip time (`MAG-119`) — the
+ *    and so includes an abandoned attempt's apology-clip time — the
  *    carrier-billed figure, deliberately NOT the agent-leg `ended_at - bridged_at`
  *    that `AgencyCampaignStats.aht_seconds` uses.
  */

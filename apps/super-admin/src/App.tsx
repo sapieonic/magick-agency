@@ -17,13 +17,12 @@ const SAFeatureFlagsPage = lazy(() => import('./pages/super-admin/SAFeatureFlags
 const SAUsagePage = lazy(() => import('./pages/super-admin/SAUsagePage'));
 
 /**
- * PORT NOTE (magick-agency): cusui mounted this tree at `/super-admin/*` inside
- * the customer app. Here the whole app is the super-admin console, and the API
- * lives at `/super-admin/*` on the same origin, so the UI routes sit at the
- * root (`/tenants`, not `/super-admin/tenants`): a page reload can never be
+ * The whole app is the super-admin console, and the API lives at
+ * `/super-admin/*` on the same origin, so the UI routes sit at the root
+ * (`/tenants`, not `/super-admin/tenants`): a page reload can never be
  * mistaken for an API call by the dev proxy or a static host.
- * Deleted routes: `/super-admin` overview (credits/fleet ranking), `providers`,
- * `governance`, `dispatch-lanes`, `alerts`.
+ * There is no overview (credits/fleet ranking), `providers`, `governance`,
+ * `dispatch-lanes` or `alerts` route.
  */
 export function App() {
   return (

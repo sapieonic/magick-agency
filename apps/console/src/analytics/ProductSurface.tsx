@@ -7,7 +7,7 @@ import type { ProductSurface as Product } from './posthog';
  * no shell to hang the hook on.
  *
  * ── Why this exists at all ─────────────────────────────────────────────────
- * E8's mechanism is "set by shell", and for `AppLayout` / `AgencyLayout` that is
+ * The mechanism is "set by shell", and for `AppLayout` / `AgencyLayout` that is
  * exactly right. But four agency routes are deliberately **full-viewport and
  * outside both shells** — `/station`, `/dialer`, `/dialer/performance` and
  * `/dialer/attempts` — because an agent on a live call must not be able to

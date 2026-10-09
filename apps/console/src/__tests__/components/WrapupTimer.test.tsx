@@ -5,9 +5,9 @@ import { openWrapup } from '../../utils/agencyWrapup';
 import type { AgencyWrapupState } from '../../types/agency';
 
 /**
- * `WrapupTimer` (§A.13.5 / §A.13.5.1) — acceptance criterion (b)'s visible half.
+ * `WrapupTimer` — acceptance criterion (b)'s visible half.
  *
- * The assertion §A.13.5 explicitly asks for is a **negative** one: a held wrap-up
+ * The assertion explicitly asks for is a **negative** one: a held wrap-up
  * renders *no track element at all*, not a track of zero width. The spec says why
  * in as many words — "a test asserting `width === 0` passes in both designs and is
  * therefore worthless here" — so every held-panel test below queries for absence.
@@ -60,7 +60,7 @@ describe('the timed wrap-up — bar, digits, and a span captured once', () => {
   });
 
   it('follows ends_at even when it disagrees with since + wrapup_seconds', () => {
-    // §A.13.11 names this as the one assertion that catches a reconstructed
+    // names this as the one assertion that catches a reconstructed
     // deadline — every other test passes either way, because the two agree in the
     // happy path. Here the campaign's `wrapup_seconds` would say 30s and the
     // frame says 45s; `ends_at` is authoritative.
@@ -154,7 +154,7 @@ describe('the held wrap-up — ends_at: null renders NO track', () => {
   });
 
   it('renders held_reason even when no countdown could ever have lapsed', () => {
-    // Case 3: `wrapup_seconds = 0` with a required disposition. Core sets the
+    // Case 3: `wrapup_seconds = 0` with a required disposition. The server sets the
     // reason on the FIRST frame precisely because there is no expiry to produce
     // one later — gate the sub-text on the countdown reaching zero and this panel
     // has no deadline AND no stated reason, which answers none of the questions
@@ -185,7 +185,7 @@ describe('the held wrap-up — ends_at: null renders NO track', () => {
 
 describe('the countdown does not announce on every repaint', () => {
   it('hides the digits and the bar from the rail’s live region', () => {
-    // The rail is this screen's ONLY polite live region (§A.11). Digits inside it
+    // The rail is this screen's ONLY polite live region. Digits inside it
     // that are not `aria-hidden` announce four times a second for the length of
     // every wrap-up of the shift, and a screen-reader user starts ignoring the
     // region that matters.
@@ -202,7 +202,7 @@ describe('the countdown does not announce on every repaint', () => {
   });
 });
 
-/** NEW (magick-agency, CONTRACT-DIFF §1): the hold cusui would have rendered as nothing. */
+/** A supervisor hold: a wrap-up with no end time must still render, not vanish. */
 describe('supervisor_hold', () => {
   it('names the supervisor, not the agent’s own outstanding disposition', () => {
     const anchor = openWrapup(frame({ ends_at: null, held_reason: 'supervisor_hold' }), 0, T0);

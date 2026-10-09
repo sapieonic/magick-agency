@@ -1,28 +1,18 @@
 /**
- * PORT NOTE (magick-agency): ported from core `src/instrumentation.ts`@4850d1d9. Changed:
- *  - `.env` is loaded first, as master's `src/instrumentation.ts:1-2`@a1f0756a does. Core's
- *    `src/index.ts` imported nothing that loaded it ahead of this file; here `.env` is loaded by
- *    `config/index.ts`, which runs after it, so without this line an `OTEL_ENABLED` set in `.env`
- *    would reach the config block but not the SDK.
- *  - OTLP export only (Manas, 2026-10-09): the `:9090` scrape is not ported, so the pull-only
- *    meter provider core installed with export off (`:229-244`), both scrape renderers
- *    (`:223`, `:243`), the `LastExportedMetrics` snapshot (`:125-129`) and their imports
- *    (`:9`, `:12-13`, `:17-18`, `:23`) are deleted. With export off no provider is installed and
- *    every instrument stays the OTel API's no-op, as before this file existed.
- *  - The HTTP instrumentation gets master's invite-token redaction hook
- *    (`src/utils/otel-instrumentations.ts:132-134`@a1f0756a): this app serves master's
- *    `/invites/:token` routes, which core never had. The hook also scrubs credential query
- *    values, which neither source did on spans, and outgoing `http` and `fetch` spans get the
- *    same query rule (`src/utils/redact-url.ts`).
- *  - `APP_VERSION` and `SERVICE_NAME` come from `@magick-agency/observability` subpaths, and the
- *    heap gauge's meter is named after `SERVICE_NAME` (core: 'voice-ai-orchestrator.runtime').
- *  - `shutdownOtelSdk` gives up after `OTEL_SHUTDOWN_TIMEOUT_MS` (see it).
- *  - Nothing starts unless `OTEL_SERVICE_NAME` is set as well (see `otelServiceNamed`).
- * Comments are core's except where marked or where they described deleted code (the scrape, the
- * `:9090` reader, core's `:64-69`, `:150-152`, `:246`). Kept as core wrote them: the `sdkRef`
- * story below is about core's billing counter (`webhook_fanout_abandoned_total`), which this app
- * does not have; the ordering rule it argues for holds here unchanged.
- * `PORTING.md` "OpenTelemetry SDK" has the row.
+ * The OpenTelemetry SDK. The first import of `src/index.ts`, so the meter provider exists before
+ * `@magick-agency/observability` binds every metric and the auto-instrumentations patch pg,
+ * ioredis and http before those load.
+ *
+ * - Starts only when `OTEL_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT` AND `OTEL_SERVICE_NAME`
+ *   are set (see `otelServiceNamed`). Otherwise no provider is installed and every instrument
+ *   stays the OTel API's no-op.
+ * - Exports over OTLP (http/protobuf) only, push: traces, metrics and logs. There is no
+ *   Prometheus scrape endpoint (decision "OTel export path").
+ * - `.env` is loaded here, first: `config/index.ts` loads it too, but runs after this file, so
+ *   without this line an `OTEL_ENABLED` set in `.env` would reach the config block but not the SDK.
+ * - Credentials in URLs are redacted on spans: the HTTP instrumentation's incoming hook and
+ *   outgoing redaction list, and the undici (`fetch`) hook (`src/utils/redact-url.ts`).
+ * - `shutdownOtelSdk` gives up after `OTEL_SHUTDOWN_TIMEOUT_MS` (see it).
  */
 // dotenv must load BEFORE we read env vars — this file runs before config/index.ts
 import 'dotenv/config';
@@ -58,10 +48,10 @@ import {
 
 const otlpEndpoint = process.env['OTEL_EXPORTER_OTLP_ENDPOINT'];
 const otelEnabled = process.env['OTEL_ENABLED'] === 'true';
-// PORT NOTE (magick-agency): not in core. Export also needs an explicit OTEL_SERVICE_NAME (Manas,
-// 2026-10-09). The fallback name, `magick-agency`, is the production name Grafana's
-// `agency_service_name_regex` selects, so an unnamed process (a laptop, a staging box missing the
-// variable) would page as production. Core's fallback (`voice-ai-orchestrator`) matches no rule.
+// Export also needs an explicit OTEL_SERVICE_NAME (Manas, 2026-10-09; decision "Unnamed
+// exporter"). The fallback name, `magick-agency`, is the production name the Grafana alert rules
+// select, so an unnamed process (a laptop, a staging box missing the variable) would page as
+// production.
 const otelServiceNamed = Boolean(process.env['OTEL_SERVICE_NAME']);
 
 /**
@@ -72,12 +62,10 @@ const otelServiceNamed = Boolean(process.env['OTEL_SERVICE_NAME']);
  * in `src/index.ts`, so a `process.on('SIGTERM', …)` here runs BEFORE the app's
  * shutdown handler — Node dispatches signal listeners in registration order —
  * and `sdk.shutdown()` is fire-and-forget from Node's point of view. The metric
- * reader was therefore shut down while the app was still on its first teardown
- * step, ~90s before `drainSettlementFanout` writes
- * `webhook_fanout_abandoned_total`: the one counter that says a customer's
- * credit release was dropped was recorded into a provider that had already
- * stopped exporting, and the process then `process.exit(0)`ed with no flush at
- * all. Every sample of it was lost, on every shutdown.
+ * reader would then be shut down while the app is still on its first teardown
+ * step: every metric and span the later stops record would go into a provider
+ * that had already stopped exporting, and `process.exit(0)` would follow with no flush
+ * at all.
  *
  * The app owns the ordering instead, via {@link shutdownOtelSdk}, which it calls
  * after the last thing that writes a metric or a span.
@@ -94,10 +82,9 @@ export async function shutdownOtelSdk(): Promise<void> {
   if (!sdk) return;
   sdkRef = null;
   try {
-    // PORT NOTE (magick-agency): bounded. Core awaited `sdk.shutdown()` as is, which with the
-    // collector unreachable takes the metric reader's export timeout (30s at the default
-    // interval) before rejecting, on top of the app's own teardown, so the orchestrator's stop
-    // grace period would kill the process mid-flush anyway.
+    // Bounded: with the collector unreachable, `sdk.shutdown()` takes the metric reader's export
+    // timeout (30s at the default interval) before rejecting, on top of the app's own teardown,
+    // so the stop grace period would kill the process mid-flush anyway.
     await withTimeout(sdk.shutdown(), OTEL_SHUTDOWN_TIMEOUT_MS, 'OTel SDK shutdown');
   } catch (err) {
     console.error('[otel] SDK shutdown failed', err);
@@ -111,8 +98,8 @@ export async function shutdownOtelSdk(): Promise<void> {
 // `utils/otel-sdk-config.ts`, where they are testable without an SDK.
 const resourceAttributes = buildResourceAttributes(process.env, { version: APP_VERSION, hostname });
 
-// Only initialize OTel when explicitly enabled AND an endpoint is configured.
-// PORT NOTE (magick-agency): AND the service is named (`otelServiceNamed`).
+// Only initialize OTel when explicitly enabled AND an endpoint is configured AND the service is
+// named (`otelServiceNamed`).
 if (otelEnabled && otlpEndpoint && otelServiceNamed) {
   console.log(`[otel] Initializing OpenTelemetry — endpoint: ${otlpEndpoint}`);
 } else {
@@ -187,8 +174,7 @@ if (otelEnabled && otlpEndpoint && otelServiceNamed) {
 
     traceExporter,
 
-    // ONE reader. (Core's `:9090` served this reader's last export rather than
-    // adding a second reader; the scrape is not ported.)
+    // ONE reader: OTLP push. There is no scrape reader.
     metricReaders: [otlpReader],
 
     views: buildMetricViews(),
@@ -240,30 +226,27 @@ if (otelEnabled && otlpEndpoint && otelServiceNamed) {
         // Keep: http, pg, ioredis, undici, openai, generic-pool (traces only —
         // their metrics are dropped by the views above)
 
-        // PORT NOTE (magick-agency): the hook is from master `src/utils/otel-instrumentations.ts:132-134`@a1f0756a.
         // The raw invite token is the path segment of `GET /invites/:token` and
         // `POST /invites/:token/claim`; on server spans whose URL carries a credential (that
         // token, a `?token=`/`sig=`/`*verify_token=` value, a media-stream path token) the hook
         // overwrites `url.path` and, when the query changed, `url.query`. `redactedQueryParams`
-        // (agency's) does the same for outgoing `http`/`https` client spans' `url.full`.
+        // does the same for outgoing `http`/`https` client spans' `url.full`.
         // See `src/utils/redact-url.ts`.
         '@opentelemetry/instrumentation-http': {
           startIncomingSpanHook: redactedRequestSpanAttributes,
           redactedQueryParams: [...OUTGOING_REDACTED_QUERY_PARAMS],
         },
 
-        // PORT NOTE (magick-agency): not in core or master. Global `fetch` spans export the full
+        // Global `fetch` spans export the full
         // request URL unredacted; the hook overwrites `url.full` / `url.query` when the query
         // carries a credential. See `redactedOutgoingSpanAttributes`.
         '@opentelemetry/instrumentation-undici': {
           startSpanHook: redactedOutgoingSpanAttributes,
         },
 
-        // pg: capture query text but not parameter values
-        // PORT NOTE (magick-agency): the line above is core's and is WRONG. With
-        // `enhancedDatabaseReporting` instrumentation-pg attaches every query's parameter values
-        // (`db.postgresql.values`); query text is captured without it. Kept verbatim by ruling
-        // (Manas, 2026-10-09): pg spans carry parameter values, as in core and master.
+        // pg: with `enhancedDatabaseReporting`, every query's parameter values are attached
+        // (`db.postgresql.values`); query text is captured without it. Kept on by ruling
+        // (Manas, 2026-10-09; decision "pg span parameters").
         '@opentelemetry/instrumentation-pg': {
           enhancedDatabaseReporting: true,
         },

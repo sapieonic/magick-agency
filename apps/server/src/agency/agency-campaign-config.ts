@@ -1,20 +1,19 @@
 /**
- * ─── AGENCY CAMPAIGN CONFIG VALIDATION (`AD-P3-M-04`) ────────────────────────
+ * ─── AGENCY CAMPAIGN CONFIG VALIDATION (public API layer) ───────────────────
  *
  * Validation of the three config surfaces the campaign builder writes: the
- * disposition catalog (§2.4), the outcome retry policy (§2.4), and the calling
- * window (§4.2, D4).
+ * disposition catalog, the outcome retry policy, and the calling
+ * window.
  *
- * ── Master validates; core stores. Master keeps no copy ─────────────────────
- * `agency_ingest_jobs`' migration states the rule this file has to respect:
- * campaign CRUD is a thin proxy because *"two writable copies of one business
- * object is how they drift"*. Nothing here persists or mirrors a campaign — it
- * inspects a request body on its way through and refuses shapes that would be
- * stored happily and then behave wrongly.
+ * ── The public route validates; the internal handler stores. No copy kept ──
+ * Nothing here persists or mirrors a campaign — it inspects a request body on
+ * its way to the internal handler and refuses shapes that would be stored
+ * happily and then behave wrongly. Two writable copies of one business object is
+ * how they drift.
  *
- * Core asks for exactly this. `calling-hours.ts` says of the ISO-8601 day
- * numbering: *"Master's validator and cusui's day picker mirror this one
- * definition."* This is that validator.
+ * `calling-hours.ts` asks for exactly this: it says of the ISO-8601 day
+ * numbering that the campaign-config validator and the console's day picker
+ * follow its one definition. This is that validator.
  *
  * ── What it does NOT do, and why that took checking ─────────────────────────
  * The three codes below are not required, and none is force-merged into a
@@ -22,16 +21,14 @@
  * each keys on a *flag*: disposition-driven retry reads `entry.retry`, the
  * callback scheduler reads `entry.requires_datetime`, suppression reads
  * `entry.suppress` — and the real DNC path is the dedicated `attempts/:id/dnc`
- * route, which never consults the catalog. Grepping core's `src/` for those
+ * route, which never consults the catalog. Grepping the dialer runtime for those
  * three strings as comparisons returns nothing outside the contract's own
  * prose, which is the method that works: a claim about dependencies is a claim
- * about callers. (The design doc previously stated the opposite — that these
- * three "cannot be removed from a catalog … because the retry engine, the
- * scheduler and the DNC path each depend on one of them existing" — a claim
- * this file falsified and `docs/agency-dialer-delivery-plan.md` has since been
- * corrected to match; do not reintroduce it here from an old copy of that doc.)
+ * about callers. Do not reintroduce the opposite claim — that these three
+ * "cannot be removed from a catalog because the retry engine, the scheduler and
+ * the DNC path each depend on one of them existing" — it is false.
  *
- * Worse, enforcing it would break a case core supports on purpose.
+ * Worse, enforcing it would break a case the dialer supports on purpose.
  * `outcome-classifier.ts`'s `requiresDisposition` treats an **empty** catalog as
  * "no codes to pick, so requiring one is a dead end" — a campaign whose agents do
  * not disposition at all. A required-codes rule here would make that campaign
@@ -40,39 +37,34 @@
  * So this file validates what is genuinely consumed and genuinely unchecked, and
  * declines to invent an invariant nothing reads.
  *
- * ── This is a good error message, not enforcement ───────────────────────────
- * ⚠️ This paragraph used to say core validates **none** of these fields, behind
- * nothing but `jsonb_typeof`. That is **out of date, and was already out of date
- * before `canceled` was added here**: core's `agency-campaigns.routes.ts` calls
+ * ── This is a good error message, not the only enforcement ──────────────────
+ * The internal handler (`agency-campaigns.routes.ts`) runs its own
  * `validateAgencyCampaignConfig` (`src/agency/campaign-config.ts`), which owns
  * the retry/window/ceiling rules and carries its own `RETRY_POLICY_OUTCOMES`.
  * The two lists are a PAIR and must move together — a key accepted here and
- * refused there is a campaign that saves from the wizard and 400s on the API,
- * and the reverse is a lever the wizard cannot offer.
+ * refused there is a campaign that saves from the wizard and 400s at the
+ * handler, and the reverse is a lever the wizard cannot offer.
  *
- * What remains true, and is the actual reason to treat this as a feedback
- * surface: core's API is reachable with a tenant API key without traversing
- * master, so every rule below is bypassable by a direct caller. The invariants
- * are ultimately consumed in core's retry engine and calling-hours gate, which
- * is where they have to hold.
+ * This file is the feedback surface: it answers in the field-keyed shape the
+ * wizard renders. The invariants are ultimately consumed in the retry engine and
+ * calling-hours gate, which is where they have to hold.
  */
 
 /**
  * The catalog a NEW campaign gets when the request does not carry one.
  *
- * ── Why a default here, and why not a merge in core ─────────────────────────
- * `agency_campaigns.disposition_catalog` is `JSONB NOT NULL DEFAULT '[]'` and
- * **nothing seeded it**: master never sent the field, so every campaign carried an
- * empty catalog, `requiresDisposition` returned false for all of them, and any
- * submission core did receive answered `unknown_disposition_code` with
- * `allowed_codes: []`. Disposition was inert platform-wide — the same
- * `heartbeat()`-with-zero-callers shape core's `DEFAULT_RETRY_POLICY` header
- * describes.
+ * ── Why a default here, and why not a merge at read time ────────────────────
+ * `agency_campaigns.disposition_catalog` is `JSONB NOT NULL DEFAULT '[]'`, so a
+ * create that sends no catalog gets an empty one: `requiresDisposition` returns
+ * false, and any submission is answered `unknown_disposition_code` with
+ * `allowed_codes: []`. Without this default, disposition would be inert for every
+ * campaign — the same `heartbeat()`-with-zero-callers shape the
+ * `DEFAULT_RETRY_POLICY` header describes.
  *
- * The tempting fix is core force-merging built-ins on read so the effective
- * catalog is never empty. That would **delete a coherent configuration**: an empty
- * catalog means "outcome-driven retry, no human write-up", which core supports
- * deliberately (`outcome-classifier.ts`) and `MAG-88` preserves explicitly.
+ * The tempting fix is force-merging built-ins on read so the effective catalog is
+ * never empty. That would **delete a coherent configuration**: an empty catalog
+ * means "outcome-driven retry, no human write-up", which the dialer supports
+ * deliberately (`outcome-classifier.ts`).
  *
  * A default at the creation boundary fixes inert-by-default without removing the
  * configuration, because a default is only consulted when the caller expressed no
@@ -80,26 +72,24 @@
  * is the whole mechanism, and it is why this is applied on POST only. A PATCH
  * carrying no catalog must not acquire one.
  *
- * The three codes are §2.4's, with its own flags. They are conventions rather than
- * dependencies — nothing in core compares against these strings, which is why
- * their *presence* is not validated — but they are the right conventions to start
- * an operator from, and the retry/datetime/suppress flags are what make them work.
+ * The three codes are the built-in dispositions, with their own flags. They are
+ * conventions rather than dependencies — nothing in the dialer runtime compares
+ * against these strings, which is why their *presence* is not validated — but
+ * they are the right conventions to start an operator from, and the
+ * retry/datetime/suppress flags are what make them work.
  *
- * ── `do_not_call` carries no `terminal` — matches core, deliberately ────────
- * Core's `BUILT_IN_DISPOSITIONS` (`magic-voice-core/src/agency/disposition-policy.ts`)
- * declares `do_not_call` as `{ suppress: true }` only, and its header states it is
- * exported *precisely* so master and cusui copy from this one place rather than
- * inventing their own three. This file previously added `terminal: true` on top,
- * which core's own `resolveDispositionDecision` can never observe: `suppress` is
- * checked FIRST and returns before `terminal` is ever read (§2.4's precedence —
- * suppress beats terminal beats callback beats disposition-retry). A flag that is
+ * ── `do_not_call` carries no `terminal` — matches `BUILT_IN_DISPOSITIONS` ───
+ * `BUILT_IN_DISPOSITIONS` (`src/agency/disposition-policy.ts`) declares
+ * `do_not_call` as `{ suppress: true }` only. A `terminal: true` on top would be
+ * a flag `resolveDispositionDecision` can never observe: `suppress` is checked
+ * FIRST and returns before `terminal` is ever read (the precedence is suppress
+ * beats terminal beats callback beats disposition-retry). A flag that is
  * structurally unreachable behind an earlier-checked flag is the "inert config"
- * shape this project keeps being bitten by (see `DEFAULT_RETRY_POLICY`'s and this
- * very catalog's own history, above), so the honest default is the one that says
- * only what is true. The repos cannot share a constant (separate services, no
- * shared package) — `test/unit/agency/agency-campaign-config.test.ts` pins this
- * catalog's shape so the two copies cannot drift silently, the same discipline
- * `agency-billing-contract.ts` uses for the wire↔rate-card mapping.
+ * shape this project keeps being bitten by (see `DEFAULT_RETRY_POLICY` and the
+ * empty-catalog case above), so the honest default is the one that says only
+ * what is true. This is a separate constant rather than an import of
+ * `BUILT_IN_DISPOSITIONS`; `test/unit/agency/agency-campaign-config.test.ts` pins
+ * its shape so the two cannot drift silently.
  */
 export const DEFAULT_DISPOSITION_CATALOG = [
   { code: 'voicemail', label: 'Voicemail', retry: { delay_minutes: 240, max_attempts: 2 } },
@@ -109,13 +99,14 @@ export const DEFAULT_DISPOSITION_CATALOG = [
 
 /**
  * Fill in a create body's config defaults. Returns a NEW object; the input is not
- * mutated, because the caller forwards the body to core and a surprise mutation of
- * a request object is how a proxy starts lying about what it sent.
+ * mutated, because the caller forwards the body to the internal handler and a
+ * surprise mutation of a request object is how a route starts lying about what it
+ * sent.
  *
  * Only `disposition_catalog`, and only when absent. Everything else already has a
- * usable column default in migration 072 — and `retry_policy` deliberately keeps
- * its `{}`, because core's `DEFAULT_RETRY_POLICY` falls back per key, so sending an
- * explicit copy from master would freeze today's defaults into every campaign row
+ * usable column default on `agency_campaigns` — and `retry_policy` deliberately
+ * keeps its `{}`, because `DEFAULT_RETRY_POLICY` falls back per key, so sending an
+ * explicit copy from here would freeze today's defaults into every campaign row
  * and make a later change to them invisible to existing campaigns.
  */
 export function withCampaignConfigDefaults(body: unknown): unknown {
@@ -129,22 +120,22 @@ export function withCampaignConfigDefaults(body: unknown): unknown {
 }
 
 /**
- * Outcomes the retry policy may be keyed by (`AgencyRetryPolicy`, §2.4).
+ * Outcomes the retry policy may be keyed by (`AgencyRetryPolicy`).
  *
- * ── `agent_disconnected` / `orphaned` (MAG-100) ─────────────────────────────
+ * ── `agent_disconnected` / `orphaned` ─────────────────────────────
  *
- * Both are genuinely produced by core — `agency-dialer.ts` settles an agent's
- * dropped station socket `agent_disconnected`, and `reaper.ts` writes `orphaned`
- * for an attempt whose owning replica died holding it — and core's
- * `DEFAULT_RETRY_POLICY` gives both a real entry (MAG-97), so core's
- * `resolveRetryDecision` genuinely honours a rule keyed by either. They were
- * missing from THIS list only, which meant master 400'd a key core both accepts
- * and acts on: the wizard could not offer the one lever that tunes the behaviour.
+ * Both are genuinely produced by the dialer — `agency-dialer.ts` settles an
+ * agent's dropped station socket `agent_disconnected`, and `reaper.ts` writes
+ * `orphaned` for an attempt whose owning replica died holding it — and
+ * `DEFAULT_RETRY_POLICY` gives both a real entry, so `resolveRetryDecision`
+ * genuinely honours a rule keyed by either. Leaving them off THIS list would
+ * 400 a key the handler both accepts and acts on: the wizard could not offer the
+ * one lever that tunes the behaviour.
  *
  * ⚠️ The cap an operator sets here is the CUSTOMER's allowance, and it binds only
  * an `agent_disconnected` that happened AFTER bridging. A drop BEFORE the bridge
  * is our fault, is charged to `agency_contacts.our_fault_attempts` instead, and is
- * bounded by core's `OUR_FAULT_REDIAL_BOUND` — which this policy can only LOWER,
+ * bounded by `OUR_FAULT_REDIAL_BOUND` (`retry-policy.ts`) — which this policy can only LOWER,
  * never raise (`min(configured, BOUND)`). That asymmetry is deliberate and is not
  * reachable from this validator: a regulated repeat-dial limit an operator can
  * raise is not a limit. Adding these keys therefore tunes the customer-allowance
@@ -154,47 +145,45 @@ export function withCampaignConfigDefaults(body: unknown): unknown {
  *
  * A dial we stopped before anyone picked up. Distinct from `no_answer` (they
  * never picked up) and from `abandoned` (they picked up and reached nobody), and
- * core now classifies it as its own outcome rather than collapsing it into
+ * the dialer classifies it as its own outcome rather than collapsing it into
  * either — an agent, a supervisor or a lifecycle event ending an attempt while
  * the phone is still ringing.
  *
- * Same omission as MAG-100's, arriving the same way: core's
- * `AgencyAttemptOutcome` and `DEFAULT_RETRY_POLICY` both carry it, its
+ * Accepted for the same reason as `agent_disconnected` / `orphaned`:
+ * `AgencyAttemptOutcome` and `DEFAULT_RETRY_POLICY` both carry it,
  * `resolveRetryDecision` has NO short-circuit for it (only `invalid` does), and
- * master refusing the key is the wizard being unable to offer a lever core acts
- * on. There is a second, sharper reason here than there was for MAG-100:
- * cusui's config form re-sends `retry_policy` as a LOSSLESS round trip
- * (`buildConfigPayload` strips only `invalid`), so a campaign that has STORED a
- * `canceled` rule would 400 on its next save from the wizard, keyed to a row the
- * form never rendered — a save that fails with nothing on screen to explain it.
+ * refusing the key would leave the wizard unable to offer a lever the dialer acts
+ * on. There is a second, sharper reason here: the console's config form re-sends
+ * `retry_policy` as a LOSSLESS round trip (`buildConfigPayload` strips only
+ * `invalid`), so a campaign that has STORED a `canceled` rule would 400 on its
+ * next save from the wizard, keyed to a row the form never rendered — a save that
+ * fails with nothing on screen to explain it.
  *
- * ⚠️ "Stored" is the precise condition, and an earlier draft of this paragraph
- * overstated it by saying "from core's own default seeding". Core does not write
- * that key onto the row: it COALESCEs a missing `retry_policy` to `'{}'` and
+ * ⚠️ "Stored" is the precise condition. Nothing writes that key onto the row by
+ * default: a missing `retry_policy` is COALESCEd to `'{}'` and
  * `DEFAULT_RETRY_POLICY` is a READ-TIME fallback. So the round-trip 400 needs
- * someone to have stored the key — a direct API caller, or a first wizard save
- * once cusui offers the row — and is not reached by every campaign that merely
- * *experiences* a cancelled dial.
+ * someone to have stored the key — an earlier save that sent it — and is not
+ * reached by every campaign that merely *experiences* a cancelled dial.
  *
  * ⚠️ **The lever this key tunes is the OUR-FAULT ledger, not the customer's, and
  * that is the whole of it — unlike `agent_disconnected`, which is both.** A
- * cancel is never bridged by construction, and core's `ended` handler routes an
- * unbridged our-fault outcome to `resolveOurFaultRedial` and
+ * cancel is never bridged by construction, and the dialer's `ended` handler
+ * routes an unbridged our-fault outcome to `resolveOurFaultRedial` and
  * `agency_contacts.our_fault_attempts`. So the `DEFAULT_RETRY_POLICY.canceled`
- * entry core ships is a FALLBACK that no live path reads (core's own comment
- * says so), while the key an operator sets HERE is read: that function takes
+ * entry is a FALLBACK that no live path reads (`retry-policy.ts` says so), while
+ * the key an operator sets HERE is read: that function takes
  * `min(configured, OUR_FAULT_REDIAL_BOUND)` for the cap and the configured
  * `delay_minutes` for the delay. Lowering only, never raising — the same
- * asymmetry MAG-100 documents above, for the same regulatory reason. Setting it
- * to `0` therefore retires a contact on the first cancelled dial without anyone
- * having spoken to them, which is why cusui labels the row as our fault and
- * warns on zero rather than leaving `0` to read as "one fewer redial".
+ * asymmetry documented for `agent_disconnected` above, for the same regulatory
+ * reason. Setting it to `0` therefore retires a contact on the first cancelled
+ * dial without anyone having spoken to them, which is why the console labels the
+ * row as our fault and warns on zero rather than leaving `0` to read as "one
+ * fewer redial".
  *
  * NOT in {@link SILENTLY_INERT_OUTCOMES} and NOT in
  * {@link SUPPRESSED_BEFORE_POLICY_OUTCOMES}: unlike `machine` it genuinely
  * happens (26 of them in the 2026-09-08 pilot window), and unlike `invalid`
- * nothing in core short-circuits ahead of the policy read. A rule keyed here
- * fires.
+ * nothing short-circuits ahead of the policy read. A rule keyed here fires.
  */
 export const RETRY_POLICY_OUTCOMES = [
   'no_answer',
@@ -211,7 +200,7 @@ export const RETRY_POLICY_OUTCOMES = [
  * `machine` is called out separately from "any unknown key" because it is the one
  * an operator will reach for, and the failure is silent.
  *
- * With AMD off (D1) the system can never classify an outcome as `machine` — a
+ * With AMD off the system can never classify an outcome as `machine` — a
  * call answered by voicemail is `connected`, because the carrier cannot tell us
  * otherwise. So a `machine` policy is not a typo that gets ignored; it is a
  * configured retry rule that will never once fire, and voicemail retry is
@@ -220,15 +209,14 @@ export const RETRY_POLICY_OUTCOMES = [
 const SILENTLY_INERT_OUTCOMES = new Set(['machine', 'voicemail', 'answering_machine']);
 
 /**
- * Refused because an EARLIER-CHECKED branch in core makes them unreachable, not
- * because they are not real outcomes (MAG-103).
+ * Refused because an EARLIER-CHECKED branch in the retry engine makes them
+ * unreachable, not because they are not real outcomes.
  *
- * Core's `resolveRetryDecision` returns `{contactState: 'suppressed'}` for
- * `invalid` BEFORE the line that reads `policy?.[outcome]`, so neither a
- * campaign's rule nor core's own `DEFAULT_RETRY_POLICY.invalid` can ever be read
- * for that outcome. The key was accepted here and by core, so an operator could
- * configure a retry, see it stored, and never have it fire — the same silent
- * no-op the `machine` rule above exists to prevent.
+ * `resolveRetryDecision` returns `{contactState: 'suppressed'}` for `invalid`
+ * BEFORE the line that reads `policy?.[outcome]`, so neither a campaign's rule
+ * nor `DEFAULT_RETRY_POLICY.invalid` can ever be read for that outcome. Accepting
+ * the key would let an operator configure a retry, see it stored, and never have
+ * it fire — the same silent no-op the `machine` rule above exists to prevent.
  *
  * Kept separate from {@link SILENTLY_INERT_OUTCOMES} because the operator needs a
  * different explanation: `machine` NEVER HAPPENS, whereas `invalid` happens
@@ -236,20 +224,20 @@ const SILENTLY_INERT_OUTCOMES = new Set(['machine', 'voicemail', 'answering_mach
  * would be actively wrong.
  *
  * ⚠️ `connected` looks similar and is NOT here, deliberately. It has no
- * short-circuit in core: it falls through to the ordinary policy lookup, so a
- * rule genuinely overrides the built-in `{max_attempts: 0}`. Refusing it would
- * delete a live lever. The two are pinned apart in core's `retry-policy.test.ts`.
+ * short-circuit: it falls through to the ordinary policy lookup, so a rule
+ * genuinely overrides the built-in `{max_attempts: 0}`. Refusing it would delete
+ * a live lever. The two are pinned apart in `retry-policy.test.ts`.
  */
 const SUPPRESSED_BEFORE_POLICY_OUTCOMES = new Set(['invalid']);
 
 /**
- * Real words this codebase itself taught the operator, which are not the spelling
- * core uses. Mapped to the correct key so the message can say which.
+ * Real words this product itself taught the operator, which are not the spelling
+ * the outcome vocabulary uses. Mapped to the correct key so the message can say
+ * which.
  *
  * `cancelled` is the whole reason this set exists. Almost every other vocabulary
- * in this service is British — jobs, schedules, automations, and
- * `NON_BILLABLE_STATUSES` — while core's outcome is `canceled`, matching
- * `webrtc_calls.status`. So an operator who has read any other part of this
+ * in this service is British — the ingest job's `cancelled` status among them —
+ * while the attempt outcome is `canceled`, matching `webrtc_calls.status`. So an operator who has read any other part of this
  * product reaches for two Ls, and gets the generic "not a call outcome" 400 with
  * a valid-keys list they then have to diff by eye to spot that the answer is one
  * letter away.
@@ -258,7 +246,7 @@ const SUPPRESSED_BEFORE_POLICY_OUTCOMES = new Set(['invalid']);
  * never fire because AMD is off, which is not true of `cancelled` and would send
  * the operator to the disposition screen for no reason. This is a typo with a
  * known fix, and the only useful message names the fix. Same class of miss as
- * `answering_machine` (MAG-100), different remedy.
+ * `answering_machine`, different remedy.
  */
 const SPELLING_ALIAS_OUTCOMES = new Map([['cancelled', 'canceled']]);
 
@@ -275,7 +263,7 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
  * and would test clean whenever anyone checked, because whoever checks is
  * unlikely to do it across a DST boundary. An `Intl`-only validator passes it.
  *
- * Ratified rule, and it holds at core's boundary too.
+ * Ratified rule, and the internal handler's validator holds it too.
  */
 const IANA_ZONE_RE = /^[A-Za-z][A-Za-z0-9_+-]*(\/[A-Za-z0-9_+-]+)+$/;
 
@@ -310,7 +298,7 @@ function toComparableTime(value: string): string {
 }
 
 /**
- * ─── BUILT-IN SEMANTIC MISMATCH (`AD-P3-M-06`) ────────────────────────────────
+ * ─── BUILT-IN SEMANTIC MISMATCH ───────────────────────────────────────────────
  *
  * The three built-in codes are available, not force-merged (see the header
  * above) — which is correct, and creates this hazard rather than removing it.
@@ -322,18 +310,16 @@ function toComparableTime(value: string): string {
  * `voicemail` without `retry` (the label promises retry it cannot deliver) and
  * `callback` without `requires_datetime` (the console never collects a time).
  *
- * Core already has this detector — `builtInSemanticMismatches()` in
- * `magic-voice-core/src/agency/disposition-policy.ts` — pure, correct, and
- * honestly documented as changing no behaviour on its own. It has zero
- * consumers in core's `src/`, so the hazard it exists to catch was detectable
- * and undetected. The repos cannot share a constant (separate services, no
- * shared package), so this mirrors core's map rather than importing it — read
- * that file for reference, never edit it from here.
+ * The dialer runtime has this detector — `builtInSemanticMismatches()` in
+ * `src/agency/disposition-policy.ts` — pure, correct, and honestly documented as
+ * changing no behaviour on its own; nothing in `src/` calls it. This file keeps
+ * its own map rather than importing that one — read that file for reference,
+ * never edit it from here.
  *
  * ── Blocking, not a warning ─────────────────────────────────────────────────
- * Core deliberately left its detector advisory: "a compliance floor that
- * overrides operator config is a decision, not an implementation detail."
- * Master makes that decision here, consciously, and blocks: the failure mode
+ * The detector is deliberately advisory: "a compliance floor that overrides
+ * operator config is a decision, not an implementation detail." This file makes
+ * that decision, consciously, and blocks: the failure mode
  * is a customer's do-not-call request being silently ignored, which is a
  * regulated harm, not a UX rough edge — and this file is already the wizard's
  * feedback surface (see the header), not merely advisory prose. A mis-flagged
@@ -386,7 +372,7 @@ function validateDispositionCatalog(catalog: unknown): ConfigIssue[] {
   }
 
   // An empty catalog is VALID and means "agents do not disposition on this
-  // campaign" — core's `requiresDisposition` reads it that way deliberately.
+  // campaign" — `requiresDisposition` reads it that way deliberately.
   const seen = new Set<string>();
 
   catalog.forEach((raw, i) => {
@@ -402,9 +388,9 @@ function validateDispositionCatalog(catalog: unknown): ConfigIssue[] {
       issues.push({
         field: `${at}.code`,
         // Lowercase and underscores only, because the code is compared
-        // byte-for-byte at three boundaries: core's catalog lookup on submit, the
+        // byte-for-byte at three boundaries: the catalog lookup on submit, the
         // console's pad, and the retry engine's precedence check. A code differing
-        // only in case is a submission core answers `unknown_disposition_code` to.
+        // only in case is a submission answered `unknown_disposition_code`.
         message:
           'code must be 1–50 characters of lowercase letters, digits or underscores.',
       });
@@ -439,7 +425,7 @@ function validateDispositionCatalog(catalog: unknown): ConfigIssue[] {
       }
     }
 
-    // Built-in semantic mismatch (`AD-P3-M-06`) — only for a code that IS one
+    // Built-in semantic mismatch — only for a code that IS one
     // of the three built-ins, matched byte-for-byte like every other code
     // comparison in this file (see the `.code` validation above).
     if (typeof code === 'string') {
@@ -510,7 +496,7 @@ function validateRetryPolicy(policy: unknown): ConfigIssue[] {
       issues.push({
         field: `retry_policy.${key}`,
         message: SPELLING_ALIAS_OUTCOMES.has(key)
-          ? `'${key}' is not a call outcome — did you mean '${SPELLING_ALIAS_OUTCOMES.get(key)}'? Core spells this one without the double L, matching the call status. Rename the key and the rule is kept as written.`
+          ? `'${key}' is not a call outcome — did you mean '${SPELLING_ALIAS_OUTCOMES.get(key)}'? The outcome is spelled with one L, matching the call status. Rename the key and the rule is kept as written.`
           : SILENTLY_INERT_OUTCOMES.has(key)
             ? `'${key}' is never a call outcome — with answering-machine detection off, a call answered by voicemail is classified 'connected'. A rule here would never fire. Configure voicemail retry on the 'voicemail' disposition instead, where it is applied.`
             : SUPPRESSED_BEFORE_POLICY_OUTCOMES.has(key)
@@ -526,7 +512,7 @@ function validateRetryPolicy(policy: unknown): ConfigIssue[] {
     issues.push(...validateRetryRule(rule as Record<string, unknown>, `retry_policy.${key}`));
   }
 
-  // An empty policy is valid and is the ORDINARY case: core's
+  // An empty policy is valid and is the ORDINARY case:
   // `DEFAULT_RETRY_POLICY` falls back per key, so `{}` means "the documented
   // defaults" rather than "retry nothing".
   return issues;
@@ -563,14 +549,14 @@ function validateCallingWindow(body: Record<string, unknown>): ConfigIssue[] {
     // lets exactly that pair through.
     if (toComparableTime(start) === toComparableTime(end)) {
       /**
-       * Core reads `start === end` as **permanently closed** — `nextOpenAt`
+       * The calling-hours gate reads `start === end` as **permanently closed** — `nextOpenAt`
        * returns null, meaning "no opening exists" — not as a 24-hour window. A
        * saveable campaign that can never place a call is a support ticket whose
        * cause is invisible on every screen, so it is refused at the boundary
        * where the operator can still see what they typed.
        *
        * A window that wraps midnight (22:00 → 06:00) IS supported and must not be
-       * rejected here: core handles `start > end` explicitly.
+       * rejected here: `calling-hours.ts` handles `start > end` explicitly.
        */
       issues.push({
         field: 'calling_window_end',
@@ -585,7 +571,7 @@ function validateCallingWindow(body: Record<string, unknown>): ConfigIssue[] {
     if (!Array.isArray(days)) {
       issues.push({ field: 'calling_days', message: 'calling_days must be an array of day numbers.' });
     } else if (days.length === 0) {
-      // Same class as `start === end`: core returns "no opening exists".
+      // Same class as `start === end`: the gate returns "no opening exists".
       issues.push({
         field: 'calling_days',
         message: 'Select at least one calling day — the campaign would never dial.',
@@ -602,8 +588,8 @@ function validateCallingWindow(body: Record<string, unknown>): ConfigIssue[] {
              * undetectable by testing the default and would surface as an
              * off-by-one on Sundays months later. A caller sending `0` believes
              * `dow`, so accepting it means we and they disagree about which days
-             * the campaign runs. Core pins the same definition in
-             * `calling-hours.ts`.
+             * the campaign runs. `calling-hours.ts` pins the same
+             * definition.
              */
             message: 'Days are ISO-8601: 1 = Monday … 7 = Sunday. 0 is not a valid day.',
           });
@@ -618,7 +604,7 @@ function validateCallingWindow(body: Record<string, unknown>): ConfigIssue[] {
       field: 'default_timezone',
       /**
        * Refused here because at dial time an unreadable zone means the
-       * *campaign's own config* is broken, and core's per-contact gate can only
+       * *campaign's own config* is broken, and the per-contact gate can only
        * park the contact and log — it cannot pause a campaign, and should not
        * learn how to. So the rejection belongs at this boundary.
        *
@@ -658,7 +644,7 @@ export function validateAgencyCampaignConfig(body: unknown): ConfigIssue[] {
   return issues;
 }
 
-/** `{ field: message }`, the shape master's other routes send as `details`. */
+/** `{ field: message }`, the shape the public routes send as `details`. */
 export function issuesToDetails(issues: readonly ConfigIssue[]): Record<string, string> {
   const details: Record<string, string> = {};
   for (const issue of issues) {

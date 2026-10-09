@@ -10,29 +10,33 @@ import type {
 } from '@magick-agency/contracts/agency';
 
 /**
- * PORT NOTE (magick-agency): the agent's station WebSocket, ported from core
- * `src/api/routes/agency.routes.ts` @4850d1d9 — the route registration (`:160-170`,
- * `GET /station/:sessionId`, `websocket: true`) and `handleStationSocket` (`:1358-1792`),
- * both VERBATIM in body. Only the module changed: core's route file is a Phase 8
- * surface (decision B16 — route files become handler modules), so the socket lives in
- * this runtime-owned module and {@link registerStationSocket} is the one registration.
+ * The agent's station WebSocket: {@link handleStationSocket}, in this runtime-owned
+ * module (decision B16).
  *
- * Mounted by `agencyPlugin` under core's prefix `/api/v1/agency` for now. Phase 8 moves
- * it to the console's path by changing that one `register` call.
+ * The console's station socket is served at `/proxy/agency/station/:sessionId` by
+ * `proxyAgencyStationRoutes` (`api/routes/proxy-agency-station.routes.ts`), which makes
+ * its two refusals — a tokenless upgrade (4401) and a path-escaping session id (1008)
+ * — and then calls `handleStationSocket` from this module.
  *
- * One addition: `runtime` may be `null` when the app is built without a context (the
- * routing-only test builds `buildApp({ ctx: null })`); such a socket is closed with
- * 1011 rather than dereferencing a missing runtime. Core always had a runtime here.
+ * `runtime` may be `null` when the app is built without a context (the routing-only
+ * test builds `buildApp({ ctx: null })`); such a socket is closed with 1011 rather
+ * than dereferencing a missing runtime.
  */
 
 const log = createChildLogger({ component: 'agency-routes' });
 
-/** Register the station socket on `app` (core's `agencyRoutes`, first route). */
+/**
+ * Register `GET /station/:sessionId` (`websocket: true`) on `app`, handing each
+ * socket to {@link handleStationSocket}.
+ *
+ * Not registered by the app; the served path is `/proxy/agency/station/:sessionId`
+ * (`proxyAgencyStationRoutes`). The station unit tests mount the handler through it.
+ */
 export function registerStationSocket(app: FastifyInstance, runtime: AgencyRuntime | null): void {
   // ── Station WebSocket ─────────────────────────────────────────────────────
   // Deliberately registered OUTSIDE the authenticated scope: a WebSocket carries
-  // no tenant headers. The session id is unguessable and the socket is proxied by
-  // master, which authenticates the agent and appends the token.
+  // no tenant headers. The session id is unguessable, and the single-use station
+  // token on the upgrade (minted over authenticated HTTP) is what authenticates it.
   app.get('/station/:sessionId', { websocket: true }, (socket: WebSocket, request: FastifyRequest<{
     Params: { sessionId: string };
     Querystring: { token?: string };
@@ -48,7 +52,8 @@ export function registerStationSocket(app: FastifyInstance, runtime: AgencyRunti
 /**
  * The long-lived station socket. Carries control frames, the heartbeat, and — for
  * the duration of an attempt — media, because the bridge borrows this very socket
- * (§7). The bridge attaches its own listeners per attempt and removes them at
+ * (the dialer depends on the bridge, never the reverse). The bridge attaches its
+ * own listeners per attempt and removes them at
  * detach, so both handler sets coexist without interfering.
  */
 export async function handleStationSocket(
@@ -71,9 +76,9 @@ export async function handleStationSocket(
   //
   // `ws` buffers nothing for a socket with no `message` listener: a frame that
   // arrives while a handler is between awaits is emitted to nobody and is gone.
-  // This listener used to be registered *after* the four awaits below, so every
-  // frame in that window was dropped — and the console's first `ping` is exactly
-  // such a frame. A dropped one costs the console a missed-ping tick out of the
+  // Registered *after* the four awaits below, every frame in that window would be
+  // dropped — and the console's first `ping` is exactly such a frame. A dropped
+  // one costs the console a missed-ping tick out of the
   // three that put its rail in the "Disconnected" state, on a socket that is in
   // fact perfectly healthy.
   //
@@ -169,23 +174,23 @@ export async function handleStationSocket(
 
       // ── A LEFT SESSION MUST STOP RENEWING ────────────────────────────────
       //
-      // `left_at` is checked once, at upgrade, and until this landed nothing
-      // rechecked it — so a session that left while its console tab stayed open
-      // went on renewing both the station ownership key and the agent lease
-      // forever, because neither renewal consults the row. Two things break
+      // `left_at` is checked at upgrade, and without this recheck a session that
+      // left while its console tab stayed open would go on renewing both the
+      // station ownership key and the agent lease forever, because neither
+      // renewal consults the row. Two things break
       // downstream, both silently:
       //
       //  * `AgencyReaper.isAgentHeldSomewhere` reads that ownership key and
       //    skips any attempt pointing at the session — so attempts on a closed
       //    session are never reaped and their contacts sit `in_flight` past the
-      //    leak threshold, which is the exact harm `AD-P2-C-08` exists to fix;
+      //    leak threshold, which is the exact harm the reaper exists to fix;
       //  * the agent is dialable-looking and undialable: the lease says
       //    `available`, while `findLiveForCampaign` — what the pacing tick reads
       //    — excludes left rows. A ready console that never rings.
       //
-      // Rare before migration 092 (only a deliberate leave with the tab open);
-      // routine after it, because the dedupe closes sessions out from under
-      // whoever is holding them. So the recheck goes on the ping: it is the one
+      // Not rare: besides a deliberate leave with the tab open, the session dedupe
+      // closes sessions out from under whoever is holding them. So the recheck goes
+      // on the ping: it is the one
       // event that both proves the tab is still there and is about to do the
       // renewing. One primary-key read per agent per 10s buys the invariant.
       //
@@ -236,13 +241,9 @@ export async function handleStationSocket(
     }
     // `media` is consumed by the bridge's borrowed-socket listener, not here.
     //
-    // Nothing else is read, and that is now stated rather than implied. This said
-    // "`hangup` is Phase 1-optional; the HTTP route is the supported surface" —
-    // true about intent, false about fact, because the HTTP route did not exist
-    // either (`MAG-112`). A `hangup` frame fell off the end of this listener and
-    // off the end of the bridge's, so the agent's hang-up button did nothing on
-    // both advertised paths while this comment explained where it went.
-    // `POST /agency/attempts/:id/hangup` is real now; the frame stays withdrawn.
+    // Nothing else is read. A `hangup` frame is handled neither here nor by the
+    // bridge's listener: the agent's hang-up is `POST /agency/attempts/:id/hangup`,
+    // and the frame is withdrawn.
   });
 
   // ── THE CLOSE HANDLER IS REGISTERED HERE TOO, AND FOR THE SAME REASON ─────
@@ -317,7 +318,7 @@ export async function handleStationSocket(
       // that afterwards, because the station heartbeat only ever renews an
       // existing `available`/`break` lease — it never restores one. The agent then
       // sat out of the dialable pool for the rest of their shift, on a console
-      // that looked entirely healthy, which is the harm in `86d44papk`.
+      // that looked entirely healthy.
       //
       // The question is asked by comparing the ATTACHED socket rather than merely
       // asking whether one is attached, so the answer does not depend on `detach`
@@ -327,8 +328,8 @@ export async function handleStationSocket(
       // whole condition, and a socket that is not holding a session has no
       // business deciding the agent is gone.
       // This read and the write inside `releaseStationOnClose` are ONE synchronous
-      // run (see that method) — so this check is not racing it, and a review's
-      // claim that it was does not hold. `socket` is handed down anyway so the
+      // run (see that method) — so this check is not racing it. `socket` is
+      // handed down anyway so the
       // same question can be re-asked at the write itself, which is what keeps
       // that property from being silently undone by a later `await`; a
       // `wentOffline === false` alongside `superseded === false` is how that
@@ -404,7 +405,7 @@ export async function handleStationSocket(
   // that can create something for it to watch.
   runtime.wakeStationSweep();
 
-  // Redis, or `break` — never the DB row (`AD-P2-C-07` (c) and (d)). The rule and
+  // Redis, or `break` — never the DB row. The rule and
   // the reason live on the runtime; this is transport.
   const resumedState = await runtime.rehydrateAgent(sessionId);
 
@@ -440,7 +441,7 @@ export async function handleStationSocket(
   // Deliberately NOT re-emitting `bridged` for a resumed attempt — the console's
   // `bridged` handler plays the audible connect cue, and a page reload starts with
   // an empty dedupe set, so it would fire mid-conversation. `active_attempt`
-  // carries `bridged_at`, which is the authority for a resumed panel (§ contract).
+  // carries `bridged_at`, which is the authority for a resumed panel.
   runtime.stations.send(sessionId, {
     event: 'ready',
     session_id: sessionId,

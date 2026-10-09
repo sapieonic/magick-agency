@@ -1,4 +1,3 @@
-// PORT NOTE (magick-agency): ported from core src/telephony/voicelink/voicelink.webhook.ts@4850d1d9; only the logger import specifier changed.
 import type { CallEvent } from '../types.js';
 import { createChildLogger } from '@magick-agency/observability';
 import type { VoicelinkWebhookBody, VoicelinkWebhookCall } from './voicelink.types.js';
@@ -80,8 +79,7 @@ export function normalizeVoicelinkWebhook(body: VoicelinkWebhookBody): Normalize
     // exclude any string containing "NOANSWER" before matching the positive form.
     // Separators (not just whitespace) are collapsed so the drift spellings
     // "NO_ANSWER"/"NO-ANSWER" can't read as answered — the same vocabulary drift
-    // that caused this bug in the first place (VoiceLink's "NO ANSWER" with a
-    // space vs the VoBiz-shaped `no-answer` with a hyphen).
+    // as VoiceLink's "NO ANSWER" (a space) vs the common `no-answer` (a hyphen).
     //
     // `answeredAt` is the SECOND positive signal, and the load-bearing one for
     // `call.ended` — that payload carries NO `callStatus` at all (only
@@ -94,7 +92,7 @@ export function normalizeVoicelinkWebhook(body: VoicelinkWebhookBody): Normalize
     // It must PARSE as a real instant, not merely be a non-empty string: a
     // carrier that JSON-encodes null as the literal "null", or emits an
     // unparseable value, would otherwise mint a phantom answered call — exactly
-    // the failure mode this whole change exists to remove. Epoch 0 is rejected
+    // the failure mode this check exists to prevent. Epoch 0 is rejected
     // too; it is a zero-value placeholder, never a real pickup time.
     wasAnswered: (() => {
       const collapsed = callStatus.replace(/[\s_-]+/g, '');
@@ -110,8 +108,8 @@ export function normalizeVoicelinkWebhook(body: VoicelinkWebhookBody): Normalize
 }
 
 /**
- * Extract just the recording URL from either payload shape (used by the webhook
- * route to persist a late `call.completed` recording independently of parsing).
+ * Extract just the recording URL from either payload shape, independently of
+ * event parsing.
  */
 export function extractVoicelinkRecordingUrl(body: VoicelinkWebhookBody): string | undefined {
   return body.call?.recordingUrl || body.recordingUrl || undefined;
@@ -178,10 +176,9 @@ export function classifyVoicelinkOutcome(n: NormalizedVoicelinkWebhook): Voiceli
   // `busy` is the operator-facing label for both: the callee was reachable but
   // did not take the call.
   //
-  // Deliberately NOT the `failed` default, which is what these settled as before
-  // and rendered as "Didn't connect" — indistinguishable from a real telephony
-  // fault in the call list, in `AI_CALLS_CONNECTED_STATUSES`, and to the
-  // platform's campaign-retry policy. `failed` stays reserved for genuine faults.
+  // Deliberately NOT the `failed` default, which renders as "Didn't connect" —
+  // indistinguishable from a real telephony fault wherever outcomes are read.
+  // `failed` stays reserved for genuine faults.
   //
   // Scoped narrowly to the observed signature rather than widening the fallback:
   // an unanswered call with an UNRECOGNISED cause is still a `failed`, because
@@ -200,11 +197,8 @@ export function classifyVoicelinkOutcome(n: NormalizedVoicelinkWebhook): Voiceli
   // and "16 - Normal Clearing" on unanswered ones, so this is only ever reached
   // AFTER the `wasAnswered` return above.
   //
-  // `outcome` is 'not_reached' to match what the AI-call path actually persists
-  // (`call.busy` → handleCallEnd(…, 'busy', 'not_reached', …)), so the three call
-  // types agree. A distinct label here would be discarded on the AI and static
-  // paths (static_calls has no outcome column at all) and survive only on
-  // webrtc_calls — one dialer-only value that no consumer maps.
+  // `outcome` is 'not_reached', the established label for a busy callee; a
+  // distinct label here would be a value no consumer maps.
   const cause16 = /^\s*16\b/.test(n.hangupCause);
   if (cause16 && sip === '200') {
     return { status: 'busy', outcome: 'not_reached', rawCause };
@@ -215,9 +209,9 @@ export function classifyVoicelinkOutcome(n: NormalizedVoicelinkWebhook): Voiceli
 /**
  * Parse a VoiceLink lifecycle webhook body into our internal `CallEvent`, or
  * `null` for purely informational events (`call.initiated`) that shouldn't drive
- * a state transition. Modeled on VoBiz's `parseVobizStatusCallback`.
+ * a state transition.
  *
- * VoiceLink event → CallEvent mapping (see implementation plan §1.3):
+ * VoiceLink event → CallEvent mapping:
  *   call.ringing                         → ringing
  *   call.answered                        → answer
  *   call.ended    (terminal, answered)   → hangup
@@ -233,38 +227,32 @@ export function classifyVoicelinkOutcome(n: NormalizedVoicelinkWebhook): Voiceli
  * NOTE: a real `call.ended` payload has NO `callStatus` field — it carries
  * `status:"ended"`, `hangupCause`, `answeredAt`, `durationSec`. It is emitted for
  * BOTH answered and unanswered calls, so the answered split applies to it just as
- * it does to `call.completed`; `answeredAt` is the discriminator. (This docblock
- * previously claimed `call.ended` implied an answer — VoiceLink's own docs say so,
- * but production does not: 429 `call.ended` vs 206 `call.answered` over 24h on
- * dedicated. Treat carrier docs as a hypothesis and the captures as the truth.)
+ * it does to `call.completed`; `answeredAt` is the discriminator. (VoiceLink's
+ * own docs say `call.ended` implies an answer; production does not: 429
+ * `call.ended` vs 206 `call.answered` over 24h on dedicated. Treat carrier docs
+ * as a hypothesis and the captures as the truth.)
  *
  * VoiceLink has NO AMD/voicemail, so there is no `machine` mapping. Both
  * `call.ended`/`call.failed` AND `call.completed` are terminal — the second is
- * deduped downstream by CallManager's `callEndTriggered`/`endHandled` guards.
+ * deduped downstream by the bridge's `endHandled` guard (and, after teardown, by
+ * its idempotent late-terminal write).
  */
 export function parseVoicelinkWebhook(body: VoicelinkWebhookBody, callId: string): CallEvent | null {
   const n = normalizeVoicelinkWebhook(body);
 
   // A terminal event carries the carrier's real disposition in `callStatus`
   // ("ANSWERED" / "NO ANSWER" / "BUSY" / …). Classify it here — the same
-  // classification the WebRTC and WS-static owners already run — and attach the
-  // result to the event, so the AI-call owner (CallManager) settles on the
-  // carrier's actual outcome instead of collapsing every non-answer into a
-  // generic TELEPHONY_ERROR failure.
-  //
-  // `call.ended` carries NO `callStatus` of its own and is only ever emitted for
-  // a call that WAS answered, so fold that in before classifying — otherwise a
-  // normal remote hangup would classify as an unanswered failure.
+  // classification the WebRTC bridge runs — and attach the result to the event,
+  // so a consumer settles on the carrier's actual outcome instead of collapsing
+  // every non-answer into a generic TELEPHONY_ERROR failure.
   const isTerminal = n.event === 'call.ended' || n.event === 'call.failed' || n.event === 'call.completed';
-  // `n.wasAnswered` is used as-is. It previously carried an
-  // `|| n.event === 'call.ended'` override, on the documented assumption that
-  // VoiceLink only emits `call.ended` for answered calls — which production
-  // disproves (429 `call.ended` vs 206 `call.answered` over 24h on dedicated).
-  // That override forced an unanswered `call.ended` to classify `completed`,
-  // which is exactly the phantom-success settlement this classification exists
-  // to prevent. `normalizeVoicelinkWebhook` already resolves the answered
-  // question correctly for a payload with no `callStatus` by falling back to
-  // `answeredAt`, so no override is needed here.
+  // `n.wasAnswered` is used as-is, with no `call.ended` override. VoiceLink's docs
+  // say `call.ended` is only emitted for answered calls; production disproves it
+  // (429 `call.ended` vs 206 `call.answered` over 24h on dedicated), and forcing
+  // an unanswered `call.ended` to classify `completed` is exactly the
+  // phantom-success settlement this classification exists to prevent.
+  // `normalizeVoicelinkWebhook` already resolves the answered question for a
+  // payload with no `callStatus` by falling back to `answeredAt`.
   const disposition = isTerminal ? classifyVoicelinkOutcome(n) : undefined;
 
   let eventType: CallEvent['eventType'];
@@ -282,16 +270,13 @@ export function parseVoicelinkWebhook(body: VoicelinkWebhookBody, callId: string
     case 'call.ended':
       // Terminal in BOTH success and failure — same split as `call.completed`.
       //
-      // This branch USED to be an unconditional `hangup`, on the documented
-      // assumption that VoiceLink only emits `call.ended` for answered calls and
-      // sends `call.failed` for the rest. Production disproves it: over 24h on
-      // dedicated we saw 429 `call.ended` against 206 `call.answered`, i.e. about
-      // half of them for calls that were never picked up. Because a `call.ended`
-      // payload also carries no `callStatus`, CallManager's hangup handler found
-      // an empty `rawCallStatus`, matched none of its branches, and fell through
-      // to the `completed` default — settling unanswered calls as phantom
-      // successes (240/24h with talk_time_seconds=0, all counted as connected by
-      // AI_CALLS_CONNECTED_STATUSES).
+      // Not an unconditional `hangup`. VoiceLink's docs say it only emits
+      // `call.ended` for answered calls and sends `call.failed` for the rest;
+      // production disproves it: over 24h on dedicated we saw 429 `call.ended`
+      // against 206 `call.answered`, i.e. about half of them for calls that were
+      // never picked up. A `call.ended` payload also carries no `callStatus`, so
+      // reading every one as a hangup settles unanswered calls as phantom
+      // successes with zero talk time.
       eventType = n.wasAnswered ? 'hangup' : 'error';
       break;
     case 'call.failed':
@@ -336,9 +321,9 @@ export function parseVoicelinkWebhook(body: VoicelinkWebhookBody, callId: string
       // no answer"). `callStatus` is excluded because it restates the status
       // ("NO ANSWER"/"BUSY") that `dispositionStatus` already carries, and
       // `rawCause` is a lowercased pipe-joined string built for classification,
-      // not for a human — and it omits sipStatus. Both would add nothing while
-      // suppressing CallManager's richer raw-body fallback, which is what should
-      // land when the carrier named no reason at all.
+      // not for a human — and it omits sipStatus. When the carrier named no reason
+      // at all the field is absent, leaving a consumer free to fall back to the
+      // raw body (which metadata also carries).
       ...(disposition
         ? {
             dispositionStatus: disposition.status,

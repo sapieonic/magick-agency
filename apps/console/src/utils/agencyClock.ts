@@ -1,5 +1,5 @@
 /**
- * Server-corrected clock for the Agent Console (`AD-P2-U-01` criterion (b):
+ * Server-corrected clock for the Agent Console (the requirement:
  * *matches the server's timer within a second and does not drift over a shift*).
  *
  * Three independent things would each break that criterion, and this module is
@@ -51,7 +51,7 @@ export const CLOCK_REPAINT_MS = 250;
 export interface ClockSample {
   /** Client epoch ms echoed back from our `ping`. */
   ts: number;
-  /** Server epoch ms at the moment the server handled it. */
+  /** Server epoch ms at the moment it was handled. */
   server_ts: number;
   /** Client epoch ms when the `pong` was received. */
   receivedAt: number;

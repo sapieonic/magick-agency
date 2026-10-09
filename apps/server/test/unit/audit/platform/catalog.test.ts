@@ -9,28 +9,20 @@ import {
 import { PERMISSION_MATRIX } from '@magick-agency/contracts/rbac';
 
 /*
- * PORT NOTE (magick-agency): ported from master test/unit/audit/catalog.test.ts@a1f0756a
- * to `platform/`.
- *  - MODIFIED (2): master scraped a fixed list of nine route/scheduler files for
- *    `action:` / `resource_type:` literals. None of them is ported yet (lanes A
- *    and B port the routes; the three scheduling files are AI and never will
- *    be), so a fixed list would throw on read. The scrape now covers EVERY file
- *    under `src/`, taking the literals inside each `platformAuditLogger.log({`
- *    block (the 20-line window the call-site guard uses) — the same check, on
- *    whatever has been ported, and it cannot be confused by core's
- *    `auditLogger.log` (audit_logs) or the super-admin audit writer.
- *  - KEPT: "pins audit.read at account_admin", against the contracts' matrix
- *    (master's `src/rbac/roles.ts` → `@magick-agency/contracts/rbac`).
- *  - DELETED here (3) by Phase 2b, RESTORED by Phase 8 (p8-campaigns): the "D10 /
- *    MAG-157: concurrency is super-admin only" source guards. They read
- *    `proxy-agency-campaigns.routes.ts` (Phase 8), `agency/agency-campaign-config.ts`
- *    (lane B2) and `super-admin.routes.ts` (lane A), all three of which now exist at
- *    master's paths under `apps/server/`, so the three cases are master's verbatim (ROOT is
- *    `apps/server`, so even the relative paths are unchanged). Lane A's
- *    `concurrency-super-admin-only.test.ts` also carries broadened copies of the first two
- *    (every agency route/module) and a copy of the third; this is master's original
- *    single-file form, including the positive `D10: there is no concurrency setter`
- *    comment check lane A left for the route file's port.
+ * The action / resource-type scrape covers EVERY file under `src/`, taking the
+ * literals inside each `platformAuditLogger.log({` block (the 20-line window the
+ * call-site guard uses). It cannot be confused by the voice engine's
+ * `auditLogger.log` (audit_logs) or the super-admin audit writer.
+ *
+ * The audit.read floor is checked against the contracts' matrix
+ * (`@magick-agency/contracts/rbac`).
+ *
+ * The "concurrency is super-admin only" source guards read
+ * `proxy-agency-campaigns.routes.ts`, `agency/agency-campaign-config.ts` and
+ * `super-admin.routes.ts` (ROOT is `apps/server`). `concurrency-super-admin-only.test.ts`
+ * also carries broadened copies of the first two (every agency route/module) and a
+ * copy of the third; this is the original single-file form, including the positive
+ * "There is no concurrency setter here" comment check on the route file.
  */
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -84,18 +76,18 @@ describe('PLATFORM_AUDIT_ACTIONS', () => {
     expect(missing).toEqual([]);
   });
 
-  it('pins audit.read at account_admin — the floor cusui must mirror', () => {
+  it('pins audit.read at account_admin — the floor the console must mirror', () => {
     expect(PERMISSION_MATRIX['audit.read']).toBe('account_admin');
   });
 });
 
-describe('D10 / MAG-157: concurrency is super-admin only', () => {
+describe('concurrency is super-admin only', () => {
   it('the agency campaign proxy has no concurrency write path', () => {
     const source = readFileSync(resolve(ROOT, 'src/api/routes/proxy-agency-campaigns.routes.ts'), 'utf8');
-    expect(source).toMatch(/D10: there is no concurrency setter/);
+    expect(source).toMatch(/There is no concurrency setter here, and that is deliberate/);
     expect(source).not.toMatch(/app\.(put|post|patch)(?:<[^>]*>)?\([^)]*concurrency/);
-    // Payload field, not just the URL: AD-P4-M-02 must not land as an unaudited
-    // campaign body key. The D10 comment names `max_concurrent_calls`; a setter
+    // Payload field, not just the URL: a concurrency setter must not land as an unaudited
+    // campaign body key. That comment names `max_concurrent_calls`; a setter
     // would have to mention it as a schema key, not only in that comment.
     expect(source).not.toMatch(/max_concurrent_calls:\s/);
   });

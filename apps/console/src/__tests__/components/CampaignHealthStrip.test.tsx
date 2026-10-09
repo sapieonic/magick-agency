@@ -10,7 +10,7 @@ import type { Role } from '../../types/auth';
  * Its copy and its thresholds are asserted against fixtures in
  * `utils/agencyHealthStrip.test.ts`. What is asserted HERE is only what exists
  * in the component: that the two action links are gated on the permissions
- * master actually enforces — including the one that matters most, an UNKNOWN
+ * the server actually enforces — including the one that matters most, an UNKNOWN
  * role rendering neither — and that a meter with nothing to draw draws nothing
  * rather than a zero-width bar that reads as "idle" or as a reassuring 0%.
  */
@@ -119,7 +119,7 @@ describe('the action links, and their gate', () => {
   it('renders NEITHER link when the role is unknown', () => {
     /**
      * The failure mode this gate exists for. A caller that does not know the
-     * role has not established that the viewer may follow the link, and master
+     * role has not established that the viewer may follow the link, and the server
      * enforces `agency.supervise` / `audit.read` on the two routes — a link
      * that renders and then 403s on arrival is worse than no link.
      */
@@ -141,7 +141,7 @@ describe('the action links, and their gate', () => {
     expect(activity.getAttribute('href')).toBe('/agency/campaigns/camp-1/activity');
   });
 
-  it('gives an agent or an operator neither, because master would refuse both', () => {
+  it('gives an agent or an operator neither, because the server would refuse both', () => {
     // `agency.supervise` and `audit.read` both floor at `account_admin`.
     expect(linkNames('agent')).toEqual([]);
     expect(linkNames('viewer')).toEqual([]);
@@ -190,7 +190,7 @@ describe('the read-out meters', () => {
 
   it('renders a null rate as “No data” with no bar, never a reassuring 0%', () => {
     /**
-     * Core sends `null` when nothing was answered in the window. This is the
+     * The server sends `null` when nothing was answered in the window. This is the
      * rule the field exists for, so it is pinned in the DOM as well as in the
      * derivation: an empty green bar would be the same lie as "0.0%".
      */

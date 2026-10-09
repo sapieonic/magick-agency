@@ -9,12 +9,12 @@ import type { Role } from './auth';
  * the address they signed in with against the stub row `POST /users/invite`
  * wrote. That match is the whole mechanism, and it fails silently in both
  * directions: `POST /auth/session` provisions a brand-new tenant for an address
- * master does not recognise, so an agent who signed up, or signed in with Google
+ * the public API layer does not recognise, so an agent who signed up, or signed in with Google
  * on a slightly different address, landed in a private empty tenant of their own
  * while the membership their supervisor created sat unclaimed — and nothing told
  * either of them. `AgencyLoginPage`'s `UnrecognisedAccount` is what the browser
  * could do about that after the fact; it can only name the problem, because by
- * the time it renders master has already provisioned the stray tenant.
+ * the time it renders the public API layer has already provisioned the stray tenant.
  *
  * The token closes it from the other end. On the claim endpoint the TOKEN is the
  * authority rather than the address, so the membership is claimed by whoever
@@ -36,7 +36,7 @@ export interface AgencyInvite {
   /**
    * The workspace they are joining, by name — never its id.
    *
-   * NULLABLE, and master means it: `invites.routes.ts` sends `tenant?.name ??
+   * NULLABLE, and the public API layer means it: `invites.routes.ts` sends `tenant?.name ??
    * null` deliberately, so that a tenant lookup which returns nothing renders a
    * THINNER invitation rather than a broken one, and so that an unauthenticated
    * caller is never handed a raw tenant UUID as a substitute. Declared as a plain
@@ -46,12 +46,12 @@ export interface AgencyInvite {
    * already branches on a missing {@link inviter_name}.
    */
   tenant_name: string | null;
-  /** Who sent it. Null when master cannot name them (a system or API invite). */
+  /** Who sent it. Null when the public API layer cannot name them (a system or API invite). */
   inviter_name: string | null;
   /**
    * What they are being added to, in the product's own words — e.g.
-   * "Magick Agency Dialer". Rendered verbatim and never assembled here: it
-   * is whitelabel-dependent and master owns the wording.
+   * "Magick Agency Dialer". Rendered unchanged and never assembled here: it
+   * is whitelabel-dependent and the public API layer owns the wording.
    */
   product_name: string;
   /** ISO 8601. Shown so a stale link is diagnosable before it is used. */
@@ -67,10 +67,10 @@ export interface AgencyInvite {
  * conversation with the supervisor, and a not-found one is usually a link that
  * an email client wrapped and truncated.
  *
- * ── `identity_already_bound` is master's fifth answer, and it is newer ─────
+ * ── `identity_already_bound` is the public API layer's fifth answer, and it is newer ─────
  * `POST /invites/:token/claim` answers 409 with it when the invited USER ROW
  * already has a real Firebase account behind it — normally somebody who was
- * invited and then signed in by some other route before opening the link. Master
+ * invited and then signed in by some other route before opening the link. The public API layer
  * refuses to rebind the row (it would be an account takeover primitive if the
  * invitation were sent to an address the claimant does not control) and leaves the
  * invitation outstanding.
@@ -81,7 +81,7 @@ export interface AgencyInvite {
  * has. A generic "something went wrong" would send somebody who is fully set up
  * back to their supervisor for a new invitation that cannot help them.
  *
- * NOTE the deliberately absent sixth: master also answers `identity_in_use`, when
+ * NOTE the deliberately absent sixth: the public API layer also answers `identity_in_use`, when
  * the FIREBASE account being claimed with belongs to a different user row. That
  * is not an unavailable invitation — the invitation is untouched and can still be
  * claimed with another account — so it is a claim failure with its own error type

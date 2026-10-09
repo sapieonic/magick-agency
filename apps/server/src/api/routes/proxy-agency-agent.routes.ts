@@ -1,17 +1,12 @@
 /*
- * PORT NOTE (magick-agency, Phase 8): master `src/api/routes/proxy-agency-agent.routes.ts`@a1f0756a,
- * served at the console's paths under `/proxy/agency` (decision B16). Changed, and only these:
- *  - hop collapse: every `proxyToCore({...})` is `callCore({...})` (`../core-dispatch.ts`) with
- *    the same options minus `coreApiKey`, and the `resolveCoreApiKey` lines are gone. Core's
- *    handler bodies (`agency.routes.ts`, sessions and attempts) run in-process with the tenant
- *    and account from lane A's context;
- *  - governance: `requireCapability('agency')` is deleted (plan §3.2);
- *  - `auditLogger` → `platformAuditLogger` (B7); imports.
- * Validation, RBAC floors (`agency.station.connect`, `agency.attempts.handle|dispose`,
- * `agency.dnc.write` + `agency.dnc.manage` for a tenant-wide mark, `agency.supervise`), the
- * actor assertion, the `station_ws_url` rewrite and the eight audit rows are master's. Comments
- * that mention `proxyToCore`'s parse check or the API key are master's record; the traversal
- * refusal is `callCore`'s now (same check, same 400).
+ * The agent's session and attempt routes, served at the console's paths under `/proxy/agency`
+ * (decision B16). Each handler validates the body, applies its RBAC floor
+ * (`agency.station.connect`, `agency.attempts.handle|dispose`, `agency.dnc.write` +
+ * `agency.dnc.manage` for a tenant-wide mark, `agency.supervise`) and asserts the actor, then
+ * runs the internal handler instance's body (`agency.routes.ts`, sessions and attempts)
+ * in-process through `callCore` (`../core-dispatch.ts`) with the request's tenant and account.
+ * These routes also rewrite `station_ws_url` and write the eight `platform_audit_log` rows
+ * (`platformAuditLogger`, decision B7). `callCore` refuses a path-escaping path with a fixed 400.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -29,11 +24,11 @@ import { requestAuditActor, resolvedUserAuditActor } from '../../audit/platform/
 const log = createChildLogger({ component: 'proxy-agency-agent' });
 
 /**
- * Best-effort extraction of a string field from core's response body for the
- * audit trail (`MAG-70`). Core's response shapes are not mirrored here (master
- * forwards verbatim — see the file header), so this narrows defensively rather
- * than trusting the body, and a malformed/unexpected response must never throw
- * out of an audit call and take the request down with it.
+ * Best-effort extraction of a string field from the internal handler's response
+ * body for the audit trail. The response is passed through untyped, so this
+ * narrows defensively rather than trusting the body, and a malformed/unexpected
+ * response must never throw out of an audit call and take the request down
+ * with it.
  */
 function extractStringField(body: unknown, field: string): string | undefined {
   if (body && typeof body === 'object' && field in body) {
@@ -57,36 +52,33 @@ function accountAudit(request: FastifyRequest): { tenant_id: string; account_id?
  * ── Why these exist rather than reusing the generic call routes ─────────────
  * Two independent reasons, and both matter.
  *
- * 1. **RBAC.** D6 puts `agent` at hierarchy level 5, deliberately below every
- *    permission floor that predates the feature. `POST /proxy/webrtc-call/:id/end`
- *    floors at `operator` (20), so an agent cannot reach it — by design, not by
- *    oversight. Every agent action therefore needs a surface floored at `agent`.
- * 2. **Ownership.** Core can verify the caller **is the reserved agent for that
- *    attempt**, which `/webrtc-call/:id/end` has no way to express. That is
- *    strictly better than reusing the generic route would have been, so the
- *    RBAC constraint pushed us somewhere we should have gone anyway.
+ * 1. **RBAC.** The role hierarchy puts `agent` at level 5, deliberately below
+ *    every other permission floor, so an agent cannot reach a generic call
+ *    route — by design, not by oversight. Every agent action therefore needs a
+ *    surface floored at `agent`.
+ * 2. **Ownership.** The internal handler verifies the caller **is the reserved
+ *    agent for that attempt**, which a generic call route has no way to express.
  *
- * Core owns all validation and all business rules; master forwards verbatim and
- * adds only the two gates it owns (capability + RBAC) plus tenant/account
- * header translation. Do not mirror core's disposition-catalog rules here — a
- * second copy of a rule is a second copy that goes stale.
+ * The internal handler owns the business rules; these routes add
+ * only RBAC, the actor and the tenant/account context. Do not mirror the
+ * disposition-catalog rules here — a second copy of a rule is a second copy
+ * that goes stale.
  *
  * ── The 403 that must not be flattened ─────────────────────────────────────
- * Core answers 403 `not_your_attempt` for a caller who is not the reserved
- * agent. That code is allow-listed in `error-mask.middleware.ts`; without that
- * entry the global mask turns it into "contact support and quote this request
- * id", which on an agent's screen between live calls is indistinguishable from
- * an outage. The whole `AgencyActionErrorCode` union is now allow-listed from
- * one place — `src/agency/agency-action-errors.ts` — so mirroring a code core
- * adds is a one-line change there rather than an edit to the mask.
+ * The internal handler answers 403 `not_your_attempt` for a caller who is not
+ * the reserved agent. `error-mask.middleware.ts` passes every 4xx through, so
+ * the console sees that code rather than "contact support and quote this
+ * request id", which on an agent's screen between live calls would be
+ * indistinguishable from an outage.
  */
 
 /**
  * Note what these schemas deliberately do NOT declare: `agent_user_id` and
  * `on_behalf`. Zod strips unknown keys, so a client that sends either — a stale
  * console, or an agent trying to file a disposition under a colleague's name —
- * has them dropped before the body reaches core, and master then attaches the
- * pair it derived from the session itself. Attribution is never client-supplied.
+ * has them dropped before the body reaches the internal handler, and the route
+ * then attaches the pair it derived from the session itself. Attribution is
+ * never client-supplied.
  */
 const dispositionSchema = z.object({
   disposition_code: z.string().min(1).max(50),
@@ -107,14 +99,14 @@ const dncSchema = z.object({
   reason: z.string().max(1000).optional(),
   disposition_code: z.string().min(1).max(50).optional(),
   /**
-   * How far this suppression reaches. **This field must not be stripped**, and
-   * for one release it was: the schema declared only `reason` and
-   * `disposition_code`, so Zod's default strip deleted the `scope` the browser
-   * sent, the handler forwarded `parsed.data` without it, and the request
-   * answered 200 — a silent scope error on a terminal compliance write, which
-   * is the exact failure class campaign-scoped DNC exists to prevent. Nothing
-   * observed it because every party was internally consistent: the browser sent
-   * a field, master answered 200, core wrote the scope it defaults to.
+   * How far this suppression reaches. **This field must not be stripped.** If
+   * the schema declared only `reason` and `disposition_code`, Zod's default
+   * strip would delete the `scope` the browser sent, the handler would forward
+   * `parsed.data` without it, and the request would answer 200 — a silent scope
+   * error on a terminal compliance write, which is the exact failure class
+   * campaign-scoped DNC exists to prevent. Nothing would observe it, because
+   * every step is internally consistent: the browser sends a field, the route
+   * answers 200, the internal handler writes the scope it defaults to.
    *
    * **Absent means `'campaign'`** — the narrower, safer scope — and that
    * direction is deliberate rather than incidental. A console built before this
@@ -124,9 +116,10 @@ const dncSchema = z.object({
    * the reverse silently suppresses a number across every campaign in the
    * tenant and is not reversible by the agent who caused it.
    *
-   * Absent is forwarded to core as absent, not normalised to `'campaign'` here.
-   * Core owns the default; a second copy of it in master is a second copy that
-   * goes stale, and the two would then disagree without either side erroring.
+   * Absent is forwarded to the internal handler as absent, not normalised to
+   * `'campaign'` here. The handler owns the default; a second copy of it in this
+   * route is a second copy that goes stale, and the two would then disagree
+   * without either side erroring.
    */
   scope: z.enum(['campaign', 'tenant']).optional(),
 });
@@ -141,7 +134,7 @@ const requireDncManage = requirePermission('agency.dnc.manage');
 
 /**
  * What the **browser** may say. `agent_user_id` is deliberately absent: which
- * agent is joining is master's fact, taken from the authenticated session below,
+ * agent is joining is the server's fact, taken from the authenticated session below,
  * not something a client gets to assert — a browser that could name the agent
  * could go available as a colleague.
  */
@@ -154,20 +147,20 @@ const breakSchema = z.object({
   reason: z.string().min(1).max(50),
 });
 
-/** Free text, recorded on core's audit event for the override. */
+/** Free text, recorded on the internal handler's audit event for the override. */
 const forceAvailableSchema = z.object({
   reason: z.string().max(1000).optional(),
 });
 
 /**
- * Q8 (Manas, 2026-10-09): the actor for a SESSION route. Master sent none on
- * station-token / available / break / break-cancel / leave / force-available, so
- * core's `requireOwnedSession` could only check tenant + account and an agent could
- * act on a colleague's session. It now receives the same pair the attempt actions
+ * Decision Q8: the actor for a SESSION route. station-token / available / break /
+ * break-cancel / leave / force-available all send the same pair the attempt actions
  * do (`resolveAgencyActor`: the authenticated user, plus `on_behalf` only for
- * `agency.supervise`) and refuses a caller who is not the session's agent unless the
- * route lets a supervisor act. Spread LAST into the body, so nothing a client sent
- * can name the actor (the zod schemas strip it anyway).
+ * `agency.supervise`), so the internal handler's `requireOwnedSession` refuses a
+ * caller who is not the session's agent unless the route lets a supervisor act.
+ * Without it, that check could only compare tenant + account and an agent could act
+ * on a colleague's session. Spread LAST into the body, so nothing a client sent can
+ * name the actor (the zod schemas strip it anyway).
  */
 function sessionActorOrRefuse(
   request: FastifyRequest,
@@ -184,31 +177,29 @@ function sessionActorOrRefuse(
 export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', sessionMiddleware);
   app.addHook('preHandler', tenantContextMiddleware);
-  // Entitlement gate. Composes (AND) with core's `agency_dialer_enabled` flag
-  // and with the RBAC floors below — a capability alone reaches nothing.
-  // PORT NOTE (magick-agency): master's `requireCapability('agency')` is deleted — there is
-  // no governance, and the section-level `agency` gate is always on because the app IS
-  // agency (plan §3.2). Core's `agency_dialer_enabled` flag and the RBAC floors remain.
+  // No capability gate: the app is the agency product, so the section-level `agency` gate
+  // is always on. The `agency_dialer_enabled` feature flag and the RBAC floors below are
+  // the gates.
   /*
-   * Every `:id` here — a session id or an attempt id — is interpolated into a
-   * core path, and find-my-way hands the handler a percent-DECODED param.
+   * Every `:id` here — a session id or an attempt id — is interpolated into an
+   * internal handler path, and find-my-way hands the handler a percent-DECODED param.
    *
    * ── Stated honestly: on THIS plugin the hook is defence in depth ──────────
    *
-   * The dot-segment family is already refused by `proxyToCore`'s parse check
-   * (`src/proxy/safe-core-path.ts`). What that check allows is a bare extra
+   * The dot-segment family is already refused by `callCore`'s `isUnsafeCorePath`
+   * check (`src/proxy/safe-core-path.ts`). What that check allows is a bare extra
    * slash — which on the sibling campaigns plugin is a real escalation, because
    * its `GET /campaigns/:id` puts the param in the LAST segment. Here every route
    * appends its own action after the param (`/available`, `/leave`,
    * `/station-token`, `/hangup`, `/disposition`, `/notes`, `/dnc`), so extra
-   * segments land in the middle and produce a 404 rather than a different core
-   * surface. No exploit is known through these routes today.
+   * segments land in the middle and produce a 404 rather than a different
+   * internal handler route. No exploit is known through these routes today.
    *
    * It is registered anyway, and the reason is the shape of the risk rather than
    * a current bug: the floor here is `agency.station.connect`, which sits at
    * **agent (level 5)** — the lowest floor in the service — and every one of
-   * these routes is a POST. A route added later that ends in its param, or a core
-   * action renamed so a param's suffix stops being unique, turns "no known
+   * these routes is a POST. A route added later that ends in its param, or an
+   * internal action renamed so a param's suffix stops being unique, turns "no known
    * exploit" into a WRITE aimed somewhere nobody granted. A plugin hook costs one
    * line and cannot be forgotten by the next route; the alternative is relying on
    * whoever adds it to notice.
@@ -222,10 +213,11 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   /**
    * POST /proxy/agency/sessions — an agent joins a campaign.
    *
-   * The response's `station_ws_url` is rewritten onto master's proxy prefix:
-   * core mints it pointing at itself, but the browser can only reach master.
-   * The query string (which carries core's session token) is preserved
-   * verbatim — master neither mints nor validates it.
+   * The response's `station_ws_url` is rewritten onto `/proxy/agency/station`:
+   * the internal handler mints it as `/api/v1/agency/station/<id>`, which is not
+   * a registered route; the console connects to the proxy path. The query string
+   * (which carries the station token) is preserved as-is — this route neither
+   * mints nor validates it.
    */
   app.post('/sessions', {
     preHandler: requirePermission('agency.station.connect'),
@@ -235,11 +227,10 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
     }
 
-    // `MAG-118`. Core's `POST /agency/sessions` requires `agent_user_id` and this
-    // handler forwarded `parsed.data`, which never carried one — so every join
-    // 400'd and no agent could reach a campaign. Refusing here rather than at core
-    // spends no proxy round trip and hands the console the same error shape the
-    // disposition and notes handlers produce.
+    // The internal handler's `POST /agency/sessions` requires `agent_user_id`, and
+    // `parsed.data` never carries one — without it every join 400s and no agent can
+    // reach a campaign. Refusing here when there is no actor hands the console the
+    // same error shape the disposition and notes handlers produce.
     //
     // Only `agent_user_id` is threaded, never the whole actor: `on_behalf` answers
     // "may this user act on an attempt they did not take", and there is no
@@ -284,16 +275,9 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   });
 
   /**
-   * Session state transitions. Phase 1 implements `available` and `leave`;
-   * `break` is proxied now because its request shape is frozen, so cusui can
-   * build the menu once rather than twice.
+   * Session state transitions: `available`, `leave`, `station-token`, `break`,
+   * `break/cancel`, and the supervisor's `force-available`.
    */
-  // Written out per action rather than generated from a loop. A loop reads
-  // tidier, but it makes the `path` a doubly-interpolated template literal,
-  // which the metric-template guard normalises to `/agency/sessions/:id/:id` —
-  // one shared, meaningless series for two different operations. Three near-
-  // identical handlers are a small price for a metric label that means
-  // something.
   app.post<{ Params: { id: string } }>('/sessions/:id/available', {
     preHandler: requirePermission('agency.station.connect'),
   }, async (request, reply) => {
@@ -338,13 +322,13 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   /**
    * POST /proxy/agency/sessions/:id/station-token — mint a fresh upgrade token.
    *
-   * Contract v2 made the station token **single-use and ~2 minutes**, rather
-   * than a shift-length bearer sitting in a query string, so a reconnect needs
+   * The station token is **single-use and lives ~2 minutes**, rather than
+   * being a shift-length bearer sitting in a query string, so a reconnect needs
    * a new one. Deliberately cheap and separate from bootstrap: a reconnect
    * needs a token, not the whole campaign config again.
    *
-   * Its `station_ws_url` gets the same rewrite as bootstrap's — core mints it
-   * pointing at itself and the browser can only reach master.
+   * Its `station_ws_url` gets the same rewrite as bootstrap's, onto
+   * `/proxy/agency/station`, the path the console connects to.
    */
   app.post<{ Params: { id: string } }>('/sessions/:id/station-token', {
     preHandler: requirePermission('agency.station.connect'),
@@ -454,7 +438,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
    * and an agent skips every disposition by clicking Available.
    *
    * So this override — the one route that CAN end a held wrap-up — is gated at
-   * `agency.supervise`, which under D6 an `agent` (level 5) cannot reach.
+   * `agency.supervise`, which an `agent` (level 5) cannot reach.
    * **The person who benefits from skipping a disposition cannot call the route
    * that skips it.** Get this floor wrong and the hole re-opens while looking
    * exactly like a working feature, which is why it is asserted against the
@@ -508,17 +492,14 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
    * POST /proxy/agency/attempts/:id/hangup — the agent hangs up the live call.
    *
    * Floored at `agency.attempts.handle`. **This is the only hangup surface.**
-   * The comment here used to describe the station socket's `hangup` control
-   * frame as an equivalent — it was never implemented, and neither was core's
-   * route, so this proxy 404'd and the agent's hang-up button did nothing on
-   * either path (`MAG-112`). The frame is now withdrawn in core's contract.
+   * The station socket acts only on `ping` and `media`; its `hangup` control
+   * frame is withdrawn in the contract (`AgencyStationHangupFrame` is deprecated).
    *
-   * Attributed like disposition and notes, and for the same reason: core checks
-   * the caller **is** the reserved agent, and it cannot do that without an actor.
-   * This previously proxied with no body at all, so the ownership rule core's
-   * contract promised could never run — any tenant member holding
-   * `agency.attempts.handle`, which is every agent, could have hung up any other
-   * agent's live call.
+   * Attributed like disposition and notes, and for the same reason: the internal
+   * handler checks the caller **is** the reserved agent, and it cannot do that
+   * without an actor. With no body the ownership rule could never run, and any
+   * tenant member holding `agency.attempts.handle`, which is every agent, could
+   * hang up any other agent's live call.
    */
   app.post<{ Params: { id: string } }>('/attempts/:id/hangup', {
     preHandler: requirePermission('agency.attempts.handle'),
@@ -532,7 +513,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       method: 'POST',
       path: `/agency/attempts/${request.params.id}/hangup`,
       // The whole actor, unlike `/sessions`: a supervisor ending a call an agent
-      // is stuck on is a real action, and `on_behalf` is what lets core allow it
+      // is stuck on is a real action, and `on_behalf` is what lets the handler allow it
       // without pretending the supervisor was the reserved agent.
       body: { ...actor.actor },
       tenantId: request.tenantId!,
@@ -561,13 +542,13 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
    * POST /proxy/agency/attempts/:id/disposition — outcome, notes, callback.
    *
    * `requires_note` / `requires_datetime` come from the campaign's disposition
-   * catalog and are enforced by CORE, not here. The schema above only bounds
+   * catalog and are enforced by the internal handler, not here. The schema above only bounds
    * shape and size; conditional requirements live where the catalog lives.
    *
-   * Carries `AgencyActorFields` (`AD-P2-M-01`). Master attributes the action and
-   * asserts whether the caller supervises; core decides whether that is allowed
-   * against the attempt's reserved agent. See `src/agency/agency-actor.ts` for
-   * why the check has to be split across the two services.
+   * Carries `AgencyActorFields`. This route attributes the action and asserts
+   * whether the caller supervises; the internal handler decides whether that is
+   * allowed against the attempt's reserved agent. See `src/agency/agency-actor.ts`
+   * for how the check is divided between the two.
    */
   app.post<{ Params: { id: string } }>('/attempts/:id/disposition', {
     preHandler: requirePermission('agency.attempts.dispose'),
@@ -593,9 +574,9 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
 
     if (result.status < 400 && actor.actor.on_behalf) {
       // Worth a line of its own: a disposition filed by someone other than the
-      // agent who took the call is the audit case this flag exists for, and
-      // core records it on the attempt but master's logs are where an operator
-      // looks first.
+      // agent who took the call is the audit case this flag exists for; the
+      // internal handler records it on the attempt, but this log line is where
+      // an operator looks first.
       log.info(
         { tenantId: request.tenantId, attemptId: request.params.id, actingUserId: actor.actor.agent_user_id },
         'Agency disposition submitted on behalf of the reserved agent',
@@ -628,7 +609,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
    *
    * Separate from the disposition submit because the two happen at different
    * times: agents type while the customer is still talking, and a call that ends
-   * before they choose a code must not discard what they wrote. Core accepts it
+   * before they choose a code must not discard what they wrote. The internal handler accepts it
    * while the attempt is live *and* through wrap-up, and it is last-write-wins,
    * so a console autosave can fire on a timer without knowing which phase it is
    * in. It does **not** end wrap-up and does **not** satisfy
@@ -666,50 +647,29 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
    * POST /proxy/agency/attempts/:id/dnc — mark the contact on the line as
    * Do Not Call.
    *
-   * Core suppresses the contact immediately, then forwards to master's
-   * `POST /internal/agency/dnc` (`internal-agency.routes.ts`), which owns
-   * `dnc_entries`.
+   * The internal handler suppresses the contact and writes the `dnc_entries`
+   * row (`markDnc`, `agency/dnc-mark.ts`) in one transaction with the attempt's
+   * bookkeeping (decision B8): a failed insert rolls the suppression back, and
+   * `dnc_recorded: false` means the number was not usable E.164 and no row was
+   * written.
    *
-   * ── The write is no longer unconditionally tenant-wide ─────────────────────
-   * This comment used to say it was, and gave a reason: tenant-wide is exactly
-   * the scope core's flat `dnc:{tenantId}` Redis set can express, so the
-   * mid-campaign agent path needed no narrower scoping. The reason was true
-   * about the Redis set and wrong about the requirement — an agent marking a
-   * number on one campaign was suppressing it across every campaign in the
-   * tenant, in the over-block direction, with nothing on any screen saying so.
-   * `scope` (above) is how the caller now says which they meant, and the
-   * tenant-wide arm carries its own permission floor (see the handler).
+   * ── The write is not unconditionally tenant-wide ───────────────────────────
+   * An agent marking a number on one campaign must not suppress it across every
+   * campaign in the tenant, in the over-block direction, with nothing on any
+   * screen saying so. `scope` (above) is how the caller says which they meant,
+   * and the tenant-wide arm carries its own permission floor (see the handler).
    *
-   * **This comment was aspirational until `AD-P3-M-03`.** It claimed a callback
-   * for the whole of Phase 2 while no endpoint in master could receive one — as
-   * did core's own contract (`contracts.ts:830`). Both described the mechanism;
-   * neither was evidence it existed. It does now, and the sentence above names the
-   * file so the next reader can check rather than trust.
+   * ── The actor ──────────────────────────────────────────────────────────────
+   * `AgencyDncRequest extends AgencyActorFields`, so `agent_user_id`/`on_behalf`
+   * are the contract's own names. `dnc_entries.added_by` is the compliance
+   * record of **who suppressed this number**; without the actor it lands NULL.
    *
-   * Master cannot short-circuit this by writing the row from core's response
-   * instead: `phone_e164` is in that response, but `dnc_recorded` is core's field
-   * and core can only populate it by asking master first.
-   *
-   * ── This handler DOES call `resolveAgencyActor` as of `MAG-107` ───────────
-   * It did not until now, and the reason was good at the time: core's
-   * `AgencyDncRequest` declared only `reason?`/`disposition_code?`, with no
-   * field for an actor to land in, so sending one would have been inventing a
-   * name the ratified contract did not carry — a guess that today is silently
-   * dropped and tomorrow collides with whatever core actually declares.
-   *
-   * `MAG-106` closed that: `AgencyDncRequest extends AgencyActorFields`, so
-   * `agent_user_id`/`on_behalf` are now the contract's own names and master can
-   * populate them without inventing anything. `dnc_entries.added_by` is the
-   * compliance record of **who suppressed this number**, and it landed NULL on
-   * every write this route produced.
-   *
-   * The actor is still master's fact, never the browser's — same rule as every
-   * sibling. Note what this deliberately does NOT do: core does not refuse a
-   * plain mark-DNC from someone who is not the reserved agent (only the
-   * disposition arm checks ownership), because a supervisor suppressing a number
-   * mid-shift is a real action. Recording the authenticated caller is the honest
-   * answer either way; it is *deriving* an actor we were not told that §1.2
-   * refused, not recording the one we were.
+   * The actor is the server's fact, never the browser's — same rule as every
+   * sibling. Note what this deliberately does NOT do: the internal handler does
+   * not refuse a plain mark-DNC from someone who is not the reserved agent (only
+   * the disposition arm checks ownership), because a supervisor suppressing a
+   * number mid-shift is a real action. Recording the authenticated caller is the
+   * honest answer either way.
    */
   app.post<{ Params: { id: string } }>('/attempts/:id/dnc', {
     preHandler: requirePermission('agency.dnc.write'),
@@ -734,19 +694,19 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
      * but it would be reading the RAW body and deciding a compliance
      * escalation from a value that has not been through `dncSchema` and so is
      * not necessarily the value this handler goes on to forward. Gating on
-     * `parsed.data.scope` makes the value checked and the value sent to core
-     * the same value; that identity is the entire property being bought, and a
+     * `parsed.data.scope` makes the value checked and the value passed to
+     * `callCore` the same value; that identity is the entire property being bought, and a
      * preHandler cannot have it.
      *
      * `requirePermission` is reused rather than reimplemented against
      * `hasPermission` so this refusal is identical to every other
-     * `agency.dnc.manage` 403 on the DNC surface, and so the platform-API-key
-     * waiver in `rbac.middleware.ts` keeps exactly one definition. It answers
-     * the request itself, hence `reply.sent`. The 403 is returned before any
-     * core call, which is what keeps `error-mask.middleware.ts` passing it
-     * through instead of flattening it to "contact support".
+     * `agency.dnc.manage` 403 on the DNC surface, and so the permission check
+     * in `rbac.middleware.ts` keeps exactly one definition. It answers
+     * the request itself, hence `reply.sent`. The 403 is returned before
+     * `callCore` runs, and like every 4xx it passes `error-mask.middleware.ts`
+     * unmasked rather than being flattened to "contact support".
      *
-     * Enforced here and not left to the console: `magick-comms-cusui` hides the
+     * Enforced here and not left to the console: the console hides the
      * escalation behind this same permission, and a hidden button is not
      * enforcement — the request is trivially craftable by anyone holding only
      * `agency.dnc.write`.
@@ -776,20 +736,19 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
           tenantId: request.tenantId,
           attemptId: request.params.id,
           // Logged as the caller sent it, `undefined` included, rather than
-          // defaulted to `'campaign'` — the whole defect was master claiming to
-          // know a scope it had actually dropped, and a log line that fills the
-          // blank in cannot distinguish "asked for campaign" from "said
-          // nothing". Core's response is the record of where the row landed.
+          // defaulted to `'campaign'` — a log line that fills the blank in
+          // cannot distinguish "asked for campaign" from "said nothing". The
+          // internal handler's response is the record of where the row landed.
           scope: parsed.data.scope,
         },
         'Agent marked contact do-not-call',
       );
 
-      // Compliance audit row (`MAG-70`). Deliberately NO phone number in
-      // `details` — core's response carries `phone_e164`, but that is PII and
-      // the ticket requires recording only that a suppression happened and its
-      // scope. `entry_id` is included when core's (untyped, forwarded-verbatim)
-      // response happens to carry one.
+      // Compliance audit row. Deliberately NO phone number in `details` — the
+      // internal handler's response carries `phone_e164`, but that is PII, and
+      // the row records only that a suppression happened and its scope.
+      // `entry_id` is included when the (untyped, passed-through) response
+      // happens to carry one.
       const entryId = extractStringField(result.body, 'entry_id');
       const campaignId = extractStringField(result.body, 'campaign_id');
       platformAuditLogger.log({

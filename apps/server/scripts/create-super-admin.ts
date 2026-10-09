@@ -1,10 +1,9 @@
 /**
- * Create a super-admin — the only way the first one exists (decision #6: super
- * admins are created fresh, master's rows are not copied; no seeded credentials).
+ * Create a super-admin — the only way the first one exists (launch decision 6:
+ * super-admins are created fresh, not imported; no seeded credentials).
  *
- * NEW (magick-agency, no source). Master seeded its first admin in migration 007
- * with a known password; agency's baseline seeds none, so a fresh database has no
- * one who can log in to `/super-admin` until this runs. Every later admin is
+ * The baseline migration seeds no admin, so a fresh database has no one who can
+ * log in to `/super-admin` until this runs. Every later admin is
  * created from the console (`POST /super-admin/admins`), which this mirrors:
  * the same body schema (`createSuperAdminSchema`), the same bcrypt cost (10), the
  * same "email already registered" refusal, and a `super_admin_audit_log` row.
@@ -16,7 +15,17 @@
  *   echo '…' | pnpm tsx scripts/create-super-admin.ts --email ops@example.com --name "Ops"
  *
  * `--system` marks the admin `is_system` (cannot be removed, reactivated or have
- * its password reset by another admin), the protection master's seeded admin had.
+ * its password reset by another admin).
+ *
+ * In the production image it is bundled to `dist/create-super-admin.js`:
+ *
+ *   docker compose -f docker/docker-compose.prod.yml exec -e SUPER_ADMIN_PASSWORD='…' server \
+ *     node dist/create-super-admin.js --email ops@example.com --name "Ops"
+ *
+ * The connection uses the server's Postgres settings (`NODE_ENV`, `DB_SSL_CA`,
+ * `DB_SSL_REJECT_UNAUTHORIZED`, through `dbTlsOptions`), so it reaches a TLS-only
+ * production database exactly as the server does; only the base config block is read,
+ * so it needs no Firebase or carrier settings.
  */
 import bcrypt from 'bcryptjs';
 import { initDbPool, closePool } from '@magick-agency/db';
@@ -25,8 +34,11 @@ import { superAdminAuditRepository } from '@magick-agency/db/repositories/super-
 import type { SafeSuperAdminRecord } from '@magick-agency/db/models/super-admin.model';
 import { getPool } from '@magick-agency/db';
 import { createSuperAdminSchema } from '../src/api/validators/super-admin.validator.js';
+import { baseConfigSchema, readBaseEnv } from '../src/config/blocks/base.js';
+import { dbTlsOptions } from '../src/db-tls.js';
+import type { Env } from '../src/config/env.js';
 
-/** master `super-admin.routes.ts` `BCRYPT_ROUNDS`. */
+/** Same cost as `super-admin.routes.ts`' `BCRYPT_ROUNDS`. */
 const BCRYPT_ROUNDS = 10;
 
 export interface CreateSuperAdminArgs {
@@ -97,14 +109,20 @@ async function readStdin(): Promise<string> {
 
 async function main(): Promise<number> {
   const { email, name, system } = parseArgs(process.argv.slice(2));
-  const databaseUrl = process.env['DATABASE_URL'];
-  if (!databaseUrl || !email || !name) {
+  if (!process.env['DATABASE_URL'] || !email || !name) {
     console.error('usage: SUPER_ADMIN_PASSWORD=… create-super-admin --email <email> --name <name> [--system]  (DATABASE_URL required)');
+    return 2;
+  }
+  // The server's own validation of DATABASE_URL and the TLS settings (refuses TLS
+  // parameters in the URL), and the server's TLS decision.
+  const base = baseConfigSchema.pick({ server: true, db: true }).safeParse(readBaseEnv(process.env as Env));
+  if (!base.success) {
+    for (const issue of base.error.issues) console.error(`Invalid config: ${issue.path.join('.')}: ${issue.message}`);
     return 2;
   }
   const password = process.env['SUPER_ADMIN_PASSWORD'] ?? (await readStdin());
 
-  initDbPool({ url: databaseUrl, poolMin: 0, poolMax: 2 });
+  initDbPool({ url: base.data.db.url, poolMin: 0, poolMax: 2, ...dbTlsOptions(base.data) });
   try {
     const result = await createSuperAdmin({ email, name, password, system });
     if (!result.ok) {

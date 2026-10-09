@@ -23,7 +23,7 @@ import styles from './CampaignLineageStrip.module.css';
  * fact is never missing from the surface it belongs on.
  *
  * ── Every failure renders nothing ───────────────────────────────────────────
- * A master that predates the route answers 404; a core outage answers 5xx. In
+ * An API that predates the route answers 404; an API outage answers 5xx. In
  * both cases the campaign page is intact and the honest thing to show is what
  * this build showed before the feature existed. An error strip here would put a
  * failure notice at the top of every campaign in the product for the length of

@@ -10,9 +10,8 @@ import { platformAuditLogger } from '../../../src/audit/platform/audit-logger.js
 import { auditLogger } from '../../../src/audit/audit-logger.js';
 
 /**
- * NEW (magick-agency, Phase 8 delta review 3): the platform bootstrap starts both buffered audit
- * writers and its stop flushes them — master `src/index.ts:320` (`auditLogger.start()`) and
- * `:697` (`auditLogger.shutdown()`)@a1f0756a, core `src/index.ts:579` / `:903`@4850d1d9.
+ * The platform bootstrap starts both buffered audit writers (`auditLogger.start()`) and its
+ * stop flushes them (`auditLogger.shutdown()`).
  * Real Postgres (5436): rows are read back from `platform_audit_log` and `audit_logs`.
  *
  * Mutation-checked: dropping the two `shutdown()` calls from the stop reds case 1 (the rows are

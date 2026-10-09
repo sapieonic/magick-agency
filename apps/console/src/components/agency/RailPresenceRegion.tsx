@@ -5,7 +5,7 @@ import styles from './RailPresenceRegion.module.css';
 
 /**
  * The rail's right-hand region: the presence control and the break elapsed time
- * (`AD-P2-U-04`, §A.13.3 / §A.13.9).
+ *.
  *
  * ── Why this is its own component ────────────────────────────────────────────
  * This region is **rewritten four times a second** to advance the break elapsed
@@ -37,7 +37,7 @@ import styles from './RailPresenceRegion.module.css';
  *
  * ── The fix that is NOT acceptable ───────────────────────────────────────────
  * **Do not stop the re-render.** The elapsed time must keep advancing: a
- * five-minute break that reads as four is the §A.13.4 defect this repaint exists
+ * five-minute break that reads as four is the defect this repaint exists
  * to prevent, so freezing the region trades an accessibility bug for a correctness
  * one. Both properties have to hold together, which is why the tests assert the
  * timer is still moving in the same breath as asserting focus held — a test that
@@ -47,7 +47,7 @@ export interface RailPresenceRegionProps {
   agentState: AgencyAgentState;
   /** `agent_state.since`, ISO-8601 from the server. The elapsed-time anchor. */
   since: string | null;
-  /** Corrected-clock offset (§A.13.2). Server instants are converted before use. */
+  /** Corrected-clock offset. Server instants are converted before use. */
   clockOffsetMs: number;
   /** Label of the break reason in effect, for the rail's sub-text. */
   breakReasonLabel?: string | null;
@@ -58,7 +58,7 @@ export interface RailPresenceRegionProps {
 }
 
 /**
- * §A.13.3: **state comes from `agent_state`; the control is a verb.**
+ *: **state comes from `agent_state`; the control is a verb.**
  *
  * Not a toggle. A switch forces the agent to answer "which way is on" from
  * peripheral vision at the moment they least want to think, and it puts state in

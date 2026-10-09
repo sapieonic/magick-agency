@@ -20,7 +20,7 @@ import type { Role } from '../types/auth';
  * The two predicates below are the two permissions that already define the split,
  * read through the same mirror the rest of the UI gates on. That is the whole
  * design: a persona list written out by hand would be a third copy of the role
- * hierarchy — after master's `roles.ts` and our `permissions.ts` mirror of it —
+ * hierarchy — after the API's `roles.ts` and our `permissions.ts` mirror of it —
  * and the one most likely to be forgotten when a floor moves. Deriving means a
  * change to a floor moves the personas with it, in the same direction, for free.
  *
@@ -54,7 +54,7 @@ import type { Role } from '../types/auth';
  *
  * ── This is presentation, not enforcement ──────────────────────────────────
  * A persona decides which page someone LANDS on and which word describes them.
- * It authorizes nothing. Master's 403 is the enforcement, exactly as it is for
+ * It authorizes nothing. The API's 403 is the enforcement, exactly as it is for
  * `hasPermission` and `RequireCapability`; a persona that guessed generously
  * would show a screen that fails on click, and one that guessed meanly would hide
  * a surface the backend would have allowed. Neither is a security boundary.
@@ -93,7 +93,7 @@ export function agencyPersona(role: Role | undefined): AgencyPersona | null {
  *
  * ── The one thing this may be used for ────────────────────────────────────
  * Deciding whether it is safe to redirect somebody AWAY from `AppLayout`. For a
- * dedicated agent the shell is an empty sidebar around an empty dashboard — §A.1:
+ * dedicated agent the shell is an empty sidebar around an empty dashboard —
  * *"that is not navigation, it is noise"*. For everybody else it is their product.
  *
  * Do not reach for {@link agencyPersona} for that decision; see its docstring for

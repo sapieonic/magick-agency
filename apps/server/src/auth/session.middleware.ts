@@ -28,10 +28,9 @@ declare module 'fastify' {
     firebaseToken?: DecodedFirebaseToken;
     user?: UserRecord;
     /*
-     * PORT NOTE (magick-agency): master's `apiKeyTenantId` and `apiKey` fields are
-     * removed with the platform API-key branch below (decision #5: no platform
-     * API keys in v1). `request.user` is therefore always the Firebase-verified
-     * person; nothing on this request can be a credential's creator.
+     * There are no platform API keys in v1, so `request.user` is always the
+     * Firebase-verified person; nothing on this request can be a credential's
+     * creator.
      */
   }
 }
@@ -78,10 +77,8 @@ export async function sessionMiddleware(request: FastifyRequest, reply: FastifyR
   }
 
   /*
-   * PORT NOTE (magick-agency): master's `X-Platform-Key` fallback (lookup hash →
-   * `platform_api_keys` → creator's user record) is DELETED — decision #5, no
-   * platform API keys. The 401 below is master's, with the message no longer
-   * offering a key header that would not be read.
+   * A Bearer token is the only credential: there are no platform API keys, so the
+   * 401 below does not offer a key header that would not be read.
    */
   authAttemptsTotal.inc({ method: 'none', status: 'missing' });
   return reply.code(401).send({ error: 'Unauthorized', message: 'Missing authentication. Provide a Bearer token.' });

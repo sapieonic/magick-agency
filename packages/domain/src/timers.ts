@@ -4,7 +4,7 @@
  * The deliberate counterpart to `AGENT_LEASE_MS` in `agent-state-machine.ts`, and
  * the separation is the point rather than tidiness.
  *
- * §6.1's invariant: **a Redis key TTL only ever expires when the thing renewing it
+ * The invariant: **a Redis key TTL only ever expires when the thing renewing it
  * is gone. It is a liveness detector, never a business timer.** A TTL cannot
  * distinguish "took too long" from "the process died", and every value in the lease
  * table is passed to `PEXPIRE` by construction — so a business duration that lands
@@ -24,7 +24,7 @@
 
 /**
  * How long a live call is held open after the agent's station socket drops, waiting
- * for the same session to reconnect and re-adopt it (`AD-P2-C-07`).
+ * for the same session to reconnect and re-adopt it.
  *
  * 8 seconds, and the number is a trade rather than a preference. **The customer is
  * on a live call hearing silence for the whole window**, so it is bounded by their
@@ -40,20 +40,19 @@ export const DEFERRED_HANGUP_MS = 8_000;
 
 /**
  * How often the rolling abandonment window is re-read and republished
- * (`AD-P2-C-06`).
  *
  * 60s, matching the reaper's cadence. This is a **refresh interval, not the
- * window** — the 24h window lives in the SQL — and the distinction is the §6.1
+ * window** — the 24h window lives in the SQL — and the distinction is the Redis-TTL
  * invariant restated for metrics: a business period must never be expressed as a
  * key TTL, and it is not expressed as a poll interval either. Publishing more
  * often would cost a grouped aggregate per tick for a number regulators measure
- * over a day; less often would let the `AD-P4-C-02` guardrail act on a rate up to
+ * over a day; less often would let the auto-pause guardrail act on a rate up to
  * that long out of date.
  */
 export const ABANDONMENT_REFRESH_MS = 60_000;
 
 /**
- * How often the hourly dial-attempt billing sweep runs (`AD-P2-C-09`).
+ * How often the hourly dial-attempt billing sweep runs.
  *
  * 60s, matching the reaper and the abandonment refresh. This is a **poll cadence,
  * not the batching period** — the hour lives in the SQL bucket and in the
@@ -61,7 +60,7 @@ export const ABANDONMENT_REFRESH_MS = 60_000;
  * `ATTEMPT_BATCH_SETTLE_MARGIN_MS`. All three are separate numbers on purpose.
  *
  * The cadence is also the **redelivery interval**, because the batcher records a
- * batch as posted only on a 2xx: an hour master rejected (a missing tenant balance
+ * batch as posted only on a 2xx: an hour the public API layer rejected (a missing tenant balance
  * row 5xx's by design) is simply re-posted on the next tick. So this is the one
  * timer whose value bounds how quickly billing recovers once provisioning is fixed,
  * and 12 harmless reposts an hour is the deliberate cost of needing no retry sweep.
@@ -69,7 +68,7 @@ export const ABANDONMENT_REFRESH_MS = 60_000;
 export const ATTEMPT_BATCH_SWEEP_MS = 60_000;
 
 /**
- * How often the DNC outbox retries marks master has not yet accepted (MAG-110).
+ * How often the DNC outbox retries marks the public API layer has not yet accepted.
  *
  * 15s, and deliberately the fastest sweep in this file. The others are billing and
  * metrics — a minute of lag costs nothing. This one is a customer's request not to
@@ -80,7 +79,7 @@ export const ATTEMPT_BATCH_SWEEP_MS = 60_000;
  * all.
  *
  * This is a **poll cadence, not the retry interval** — the backoff ladder lives in
- * `dncRetryBackoffSeconds` and the row's `next_attempt_at`, so a down master is not
+ * `dncRetryBackoffSeconds` and the row's `next_attempt_at`, so a down public API layer is not
  * hammered four times a minute.
  */
 export const DNC_OUTBOX_SWEEP_MS = 15_000;
@@ -92,12 +91,11 @@ export const DNC_OUTBOX_SWEEP_MS = 15_000;
  * 2 minutes, against a forward bounded at 5s by `REQUEST_TIMEOUT_MS`. The margin is
  * ~24× rather than a tight multiple because the cost of the two errors is wildly
  * asymmetric: recovering too EARLY tears a live forward from under itself and sends
- * a duplicate (which master de-duplicates — harmless), while recovering too LATE
+ * a duplicate (which the public API layer de-duplicates — harmless), while recovering too LATE
  * only delays a retry by a bounded amount. Neither can lose the mark, so the number
  * is chosen to be obviously safe rather than tuned.
  *
- * ⚠️ This is an in-process timer against a DB column, not a Redis TTL — §6.1's
- * invariant. Nothing in this file is ever handed to `PEXPIRE`.
+ * ⚠️ This is an in-process timer against a DB column, not a Redis TTL — see the invariant above. Nothing in this file is ever handed to `PEXPIRE`.
  */
 export const DNC_OUTBOX_STALE_CLAIM_MS = 120_000;
 
@@ -123,7 +121,7 @@ export const DNC_OUTBOX_STALE_CLAIM_MS = 120_000;
  * single source is a number that drifts.
  *
  * ⚠️ Not to be confused with `OWNERSHIP_TTL_MS` in `station-registry.ts`, which is
- * the same duration for the same reason and is a Redis TTL. §6.1's invariant cuts
+ * the same duration for the same reason and is a Redis TTL. that invariant cuts
  * exactly between them: that one is a liveness detector handed to `PEXPIRE`, this
  * one is an in-process timer. Nothing in this file is ever handed to Redis.
  */

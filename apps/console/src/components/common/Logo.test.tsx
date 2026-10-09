@@ -6,8 +6,7 @@ import { brand } from '../../brand';
 afterEach(cleanup);
 
 /*
- * PORT NOTE (magick-agency, decision B17): the mark is a text tile, not the
- * parent product's `/logo.png`. Same three cases, re-pointed at the tile.
+ * Decision B17: the mark is a text tile, not an image. Three cases cover the tile.
  */
 describe('Logo', () => {
   it('renders the brand wordmark tile with brand.name as the accessible name', () => {

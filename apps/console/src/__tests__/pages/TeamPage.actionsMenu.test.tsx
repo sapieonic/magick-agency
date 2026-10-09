@@ -37,7 +37,7 @@ function makeMember(overrides?: {
   /**
    * `'absent'` is a NAME for omitting the property, not a third behaviour: it
    * and `undefined` both build a membership with no `invite_state` key at all,
-   * which is the shape an older master sends. It exists so a test about that
+   * which is the shape an older server sends. It exists so a test about that
    * case says so at the call site instead of leaving the reader to infer it
    * from an argument that is not there.
    *
@@ -64,7 +64,7 @@ function makeMember(overrides?: {
     },
     user: {
       id: 'user-1',
-      // Master's placeholder stub for somebody who has never completed Firebase
+      // The API's placeholder stub for somebody who has never completed Firebase
       // sign-in — the exact value `invite_state: 'pending'` is derived from, and
       // the one the ticket forbids putting on screen. Tracking the state here
       // rather than hardcoding one uid is what gives the "no stub uid is
@@ -158,13 +158,13 @@ describe('TeamPage — member actions menu (overflow clip regression)', () => {
 });
 
 /**
- * `agent` is assignable (`MAG-160`).
+ * `agent` is assignable.
  *
  * It was display metadata only — `ROLES` carried it so an existing membership
  * rendered as "Agent", and neither picker offered it — because the role had no
  * way into the product. It does now: an `agent` lands on their assigned station
  * at sign-in, so a supervisor staffing a dialer campaign must be able to create
- * one without a support ticket. Master's validators already accepted it, which
+ * one without a support ticket. The API's validators already accepted it, which
  * is exactly why the omission was invisible.
  */
 describe('TeamPage — the agent role is offered in both pickers', () => {
@@ -200,17 +200,17 @@ describe('TeamPage — the agent role is offered in both pickers', () => {
 });
 
 /**
- * ClickUp `14ygtkj7tbx` — "Show pending vs signed-up status after inviting an
+ * Show pending vs signed-up status after inviting an
  * agent". Before this, an invited member's row showed nothing to say whether
  * they had signed up at all; a supervisor had to take it on faith.
  *
- * Master derives `invite_state` from ONE rule for every role: `pending` iff the
+ * The API derives `invite_state` from ONE rule for every role: `pending` iff the
  * person has never completed Firebase sign-in (their stored identity is still a
  * placeholder stub). It is a fact about the PERSON — it does not claim anything
  * about whether they have opened this particular workspace — so the copy below
  * is deliberately about signing up and never about accepting an invitation.
  *
- * The three cases are the three things master can say (`pending`, `active`, and
+ * The three cases are the three things the API can say (`pending`, `active`, and
  * nothing at all — see `InviteStateBadge` for why the third claims NEITHER of
  * the first two, and `inviteNotKnownJoined` for why the Resend control still
  * has to pick a side). The fourth pins the two header decisions: the invite column
@@ -220,7 +220,7 @@ describe('TeamPage — the agent role is offered in both pickers', () => {
  * was WRITTEN — so it read "Joined 3 days ago" about somebody who never had.
  */
 describe('TeamPage — invite column', () => {
-  it('shows Pending for somebody master says has never signed in', () => {
+  it('shows Pending for somebody the API says has never signed in', () => {
     mocks.useTeam.mockReturnValue({
       members: [makeMember({ inviteState: 'pending' })],
       loading: false,
@@ -235,14 +235,14 @@ describe('TeamPage — invite column', () => {
     /*
       The stub uid this state is derived from must not reach the screen — the
       ticket's one explicit prohibition, and the reason `invite_state` exists
-      instead of master shipping `firebase_uid` to the browser. The member
+      instead of the API shipping `firebase_uid` to the browser. The member
       above carries `pending_9f0c2b41`, so this fails if any cell ever renders
       it (a debug column, a `title`, an avatar fallback keyed on the uid).
     */
     expect(document.body.textContent ?? '').not.toMatch(/pending_/);
   });
 
-  it('shows Joined for somebody master says has signed in', () => {
+  it('shows Joined for somebody the API says has signed in', () => {
     mocks.useTeam.mockReturnValue({
       members: [makeMember({ inviteState: 'active' })],
       loading: false,
@@ -259,8 +259,8 @@ describe('TeamPage — invite column', () => {
     expect(screen.queryByText('Active')).toBeNull();
   });
 
-  it('claims NEITHER state when master sent no invite_state', () => {
-    // An older master (or a cached SPA outliving a rollback) sends nothing, and
+  it('claims NEITHER state when the API sent no invite_state', () => {
+    // An older server (or a cached SPA outliving a rollback) sends nothing, and
     // the badge makes no claim on no evidence — in EITHER direction. This test
     // previously asserted a green "Joined" here, which is the exact sentence
     // this column was added to stop the page getting wrong: it would tell a

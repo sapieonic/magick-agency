@@ -1,7 +1,3 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/src/audio/ensure-pcm-clip.ts@4850d1d9.
-// Only change: import specifiers (getPool, SingleFlight, AudioFileRecord -> @magick-agency/db;
-// logger, withSpan -> @magick-agency/observability).
-
 import { getPool } from '@magick-agency/db';
 import { getFile } from '../storage/s3.js';
 import { createChildLogger, withSpan } from '@magick-agency/observability';
@@ -20,9 +16,8 @@ export interface PcmClipRef {
 
 /**
  * Coalesce concurrent resolution of the *same* audio file within this process.
- * A 100-phone VoiceLink batch resolves one clip, but two overlapping batches (or
- * a dequeued call racing an immediate dispatch) would each S3-download and
- * re-decode identical bytes. Keyed on the audio-file id, which fully determines
+ * Two abandoned calls resolving the same apology clip at once would each
+ * S3-download and re-decode identical bytes. Keyed on the audio-file id, which fully determines
  * the result. Failures are never memoized — the next caller retries cleanly.
  */
 const clipFlight = new SingleFlight<PcmClipRef>();
@@ -33,16 +28,16 @@ const clipFlight = new SingleFlight<PcmClipRef>();
  * safe to race across replicas.
  *
  * Why this exists rather than trusting `pcm_audio_hash`: the clip cache is
- * **node-local disk** (`TTS_AUDIO_DIR`). A batch dispatched from a replica that
- * did not handle the upload will miss it, and `sweepTtsCache` can evict a clip by
+ * **node-local disk** (`TTS_AUDIO_DIR`). A call on a replica that has never
+ * decoded the clip will miss it, and `sweepTtsCache` can evict a clip by
  * age or size at any time. So the row's hash is a *cache key*, not a promise that
  * the bytes are present. Three cases, one code path:
  *
  *  1. hash set + clip on disk → fast path, no S3, no decode.
- *  2. hash set + clip missing (another replica handled the upload, or the sweeper
+ *  2. hash set + clip missing (another replica decoded it, or the sweeper
  *     evicted it) → re-download from S3 (the durable source of truth), re-decode,
  *     re-populate the cache under the same content hash.
- *  3. `pcm_audio_hash IS NULL` (legacy row uploaded before this feature) → same
+ *  3. `pcm_audio_hash IS NULL` (a legacy row, never decoded) → same
  *     S3 decode path, then **persist** the hash/rate/channels so the row heals.
  *     There is deliberately no backfill migration; rows heal on first use.
  *
@@ -51,17 +46,17 @@ const clipFlight = new SingleFlight<PcmClipRef>();
  * identical bytes to its own local cache and issuing the same idempotent UPDATE.
  *
  * Throws (never returns a silent/empty clip): `AudioDecodeError` for an
- * undecodable object — notably a legacy `audio/mp4` row, which is exactly the
- * case §5.8's fail-closed dial guard exists to catch — or an S3 error. A caller
- * on a WS-only carrier MUST treat a throw as "fail the call", never "dial anyway".
+ * undecodable object — notably a legacy `audio/mp4` row — or an S3 error. A
+ * caller MUST treat a throw as "nothing to play" (the abandon-clip resolver hangs
+ * up without a clip), never as a clip.
  */
 export async function ensurePcmClip(audioFile: AudioFileRecord): Promise<PcmClipRef> {
   const storedHash = audioFile.pcm_audio_hash ?? null;
   const storedRate = audioFile.pcm_sample_rate ?? null;
-  // A clip cached at anything other than the telephony wire rate predates the
-  // pre-conversion change and is USABLE but SLOW — it makes the call pay the
-  // ~1.9s resample. Treat it as a miss so it is re-decoded (at dispatch, off the
-  // call path) and the row heals to 8kHz permanently.
+  // A clip cached at anything other than the telephony wire rate was cached
+  // without the 8 kHz conversion and is USABLE but SLOW — it makes the call pay
+  // the ~1.9s resample. Treat it as a miss so it is re-decoded and the row heals
+  // to 8kHz permanently.
   //
   // This check cannot be folded into the hash: the hash is content-addressed on
   // the raw uploaded BYTES, so it is identical for a 44.1kHz and an 8kHz cache of
@@ -103,13 +98,12 @@ export async function ensurePcmClip(audioFile: AudioFileRecord): Promise<PcmClip
         sampleRate = storedRate;
       } else {
         const decoded = await decodeToPcm16(bytes, audioFile.content_type);
-        // Downsample to the telephony wire rate before caching — the SAME
-        // normalization the upload path applies. This arm must not be forgotten:
-        // it serves the cache-miss re-decode and the legacy-row heal, so without
-        // it a clip resolved on a replica that did not handle the upload (or after
-        // the sweeper evicted it) would be cached at 44.1kHz and quietly
-        // re-introduce the ~1.9s mid-call resample this change removes. That is a
-        // latency regression with no error to show for it.
+        // Downsample to the telephony wire rate before caching. This arm must not
+        // be forgotten: it serves the cache-miss re-decode and the legacy-row heal,
+        // so without it a clip resolved on a replica that had not decoded it (or
+        // after the sweeper evicted it) would be cached at 44.1kHz and quietly put
+        // the ~1.9s resample back on the call. That is a latency regression with
+        // no error to show for it.
         const clip = toTelephonyClip(decoded.pcm16, decoded.sampleRate);
         sampleRate = clip.sampleRate;
         // decodeToPcm16 contracts mono output (it downmixes internally), so the
@@ -130,8 +124,8 @@ export async function ensurePcmClip(audioFile: AudioFileRecord): Promise<PcmClip
       }
 
       // Persist/heal the row. Best-effort: the clip is already usable for THIS
-      // dispatch, and a failed write only costs a re-decode next time — it must
-      // not fail a batch that can otherwise render audio.
+      // call, and a failed write only costs a re-decode next time — it must not
+      // fail a call that can otherwise play audio.
       if (hash !== storedHash || sampleRate !== storedRate) {
         await persistPcmMetadata(audioFile.id, hash, sampleRate, channels).catch((err) => {
           log.warn({ err, audioFileId: audioFile.id, hash }, 'Failed to persist PCM clip metadata (will re-decode next use)');

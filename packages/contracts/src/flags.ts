@@ -1,25 +1,19 @@
 /**
- * The three agency feature flags, ported from
- * `magic-voice-core/src/feature-flags/registry.ts` (core v1.123.2,
- * 4850d1d9ffc9eb9eab56d2ed482b9bd616edd103): same keys, defaults, scopes,
- * `envVar` names, `clientExposed`, owners, descriptions and comments
- * (extraction plan §3.2: "become agency flags with the same scopes and
- * defaults"; super-admins can override them per tenant and account).
+ * The three agency feature flags: keys, defaults, scopes, `envVar` names,
+ * `clientExposed`, owners and descriptions. Super-admins can override them per
+ * tenant and account.
  *
- * PORT NOTE (magick-agency): data and types only. Core's `defineFlag` registers
- * into a module-level `Map` and core's `resolveEnvDefault` reads `process.env`;
- * neither belongs in a package two browser apps import, so the registry and the
- * env resolution are the server's to build on top of {@link AGENCY_FLAGS}. The
- * `FlagDefinition` interface is core's verbatim (`registry.ts:15-37`) minus its
- * `validate` predicate, which is a function and none of these three flags sets.
+ * Data and types only. A registry that registers into a module-level `Map` and an
+ * env resolver that reads `process.env` do not belong in a package two browser
+ * apps import, so the registry and the env resolution are the server's to build
+ * on top of {@link AGENCY_FLAGS}. `FlagDefinition` has no `validate` predicate
+ * (a function), and none of these three flags needs one.
  */
 
-/** Core `registry.ts:15`. */
 export type FlagScope = 'global' | 'tenant' | 'account';
-/** Core `registry.ts:16`. */
 export type FlagType = 'boolean' | 'number' | 'string' | 'json';
 
-/** Core `registry.ts:18-37`, without `validate` (see the module note). */
+/** A flag definition, without `validate` (see the module note). */
 export interface FlagDefinition<T = unknown> {
   /** Unique catalog key (matches the `feature_flag_overrides.flag_key`). */
   key: string;
@@ -40,86 +34,46 @@ export interface FlagDefinition<T = unknown> {
 }
 
 /**
- * The definitions, frozen as core's `defineFlag` freezes each one
- * (`registry.ts:42-49`). Keyed by flag key.
+ * The definitions, frozen as the dialer runtime's `defineFlag` freezes each one
+ *. Keyed by flag key.
  */
 export const AGENCY_FLAGS = Object.freeze({
   /*
-   * The agency product's own analysis switch. Agency legs are `webrtc_calls` rows
-   * too, so before this flag existed the end-of-call gate applied
-   * `dialer_call_analysis` to them — which meant a tenant enabling softphone
-   * analysis silently started paying for transcription on every campaign call,
-   * and a tenant turning it off lost agency analysis it had bought separately.
-   * Two products, two switches (`docs/agency-dialer-design.md` §7b).
+   * The agency analysis switch. Agency legs are `webrtc_calls` rows, and this flag
+   * gates end-of-call analysis (transcription and the analysis worker) for them.
    *
-   * Deliberately a sibling of `dialer_call_analysis` rather than a child: the
-   * `dialer_analysis_*` config block and the analysis worker are shared
-   * machinery, and an agency tenant that runs no softphone must be able to turn
-   * this on without turning that on.
+   * ── `default: false`, deliberately ─────────────────────────────────────────
    *
-   * ── `default: false` is right, and is NOT what makes the split a regression ─
-   *
-   * Do not "fix" this default to true. It looks like the thing that would
-   * silently turn agency analysis off on the day the split ships — every tenant
-   * whose agency calls were being analysed under `dialer_call_analysis` resolves
-   * a brand-new flag that has no override rows, so gate 2 returns, nothing is
-   * enqueued, and `analysis_status` stays NULL with no error anywhere. But
-   * flipping the default fixes that by enabling a metered, consent-sensitive
-   * feature for every tenant that never asked for it, including every tenant
-   * created afterwards. Analysis is a per-call transcription cost, so that blast
-   * radius is a bill.
-   *
-   * The existing state is carried forward as DATA instead, where it can be
-   * scoped, attributed and removed:
-   * `src/db/migrations/107_agency_call_analysis_backfill.sql` seeds this flag
-   * true at exactly the scopes where agency analysis was already running —
-   * tenants that have agency campaigns and whose `dialer_call_analysis` resolved
-   * true — and false where an operator had explicitly turned softphone analysis
-   * off. Every seeded row carries a `reason` saying so, so a super-admin reading
-   * it later knows why it exists and that deleting it is safe.
-   *
-   * The one layer that backfill cannot reach is this `envVar`. An environment
-   * with `FF_DIALER_CALL_ANALYSIS` set truthy resolves `dialer_call_analysis`
-   * true for every tenant with no override row for a migration to find, so
-   * `FF_AGENCY_CALL_ANALYSIS` has to be set alongside it there. The migration
-   * header carries that as a deploy obligation.
-   *
-   * PORT NOTE (magick-agency): in Magick Agency there is no softphone and no
-   * `dialer_call_analysis`, so the "two products" argument is historical; the
-   * cutover copies each tenant's EFFECTIVE value (plan §3.2/§10.5). The
-   * `default: false` reasoning (metered, consent-sensitive) still holds.
+   * Do not "fix" this default to true. A tenant that never asked for analysis
+   * would otherwise get a metered, consent-sensitive feature, including every
+   * tenant created afterwards. Analysis is a per-call transcription cost, so that
+   * blast radius is a bill. With no override row the gate returns false, nothing
+   * is enqueued, and `analysis_status` stays NULL with no error anywhere — that is
+   * the intended off state. Turn it on per tenant or account with an override row,
+   * where it can be scoped, attributed and removed.
    */
   agency_call_analysis: {
     key: 'agency_call_analysis',
     type: 'boolean',
-    // Gated: costs money, consent-sensitive. Pre-split behaviour is preserved by
-    // migration 107's backfill, NOT by this default — see above.
+    // Gated: costs money, consent-sensitive — see above.
     default: false,
     envVar: 'FF_AGENCY_CALL_ANALYSIS', // staging: FF_AGENCY_CALL_ANALYSIS=true
     scopes: ['global', 'tenant', 'account'],
-    clientExposed: true, // cusui shows/hides the agency analysis UI
+    clientExposed: true, // the console shows/hides the agency analysis UI
     owner: 'voice',
     description: 'Post-call analysis (transcript + summary + dimensions) for agency campaign calls',
   },
 
   // ── Agency dialer (human-agent outbound power dialing) ──────────────────────
-  // Off by default and it must STAY off until magick-master has shipped its side.
-  // Master's unified settlement endpoint rejects an unknown `call_type` with a
-  // 400, so enabling this for a tenant before master's settlement branch and the
-  // two rate-card rows are live would make every agency call fail to settle
-  // (docs/agency-dialer-design.md §8). This flag is the deploy-ordering guard, so
-  // it belongs in the rollout checklist, not just in a doc.
-  //
-  // PORT NOTE (magick-agency): the settlement reason above does not apply — v1
-  // has no settlement (plan Decided #8). The flag survives as the per-tenant /
-  // per-account kill switch for the dialer, with the same default and scopes.
+  // Off by default. v1 has no settlement, so the flag is the per-tenant /
+  // per-account kill switch for the dialer.
   agency_dialer_enabled: {
     key: 'agency_dialer_enabled',
     type: 'boolean',
     default: false,
     envVar: 'FF_AGENCY_DIALER', // staging: FF_AGENCY_DIALER=true
     scopes: ['global', 'tenant', 'account'],
-    clientExposed: true, // cusui shows/hides the Agent + Supervisor consoles
+    clientExposed: true, // the console shows/hides the Agent + Supervisor consoles
     owner: 'voice',
     description: 'Agency dialer: human-agent outbound power dialing (campaigns, agent stations, pacing engine)',
   },
@@ -133,7 +87,7 @@ export const AGENCY_FLAGS = Object.freeze({
   // are delivered synchronously at the carrier answer — so a dial that rings out,
   // is busy, fails or finds an unreachable handset reaches the console as
   // *nothing*. A dial answered by VOICEMAIL still reaches the agent: the carrier
-  // reports it `answered` like any other, and D1 puts AMD out of scope, so
+  // reports it `answered` like any other, and answering-machine detection is out of scope, so
   // nothing can tell a machine from a human before the bind (see
   // `contracts.ts` on `AgencyAttemptOutcome`). Shortening that greeting is a
   // wrap-up problem, not a binding one.
@@ -166,7 +120,7 @@ export const AGENCY_FLAGS = Object.freeze({
     envVar: 'FF_AGENCY_LATE_BINDING', // staging: FF_AGENCY_LATE_BINDING=true
     scopes: ['global', 'tenant', 'account'],
     // NOT client-exposed: the console receives the same frames in the same order,
-    // just later, so there is nothing for cusui to show or hide. A flag the client
+    // just later, so there is nothing for the console to show or hide. A flag the client
     // can read is a flag the client can branch on, and the whole point here is
     // that the console needs no knowledge of when the bind happened.
     owner: 'voice',
@@ -194,7 +148,7 @@ export type ClientExposedAgencyFlagKey = {
 
 /**
  * The client-exposed flag map the console reads (the agency successor of
- * `GET /proxy/feature-flags` → cusui `FeatureFlagMap`), narrowed to agency's
+ * `GET /proxy/feature-flags` → the console `FeatureFlagMap`), narrowed to agency's
  * exposed keys. `agency_late_binding` is deliberately absent — see its comment.
  */
 export type AgencyClientFlagMap = Record<ClientExposedAgencyFlagKey, boolean>;

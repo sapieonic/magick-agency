@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from 'vitest';
-// PORT NOTE (magick-agency): ported from core test/unit/core/paced-audio-streamer.test.ts@4850d1d9; only the logger mock specifier changed.
 
 // ---------------------------------------------------------------------------
 // Self-contained harness (project convention: no shared test utilities).
@@ -174,7 +173,7 @@ describe('PacedAudioStreamer', () => {
     expect(pauseCount).toBeGreaterThanOrEqual(2);
   });
 
-  it('M4: does NOT burst-catch-up on resume from a backpressure pause', async () => {
+  it('does NOT burst-catch-up on resume from a backpressure pause', async () => {
     // 5 frames. bufferedAmount stays over the cap for several polls (wall-clock
     // advancing the whole time), then drops to 0. Post-pause frames must pace at
     // ~frameMs each — NOT a run of zero-delay "catch-up" sends that would re-flood
@@ -211,7 +210,7 @@ describe('PacedAudioStreamer', () => {
     for (const s of sendSleeps) expect(s).toBeCloseTo(20, 5);
   });
 
-  it('M2: returns "aborted" once the absolute max-duration deadline is exceeded', async () => {
+  it('returns "aborted" once the absolute max-duration deadline is exceeded', async () => {
     const clock = fakeClock();
     // Big clip; deadline of 100ms. Each frame advances ~20ms, so we abort part-way.
     const streamer = new PacedAudioStreamer({
@@ -225,7 +224,7 @@ describe('PacedAudioStreamer', () => {
     expect(sink.frames.length).toBeLessThan(20);
   });
 
-  it('M4: aborts promptly during a backpressure pause when abort() is called', async () => {
+  it('aborts promptly during a backpressure pause when abort() is called', async () => {
     const clock = fakeClock();
     const buffered = 100000; // permanently over the cap
     const sink: PacedStreamSink = {

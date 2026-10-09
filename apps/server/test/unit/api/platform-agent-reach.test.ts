@@ -2,15 +2,14 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance, RouteOptions } from 'fastify';
 
 /**
- * Plan §9 invariant, lane A's half: **`agent` at level 5 reaches only the agent
+ * The platform half of the agent invariant: **`agent` at level 5 reaches only the agent
  * surfaces plus session, `/accounts/mine` and notification preferences.**
  *
- * NEW (magick-agency). Master pinned the same property as a permission-matrix
- * fact (`test/unit/rbac/roles.agent.test.ts`, ported against the contract); this
- * pins it at the point of CONSUMPTION, over the real route table:
+ * The same property is pinned as a permission-matrix fact in
+ * `test/unit/rbac/roles.agent.test.ts`; this pins it at the point of CONSUMPTION, over the real route table:
  *
- *  1. Every lane-A route is enumerated from Fastify's own `onRoute` hook (handoff
- *     rule 10 — never by grep), with the super-admin tree registered.
+ *  1. Every platform route is enumerated from Fastify's own `onRoute` hook (never
+ *     by grep), with the super-admin tree registered.
  *  2. Each route is called with a valid Firebase session for a user whose ONLY
  *     membership is `agent` on the tenant/account the headers name. The real
  *     session middleware, tenant-context middleware and `requirePermission` run;
@@ -103,7 +102,7 @@ import { buildApp } from '../../../src/app.js';
 import { platformPlugin, PLATFORM_ROUTE_PREFIXES } from '../../../src/api/platform.plugin.js';
 
 /**
- * How each lane-A route is meant to be reached. `public` routes run no session
+ * How each platform route is meant to be reached. `public` routes run no session
  * at all (the token, or the login, is the credential); `agent` routes are the
  * console bootstrap and self-service reads the invariant names; `floor` routes
  * carry a permission an agent does not hold; `super_admin` routes are the
@@ -143,7 +142,7 @@ function classify(route: string): RouteClass {
 
 let app: FastifyInstance;
 const routes: Array<{ method: string; url: string }> = [];
-/** Every route the platform plugin ALONE registers — the authoritative lane-A set. */
+/** Every route the platform plugin ALONE registers — the authoritative platform set. */
 const pluginRoutes: Array<{ method: string; url: string }> = [];
 
 beforeAll(async () => {
@@ -160,7 +159,7 @@ beforeAll(async () => {
   });
   await app.ready();
 
-  // Capture the registering plugin itself, so the lane-A set is what
+  // Capture the registering plugin itself, so the platform set is what
   // `platformPlugin` registers, not a list kept beside it.
   const bare = Fastify({ logger: false });
   bare.addHook('onRoute', (r: RouteOptions) => {
@@ -179,7 +178,7 @@ afterAll(async () => {
 const keyOf = (r: { method: string; url: string }) => `${r.method} ${r.url.replace(/\/$/, '') || '/'}`;
 
 /**
- * Lane A's routes: everything the platform plugin registers, taken from the
+ * The platform routes: everything the platform plugin registers, taken from the
  * REAL app's route table (so the real hook chain is what is exercised), keyed
  * by the routes the plugin registers on its own.
  */
@@ -220,7 +219,7 @@ function refusedByGuards(res: { statusCode: number; body: string }): boolean {
   }
 }
 
-describe('lane A route table — the agent invariant (plan §9)', () => {
+describe('platform route table — the agent invariant', () => {
   it('enumerates the platform routes from onRoute, super-admin tree included', () => {
     const keys = laneARoutes().map((r) => r.key);
     expect(keys.length).toBeGreaterThan(20);

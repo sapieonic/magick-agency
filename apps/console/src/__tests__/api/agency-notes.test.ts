@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
- * `saveAttemptNotes` — the guard moved INSIDE the client (§A.13.7).
+ * `saveAttemptNotes` — the guard moved INSIDE the client.
  *
  * The hazard is specific: **`notes: ''` clears the attempt's notes wholesale**,
  * because the request replaces rather than merges. `mayAutosave()` has existed

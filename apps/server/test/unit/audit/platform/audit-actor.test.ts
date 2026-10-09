@@ -9,28 +9,21 @@ import {
 import { PLATFORM_AUDIT_ACTOR_TYPES } from '../../../../src/audit/platform/catalog.js';
 
 /*
- * PORT NOTE (magick-agency): ported from master test/unit/audit/audit-actor.test.ts@a1f0756a
- * to `platform/` (the module's path here). Decision #5 removes platform API keys,
- * so the `api_key` actor and the key branch of both resolvers are gone.
- *  - DELETED: "reports a CREATOR-BACKED key as the credential…", "reports a
- *    creator-less key identically", "still reports api_key when the credential
- *    id is missing", "refuses to name a user on a key-authenticated request".
- *  - MODIFIED: "distinguishes automatic from key-authenticated" pins the two
- *    remaining kinds, `['human', 'system']`.
- *  - KEPT verbatim: the human, no-principal, absent-apiKeyTenantId, resolved-user,
- *    SYSTEM_AUDIT_ACTOR and no-"unknown" cases. The header comment is master's.
+ * Platform API keys do not exist here (decision #5), so there is no `api_key`
+ * actor and no key branch in either resolver; the two actor kinds are
+ * `['human', 'system']`.
  */
 
 /**
- * **The audit row must say WHAT KIND of principal acted (`86d45t7rm`).**
+ * **The audit row must say WHAT KIND of principal acted.**
  *
  * Every audited write in this service used to stamp `user_id` and nothing else,
  * and `user_id` answers a narrower question than it reads as: which principal
- * master AUTHENTICATED. For a platform API key that is
+ * the platform AUTHENTICATED. For a platform API key that is
  * `platform_api_keys.created_by` — the person who minted the credential, once,
  * possibly years ago — because `sessionMiddleware`'s key branch loads that user
  * into `request.user`. So a key-authenticated action wrote a row indistinguishable
- * from that person acting in a browser, and master's trail contradicted core's
+ * from that person acting in a browser, and the audit trail contradicted the voice engine's
  * `last_transition_by`, which had already been corrected for the same defect.
  *
  * The cases below are the discriminator itself. The one that matters most is the
@@ -95,7 +88,7 @@ describe('the actor-type catalog', () => {
   /**
    * `system` and `api_key` are separate values and must stay separate. Both
    * write a NULL `user_id`, so collapsing them would recreate the exact
-   * three-meanings ambiguity this ticket names in core's `last_transition_by`:
+   * three-meanings ambiguity this ticket names in the voice engine's `last_transition_by`:
    * "genuinely automatic" and "a credential did it" are opposite conclusions for
    * an incident.
    */

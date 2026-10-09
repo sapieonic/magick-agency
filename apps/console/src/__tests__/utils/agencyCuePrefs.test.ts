@@ -10,7 +10,7 @@ import {
 import { escalatedVisualActive } from '../../utils/agencyCues';
 
 /**
- * The cue preferences — `AD-P2-U-07`'s criterion (c), "the preference is settable,
+ * The cue preferences — criterion (c), "the preference is settable,
  * not just readable".
  *
  * The parse is unit-tested away from the popover because the failure mode it
@@ -55,7 +55,7 @@ describe('the defaults do not change what a silent upgrade sounds like', () => {
 
 describe('clampCueVolume', () => {
   it('keeps 0 as a real setting and refuses NaN, which would silence both channels', () => {
-    // 0 is permitted (§A.4.3.1) and must survive the clamp as 0 — coercing it to the
+    // 0 is permitted and must survive the clamp as 0 — coercing it to the
     // default would override an agent who chose to work in silence.
     expect(clampCueVolume(0)).toBe(0);
     expect(escalatedVisualActive({ setting: 'auto', volume: clampCueVolume(0), audible: true })).toBe(
@@ -105,7 +105,7 @@ describe('readCuePrefs / writeCuePrefs', () => {
     // nothing at all.
     expect(readCuePrefs(storage)).toEqual({ volume: 0, connectFlash: 'always' });
     expect(storage.written).toEqual(['{"volume":0,"connectFlash":"always"}']);
-    expect(CUE_PREFS_STORAGE_KEY).toBe('magick-agency.cuePrefs.v1'); // B17 rename (cusui: `magickvoice.agency.cuePrefs.v1`)
+    expect(CUE_PREFS_STORAGE_KEY).toBe('magick-agency.cuePrefs.v1');
   });
 
   it('defaults on absent, on garbage, and on a store that throws', () => {

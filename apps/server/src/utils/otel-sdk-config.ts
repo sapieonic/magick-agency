@@ -1,23 +1,13 @@
 /**
- * PORT NOTE (magick-agency): ported from core `src/utils/otel-sdk-config.ts`@4850d1d9. Changed:
- * the local `:9090` scrape section (`:303-457`: `ScrapeMetricReader`, `LastExportedMetrics`,
- * `scrapeErrorComment`, `renderPrometheusScrape`, `renderLastExportScrape`) is deleted, and with
- * it `withFreshGauges`' `lastExport` argument (`:280-292`) and the imports only that section used
- * (`:17`, `:20`, `:22`), because this app exports over OTLP only (Manas, 2026-10-09; `PORTING.md`
- * "OpenTelemetry SDK"). The default `service.name` is `SERVICE_NAME` (`:122`). Everything else
- * is verbatim, comments included: where they name `:9090`, `src/utils/metrics.ts`,
- * `grafana/README.md`, `docs/architecture/call-orchestration.md` or
- * `webhook_fanout_abandoned_total` they describe core, whose metric names this app keeps.
- * Agency adds `OTEL_SHUTDOWN_TIMEOUT_MS` and `withTimeout` at the end.
- *
  * The pure pieces of the OTel SDK configuration in `src/instrumentation.ts`,
  * pulled out so they can be tested without starting an SDK.
  *
  * ⚠️ Import-free with respect to the application on purpose. `instrumentation.ts`
  * is the FIRST import in `src/index.ts` and reads `process.env` directly — it
  * must never pull in `src/config/index.js`, whose module body can
- * `process.exit(1)`. Only OTel libraries and Node built-ins are imported here.
- * (Agency: plus `@magick-agency/observability/service`, a constant with no imports.)
+ * `process.exit(1)`. Only OTel libraries, Node built-ins and
+ * `@magick-agency/observability/service` (a constant with no imports) are imported here.
+ * `OTEL_SHUTDOWN_TIMEOUT_MS` and `withTimeout` (at the end) bound the final flush.
  *
  * Grafana Cloud (fed by the OTLP exporter configured from this) is the only
  * billed and alertable metrics path, and it enforces a per-instance active-series
@@ -37,7 +27,7 @@ import {
   ATTR_SERVICE_VERSION,
   SEMRESATTRS_DEPLOYMENT_ENVIRONMENT,
 } from '@opentelemetry/semantic-conventions';
-// PORT NOTE (magick-agency): the subpath, not the package index, which loads the
+// The subpath, not the package index, which loads the
 // logger and the meter (`meter.ts` calls `metrics.getMeter` at module load) and
 // must not run before `instrumentation.ts` has installed the meter provider.
 import { SERVICE_NAME } from '@magick-agency/observability/service';
@@ -47,20 +37,19 @@ type Env = Record<string, string | undefined>;
 // ── Export interval ─────────────────────────────────────────────────────────
 
 /**
- * 60s, not the 30s this used to be. Grafana Cloud bills data points per minute
- * above 1 DPM per series, so a 30s interval made every series ~2× billable for
- * no operator benefit: the tightest range any alert rule uses is `[5m]` (five
+ * 60s. Grafana Cloud bills data points per minute above 1 DPM per series, so a
+ * 30s interval would make every series ~2× billable for no operator benefit: the tightest range any alert rule uses is `[5m]` (five
  * samples at 60s) and the dashboard uses `[$__rate_interval]`. One sample a
  * minute would empty a `$__rate_interval` panel at the datasource's default 15s
- * scrape interval, so every Prometheus target in the committed dashboard pins a
- * `1m` Min step, which makes the dashboard self-sufficient at this interval.
+ * scrape interval, so every Prometheus target in agency's dashboard
+ * (`grafana/dashboards/`) pins a `1m` Min step, which makes the dashboard self-sufficient at this interval.
  * Setting the datasource's "Scrape interval" to ≥ 60s as well is belt-and-braces
  * only (it covers ad-hoc Explore queries and panels added later without the
  * step) — see `grafana/README.md`.
  *
  * The shutdown path is unaffected: `sdk.shutdown()` forces a final collect +
- * export regardless of the interval, which is what carries the single sample of
- * a shutdown-only counter (`webhook_fanout_abandoned_total`) off the box.
+ * export regardless of the interval, which is what carries whatever the last
+ * partial interval and the teardown recorded off the box.
  */
 export const DEFAULT_METRICS_EXPORT_INTERVAL_MS = 60_000;
 
@@ -73,7 +62,7 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 /**
  * `OTEL_METRICS_EXPORT_INTERVAL_MS`, falling back to the default for anything
  * that is not a positive finite number no larger than {@link MAX_TIMER_DELAY_MS}.
- * The old `Number(x) || 30_000` let a negative value through, and
+ * A plain `Number(x) || default` would let a negative value through, and
  * `PeriodicExportingMetricReader` THROWS on one — at module load of the
  * process's first import, i.e. the service never starts.
  */
@@ -114,9 +103,8 @@ export function resolveMetricsExportTimeoutMs(intervalMs: number): number {
  * last-writer-wins value (read with `max()`/`sum()` it means nothing per
  * replica); for cumulative counters exported from >1 replica the interleaved
  * values make `rate()` read constant resets. Setting it fixes both, and
- * multiplies every OTel series by the replica count — so it is enabled only
- * after the cardinality cuts land and headroom is verified (runbook in
- * `docs/architecture/call-orchestration.md`).
+ * multiplies every OTel series by the replica count — so it stays off unless
+ * the series cap has the headroom (this app runs one replica).
  *
  * The value is `OTEL_SERVICE_INSTANCE_ID` when set, else `os.hostname()`.
  * Hostname rather than a random UUID (the SDK's `serviceinstance` detector)
@@ -125,7 +113,7 @@ export function resolveMetricsExportTimeoutMs(intervalMs: number): number {
  * churns on EVERY process start — crash restarts, `docker compose restart` —
  * while a container hostname survives those and changes only when the
  * container is recreated (a deploy). Operators who want zero churn pin a stable
- * per-replica name (`core-1`, `core-2`) via `OTEL_SERVICE_INSTANCE_ID`. The
+ * per-replica name (`agency-1`, `agency-2`) via `OTEL_SERVICE_INSTANCE_ID`. The
  * trade-off accepted: two processes sharing a hostname (host networking,
  * `hostname:` pinned identically) would collapse again — pin distinct ids there.
  */
@@ -134,8 +122,7 @@ export function buildResourceAttributes(
   opts: { version: string; hostname: () => string },
 ): Record<string, string> {
   const attrs: Record<string, string> = {
-    // PORT NOTE (magick-agency): core `src/utils/otel-sdk-config.ts:122`@4850d1d9 defaulted to
-    // 'voice-ai-orchestrator'. Same default as `config.otel.serviceName`.
+    // Same default as `config.otel.serviceName`.
     [ATTR_SERVICE_NAME]: env['OTEL_SERVICE_NAME'] || SERVICE_NAME,
     [ATTR_SERVICE_VERSION]: opts.version,
     [SEMRESATTRS_DEPLOYMENT_ENVIRONMENT]: env['OTEL_ENVIRONMENT'] || env['NODE_ENV'] || 'development',
@@ -152,9 +139,8 @@ export function buildResourceAttributes(
 /**
  * The Node runtime-health allow-list: the ONLY instruments of
  * `@opentelemetry/instrumentation-runtime-node` that are exported. One series
- * each (no attributes). Before this, Grafana Cloud had no event-loop or heap
- * signal at all — prom-client's `collectDefaultMetrics` has one, but only on the
- * unscraped `:9090`.
+ * each (no attributes). Without them Grafana Cloud has no event-loop or heap
+ * signal at all.
  *
  * - `nodejs.eventloop.delay.p99` / `.max` — the collector RESETS its histogram
  *   on every collection, so each is "over the last export interval" (60s by
@@ -178,8 +164,8 @@ export const RUNTIME_METRIC_ALLOW_LIST = [
  * dropping the `v8js.heap.space.name` attribute on an async instrument keeps the
  * LAST observation (`AsyncMetricStorage.record` does a map `set`), which would
  * silently export one space's size labelled as the total. Named after
- * prom-client's own default metric so a query written against the `:9090`
- * scrape reads the same in Grafana Cloud.
+ * prom-client's default heap metric, so the usual Node queries read it
+ * unchanged.
  */
 export const HEAP_USED_METRIC = 'nodejs_heap_size_used_bytes';
 
@@ -267,12 +253,11 @@ const GAUGE_INSTRUMENT_TYPES: ReadonlySet<InstrumentType> = new Set([
  * Under the SDK's default CUMULATIVE temporality an observable gauge's attribute
  * set, once observed, is re-exported with its LAST value on every collection
  * forever — the cumulative merge keeps entries the current collection did not
- * observe (`TemporalMetricProcessor.merge`). Every "expires" design in
- * `src/utils/metrics.ts` depends on the opposite: the queued-backlog and
- * parked-group readings that stop being observed once stale, the abandonment
- * rate that is "absent, not zero" for a campaign with no answered calls, the DNC
- * `synced` series dropped after its TTL, a gauge entry removed when its label
- * set is gone. Under cumulative temporality all of those exported a frozen
+ * observe (`TemporalMetricProcessor.merge`). Every gauge that "expires" in
+ * `packages/observability/src/metrics/` depends on the opposite: readings that
+ * stop being observed once stale, `agency_abandonment_rate_24h` that is "absent,
+ * not zero" for a campaign with no answered calls, a gauge entry removed when its
+ * label set is gone. Under cumulative temporality all of those would export a frozen
  * reading instead — the exact failure their comments say they prevent (a
  * `max by` alert held firing by one dormant replica).
  *
@@ -294,8 +279,6 @@ export function freshGaugeTemporality(base: AggregationTemporalitySelector): Agg
  * exporter only offers the three whole-exporter presets
  * (cumulative/delta/lowmemory), none of which separates gauges.
  */
-// PORT NOTE (magick-agency): core `src/utils/otel-sdk-config.ts:280-292`@4850d1d9 also took
-// `lastExport` and recorded each batch for the `:9090` scrape, which is not ported.
 export function withFreshGauges(exporter: PushMetricExporter): PushMetricExporter {
   const base: AggregationTemporalitySelector = exporter.selectAggregationTemporality
     ? exporter.selectAggregationTemporality.bind(exporter)
@@ -313,11 +296,10 @@ export function withFreshGauges(exporter: PushMetricExporter): PushMetricExporte
 }
 
 /**
- * PORT NOTE (magick-agency): no source has this. How long `shutdownOtelSdk` waits for the SDK's
- * final flush. Core waited for `sdk.shutdown()` itself, which with the collector unreachable
- * rejects only after the metric reader's export timeout (`resolveMetricsExportTimeoutMs`: 30s at
- * the default interval). That comes on top of the app's own teardown, past a 10s (Docker) or 30s
- * (Kubernetes) stop grace period, so the process was killed mid-flush anyway. A reachable
+ * How long `shutdownOtelSdk` waits for the SDK's final flush. `sdk.shutdown()` on its own, with
+ * the collector unreachable, rejects only after the metric reader's export timeout
+ * (`resolveMetricsExportTimeoutMs`: 30s at the default interval). That comes on top of the app's
+ * own teardown, past the stop grace period, so the process would be killed mid-flush anyway. A reachable
  * collector answers well inside this (0.4s for a whole SIGTERM shutdown, measured).
  */
 export const OTEL_SHUTDOWN_TIMEOUT_MS = 5_000;

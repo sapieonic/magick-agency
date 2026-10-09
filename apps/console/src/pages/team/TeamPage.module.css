@@ -84,7 +84,7 @@
   font-family: var(--font-mono);
 }
 
-/* The Invite cell when master sent no `invite_state` at all — an older server,
+/* The Invite cell when the server sent no `invite_state` at all — an older server,
    or a cached SPA outliving a rollback. Muted and unweighted on purpose: it is
    an absence of information, and it must not read as a third STATE sitting
    alongside Pending and Joined. See `InviteStateBadge`. */

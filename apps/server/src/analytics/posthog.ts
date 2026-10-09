@@ -1,12 +1,7 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/src/analytics/posthog.ts@4850d1d9.
-// Lane C owns this file (lead decision): it holds the lifecycle wrappers and the
-// three WebRTC bridge trackers, bodies verbatim except where marked. Every other
-// core tracker is AI/static/IVR/messaging/KB/inbound and is not carried (listed in
-// PORTING.md, Lane C). Lane D's `trackDialerCallAnalyzed` (core :556-585) was folded in
-// verbatim by the lead at lane C's merge. Modified: the SIP egress dimension (SIP is deleted, plan §5) — `egress`
-// is always `'pstn'` and `sip_connection_id` is never sent; the rejection's default
-// provider is `voicelink` (VoBiz deleted). `identifyTenantAccount` and its
-// group-name memo are not carried (master's name headers do not exist here).
+// The lifecycle wrappers, the three WebRTC bridge trackers and
+// `trackDialerCallAnalyzed`. There is no SIP egress, so `egress` is always
+// `'pstn'` and no SIP connection id is sent; the rejection's default provider is
+// `voicelink`.
 /**
  * PostHog product/business analytics.
  *
@@ -57,7 +52,7 @@ export function trackWebrtcCallInitiated(record: WebRtcCallRecord): void {
     telephony_provider: record.provider,
     direction: 'outbound',
     has_metadata: Object.keys(record.metadata ?? {}).length > 0,
-    // PORT NOTE: core sent `record.sip_connection_id ? 'sip' : 'pstn'` and the id.
+    // Always PSTN: there is no SIP egress.
     egress: 'pstn',
   });
 }
@@ -85,7 +80,6 @@ export function trackWebrtcCallRejected(args: {
 }): void {
   track('webrtc_call_rejected', args.tenantId, args.accountId, {
     reason: args.reason,
-    // PORT NOTE: core defaulted to 'vobiz'.
     telephony_provider: args.provider ?? 'voicelink',
     direction: 'outbound',
   });
@@ -124,14 +118,14 @@ export function trackWebrtcCallCompleted(args: {
     talk_time_seconds: args.talkTimeSeconds,
     error_code: args.errorCode,
     ended_by: args.endedBy,
-    // PORT NOTE: core sent `args.sipConnectionId ? 'sip' : 'pstn'` and the id.
+    // Always PSTN: there is no SIP egress.
     egress: 'pstn',
   });
 }
 
 /**
  * `dialer_call_analyzed` — post-call analysis of a dialer (WebRTC human) call.
- * Same PII posture as `call_analyzed`: NEVER forward the summary, transcript, or
+ * Same PII posture as every event here: NEVER forward the summary, transcript, or
  * operator-defined custom dimension values — only ids/enums/counts plus the
  * transcription-specific metrics. Emitted from the dialer-analysis runner.
  */

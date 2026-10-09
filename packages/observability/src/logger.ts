@@ -4,7 +4,7 @@ import { getLogContext } from './log-context.js';
 import { maskPiiValue } from './crypto.js';
 import { APP_VERSION } from './version.js';
 import { SERVICE_NAME } from './service.js';
-// PORT NOTE (magick-agency): `scrubMediaUrl` and its key set moved to `url-scrub.ts` (see its header).
+// `scrubMediaUrl` and its key set live in `url-scrub.ts` (see its header).
 import { isSecretQueryKey, scrubMediaUrl } from './url-scrub.js';
 
 export { scrubMediaUrl };
@@ -18,12 +18,11 @@ const isProduction = process.env['NODE_ENV'] === 'production';
 export const CAPTURE_TRANSCRIPTS = process.env['LOG_CAPTURE_TRANSCRIPTS'] === 'true';
 
 /**
- * PORT NOTE (magick-agency): core `src/utils/logger.ts:17-55`@4850d1d9 also added a
- * `pino-opentelemetry-transport` target when `OTEL_ENABLED=true` and an endpoint were set. Removed
- * (Manas, 2026-10-09): with the SDK started (`apps/server/src/instrumentation.ts`),
- * `PinoInstrumentation` already sends every record to the SDK's log exporter, so the transport
- * would ship each line a second time. Logs now leave the process only through the SDK, under the
- * same resource as traces and metrics. Without OTel the outputs are unchanged.
+ * No OTLP transport here (Manas, 2026-10-09; decision "Log export"): with the SDK started
+ * (`apps/server/src/instrumentation.ts`), `PinoInstrumentation` already sends every record to the
+ * SDK's log exporter, so a `pino-opentelemetry-transport` target would ship each line a second
+ * time. Logs leave the process only through the SDK, under the same resource as traces and
+ * metrics.
  */
 function buildTransport(): TransportSingleOptions | undefined {
   if (!isProduction) {

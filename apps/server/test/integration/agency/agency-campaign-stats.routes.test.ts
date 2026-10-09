@@ -10,19 +10,17 @@ import {
 } from './agency-factories.js';
 
 /*
- * PORT NOTE (magick-agency, Phase 8): ported from core
- * test/integration/agency/agency-campaign-stats.routes.test.ts@4850d1d9 (7 cases, all kept).
- * Recorded changes:
- *  - core's handler module now runs only on the private in-process instance behind
+ * Harness notes:
+ *  - the handler module runs only on the private in-process instance behind
  *    `callCore` (decision B16), where `authMiddleware` keeps only its header half: the
  *    `x-api-key` header, `insertApiKey`, and the `config.auth` / PostHog mocks that served
- *    the API-key branch are gone with it (decision #5);
+ *    the API-key branch are gone with it;
  *  - the pool mock is `@magick-agency/db` (agency's `getPool`); the logger mock is partial;
  *  - ids: `'test-tenant'`/`'test-account'` are the shared `DEFAULTS` UUIDs (the factories'
- *    defaults, as core's were); `'other-tenant'`/`'other-account'` are `OTHER_TENANT` /
+ *    defaults); `'other-tenant'`/`'other-account'` are `OTHER_TENANT` /
  *    `OTHER_ACCOUNT`; agent labels (`'at-their-desk'`, …) are `uuidFor(label)` (the
  *    baseline types `agent_user_id` UUID).
- * NEW cases (no source twin) at the end: the real DNC probe (`dnc-availability.ts`) on real
+ * The last cases cover: the real DNC probe (`dnc-availability.ts`) on real
  * Postgres, and the spine's `?agent_user_id=` guard against a real `22P02`.
  */
 
@@ -73,7 +71,7 @@ const ACCOUNT = DEFAULTS.accountId;
  * would then be untested while still looking green.
  *
  * `DNC_APPLIED_VERSION` non-null ⇒ `dnc_unavailable` must NOT be diagnosed;
- * `CONCURRENCY_IN_USE` must surface verbatim as `concurrency_in_use`. Both are
+ * `CONCURRENCY_IN_USE` must surface unchanged as `concurrency_in_use`. Both are
  * asserted below, so the wiring is pinned rather than merely present — this file
  * previously registered the plugin with no deps at all, which Fastify silently
  * satisfied with the register options object.
@@ -90,7 +88,7 @@ const getDistributedAccountCount = vi.fn(
 );
 
 /**
- * §C.4 liveness, healthy by default: every session asked about is connected.
+ * Liveness, healthy by default: every session asked about is connected.
  *
  * Same rule as the two stubs above — a stub that answered `false` everywhere would
  * pin the floor against a permanently disconnected shift, and the `connected`
@@ -254,7 +252,7 @@ describe('GET /api/v1/agency-campaigns/:id/stats (integration)', () => {
     expect(body.abandonment_rate_24h_pct).toBeCloseTo(200 / 3, 8);
 
     // The strip half, pinned to the injected deps rather than merely present.
-    // `concurrency_in_use` is the stub's count verbatim, and a non-null applied
+    // `concurrency_in_use` is the stub's count unchanged, and a non-null applied
     // DNC version means `dnc_unavailable` must not appear anywhere in the
     // ranking — both would still "pass" as `null`/present under the degraded
     // wiring this file used to have.
@@ -330,7 +328,7 @@ describe('GET /api/v1/agency-campaigns/:id/stats (integration)', () => {
   });
 
   it('serves per-agent liveness, asked once for the whole floor', async () => {
-    // §C.4 risk rank 4. `connected` is the ROUTE's field — the roster is SQL and
+    // `connected` is the ROUTE's field — the roster is SQL and
     // liveness is Redis — so this is the seam where a missing merge would show up
     // as `undefined` on the wire.
     const campaign = await insertAgencyCampaign({ status: 'running' });
@@ -396,7 +394,7 @@ describe('GET /api/v1/agency-campaigns/:id/stats (integration)', () => {
     expect(response.statusCode).toBe(404);
     expect(response.json()).toMatchObject({ error: 'Not Found' });
   });
-  // ── NEW (magick-agency, Phase 8) ────────────────────────────────────────────
+  // ── Real-Postgres cases ─────────────────────────────────────────────────────
 
   it('the real DNC probe answers null exactly when the real gate read answers unavailable (real Postgres)', async () => {
     // `dnc-availability.ts`'s equivalence on the real `dnc_entries` read: a healthy read
@@ -434,8 +432,7 @@ describe('GET /api/v1/agency-campaigns/:id/stats (integration)', () => {
   });
 
   it('the spine refuses a non-UUID agent filter with 400 before Postgres, and a UUID matching nobody is an empty page', async () => {
-    // Core's column was VARCHAR, so `?agent_user_id=u9` matched nothing; agency's is UUID,
-    // so the same value would be a real 22P02 (a 500). The route refuses it first.
+    // The column is UUID, so a non-UUID `?agent_user_id=u9` would be a real 22P02 (a 500). The route refuses it first.
     const campaign = await insertAgencyCampaign({ status: 'running' });
     const contact = await insertAgencyContact(campaign.id, { source_row_number: 1 });
     await insertAgencyAttempt(campaign.id, contact.id, { state: 'ended', outcome: 'no_answer' });

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { ApiError } from '../../api/client';
 import { sessionRefusalCode } from '../../utils/sessionRefusal';
 
-/** NEW (magick-agency): the classifier for agency's path-4 refusal (plan §3.1). */
+/** NEW (magick-agency): the classifier for agency's path-4 refusal. */
 describe('sessionRefusalCode', () => {
   it('reads `no_membership` off a 403', () => {
     expect(

@@ -4,7 +4,7 @@ import { CampaignPerformance } from '../../components/agency/CampaignPerformance
 import type { AgencyCampaignStats } from '../../types/agency-campaign';
 
 /**
- * §C.3's derived figures, as rendered (MAG-151).
+ * The derived figures, as rendered.
  *
  * The derivations themselves are pinned in `utils/agencyCampaignPerformance.test.ts`.
  * What is asserted here is what only the component decides: that a structurally
@@ -45,7 +45,7 @@ describe('CampaignPerformance', () => {
 
   it('renders the conversion rate and its success count', () => {
     /**
-     * MAG-151's successor: `is_success` had been settable on every campaign's
+     * Follow-up: `is_success` had been settable on every campaign's
      * disposition catalog and read by nothing, so a "Counts as a success" tick
      * had no output anywhere in the product. This readout is its first consumer.
      */
@@ -90,7 +90,7 @@ describe('CampaignPerformance', () => {
   });
 
   it('shows the with-voicemail average beside handle time', () => {
-    // D1's split, as the second bar of the comparison rather than a sentence:
+    // the outcome split, as the second bar of the comparison rather than a sentence:
     // the delta between the two averages is what the split is for.
     render(<CampaignPerformance stats={stats()} wrapupSeconds={45} />);
     const readout = screen.getByTestId('handle-time-readout');
@@ -101,7 +101,7 @@ describe('CampaignPerformance', () => {
   it('names what handle time excluded, on its denominator line', () => {
     render(<CampaignPerformance stats={stats()} wrapupSeconds={45} />);
     expect(screen.getByTestId('handle-time-readout-secondary').textContent)
-      .toBe('Voicemail excluded — core’s own figure');
+      .toBe('Voicemail excluded — the dialer’s own figure');
   });
 
   it('marks a figure unknown rather than colouring it as a problem', () => {

@@ -18,9 +18,9 @@ import { escapeHtml } from '../escape-html.js';
  * up Mailjet to read it is a test nobody writes."*
  *
  * ── Why a real HTML email and not the two-paragraph `<div>` next door ───────
- * `job-completion.ts` and `agency-campaign-completion.ts` render a bare `<div>`
- * with a `max-width`, and that is fine for what they are: operational notices to
- * somebody who already uses the product and will read them in whatever their
+ * `agency-campaign-completion.ts` renders a bare `<div>` with a `max-width`, and
+ * that is fine for what it is: an operational notice to somebody who already
+ * uses the product and will read them in whatever their
  * client shows. This one is a customer-facing invitation to a person who has
  * never seen this company, sent to an inbox we know nothing about, and it has to
  * survive three renderers that disagree about almost everything:
@@ -46,24 +46,23 @@ import { escapeHtml } from '../escape-html.js';
  * copy.
  */
 
-/** The platform accent — the same value `job-completion.ts` links with. */
+/** The platform accent — the same value `agency-campaign-completion.ts` links with. */
 export const DEFAULT_BRAND_ACCENT = '#7c5cfc';
 
 /**
  * The product noun, composed rather than hard-coded.
  *
- * "Agency Dialer" is the shipped name everywhere in this platform — master's
- * governance catalog label (`src/governance/catalog.ts`), cusui's
- * `RequireCapability`, `DialerUnavailable` and `returnPath`. Only the BRAND half
+ * "Agency Dialer" is the shipped name everywhere in this product, including the
+ * console. Only the BRAND half
  * is a variable, so a white-labelled deployment renames the company and not the
  * product. Inventing a different noun here would put a name in the invitee's
  * first-ever contact with us that appears nowhere in the app they then open.
  */
 export function agencyProductName(brandName: string): string {
-  // PORT NOTE (magick-agency, decision B17): a brand that already ends in
-  // "Agency" — the default, `Magick Agency` — gets "Dialer" alone, so the noun
-  // reads "Magick Agency Dialer" and not "Magick Agency Agency Dialer". Every
-  // other brand composes exactly as master did.
+  // Decision B17: a brand that already ends in "Agency" — the default,
+  // `Magick Agency` — gets "Dialer" alone, so the noun reads "Magick Agency
+  // Dialer" and not "Magick Agency Agency Dialer". Every other brand gets
+  // "<brand> Agency Dialer".
   if (/\bagency$/i.test(brandName.trim())) return `${brandName.trim()} Dialer`;
   return `${brandName} Agency Dialer`;
 }
@@ -77,7 +76,7 @@ export interface AgentInviteEmailInput {
   email: string;
   /** The organisation they are joining. CONTEXT, not the headline — see below. */
   tenantName: string;
-  /** Who invited them. `null` when master cannot name them; the copy adapts. */
+  /** Who invited them. `null` when the server cannot name them; the copy adapts. */
   inviterName: string | null;
   /** Their role, in the operator's vocabulary (`Agent`), not the enum's. */
   roleLabel: string;

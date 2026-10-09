@@ -1,15 +1,15 @@
 import type { AgencyBreakReason } from '@magick-agency/contracts/agency';
 
 /**
- * Break / not-ready with reason codes (`AD-P2-C-03`).
+ * Break / not-ready with reason codes.
  *
  * Two responsibilities, both small and both about not stranding an agent:
  * resolving which reason codes a campaign actually accepts, and remembering a
  * break an agent asked for while they were still on a call.
  *
  * **A queued break is in-process, deliberately.** It is not a Redis key and not a
- * DB column, because it does not need to survive this process: D2 lands every
- * agent in `break` after a restart anyway, so a pending break that is lost to a
+ * DB column, because it does not need to survive this process: after a restart
+ * every agent lands in `break` anyway, so a pending break that is lost to a
  * crash resolves to the state the agent asked for. Persisting it would add a write
  * to the call-teardown path to achieve nothing the restart rule does not.
  */
@@ -19,9 +19,9 @@ import type { AgencyBreakReason } from '@magick-agency/contracts/agency';
  *
  * `'[]'` on the column means "the operator has no opinion" — NOT "breaks are
  * disabled". A break menu with no entries is a control the agent cannot use, and
- * every campaign created before migration 078 has an empty column.
+ * a campaign that never configured breaks has an empty column.
  *
- * Deliberately generic per D8: the mechanism ships operator-configured with neutral
+ * Deliberately generic: the mechanism ships operator-configured with neutral
  * defaults, so there are no jurisdiction-specific codes, no prescribed labels and
  * nothing that reads as a compliance claim. `is_paid` is omitted rather than
  * guessed — that is a payroll question no default can answer for an operator.
@@ -75,7 +75,7 @@ const DEFERRING_STATES = new Set(['on_call', 'reserved', 'wrapup']);
 /**
  * Whether a break requested from this state has to wait.
  *
- * `on_call` is the obvious one — §5.1 is explicit that a break requested mid-call
+ * `on_call` is the obvious one — a break requested mid-call
  * is applied at the end of wrap-up, never mid-conversation. `wrapup` defers for the
  * same reason one step later: the agent still owes a disposition, and letting the
  * break jump that would drop the record of the call they just had.

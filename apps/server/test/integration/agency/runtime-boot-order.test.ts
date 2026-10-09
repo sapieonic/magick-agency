@@ -1,18 +1,18 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 /**
- * NEW (magick-agency, Phase 6): the boot and stop ORDER between the voice engine and the
- * agency runtime — core `src/index.ts@4850d1d9`:
- *   - `:353-354` the bridge's startup self-heal (`runSelfHealSweep('startup')`) runs
- *     BEFORE `:981` `agencyRuntime.start()` — reconcile drifted counters and fail dead
+ * the boot and stop ORDER between the voice engine and the
+ * agency runtime, as `src/index.ts` sequences them:
+ *   - the bridge's startup self-heal (`runSelfHealSweep('startup')`) runs
+ *     BEFORE `agencyRuntime.start()` — reconcile drifted counters and fail dead
  *     calls before the pacing supervisor can admit new work;
- *   - `:977-981` inside `agencyRuntime.start()`, the startup reaper runs BEFORE the pacing
+ *   - inside `agencyRuntime.start()`, the startup reaper runs BEFORE the pacing
  *     supervisor (a supervisor started first would count dead rows as occupancy);
- *   - `:981` → `:984` `agencyRuntime.start()` completes BEFORE `app.listen` (scraped);
- *   - `:856` `agencyRuntime.stop()` runs BEFORE `:857` `webrtcBridge.gracefulShutdown()` —
+ *   - `agencyRuntime.start()` completes BEFORE `app.listen` (scraped);
+ *   - `agencyRuntime.stop()` runs BEFORE `webrtcBridge.gracefulShutdown()` —
  *     pacing stops first, so no tick can place a call while the bridge drains.
  *
- * `src/index.ts` (lead-owned, reordered at main `7dc28e3`) cannot be imported — it calls
+ * `src/index.ts` cannot be imported — it calls
  * `main()` — so the order is pinned twice: (1) a scrape of `index.ts` that the start calls
  * are voice-then-agency and the stops run in reverse, and (2) the bootstrap functions
  * driven in that sequence on real Postgres/Redis with a led campaign, asserting the
@@ -58,7 +58,7 @@ async function waitFor(what: string, probe: () => boolean, timeoutMs = 10_000): 
   }
 }
 
-describe('voice ↔ agency boot and stop order (core src/index.ts:353-354, :856-857, :981)', () => {
+describe('voice ↔ agency boot and stop order', () => {
   beforeAll(async () => {
     initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
     await truncateAll();
@@ -82,7 +82,7 @@ describe('voice ↔ agency boot and stop order (core src/index.ts:353-354, :856-
     const analysis = source.indexOf('stops.push(await startAnalysis(ctx))');
     expect(voice).toBeGreaterThan(-1);
     expect(agency).toBeGreaterThan(voice);
-    // core `src/index.ts:977-984`: `agencyRuntime.start()` (startup reap, then the
+    // `agencyRuntime.start()` (startup reap, then the
     // supervisor) completes before `app.listen`, so no request beats the reap.
     const listens = [...source.matchAll(/await app\.listen\(/g)].map((m) => m.index!);
     expect(listens).toHaveLength(1);
@@ -90,11 +90,10 @@ describe('voice ↔ agency boot and stop order (core src/index.ts:353-354, :856-
     expect(listens[0]).toBeGreaterThan(analysis);
     const stopLoop = source.search(/for \(const stop of \[\.\.\.stops\]\.reverse\(\)\)/);
     expect(stopLoop).toBeGreaterThan(-1);
-    // Lead (session 4): HTTP closes before the lanes' stops — core's `http-close` (:837)
-    // precedes the runtime/bridge stops and `audit-flush` (:903); master `app.close()` (:689)
-    // precedes `auditLogger.shutdown()` (:697) — so no request buffers an audit row after the
-    // platform stop flushed it. And the signal handlers are installed before the bootstraps
-    // (core :974-975, ahead of `agencyRuntime.start()` at :981).
+    // HTTP closes before the bootstraps' stops — `http-close` precedes the runtime/bridge
+    // stops and `audit-flush`; `app.close()` precedes `auditLogger.shutdown()` — so no
+    // request buffers an audit row after the platform stop flushed it. And the signal
+    // handlers are installed before the bootstraps (ahead of `agencyRuntime.start()`).
     const closes = [...source.matchAll(/await app\.close\(/g)].map((m) => m.index!);
     expect(closes).toHaveLength(1);
     expect(closes[0]).toBeLessThan(stopLoop);
@@ -114,7 +113,7 @@ describe('voice ↔ agency boot and stop order (core src/index.ts:353-354, :856-
 
     const ctx: AppContext = { config, pool: getPool(), redis: getTestRedis() };
     // index.ts runs `buildApp` before the bootstraps, and `buildApp` initialises the flag
-    // service on the process's Redis (main `35b9c57`); this test boots no HTTP app.
+    // service on the process's Redis; this test boots no HTTP app.
     initFeatureFlagService(ctx.redis, config.redis.keyPrefix);
     const events: string[] = [];
 

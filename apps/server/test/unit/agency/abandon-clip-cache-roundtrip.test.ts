@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 // ---------------------------------------------------------------------------
-// AD-P2-C-05 / test-plan §16.7 criterion 4 — the apology clip, against the REAL
+// The apology clip, against the REAL
 // clip cache and real disk.
 //
 // **Why this file exists when `abandoned-call-path.test.ts` already plays a
@@ -16,7 +16,7 @@ import path from 'node:path';
 // the hash `resolveAbandonClip` produced is the hash the bridge looks up. A dial
 // path that passed the announcement id, the campaign id, or an empty string to
 // `playClipToCarrierThenHangUp` would satisfy every assertion in that file. That
-// is §16.6 question 1 exactly — the test supplies the answer to the question it
+// is the classic self-answering check: the test supplies the answer to the question it
 // claims to ask.
 //
 // `abandon-clip.test.ts` covers the other half (which hash the resolver returns)
@@ -36,25 +36,20 @@ import path from 'node:path';
 //
 // Self-contained mock harness (project convention: no shared test utilities).
 //
-// PORT NOTE (magick-agency, Phase 6): core test/unit/agency/abandon-clip-cache-roundtrip
-// .test.ts @4850d1d9 (5 cases → 5). The cache, the disk, the bridge and the pacer are
-// still real; what changed (each marked inline):
-//   - the carrier is VoiceLink (lane C deleted VoBiz): the answer is the media WS's
-//     `start` frame, the hangup is the bridge closing that WS, and the row settles on
-//     the carrier's `call.ended` (`answerCarrier` / `confirmCarrierEnd`, as in lane C's
-//     bridge suites).
+// The cache, the disk, the bridge and the pacer are all real. Notes on the harness:
+//   - the carrier is VoiceLink: the answer is the media WS's `start` frame, the hangup
+//     is the bridge closing that WS, and the row settles on the carrier's `call.ended`
+//     (`answerCarrier` / `confirmCarrierEnd`, as in the bridge suites).
 //   - the wire format is VoiceLink's: the bridge converts the cached 16 kHz PCM to
-//     A-law 8 kHz, 160 bytes per 20 ms frame — still 10 frames for the 200 ms clip. So
+//     A-law 8 kHz, 160 bytes per 20 ms frame — 10 frames for the 200 ms clip. So
 //     "the customer heard the EXACT bytes on disk" is asserted as: the reassembled wire
 //     bytes equal `pcmToAlaw(<the bytes on disk>, 16000)`, the bridge's one conversion of
 //     THIS file. A clip read from another hash, truncated, reordered or duplicated
 //     still fails it; the NEGATIVE CONTROL (clip present under a different hash) is
 //     unchanged.
-//   - the apology is an uploaded clip (decision #4 deletes TTS synthesis): the stubbed
-//     step that hands back the cache hash is `ensurePcmClip` (it decodes from S3), in
-//     the role `generateTtsAudio` played — a fixture, not a stand-in for the cache.
-//   - harness: guard-host stand-in for the bridge; mocks of deleted modules removed;
-//     no `vobiz` config block; no `sip_connection_id` on fixtures.
+//   - the apology is an uploaded clip (decision #4: no TTS synthesis): the stubbed
+//     step that hands back the cache hash is `ensurePcmClip` (it decodes from S3) —
+//     a fixture, not a stand-in for the cache.
 // ---------------------------------------------------------------------------
 
 // The cache reads `TTS_AUDIO_DIR` at module-evaluation time, so it must be set
@@ -84,8 +79,7 @@ vi.mock('../../../src/config/index.js', () => ({
   config: {
     redis: { keyPrefix: '' },
     telephony: {
-      // PORT NOTE: core's `vobiz` block removed (VoBiz deleted).
-      voicelink: { webhookBaseUrl: 'https://core.test/api/v1/webhooks/voicelink' },
+      voicelink: { webhookBaseUrl: 'https://server.test/api/v1/webhooks/voicelink' },
     },
   },
 }));
@@ -124,7 +118,6 @@ vi.mock('@magick-agency/db/repositories/agency-call.repository', () => ({
 }));
 
 vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
-  // PORT NOTE: + `getWebrtcMaxDurationSeconds` (null ⇒ the bridge's 1800 default).
   accountSettingsRepository: {
     getAllowRecording: vi.fn().mockResolvedValue(null),
     getWebrtcMaxDurationSeconds: vi.fn().mockResolvedValue(null),
@@ -137,7 +130,7 @@ vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
 // the hash the real cache is keyed on — which is precisely the value whose
 // journey to `readTtsPcm` this file exists to check, so it is a fixture, not a
 // stand-in for the thing under test.
-// PORT NOTE: `ensurePcmClip` in `generateTtsAudio`'s role — see the header.
+// `ensurePcmClip` supplies the hash — see the header.
 const { announcements, audioFiles, ensurePcmClip } = vi.hoisted(() => ({
   announcements: { findActiveByIdScoped: vi.fn() },
   audioFiles: { findById: vi.fn().mockResolvedValue(null) },
@@ -149,7 +142,6 @@ vi.mock('@magick-agency/db/repositories/announcement.repository', () => ({
 vi.mock('@magick-agency/db/repositories/audio-file.repository', () => ({
   audioFileRepository: audioFiles,
 }));
-// PORT NOTE: core mocked `tts/tts-generator.js` (deleted, decision #4).
 vi.mock('../../../src/audio/ensure-pcm-clip.js', () => ({ ensurePcmClip }));
 
 const { mockAdapter } = vi.hoisted(() => ({
@@ -163,7 +155,6 @@ vi.mock('../../../src/telephony/factory.js', () => ({
   TelephonyProviderRegistry: class { get() { return mockAdapter; } },
 }));
 
-// PORT NOTE: core's `webhooks/settlement-dispatcher.js` mock removed (module deleted).
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn() } }));
 vi.mock('../../../src/analytics/posthog.js', () => ({
   trackWebrtcCallInitiated: vi.fn(),
@@ -194,7 +185,7 @@ import {
   writeTtsFile, readTtsPcm, getTtsFilePath, ttsFileExists,
 } from '../../../src/tts/tts-file-cache.js';
 import type { DialCommand } from '../../../src/agency/dial-dispatcher.js';
-// PORT NOTE: the bridge's own clip conversion for VoiceLink — see the header.
+// The bridge's own clip conversion for VoiceLink — see the header.
 import { pcmToAlaw } from '../../../src/utils/audio.js';
 
 // `writeTtsFile` does not create its directory (`initTtsFileCache` does, at
@@ -231,7 +222,7 @@ class PstnSocket extends EventEmitter {
   send(s: string): void {
     try { this.frames.push({ at: Date.now(), frame: JSON.parse(s) }); } catch { /* ignore */ }
   }
-  /** PORT NOTE: VoiceLink's hangup is the bridge closing this WS; stamped here. */
+  /** VoiceLink's hangup is the bridge closing this WS; stamped here. */
   closedAt: number | null = null;
   close(): void {
     this.readyState = 3;
@@ -240,7 +231,7 @@ class PstnSocket extends EventEmitter {
   }
 }
 
-/** PORT NOTE: the VoiceLink answer — the media WS's `start` frame. */
+/** The VoiceLink answer — the media WS's `start` frame. */
 function answerCarrier(world: { bridge: WebRtcBridgeManager }, pstn: PstnSocket): void {
   world.bridge.attachPstnLeg('call-1', pstn as any);
   pstn.emit('message', JSON.stringify({
@@ -249,7 +240,7 @@ function answerCarrier(world: { bridge: WebRtcBridgeManager }, pstn: PstnSocket)
   }));
 }
 
-/** PORT NOTE: the carrier's `call.ended`, confirming the hangup the bridge issued. */
+/** The carrier's `call.ended`, confirming the hangup the bridge issued. */
 async function confirmCarrierEnd(world: { bridge: WebRtcBridgeManager }): Promise<void> {
   await world.bridge.handleVoicelinkStatus('call-1', {
     providerCallId: 'carrier-1', callId: 'call-1', eventType: 'hangup', timestamp: new Date(),
@@ -300,7 +291,6 @@ function fakeWrapup() {
 
 const CAMPAIGN = {
   id: 'camp-1', name: 'Q3 Renewals', tenant_id: 't1', account_id: 'a1',
-  // PORT NOTE: `voicelink` (core: `vobiz`, deleted); `sip_connection_id` dropped (SIP).
   telephony_provider: 'voicelink', record_calls: false,
   analysis_profile_id: null, caller_ids: ['+14155550100'],
   disposition_catalog: [], wrapup_seconds: 0, wrapup_auto_return: true,
@@ -329,17 +319,17 @@ function makeWorld() {
 
 // ─── The clip, and the numbers derived from it ──────────────────────────────
 //
-// 3200 samples at 16 kHz is exactly 200 ms. The bridge resamples a VoBiz clip to
-// CARRIER_L16_SAMPLE_RATE (16 kHz), which is identity here — deliberately, so the
-// bytes on the wire are comparable to the bytes on disk and "the customer heard
-// THIS clip" is assertable rather than only "some audio arrived". 20 ms frames at
-// 32000 B/s ⇒ 10 frames of 640 bytes. Every number is derived, not read off a run.
+// 3200 samples at 16 kHz is exactly 200 ms. The bridge converts the cached 16 kHz PCM
+// to A-law 8 kHz, so the wire bytes are comparable to the bytes on disk through that
+// one conversion and "the customer heard THIS clip" is assertable rather than only
+// "some audio arrived". 20 ms frames of 160 bytes ⇒ 10 frames. Every number is derived,
+// not read off a run.
 const CLIP_SAMPLE_RATE = 16000;
 const CLIP_SAMPLES = 3200;
 const CLIP_MS = (CLIP_SAMPLES / CLIP_SAMPLE_RATE) * 1000;
 const FRAME_MS = 20;
-// PORT NOTE: VoiceLink's wire is A-law at 8 kHz, one byte per sample: 160 bytes per
-// 20 ms frame (core: L16 at 16 kHz, 640 bytes). Still derived, not read off a run.
+// VoiceLink's wire is A-law at 8 kHz, one byte per sample: 160 bytes per 20 ms
+// frame. Derived, not read off a run.
 const FRAME_BYTES = (8000 * 1 * FRAME_MS) / 1000;
 const EXPECTED_FRAMES = CLIP_MS / FRAME_MS;
 
@@ -377,7 +367,7 @@ async function waitUntil(pred: () => boolean, budgetMs = 4000): Promise<void> {
   await flush();
 }
 
-/** Dial, lose the agent mid-ring, let the customer answer. The only route to abandonment under D1. */
+/** Dial, lose the agent mid-ring, let the customer answer. The only route to abandonment (AMD is out of scope). */
 async function loseAgentThenAnswer(world: ReturnType<typeof makeWorld>) {
   const ws = new StationSocket();
   await world.stations.attach({
@@ -393,8 +383,8 @@ async function loseAgentThenAnswer(world: ReturnType<typeof makeWorld>) {
 
   const pstn = new PstnSocket();
   const answeredAt = Date.now();
-  answerCarrier(world, pstn); // PORT NOTE: VoiceLink answers on `start`
-  // PORT NOTE: hangup = the bridge closing the media WS; the row settles on `call.ended`.
+  answerCarrier(world, pstn); // VoiceLink answers on `start`
+  // Hangup = the bridge closing the media WS; the row settles on `call.ended`.
   await waitUntil(() => pstn.readyState === 3);
   await confirmCarrierEnd(world);
   await waitUntil(() => repos.attempt.setState.mock.calls.some((c) => c[1] === 'ended'));
@@ -422,9 +412,9 @@ beforeEach(() => {
     campaign_id: i.campaign_id ?? null, agency_attempt_id: i.agency_attempt_id ?? null,
   }));
   mockAdapter.initiateCall.mockResolvedValue({ providerCallId: 'pcid-1' });
-  // PORT NOTE: `hangupAt` is stamped by `PstnSocket.close` (VoiceLink's hangup).
+  // `hangupAt` is stamped by `PstnSocket.close` (VoiceLink's hangup).
   mockAdapter.endCall.mockResolvedValue(undefined);
-  // PORT NOTE: an uploaded recording (decision #4).
+  // An uploaded recording (decision #4).
   announcements.findActiveByIdScoped.mockResolvedValue({
     id: 'ann-1', tenant_id: 't1', account_id: 'a1', name: 'Apology', type: 'audio',
     audio_file_id: 'af-1', is_active: true,
@@ -432,7 +422,7 @@ beforeEach(() => {
   audioFiles.findById.mockResolvedValue({ id: 'af-1', s3_key: 'clips/af-1.wav' });
   // Synthesis is stubbed; the CACHE is real. By default the clip is on disk under
   // the hash the resolver hands back — the ordinary state after a synthesis.
-  // PORT NOTE: the decode step (`ensurePcmClip`) is what hands the hash back now.
+  // The decode step (`ensurePcmClip`) is what hands the hash back.
   ensurePcmClip.mockResolvedValue({ hash: APOLOGY_HASH, sampleRate: CLIP_SAMPLE_RATE });
   writeTtsFile(APOLOGY_HASH, apologyPcm(), CLIP_SAMPLE_RATE, 1);
 });
@@ -451,7 +441,7 @@ afterAll(() => {
 // The cache is real, and it is the same directory the product writes to.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('§16.7 criterion 4 · the clip cache under test is the real one', () => {
+describe('the clip cache under test is the real one', () => {
   it('writes to a real file that the real reader can read back', () => {
     // The premise every case below rests on, asserted rather than assumed: if
     // `TTS_AUDIO_DIR` had not been set before the module loaded, `writeTtsFile`
@@ -474,7 +464,7 @@ describe('§16.7 criterion 4 · the clip cache under test is the real one', () =
 // The seam: the hash the resolver returns is the hash the bridge reads.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('§16.7 criterion 4 · the resolved clip is what reaches the customer', () => {
+describe('the resolved clip is what reaches the customer', () => {
   it('plays the EXACT bytes on disk to the carrier, then hangs up, settling `abandoned`', async () => {
     const world = makeWorld();
     const { pstn } = await loseAgentThenAnswer(world);
@@ -482,7 +472,7 @@ describe('§16.7 criterion 4 · the resolved clip is what reaches the customer',
     // The bridge looked the clip up by the hash the resolver produced. Nothing
     // else could have put these bytes on the wire.
     expect(pstn.mediaFrames.length).toBe(EXPECTED_FRAMES);
-    // PORT NOTE: VoiceLink's envelope (core: VoBiz `playAudio`, `audio/x-l16`).
+    // VoiceLink's media envelope.
     expect(pstn.mediaFrames[0]!.frame).toMatchObject({
       event: 'media',
       media: { payload: expect.any(String) },
@@ -495,11 +485,11 @@ describe('§16.7 criterion 4 · the resolved clip is what reaches the customer',
     // byte-identical to what was written under the resolved hash. A frame count
     // alone passes against a clip read from the wrong hash, truncated, resampled
     // by mistake, or reordered.
-    // PORT NOTE: VoiceLink transcodes, so "byte-identical to what was written" is
+    // VoiceLink transcodes, so "byte-identical to what was written" is
     // byte-identical to the bridge's A-law conversion of what was written.
     expect(pstn.heardPcm.equals(pcmToAlaw(apologyPcm(), CLIP_SAMPLE_RATE))).toBe(true);
 
-    expect(pstn.closedAt).not.toBeNull(); // PORT NOTE: VoiceLink's hangup (core: `endCall('pcid-1')`)
+    expect(pstn.closedAt).not.toBeNull(); // VoiceLink's hangup
     expect(hangupAt).not.toBeNull();
     for (const f of pstn.mediaFrames) expect(f.at).toBeLessThanOrEqual(hangupAt!);
     expect(endedWith()).toMatchObject({ outcome: 'abandoned' });
@@ -526,7 +516,7 @@ describe('§16.7 criterion 4 · the resolved clip is what reaches the customer',
     // And the accounting is unaffected — the clip is the courtesy, not the
     // mechanism. A cache miss is the ordinary state of a replica that has never
     // played this clip, so it must never leave the attempt non-terminal.
-    expect(pstn.closedAt).not.toBeNull(); // PORT NOTE: VoiceLink's hangup (core: `endCall('pcid-1')`)
+    expect(pstn.closedAt).not.toBeNull(); // VoiceLink's hangup
     expect(endedWith()).toMatchObject({ outcome: 'abandoned' });
   });
 

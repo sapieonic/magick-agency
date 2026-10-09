@@ -4,7 +4,7 @@ import type { AgencyCampaignStats, AgencySupervisorAgent } from '../../types/age
 import { ApiError } from '../../api/client';
 
 /**
- * The agent floor (§C.4) and MAG-142's force-return control, as rendered.
+ * The agent floor and the force-return control, as rendered.
  *
  * The ordering itself is asserted in `utils/agencyAgentFloor.test.ts` against
  * fixtures spanning every adjacent rank boundary. What is asserted HERE is the
@@ -171,7 +171,7 @@ describe('agent floor — the warning glyph', () => {
 });
 
 describe('agent floor — `connected: null` is not “disconnected”', () => {
-  it('renders no disconnection warning when core could not determine it', () => {
+  it('renders no disconnection warning when the server could not determine it', () => {
     // A degraded Redis read must never manufacture "this agent has dropped" on
     // a floor a supervisor is about to act on.
     renderFloor({ stats: stats([agent({ session_id: 'maybe', connected: null })]) });
@@ -196,7 +196,7 @@ describe('agent floor — `connected: null` is not “disconnected”', () => {
   });
 });
 
-describe('agent floor — the name master could not resolve', () => {
+describe('agent floor — the name the server could not resolve', () => {
   it('shows a shortened user id, never blank and never “Unknown”', () => {
     renderFloor({ stats: stats([agent({ session_id: 'ghost', agent_name: null })]) });
     const row = screen.getByTestId('floor-row-ghost');
@@ -243,8 +243,8 @@ describe('agent floor — an absent roster is not an empty floor', () => {
     expect(screen.queryByTestId('floor-unavailable')).toBeNull();
   });
 
-  it('still says who is on shift if only the roster goes missing (MAG-151)', () => {
-    // Defensive only. Core tallies `agents_by_state` from the same array
+  it('still says who is on shift if only the roster goes missing', () => {
+    // Defensive only. The server tallies `agents_by_state` from the same array
     // `agents[]` comes from, so today the two always arrive together and this
     // payload cannot occur — pinned so the component keeps degrading correctly
     // rather than because the state is reachable.
@@ -299,7 +299,7 @@ describe('agent floor — an absent roster is not an empty floor', () => {
   });
 });
 
-describe('force-return (MAG-142) — the two gates', () => {
+describe('force-return — the two gates', () => {
   const wrapping = agent({ session_id: 'wrap', agent_name: 'Ravi', state: 'wrapup', state_since: ago(200) });
 
   it('is offered on a wrap-up to a viewer who holds agency.supervise', () => {
@@ -310,8 +310,8 @@ describe('force-return (MAG-142) — the two gates', () => {
 
   it('is HIDDEN without agency.supervise, even on a wrap-up', () => {
     /*
-     * The UI gate must be the API gate. Master gates the route on
-     * `requirePermission('agency.supervise')`, which under D6 a `viewer`,
+     * The UI gate must be the API gate. The server gates the route on
+     * `requirePermission('agency.supervise')`, which under the role hierarchy a `viewer`,
      * `operator` or `agent` cannot reach — so a looser gate here would render a
      * button that 403s on click, and the person it would tempt most is the agent
      * whose own disposition it would skip.
@@ -333,7 +333,7 @@ describe('force-return (MAG-142) — the two gates', () => {
   });
 });
 
-describe('force-return (MAG-142) — the action', () => {
+describe('force-return — the action', () => {
   const wrapping = agent({ session_id: 'wrap-sess', agent_user_id: 'usr_person', agent_name: 'Ravi', state: 'wrapup', state_since: ago(200) });
 
   function openAndClickForce(onForced = vi.fn()) {
@@ -502,7 +502,7 @@ describe('the floor as a table', () => {
      * A signed-out agent is still a row — they worked this shift and their
      * handled calls are real — but they are not ON it. `offline` is excluded
      * from the readout and the bar for the reason `agencyCampaignOverview`'s
-     * rail excludes it and core's own `shift_seconds` does: otherwise Overview
+     * rail excludes it and the server's own `shift_seconds` does: otherwise Overview
      * and this tab report different denominators for one payload.
      */
     const roster = [

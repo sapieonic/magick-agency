@@ -17,14 +17,8 @@
  *     templated from it) and none keeps `instance`;
  *  5. the pending-period arithmetic of zero-threshold rate()/increase() rules;
  *  6. every rule selects agency's deployments and nothing else;
- *  7. the routing labels the MagickVoice platform's notification policy keys on
- *     are present and spelled as the platform spells them (this module manages
- *     no routing of its own).
- *
- * PORT NOTE (magick-agency, B6): ported from the MagickVoice superproject's
- * `scripts/validate-grafana-alerts.test.mjs`@e32a5db, cut to one service: the
- * per-file uid prefixes, the core/master/all_services locals and the cross-file
- * scope checks are gone; 6 and 7 are new. See PORTING.md, "Grafana alerting (B6)".
+ *  7. the routing labels the stack's notification policy keys on are present
+ *     and spelled as it expects (this module manages no routing of its own).
  *
  *   pnpm test:grafana
  */
@@ -63,24 +57,29 @@ const FORBIDDEN_METRICS = {
 const PER_PROCESS_LABELS = new Set(['instance', 'service_instance_id']);
 
 /**
- * The MagickVoice platform's `local.deployment_label`
- * (MagickVoice-platform/grafana/terraform/alert-rules.tf). Its notification
- * policy routes on the value this renders, so agency's copy must render
- * exactly the same — a drift here silently re-routes agency's pages.
+ * The `deployment` label template the stack's notification policy expects (the
+ * same text every service on the stack uses). The policy routes on the value
+ * this renders, so a drift here silently re-routes agency's pages: change it
+ * only together with the policy.
  */
-const PLATFORM_DEPLOYMENT_LABEL = '{{ if match "-Staging$" $labels.service_name }}staging{{ else if match "-Dedicated$" $labels.service_name }}dedicated{{ else if $labels.service_name }}production{{ else }}unknown{{ end }}';
+const ROUTED_DEPLOYMENT_LABEL = '{{ if match "-Staging$" $labels.service_name }}staging{{ else if match "-Dedicated$" $labels.service_name }}dedicated{{ else if $labels.service_name }}production{{ else }}unknown{{ end }}';
 
-/** The labels a rule may add of its own, and their allowed values (the platform's mute route). */
+/** The labels a rule may add of its own, and their allowed values (the policy's mute route). */
 const RULE_LABELS = { nightly_window: ['mute'] };
 
-/** Resources that belong to the platform module alone (one per stack, or routed to by name). */
-const PLATFORM_ONLY_RESOURCES = ['grafana_notification_policy', 'grafana_contact_point', 'grafana_mute_timing', 'grafana_message_template'];
+/** Routing resources, managed outside this repo (one per stack, or routed to by name). */
+const ROUTING_RESOURCES = ['grafana_notification_policy', 'grafana_contact_point', 'grafana_mute_timing', 'grafana_message_template'];
 
 /** Names agency's selector must, and must not, select. */
 const AGENCY_NAMES = ['magick-agency', 'magick-agency-Staging', 'magick-agency-Dedicated'];
+/**
+ * Other services on the same stack, by shape: a `magick-` prefix, the routed
+ * `-Staging` / `-Dedicated` suffixes, and a dev box named as `.env.example`
+ * suggests. A regex that drifts to `magick-.*` or unanchors selects one.
+ */
 const FOREIGN_NAMES = [
-  'MagickVoice-Orchestrator', 'MagickVoice-Orchestrator-Staging', 'MagickVoice-Orchestrator-Dedicated', 'voice-ai-orchestrator',
-  'MagickVoice-Platform', 'MagickVoice-Platform-Staging', 'MagickVoice-Platform-Dedicated', 'magick-master',
+  'magick-platform', 'magick-platform-Staging', 'magick-platform-Dedicated', 'magick-console',
+  'voice-ai-orchestrator', 'other-service-Staging', 'agency-magick-agency',
   'agency-dev-someone',
 ];
 
@@ -225,8 +224,8 @@ describe('agency alert rules', () => {
     assert.deepEqual(problems, [], problems.join('\n'));
   });
 
-  // One process, one service: nothing here may watch core's or master's series
-  // (the platform module does), and nothing may reach past agency's selector.
+  // One process, one service: nothing here may watch another service's series,
+  // and nothing may reach past agency's selector.
   test('every rule selects agency\'s deployments and nothing else', () => {
     const { rules, selector } = load();
     const problems = [];
@@ -371,9 +370,9 @@ describe('agency alert rules', () => {
     assert.deepEqual([...new Set(unbalanced)], [], 'unbalanced expressions');
   });
 
-  // The platform module owns the stack's one notification policy; these alerts
-  // reach Slack and PagerDuty only by carrying the labels it routes on.
-  test('every rule carries the platform\'s routing labels, and this module manages no routing', () => {
+  // The stack's one notification policy is managed outside this repo; these
+  // alerts reach Slack and PagerDuty only by carrying the labels it routes on.
+  test('every rule carries the policy\'s routing labels, and this module manages no routing', () => {
     const alerting = readFileSync(tf('alerting.tf'), 'utf8');
     const problems = [];
     const labelsBlock = /\n\s+labels = merge\(\{([^}]*)\}, try\(rule\.value\.labels, \{\}\)\)/.exec(alerting)?.[1];
@@ -384,8 +383,8 @@ describe('agency alert rules', () => {
         if (!new RegExp(`\\n\\s+${k}\\s+= ${v.replace(/[.()"]/g, '\\$&')}\\s*\\n`).test(labelsBlock)) problems.push(`alerting.tf: rule label ${k} must be ${v}`);
       }
     }
-    if (hclString(alerting, '\\n\\s+deployment_label') !== PLATFORM_DEPLOYMENT_LABEL) {
-      problems.push('alerting.tf: local.deployment_label differs from the platform\'s — the notification policy would route agency\'s alerts differently');
+    if (hclString(alerting, '\\n\\s+deployment_label') !== ROUTED_DEPLOYMENT_LABEL) {
+      problems.push('alerting.tf: local.deployment_label differs from the text the notification policy expects — it would route agency\'s alerts differently');
     }
     for (const r of load().rules) {
       for (const [k, v] of Object.entries(r.labels)) {
@@ -394,10 +393,10 @@ describe('agency alert rules', () => {
       }
     }
     for (const file of readdirSync(tf('')).filter((f) => f.endsWith('.tf'))) {
-      for (const res of PLATFORM_ONLY_RESOURCES) {
-        if (new RegExp(`resource "${res}"`).test(readFileSync(tf(file), 'utf8'))) problems.push(`${file}: ${res} belongs to the platform module, not here`);
+      for (const res of ROUTING_RESOURCES) {
+        if (new RegExp(`resource "${res}"`).test(readFileSync(tf(file), 'utf8'))) problems.push(`${file}: ${res} is routing, managed outside this repo`);
       }
     }
-    assert.deepEqual(problems, [], `routing contract with the platform module broken:\n  ${problems.join('\n  ')}`);
+    assert.deepEqual(problems, [], `routing contract with the stack's notification policy broken:\n  ${problems.join('\n  ')}`);
   });
 });

@@ -1,4 +1,4 @@
-// PORT NOTE (magick-agency): ported from master test/unit/db/repositories/tenant.repository.test.ts@a1f0756a — verbatim except import specifiers and the type-only casts marked below.
+// Type-only casts are marked below: tests are typechecked (decision B1).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ pool: { query: vi.fn() } }));
@@ -96,7 +96,7 @@ describe('TenantRepository', () => {
 
     it('should UPDATE status', async () => {
       mocks.pool.query.mockResolvedValue({ rows: [row] });
-      // PORT NOTE (magick-agency): type-only cast — agency's tsconfig typechecks tests (B1), master's did not.
+      // Type-only cast — the tsconfig typechecks tests (decision B1).
       await repo.update('t-1', { status: 'inactive' as never });
       const [, params] = mocks.pool.query.mock.calls[0]!;
       expect(params[0]).toBe('inactive');

@@ -11,14 +11,9 @@ import { describe, it, expect } from 'vitest';
  * "contact support and quote this request id" for what is a typo in a checkbox.
  */
 
-// PORT NOTE (magick-agency): `previewDigestSchema` and `runDigestsSchema` are
-// deleted from the validator (credits usage digest, plan §3.3/§3.5) with their
-// 22 cases (`previewDigestSchema` 2 + 5, `runDigestsSchema` 4 + 11). Agency's
-// catalog holds only `agency.campaign.completed`, an immediate event, so cases
-// that master wrote against `usage.digest` / `campaign.completed` use that key
-// wherever the rule under test does not depend on the event being a digest, and
-// the five cases that DO depend on a digest event (or on two distinct live
-// events) are deleted, each marked where it stood.
+// The catalog holds only `agency.campaign.completed`, an immediate event, so the cases
+// below use that key wherever the rule under test does not depend on the event being a
+// digest.
 import {
   updateNotificationPreferencesSchema,
 } from '../../../src/api/validators/notification.validator.js';
@@ -28,19 +23,12 @@ function parse(preferences: unknown[]) {
 }
 
 describe('updateNotificationPreferencesSchema', () => {
-  // PORT NOTE (magick-agency): master's 'accepts a digest preference with a
-  // cadence' is deleted — agency's catalog has no digest event (plan §3.5).
-
   it('defaults the channel', () => {
     // Present in the contract from the start rather than added later: a client
     // that has always sent `channel` keeps working when a second one exists.
     const result = parse([{ event_key: 'agency.campaign.completed', enabled: false }]);
     expect(result.success && result.data.preferences[0]?.channel).toBe('email');
   });
-
-  // PORT NOTE (magick-agency): master's 'accepts an explicit null frequency on a
-  // digest' is deleted — agency's catalog has no digest event (plan §3.5); the
-  // immediate-event null case below still covers an explicit `null`.
 
   describe('refusals', () => {
     it('refuses an unknown event key, naming it', () => {
@@ -82,9 +70,8 @@ describe('updateNotificationPreferencesSchema', () => {
       // depend on which entry the client happened to put last. A silently
       // non-deterministic save is worse than a 400 naming the repeated key.
       //
-      // PORT NOTE (magick-agency): master's entries carry `daily` / `weekly` on
-      // `usage.digest`; on agency's one (immediate) event a frequency is its own
-      // refusal and would be issue 0, so the duplicate is stated without one.
+      // On the one (immediate) event a frequency is its own refusal and would be
+      // issue 0, so the duplicate is stated without one.
       const result = parse([
         { event_key: 'agency.campaign.completed', enabled: true },
         { event_key: 'agency.campaign.completed', enabled: false },
@@ -118,10 +105,6 @@ describe('updateNotificationPreferencesSchema', () => {
 });
 
 describe('updateNotificationPreferencesSchema, further cases', () => {
-  // PORT NOTE (magick-agency): master's 'accepts a digest preference with NO
-  // frequency at all' and 'accepts every cadence the scheduler runs' are deleted
-  // — agency's catalog has no digest event (plan §3.5).
-
   it('accepts an immediate event with an explicit NULL frequency', () => {
     // `null` is "not applicable", which is exactly what an immediate event's
     // column holds. Only a real cadence on an immediate event is a mistake.
@@ -133,8 +116,7 @@ describe('updateNotificationPreferencesSchema, further cases', () => {
     // The unsubscribe-everything shape a settings page sends. Every catalog key
     // must be writable without the client knowing which are digests.
     //
-    // PORT NOTE (magick-agency): master lists its four events; agency's catalog
-    // holds one (plan §3.5).
+    // The catalog holds one event.
     const result = parse([
       { event_key: 'agency.campaign.completed', enabled: false },
     ]);
@@ -154,10 +136,6 @@ describe('updateNotificationPreferencesSchema, further cases', () => {
     expect(result.error?.issues[0]?.message).toContain('Duplicate');
     expect(result.error?.issues[0]?.path).toEqual(['preferences', 1, 'event_key']);
   });
-
-  // PORT NOTE (magick-agency): master's 'does not treat two DIFFERENT events as
-  // duplicates' is deleted — it needs two live event keys and agency's catalog
-  // holds one (plan §3.5).
 
   it('reports only the FIRST problem for one entry, not a cascade', () => {
     // Each refusal `return`s, so an entry with an unknown key is reported once
@@ -201,9 +179,8 @@ describe('updateNotificationPreferencesSchema, further cases', () => {
     // than the catalog holds, and the cap is there to stop an unbounded upsert
     // rather than to limit a legitimate save.
     const entry = (_i: number) => ({
-      // PORT NOTE (magick-agency): master alternates `usage.digest` /
-      // `campaign.completed`; agency's catalog holds one event, so all 50 share one
-      // identity — the 50 still fail on the DUPLICATE rule, not the size rule.
+      // The catalog holds one event, so all 50 share one identity — the 50 fail on
+      // the DUPLICATE rule, not the size rule.
       event_key: 'agency.campaign.completed' as const,
       enabled: true,
     });

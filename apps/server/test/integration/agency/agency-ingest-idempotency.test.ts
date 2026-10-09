@@ -13,46 +13,46 @@ const { agencyContactRepository } = await import(
 );
 
 /**
- * Roster-ingest idempotency — C21 and the M1 carried gap (session-state §3.1).
+ * Roster-ingest idempotency — C21 and the M1 carried gap.
  *
  * ── What was already covered, and what was not ─────────────────────────────
- * Both halves were tested in isolation before this file: master's key builder
- * (`rosterChunkKey`) at master's unit tier, and core's UNIQUE index at core's.
- * The untested failure is the CROSS-SERVICE one — master dying *after* core
- * committed a chunk and *before* master recorded it, then coming back. Nothing
+ * Both halves are tested in isolation elsewhere: the chunk-key builder
+ * (`rosterChunkKey`) at the unit tier, and the UNIQUE index at the repository tier.
+ * The failure covered here is the CROSS-LAYER one — the public API layer dying *after* the
+ * roster committed a chunk and *before* the job recorded it, then coming back. Nothing
  * exercised that seam, and it is the only one that can duplicate a contact,
  * because a duplicated contact dials twice down two independent attempt chains
  * that `uq_agency_attempt_live` cannot join (two different `contact_id`s).
  *
  * ── There are TWO mechanisms here and this file refuses to conflate them ───
- * Migration 077 introduces `agency_ingest_chunks`, keyed `{ingest_job_id}-
- * {chunk_index}`, and calls the row-level unique index "defence in depth beneath
- * that". A test that only asserts "the contact count did not change" passes
+ * `agency_ingest_chunks` is keyed `{ingest_job_id}-
+ * {chunk_index}`, with the row-level unique index as defence in depth beneath
+ * that. A test that only asserts "the contact count did not change" passes
  * whichever layer fired — and therefore proves nothing about either. Every arm
  * below states which layer it is falsifying, and the restart arm asserts on
  * `duplicate_chunk` specifically so that the answer to "which one caught it" is
  * written into the test rather than inferred.
  *
- * That distinction is not academic. Master builds the key from `job.id`
+ * That distinction is not academic. The public API layer builds the key from `job.id`
  * (`agency-ingest.service.ts` → `ingestJobId: job.id`) and NEVER reuses a job
  * id across a restart: `reapStaleJobs()` fails every live job at boot and
  * `POST /ingest/jobs` always creates a fresh row. So the chunk-key layer cannot
  * fire for the restart case at all, and the row-level index is carrying it
- * alone. `it('re-upload after a master restart …')` is where that is pinned.
+ * alone. `it('re-upload after a caller restart …')` is where that is pinned.
  *
- * That index is `uq_agency_contacts_row_fingerprint` (083), not 073's
- * `uq_agency_contacts_source_row`. 073 keyed on the row's position in the file,
- * which made a second CSV's lines collide with the first's and silently
- * discarded every top-up (D1); 083 keys on the row's CONTENT, which refuses the
- * same restart re-upload while letting a genuinely new file land. Read 083's
- * header before touching any arm here — "namespace it per ingest job" is the
+ * That index is `uq_agency_contacts_row_fingerprint`, not the legacy
+ * `uq_agency_contacts_source_row`. Keying on the row's position in the file
+ * would make a second CSV's lines collide with the first's and silently
+ * discard every top-up; the fingerprint keys on the row's CONTENT, which refuses the
+ * same restart re-upload while letting a genuinely new file land. Take care
+ * before touching any arm here — "namespace it per ingest job" is the
  * intuitive fix and it gives away exactly the guarantee this file exists for.
  *
  * ── Cleanup ───────────────────────────────────────────────────────────────
  * `beforeEach(truncateAll)` only, matching the sibling agency files. Nothing
  * here starts a dialer, a lease renewer or a timer, so there is no live
  * resource needing an `afterEach` teardown — and no test body does its own
- * cleanup, which is the failure mode that reddened T-L2 in Phase 1.
+ * cleanup, which is the failure mode that reddened T-L2 earlier.
  */
 
 const TENANT = DEFAULTS.tenantId;
@@ -62,7 +62,7 @@ const ACCOUNT = DEFAULTS.accountId;
  * One chunk's worth of contacts.
  *
  * `source_row_number` is derived from the row's position in the FILE, exactly
- * as master derives it (`startLine`), because that is the property the
+ * as the public API layer derives it (`startLine`), because that is the property the
  * row-level index keys on and the whole point is that it is stable across
  * runs while the job id is not.
  */
@@ -184,14 +184,14 @@ describe('agency roster-ingest idempotency (integration)', () => {
     expect(await contactCount(b.id)).toBe(5);
   });
 
-  // ── The carried gap: master dies mid-ingest, restarts, re-runs ───────────
+  // ── The carried gap: the public API layer dies mid-ingest, restarts, re-runs ───────────
 
-  it('re-upload after a master restart does not duplicate — but it is the ROW index, not the chunk key, that stops it', async () => {
+  it('re-upload after a caller restart does not duplicate — but it is the ROW index, not the chunk key, that stops it', async () => {
     const campaign = await insertAgencyCampaign();
 
-    // Run 1. Core commits chunks 0 and 1. Master is killed here — before it
-    // wrote `chunks_sent`, so from master's side these two chunks never
-    // happened. This is precisely the failure §3.1 names.
+    // Run 1. The roster commits chunks 0 and 1. The caller is killed here — before it
+    // wrote `chunks_sent`, so from the caller's side these two chunks never
+    // happened. This is precisely the failure mode being covered.
     const jobOne = randomUUID();
     await apply(campaign.id, jobOne, 0, chunkContacts(0, 5));
     await apply(campaign.id, jobOne, 1, chunkContacts(1, 5));
@@ -218,9 +218,9 @@ describe('agency roster-ingest idempotency (integration)', () => {
     // `uq_agency_contacts_row_fingerprint` + `ON CONFLICT DO NOTHING` swallowing
     // all ten rows one at a time — the re-uploaded file carries byte-identical
     // rows, which is exactly what the content key recognises. The count is
-    // protected; the mechanism 077 was written for is not participating.
+    // protected; the chunk-key mechanism is not participating.
     //
-    // If master is ever changed to resume a job id across a restart, these two
+    // If the public API layer is ever changed to resume a job id across a restart, these two
     // flip to `true` and this test fails. That failure is GOOD — flip the
     // expectation and delete this comment, because it means the primary layer
     // came alive.
@@ -233,7 +233,7 @@ describe('agency roster-ingest idempotency (integration)', () => {
     expect(replay0).toMatchObject({ accepted: 0, duplicate_chunk: false, rejected_duplicate_rows: 5 });
     expect(replay1).toMatchObject({ accepted: 0, duplicate_chunk: false, rejected_duplicate_rows: 5 });
     expect(fresh2).toMatchObject({ accepted: 5, duplicate_chunk: false, rejected_duplicate_rows: 0 });
-    // The refused row numbers are named back, so master can tell the operator
+    // The refused row numbers are named back, so the public API layer can tell the operator
     // which rows collided instead of just "0 accepted".
     expect(replay0.duplicate_source_rows).toEqual([1, 2, 3, 4, 5]);
 
@@ -287,27 +287,27 @@ describe('agency roster-ingest idempotency (integration)', () => {
    * it makes the fix prove itself instead of being asserted, and it cannot rot
    * quietly the way a characterization test can.
    *
-   * **MET as of `363fce1`, and the `.fails` is gone.** The product decision was
+   * **MET, and the `.fails` is gone.** The product decision was
    * "refuse, do not merge", and the repository now reports
    * `rejected_duplicate_rows` + `duplicate_source_rows` alongside `accepted`, so
-   * master can name the colliding rows to the operator.
+   * the public API layer can name the colliding rows to the operator.
    *
-   * **REOPENED, and re-answered differently, by migration 083 (D1).** "Refuse"
+   * **Re-answered by the content fingerprint.** "Refuse"
    * was never a product decision so much as a consequence of keying identity on
    * `source_row_number` — and that key also made `AgencyCampaignContactsPage`,
    * whose entire purpose is adding contacts to a live campaign, silently discard
    * every row. Both behaviours are the one key: a second file's lines 2..N are
    * the first file's lines 2..N. They cannot be separated schematically, because
-   * core cannot tell a CORRECTION from a TOP-UP — only master knows which the
+   * the roster cannot tell a CORRECTION from a TOP-UP — only the public API layer knows which the
    * operator meant.
    *
-   * So 083 keys on the row's CONTENT and the answer here becomes "upsert": the
+   * So the fingerprint keys on the row's CONTENT and the answer here becomes "upsert": the
    * corrected rows land. The invariant below still holds — the caller is told
    * truthfully that 5 rows landed — but the *roster* is now half-corrected,
-   * which §13.4 rightly calls worse than an uncorrected one. That residual is
-   * asserted explicitly in the test after this one, and it is master's to close
+   * which rightly calls worse than an uncorrected one. That residual is
+   * asserted explicitly in the test after this one, and it is the caller's to close
    * (a confirmation on top-up into a populated campaign, or a replace-roster
-   * mode). Core will not guess.
+   * mode). The roster will not guess.
    */
   it('a corrected re-upload either lands or reports a conflict — never a silent no-op', async () => {
     const campaign = await insertAgencyCampaign();
@@ -328,9 +328,9 @@ describe('agency roster-ingest idempotency (integration)', () => {
         'SELECT phone_e164 FROM agency_contacts WHERE campaign_id = $1',
         [campaign.id],
       );
-      // Any honest signal counts. Under 083 it is `accepted`: the corrected rows
+      // Any honest signal counts. With the fingerprint it is `accepted`: the corrected rows
       // genuinely landed and the count says so. What must NOT satisfy this is
-      // the pre-083 shape — a bare `accepted: 0` with no discriminator, which is
+      // the position-keyed shape — a bare `accepted: 0` with no discriminator, which is
       // "fresh, empty work" and is indistinguishable from success.
       const r = (result ?? {}) as Record<string, unknown>;
       const correctionLanded =
@@ -343,30 +343,29 @@ describe('agency roster-ingest idempotency (integration)', () => {
     }
   });
 
-  it('a corrected re-upload MERGES — and the wrong numbers are still dialable (open, master-side)', async () => {
+  it('a corrected re-upload MERGES — and the wrong numbers are still dialable (open, caller-side)', async () => {
     // The scenario is ordinary: the operator picks the wrong `phone_column`, or
     // leaves `default_country_code` at the platform default so a US list
-    // normalises to +91 (design §13.4). They notice, fix the mapping, and
+    // normalises to +91. They notice, fix the mapping, and
     // re-upload the same file.
     //
-    // Under 073's `(campaign_id, source_row_number)` every corrected row
-    // collided and the campaign kept its original numbers. Under 083's content
+    // Under a `(campaign_id, source_row_number)` key every corrected row
+    // collided and the campaign kept its original numbers. Under the content
     // key the corrected rows have different content, so they land ALONGSIDE the
     // uncorrected ones — ten rows where the operator has five people, five of
     // which dial the wrong country.
     //
-    // **It takes 083 AND 085 for this to be true, which this test is what proved.**
-    // With 083 alone it failed here with 23505 on `uq_agency_contacts_source_row`:
-    // the corrected rows reuse lines 1..5, that index is still live (it cannot be
-    // dropped until no pre-083 replica can serve a request), and the new INSERT
-    // infers the FINGERPRINT index so the violation is no longer swallowed. 085
-    // leaves `source_row_number` NULL — the old index is partial on NOT NULL — and
-    // moves the CSV line to `csv_line_number`.
+    // **It takes the fingerprint key AND a NULL `source_row_number` for this to be true.**
+    // With a populated `source_row_number` it would fail here with 23505 on `uq_agency_contacts_source_row`:
+    // the corrected rows reuse lines 1..5, that index is still live, and the
+    // INSERT infers the FINGERPRINT index so the violation is no longer swallowed.
+    // `source_row_number` stays NULL — the old index is partial on NOT NULL — and
+    // the CSV line goes to `csv_line_number`.
     //
     // This is asserted rather than left implicit because it is the price of
-    // 083 and somebody has to be able to see it in a test. It is NOT fixable in
-    // core: a corrected re-upload and a legitimate top-up are the same request,
-    // and only master — which holds the file, the mapping and the operator's
+    // content keying and somebody has to be able to see it in a test. It is NOT fixable in
+    // the roster: a corrected re-upload and a legitimate top-up are the same request,
+    // and only the public API layer — which holds the file, the mapping and the operator's
     // intent — can tell them apart. The close is a confirmation step (or a
     // replace-roster mode) on the top-up flow.
     const campaign = await insertAgencyCampaign();
@@ -394,21 +393,21 @@ describe('agency roster-ingest idempotency (integration)', () => {
     expect(rows.filter((r) => r.phone_e164.startsWith('+91900'))).toHaveLength(5);
   });
 
-  it('a genuine top-up lands — the whole point of migration 083 (D1)', async () => {
-    // The defect 083 exists for. `AgencyCampaignContactsPage` adds contacts to a
+  it('a genuine top-up lands — the whole point of content keying', async () => {
+    // The defect content keying exists for. `AgencyCampaignContactsPage` adds contacts to a
     // live campaign, and a second CSV starts at line 1 like every CSV — so under
     // `(campaign_id, source_row_number)` every one of its rows collided with a
-    // row of the first file and was discarded, while master (which dropped the
+    // row of the first file and was discarded, while the public API layer (which dropped the
     // rejection counts) reported that all of them landed.
     //
     // Different people, same line numbers: that combination is the whole defect,
     // so the second file deliberately reuses rows 1..5.
     //
-    // And it is why 083 alone did not fix it. Reusing lines 1..5 collided on 073's
+    // And a fingerprint key alone is not enough. Reusing lines 1..5 collides on the
     // still-live `uq_agency_contacts_source_row`, and once the INSERT infers the
     // fingerprint index instead, that 23505 aborts the chunk rather than being
     // swallowed — so the defect changed shape (silent discard → 500) without going
-    // away. 085 is what makes this green in THIS release: new rows store NULL in
+    // away. What makes this green: new rows store NULL in
     // `source_row_number`, which is outside that partial index, and the CSV line
     // lives in `csv_line_number`.
     const campaign = await insertAgencyCampaign();
@@ -423,10 +422,10 @@ describe('agency roster-ingest idempotency (integration)', () => {
   });
 
   it('a discarded row is distinguishable from an empty chunk, including a PARTIAL collision', async () => {
-    // This was a finding and is now a guarantee (`363fce1`). Three outcomes used
+    // This was a finding and is now a guarantee. Three outcomes used
     // to return an identical body, and one of them is routine traffic:
     //
-    //   1. the empty terminator chunk master sends on EVERY ingest  → accepted: 0
+    //   1. the empty terminator chunk the public API layer sends on EVERY ingest  → accepted: 0
     //   2. a re-sent file, every row discarded                       → accepted: 0
     //   3. a PARTIAL collision, some rows discarded                  → accepted: n
     //
@@ -435,7 +434,7 @@ describe('agency roster-ingest idempotency (integration)', () => {
     // three rows. All three are now separable, and the partial case is asserted
     // explicitly because it is the one no count alone can catch.
     //
-    // Since 083 a discarded row is one the roster already holds VERBATIM, so
+    // A discarded row is one the roster already holds EXACTLY, so
     // the discarded arms below re-send the identical rows rather than
     // differently-numbered ones — that is what a replay looks like now, and a
     // corrected re-upload is no longer one (see the merge test above).
@@ -474,7 +473,7 @@ describe('agency roster-ingest idempotency (integration)', () => {
   // ── Layer 3: the chunk is all-or-nothing ────────────────────────────────
 
   it('a chunk that fails mid-insert leaves neither rows nor a marker', async () => {
-    // 077's header claims "the chunk marker and its rows are inserted in ONE
+    // The chunk marker and its rows are inserted in ONE
     // transaction, so partial application is impossible rather than merely
     // detectable". Asserted here rather than trusted, because the dangerous
     // shape is the inverse — a marker that committed without its rows, which
@@ -505,7 +504,7 @@ describe('agency roster-ingest idempotency (integration)', () => {
   // ── Completeness reporting on the final chunk ───────────────────────────
 
   it('a lost chunk is reported as a gap, not as a complete roster', async () => {
-    // Without this, a chunk master believed it sent leaves a campaign short and
+    // Without this, a chunk the public API layer believed it sent leaves a campaign short and
     // startable — it dials a partial list and nothing says so.
     const campaign = await insertAgencyCampaign();
     const job = randomUUID();
@@ -516,7 +515,7 @@ describe('agency roster-ingest idempotency (integration)', () => {
 
     expect(await agencyContactRepository.missingChunks(campaign.id, job, 3)).toEqual([1]);
 
-    // Master re-sends precisely the gap.
+    // The public API layer re-sends precisely the gap.
     await apply(campaign.id, job, 1, chunkContacts(1, 5));
     expect(await agencyContactRepository.missingChunks(campaign.id, job, 3)).toEqual([]);
     expect(await contactCount(campaign.id)).toBe(15);

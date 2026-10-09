@@ -1,24 +1,22 @@
 /**
- * Dialer-analysis recording-race test (B1 / C3).
+ * Dialer-analysis recording-race test.
  *
  * The dangerous ordering: the recording webhook can land BEFORE the job row exists
  * (the carrier POSTs RecordStop before `endCall` enqueues). The design defends this
  * two ways, both exercised here against a faithful in-memory model of the repo's
  * guarded-SQL semantics:
  *
- *  - `markRecordingReady` guards `WHERE status='awaiting_recording'` (C3): a webhook
+ *  - `markRecordingReady` guards `WHERE status='awaiting_recording'`: a webhook
  *    with no job yet is a no-op; a duplicate webhook after the job is running/queued
  *    is a no-op — never a double re-queue.
  *  - `enqueueFromCall` derives `queued` vs `awaiting_recording` in-SQL FROM the call
- *    row's `recording_url` (B1): a recording that beat `endCall` lands the job
+ *    row's `recording_url`: a recording that beat `endCall` lands the job
  *    straight in `queued`, so it is NEVER stuck in awaiting and NEVER expired.
  *  - The worker promotes (recording present) BEFORE it expires, so even a job that
  *    was enqueued awaiting and only later got its recording is rescued, not expired.
  */
 /*
- * PORT NOTE (magick-agency): ported from core test/unit/core/dialer-analysis-race.test.ts
- * @4850d1d9 (4 -> 4). Only the model import path and the removed settlement fields
- * changed; the real-SQL counterpart is test/integration/flows/dialer-analysis-race.
+ * The real-SQL counterpart is test/integration/flows/dialer-analysis-race.
  */
 import { describe, it, expect } from 'vitest';
 import type { DialerAnalysisJobRecord } from '@magick-agency/db/models/dialer-analysis-job.model';
@@ -31,7 +29,7 @@ class InMemoryJobs {
   jobs = new Map<string, DialerAnalysisJobRecord>();
   private seq = 0;
 
-  /** Derives queued vs awaiting_recording from the call's recording_url (B1). ON CONFLICT no-op. */
+  /** Derives queued vs awaiting_recording from the call's recording_url. ON CONFLICT no-op. */
   enqueueFromCall(callId: string, recordingUrl: string | null, createdAt = new Date()): DialerAnalysisJobRecord | null {
     const existing = [...this.jobs.values()].find((j) => j.call_id === callId);
     if (existing) return existing; // ON CONFLICT (call_id) DO NOTHING
@@ -48,7 +46,7 @@ class InMemoryJobs {
     return job;
   }
 
-  /** Guarded WHERE status='awaiting_recording' (C3). Returns the promoted job or null. */
+  /** Guarded WHERE status='awaiting_recording'. Returns the promoted job or null. */
   markRecordingReady(callId: string): DialerAnalysisJobRecord | null {
     const job = [...this.jobs.values()].find((j) => j.call_id === callId);
     if (!job || job.status !== 'awaiting_recording') return null;
@@ -56,7 +54,7 @@ class InMemoryJobs {
     return job;
   }
 
-  /** Promote awaiting → queued where the call now has a recording (B1). Count promoted. */
+  /** Promote awaiting → queued where the call now has a recording. Count promoted. */
   promoteRecordingReady(hasRecording: (callId: string) => boolean): number {
     let n = 0;
     for (const j of this.jobs.values()) {
@@ -78,7 +76,7 @@ class InMemoryJobs {
 }
 
 describe('dialer-analysis recording race', () => {
-  it('webhook BEFORE the job row exists ⇒ enqueue derives queued, never awaiting/expired (B1)', () => {
+  it('webhook BEFORE the job row exists ⇒ enqueue derives queued, never awaiting/expired', () => {
     const repo = new InMemoryJobs();
     const recordings = new Map<string, string>();
 
@@ -89,7 +87,7 @@ describe('dialer-analysis recording race', () => {
 
     // 2. endCall enqueues, reading the (already-present) recording_url from the call row.
     const job = repo.enqueueFromCall('call-1', recordings.get('call-1') ?? null);
-    expect(job?.status).toBe('queued'); // B1 — straight to queued, never awaiting
+    expect(job?.status).toBe('queued'); // straight to queued, never awaiting
 
     // 3. Even a late expiry sweep can never touch it (it isn't awaiting).
     const expired = repo.expireAwaitingRecording(new Date(Date.now() + 1e9), (id) => recordings.has(id));
@@ -97,7 +95,7 @@ describe('dialer-analysis recording race', () => {
     expect(repo.jobs.get(job!.id)!.status).toBe('queued');
   });
 
-  it('duplicate webhooks after the job is queued are no-ops (C3)', () => {
+  it('duplicate webhooks after the job is queued are no-ops', () => {
     const repo = new InMemoryJobs();
     // Job already awaiting (enqueued before the recording).
     const job = repo.enqueueFromCall('call-2', null)!;
@@ -111,7 +109,7 @@ describe('dialer-analysis recording race', () => {
     expect(repo.jobs.get(job.id)!.status).toBe('queued');
   });
 
-  it('promotion rescues a lost-wake awaiting job before expiry (B1 ordering)', () => {
+  it('promotion rescues a lost-wake awaiting job before expiry (ordering)', () => {
     const repo = new InMemoryJobs();
     const recordings = new Map<string, string>();
     // Enqueued awaiting an hour ago (older than any wait window).

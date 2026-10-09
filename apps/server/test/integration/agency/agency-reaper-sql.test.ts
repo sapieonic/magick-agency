@@ -1,10 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 /*
- * PORT NOTE (magick-agency, Phase 6): ported from core
- * test/integration/agency/agency-reaper-sql.test.ts@4850d1d9 — 12 cases, all kept. Modified only in
- * harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
+ * Harness plumbing: the connection mock targets agency's `@magick-agency/db` (and its
  * `/connection` entry, which packages/db's repositories import); the config stub
- * drops `telephony.vobiz` (VoBiz deleted, plan §5); import specifiers per the path
+ * carries no carrier config; import specifiers per the path
  * rule (domain leaves, `@magick-agency/contracts/agency`).
  */
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
@@ -12,7 +10,7 @@ import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js'
 // `vi.mock` below runs — the same reason every value import here is dynamic.
 import type { AgencyReaperDeps } from '../../../src/agency/reaper.js';
 
-// PORT NOTE: core mocked `src/db/connection.js`; agency's pool lives in `@magick-agency/db`
+// The DB pool lives in `@magick-agency/db`
 // (the server's repositories import its root, packages/db's repositories `./connection`).
 vi.mock('@magick-agency/db', () => ({ getPool: () => getTestPool() }));
 vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() }));
@@ -27,12 +25,12 @@ const { requiresDisposition } = await import('../../../src/agency/outcome-classi
 const { AUTO_DISPOSITION_CODE } = await import('../../../src/agency/disposition.js');
 
 /**
- * ─── `AD-P2-C-08`'s SQL, WHICH THE UNIT TIER CANNOT REACH ────────────────────
+ * ─── the SQL, WHICH THE UNIT TIER CANNOT REACH ────────────────────
  *
  * `test/unit/agency/reaper.test.ts` is thorough — 40 cases — and it mocks
  * `agencyAttemptRepository` wholesale. That is the right choice for what it tests
  * (which liveness question the sweep asks, in what order, and what it does with the
- * answer) and it means **three properties in this ticket have never executed**:
+ * answer) and it means **three properties in this suite have never executed**:
  *
  * 1. `reapByIds`' `state = ANY(live)` re-guard. Against a mock, "the guarded UPDATE
  *    decides what was reaped" is asserted by making the mock *return* a subset —
@@ -103,7 +101,7 @@ async function conversationAwaitingWrapup(opts: {
   contactState?: string;
 }) {
   // Deliberately NOT `running`. `uq_agency_campaign_running` allows one running
-  // campaign per account (D9), so a case needing several campaigns cannot have them
+  // campaign per account, so a case needing several campaigns cannot have them
   // all running — and it does not need to: `findLapsedWrapups` has no campaign-status
   // clause, which is correct and is asserted below. A supervisor pausing a campaign
   // must not strand a contact who is waiting for a write-up.
@@ -144,10 +142,10 @@ async function conversationAwaitingWrapup(opts: {
  *
  * So the clause is proven load-bearing the other way round: run the **same query
  * minus the one clause** against the **same rows**, and show the answers differ.
- * That is what §16.6's fourth pattern demands of any check — it must run on data
+ * That is what the fourth pattern demands of any check — it must run on data
  * where the two definitions *could* disagree. Without a control, a passing guard
  * test cannot distinguish "the guard worked" from "no row in this fixture could have
- * been affected either way", which is the vacuity that made §10's first cross-check
+ * been affected either way", which is the vacuity that made the first cross-check
  * worthless.
  *
  * These are controls, not assertions about the product: the product assertions are
@@ -190,7 +188,7 @@ afterAll(closeTestPool);
 // (1) The re-guard, driven through the real race window.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P2-C-08 · reapByIds re-guards on state, in SQL', () => {
+describe('reapByIds re-guards on state, in SQL', () => {
   /**
    * The window is real and narrow: `sweepOnce` SELECTs candidates, then asks Redis
    * about each one's agent, then UPDATEs. An attempt that settles normally during
@@ -339,7 +337,7 @@ describe('AD-P2-C-08 · reapByIds re-guards on state, in SQL', () => {
 // (2) The lapsed-wrap-up clock. Every term of it.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P2-C-08 (b) · findLapsedWrapups clock', () => {
+describe('findLapsedWrapups clock', () => {
   /**
    * `wrapup_seconds` is read **off the attempt**, not off the campaign's current
    * config — an operator shortening the window mid-shift must not retroactively
@@ -473,7 +471,7 @@ describe('AD-P2-C-08 (b) · findLapsedWrapups clock', () => {
    * omission.
    *
    * Found while writing this file: `uq_agency_campaign_running` allows one running
-   * campaign per account (D9), which forced the fixtures onto `paused` — and that
+   * campaign per account, which forced the fixtures onto `paused` — and that
    * turned out to be the more interesting state to test in. **A supervisor pausing
    * or stopping a campaign must not strand a contact who is mid-wrap-up.** Pausing
    * stops new dials; it says nothing about the conversation that just happened, and
@@ -523,7 +521,7 @@ describe('AD-P2-C-08 (b) · findLapsedWrapups clock', () => {
     expect(row!.campaign_disposition_catalog).toEqual([{ code: 'promise_to_pay', label: 'Promise to pay' }]);
     expect(row!.campaign_retry_policy).toEqual({ connected: { max_attempts: 0 } });
     // The CONTACT's budget, not the attempt's `attempt_number` — the two were
-    // deliberately decoupled by `AD-P2-C-12` and the policy reads the budget.
+    // deliberately decoupled and the policy reads the budget.
     expect(row!.contact_attempt_count).toBe(1);
   });
 });
@@ -532,7 +530,7 @@ describe('AD-P2-C-08 (b) · findLapsedWrapups clock', () => {
 // (3) The sweep end to end, and the argument that must never be defaulted.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('AD-P2-C-08 (b) · the sweep against real SQL', () => {
+describe('the sweep against real SQL', () => {
   it('stamps no_disposition, attributes it to nobody, and releases the contact', async () => {
     const { attemptId, contactId } = await conversationAwaitingWrapup({
       endedSecondsAgo: 200,
@@ -565,11 +563,11 @@ describe('AD-P2-C-08 (b) · the sweep against real SQL', () => {
    * ─── THE ARGUMENT THAT MUST NEVER BE DEFAULTED ──────────────────────────
    *
    * `requiresDisposition(outcome, undefined)` returns **true** — the optional
-   * parameter preserves the pre-Phase-2 answer for a caller with no campaign in
+   * parameter preserves the original answer for a caller with no campaign in
    * hand. So the reaper omitting or defaulting that argument would auto-disposition
    * **every** campaign, including those that never asked for one: recording an
    * agent's failure to do something nobody required of them, and poisoning the
-   * Phase 3 retry decision that reads `last_disposition`.
+   * retry decision that reads `last_disposition`.
    *
    * The hazard is pinned mechanically as well as behaviourally, because the
    * behavioural half alone cannot distinguish "the catalog was passed" from "the
@@ -586,7 +584,7 @@ describe('AD-P2-C-08 (b) · the sweep against real SQL', () => {
     ).toBe(true);
     expect(requiresDisposition('connected', [])).toBe(false);
 
-    // `disposition_catalog` is `JSONB NOT NULL DEFAULT '[]'` (072), so an
+    // `disposition_catalog` is `JSONB NOT NULL DEFAULT '[]'`, so an
     // unconfigured campaign is the ORDINARY case, not an edge case.
     const { attemptId, contactId } = await conversationAwaitingWrapup({
       endedSecondsAgo: 200, wrapupSeconds: 30,

@@ -14,24 +14,23 @@ const log = createChildLogger({ component: 'session-payload' });
  * ── Why it is a shared function and not three copies ────────────────────────
  * `POST /invites/:token/claim` must return **exactly** this shape, because the
  * whole point of that endpoint is that the SPA can reuse its existing
- * `SessionResponse` type verbatim: an invited agent finishes claiming and is
+ * `SessionResponse` type unchanged: an invited agent finishes claiming and is
  * already signed in, with no second round trip to `/auth/session` and no second
  * response type to keep in step. A second transcription of the three lookups
- * plus the governance resolve is exactly how the two would drift — and the
+ * plus the settings resolve is exactly how the two would drift — and the
  * drift would be invisible, because both endpoints would keep returning
  * well-formed JSON that merely disagreed about what a session contains.
  *
  * The three lookups are also not interchangeable with anything simpler.
- * `memberships[0]` decides which context governance is resolved for, and
- * `findAllByUserId` orders by `created_at DESC`, so "the primary context" means
- * "the most recent membership" — a rule that lives here rather than being
- * re-derived at each call site.
+ * `findAllByUserId` orders by `created_at DESC`, so `memberships[0]`, "the
+ * primary context", means "the most recent membership" — a rule that lives here
+ * rather than being re-derived at each call site.
  */
 export interface SessionPayload {
   user: unknown;
   tenants: TenantRecord[];
   memberships: MembershipRecord[];
-  /** PORT NOTE (magick-agency): replaces master's `governance` (plan §3.2). */
+  /** Effective per-account settings, keyed by `account_id`. */
   settings: AgencyAccountSettingsMap;
   is_new: false;
 }
@@ -39,11 +38,8 @@ export interface SessionPayload {
 /**
  * Resolve the effective per-account settings map for the caller, fail-open.
  *
- * PORT NOTE (magick-agency): master's `resolveGovernanceSafe(tenantId,
- * accountId)` resolved governance for `memberships[0]` only. Plan §3.2 replaces
- * governance with one per-account settings row, and the contract keys the map by
- * `account_id` across EVERY account the active memberships reach (lead decision
- * Q3a). The fail-open posture is master's, unchanged, and for master's reason:
+ * The contract keys the map by `account_id` across EVERY account the active
+ * memberships reach (decision Q3 (a)).
  *
  * A resolver/DB error must never break login — on throw we log and return an
  * empty map.
@@ -69,10 +65,8 @@ export async function resolveSettingsSafe(
  *
  * `is_new` is hard-coded `false` and typed as the literal, which is deliberate:
  * every caller of this function is a path where the user was found or adopted,
- * never provisioned. The one path that answers `is_new: true` —
- * `POST /auth/session` path 4 — builds its own body because it also carries
- * `default_account`, `needs_phone` and `signup_bonus_credits`, and the claim
- * path must never be able to produce any of them.
+ * never provisioned. `POST /auth/session` never provisions an unknown user (path
+ * 4 answers `403 no_membership`), so no session body here is ever `is_new: true`.
  *
  * `user` is passed in rather than re-read, because the two callers hold
  * different rows at this point: the session path holds the row it just adopted,

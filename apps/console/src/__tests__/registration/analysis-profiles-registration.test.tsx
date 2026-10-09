@@ -11,11 +11,9 @@ function source(relativePath: string): string {
  * solely for tests would expand the production API surface.
  */
 /*
- * PORT NOTE (magick-agency): the three cases are kept and pinned to agency's
- * gates — the `agency.analytics` capability (the active account's
- * `analyze_calls`) and the `agency_call_analysis` flag — where cusui's were the
- * softphone's `calls.dialer.analytics` and `dialer_call_analysis`, which agency
- * does not have.
+ * The three cases are pinned to agency's gates — the `agency.analytics`
+ * capability (the active account's `analyze_calls`) and the `agency_call_analysis`
+ * flag.
  */
 describe('dialer call-analysis registration', () => {
   it('protects the Call Summaries route with the analytics capability and feature flag', () => {

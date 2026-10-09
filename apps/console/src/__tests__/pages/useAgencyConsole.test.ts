@@ -30,7 +30,7 @@ import { ApiError } from '../../api/client';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
 /**
- * The refusal core actually sends, thrown the way `apiFetch` actually throws it.
+ * The refusal the API actually sends, thrown the way `apiFetch` actually throws it.
  *
  * Deliberately a **real `ApiError`** rather than `Object.assign(new Error(), {…})`.
  * The hand-built version carried `status`/`body`; `ApiError` carries
@@ -48,9 +48,9 @@ function dispositionRequiredRefusal(): ApiError {
 }
 
 /**
- * §A.13.8's "**disposition submitted, no `agent_state` follows**" row, tested
+ * The "**disposition submitted, no `agent_state` follows**" row, tested
  * where it is consumed — through the real station hook and real frames, not
- * against a hand-built state object. The row is the only place in Phase 2 where
+ * against a hand-built state object. The row is the only place where
  * the console is licensed to read a disposition response's `agent_state`, and the
  * whole risk is that it reads it *too eagerly*: the field races the socket by
  * design, so a console that reconciles from it whenever it arrives drops the panel
@@ -154,7 +154,7 @@ function latest(): FakeSocket {
   return FakeSocket.instances[FakeSocket.instances.length - 1]!;
 }
 
-describe('useAgencyConsole — the 3s reconciliation window (§A.13.8)', () => {
+describe('useAgencyConsole — the 3s reconciliation window', () => {
   beforeEach(() => {
     FakeSocket.instances = [];
     Object.values(mocks).forEach((m) => m.mockReset());
@@ -277,7 +277,7 @@ describe('useAgencyConsole — the 3s reconciliation window (§A.13.8)', () => {
     // is false here: the call connected, and it is over.
     expect(view.result.current.padDisabledReason).toBe(WAITING_FOR_DIALER_COPY);
     /**
-     * The notes route is accepted through wrap-up regardless (§A.13.7), so the
+     * The notes route is accepted through wrap-up regardless, so the
      * lock must not take the field with it. Written as its own assertion because
      * the tempting implementation — `notesEnabled = padEnabled` — passes every
      * other assertion in this test.
@@ -288,8 +288,8 @@ describe('useAgencyConsole — the 3s reconciliation window (§A.13.8)', () => {
 
   it('says the same thing when the response DID carry a state — both arms, one line', async () => {
     /**
-     * The coordinator's ruling, pending designer ratification. An earlier revision
-     * read §A.13.8's "if that is also absent" as forbidding the copy here, which
+     * An earlier revision
+     * read "if that is also absent" as forbidding the copy here, which
      * left the reconcile arm silent — and the agent cannot tell "reconciled, still
      * waiting" from "no frame ever came", because both are a wrap-up rail holding a
      * saved disposition. Silence there is the dead end the copy exists to prevent.
@@ -304,13 +304,13 @@ describe('useAgencyConsole — the 3s reconciliation window (§A.13.8)', () => {
 
     expect(view.result.current.waitingForDialer).toBe(WAITING_FOR_DIALER_COPY);
     // And the response STILL did not move the rail: `agent_state` is the sole
-    // authority, and no frame said the agent left wrap-up (§A.13.1). The advisory
+    // authority, and no frame said the agent left wrap-up. The advisory
     // buys the line, never the state.
     expect(view.result.current.station.agentState).toBe('wrapup');
   });
 
   it('clears a queued break from the response only — the pill, never the rail', async () => {
-    // Core's real body shape: `break_reason`, and a `since`. It does not send
+    // The API's real body shape: `break_reason`, and a `since`. It does not send
     // `pending_break_reason` on an HTTP response — only on the socket frame.
     mocks.setAgentBreak.mockResolvedValue({
       session_id: 'sess-1',
@@ -338,7 +338,7 @@ describe('useAgencyConsole — the 3s reconciliation window (§A.13.8)', () => {
       /**
        * **Wrap-up entry carries the queued break, and this fixture now says so.**
        *
-       * Core's `WrapupManager` puts `pending_state`/`pending_break_reason` on this
+       * The API's `WrapupManager` puts `pending_state`/`pending_break_reason` on this
        * frame deliberately — it is the only transition frame inside the wrap-up
        * window, so omitting it would leave the console unable to answer "am I
        * getting another call after this one". Without them here the console would
@@ -363,7 +363,7 @@ describe('useAgencyConsole — the 3s reconciliation window (§A.13.8)', () => {
     });
 
     /**
-     * §A.13.6: "the correct post-submit state is `break`, not `available`" — so the
+     * The correct post-submit state is `break`, not `available` — so the
      * queued break was promoted and the pill's subject is gone. This is the only
      * thing the advisory state is allowed to change.
      */
@@ -440,18 +440,18 @@ describe('useAgencyConsole — the 3s reconciliation window (§A.13.8)', () => {
     expect(view.result.current.waitingForDialer).toBeNull();
   });
 
-  it('states core 409 refusal of /available instead of swallowing it', async () => {
+  it('states the API 409 refusal of /available instead of swallowing it', async () => {
     /**
      * `/sessions/:id/available` refuses with **409 `attempt_not_dispositionable`**
-     * while a required disposition is outstanding (core `agency.routes.ts:146`),
+     * while a required disposition is outstanding (in the sessions route),
      * and that refusal is the entire mechanism making a disposition mandatory.
-     * Master forwards it verbatim rather than mirroring the rule.
+     * The API forwards it unchanged rather than mirroring the rule.
      *
      * The handler used to catch-and-ignore, on the reasoning that `agent_state`
      * reconciles the rail anyway. It does — and that is exactly the problem: the
      * agent presses the control, the rail correctly does not move, and **nothing
      * is said**. The only reading left to them is that the product is broken, and
-     * the remedy is one sentence core already wrote.
+     * the remedy is one sentence the API already wrote.
      */
     const refusal = dispositionRequiredRefusal();
     mocks.setAgentAvailable.mockRejectedValue(refusal);
@@ -465,7 +465,7 @@ describe('useAgencyConsole — the 3s reconciliation window (§A.13.8)', () => {
       'Submit a disposition for your last call before going available.',
     );
     // Not an error banner and not a state change: the rail is still whatever
-    // `agent_state` last said, because a refusal moves nothing (§A.13.1).
+    // `agent_state` last said, because a refusal moves nothing.
     expect(view.result.current.station.agentState).toBe('wrapup');
   });
 
@@ -494,7 +494,7 @@ describe('useAgencyConsole — the 3s reconciliation window (§A.13.8)', () => {
     await submitSale(view);
     expect(mocks.submitDisposition).toHaveBeenCalledTimes(1);
 
-    // §A.13.6's second guard. The disabled button is the first, and it is not this
+    // The second guard. The disabled button is the first, and it is not this
     // one: `Ctrl+Enter` reaches `submit()` without going near the button.
     await submitSale(view);
     expect(mocks.submitDisposition).toHaveBeenCalledTimes(1);

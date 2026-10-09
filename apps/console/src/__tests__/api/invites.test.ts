@@ -7,10 +7,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * Not that `fetch` was called. Three things, each of which is a way agency
  * onboarding fails rather than a way the code could be rearranged:
  *
- *  1. **Master's conflicts are told apart.** `claimed` / `expired` / `revoked` /
+ *  1. **The server's conflicts are told apart.** `claimed` / `expired` / `revoked` /
  *     `not_found` / `identity_already_bound` mean the INVITATION cannot be used
  *     and the page switches to that status's screen. `identity_in_use` means the
- *     ACCOUNT cannot be used and the invitation is untouched — master leaves it
+ *     ACCOUNT cannot be used and the invitation is untouched — the server leaves it
  *     outstanding on purpose — so it must not switch screens, because the screen
  *     it would leave carries the only control that signs out.
  *  2. **A modelled outcome is not an API error.** These endpoints answer 404 and
@@ -44,7 +44,7 @@ import {
   InviteUnavailableError,
 } from '../../api/invites';
 
-/** 43 base64url characters, the shape master mints. */
+/** 43 base64url characters, the shape the server mints. */
 const TOKEN = 'Xk8sQ2vLp7NmR4tYwZ1aB3cD5eF6gH9jK0lM2nO4pQ6';
 
 const INVITE = {
@@ -92,13 +92,13 @@ describe('getInvite', () => {
   it('answers a BODYLESS 404 as not_found too', async () => {
     /*
       What made the case above a value was `body.status`, not the 404 — so the
-      contract held exactly as far as master's own JSON. A 404 carrying
+      contract held exactly as far as the server's own JSON. A 404 carrying
       `{ error: 'Not Found' }`, an empty body, or a gateway's HTML error page fell
       through to the throw, and the page rendered "We could not open your
       invitation — try again" instead of the not-found screen and its advice
       ("copy the whole link"). That is the commonest damaged-link case on a page
       reached from an email, on the one failure retrying cannot fix — and the
-      network between here and master is not ours to assume anything about.
+      network between here and the server is not ours to assume anything about.
     */
     mocks.fetch.mockImplementation(async () => new Response(null, { status: 404 }));
 
@@ -109,7 +109,7 @@ describe('getInvite', () => {
 
   it('lets a 404 that names a different status keep its own name', async () => {
     // The HTTP status makes it a value; the body only refines WHICH value, so a
-    // status master does name is taken at its word rather than flattened.
+    // status the server does name is taken at its word rather than flattened.
     respondWith(404, { status: 'revoked' });
 
     await expect(getInvite(TOKEN)).resolves.toEqual({ status: 'revoked' });
@@ -127,7 +127,7 @@ describe('getInvite', () => {
 });
 
 describe('claimInvite', () => {
-  it('returns the session master answers with', async () => {
+  it('returns the session the server answers with', async () => {
     const session = { user: { id: 'u1' }, tenants: [], memberships: [], is_new: false };
     respondWith(200, session);
 
@@ -150,7 +150,7 @@ describe('claimInvite', () => {
     expect(mocks.trackApiErrorEvent).not.toHaveBeenCalled();
   });
 
-  it('raises identity_in_use as its own thing, carrying master’s advice', async () => {
+  it('raises identity_in_use as its own thing, carrying the server’s advice', async () => {
     /*
       The Firebase account already belongs to a different user row here. The
       invitation is fine and another account still claims it, so this is NOT an
@@ -214,7 +214,7 @@ describe('resendInvite', () => {
     expect(url).toMatch(/\/invites\/resend$/);
     expect((init as RequestInit).method).toBe('POST');
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({ membership_id: 'mem-9' });
-    // Tenant-scoped: master resolves the membership inside the caller's tenant.
+    // Tenant-scoped: the server resolves the membership inside the caller's tenant.
     expect(tenantId).toBe('tenant-1');
   });
 });

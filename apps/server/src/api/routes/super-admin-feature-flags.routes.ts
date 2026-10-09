@@ -18,42 +18,30 @@ import {
 const log = createChildLogger({ component: 'super-admin-feature-flags-routes' });
 
 /*
- * PORT NOTE (magick-agency): HOP COLLAPSE of master
- * `src/api/routes/super-admin-feature-flags.routes.ts`@a1f0756a (validation,
- * tenant check, super-admin audit) onto core
- * `src/api/routes/internal.routes.ts:655-900`@4850d1d9 (the handler bodies),
- * which now run in-process on the shared `featureFlagRepository` and the flag
- * service singleton. Deleted with the hop, each for the stated reason:
- *  - `coreInternalRequest` and every 502 "Failed to … core service" branch —
- *    there is no second service to be unreachable;
- *  - `REVIEWED_FLAG_ERROR_LABELS` / `markReviewedFlagError` /
- *    `preserveReviewedUpstreamError` — they exempted CORE-forwarded 4xx from
- *    master's `errorMaskHook`; agency's mask has no core-4xx branch (Phase 8:
- *    only master's 5xx branch is kept, app-wide) and these responses are
- *    first-party (core's own labels and messages, unchanged);
- *  - `toForwardQuery` — built core's query string;
- *  - `flag-policies` (`flagPolicy`, `withCatalogPolicies`, `withFlagDetailPolicy`)
- *    — no agency flag has a policy (`ai_turn_transcript_logging` was the only
- *    one), so the reason-required and bulk-refused branches are unreachable;
- *  - `broadcast-concurrency` (`afterOverrideWrite`) — master's broadcast cap
- *    cache; no broadcast campaigns in agency;
- *  - core's `trackFeatureFlagChanged` (PostHog) — no analytics module.
+ * Super-admin feature-flag management: validation, the tenant check, the write on
+ * the shared `featureFlagRepository`, cache invalidation through the flag service
+ * singleton, and the audit rows. Deliberately absent:
+ *  - flag policies (reason-required, bulk-refused) — no flag has a policy, so
+ *    those branches would be unreachable;
+ *  - a broadcast-cap cache refresh after an override write — no broadcast
+ *    campaigns;
+ *  - flag-change analytics — no analytics module.
+ * The 4xx responses are first-party (the routes' own labels and messages), and the
+ * app-wide error mask passes every 4xx through as it is.
  *
- * Core's `audit_logs` row (`feature_flag.override.upsert|delete`) is written only
- * where its UUID columns can hold the scope: core stamped `tenant_id = 'global'`
- * / `'bulk'` and `account_id = 'default'`, which the baseline's UUID
- * `audit_logs.tenant_id` / `account_id` refuse — and a refused row fails the
- * whole buffered batch, dropping other events with it. So the core row is kept
- * for ACCOUNT scope (both ids real), and the facts it carried that master's row
- * did not (`old_value`, and bulk's applied/failed split) are added to the
- * super-admin audit row, which every scope writes.
+ * The `audit_logs` row (`feature_flag.override.upsert|delete`) is written only
+ * where its UUID columns can hold the scope: only an account-scoped change has a
+ * real tenant AND account id, and the placeholder ids the other scopes would need
+ * are refused by the UUID `audit_logs.tenant_id` / `account_id` — and a refused
+ * row fails the whole buffered batch, dropping other events with it. So that row
+ * is written for ACCOUNT scope only, and the facts it carries (`old_value`, and
+ * bulk's applied/failed split) are also put on the super-admin audit row, which
+ * every scope writes.
  */
 
 /**
- * Best-effort prior-override read for the old→new audit trail (spec §7). A
- * failed read returns null so it never blocks the write that follows.
- *
- * PORT NOTE (magick-agency): core `internal.routes.ts:668-677`, verbatim.
+ * Best-effort prior-override read for the old→new audit trail. A failed read
+ * returns null so it never blocks the write that follows.
  */
 const readPriorOverride = async (
   tuple: { flag_key: string; scope_type: 'global' | 'tenant' | 'account'; tenant_id?: string; account_id?: string },
@@ -67,10 +55,8 @@ const readPriorOverride = async (
 };
 
 /**
- * Audit a flag override change in core's `audit_logs` (core
- * `internal.routes.ts:680-696`).
- *
- * PORT NOTE (magick-agency): called for account scope only — see the module note.
+ * Audit a flag override change in `audit_logs`. Called for account scope only —
+ * see the module note.
  */
 const auditFlagChange = (
   tenantId: string,
@@ -94,13 +80,12 @@ const auditFlagChange = (
  * Super-admin feature-flag management. There is no flag allow-list: every key
  * the registry declares is manageable. Writes record the authenticated
  * super-admin's id as `updated_by` and are audited in `super_admin_audit_log`.
- * Tech-plan: feature-flags-tech-plan.md §A2.
  */
 export async function superAdminFeatureFlagsRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', superAdminMiddleware);
 
-  // core `internal.routes.ts:662` — the same singleton the call hot path reads,
-  // so a cache invalidation here propagates everywhere.
+  // The same singleton the call hot path reads, so a cache invalidation here
+  // propagates everywhere.
   const featureFlags = getFeatureFlagService();
 
   // GET /super-admin/feature-flags — registry catalog + current global overrides.
@@ -193,7 +178,7 @@ export async function superAdminFeatureFlagsRoutes(app: FastifyInstance): Promis
       return reply.code(422).send({ error: 'Invalid Value', message: valueError });
     }
 
-    // Capture the prior value for the old→new audit trail (spec §7). Best-effort:
+    // Capture the prior value for the old→new audit trail. Best-effort:
     // a failed prior-read must never block the write, so it falls back to undefined.
     const prior = await readPriorOverride({
       flag_key: flag.key, scope_type: body.scope_type, tenant_id: body.tenant_id, account_id: body.account_id,
@@ -231,8 +216,8 @@ export async function superAdminFeatureFlagsRoutes(app: FastifyInstance): Promis
         scope_type: body.scope_type,
         tenant_id: body.tenant_id ?? null,
         account_id: body.account_id ?? null,
-        // PORT NOTE (magick-agency): `old_value` is core's audit field, carried
-        // here because core's row is not written for every scope (module note).
+        // `old_value` too, because the `audit_logs` row is not written for every
+        // scope (module note).
         old_value: prior?.value ?? null,
         value: body.value,
         reason: body.reason ?? null,
@@ -289,7 +274,7 @@ export async function superAdminFeatureFlagsRoutes(app: FastifyInstance): Promis
         scope_type: body.scope_type,
         tenant_id: body.tenant_id ?? null,
         account_id: body.account_id ?? null,
-        // PORT NOTE (magick-agency): core's `old_value` (module note).
+        // `old_value` too (module note).
         old_value: prior?.value ?? null,
       },
     });
@@ -349,7 +334,7 @@ export async function superAdminFeatureFlagsRoutes(app: FastifyInstance): Promis
         tenant_ids: body.tenant_ids,
         value: body.value,
         reason: body.reason ?? null,
-        // PORT NOTE (magick-agency): core's summary row fields (module note).
+        // The applied/failed split (module note).
         applied_tenant_ids: applied,
         failed_tenant_ids: failed.map((f) => f.tenant_id),
       },

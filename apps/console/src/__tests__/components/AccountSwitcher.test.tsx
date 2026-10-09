@@ -17,7 +17,7 @@ import type { TenantAccount } from '../../types/auth';
  *
  * `TenantContext` falls back from `GET /accounts` to `GET /accounts/mine` on any
  * rejection, which is right for recovery and was silent about the difference. An
- * `account_admin` signing in during a master restart got their own memberships
+ * `account_admin` signing in during a server restart got their own memberships
  * only — no `slug`/`settings`/`status` and possibly fewer accounts — while
  * resolution reported `'ready'`: no warning, no retry, and the narrowed selection
  * written to `localStorage`.

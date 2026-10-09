@@ -12,7 +12,7 @@ import type { AgencyAgentState, AgencyStationReleasedFrame } from '../../types/a
 import styles from './StateRail.module.css';
 
 /**
- * The State Rail — "the single most important component in the product" (§A.3).
+ * The State Rail — "the single most important component in the product".
  *
  * A full-width 64px band whose **tint, accent bar, label and sub-text together are
  * the agent's state**. Everything here is derived from authoritative frames; the
@@ -29,7 +29,7 @@ import styles from './StateRail.module.css';
  *
  * ── The rail is the CALL's state ─────────────────────────────────────────────
  * A queued break does not touch it — no tint, no hatch, no sub-text — and neither
- * does a failed break-cancel. Both are the action bar's business. Stated in §A.13.4
+ * does a failed break-cancel. Both are the action bar's business. Stated here
  * because tinting the rail is the obvious "helpful" thing to do, and it would mean
  * the most important 64px on the screen is describing something that has not
  * happened yet.
@@ -51,7 +51,7 @@ export interface StateRailProps {
   connection: StationConnection;
   live: LiveAttempt | null;
   release: AgencyStationReleasedFrame | null;
-  /** Null means **no wrap-up frame** — not a held one (§A.13.5.1). */
+  /** Null means **no wrap-up frame** — not a held one. */
   wrapup: WrapupAnchor | null;
   dispositionSubmitted: boolean;
   dialing: boolean;
@@ -60,7 +60,7 @@ export interface StateRailProps {
   onGoAvailable: () => void;
   onEndBreak: () => void;
   /**
-   * §A.13.8's "no `agent_state` follows" copy, or null.
+   * The "no `agent_state` follows" copy, or null.
    *
    * It replaces the wrap-up **sub-text**, never the label: the state has not
    * changed — no authority has said it did — and overwriting the label would assert
@@ -69,23 +69,23 @@ export interface StateRailProps {
   waitingForDialer?: string | null;
   /**
    * The cue to show on the rail, for an agent who cannot hear the audible one
-   * (`AD-P2-U-07`). `null` — so nothing rendered — for a hearing agent with working
+   * `null` — so nothing rendered — for a hearing agent with working
    * sound, which is the point: an unconditional flash 200 times a day is the visual
    * form of the haptics defect.
    */
   cueFlash?: CueFlash | null;
   /**
-   * The way back from a station the console has stopped trying to hold — §A.8.2's
-   * big **Reconnect** and §A.8.3's **Use this window instead**, which are one act
+   * The way back from a station the console has stopped trying to hold — the
+   * big **Reconnect** and the **Use this window instead**, which are one act
    * and so one handler.
    *
    * Optional so every existing caller and test is unaffected; absent means the
    * rail states the problem and offers nothing, which is what shipped and is the
-   * defect (`86d44papk`): both of those states rendered copy alone, so an agent
+   * defect: both of those states rendered copy alone, so an agent
    * whose station moved to another window had **no way back at all** and the only
    * recovery was a page reload.
    *
-   * ── §A.8.3's second button is deliberately NOT here ────────────────────────
+   * ── The second button is deliberately NOT here ────────────────────────
    * `window.close()` is refused by every browser for a tab the user opened
    * themselves, so a literal Close would be a dead control.
    *
@@ -97,15 +97,15 @@ export interface StateRailProps {
    * today. It is left out only because the reclaim is what closes the dead end,
    * and it is recorded as outstanding rather than presented as impossible.
    *
-   * §A.8.3's dimmed non-dismissible overlay is likewise outstanding — but the
+   * A dimmed non-dismissible overlay is likewise outstanding — but the
    * half of it that mattered is now handled: the console behind a lost station no
    * longer accepts a disposition or a note (see `padUnlocked` in
-   * `useAgencyConsole`), which is the hazard the spec spelled out.
+   * `useAgencyConsole`), which was the hazard the overlay was meant to prevent.
    */
   onReconnect?: (() => void) | undefined;
   /**
-   * PORT NOTE (magick-agency, CONTRACT-DIFF §1): `intervals.deferred_hangup_ms`
-   * from the session bootstrap — how long core holds a live call open while the
+   * `intervals.deferred_hangup_ms`
+   * from the session bootstrap — how long the API holds a live call open while the
    * station reconnects. Null/absent when the bootstrap does not carry it.
    */
   deferredHangupMs?: number | null;
@@ -142,7 +142,7 @@ export function describeRail(input: {
     return { tone: 'danger', label: 'Session ended', detail: 'Rejoin the campaign to take calls.' };
   }
   /**
-   * §A.8.2's third row, verbatim. It outranks agent state for the same reason
+   * The third row of the connection states. It outranks agent state for the same reason
    * every other connection arm does — and more sharply here, because this is the
    * one connection state where the console has STOPPED trying: telling an agent
    * they are "waiting for a call" while nothing is listening is the exact
@@ -154,10 +154,10 @@ export function describeRail(input: {
   if (connection === 'disconnected') {
     /**
      * Mid-call is a different sentence, and getting this wrong was a real defect.
-     * §A.8.2's copy is written for an idle agent — "you are not receiving calls"
+     * The copy is written for an idle agent — "you are not receiving calls"
      * — and this arm outranks the live-attempt arms below, so an agent four
      * minutes into a conversation was told nothing was reaching them while a talk
-     * timer counted up beside it. §A.8.1 supplies the words for the connection
+     * timer counted up beside it. The mid-call wording covers the connection
      * being lost *during* a call, and they answer the question the agent actually
      * has: can the customer hear me.
      *
@@ -175,7 +175,7 @@ export function describeRail(input: {
     return {
       tone: 'danger',
       label: 'Disconnected — you are not receiving calls',
-      // Two steps, because it is two steps: core released the agent when the
+      // Two steps, because it is two steps: the API released the agent when the
       // socket went, so reconnecting restores the station and `ready` reports
       // them `offline`. Promising one press left agents who pressed Reconnect and
       // walked away out of the pool for the rest of their break.
@@ -183,15 +183,15 @@ export function describeRail(input: {
     };
   }
   if (connection === 'reconnecting') {
-    // Never say "call ended" while a reconnect is still possible (§A.8.1).
+    // Never say "call ended" while a reconnect is still possible.
     /**
-     * PORT NOTE (magick-agency, CONTRACT-DIFF §1): with a call live and core's
+     * With a call live and the API's
      * `deferred_hangup_ms` known, the copy states the window as an UPPER BOUND —
      * "held for up to 30 seconds". Deliberately not a running countdown, for the
      * reason the `disconnected` arm above gives: this side cannot tell whether the
      * window is still open, and a countdown past the hangup would be worse than
      * none. A bound is true whenever it is shown. Without the value, or with no
-     * call, cusui's sentence is unchanged.
+     * call, the plain sentence is used.
      */
     const windowMs = input.deferredHangupMs ?? null;
     if (live && windowMs !== null && windowMs > 0) {
@@ -218,20 +218,20 @@ export function describeRail(input: {
 
   /**
    * Wrap-up. The shape came from `released.requires_disposition`, the words from the
-   * §A.8.4 reason mapping, and the clock — if there is one — from the wrap-up frame.
+   * reason mapping, and the clock — if there is one — from the wrap-up frame.
    *
    * `agentState === 'wrapup'` with **no anchor** is a legitimate state and renders
    * "Wrap-up" with no bar, no digits and **no waiting treatment**: it may simply
-   * mean there is no wrap-up, and the console must not hang here (§A.13.8).
+   * mean there is no wrap-up, and the console must not hang here.
    *
    * ── The third arm: `on_call` with the call already released ──────────────────
    * `released` clears `live` and the frame that says what comes next arrives
-   * **separately** — core sends `released` → `agent_state` → `wrapup` as three
+   * **separately** — the API sends `released` → `agent_state` → `wrapup` as three
    * frames, so between the first and the second `agentState` is still `on_call`
    * with nothing live behind it. Without this arm that window fell all the way
    * through to the `Offline` fallback: the most important 64px on the screen told
    * an agent who had just finished talking to a customer that they had not started
-   * their shift, and on the truncated path from core `#290` (where the
+   * their shift, and on the truncated path from the API `#290` (where the
    * `agent_state{wrapup}` and `wrapup` frames are never sent at all) it was the
    * only thing the rail ever said about the call ending.
    *
@@ -255,7 +255,7 @@ export function describeRail(input: {
   if (agentState === 'break') {
     return {
       tone: 'neutral',
-      // §A.3's rail table: "On break — Lunch". The reason is part of the state, not
+      // "On break — Lunch". The reason is part of the state, not
       // a decoration, so a supervisor glancing at the floor reads it from here.
       label: breakReasonLabel ? `On break — ${breakReasonLabel}` : 'On break',
       detail: 'Press End break when you’re ready.',
@@ -278,7 +278,7 @@ export function describeRail(input: {
   }
 
   /**
-   * `on_call` with neither a live attempt nor a release — core's word for the state
+   * `on_call` with neither a live attempt nor a release — the API's word for the state
    * and nothing to say about the call.
    *
    * Reachable from a `ready` that reports `on_call` with no `active_attempt`. The
@@ -358,13 +358,13 @@ export function StateRail({
       role="status"
       aria-live="polite"
       data-tone={rail.tone}
-      // `break` and `offline` share a tint in §A.3's table, so the hatch is what
+      // `break` and `offline` share a tint, so the hatch is what
       // separates "I have stepped away" from "I have not started". A second
       // channel, not a decoration.
       data-hatched={agentState === 'break' ? 'true' : undefined}
     >
       {/*
-        ── The cue's visual channel (`AD-P2-U-07`) ────────────────────────────
+        ── The cue's visual channel ────────────────────────────
         Three things about this element are load-bearing:
 
         1. **The three cues must be told apart by sight**, and the differences are
@@ -455,7 +455,7 @@ export function StateRail({
                 Superseded, they are choosing between windows and the spec words it
                 as such; disconnected, there is no other window and "Reconnect" is
                 simply what they want. Same handler either way — reclaiming IS
-                attaching, since core hands the station to whoever attaches last.
+                attaching, since the API hands the station to whoever attaches last.
               */}
               {connection === 'superseded' ? 'Use this window instead' : 'Reconnect'}
             </button>

@@ -105,7 +105,7 @@ describe('redactUrl', () => {
      *
      * `patch` is in the verb list although this file registers none: a verb the
      * pattern omits is a route this audit stops deriving, which is silence, not
-     * a failure — the same blind spot the L2 gating audits close by deriving
+     * a failure — the same blind spot the gating audits close by deriving
      * their verbs from `PASSTHROUGH_METHODS`.
      */
     const source = SRC('api/routes/invites.routes.ts');
@@ -127,14 +127,11 @@ describe('redactedRequestSpanAttributes', () => {
 
   it('overrides BOTH semconv vocabularies, because which one is emitted is an env var', () => {
     /**
-     * `instrumentation-http` defaults to `SemconvStability.OLD` and this service
-     * does not set `OTEL_SEMCONV_STABILITY_OPT_IN`, so `http.url`/`http.target`
-     * are what ships today and `url.path` is what ships if anybody opts in.
-     * Writing only the stable key would have redacted nothing at all.
-     *
-     * PORT NOTE (magick-agency): true of master's 0.212.0. At 0.223.0 only the stable keys are
-     * emitted, so `url.path` is the one that overrides; the old keys are added beside it. The
-     * span-level case under "agency" below runs the real instrumentation.
+     * At `instrumentation-http@0.223.0` only the stable keys are emitted, so
+     * `url.path` is the one that overrides; the old keys (`http.url`,
+     * `http.target`) are added beside it. Covering both means whichever vocabulary
+     * an instrumentation version emits is redacted. The span-level probe below runs
+     * the real instrumentation.
      */
     const attrs = redactedRequestSpanAttributes({ url: `/invites/${TOKEN}/claim`, headers });
 
@@ -173,13 +170,13 @@ describe('redactedRequestSpanAttributes', () => {
     expect(redactedRequestSpanAttributes({ url: '/users/invite', headers })).toEqual({});
     expect(redactedRequestSpanAttributes({ url: '/invites/resend', headers })).toEqual({});
     expect(redactedRequestSpanAttributes({ headers })).toEqual({});
-    // PORT NOTE (magick-agency): plus a query with no credential in it.
+    // Nor does a query with no credential in it.
     expect(redactedRequestSpanAttributes({ url: '/users?account_id=1&page=2', headers })).toEqual({});
   });
 
-  // PORT NOTE (magick-agency): the cases below are agency's. The hook also applies the log
-  // scrubber (`scrubMediaUrl`), so query and media-stream credentials leave spans redacted too.
-  describe('credentials outside the invite path (agency)', () => {
+  // The hook also applies the log scrubber (`scrubMediaUrl`), so query and media-stream
+  // credentials leave spans redacted too.
+  describe('credentials outside the invite path', () => {
     const SECRET = 'SECRETTOKEN222';
 
     it("redacts the VoiceLink status webhook's ?token= on every URL attribute", () => {
@@ -302,12 +299,8 @@ describe('every sink actually redacts', () => {
    * are exactly where a future edit would reintroduce the raw URL.
    */
 
-  // PORT NOTE (magick-agency): deleted "src/index.ts logs a REDACTED url on both request hooks"
-  // — master's per-request log hooks in `main()` are not part of agency's lead-owned
-  // `index.ts`/`app.ts` (agency logs no per-request URL line).
   it('the error middlewares redact too — a 500 on a claim is one line of SQL away', () => {
-    // PORT NOTE (magick-agency): the error mask is not ported (plan §1); the one error
-    // middleware here is master's `errorHandler`, registered in `agencyPlugin`.
+    // The one error middleware is `errorHandler`, registered in `agencyPlugin`.
     for (const file of ['api/middleware/error-handler.middleware.ts']) {
       const source = SRC(file);
       expect(source).toContain('redactUrl');
@@ -317,19 +310,17 @@ describe('every sink actually redacts', () => {
 
   it('the trace instrumentation set hands the redactor to the HTTP instrumentation', () => {
     /**
-     * PORT NOTE (magick-agency): restored with the SDK port, as a source audit. Master built the
-     * set in `utils/otel-instrumentations.ts` and also asserted on the constructed
-     * instrumentation; here the set is inline in `instrumentation.ts`, as in core, so only the
-     * source can be read.
+     * A source audit: the instrumentation set is built inline in `instrumentation.ts`, so only
+     * the source can be read.
      *
      * The traces half. `getNodeAutoInstrumentations` merges the hook's
      * attributes LAST over the instrumentation's own, so this genuinely
      * overrides `url.path` (and `url.query`) rather than adding beside it —
      * the property the redaction depends on, verified against
      * `instrumentation-http`'s `getIncomingRequestAttributes` and written up in
-     * `redact-url.ts`. (Agency: the old-semconv keys are added beside it at 0.223.0.)
+     * `redact-url.ts`. (At 0.223.0 the old-semconv keys are added beside it.)
      *
-     * Agency: plus the outgoing settings, the same ones the span probe below runs with.
+     * Plus the outgoing settings, the same ones the span probe below runs with.
      */
     const source = SRC('instrumentation.ts');
     expect(source).toMatch(/'@opentelemetry\/instrumentation-http': \{\n\s+startIncomingSpanHook: redactedRequestSpanAttributes,\n\s+redactedQueryParams: \[\.\.\.OUTGOING_REDACTED_QUERY_PARAMS\],\n\s+\},/);
@@ -345,7 +336,7 @@ describe('every sink actually redacts', () => {
      * would drag the whole application graph — and config's `process.exit(1)` —
      * in front of the instrumentation bootstrap.
      */
-    // PORT NOTE (magick-agency): except the log scrubber, a leaf that itself imports nothing.
+    // Except the log scrubber, a leaf that itself imports nothing.
     const imports = SRC('utils/redact-url.ts').match(/^\s*import\s.*$/gm) ?? [];
     expect(imports).toEqual(["import { isSecretQueryKey, scrubMediaUrl } from '@magick-agency/observability/url-scrub';"]);
     const leaf = readFileSync(resolve(process.cwd(), '../../packages/observability/src/url-scrub.ts'), 'utf8');

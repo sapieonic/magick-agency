@@ -76,18 +76,18 @@ function primaryMembership(memberships: MembershipRecord[]): MembershipRecord | 
  * Why an offboarding closes someone's agency staffing, and why it may fail.
  *
  * ── The leak ───────────────────────────────────────────────────────────────
- * `DELETE /:id/membership` removed a membership and dropped a cache key. It did
- * not touch `agency_campaign_agents`, and nothing else in master called any bulk
- * unassign — the staffing route was the repository's only caller — so a departed
- * agent stayed on every supervisor's staffing list forever, still resolving to a
- * name and an email through `GET /proxy/agency/campaigns/:id/agents` (which reads
- * `users`, a table the membership removal does not touch either). A role change
- * away from `agent` left the same residue.
+ * Removing a membership and dropping a cache key does not touch
+ * `agency_campaign_agents`, and nothing else calls a bulk unassign, so without
+ * this a departed agent would stay on every supervisor's staffing list forever,
+ * still resolving to a name and an email through
+ * `GET /proxy/agency/campaigns/:id/agents` (which reads `users`, a table the
+ * membership removal does not touch either). A role change away from `agent`
+ * would leave the same residue.
  *
  * ── Closing a staffing row REVOKES NOTHING, which is what makes this safe to do
  *    automatically ─────────────────────────────────────────────────────────
- * Staffing is not authorization. Migration 060's header and the module header of
- * `proxy-agency-staffing.routes.ts` both say so at length: nothing consults this
+ * Staffing is not authorization. The module header of
+ * `proxy-agency-staffing.routes.ts` says so at length: nothing consults this
  * table to decide whether a station join is allowed — `agency.station.connect`
  * does, and the membership change is what takes that away. A row here only decides
  * where an agent is SENT by default. So this is tidying a navigation list on a
@@ -255,9 +255,6 @@ function accountScopeMismatch(request: FastifyRequest, targetAccountId: string |
 export async function userRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', sessionMiddleware);
   app.addHook('preHandler', tenantContextMiddleware);
-  // PORT NOTE (magick-agency): master added `denyPlatformApiKey(...)` here as a
-  // third plugin-wide preHandler. There are no platform API keys (decision #5), so
-  // the guard has nothing to refuse and is removed with them.
 
   /**
    * POST /users/invite — invite user by email (account_admin+)
@@ -274,8 +271,8 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     const { email, role, account_id } = parsed.data;
 
     // Check that inviter can manage the target role
-    // PORT NOTE (magick-agency): hardening — fails closed without a membership; master
-    // (`request.membership && !…`) relied on requirePermission running first.
+    // Fails closed without a membership rather than relying on
+    // `requirePermission` having run first.
     if (!request.membership || !canManageRole(request.membership.role, role as MembershipRole)) {
       return reply.code(403).send({ error: 'Forbidden', message: 'Cannot invite with a role equal to or above your own' });
     }
@@ -298,7 +295,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     /**
      * `account_id` is caller-supplied and previously went straight into the
      * membership row with no check that it belongs to `request.tenantId`.
-     * `memberships.account_id` is `REFERENCES accounts(id)` (migration 001)
+     * `memberships.account_id` is `REFERENCES accounts(id)`
      * with no composite FK back to the tenant, so nothing else in the schema
      * catches this — a tenant_admin of tenant A could invite a user against
      * an `account_id` that belongs to tenant B, and every reader downstream
@@ -338,8 +335,8 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
      * ── The reuse is deliberate, and it is ALSO the takeover surface ─────────
      * An address that is already known gets its existing `users` row, which is
      * what makes a person invited by two workspaces one person rather than two.
-     * `users.email` carries only a non-unique index
-     * (`001_initial_schema.sql:60`), so minting a second row here instead would
+     * `users.email` carries only a non-unique index,
+     * so minting a second row here instead would
      * not fail — it would silently split the address, and
      * `POST /auth/session` path 2 (`findByEmail`, "whichever row Postgres hands
      * back first") would then activate one of the two and leave the other
@@ -372,7 +369,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
      * writes a membership against whatever row matches. An attacker who
      * self-invites `victim@corp.test` and claims it is then handed every later
      * invitation anybody sends to that address, including a super admin's
-     * `tenant_owner`. Migration 073 is the whole chain.
+     * `tenant_owner`.
      *
      * Unlike the claim-side guard above, this one CAN live here: the poisoned
      * row already exists by the time anybody names the address again.
@@ -548,39 +545,30 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
      * depending on the callee keeping its word.
      *
      * ── EVERYTHING to do with the invitation IS INSIDE THE GUARD ──────────
-     * `issueInvite` now mints a token, writes a `membership_invites` row, reads
-     * the tenant and inviter names, resolves the join URL and sends the mail —
-     * five more things that can fail than the one this guard was written for,
-     * and every one of them after the membership has committed.
+     * `issueInvite` mints a token, writes a `membership_invites` row, reads the
+     * tenant and inviter names, resolves the join URL and sends the mail — five
+     * things that can fail, and every one of them after the membership has
+     * committed.
      *
-     * The original defect is the reason the guard is drawn where it is, and it
-     * is worth keeping in view because the shape recurs: `inviteSignInUrl` used
-     * to sit on the line ABOVE the `try`, and it reads config through a lazy
-     * `import('../config/index.js')`. Any failure resolving config there escaped
-     * as a 500 on a request whose membership had already been written — the
-     * supervisor is told the invite failed, retries, and gets a 409 from the row
-     * the "failed" attempt created. A lie about a durable write is worse than
-     * the cosmetic 500 it looks like.
-     *
-     * That is not hypothetical. `test/integration/api/user.routes.test.ts` mocks
-     * every module that touches config — `db/connection`, both middlewares, RBAC,
-     * `redis-cache`, the logger — and this one slipped through, because a lazy
-     * `import()` inside a function is invisible to the mock list at the top of a
-     * test file. Both invite-creation cases 500'd, on `main`, from
-     * `process.exit(1)` inside config validation.
+     * The shape to watch for: anything that resolves config through a lazy
+     * `import('../config/index.js')` (as the join URL does) must stay inside the
+     * `try`. A config failure outside it escapes as a 500 on a request whose
+     * membership has already been written — the supervisor is told the invite
+     * failed, retries, and gets a 409 from the row the "failed" attempt created. A
+     * lie about a durable write is worse than the cosmetic 500 it looks like. A
+     * test file that mocks every config-touching module at its top does not see a
+     * lazy `import()` inside a function, so this is easy to miss.
      *
      * `sign_in_url: null` is the right degraded value rather than an invention:
-     * the response already documents `null` as "CUSUI_BASE_URL is unset", and
+     * the response already documents `null` as "`CONSOLE_BASE_URL` is unset", and
      * "could not be resolved" is the same fact from the caller's side.
      *
-     * ── What a failure here now COSTS, which is more than it used to ──────
-     * When this was a no-op stub, a failure cost nothing that was not already
-     * the shipped behaviour. It now costs the agent their mail — and for an
-     * `agent` that mail is their only route in (`/agency/login` has no signup).
-     * The recovery is `POST /invites/resend`, which is the reason that route
-     * exists rather than being a convenience: the membership is written, the
-     * response says `sent: false` with a reason, and a supervisor can re-issue
-     * without deleting and re-inviting.
+     * ── What a failure here COSTS ─────────────────────────────────────────
+     * The agent's mail — and for an `agent` that mail is their only route in
+     * (`/agency/login` has no signup). The recovery is `POST /invites/resend`,
+     * which is the reason that route exists rather than being a convenience: the
+     * membership is written, the response says `sent: false` with a reason, and a
+     * supervisor can re-issue without deleting and re-inviting.
      */
     let signInUrl: string | null = null;
     let inviteEmail: InviteEmailResult;
@@ -660,9 +648,9 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
         : { sent: false, reason: inviteEmail.reason },
       /**
        * The link the invitee needs, so the hand-off panel can eventually stop
-       * deriving it from `window.location.origin` (cusui's `inviteSignInUrl`; see
-       * the mailer's docstring for why the duplication is accepted for now).
-       * `null` when `CUSUI_BASE_URL` is unset — the KEY is always present, because
+       * deriving it from `window.location.origin` (the console's `inviteSignInUrl`;
+       * see the mailer's docstring for why the duplication is accepted for now).
+       * `null` when `CONSOLE_BASE_URL` is unset — the KEY is always present, because
        * a sometimes-absent key is indistinguishable from one a client forgot to
        * read.
        */
@@ -721,8 +709,8 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     // assigning `viewer` passes that check while the target is a tenant_owner.
     // Require the caller to outrank the CURRENT role too (co-owners allowed;
     // last-owner is refused below).
-    // PORT NOTE (magick-agency): hardening — fails closed without a membership; master
-    // (`request.membership && !…`) relied on requirePermission running first.
+    // Fails closed without a membership rather than relying on
+    // `requirePermission` having run first.
     if (!request.membership || !canManageExistingRole(request.membership.role, targetMembership.role)) {
       return reply.code(403).send({
         error: 'Forbidden',
@@ -731,8 +719,8 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     }
 
     // Can only assign roles below own level
-    // PORT NOTE (magick-agency): hardening — fails closed without a membership; master
-    // (`request.membership && !…`) relied on requirePermission running first.
+    // Fails closed without a membership rather than relying on
+    // `requirePermission` having run first.
     if (!request.membership || !canManageRole(request.membership.role, role as MembershipRole)) {
       return reply.code(403).send({ error: 'Forbidden', message: 'Cannot assign a role equal to or above your own' });
     }
@@ -776,8 +764,8 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
      *
      * ── Ordering, and why it is this way round ─────────────────────────────
      * The role write is the authoritative change and the cache `del` is what makes
-     * it take effect across instances at once (see the local-cache section of
-     * CLAUDE.md — that broadcast is why `PUT /:id/role` deletes the key at all).
+     * it take effect across instances at once (see the header of
+     * `cache/local-cache.ts` — that broadcast is why `PUT /:id/role` deletes the key at all).
      * Staffing is neither: closing a row revokes nothing. So the order is
      * authoritative write → invalidation → tidy-up, and a failure in the tidy-up
      * leaves a stale navigation entry rather than a stale permission.
@@ -839,8 +827,8 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     // Same current-role check as PUT /:id/role. Without it a tenant_admin
     // could revoke a co-owner (when more than one remains) or a peer admin:
     // DELETE previously only protected the last owner.
-    // PORT NOTE (magick-agency): hardening — fails closed without a membership; master
-    // (`request.membership && !…`) relied on requirePermission running first.
+    // Fails closed without a membership rather than relying on
+    // `requirePermission` having run first.
     if (!request.membership || !canManageExistingRole(request.membership.role, targetMembership.role)) {
       return reply.code(403).send({
         error: 'Forbidden',

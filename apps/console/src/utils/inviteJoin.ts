@@ -6,7 +6,7 @@
  * `AuthContext.establishInviteCredential` produces a Firebase credential without
  * creating a platform session, and suppresses the provider's own
  * `onAuthStateChanged` listener while it does so — because that listener runs
- * `syncSession` → `POST /auth/session` → master's path 4, which provisions a
+ * `syncSession` → `POST /auth/session` → the API's path 4, which provisions a
  * BRAND-NEW TENANT for an address it does not recognise. That suppression is a
  * `useRef`, and a ref is correct for exactly as long as the page lives.
  *
@@ -17,7 +17,7 @@
  * mismatch confirmation — a screen that deliberately WAITS for a human — and they
  * reload, close and re-open the tab, or their phone restores it. `AuthProvider`
  * mounts, the ref is `false`, a Google user is always `emailVerified`, and the
- * listener silently provisions the stray tenant, the credits and the core API key
+ * listener silently provisions the stray tenant, the credits and the tenant API key
  * this whole page was built to prevent. Worse, it is not recoverable: their
  * Google uid is now bound to that new user row, so the real claim afterwards
  * fails with `identity_in_use` forever.

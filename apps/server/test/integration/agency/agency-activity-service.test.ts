@@ -12,9 +12,9 @@ const { resetAuditRetentionCache } = await import('../../../src/audit/audit-rete
  * The campaign activity trail, end to end on REAL Postgres (decision B7).
  *
  * The trail merges `platform_audit_log` (the "Console" half) and `audit_logs` (the "Dialer" half,
- * which master used to fetch from core over `GET /internal/audit-logs`). Master's mocked suite
+ * read in-process from `audit_logs`). A mocked-pool suite
  * could not see either table's SQL, scope or ordering, and the hop that is now an in-process read
- * of `audit_logs` had no test on this side at all (core's handler had its own).
+ * of `audit_logs` had no test of its own.
  */
 
 let tenantId: string;

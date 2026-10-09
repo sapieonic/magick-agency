@@ -3,29 +3,27 @@
 # resource every rule goes through.
 #
 # ROUTING IS NOT HERE. The stack has ONE notification policy (a Grafana
-# singleton), owned by the MagickVoice platform module
-# (MagickVoice-platform/grafana/terraform/alerting.tf), together with the
-# contact points (AlertInSlack, AlertInPagerDuty) and the nightly mute timings.
-# This module must never manage any of those: applying a policy from here would
-# replace the platform's whole routing tree. Agency's alerts reach Slack and
-# PagerDuty only because they carry the labels that policy routes on, so the
-# labels below are a contract with the platform module (../README.md,
-# "Routing"):
+# singleton), managed outside this repo together with the contact points
+# (AlertInSlack, AlertInPagerDuty) and the nightly mute timings. This module
+# must never manage any of those: applying a policy from here would replace the
+# stack's whole routing tree. Agency's alerts reach Slack and PagerDuty only
+# because they carry the labels that policy routes on, so the labels below are a
+# contract with the stack's routing (../README.md, "Routing"):
 #
 #   severity       critical | warning   — critical pages (production, dedicated)
-#   deployment     templated from service_name, exactly as the platform does:
+#   deployment     templated from service_name, as the policy expects:
 #                  -Staging → staging, -Dedicated → dedicated, else production
 #   nightly_window "mute" on rules whose staging/dedicated firings are the
-#                  nightly shutdown (the platform's mute timings apply)
+#                  nightly shutdown (the stack's mute timings apply)
 #   service        "agency" — the PagerDuty incident's component
 #   component      the rule group — the PagerDuty incident's class
 #
 # The policy groups by grafana_folder, alertname and deployment. The validators
-# (grafana/scripts/validate-alerts.test.mjs) pin the deployment template to the
-# platform's text and refuse any other rule label.
+# (grafana/scripts/validate-alerts.test.mjs) pin the deployment template text
+# and refuse any other rule label.
 #
 # Each rule is an instant query (refId A) feeding a threshold expression
-# (refId B), the shape the platform module uses. Rule fields: uid, name, expr,
+# (refId B). Rule fields: uid, name, expr,
 # op, threshold, for, severity, no_data_state, summary, description — plus
 # optional datasource ("prom" default, "loki"), range_seconds (default 600),
 # keep_firing_for, labels (nightly_window only) and runbook_url.
@@ -44,10 +42,9 @@ locals {
   # Which deployment an alert instance belongs to, templated from its
   # service_name at evaluation time. deployment_environment cannot be used:
   # staging reports deployment_environment="production" and is told apart only
-  # by its -Staging service name. The platform's notification policy routes on
-  # this label, so it must stay byte-identical to the platform's
-  # local.deployment_label, and every rule keeps service_name through its
-  # aggregation.
+  # by its -Staging service name. The stack's notification policy routes on
+  # this label, so its text is pinned by the routing test (change it only with
+  # the policy), and every rule keeps service_name through its aggregation.
   deployment_label = "{{ if match \"-Staging$\" $labels.service_name }}staging{{ else if match \"-Dedicated$\" $labels.service_name }}dedicated{{ else if $labels.service_name }}production{{ else }}unknown{{ end }}"
 
   alert_datasources = {

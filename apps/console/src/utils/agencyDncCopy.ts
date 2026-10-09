@@ -1,11 +1,11 @@
 import type { AgencyDncResponse } from '../types/agency';
 
 /**
- * Mark-DNC copy (§A.7.5) — the scope statement, and the promise the console is
+ * Mark-DNC copy — the scope statement, and the promise the console is
  * allowed to make afterwards.
  *
  * ── Why this is a module and not three strings in a component ────────────────
- * §A.7.5: *"The confirmation must state the resulting scope in plain words … If
+ * Rule: *"The confirmation must state the resulting scope in plain words … If
  * the backend cannot guarantee that scope, the copy must be weakened to match —
  * **never overstate a compliance action**."* That is a rule about a *response
  * field*, so it is logic, and logic gets tested.
@@ -21,15 +21,15 @@ import type { AgencyDncResponse } from '../types/agency';
  * harder-to-reach control an agent must choose on purpose. Absent `scope` is
  * defined server-side as campaign-scoped too, so an older client that sends
  * neither fails safe into the narrower reading rather than escalating by
- * accident; master additionally floors `scope: 'tenant'` at `agency.dnc.manage`.
+ * accident; the API additionally floors `scope: 'tenant'` at `agency.dnc.manage`.
  *
- * The tenant-wide scope is still genuinely tenant-wide: master's
+ * The tenant-wide scope is still genuinely tenant-wide: The API's
  * `/internal/agency/dnc` **refuses** an `account_id` rather than ignoring it,
- * precisely because an account-scoped row never enters core's flat
+ * precisely because an account-scoped row never enters the server's flat
  * `dnc:{tenantId}` Redis set and so would never suppress a dial. So that
  * escalation's confirmation may say "any campaign in this workspace" — but only
  * once `dnc_recorded` says the list write landed. Until then the honest claim is
- * the narrower one core can make on its own: this campaign will not dial them
+ * the narrower one the server can make on its own: this campaign will not dial them
  * again.
  */
 
@@ -77,18 +77,18 @@ export function dncTenantConfirmHint(phoneE164: string): string {
  * What to tell the agent once it lands. Scoped to what the agent actually chose
  * AND to what the response promised — `dnc_recorded: false` on the tenant-wide
  * escalation means the wider row is still in flight, so the wider promise is
- * not yet true. Claiming it anyway is exactly the overstatement §A.7.5 forbids,
+ * not yet true. Claiming it anyway is exactly the overstatement that rule forbids,
  * and it is the claim an agent may repeat to the customer.
  *
  * **The campaign-scoped mark reads `dnc_recorded` too**, and the reason it once
- * did not is the reason it must. The old justification — "core suppresses the
+ * did not is the reason it must. The old justification — "the server suppresses the
  * contact directly, so the promise is true on any success response" — is true of
- * the ROSTER and false of the LIST, and the sentence named the list. Core writes
- * the roster rows `suppressed` itself, then forwards to master; when that forward
- * cannot land (master unreachable, or a status core's `PERMANENT_REJECTION_STATUSES`
+ * the ROSTER and false of the LIST, and the sentence named the list. The server writes
+ * the roster rows `suppressed` itself, then forwards to the API; when that forward
+ * cannot land (the server unreachable, or a status the server's `PERMANENT_REJECTION_STATUSES`
  * treats as permanent, which abandons the outbox row) it still answers
  * `200 { contact_state: 'suppressed', dnc_recorded: false }`. No entry exists on
- * any list. Core's own abandon log states the consequence: the campaign's current
+ * any list. The server's own abandon log states the consequence: the campaign's current
  * roster rows are suppressed, but nothing on record stops a re-upload of that
  * number into the same campaign — so it is dialled again at the next top-up,
  * after the agent read the promise out loud.
@@ -102,16 +102,13 @@ export function dncOutcomeCopy(response: AgencyDncResponse, scope: DncScope): st
   }
   if (response.dnc_recorded) {
     /*
-      "No campaign in this workspace" was the unqualified sentence Q2's copy
-      obligation narrowed away from on `DncPage` — where the widest true claim is
-      now "no agency campaign in this workspace will call it, and it does not stop
-      AI calls or broadcasts", because the dial-time gate lives in core's
-      `agency/pre-dial-gates.ts` and nothing in AI dispatch consults it. This is
-      the sentence an AGENT reads, and may read out loud to the customer who just
-      asked never to be called, so it has to be at most as wide as the page's.
-      The AI-calls exclusion is deliberately not appended: "broadcast" is not a
-      word this reader has, and §A.7.5's rule is to not OVERSTATE, which naming
-      the enforced scope satisfies.
+      "No campaign in this workspace" was the unqualified sentence `DncPage`'s copy
+      was narrowed away from — the widest true claim is "no agency campaign in
+      this workspace will call it", because the dial-time gate lives in the
+      server's `agency/pre-dial-gates.ts`. This is the sentence an AGENT reads,
+      and may read out loud to the customer who just asked never to be called, so
+      it has to be at most as wide as the page's. The rule is to not OVERSTATE,
+      which naming the enforced scope satisfies.
     */
     return `${response.phone_e164} is on your Do Not Call list. No agency campaign in this workspace will dial it again.`;
   }
@@ -121,10 +118,10 @@ export function dncOutcomeCopy(response: AgencyDncResponse, scope: DncScope): st
 /**
  * Why the control is unavailable. `null` ⇒ available.
  *
- * `AD-P3-U-03` acceptance (c) is *both actions are disabled when the agent is
+ * the requirement is *both actions are disabled when the agent is
  * not the reserved agent*. In this console that is expressible exactly: the
- * console only ever holds an attempt core reserved **to this agent**, so "no
- * live attempt" is the same condition, and core answers 403 `not_your_attempt`
+ * console only ever holds an attempt the server reserved **to this agent**, so "no
+ * live attempt" is the same condition, and the server answers 403 `not_your_attempt`
  * to anything that slips through. The permission floor is the second half — a
  * viewer-level user without `agency.dnc.write` sees the reason rather than a
  * bare greyed button.
@@ -153,7 +150,7 @@ export function dncBlockReason(input: {
 /**
  * Failure copy.
  *
- * `not_your_attempt` is allow-listed through master's error mask precisely so it
+ * `not_your_attempt` is allow-listed through the API's error mask precisely so it
  * can be said plainly here; turning it into "contact support and quote this id"
  * on an agent's screen between live calls is indistinguishable from an outage.
  */
@@ -175,18 +172,18 @@ export function dncFailureCopy(err: unknown): string {
 }
 
 /**
- * Hang-up failure copy (`MAG-112`).
+ * Hang-up failure copy.
  *
  * Lives beside the DNC copy because it obeys the same rule for the same reason:
  * these are the two things an agent does mid-call, both are allow-listed through
- * master's error mask, and both may be read out loud to a customer who is still
+ * the API's error mask, and both may be read out loud to a customer who is still
  * on the line. "Contact support and quote this request id" is the wrong sentence
  * in that moment.
  *
- * **The default matters more than the named cases.** Until `MAG-112` this string
+ * **The default matters more than the named cases.** Until now this string
  * did not exist, because the rejection was discarded on the theory that the
  * station socket's `hangup` frame had already ended the call. Nothing read that
- * frame and core had no route, so every sentence here describes a state that was
+ * frame and the server had no route, so every sentence here describes a state that was
  * previously reported as success — which is why each one says plainly that the
  * agent is still connected, the only fact they can act on.
  */
@@ -199,7 +196,7 @@ export function hangupFailureCopy(err: unknown): string {
   if (code === 'not_your_attempt') {
     return 'This call has moved on — it isn’t yours to end any more.';
   }
-  // Core is not bridging it and its row is not terminal, so the call is out of
+  // The server is not bridging it and its row is not terminal, so the call is out of
   // reach from here. Say that rather than implying another press will work.
   if (code === 'attempt_not_live') {
     return 'We can’t reach this call to end it. Ask the customer to hang up, then use Wrap-up.';

@@ -63,9 +63,8 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 /*
- * NEW (magick-agency): the source's three `pool_eligible` cases are deleted with
- * the signup pool. These cover the replacement behaviour: the create form picks
- * `provider_id` from `GET /super-admin/telephony-providers`, as cusui did.
+ * There is no signup pool, so no `pool_eligible` cases. The create form picks
+ * `provider_id` from `GET /super-admin/telephony-providers`.
  */
 describe('SAPhoneNumbersPage — provider picker', () => {
   it('lists the active providers from the providers route and sends the chosen provider_id', async () => {

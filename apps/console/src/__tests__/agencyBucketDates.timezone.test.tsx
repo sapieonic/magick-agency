@@ -28,7 +28,7 @@ import type { AgencyAgentStatsBucket } from '../types/agency-stats';
  * named this way; the same assertions in an ordinary test file are decoration.
  *
  * ── What is under test ─────────────────────────────────────────────────────
- * `bucket_start` is `YYYY-MM-DD` with no time and no offset — core formats it in
+ * `bucket_start` is `YYYY-MM-DD` with no time and no offset — the server formats it in
  * SQL precisely so that none attaches. `new Date('2026-08-20')` is the one date
  * literal JS parses as **UTC midnight**, and `getDate()` /
  * `toLocaleDateString()` then read it back in LOCAL time. Under

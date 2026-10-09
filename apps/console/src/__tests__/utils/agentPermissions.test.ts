@@ -4,14 +4,14 @@ import type { Permission } from '../../utils/permissions';
 import type { Role } from '../../types/auth';
 
 /**
- * The `agent` role (Agency Dialer) mirrors master's `ROLE_HIERARCHY` and sits
+ * The `agent` role (Agency Dialer) mirrors the API's `ROLE_HIERARCHY` and sits
  * BELOW `viewer`, so it resolves to the four `agency.*` ACTION permissions,
- * plus `agency.flags.read` (MAG-181), and to nothing else. The fifth is
+ * plus `agency.flags.read`, and to nothing else. The fifth is
  * not an agency action: it floors at `agent` because the flag map is what the
  * SPA reads to render at all, and while it was gated on the `viewer`-floored
  * `proxy.stats.read` every agent 403'd on it and the fail-safe-closed flag
  * context refused all four dialer routes. These assertions are the client-side half of the same
- * invariant master pins in `test/unit/rbac/roles.agent.test.ts` — if the two
+ * invariant the API pins in `test/unit/rbac/roles.agent.test.ts` — if the two
  * hand-maintained tables drift, the UI starts showing controls the backend
  * 403s (or hiding ones it would allow).
  */
@@ -24,14 +24,13 @@ const AGENCY_PERMISSIONS: Permission[] = [
 ];
 
 // Every permission that predates the Agency Dialer.
-// PORT NOTE (magick-agency): cut to the pre-dialer permissions Magick Agency's
+// Cut to the pre-dialer permissions Magick Agency's
 // contract keeps (`@magick-agency/contracts/rbac`), under their agency names
 // (`proxy.contact_lists.*` → `agency.campaigns.*`, `proxy.prompts.*` →
 // `agency.analysis_profiles.*`, `proxy.phone_numbers.read` →
-// `agency.phone_numbers.read`). cusui's list also carried 31 AI, credits,
-// API-key, tenant/account-admin and number-management permissions
-// (`proxy.phone_numbers.manage` included) that no longer exist — their
-// `it.each` rows are deleted with them.
+// `agency.phone_numbers.read`). Permissions for AI, credits,
+// API keys, tenant/account administration and number management do not
+// exist here, so they have no `it.each` rows.
 const PRE_EXISTING_PERMISSIONS: Permission[] = [
   'tenant.read',
   'account.read',
@@ -51,7 +50,7 @@ const HIGHER_ROLES: Role[] = [
 ];
 
 describe('agent role level', () => {
-  it('is 5 — below viewer, matching master ROLE_HIERARCHY', () => {
+  it('is 5 — below viewer, matching the API ROLE_HIERARCHY', () => {
     expect(getRoleLevel('agent')).toBe(5);
     expect(getRoleLevel('agent')).toBeLessThan(getRoleLevel('viewer'));
   });
@@ -76,7 +75,7 @@ describe('agent can resolve the feature-flag map', () => {
    * Asserted POSITIVELY on purpose. Every other assertion in this file is about
    * what an agent must NOT reach, which is exactly why a total lockout read as
    * compliance for as long as it did: the dialer was unreachable and nothing was
-   * red. Master pins the same pair in `test/unit/rbac/roles.agent.test.ts`.
+   * red. The API pins the same pair in `test/unit/rbac/roles.agent.test.ts`.
    */
   it('holds agency.flags.read', () => {
     expect(hasPermission('agent', 'agency.flags.read')).toBe(true);
@@ -85,8 +84,7 @@ describe('agent can resolve the feature-flag map', () => {
   it('does NOT come with the viewer-floored stats lane it used to borrow', () => {
     // The split is the fix. Lowering `proxy.stats.read` instead would have
     // handed every agent tenant-wide call statistics.
-    // PORT NOTE (magick-agency): `proxy.stats.read` does not exist in agency;
-    // the viewer-floored read that carries campaign statistics here is
+    // The viewer-floored read that carries campaign statistics here is
     // `agency.campaigns.read`, and it must stay out of an agent's reach.
     expect(hasPermission('agent', 'agency.campaigns.read')).toBe(false);
   });

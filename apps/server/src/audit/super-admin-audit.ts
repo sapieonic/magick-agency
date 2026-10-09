@@ -8,16 +8,15 @@ export type SuperAdminAuditEntry = Parameters<typeof superAdminAuditRepository.l
 /**
  * Write one super-admin audit row, never rejecting.
  *
- * Master writes these rows fire-and-forget (`superAdminAuditRepository.log(...).catch(() => {})`)
- * so an audit outage never fails the admin action, and that is kept (Manas, 2026-10-09). What is
- * NOT kept is the empty `catch`: a failed write vanished without a trace, so an action could
- * leave no audit row and nothing anywhere said so. A failure is now logged at ERROR with what
+ * The write is fire-and-forget so an audit outage never fails the admin action (Manas,
+ * 2026-10-09). It is never swallowed silently, though: an empty `catch` would let an action
+ * leave no audit row with nothing anywhere saying so. A failure is logged at ERROR with what
  * the row would have said — action, actor, target, tenant — so it is findable and can be
- * reconstructed. Fire-and-forget sites call `void recordSuperAdminAudit(...)`; the two sites
- * master awaited (the concurrency update and its refusal) still `await` it.
+ * reconstructed. Fire-and-forget sites call `void recordSuperAdminAudit(...)`; the
+ * concurrency update and its refusal `await` it.
  *
- * The repository method is called synchronously (same tick as before), so the in-flight-write
- * drain in tests (`test/helpers/drain-super-admin-audit.ts`) still sees it.
+ * The repository method is called synchronously (in the caller's tick), so the in-flight-write
+ * drain in tests (`test/helpers/drain-super-admin-audit.ts`) sees it.
  */
 export function recordSuperAdminAudit(entry: SuperAdminAuditEntry): Promise<void> {
   const onError = (err: unknown) => {

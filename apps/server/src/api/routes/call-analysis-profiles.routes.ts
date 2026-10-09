@@ -11,32 +11,26 @@ import { auditLogger } from '../../audit/audit-logger.js';
 import { createChildLogger } from '@magick-agency/observability';
 
 /*
- * PORT NOTE (magick-agency): ported from core `src/api/routes/call-analysis-profiles.routes.ts`
- * (v1.123.2). Changes, each in PORTING.md:
- *  - AUTH is an option, not an import: core's `authMiddleware` / `getTenantId` /
- *    `getAccountId` are Phase 8's merge, so the plugin takes them as
- *    `ProfileRouteAuth`, DEFAULTING TO REFUSE-ALL (401 on every route) so nothing
- *    ships unauthenticated;
- *  - the agency-campaign reference check reads `agencyCampaignRepository` in core
- *    (lane B's repository, not on this branch): it is a `ProfileDependents` option
- *    with core's two method signatures, and when absent PUT and DELETE refuse (503)
+ * Call-analysis profile routes. Notes on the shape:
+ *  - AUTH is an option, not an import: the plugin takes `ProfileRouteAuth`
+ *    (`platformProfileRouteAuth` in `agency.plugin.ts`), DEFAULTING TO REFUSE-ALL
+ *    (401 on every route) so nothing ships unauthenticated;
+ *  - the agency-campaign reference check is a `ProfileDependents` option (the
+ *    agency repository's two methods), and when absent PUT and DELETE refuse (503)
  *    rather than retire a profile unguarded;
- *  - the flag gate is `agency_call_analysis` alone: core ORed in
- *    `dialer_call_analysis` (the softphone's flag, which does not exist here).
- *  - SECURITY: `findActiveSuccessor` is scoped to the caller's tenant/account (core
- *    passes the id alone, so another tenant's superseded id returned a 409 leaking
- *    that tenant's current profile id; flagged for a later core fix);
- * Everything else - validation, copy-on-write, the 409 bodies, audit events - is
- * core's, verbatim.
+ *  - the flag gate is `agency_call_analysis`;
+ *  - SECURITY: `findActiveSuccessor` is scoped to the caller's tenant/account, so
+ *    another tenant's superseded id cannot return a 409 that leaks that tenant's
+ *    current profile id.
  */
 
-/** One live agency campaign that depends on a profile (core's `AgencyCampaignDependent`). */
+/** One live agency campaign that depends on a profile. */
 export interface AgencyCampaignDependent {
   id: string;
   status: string;
 }
 
-/** The two reads of `agencyCampaignRepository` the reference check uses (signatures verbatim). */
+/** The two reads of `agencyCampaignRepository` the reference check uses. */
 export interface ProfileDependents {
   findLiveDependentsOnAnalysisProfile(
     profileId: string,
@@ -46,7 +40,7 @@ export interface ProfileDependents {
   countLiveCampaignsInheritingAccountDefault(tenantId: string, accountId: string): Promise<number>;
 }
 
-/** What the routes need from the platform's auth layer (merged in Phase 8). */
+/** What the routes need from the platform's auth layer. */
 export interface ProfileRouteAuth {
   preHandler: preHandlerAsyncHookHandler;
   getTenantId(request: FastifyRequest): string;
@@ -95,14 +89,14 @@ const DEPENDENT_SAMPLE_LIMIT = 20;
 
 /**
  * Call-analysis profiles — reusable, nameable, defaultable dimension sets for
- * post-call analysis (the dialer's answer to prompt `analytics_config`).
- * Copy-on-write versioning + soft delete + active-name uniqueness, mirroring
- * prompt templates. Mounted unconditionally; a feature flag gates behavior per
+ * post-call analysis. Copy-on-write versioning + soft delete + active-name
+ * uniqueness. Mounted unconditionally; a feature flag gates behavior per
  * tenant/account (403 when off) — see `analysisEnabled`.
  *
- * A profile is also the agency dialer's analysis definition — a shared primitive
- * with two consumers and only one editor (Q3). The two routes that retire a
- * version, PUT and DELETE, therefore answer to `agencyDependencyRejected` below.
+ * A profile is the agency dialer's analysis definition: a campaign names one, or
+ * names none and inherits the account default, and this surface is its only
+ * editor. The two routes that retire a version, PUT and DELETE, therefore answer
+ * to `agencyDependencyRejected` below.
  */
 export async function callAnalysisProfilesRoutes(
   app: FastifyInstance,
@@ -115,37 +109,14 @@ export async function callAnalysisProfilesRoutes(
   app.addHook('preHandler', auth.preHandler);
 
   /**
-   * Flag gate for the whole profile surface: EITHER product's analysis flag opens
-   * it.
+   * Flag gate for the whole profile surface: `agency_call_analysis`.
    *
-   * ── Why an OR, when every other analysis gate picks one product ────────────
-   *
-   * Because this is the one surface where core genuinely cannot know which
-   * product is asking. Everywhere else the scope is on the request — the softphone
-   * route is the softphone's, an agency campaign edit is agency's, a call carries
-   * a `campaign_id` — and those gates take a required `scope` and resolve it
-   * through `analysisFlagFor`. A profile row has no product: no column says which,
-   * both products point at the same ids, and a campaign that names none inherits
-   * the account default, so the same row is frequently both products' definition
-   * at once (Q3 — a shared primitive, and deliberately not promoted to a neutral
-   * capability until a third consumer appears).
-   *
-   * Gating it on `dialer_call_analysis` alone made the sibling flags incoherent:
-   * an agency-only tenant — precisely the tenant the split exists to serve, per
-   * the registry's own note that "an agency tenant that runs no softphone must be
-   * able to turn this on without turning that on" — got analysis RUNNING on every
-   * campaign call while every route that configures it answered 403 "Dialer call
-   * analysis is not enabled for this account." A feature they are paying for, with
-   * no reachable way to define what it measures.
-   *
-   * This mirrors master, which already ORs the capability half
-   * (`requireAnyCapability('calls.dialer.analytics','agency.analytics')` on the
-   * list route in `proxy-call-analysis-profiles.routes.ts`). Note master ORs the
-   * LIST and keeps `calls.dialer.analytics` alone on the other four: authoring
-   * authority is the primary app's, which is a governance decision and master's to
-   * make. The flag layer is answering a different question — "is post-call
-   * analysis a feature of this account at all" — and for that, either product
-   * saying yes is yes. Two layers, two questions; a tenant needs both.
+   * A profile row has no product of its own — no column says which, and a
+   * campaign that names none inherits the account default — so the gate is the
+   * account's analysis flag rather than anything on the row. The capability half
+   * (`agency.analytics`) and the RBAC floors are `ProfileRouteAuth`'s. The flag
+   * layer answers a different question — "is post-call analysis a feature of this
+   * account at all". Two layers, two questions; a tenant needs both.
    */
   const analysisEnabled = async (
     tenantId: string,
@@ -154,15 +125,10 @@ export async function callAnalysisProfilesRoutes(
   ): Promise<boolean> => {
     const flags = getFeatureFlagService();
     const ctx = { tenantId, accountId };
-    // Sequential, and short-circuiting on the softphone flag: it is the one that
-    // is on for almost every account that reaches this surface, so the agency
-    // resolution is usually not spent at all.
     const enabled = await flags.isEnabled(FLAGS.agency_call_analysis, ctx);
     if (!enabled) {
       reply.code(403).send({
         error: 'Feature Not Enabled',
-        // Names neither product: with both flags off, pointing at one of them
-        // would send the operator to a switch that is not the only one missing.
         message: 'Call analysis is not enabled for this account.',
       });
       return false;
@@ -171,17 +137,14 @@ export async function callAnalysisProfilesRoutes(
   };
 
   /**
-   * Q3's reference check: a live agency campaign vetoes removing the profile it
-   * depends on (`docs/agency-dialer-design.md` §7b).
+   * The reference check: a live agency campaign vetoes removing the profile it
+   * depends on.
    *
-   * Analysis profiles are a **shared primitive** — the softphone attaches one per
-   * call, an agency campaign names one in its config, or names none and inherits
-   * the account default — but only this surface can retire one, and master gates it
-   * on `calls.dialer.analytics` ALONE. So a primary-app admin could take away a
-   * running campaign's analysis definition, with nothing refusing them and nothing
-   * telling anyone. The profile stays shared (no promotion to a neutral capability
-   * until a third consumer appears); what changes is that *removal* now answers to
-   * the other consumer.
+   * An agency campaign names a profile in its config, or names none and inherits
+   * the account default, but only this surface can retire one. Without this check
+   * an edit here could take away a running campaign's analysis definition, with
+   * nothing refusing it and nothing telling anyone. So *removal* answers to the
+   * campaigns that depend on the profile.
    *
    * ── Two dependencies, two different rules ─────────────────────────────────
    *
@@ -194,8 +157,7 @@ export async function callAnalysisProfilesRoutes(
    *    it requested; a *missing* default is not, and collapses its snapshot to
    *    `{ custom_dimensions: [] }` with no error anywhere.
    *
-   * The second case is the one an earlier draft of this guard missed entirely, and
-   * it was the more destructive of the two — see
+   * The second case is the more destructive of the two — see
    * `countLiveCampaignsInheritingAccountDefault`. `analysis_profile_id` on a
    * campaign is opt-in with no column default, so inheriting is the ORDINARY case,
    * not the edge.
@@ -214,10 +176,10 @@ export async function callAnalysisProfilesRoutes(
    *
    * The alternative considered was carrying live references forward to the
    * successor inside the same transaction — treating the lineage, not the row, as
-   * the thing a campaign names. Rejected twice over: it makes a primary-app edit
+   * the thing a campaign names. Rejected twice over: it makes a profile edit
    * silently change what a running agency campaign measures with no signal to the
-   * depending side, and it writes agency rows from a primary-app route, which is
-   * the cross-product coupling this boundary exists to remove. Refusing costs an
+   * campaign's owner, and it writes campaign rows from a profile route. Refusing
+   * costs an
    * operator a detour — clone the profile, point the campaign at the clone — and a
    * detour is legible, whereas an edit that never arrives is not.
    *
@@ -232,9 +194,9 @@ export async function callAnalysisProfilesRoutes(
    * campaign committed between them and the write is invisible here. That is
    * deliberate and it is where a reviewer arrives first, so the argument lives one
    * hop away rather than being re-derived: see the race note on
-   * `findLiveDependentsOnAnalysisProfile` and §7b's "What the guard does not
-   * close". The short form: serialising it would put a lock on a primary-app table
-   * inside every agency campaign write, the two dependency classes lose the race
+   * `findLiveDependentsOnAnalysisProfile`. The short form: serialising it would put
+   * a lock on the profile table inside every agency campaign write, the two
+   * dependency classes lose the race
    * differently (a naming campaign keeps resolving the retired row through the
    * unscoped `findById`; an inheriting campaign created in the window gets an empty
    * snapshot), and for the class that actually degrades a lock buys no invariant,
@@ -284,20 +246,17 @@ export async function callAnalysisProfilesRoutes(
       : 0;
     if (named.length === 0 && inheriting === 0) return false;
 
-    // The code is the load-bearing part, not the prose: master's error mask
-    // rewrites any core 4xx it cannot recognise into "contact support and quote
-    // this request id", and this refusal is one an operator fixes in a couple of
+    // The code is the load-bearing part, not the prose: the console reads
+    // refusals by `code`, and this refusal is one an operator fixes in a couple of
     // clicks — see the header of `src/analysis/profile-preflight.ts` for the whole
-    // argument. It is allow-listed in master's `FORWARDABLE_ERROR_CODES` by this
-    // exact string, so a rename here is a silently unreadable error at the browser.
+    // argument. A rename here is a silently unreadable error at the browser.
     //
     // No campaign NAMES in the message or in `details` — see
     // `AgencyCampaignDependent`. The reader may hold no agency entitlement, so the
     // message carries a count and a status breakdown rather than a roll-call.
     //
-    // Be precise about what that does and does not seal, because three comments
-    // (here, `AgencyCampaignDependent`, and master's allow-list entry) previously
-    // stated it as absolute and it is not: **campaign UUIDs do cross.**
+    // Be precise about what that does and does not seal, because it is easy to
+    // state as absolute and it is not: **campaign UUIDs do cross.**
     // `details.campaigns` is opaque ids and a closed status enum, and it is
     // deliberate — it is the only thing a console holding `agency.analytics` can
     // resolve into "which campaigns", which is the remedy this refusal exists to
@@ -432,7 +391,7 @@ export async function callAnalysisProfilesRoutes(
   });
 
   // PUT /:id — copy-on-write update (new version). 409 + successor id if the
-  // referenced version was already superseded (stale write), mirroring prompts.
+  // referenced version was already superseded (stale write).
   app.put('/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const tenantId = getTenantId(request);
     const accountId = getAccountId(request);
@@ -487,10 +446,9 @@ export async function callAnalysisProfilesRoutes(
     return reply.send(updated);
   });
 
-  // DELETE /:id — soft delete (scoped). Dialer analysis jobs are self-contained
-  // (they snapshot the dimensions), so nothing on the softphone side needs a
-  // reference guard — but a live agency campaign re-reads this id on every dial,
-  // and does need one. 409 with `profile_in_use_by_agency_campaign`.
+  // DELETE /:id — soft delete (scoped). Analysis jobs are self-contained (they
+  // snapshot the dimensions), but a live agency campaign re-reads this id on every
+  // dial, so it needs a reference guard. 409 with `profile_in_use_by_agency_campaign`.
   app.delete('/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const tenantId = getTenantId(request);
     const accountId = getAccountId(request);

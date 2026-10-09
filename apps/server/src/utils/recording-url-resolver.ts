@@ -1,22 +1,14 @@
-/*
- * PORT NOTE (magick-agency): ported from core `src/utils/recording-url-resolver.ts`
- * (v1.123.2). `resolveRecordingUrl` (the AI-call binding over `CallRecord`) is not
- * carried; `isDirectRecordingProvider` and `resolveClientRecordingUrl` are verbatim.
- * The comments below describe core's other carriers.
- */
-
 // Pure, dependency-free resolution of the recording URL surfaced to clients.
-// Kept separate from `recording-proxy.ts` (which imports the Zod-validated
-// `config` for provider auth headers) so response formatters and CSV exports
-// can resolve the URL without pulling telephony config into their import graph.
+// Kept separate from `recording-proxy.ts` so response formatters and CSV exports
+// can resolve the URL without pulling the proxy's dependencies into their import
+// graph.
 
 /**
  * Telephony providers whose recording URL is a plain, unauthenticated, directly
  * playable link — so the client can `<audio src>` it straight from the provider
- * instead of round-tripping through our proxy. For every other provider the
- * recording URL is auth-gated (Twilio Basic, VoBiz X-Auth-*), so it MUST go
- * through the proxy (see `buildUpstreamHeaders` in recording-proxy.ts) and its
- * raw URL is never surfaced to the client.
+ * instead of round-tripping through our proxy. For any other provider the raw
+ * recording URL is never surfaced to the client: it goes through the proxy
+ * (`recording-proxy.ts`), which fetches only allow-listed hosts.
  *
  * VoiceLink (Elision, India-only) recordings are public https mp3s needing no
  * auth; serving them directly also sidesteps the fact that our (non-India cloud)
@@ -31,14 +23,11 @@
  * outside India, for whom the proxy would have worked. So (b) is about the people
  * who actually open the player, not about us.
  *
- * Plivo is deliberately NOT here even though its recording URLs are documented
- * as public *by default*. "By default" is the disqualifier: whether media
- * requires Basic auth is an account-level console toggle ("HTTP Auth on
- * recordings") carrying no API signal, so a direct URL handed to a browser would
- * work until an operator flipped it and then 401 for every viewer, with nothing
- * in our code having changed. Condition (a) has to hold unconditionally, not by
- * default — so Plivo goes through the proxy, which attaches credentials either
- * way (`buildUpstreamHeaders`).
+ * Condition (a) has to hold unconditionally, not *by default*. A provider whose
+ * media auth is an account-level console toggle carrying no API signal (Plivo's
+ * "HTTP Auth on recordings", for example) would hand a browser a direct URL that
+ * works until an operator flips it and then 401s for every viewer, with nothing
+ * in our code having changed.
  */
 const DIRECT_RECORDING_PROVIDERS = new Set<string>(['voicelink']);
 
@@ -57,25 +46,24 @@ export function isDirectRecordingProvider(provider: string): boolean {
  *  - an **absolute** external URL (`https://…`) — for providers in
  *    `DIRECT_RECORDING_PROVIDERS`, whose recordings are public/unauthenticated
  *    and reachable by the client directly.
- *  - the given **relative** proxy path — default, for auth-gated providers whose
- *    upstream must be fetched with our credentials.
+ *  - the given **relative** proxy path — default, for every other provider, whose
+ *    upstream is fetched by the proxy.
  *
  * NOTE: the return is therefore heterogeneous (absolute vs relative). Consumers
  * must not blindly prepend an API base — detect absolute URLs (scheme prefix)
  * and use them as-is.
  *
- * `proxyPath` is a parameter because AI calls and WebRTC calls live in different
- * tables behind different streaming routes (`/api/v1/calls/:id/recording` vs
- * `/api/v1/webrtc-call/:id/recording`), while the direct-provider rule is
- * identical for both and must not be forked: a provider added to the allowlist
+ * `proxyPath` is a parameter so each caller names its own streaming route while
+ * the direct-provider rule stays in one place and is not forked: a provider added
+ * to the allowlist
  * has to take effect on every playback surface at once, or a VoiceLink recording
  * stays unplayable on whichever surface was missed.
  */
 export function resolveClientRecordingUrl(input: {
   recordingUrl: string | null | undefined;
-  /** The telephony provider the call ran on (`calls.telephony_provider` / `webrtc_calls.provider`). */
+  /** The telephony provider the call ran on (the call record's `provider`). */
   provider: string;
-  /** Relative streaming route for this call kind, used for auth-gated providers. */
+  /** Relative streaming route for this call kind, used for non-direct providers. */
   proxyPath: string;
 }): string | null {
   if (!input.recordingUrl) return null;

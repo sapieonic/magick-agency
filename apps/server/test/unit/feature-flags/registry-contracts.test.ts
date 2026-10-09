@@ -4,7 +4,7 @@ import { analysisFlagFor } from '@magick-agency/db/repositories/agency-call.repo
 import { FLAGS, allFlags, clientExposedFlags, getFlag } from '../../../src/feature-flags/registry.js';
 
 /**
- * NEW (magick-agency, no source). The registry `defineFlag`s each agency flag
+ * The registry `defineFlag`s each agency flag
  * FROM `AGENCY_FLAGS` in `@magick-agency/contracts/flags` rather than restating
  * it, and `analysisFlagFor` (in `@magick-agency/db`, which cannot import the
  * server) returns the contracts' definition directly. These pin that the three

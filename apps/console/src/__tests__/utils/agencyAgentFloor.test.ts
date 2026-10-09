@@ -31,7 +31,7 @@ import {
 import type { AgencyAgentLiveState, AgencySupervisorAgent } from '../../types/agency-campaign';
 
 /**
- * The agent floor's derivations (§C.4).
+ * The agent floor's derivations.
  *
  * The ordering IS the feature — "spot trouble in seconds" is a claim about
  * which tile a supervisor's eye lands on first — so it is asserted at every
@@ -69,7 +69,7 @@ function agent(over: Partial<AgencySupervisorAgent> = {}): AgencySupervisorAgent
 const THRESHOLDS = { wrapupSeconds: 30, ahtSeconds: 120 };
 
 describe('the risk ranking', () => {
-  it('is exactly §C.4’s order, worst first', () => {
+  it('is exactly the documented order, worst first', () => {
     // Pinned literally rather than derived. The whole point of the constant is
     // that a reorder is a decision someone made — it must break a test, not
     // quietly change which agent a supervisor looks at first.
@@ -164,7 +164,7 @@ describe('floorRisk — the thresholds', () => {
 
   it('rank 4 does NOT fire on `connected: null` — that is “could not determine”', () => {
     /*
-     * The single most important assertion in this file. Core resolves
+     * The single most important assertion in this file. The API resolves
      * `connected` from Redis and degrades to `null` on a fault. `!connected` —
      * the natural thing to type — turns one degraded read into a floor full of
      * agents reported as dropped, on the exact screen a supervisor uses to
@@ -289,7 +289,7 @@ describe('rankFloor — within a rank', () => {
   });
 
   it('sorts the unranked by name, NOT by how long they have been sitting there', () => {
-    // §C.4 says "everyone else, by name". A supervisor scanning the calm tail is
+    // The rule is "everyone else, by name". A supervisor scanning the calm tail is
     // looking someone up, not triaging.
     const floor = [
       agent({ session_id: 'z', agent_name: 'Zoe', state_since: ago(9000) }),
@@ -347,7 +347,7 @@ describe('rankFloor — the alphabetical option', () => {
   });
 });
 
-describe('agentDisplayName — what a tile calls someone master could not resolve', () => {
+describe('agentDisplayName — what a tile calls someone the API could not resolve', () => {
   it('uses the resolved name when there is one', () => {
     expect(agentDisplayName(agent({ agent_name: 'Sunita' }))).toBe('Sunita');
     expect(hasResolvedName(agent({ agent_name: 'Sunita' }))).toBe(true);
@@ -355,7 +355,7 @@ describe('agentDisplayName — what a tile calls someone master could not resolv
 
   it('falls back to a shortened user id — never blank, never “Unknown”', () => {
     /*
-     * Master sends `null` rather than a placeholder precisely so this choice is
+     * The API sends `null` rather than a placeholder precisely so this choice is
      * made here, and both tempting answers are wrong:
      *
      * - Blank looks like a rendering bug and cannot be acted on.
@@ -381,17 +381,17 @@ describe('agentDisplayName — what a tile calls someone master could not resolv
   });
 
   it('treats a blank or whitespace name as unresolved', () => {
-    // Master should not send one; rendering it would produce the blank tile.
+    // The API should not send one; rendering it would produce the blank tile.
     expect(agentDisplayName(agent({ agent_name: '   ' }))).toMatch(/^Agent /);
     expect(agentDisplayName(agent({ agent_name: '' }))).toMatch(/^Agent /);
     expect(hasResolvedName(agent({ agent_name: '  ' }))).toBe(false);
   });
 });
 
-describe('the force-return control (MAG-142)', () => {
+describe('the force-return control', () => {
   it('is offered on a wrap-up and on nothing else', () => {
     // The route is the one thing that can end a HELD wrap-up, and that is all it
-    // is for. Offering it elsewhere advertises an action core will refuse.
+    // is for. Offering it elsewhere advertises an action the API will refuse.
     expect(canForceAvailable(agent({ state: 'wrapup' }))).toBe(true);
     for (const state of ['offline', 'available', 'reserved', 'on_call', 'break'] as const) {
       expect(canForceAvailable(agent({ state }))).toBe(false);
@@ -407,7 +407,7 @@ describe('the force-return control (MAG-142)', () => {
     expect(canForceAvailable(fresh)).toBe(true);
   });
 
-  it('mirrors master’s 1000-character reason cap', () => {
+  it('mirrors the API’s 1000-character reason cap', () => {
     expect(FORCE_AVAILABLE_REASON_MAX).toBe(1000);
   });
 
@@ -430,7 +430,7 @@ describe('the force-return control (MAG-142)', () => {
   });
 });
 
-describe('stateSummary — agents_by_state as one line (MAG-151)', () => {
+describe('stateSummary — agents_by_state as one line', () => {
   it('reads busiest first, not in the wire enum’s order', () => {
     // A supervisor glancing at this wants "who is working" before "who is not".
     expect(
@@ -438,8 +438,8 @@ describe('stateSummary — agents_by_state as one line (MAG-151)', () => {
     ).toBe('3 on a call · 1 wrapping up · 1 reserved · 2 available · 2 on break · 1 offline');
   });
 
-  it('drops the zeroes core seeds every state with', () => {
-    // Core sends a total record, so an absent state is provably "nobody in it".
+  it('drops the zeroes the API seeds every state with', () => {
+    // The API sends a total record, so an absent state is provably "nobody in it".
     // Rendering all six means the two that matter have to be found, not read.
     expect(stateSummary({ offline: 0, available: 4, reserved: 0, on_call: 0, wrapup: 0, break: 0 }))
       .toBe('4 available');
@@ -600,7 +600,7 @@ describe('agentInitials — the row’s avatar', () => {
 describe('Overview and the Agents tab agree about who is on shift', () => {
   /*
     `agencyCampaignOverview`'s rail excludes `offline` (its `FLOOR_BAR_ORDER`,
-    matching core's `shift_seconds` via `foldOccupancy`). This tab used to
+    matching the API's `shift_seconds` via `foldOccupancy`). This tab used to
     include it, so one payload produced "3 of 9 free" on Overview and a different
     denominator plus an Offline band on Agents.
   */

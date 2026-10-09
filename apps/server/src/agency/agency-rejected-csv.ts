@@ -1,10 +1,10 @@
 import type { AgencyIngestRejection } from './agency-csv-ingest.js';
 
 /**
- * Serializer for the rejected-rows CSV export (UX §B.4).
+ * Serializer for the rejected-rows CSV export.
  *
  * "Nobody fixes 577 rows from a screen; they fix them in Excel and re-upload."
- * So the export is the operator's original columns, verbatim and in the original
+ * So the export is the operator's original columns, unchanged and in the original
  * order, plus one trailing column literally named `_reason`. Anything else — a
  * reshaped file, renamed headers, a different column order — makes the fix-and-
  * re-upload loop harder, which is the entire point of the artifact.
@@ -34,7 +34,7 @@ function toCsvLine(values: string[]): string {
 /** The column appended to every rejected-rows export. */
 export const REJECTED_REASON_COLUMN = '_reason';
 
-/** The column carrying the source line, so the operator can find the row again. */
+/** The column carrying the uploaded file's line, so the operator can find the row again. */
 export const REJECTED_ROW_COLUMN = '_row';
 
 /**

@@ -105,7 +105,7 @@ async function events(sessionId: string): Promise<{ byInsert: EventRow[]; byAt: 
  * for a transition that moved nothing, so a `setState(id, 'available')` on such a
  * session is a silent no-op and a test that expected an event would be asserting
  * the opposite of the behaviour. `offline` is the honest starting point for a log
- * test — it is what the column itself defaults to in migration 074 — and every
+ * test — it is what the column itself defaults to — and every
  * case below names it rather than inheriting a fixture's choice.
  */
 async function sessionStartingOffline(campaignId: string) {
@@ -369,7 +369,7 @@ describe('agent transition log ordering (integration)', () => {
     // agent went on break at 08:55, the next reports available.
     //
     // The ties are already in the table: before `at` was carried from the mutation,
-    // the batch INSERT took migration 105's `DEFAULT now()`, which is the
+    // the batch INSERT took the column's `DEFAULT now()`, which is the
     // TRANSACTION timestamp and therefore identical for every row of a
     // `markAllOffline` sweep of the whole floor.
     const campaign = await insertAgencyCampaign({ status: 'stopped' });

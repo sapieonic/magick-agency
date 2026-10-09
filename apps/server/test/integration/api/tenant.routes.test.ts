@@ -1,10 +1,6 @@
 /*
- * PORT NOTE (magick-agency): ported from master test/integration/api/tenant.routes.test.ts@a1f0756a
- * (23 cases → 17). Deleted with `GET /tenants` and `PUT /tenants/:id`: 'GET / —
- * lists user tenants' (2) and 'PUT /:id — update tenant' (4). Real Postgres
- * through `initDbPool` (master mocked `src/db/connection.js`). The
- * metadata-cache write-fence stubs and the core account-settings sync stub are
- * removed with the modules.
+ * Tenant routes on real Postgres through `initDbPool`. `GET /tenants` and
+ * `PUT /tenants/:id` are not served, so they are not covered.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { vi } from 'vitest';
@@ -54,7 +50,7 @@ vi.mock('../../../src/rbac/rbac.middleware.js', () => ({
 }));
 
 // Stub logger
-// PORT NOTE (magick-agency): partial — `packages/db`'s pool imports `logger`.
+// Partial mock: `packages/db`'s pool imports `logger`.
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/observability')>()),
   createChildLogger: () => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }),
@@ -237,13 +233,13 @@ describe('tenant routes (integration)', () => {
        * ── The regression the two-arm design shipped, cases 1–3 ──────────────
        *
        * An `agent` membership with a real Firebase uid and NO `membership_invites`
-       * row is not a hypothetical: it is every agent predating migration 069
-       * (the role dates from 051 and 069 ships no backfill), every membership
+       * row is not a hypothetical: it is every agent created without an invite
+       * (nothing backfills an invite row), every membership
        * `PUT /users/:id/role` re-roles to `agent`, and every one super-admin
        * creates directly. None of those paths writes an invite, so the claim
        * arm labelled all three populations `pending` forever. They are `active`.
        */
-      it('is active for an agent with a real uid and no invite row — the pre-069, re-role and super-admin cases', async () => {
+      it('is active for an agent with a real uid and no invite row — the pre-invite, re-role and super-admin cases', async () => {
         const tenant = await insertTenant();
         const user = await insertUser({ firebase_uid: `fb-real-${randomUUID()}` });
         await insertMembership({ user_id: user.id, tenant_id: tenant.id, role: 'agent' });
@@ -391,7 +387,7 @@ describe('tenant routes (integration)', () => {
 
       /**
        * `firebase_uid` is read by the derivation and must not leave the
-       * service — the stub form is `pending_<uuid>` and the ticket forbids
+       * service — the stub form is `pending_<uuid>` and it must not
        * leaking either it or a real uid. Asserted over the SERIALIZED body, not
        * over the parsed object's top-level keys: the point is that the bytes do
        * not contain it, wherever somebody might later nest it.
@@ -446,7 +442,7 @@ describe('tenant routes (integration)', () => {
        * worth pinning rather than asserting the opposite.
        *
        * `memberships.user_id` is `NOT NULL REFERENCES users(id) ON DELETE
-       * CASCADE` (migration 001), so hard-deleting the user takes the
+       * CASCADE`, so hard-deleting the user takes the
        * membership with it — the member does not appear with a null `user`,
        * they stop appearing at all. The old per-member
        * `userRepository.findById` could never have returned `null` either.

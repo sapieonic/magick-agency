@@ -11,13 +11,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *
  * ── What this is protecting, stated as the failure ──────────────────────────
  *
- * Master's `rewriteStationWsUrl` deliberately returns a PATH
+ * The server's `rewriteStationWsUrl` deliberately returns a PATH
  * (`/proxy/agency/station/<id>?token=…`), so the client chooses the host. The
  * original implementation chose `window.location.host`, which is right in dev
- * (Vite proxies `/proxy` to master, `API_BASE` empty) and on a single-origin
+ * (Vite proxies `/proxy` to the API, `API_BASE` empty) and on a single-origin
  * deploy, and wrong on every split-origin one. On staging the page is served
- * from `staging.app.magickvoice.com` and master from
- * `staging.appi.magickvoice.com`, so the upgrade hit the SPA's own history
+ * from an `app.` host and the API from an `appi.` host on staging, so the upgrade hit the SPA's own history
  * fallback and came back `200 text/html`. A handshake answered 200 never
  * reaches 101, so no close code is ever delivered, the console can only report
  * a bare transport failure, and its retry loop re-mints a token and tries
@@ -49,12 +48,12 @@ describe('toAbsoluteWsUrl', () => {
   });
 
   it('points at API_BASE, not the page, when they are different origins', () => {
-    // The staging shape verbatim. The page is on `app.`, master is on `appi.`,
+    // The staging shape. The page is on `app.`, the API is on `appi.`,
     // and the pre-fix implementation produced the `app.` host here — which is
     // the SPA, which answers 200 with index.html.
-    cfg.apiBase = 'https://staging.appi.magickvoice.com';
+    cfg.apiBase = 'https://staging.api.example.com';
     expect(toAbsoluteWsUrl(STATION_PATH)).toBe(
-      `wss://staging.appi.magickvoice.com${STATION_PATH}`,
+      `wss://staging.api.example.com${STATION_PATH}`,
     );
   });
 
@@ -86,27 +85,27 @@ describe('toAbsoluteWsUrl', () => {
 
   it('uses only the ORIGIN of API_BASE, never its path prefix', () => {
     // Matches the two sibling resolvers, which both read `baseUrl.host` alone.
-    // The socket path is master's own rewrite and is already absolute from the
+    // The socket path is the server's own rewrite and is already absolute from the
     // host root, so joining a base prefix onto it would corrupt it.
     cfg.apiBase = 'https://api.example.com/v2';
     expect(toAbsoluteWsUrl(STATION_PATH)).toBe(`wss://api.example.com${STATION_PATH}`);
   });
 
   it('passes an absolute ws(s) URL through untouched, even with API_BASE set', () => {
-    // `rewriteStationWsUrl` falls back to core's own absolute URL when it does
-    // not recognise the shape, so the client can still reach core directly.
-    // Re-hosting that onto master would break the one case the fallback exists
+    // `rewriteStationWsUrl` falls back to the server's own absolute URL when it does
+    // not recognise the shape, so the client can still reach it directly.
+    // Re-hosting that onto the API host would break the one case the fallback exists
     // for.
-    cfg.apiBase = 'https://staging.appi.magickvoice.com';
-    expect(toAbsoluteWsUrl('wss://core.internal/api/v1/agency/station/s1?token=t')).toBe(
-      'wss://core.internal/api/v1/agency/station/s1?token=t',
+    cfg.apiBase = 'https://staging.api.example.com';
+    expect(toAbsoluteWsUrl('wss://dialer.internal/api/v1/agency/station/s1?token=t')).toBe(
+      'wss://dialer.internal/api/v1/agency/station/s1?token=t',
     );
   });
 
   it('tolerates a path with no leading slash', () => {
-    cfg.apiBase = 'https://staging.appi.magickvoice.com';
+    cfg.apiBase = 'https://staging.api.example.com';
     expect(toAbsoluteWsUrl('proxy/agency/station/s1')).toBe(
-      'wss://staging.appi.magickvoice.com/proxy/agency/station/s1',
+      'wss://staging.api.example.com/proxy/agency/station/s1',
     );
   });
 });

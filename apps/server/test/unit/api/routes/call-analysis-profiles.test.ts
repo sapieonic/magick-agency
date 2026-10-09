@@ -2,17 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 /*
- * PORT NOTE (magick-agency): ported from core test/unit/api/routes/call-analysis-profiles.test.ts
- * @4850d1d9 (20 cases -> 21). The routes take auth and the campaign reference check as
- * OPTIONS (`ProfileRouteAuth`, `ProfileDependents`), so the suite injects fakes instead
- * of mocking the auth middleware and `agency.repository`. Flag gating: core ORed
- * `dialer_call_analysis` with `agency_call_analysis`; only the latter exists here, so
- * deleted: "opens every method on the softphone flag alone" and "does not spend the
- * agency resolution when the softphone flag already said yes"; modified: "both off"
- * (-> the agency flag off) and "agency flag alone" (-> flag on). New: the stale-version
- * 409 passes the caller's tenant/account to `findActiveSuccessor` (security deviation),
- * refuse-all by default (every route 401 with no auth option), and PUT/DELETE refuse
- * (503) when no reference check is wired.
+ * The routes take auth and the campaign reference check as OPTIONS (`ProfileRouteAuth`,
+ * `ProfileDependents`), so the suite injects fakes instead of mocking the auth middleware
+ * and `agency.repository`. Flag gating is on `agency_call_analysis` alone. Also covered: the
+ * stale-version 409 passes the caller's tenant/account to `findActiveSuccessor`, the routes
+ * refuse all by default (every route 401 with no auth option), and PUT/DELETE refuse (503)
+ * when no reference check is wired.
  */
 
 // ── Hoisted mocks ─────────────────────────────────────────────────────
@@ -43,7 +38,7 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 
-// Only the agency flag exists here (the softphone's `dialer_call_analysis` is deleted).
+// Only the agency flag exists here.
 const { FLAG_DEFS } = vi.hoisted(() => ({
   FLAG_DEFS: {
     agency_call_analysis: { key: 'agency_call_analysis', type: 'boolean' },
@@ -281,7 +276,7 @@ describe('call-analysis-profiles routes — update (copy-on-write)', () => {
     const res = await app.inject({ method: 'PUT', url: '/api/v1/call-analysis-profiles/p1', headers: HEADERS, payload: { context: 'x' } });
     expect(res.statusCode).toBe(409);
     expect(res.json().details.current_profile_id).toBe('p2');
-    // Scoped to the caller (security deviation from core, which passed the id alone).
+    // Scoped to the caller: the lookup is never by id alone.
     expect(mocks.repo.findActiveSuccessor).toHaveBeenCalledWith('p1', 'tenant-1', 'account-1');
   });
 

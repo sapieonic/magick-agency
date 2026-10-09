@@ -1,7 +1,5 @@
-// PORT NOTE (magick-agency): ported from magic-voice-core/test/integration/scenarios/audio-file-announcement-fk.test.ts@4850d1d9.
-// Changed: connection/repository paths (packages/db layout); tenant/account labels wrapped in
-// `uuidFor` (UUID columns); factories come from ../setup/clip-factories.js; removed the four
-// `tts_text: null` factory overrides (column dropped by the baseline, decision 4). Every case kept.
+// Tenant/account labels are wrapped in `uuidFor` (UUID columns); factories come from
+// ../setup/clip-factories.js (there is no tts_text column).
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { vi } from 'vitest';
 import { getTestPool, closeTestPool, truncateAll } from '../setup/test-utils.js';

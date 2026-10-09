@@ -13,7 +13,7 @@ import type { AgencyContactFilters } from '../types/agency-spine';
  *    argument (`agencyCampaignTabs.ts`: "sections are URLs, not component
  *    state").
  * 2. The browser's back button answers a filter change.
- * 3. **Retry design DR-3 is literally true.** The selector *is* the filter set
+ * 3. **"The filters on screen become the selector" is literally true.** The selector *is* the filter set
  *    the supervisor is already looking at: "the supervisor narrows the Contacts
  *    tab until it shows the rows they mean, presses Retry these contacts, and
  *    the query string they were already looking at becomes the selector." With
@@ -21,16 +21,16 @@ import type { AgencyContactFilters } from '../types/agency-spine';
  *    of two representations; with them in the URL it describes one.
  *
  * ── Repeated params, never comma-joined ────────────────────────────────────
- * Matching what this client sends to master on every agency filter. A
+ * Matching what this client sends to the API on every agency filter. A
  * comma-joined value would additionally be unable to carry a disposition code
- * containing a comma — which master's `forwardAllowedQuery` and core's
+ * containing a comma — which the server's `forwardAllowedQuery` and the dialer runtime's
  * `multiParam` already cannot, but there is no reason for the URL to lose it a
  * second time before the request is even built.
  *
  * ── An unrecognised key is ignored, not preserved ──────────────────────────
  * Reading is an allow-list. A hand-edited or stale link degrades to the filters
  * this build knows rather than forwarding an unknown key to a route that would
- * 400 `unknown_query_params` — master's contacts (and attempts) lists refuse
+ * 400 `unknown_query_params` — the API's contacts (and attempts) lists refuse
  * anything not on their allow-list, they no longer drop it. Forwarding a typo
  * would fail the whole page load instead of showing the filters this build
  * understands.

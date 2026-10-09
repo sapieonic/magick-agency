@@ -8,19 +8,13 @@
  * labels reads every matcher as wrong, one it sees wrongly as a histogram lets
  * `x_count` through.
  *
- * PORT NOTE (magick-agency, B6): ported from the MagickVoice superproject's
- * `scripts/metric-declarations.mjs`@e32a5db (and its B6 branch, which taught
- * it agency), cut to agency alone — core's and master's parsers, master's
- * `new Counter({…})` shape and core's fixture are gone. The PromQL parser at
- * the bottom is verbatim. See PORTING.md, "Grafana alerting (B6)".
- *
  * Deliberately textual: importing the metric modules would hide a rename
  * behind a mock, and the server's config `process.exit(1)`s without a `.env`.
  *
- * - **Application metrics** are declared through core's facades
- *   (`packages/observability/src/metric-instruments.ts`), one file per lane
- *   under `packages/observability/src/metrics/` — every `*.ts` there is read, so
- *   a new lane file is picked up: `counter<'a' | 'b'>(meter, 'name', {…})`. The
+ * - **Application metrics** are declared through the facades
+ *   (`packages/observability/src/metric-instruments.ts`), one file per module
+ *   area under `packages/observability/src/metrics/` — every `*.ts` there is
+ *   read, so a new area file is picked up: `counter<'a' | 'b'>(meter, 'name', {…})`. The
  *   TYPE ARGUMENT is the label set; no type argument means no labels.
  *   `packages/observability/test/fixtures/agency-otlp-instruments.json`
  *   snapshots the `agency_*` instruments of `metrics/agency.ts` (pinned against
@@ -81,7 +75,7 @@ function promName(instrument, unit, kind) {
 }
 
 /**
- * Comments stripped first, as core's own contract test does, so a quoted
+ * Comments stripped first, so a quoted
  * example in prose cannot satisfy — or be mistaken for — a declaration.
  * String-aware: a regex-only strip reads the `/*` in `'/api/*'` (or in a regex
  * literal) as a comment opener and deletes everything up to the next real
@@ -269,12 +263,9 @@ const PINNED_LABELS = [
 const MIN_METRICS = 30;
 
 /**
- * Series agency must NOT declare: core's agency-billing series, retired with
- * settlement (docs/decisions.md S6 — the attempt batcher, master's attempt
- * settlement, core's settlement fan-out). The MagickVoice platform's rules and
- * panels over them stay on core/master and go silent after a tenant's cutover;
- * an agency copy of one would mean billing came back, which is a decision, not
- * drift.
+ * Series agency must NOT declare: the billing series (docs/decisions.md S6 —
+ * attempt batches, attempt settlement, settlement fan-out). Declaring one
+ * would mean billing came back, which is a decision, not drift.
  */
 export const RETIRED_SERIES = [
   'agency_attempt_batches_total',

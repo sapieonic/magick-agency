@@ -9,19 +9,18 @@ import type { FeatureFlagCatalogEntry, FlagScopeType } from '@magick-agency/cont
 export type TriState = 'inherit' | 'on' | 'off';
 
 /**
- * Can this flag be overridden at this scope? Mirrors core's registry `scopes`
+ * Can this flag be overridden at this scope? Mirrors the server's registry `scopes`
  * declaration, which its write path enforces with a 422 — so every surface that
  * offers an edit affordance must gate on this, or it ships a control whose only
  * possible outcome is a server rejection.
  *
- * PORT NOTE (magick-agency): in MagickVoice three flags were affected
- * (`prewarm_enabled`, `prewarm_ring_delay_ms`, `ai_turn_transcript_logging`).
- * None is in agency's registry; they survive only as unregistered TEST FIXTURES
- * (a flag with narrower scopes), as does `webrtc_max_duration_seconds`, which is
- * now a per-account setting rather than a flag. Every agency flag has all three
+ * Flags with narrower scopes (`prewarm_enabled`, `prewarm_ring_delay_ms`,
+ * `ai_turn_transcript_logging`) are not in agency's registry; they survive only
+ * as unregistered TEST FIXTURES, as does `webrtc_max_duration_seconds`, which is
+ * a per-account setting rather than a flag. Every agency flag has all three
  * scopes, so today this gate never refuses a real flag.
  *
- * KEEP IN STEP with `scopes` in magic-voice-core/src/feature-flags/registry.ts —
+ * KEEP IN STEP with `scopes` in the server's feature-flag registry —
  * the catalog response carries them per flag, so this reads them rather than
  * hard-coding a list.
  */
@@ -32,8 +31,8 @@ export function canEditAtScope(flag: FeatureFlagCatalogEntry, scope: FlagScopeTy
 /**
  * May this flag be offered in the cross-tenant bulk rollout? The modal writes
  * `true`/`false` at tenant scope, so the flag must be boolean and
- * tenant-scopable — and master's `policy.bulk_allowed` must not forbid it.
- * Master refuses such a bulk write (422) regardless; this keeps the UI from
+ * tenant-scopable — and the server's `policy.bulk_allowed` must not forbid it.
+ * The server refuses such a bulk write (422) regardless; this keeps the UI from
  * offering an action whose only outcome is that refusal.
  */
 export function canBulkRollOut(flag: FeatureFlagCatalogEntry): boolean {
@@ -53,7 +52,7 @@ export function isGuardedWhenOn(flag: FeatureFlagCatalogEntry): boolean {
 }
 
 /*
- * PORT NOTE (magick-agency): the `whatsapp` and `sip` tokens, the SIP / knowledge-base /
+ * the `whatsapp` and `sip` tokens, the SIP / knowledge-base /
  * catalog / document KEY_LABELS and their NUMERIC_FLAG_BOUNDS entries are deleted
  * (those features are out of scope). `prewarm_*` and `webrtc_max_duration_seconds`
  * stay: the numeric-dialog and scope-gate tests drive them as fixtures.
@@ -122,7 +121,7 @@ export function relativeExpiry(iso: string): string {
 }
 
 /**
- * Client-side bounds for numeric flags, mirroring core's registry `validate`
+ * Client-side bounds for numeric flags, mirroring the server's registry `validate`
  * fns (e.g. `isRingDelay` for `prewarm_ring_delay_ms`). Purely for pre-flight
  * validation and the input `(min..max)` label; server always re-validates and
  * returns 422 on breach. Add an entry here when a new numeric flag lands so
@@ -131,7 +130,7 @@ export function relativeExpiry(iso: string): string {
  * input placeholder.
  *
  * KEEP IN SYNC with the `validate` fns in
- * magic-voice-core/src/feature-flags/registry.ts. A less-brittle long-term fix
+ * the server's feature-flag registry. A less-brittle long-term fix
  * would be to expose `min`/`max` in the catalog response.
  */
 export interface NumericFlagBounds {

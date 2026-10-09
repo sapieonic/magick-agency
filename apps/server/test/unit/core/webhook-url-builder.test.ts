@@ -3,24 +3,22 @@
  *
  * Exhaustively covers the three public methods of the pure, stateless
  * `WebhookUrlBuilder` class extracted from CallManager:
- *  - baseUrl(provider)            — known providers + unknown → VOBIZ fallback,
+ *  - baseUrl(provider)            — known providers + unknown → default-carrier fallback,
  *                                    case-sensitivity.
  *  - providerWebhookBase(provider)— known provider base; unknown → '' (it does
  *                                    NOT share baseUrl's carrier fallback);
  *                                    configured provider missing
  *                                    webhookBaseUrl → ''.
  *  - outboundUrls(provider, id)   — answer/status shape for every provider;
- *                                    Exotel's flowUrl + path-less status; verbatim
+ *                                    Exotel's flowUrl + path-less status; raw
  *                                    callId interpolation (no encoding).
  *
- * PORT NOTE (magick-agency): ported from core test/unit/core/webhook-url-builder.test.ts@4850d1d9.
- * Only `baseUrl` survives (VoiceLink-only builder), and its unknown-provider
- * fallback is the VoiceLink base, not VoBiz. The config mock is verbatim: the
- * other providers' bases stay in it so the fallback assertions can prove the
- * builder never reads them. Deleted and modified cases are listed in PORTING.md (Lane C).
+ * Only `baseUrl` is covered (VoiceLink-only builder), and its unknown-provider
+ * fallback is the VoiceLink base, not VoBiz. The config mock keeps the other
+ * providers' bases so the fallback assertions can prove the builder never reads
+ * them.
  *
- * Mocking pattern: vi.hoisted + vi.mock with ESM .js imports — matches
- * test/unit/core/runPostCallAnalysis.test.ts. Distinct, recognizable base URLs
+ * Mocking pattern: vi.hoisted + vi.mock with ESM .js imports. Distinct, recognizable base URLs
  * per provider let us assert the correct one was chosen.
  */
 
@@ -84,22 +82,19 @@ describe('WebhookUrlBuilder', () => {
     });
 
     it('returns voicelink base for voicelink (guards against the silent default fallback)', () => {
-      // baseUrl() defaults unknown providers to VoBiz, which would silently
+      // baseUrl() defaults unknown providers to the fallback carrier, which would silently
       // mis-route VoiceLink webhook/WS URLs to the wrong host. Pin the explicit case.
       expect(builder.baseUrl('voicelink')).toBe(VOICELINK_BASE);
       expect(builder.baseUrl('voicelink')).not.toBe(VOBIZ_BASE);
     });
 
-    // The unknown-provider fallback is VOBIZ, not Plivo. Plivo was the fallback
-    // only because it was the historical `TELEPHONY_PROVIDER` default; both moved
-    // together. This branch decides where a carrier POSTs the answer and status
+    // The unknown-provider fallback is the carrier the platform runs on. This branch decides where a carrier POSTs the answer and status
     // callbacks that drive the whole call state machine, so it must point at the
     // carrier the platform actually runs on rather than at the least-exercised
     // adapter. (Best-effort by construction either way: a provider we cannot name
     // is one whose webhook shape we also do not know, so the fallback buys a
     // well-formed URL, never a working callback.)
-    // PORT NOTE (magick-agency): here the carrier the platform runs on is
-    // VoiceLink, so the fallback is the VoiceLink base (and never VoBiz's).
+    // The platform runs on VoiceLink, so the fallback is the VoiceLink base (and never VoBiz's).
     it('falls back to the voicelink base for an unknown provider', () => {
       expect(builder.baseUrl('nexmo')).toBe(VOICELINK_BASE);
       expect(builder.baseUrl('nexmo')).not.toBe(VOBIZ_BASE);

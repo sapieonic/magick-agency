@@ -2,15 +2,15 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import Fastify, { type FastifyInstance } from 'fastify';
 
 /**
- * NEW (magick-agency, no source). `GET` / `PUT /notifications/preferences`
+ * `GET` / `PUT /notifications/preferences`
  * through the REAL route plugin at the platform plugin's prefix, behind the real
  * `sessionMiddleware` and `tenantContextMiddleware` (the real Redis cache
  * included), on real Postgres 5436 and Redis 6383 db 1, with only Firebase's
  * `verifyIdToken` mocked. The plugin is registered on its own rather than
- * through `buildApp`, so the suite does not depend on every other lane-A route
+ * through `buildApp`, so the suite does not depend on every other route
  * module compiling.
  *
- * What it pins (plan §9): these routes have NO permission floor, so an `agent`
+ * What it pins: these routes have NO permission floor, so an `agent`
  * — level 5, below `viewer` — reaches its own preferences. With agency's
  * one-event catalog it can receive nothing (`agency.campaign.completed` floors
  * at `agency.supervise` = `account_admin`), so GET is an empty list rather than
@@ -166,7 +166,7 @@ describe('/notifications/preferences through the real app (integration)', () => 
     expect(res.statusCode).toBe(401);
   });
 
-  it('POST /notifications/digests/preview is not registered (credits usage digest, plan §3.5)', async () => {
+  it('POST /notifications/digests/preview is not registered (credits usage digest)', async () => {
     const headers = signInAs('fb-supervisor', 'sup@acme.example');
     const res = await app.inject({
       method: 'POST', url: '/notifications/digests/preview', headers, payload: { frequency: 'weekly' },

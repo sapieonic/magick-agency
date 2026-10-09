@@ -26,11 +26,11 @@ import { ApiError } from '../../api/client';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
 /**
- * The Agent Console page — `AD-P2-U-01` criterion (d), **usable end to end
+ * The Agent Console page — **usable end to end
  * without a mouse**.
  *
  * ── The assertion discipline this file is written to ──────────────────────────
- * `AD-P2-U-04` found a focus assertion that survived a 250ms timing change while
+ * An earlier change found a focus assertion that survived a 250ms timing change while
  * `End break` was in fact keyboard-**unreachable**: the shortcut worked, so
  * nothing looked broken unless you navigated by focus. So nothing here asserts
  * that a handler exists or that a component was rendered with the right props.
@@ -78,7 +78,7 @@ const BOOTSTRAP: AgencySessionBootstrap = {
 };
 
 /**
- * A contact with more than one tier-2 field, for the filter tests (§A.6.3).
+ * A contact with more than one tier-2 field, for the filter tests.
  * `hero: ['First Name']` pins the hero row explicitly so the heuristic never
  * runs — otherwise `City`/`Branch` (place-ish) would compete with the heuristic
  * for a hero slot and which fields land in tier 2 would depend on bucket order
@@ -173,7 +173,7 @@ async function mounted() {
   return view;
 }
 
-/** Bridged and talking, with `agent_state` following as core sends it. */
+/** Bridged and talking, with `agent_state` following as the API sends it. */
 async function onCall() {
   const view = await mounted();
   await act(async () => {
@@ -261,7 +261,7 @@ describe('the station header names the agent and shows the gear', () => {
     expect(screen.getByTestId('idle-guide').textContent).toContain('When a call connects');
     expect(screen.getByTestId('idle-guide').textContent).toContain('Take a break');
     // No controls: a button that existed only while idle would enter the
-    // tab order between waiting and connected (§A.13.9).
+    // tab order between waiting and connected.
     expect(screen.getByTestId('idle-guide').querySelector('button')).toBeNull();
 
     await act(async () => {
@@ -277,7 +277,7 @@ describe('AgentConsolePage — the Phase 2 surfaces are actually composed', () =
     await mounted();
 
     // Every region renders in every state — that is the mechanism keeping tab
-    // order stable, not a cosmetic choice (§A.13.9).
+    // order stable, not a cosmetic choice.
     expect(screen.getByTestId('rail-label').textContent).toBe('Offline');
     expect(screen.getByRole('button', { name: /go available/i })).toBeTruthy();
     expect(screen.getByRole('button', { name: /^break/i })).toBeTruthy();
@@ -293,7 +293,7 @@ describe('AgentConsolePage — the Phase 2 surfaces are actually composed', () =
       latest().emit({ event: 'reserved', attempt: ATTEMPT });
       latest().emit({ event: 'agent_state', state: 'reserved', since: '2026-08-11T10:00:00.000Z' });
       // Bridge-originated and DIAGNOSTIC. The carrier says the far end went
-      // off-hook; it does not say audio reaches this agent (§A.3.1).
+      // off-hook; it does not say audio reaches this agent.
       latest().emit({ event: 'status', attempt_id: 'att-1', status: 'answered' });
     });
     expect(screen.getByTestId('rail-label').textContent).toBe('Ringing — get ready');
@@ -342,7 +342,7 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
     press('b');
 
     // `role="menu"` present AND focus moved into it: an opened popover a keyboard
-    // agent cannot reach is the `AD-P2-U-04` defect in a different control.
+    // agent cannot reach is a defect in a different control.
     const menu = screen.getByRole('menu');
     expect(menu).toBeTruthy();
     expect(menu.contains(document.activeElement)).toBe(true);
@@ -357,11 +357,11 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
 
     expect(screen.queryByRole('menu')).toBeNull();
     // Never `<body>`: that strands a keyboard agent at the top of the document,
-    // which on this screen is past the whole contact panel (§A.13.9).
+    // which on this screen is past the whole contact panel.
     expect(document.activeElement).toBe(trigger);
   });
 
-  it('a number key picks the catalog entry at that index, in core order', async () => {
+  it('a number key picks the catalog entry at that index, in the API’s order', async () => {
     await onCall();
 
     press('2');
@@ -391,7 +391,7 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
     fireEvent.change(notes, { target: { value: 'Asked for a call back Tuesday.' } });
 
     // Esc blurs and MUST NOT clear: destroying an eight-minute call's notes on a
-    // stray Esc is unrecoverable (§A.13.7).
+    // stray Esc is unrecoverable.
     press('Escape', notes);
     expect(notes.value).toBe('Asked for a call back Tuesday.');
 
@@ -415,7 +415,7 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
      * handler looked covered and was not.
      *
      * It matters because an agent who picked an outcome with `1` has focus on the
-     * pad, not the notes, and §A.13.5 puts this shortcut on "call 200 is the
+     * pad, not the notes, and this shortcut matters because "call 200 is the
      * difference between a tool and a punishment".
      */
     await onCall();
@@ -433,7 +433,7 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
   it('every control in the action bar is reachable by Tab, in a fixed order', async () => {
     await onCall();
     // Pick an outcome first, so Save is enabled. **A disabled control is meant to
-    // be absent from the tab order** — §A.13.9 makes inactive controls `disabled`
+    // be absent from the tab order** — inactive controls are `disabled`
     // precisely so they are skipped rather than reordered, which is what keeps the
     // order stable across states. An earlier version of this test expected Save in
     // the order with nothing selected and was asserting against the spec.
@@ -455,7 +455,7 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
         // `<button tabindex="-1">` matches the `button` selector, renders, reads
         // correctly to a screen reader, and cannot be tabbed to. Mutation-testing
         // this file caught the earlier version passing with `tabIndex={-1}` on
-        // Save — the same "operable but unreachable" shape as `AD-P2-U-04`.
+        // Save — the same "operable but unreachable" shape.
         el.tabIndex >= 0,
     );
 
@@ -474,7 +474,7 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
  * ── Criterion (c), at the page rather than in the pure function ────────────────
  *
  * `agencyDispositionForm.test.ts` already pins the rule (`noteSatisfied` trims, so
- * whitespace is not a note) and core pins the same rule server-side
+ * whitespace is not a note) and the API pins the same rule server-side
  * (`disposition.ts` → `notesRaw.trim()`, tested in `disposition.test.ts` and
  * `disposition-route.test.ts`). Neither of those can see the **wiring**, and the
  * wiring is where this criterion was actually broken: the block was computed over
@@ -491,9 +491,9 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
  * the criterion, which is that a shift can be *worked* without a pointer: a set of
  * individually-reachable controls can still leave a gap — a step with no key at all,
  * or a key that only works from a focus position the previous step does not leave you
- * in — and each of them passes its own test. `AD-P2-U-04` is the standing example
+ * in — and each of them passes its own test. That defect is the standing example
  * (`End break` was operable by shortcut and unreachable by focus, so nothing looked
- * broken), and `MAG-90`'s `C` and `/` were the two remaining holes in this path.
+ * broken), and the `C` and `/` shortcuts were the two remaining holes in this path.
  *
  * So this is the whole path, in order, in one test: offline → available → reserved →
  * read the context (with the `/` filter) → bridged → hang up → wrap-up → disposition
@@ -548,7 +548,7 @@ describe('criterion (d) — a whole call worked without a pointer', () => {
 
   /**
    * A campaign whose callback code needs **both** a note and a time, so the run has
-   * to satisfy the two requirements the criterion's own §A.13.6 surfaces impose, and
+   * to satisfy the two requirements the criterion's own surfaces impose, and
    * a contact with enough tier-2 fields for the filter to have something to hide.
    */
   const FLOW_BOOTSTRAP: AgencySessionBootstrap = {
@@ -568,7 +568,7 @@ describe('criterion (d) — a whole call worked without a pointer', () => {
   it('offline → available → reserved → read → bridged → hang up → wrap-up → save → available', async () => {
     mocks.createAgencySession.mockResolvedValue(FLOW_BOOTSTRAP);
     mocks.hangupAttempt.mockResolvedValue(undefined);
-    // A break requested mid-call is queued, not taken — core answers with the
+    // A break requested mid-call is queued, not taken — the API answers with the
     // pending state, which is what puts the pill on screen.
     mocks.setAgentBreak.mockResolvedValue({
       session_id: 'sess-1',
@@ -614,7 +614,7 @@ describe('criterion (d) — a whole call worked without a pointer', () => {
       });
       expect(screen.getByTestId('rail-label').textContent).toBe('Ringing — get ready');
 
-      // ── 3. Read the context, including narrowing it (`MAG-90`, §A.6.3) ────────
+      // ── 3. Read the context, including narrowing it ────────
       // The position this has to work from: the console's post-reservation focus
       // effect lands on the body, not in a text field.
       expect(document.activeElement?.tagName).not.toBe('INPUT');
@@ -688,7 +688,7 @@ describe('criterion (d) — a whole call worked without a pointer', () => {
       expect(screen.getByTestId('rail-label').textContent).toBe('Wrap-up');
       expect(screen.getByTestId('wrapup-digits')).toBeTruthy();
 
-      // ── 8. Pick the disposition with `C` (`MAG-90`) ───────────────────────────
+      // ── 8. Pick the disposition with `C` ───────────────────────────
       press('c');
       // The callback row does not exist until the selection renders it, so the pad
       // defers the focus move by a frame.
@@ -764,7 +764,7 @@ describe('criterion (c) — a required note blocks submission, and whitespace is
     expect(notes.tagName).toBe('TEXTAREA');
     const save = screen.getByRole('button', { name: /save disposition/i }) as HTMLButtonElement;
 
-    // Whitespace is exactly what an agent under time pressure types, and core
+    // Whitespace is exactly what an agent under time pressure types, and the API
     // rejects it with `note_required` — so the console must not let it through, or
     // the agent watches a submit "succeed" that the server refused.
     fireEvent.change(notes, { target: { value: '   \n\t ' } });
@@ -801,7 +801,7 @@ describe('criterion (c) — a required note blocks submission, and whitespace is
      * `NotesField` owns `Ctrl+Enter` and calls `submit()`; the key then bubbles to
      * the page's `window` handler, which calls it again. `submitting` and
      * `dispositionSubmitted` are React state and neither is readable by the second
-     * call in the same task, so both requests went out and core recorded whichever
+     * call in the same task, so both requests went out and the API recorded whichever
      * landed second against an attempt the first had already dispositioned.
      *
      * The count is the whole assertion. `toHaveBeenCalled()` passes at one and at
@@ -819,7 +819,7 @@ describe('criterion (c) — a required note blocks submission, and whitespace is
   });
 });
 
-describe('the contact-panel field filter (§A.6.3)', () => {
+describe('the contact-panel field filter', () => {
   it('is reachable and operable from the keyboard, not just present in the DOM', async () => {
     // Same trap as the tab-order test above: a `<input tabindex="-1">` still
     // matches an `input` selector and renders correctly, so presence alone would
@@ -834,7 +834,7 @@ describe('the contact-panel field filter (§A.6.3)', () => {
     await onCallWithContext(FILTER_ATTEMPT, FILTER_BOOTSTRAP);
     // The console's own post-reservation focus effect lands on the body, not a
     // text field — this is the position `/` actually has to work from, and it is
-    // NOT the notes field or the disposition pad (`AD-P2-U-04`'s shape: a
+    // NOT the notes field or the disposition pad (the earlier shape: a
     // shortcut tested from the one place that doesn't need it).
     expect(document.activeElement?.tagName).not.toBe('INPUT');
     expect(document.activeElement?.tagName).not.toBe('TEXTAREA');
@@ -959,7 +959,7 @@ describe('the contact-panel field filter (§A.6.3)', () => {
      * entire wrap-up. The agent who filtered to find a policy number lost the query
      * at the exact moment they began writing the note that quotes it.
      *
-     * §A.6.3 puts the boundary at the next `reserved`, so the panel's attempt is the
+     * The boundary is the next `reserved`, so the panel's attempt is the
      * right key and `live`'s is not. Both halves are asserted here: it must still be
      * set through wrap-up, **and** it must still clear afterwards — without the
      * second half a filter that simply never cleared would satisfy the first.
@@ -991,7 +991,7 @@ describe('the contact-panel field filter (§A.6.3)', () => {
     expect(screen.getByText('City')).toBeTruthy();
     expect(screen.queryByText('Branch')).toBeNull();
 
-    // The rest of the window: core's wrap-up frames land after the release, and
+    // The rest of the window: The API's wrap-up frames land after the release, and
     // neither of them is the boundary either.
     await act(async () => {
       latest().emit({
@@ -1024,28 +1024,28 @@ describe('the contact-panel field filter (§A.6.3)', () => {
 });
 
 /**
- * ── The wrap-up core never announces (core `#290`) ──────────────────────────────
+ * ── The wrap-up the API never announces ─────────────────────────────────────────
  *
  * `WrapupManager.enter` returns early when the attempt already carries a
  * `disposition_code` — the agent filled the form and *then* hung up, which is an
- * ordinary habit, not an edge case (core's own note cites a staging session
+ * ordinary habit, not an edge case (a staging session was
  * dispositioned three seconds before the hangup). That return happens **after** the
  * state is written to Redis and **before** the `agent_state{wrapup}` and `wrapup`
  * frames are sent, so the console's whole account of the call ending is the
  * `released` frame, and the next thing it hears is `agent_state{available}`.
  *
- * Core's review notes traced the consequence here and left it deliberately: the pad
+ * The consequence is deliberate: the pad
  * re-locks and nothing sticks, but the release copy lives in the wrap-up rail, so on
  * this path "the panel simply empties instead of explaining itself". These drive that
- * exact frame sequence — nothing invented, nothing core does not send.
+ * exact frame sequence — nothing invented, nothing the API does not send.
  */
-describe('a call whose wrap-up core never announced', () => {
+describe('a call whose wrap-up the API never announced', () => {
   const RELEASED = {
     event: 'released',
     attempt_id: 'att-1',
     reason: 'completed',
     requires_disposition: true,
-    // `releaseMessageFor('completed')` in core, verbatim.
+    // `releaseMessageFor('completed')` on the server, exactly.
     message: 'Call ended.',
   };
 
@@ -1055,14 +1055,14 @@ describe('a call whose wrap-up core never announced', () => {
     await act(async () => {
       latest().emit(RELEASED);
     });
-    // Core's early return: NO `agent_state{wrapup}`, NO `wrapup` frame, straight
+    // The API's early return: NO `agent_state{wrapup}`, NO `wrapup` frame, straight
     // back to the pool.
     await act(async () => {
       latest().emit({ event: 'agent_state', state: 'available', since: '2026-08-11T10:05:00.000Z' });
     });
 
     // The account the wrap-up rail would have carried, in the panel that is now the
-    // only thing on screen. Positively identified by core's own sentence — a panel
+    // only thing on screen. Positively identified by the API's own sentence — a panel
     // that rendered nothing, or the resting copy, cannot produce this string.
     const notice = screen.getByTestId('unexplained-release');
     expect(notice.textContent).toBe('Call ended.');
@@ -1088,7 +1088,7 @@ describe('a call whose wrap-up core never announced', () => {
     });
 
     expect(screen.getByTestId('rail-label').textContent).not.toBe('Offline');
-    // What it says instead, named: the §A.8.4 copy for the reason core sent.
+    // What it says instead, named: the copy for the reason the API sent.
     expect(screen.getByTestId('rail-label').textContent).toBe('Wrap-up');
   });
 
@@ -1097,8 +1097,8 @@ describe('a call whose wrap-up core never announced', () => {
      * The other half, and the reason the station clears `release` when a wrap-up
      * genuinely ends. A wrap-up that happened has had the release copy in the rail
      * for its whole window; repeating it in the idle panel afterwards would report a
-     * finished call as if it had just happened — the stale-notice defect §A.7.1.1
-     * refuses everywhere else on this screen.
+     * finished call as if it had just happened — the stale-notice defect refused
+     * everywhere else on this screen.
      */
     await onCall();
     await act(async () => {
@@ -1149,11 +1149,11 @@ describe('a call whose wrap-up core never announced', () => {
   });
 });
 
-describe('hang up actually hangs up (`MAG-112`)', () => {
+describe('hang up actually hangs up', () => {
   /**
    * Nothing in this file exercised the hang-up action before — only its position
    * in tab order. That is how it shipped doing nothing: the page sent a station
-   * socket frame no listener in core reads, then called an HTTP route core never
+   * socket frame no listener in the API reads, then called an HTTP route the API never
    * registered and **swallowed the 404**, on the reasoning that the frame had
    * already worked. Two dead paths, one silent catch, and a green suite.
    *
@@ -1180,7 +1180,7 @@ describe('hang up actually hangs up (`MAG-112`)', () => {
 
     // Asserting the count rather than "no frame with event: hangup": a second
     // path re-added under any other name would still be a second ownership check
-    // to keep in step with core's.
+    // to keep in step with the API's.
     expect(latest().sent).toHaveLength(before);
   });
 
@@ -1205,7 +1205,7 @@ describe('hang up actually hangs up (`MAG-112`)', () => {
   it('does not report a failed hangup over a call that has since moved on', async () => {
     // The rejection resolves after a new `reserved` may have landed. Reporting
     // the previous call's failure on the new one is the stale-response hazard
-    // §A.13.6 refuses for dispositions.
+    // already refused for dispositions.
     let reject: (err: Error) => void = () => {};
     mocks.hangupAttempt.mockReturnValue(new Promise((_, r) => { reject = r; }));
     await onCall();
@@ -1226,7 +1226,7 @@ describe('hang up actually hangs up (`MAG-112`)', () => {
 });
 
 describe('the refusal that makes a disposition mandatory', () => {
-  it('states core 409 under the rail rather than swallowing it', async () => {
+  it('states the API 409 under the rail rather than swallowing it', async () => {
     // A real `ApiError` (`statusCode`/`details`), not a hand-built `{status, body}`
     // — the console read the latter, so this test used to pass against a shape
     // `apiFetch` cannot throw. See the same note in `useAgencyConsole.test.ts`.
@@ -1246,13 +1246,13 @@ describe('the refusal that makes a disposition mandatory', () => {
       screen.getByText('Submit a disposition for your last call before going available.'),
     ).toBeTruthy();
     // In its own line under the rail, never IN the rail — the rail is the call's
-    // state (§A.13.4).
+    // state.
     expect(screen.getByTestId('rail-label').textContent).toBe('Offline');
   });
 
   describe('a call that ended while the socket was away', () => {
     /**
-     * `ready.missed_release` — and core **consumes it on read**
+     * `ready.missed_release` — and the API **consumes it on read**
      * (`takeMissedRelease` clears as it reads), so this frame is the only time the
      * console is ever offered it. Dropped, the record is gone for good: an agent
      * who loses their connection mid-call reconnects to an empty station with no
@@ -1290,7 +1290,7 @@ describe('the refusal that makes a disposition mandatory', () => {
 
     it('drops the notice the moment the next customer arrives', async () => {
       // It was about someone else. Left beside the new contact's details it is the
-      // stale-notice defect the DNC and hang-up paths already refuse (§A.7.1.1).
+      // stale-notice defect the DNC and hang-up paths already refuse.
       await mounted();
       await act(async () => {
         latest().emit({
@@ -1320,7 +1320,7 @@ describe('the refusal that makes a disposition mandatory', () => {
     /**
      * **The pill had never been asserted on this page**, only in isolation — so the
      * one thing nobody had checked was whether the agent actually sees it. That
-     * matters more here than for most surfaces: core reports the queue with `peek`
+     * matters more here than for most surfaces: The API reports the queue with `peek`
      * and `releaseAgent` `take`s it when wrap-up ends, so **the break lands whether
      * or not this pill rendered**. An unrendered pill is not a missing reminder, it
      * is an agent dropped out of the pool with no warning and no chance to cancel.
@@ -1353,7 +1353,7 @@ describe('the refusal that makes a disposition mandatory', () => {
       });
     }
 
-    it('warns on the reconnect, and the ✕ cancels against core rather than dismissing', async () => {
+    it('warns on the reconnect, and the ✕ cancels against the API rather than dismissing', async () => {
       const view = await onCall();
       await act(async () => {
         latest().emit({
@@ -1386,7 +1386,7 @@ describe('the refusal that makes a disposition mandatory', () => {
       expect(chip.textContent).toContain('Break after this call — Lunch');
 
       // The ✕ is a real `POST /break/cancel`, not a local hide: the queue lives on
-      // core, so a console that merely stopped rendering the pill would leave the
+      // the API, so a console that merely stopped rendering the pill would leave the
       // agent believing they had taken the break back.
       mocks.cancelQueuedBreak.mockResolvedValue({
         session_id: 'sess-1',
@@ -1411,7 +1411,7 @@ describe('a lost station leaves the console a way back, and nothing to type into
    * unit test: removing it restored an agent with no way back, with the full
    * suite green.
    *
-   * Driven through a real `4409`, which core only started sending in this same
+   * Driven through a real `4409`, which the API only started sending in this same
    * change — so this is also the first coverage of the code path end to end.
    */
   it('offers the reclaim on 4409 and reconnects when it is pressed', async () => {
@@ -1485,7 +1485,7 @@ describe('a lost station leaves the console a way back, and nothing to type into
 
   it('locks the disposition pad on a station that is gone', async () => {
     /**
-     * §A.8.3's stated reason for making the losing console inert: *"so there is
+     * The stated reason for making the losing console inert: *"so there is
      * no chance of the agent typing a note into a dead tab."* Both the
      * disposition and the notes route are HTTP, so a write from the dead tab may
      * actually LAND — racing the winning window's own pad — which is worse than
@@ -1509,7 +1509,7 @@ describe('a lost station leaves the console a way back, and nothing to type into
 });
 
 /**
- * NEW (magick-agency, CONTRACT-DIFF §1): the bootstrap's
+ * The bootstrap's
  * `intervals.deferred_hangup_ms` reaches the rail, so an agent whose socket drops
  * mid-call is told how long the call is held — as a bound, not a countdown.
  */

@@ -76,7 +76,7 @@ export class SuperAdminApiError extends Error {
 /**
  * First usable message out of a Zod issue list.
  *
- * magic-voice-core answers a validation failure with
+ * The server answers a validation failure with
  * `{ error: 'Validation Error', details: [...zod issues] }` and **no top-level
  * `message`** — so its carefully-worded messages ("Unknown status \"canceled\"
  * for offering \"ai_calls\". Valid values: …") all rendered as "API error 400".
@@ -198,7 +198,7 @@ export async function addUserToTenant(tenantId: string, data: AddUserToTenantBod
   });
 }
 
-/** NEW (plan §3.4): change a membership's role. */
+/** NEW: change a membership's role. */
 export async function changeMembershipRole(
   tenantId: string,
   membershipId: string,
@@ -210,7 +210,7 @@ export async function changeMembershipRole(
   });
 }
 
-/** NEW (plan §3.4): revoke a membership; the server also closes its campaign staffing. */
+/** NEW: revoke a membership; the server also closes its campaign staffing. */
 export async function revokeMembership(tenantId: string, membershipId: string): Promise<RevokeMembershipResponse> {
   return saFetch(`${SA_BASE}/tenants/${tenantId}/memberships/${membershipId}`, { method: 'DELETE' });
 }
@@ -257,7 +257,7 @@ export async function updateProviderConcurrency(
   });
 }
 
-// ── Per-account settings (NEW, plan §3.2) ────────────────
+// ── Per-account settings (NEW, plan) ────────────────
 
 export async function getAccountSettings(
   tenantId: string,
@@ -277,7 +277,7 @@ export async function updateAccountSettings(
   });
 }
 
-// ── Usage counts (NEW, plan §3.3) ────────────────────────
+// ── Usage counts (NEW, plan) ────────────────────────
 
 export async function getUsageCounts(query: UsageCountsQuery): Promise<UsageCountsResponse> {
   const qs = new URLSearchParams({ from: query.from, to: query.to });
@@ -392,8 +392,7 @@ export async function listAuditLog(
 // ── Telephony providers (read-only) ──────────────────────
 
 /**
- * PORT NOTE (magick-agency): cusui's `TelephonyProvider` minus
- * `live_transfer_enabled` (AI escalation, not carried). Only the read survives:
+ * A telephony provider (no `live_transfer_enabled`: no AI escalation). Only the read survives:
  * the baseline seeds one `voicelink` row and the add-number form picks its id.
  */
 export interface TelephonyProvider {

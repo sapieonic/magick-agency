@@ -1,7 +1,3 @@
-/*
- * PORT NOTE (magick-agency): ported from master test/unit/services/tenant-record-cache.edge.test.ts@a1f0756a
- * (7 cases → 7); the PostHog mock is removed, nothing else changed.
- */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Redis } from 'ioredis';
 
@@ -34,8 +30,6 @@ vi.mock('@magick-agency/db/repositories/tenant.repository', () => ({
 vi.mock('@magick-agency/db/repositories/account.repository', () => ({
   accountRepository: { findById: mocks.accountFindById },
 }));
-// PORT NOTE (magick-agency): master's `analytics/posthog.js` mock is removed —
-// the resolver no longer calls `identifyGroups`.
 vi.mock('@magick-agency/observability', () => ({
   createChildLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));

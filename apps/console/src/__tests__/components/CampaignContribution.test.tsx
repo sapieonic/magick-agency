@@ -8,7 +8,7 @@ import { campaignTotalRow, contributionPage } from '../helpers/contribution';
  *
  * ── The two reads are the subject of this file ─────────────────────────────
  * One grouped by `agent,campaign` for the rows and one by `campaign` for the
- * campaign's own line, because the second is NOT the sum of the first: master drops
+ * campaign's own line, because the second is NOT the sum of the first: the server drops
  * departed members from an agent-grouped page and has nothing to drop from a
  * campaign-grouped one. Several cases below exist only to pin that the two are
  * asked separately, that `include_inactive` reaches exactly one of them, and that
@@ -28,7 +28,7 @@ vi.mock('../../analytics/events', () => ({
   trackAgencyCampaignContributionViewed: mocks.trackViewed,
 }));
 /*
-  Mocked at the API boundary, the seam every other agency test mocks at — master's
+  Mocked at the API boundary, the seam every other agency test mocks at — the server's
   grouped route is being written in parallel and does not exist to call.
 */
 vi.mock('../../api/agencyStats', () => ({
@@ -165,9 +165,9 @@ describe('CampaignContribution — the two reads', () => {
   it('sends the tenant and the account on both, and no agent id on either', async () => {
     /**
      * The account is a REQUIRED predicate on this route rather than a filter —
-     * master answers `400 account_scope_required` before it even resolves the
-     * tenant's core key. And `agent_user_id` is not an accepted filter on either
-     * service: core has no user table, so only master's memberships can police that
+     * the server answers `400 account_scope_required` before it even resolves the
+     * tenant's API key. And `agent_user_id` is not an accepted filter on either
+     * service: the dialer runtime has no user table, so only the server's memberships can police that
      * boundary, and naming one person is the per-agent record's job.
      */
     renderView();
@@ -222,7 +222,7 @@ describe('CampaignContribution — the two reads', () => {
 
 describe('CampaignContribution — include_inactive reaches the rows only', () => {
   it('omits it entirely when former members are hidden', async () => {
-    // Master accepts only `true|false|1|0` and 400s otherwise; an explicit `false`
+    // The server accepts only `true|false|1|0` and 400s otherwise; an explicit `false`
     // is one more thing for the whitelist to agree about for no gain.
     renderView();
     await screen.findByTestId('contribution-table');
@@ -268,7 +268,7 @@ describe('CampaignContribution — include_inactive reaches the rows only', () =
   });
 });
 
-describe('CampaignContribution — the D8 asymmetry is on the screen', () => {
+describe('CampaignContribution — the asymmetry is on the screen', () => {
   it('states the gap ABOVE the table when rows were dropped', async () => {
     /**
      * ⚠️ The trap this screen exists to not fall into. The campaign line counts
@@ -342,7 +342,7 @@ describe('CampaignContribution — the four states', () => {
      * failure — and "we could not ask" is a different fact from "nobody dialled
      * it", which is why an empty table for both would be wrong.
      */
-    // A message `ErrorAlert` passes through verbatim — it rewrites the ones it can
+    // A message `ErrorAlert` passes through unchanged — it rewrites the ones it can
     // make friendlier ("Forbidden", "500"), which would make this assertion about
     // that component's copy rather than about the server's sentence reaching it.
     mocks.getAgencyGroupedStats.mockRejectedValue(new Error('Request Failed'));
@@ -389,7 +389,7 @@ describe('CampaignContribution — the four states', () => {
 
   it('distinguishes "everyone who dialled it has left" from "nobody dialled it"', async () => {
     /**
-     * An ordinary master response — core returns two revoked agents, master filters
+     * An ordinary server response — the dialer runtime returns two revoked agents, the server filters
      * both — and a different screen: the remedy is the checkbox, not a longer
      * window, so the sentence advising a longer window must not be the one that
      * renders.
@@ -496,7 +496,7 @@ describe('CampaignContribution — the four states', () => {
     /**
      * ⚠️ The roster's bug on this screen, and sharper here: `empty` keyed on
      * `inactive_omitted` alone, so `{ rows: [], unattributed_omitted: 3 }` — groups
-     * master could not attribute to any member, R4's third state — took the empty arm
+     * the server could not attribute to any member (the third state) — took the empty arm
      * and said "Nobody was handed a call on Renewals in this window". Meanwhile the
      * campaign's own line is pinned in the footer and still counts their calls, so the
      * reader is told the whole team resigned while looking at the work they did.
@@ -753,7 +753,7 @@ describe('CampaignContribution — what it reports about itself', () => {
     /**
      * The fields are the ones a question about this screen will be about: whether
      * the campaign's own line — the Share column's denominator — was readable at
-     * all, whether master hid rows, and whether `limit` cut the page. `truncated` is
+     * all, whether the server hid rows, and whether `limit` cut the page. `truncated` is
      * the console's own answer rather than three counts for a funnel to re-derive.
      */
     answerBoth(

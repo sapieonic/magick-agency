@@ -31,11 +31,10 @@ Object.defineProperty(window, 'location', {
 });
 
 /*
- * PORT NOTE (magick-agency): the apiFetch cases (3) and the recording-blob case
- * are verbatim. DELETED with the modules they exercised: the super-admin
- * `saFetch` / `saFetchRaw` cases (2 — super-admin is its own app), contact-list
- * upload and template download (2), audio-file upload (1) and the two CSV-export
- * downloader cases (2) — AI-product endpoints, not ported.
+ * Covers `apiFetch` and the recording-blob fetch. The super-admin fetch helpers
+ * are not covered here (super-admin is its own app), and the console has no
+ * contact-list upload, template download, audio-file upload or CSV-export
+ * downloader.
  */
 import { apiFetch } from '../../api/client';
 import { fetchRecordingBlobUrl } from '../../api/calls';

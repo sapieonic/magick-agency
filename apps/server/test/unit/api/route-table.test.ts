@@ -5,8 +5,8 @@ import { buildApp } from '../../../src/app.js';
 /**
  * Routes are enumerated from the router's own onRoute hook, never by grep: a
  * grep for `.post(` misses `app.post<{...}>(` and once reported 1 route for a
- * plugin that registers 11 (agency.md §6.4). Phase 8 grows this into the full
- * console + super-admin path table.
+ * plugin that registers 11. The full console + super-admin path table is
+ * `agency-route-table.test.ts`.
  */
 async function registeredRoutes(): Promise<string[]> {
   const routes: string[] = [];

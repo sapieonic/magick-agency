@@ -3,8 +3,8 @@ import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/re
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
 /**
- * NEW in magick-agency (no cusui source): the per-account settings panel
- * (plan §3.2), role change and revoke (plan §3.4), and the account-scoped
+ * Covers the per-account settings panel
+ *, role change and revoke, and the account-scoped
  * add-user form.
  */
 const mocks = vi.hoisted(() => ({

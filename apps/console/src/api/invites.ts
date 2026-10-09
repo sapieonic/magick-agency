@@ -16,7 +16,7 @@ import type { ResendInviteResult } from '../types/team';
  * the session clock, signs the user out of Firebase and sets
  * `window.location.href = sessionExpiredLoginUrl()`. On every other route that is
  * exactly right. Here it is destructive. `POST /invites/:token/claim` answers 401
- * for a Firebase token master would not accept — a credential that is seconds
+ * for a Firebase token the server would not accept — a credential that is seconds
  * old, on a page the visitor reached from an email while signed out — and the
  * response to that must be a sentence in the card, not a full-page navigation
  * that abandons the token URL and lands the invited agent on a sign-in form for
@@ -69,20 +69,20 @@ export class InviteUnavailableError extends Error {
 }
 
 /**
- * Master's own conflict on the claim: the FIREBASE account being claimed with
+ * The server's own conflict on the claim: the FIREBASE account being claimed with
  * already belongs to a different user row here, so binding it would break
  * `users.firebase_uid`'s unique constraint.
  *
  * Its own class rather than an {@link InviteUnavailableError}, because the
- * invitation is FINE — master leaves it outstanding on purpose, since the remedy
+ * invitation is FINE — the server leaves it outstanding on purpose, since the remedy
  * is another account rather than another invitation. Told apart in the page so
  * the mismatch screen (and with it the only control that signs out) survives the
  * failure instead of being torn down, which is what left the visitor looping on
  * "Continue with Google" against the colliding account.
  *
- * Carries master's message rather than composing one: it names both remedies
+ * Carries the server's message rather than composing one: it names both remedies
  * (sign in with that account directly, or ask for an invitation to that address)
- * and master is the side that knows which of them is available.
+ * and the server is the side that knows which of them is available.
  */
 export class InviteIdentityInUseError extends Error {
   constructor(message: string) {
@@ -104,7 +104,7 @@ function unavailableStatus(body: unknown): InviteUnavailableStatus | null {
     : null;
 }
 
-/** Whether master answered the claim with its `identity_in_use` conflict. */
+/** Whether the server answered the claim with its `identity_in_use` conflict. */
 function isIdentityInUse(body: unknown): boolean {
   return typeof body === 'object'
     && body !== null
@@ -137,10 +137,10 @@ async function readBody(res: Response): Promise<unknown> {
  * email client wrapped across two lines is the commonest way one of these
  * arrives, it has its own screen, and its advice ("copy the whole link") is
  * something the recipient can act on alone. The implementation inspected only
- * `body.status`, so the contract held exactly as far as master's own JSON: a 404
+ * `body.status`, so the contract held exactly as far as the server's own JSON: a 404
  * carrying `{ error: 'Not Found' }`, an empty body, or a gateway's HTML error
  * page fell through to the throw and rendered "We could not open your
- * invitation — try again", on the one failure retrying cannot fix. Master does
+ * invitation — try again", on the one failure retrying cannot fix. The server does
  * send the field today; a proxy, a CDN or an ingress in front of it need not, and
  * this is a page reached from an email on somebody else's network.
  *
@@ -149,7 +149,7 @@ async function readBody(res: Response): Promise<unknown> {
  * nothing is `not_found`. The cost of the trade is worth stating: a 404 caused by
  * the route being unmounted (a deploy skew, a wrong API base) now reads as a
  * missing invitation rather than as an outage, and is not reported to
- * `api_error`. That is the same trade the endpoint already made for master's own
+ * `api_error`. That is the same trade the endpoint already made for the server's own
  * 404s, and the alternative — telling somebody with a broken link to try again —
  * is worse in the case that actually happens.
  */
@@ -201,7 +201,7 @@ export async function getInvite(token: string): Promise<InviteLookup> {
 
   /*
     A 200 that is neither `pending` with a body nor one of the four terminal
-    statuses is master answering something this client does not model. Treated as
+    statuses is the server answering something this client does not model. Treated as
     unreachable rather than rendered: a half-populated invitation card — a role
     and a workspace with no address, say — is worse than the retry affordance,
     because it invites somebody to claim a membership nobody can describe.
@@ -212,7 +212,7 @@ export async function getInvite(token: string): Promise<InviteLookup> {
 /**
  * Claim the invite with a Firebase id token, and receive a platform session.
  *
- * The response body is EXACTLY `POST /auth/session`'s — master's own contract,
+ * The response body is EXACTLY `POST /auth/session`'s — the server's own contract,
  * not a coincidence — which is what lets `AuthContext` adopt it through the same
  * path a sign-in uses instead of growing a second session-adoption path. `is_new`
  * is always `false` here: the tenant already exists and the membership was
@@ -238,10 +238,10 @@ export async function claimInvite(token: string, idToken: string): Promise<Sessi
       so it is raised as the typed error and the page switches screens rather
       than leaving an error under a form that can no longer succeed. Read through
       {@link responseStatus}, so a bodyless 404 from something between here and
-      master is the same state change rather than a bare error under the form —
+      the server is the same state change rather than a bare error under the form —
       the identical defect {@link getInvite} had, on the same token.
 
-      `identity_already_bound` joins them: master refuses to rebind a user row
+      `identity_already_bound` joins them: the server refuses to rebind a user row
       that already has a real account, and the honest reading of that is "you are
       already set up — sign in." See `types/invite.ts`.
     */
@@ -274,7 +274,7 @@ export async function claimInvite(token: string, idToken: string): Promise<Sessi
  * Re-issue an invitation for a membership whose invite has not been used.
  *
  * ── Why this exists: the one-way door it closes ────────────────────────────
- * Invitations expire (seven days by default). Master revokes any outstanding
+ * Invitations expire (seven days by default). The server revokes any outstanding
  * token and mints a fresh one on this route, and its own copy names it as THE
  * recovery path — but until this function there was no caller anywhere in the
  * product, so the dead end was guaranteed rather than hypothetical: the invite
@@ -288,7 +288,7 @@ export async function claimInvite(token: string, idToken: string): Promise<Sessi
  * session, and a 401 here really does mean their session lapsed.
  *
  * Answers the same `{ invite_email, sign_in_url }` shape `POST /users/invite`
- * does — master's contract, so one hand-off panel can describe either.
+ * does — the server's contract, so one hand-off panel can describe either.
  */
 export function resendInvite(tenantId: string, membershipId: string): Promise<ResendInviteResult> {
   return apiFetch(ENDPOINTS.invites.resend, {

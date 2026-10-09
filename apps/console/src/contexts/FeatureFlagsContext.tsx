@@ -7,13 +7,13 @@ import type { FeatureFlagMap, FeatureFlagStatus } from '../types/feature-flags';
 interface FeatureFlagsContextValue {
   /** Resolved client-exposed flags for the current tenant/account. */
   flags: FeatureFlagMap;
-  /** Resolution lifecycle — drives the anti-flicker render rule (UX §2.1). */
+  /** Resolution lifecycle — drives the anti-flicker render rule (UX). */
   status: FeatureFlagStatus;
   reload: () => void;
   /**
    * True only when the flag has resolved to a truthy value. While `loading` or
-   * on `error` this returns false — fail-safe closed, matching core's
-   * default-off posture (UX §2.1). Gate render-only decisions on this.
+   * on `error` this returns false — fail-safe closed, matching the server's
+   * default-off posture (UX). Gate render-only decisions on this.
    */
   isEnabled: (flag: string) => boolean;
 }
@@ -40,7 +40,7 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
   const loadedForKey = useRef<string | null>(null);
 
   const load = useCallback(() => {
-    // Feature flags are ACCOUNT-scoped — core's proxy 400s ("Missing required
+    // Feature flags are ACCOUNT-scoped — the server's proxy 400s ("Missing required
     // header: x-mgkvc-account") if we fetch before the active account resolves.
     // Wait for accountId so we never fire a doomed request (which, being
     // fail-closed, would hide every flag-gated nav item). Stay in 'loading'
@@ -91,7 +91,7 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => {
         if (loadedForKey.current !== key) return;
-        // Fail-safe closed: an error resolves every gate to off (UX §2.1).
+        // Fail-safe closed: an error resolves every gate to off (UX).
         setFlags({});
         setStatus('error');
       });

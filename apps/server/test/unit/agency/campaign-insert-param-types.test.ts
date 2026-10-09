@@ -6,7 +6,7 @@ import { dirname, resolve } from 'node:path';
 /**
  * ─── The 42804 that made `POST /api/v1/agency-campaigns` fail outright ───────
  *
- * Shipped in 1.73.1:
+ * Shipped once in a release:
  *
  *   err_code=42804
  *   column "calling_window_start" is of type time without time zone
@@ -17,7 +17,7 @@ import { dirname, resolve } from 'node:path';
  * its own arguments, so an untyped placeholder beside an untyped quoted literal
  * resolves to `text` — and Postgres then refuses to assign `text` to any column
  * it has no assignment cast to. `TIME`, `SMALLINT[]`, `UUID`, and every enum are
- * such columns; `VARCHAR`/`TEXT` are not, which is why fourteen of the twenty
+ * such columns; `VARCHAR`/`TEXT` are not, which is why most of the
  * parameters in that INSERT were fine and three were not.
  *
  * ── Why this is a SOURCE-level test ───────────────────────────────────────────
@@ -30,10 +30,10 @@ import { dirname, resolve } from 'node:path';
  * a `npm test` run with no Docker, which is the run most people do.
  *
  * Reading the SQL and the migrations from a unit test follows the precedent set
- * by `roster-row-identity.test.ts` and `s2s-contract.test.ts`.
+ * by `roster-row-identity.test.ts`.
  *
  * ── It is a RULE, not three string matches ────────────────────────────────────
- * The assertion below is derived from migration 072's declared column types
+ * The assertion below is derived from the baseline migration's declared column types
  * rather than hard-coded, so a new `TIME`/array/`UUID`/enum column added to this
  * INSERT with the same `COALESCE($n,'literal')` shape reds here immediately.
  * Three explicit assertions ride alongside it as a backstop, so a parser that
@@ -41,11 +41,8 @@ import { dirname, resolve } from 'node:path';
  */
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// PORT NOTE (magick-agency, lane B1): ported from core
-// test/unit/agency/campaign-insert-param-types.test.ts@4850d1d9 (3 cases). The
-// column types are read off the squashed BASELINE (one CREATE TABLE, no later
-// ALTERs) instead of migration 072 + every `ALTER TABLE agency_campaigns`; the
-// INSERT now has 20 columns (`sip_connection_id` is gone). The rule is unchanged.
+// The column types are read off the squashed BASELINE (one CREATE TABLE, no later
+// ALTERs); the INSERT has 20 columns.
 const BASELINE = resolve(__dirname, '../../../../../packages/db/migrations/0001_baseline.sql');
 const REPOSITORY = resolve(__dirname, '../../../src/db/repositories/agency.repository.ts');
 
@@ -97,14 +94,11 @@ function splitTopLevel(text: string): string[] {
   return out.map((s) => s.replace(/\s+/g, ' ')).filter((s) => s.length > 0);
 }
 
-// ── The declared shape of `agency_campaigns`, read off the migrations ────────
+// ── The declared shape of `agency_campaigns`, read off the baseline migration ────────
 
 /**
- * `column -> declared SQL type`, from 072's CREATE TABLE plus every later
- * `ALTER TABLE agency_campaigns ... ADD COLUMN`.
+ * `column -> declared SQL type`, from the baseline CREATE TABLE for `agency_campaigns`.
  *
- * Scanning all migrations rather than naming 078/080 means a column added by a
- * migration that does not exist yet is still typed correctly here.
  */
 function agencyCampaignColumnTypes(): Record<string, string> {
   const types: Record<string, string> = {};
@@ -154,10 +148,10 @@ describe('AgencyCampaignRepository.create — parameter typing inside COALESCE',
   const types = agencyCampaignColumnTypes();
   const pairs = createInsertPairs();
 
-  it('parses the migration and the INSERT — the counts that make the rule non-vacuous', () => {
+  it('parses the baseline migration and the INSERT — the counts that make the rule non-vacuous', () => {
     // If either parser quietly stops matching, every assertion below passes over
     // an empty set. These two numbers are the proof that it ran.
-    // 21 since `AD-P4-C-02` added `abandonment_ceiling_pct`. This number is
+    // This number is
     // deliberately hard-coded and deliberately annoying to change: it is the only
     // thing standing between a silently-stale parser and a whole file of
     // assertions that pass over an empty set.

@@ -4,7 +4,7 @@ import type { AgencyCampaignSeries } from '../types/agency-campaign-series';
 import type { AgencyStatsBucketWidth } from '../types/agency-stats';
 
 /**
- * One campaign's numbers over time, through master's `/proxy/agency`.
+ * One campaign's numbers over time, through the server's `/proxy/agency`.
  *
  * ── The window is HALF-OPEN `[from, to)` ───────────────────────────────────
  * The same convention as `/agency/my-stats`, and deliberately **not** the
@@ -21,14 +21,14 @@ import type { AgencyStatsBucketWidth } from '../types/agency-stats';
  * clocks go back at midnight.
  *
  * ── `agency.supervise`, and the caller must have checked ───────────────────
- * Master floors this route exactly there. Every affordance that reaches it is
+ * The server floors this route exactly there. Every affordance that reaches it is
  * already inside a section gated on `agency.supervise` (`CAMPAIGN_TABS`), so
  * there is no second check here — but a new call site that is not must add one,
  * for the reason `getAgentStats` states: a panel whose first read 403s is worse
  * than a panel that was never offered.
  *
  * **`accountId` is not optional in practice.** `apiFetch` sends `X-Account-Id`
- * only when the fourth argument is present, and core answers a missing one with
+ * only when the fourth argument is present, and the server answers a missing one with
  * `400 Missing required header: x-mgkvc-account` — an error with nothing in it
  * pointing back here. See the longer note in `agencyCampaigns.ts`.
  */
