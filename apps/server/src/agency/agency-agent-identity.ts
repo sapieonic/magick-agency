@@ -10,14 +10,15 @@ const log = createChildLogger({ component: 'agency-agent-identity' });
  * Identity for the campaign STAFFING list — who a supervisor has assigned to a
  * campaign, as opposed to who is currently live on it.
  *
- * ── The same ownership split as `agency-stats-enrichment.ts` ────────────────
- * Master's `agency_campaign_agents` rows carry a `user_id` and nothing else that
- * a human can read; core has no user table at all (design D3). So identity is
- * resolved here, on master, for exactly the reason `agent_name` is resolved there
- * — it is the only service that holds the fact.
+ * ── The same split as `agency-stats-enrichment.ts` ──────────────────────────
+ * `agency_campaign_agents` rows carry a `user_id` and nothing else that a human
+ * can read, and the dialer's own tables keep agent ids with no foreign key to
+ * `users`. So identity is resolved here, at the public API layer, for exactly the
+ * reason `agent_name` is resolved there — `users` and `memberships` are where the
+ * fact lives.
  *
  * ── Enrichment must never turn a 200 into a 500 ─────────────────────────────
- * The rule that file states, followed here verbatim. The ASSIGNMENT is the fact
+ * The rule that file states, followed here exactly. The ASSIGNMENT is the fact
  * this endpoint exists to report and it is already in hand before any lookup
  * runs; a failed identity read must degrade to `name: null` / `email: null` /
  * `role: null` on every row, never fail the request. The KEYS are always
@@ -91,8 +92,8 @@ export function foldHighestRole(
  * Attach identity to a campaign's staffing rows.
  *
  * ONE query for the whole list, never one per row — the "no per-item loops over
- * I/O" rule in docs/reference/magick-master/CLAUDE.md, and the same N+1 `findDisplayNamesInTenant` was
- * introduced to avoid.
+ * I/O" rule, and the same N+1 `findDisplayNamesInTenant` was introduced to
+ * avoid.
  *
  * A user id that resolves to nothing — deleted, or belonging to another tenant —
  * yields nulls rather than being dropped from the list. Dropping it would hide a
@@ -145,22 +146,17 @@ export async function enrichAssignedAgents(
 /**
  * The identity lookup every agent-facing enrichment goes through.
  *
- * ── One binding, and it now really is one ─────────────────────────────────
+ * ── One binding ────────────────────────────────────────────────────────────
  * A named export rather than a closure per call site: the campaign spine's JSON
  * list, its CSV drain, and the supervisor's view of one agent all have to name
  * the same person, and two call sites reaching for two different lookups is how
  * one of them starts reporting an email where the other reports a display name.
- *
- * This was exported to end a duplication and then the duplicate was left in
- * place — `proxy-agency-campaigns.routes.ts` went on declaring a byte-identical
- * local `resolveAgentNames`, so the consolidation this docstring described was
- * something only the docstring believed. Both of that file's call sites now use
- * this binding and the local one is gone, which is what makes the claim
- * checkable: it is the only declaration of the lookup in the repository.
+ * It is the only declaration of the lookup in the repository, which is what
+ * makes that checkable — do not declare a local copy beside a caller.
  *
  * Lives here rather than beside its callers because this module is the one place
  * that owns "turn a user id into something a human reads" — see the header for
- * why that job is master's at all (core has no user table, design D3).
+ * why that job belongs to the public API layer.
  */
 export const resolveAgentNames = (
   ids: readonly string[],
@@ -169,19 +165,19 @@ export const resolveAgentNames = (
 
 /**
  * Put `agent_name` beside the `agent_user_id` on a body whose SUBJECT is one
- * agent — core's per-agent stats payload, as opposed to a page of rows.
+ * agent — the handler's per-agent stats payload, as opposed to a page of rows.
  *
  * ── Why the per-agent stats body needs its own enricher ─────────────────────
  * `enrichAttemptAgentNames` (`agency-spine.ts`) handles the row-page shape:
- * `{ rows: [{ agent_user_id, … }] }`. Core's `GET /agency-agents/:id/stats` is
+ * `{ rows: [{ agent_user_id, … }] }`. The handler's `GET /agency-agents/:id/stats` is
  * neither a page nor a list — the agent is the whole subject of the document and
  * their id sits at the top level. Reusing the page enricher would silently do
  * nothing (there is no `rows` array, so it returns the body untouched), which is
  * the failure mode that ships looking like it works.
  *
  * ── Shape rules, inherited from every other enrichment on this feature ──────
- * A SPREAD over the body core sent, never a reconstruction — the totals and
- * bucket arrays core adds next must arrive untouched without this file being
+ * A SPREAD over the body the handler returned, never a reconstruction — the
+ * totals and bucket arrays it adds next must arrive untouched without this file being
  * edited. The KEY is produced whether or not the lookup succeeds: a
  * sometimes-absent key is indistinguishable from a client that forgot to read it,
  * while `null` is an answer. And a failed lookup degrades to `null` rather than
@@ -189,9 +185,9 @@ export const resolveAgentNames = (
  * showing the numbers. The rule `agency-stats-enrichment.ts` states: enrichment
  * must never turn a 200 into a 500.
  *
- * A body that carries no string `agent_user_id` (an error body, a shape core has
- * changed) is returned BY REFERENCE, so an error reaches `errorMaskHook` exactly
- * as core wrote it.
+ * A body that carries no string `agent_user_id` (an error body, a shape the
+ * handler has changed) is returned BY REFERENCE, so an error reaches
+ * `errorMaskHook` exactly as the handler wrote it.
  */
 export async function enrichAgentStatsIdentity(
   body: unknown,
@@ -217,15 +213,14 @@ export async function enrichAgentStatsIdentity(
 // ─── The supervisory ROSTER's row filter ────────────────────────────────────
 
 /**
- * One roster row, as much of it as master reads.
+ * One roster row, as much of it as the public layer reads.
  *
- * A hand-mirror of core's `AgencyRosterAgentRow` narrowed to the ONE field
- * master's own logic depends on. Master and core share no package, so every
- * cross-service shape here is hand-mirrored — and mirroring the whole row would
- * be a second, drifting definition of arithmetic master deliberately does not
- * own (the rates, the AHT, the occupancy denominator). The generic below carries
- * the rest through untouched instead, so a field core adds next arrives without
- * this file being edited.
+ * `AgencyRosterAgentRow` narrowed to the ONE field this module's logic depends
+ * on. Mirroring the whole row would be a second, drifting definition of
+ * arithmetic this layer deliberately does not own (the rates, the AHT, the
+ * occupancy denominator). The generic below carries the rest through untouched
+ * instead, so a field the handler adds next arrives without this file being
+ * edited.
  */
 export interface RosterAgentRowRef {
   agent_user_id: string;
@@ -271,31 +266,30 @@ export interface RosterMembershipFilter<TRow> {
    * `unattributed_omitted`. Two rules, and they pull in opposite directions so
    * both have to be stated: the counts are never folded together, because
    * reporting a stranger as a departed colleague is a different lie from hiding
-   * one (R4) — and neither is withheld, because a row that vanishes with no
+   * one — and neither is withheld, because a row that vanishes with no
    * counter behind it makes the console's one quantitative claim (the visible
    * rows fall short of the campaign total by exactly the departed agents' work)
-   * false with nothing on the wire to say so. This was logged-and-withheld at
-   * first, which is how that claim came to be wrong.
+   * false with nothing on the wire to say so.
    *
-   * ⚠️ It is NOT the unreachable case its first comment claimed. Core scoping
-   * every statement on `tenant_id` AND `account_id` is what makes a FOREIGN
-   * agent impossible; it says nothing about a former one. Core keeps attempt
-   * history forever while a `memberships` row goes away with the user, so an id
-   * core can still name is an id master can no longer account for — and on the
-   * grouped read one such id costs N rows, because an `agent,campaign` page
-   * emits one row per campaign for the same agent.
+   * ⚠️ It is NOT an unreachable case. Scoping every statement on `tenant_id` AND
+   * `account_id` is what makes a FOREIGN agent impossible; it says nothing about
+   * a former one. Attempt history is kept while a `memberships` row goes away
+   * with the user, so an id the dialer can still name is an id `memberships` can
+   * no longer account for — and on the grouped read one such id costs N rows,
+   * because an `agent,campaign` page emits one row per campaign for the same
+   * agent.
    */
   unknownOmitted: number;
 }
 
 /**
- * Decide which of core's roster rows master shows.
+ * Decide which of the handler's roster rows the public route shows.
  *
- * ── Why master filters a list core just computed ───────────────────────────
- * Core has no user table (design D3) and `agency_agent_sessions.agent_user_id`
- * has no FK, so core returns every agent who dialled in the window and cannot
- * know that one of them left in April. Master holds `memberships`, so master is
- * the only service that can make this call — the same division of labour as the
+ * ── Why the public route filters a list the handler just computed ──────────
+ * `agency_agent_sessions.agent_user_id` has no FK to `users`, and the roster
+ * query reads only the dialer's tables, so it returns every agent who dialled in
+ * the window and cannot know that one of them left in April. The answer is in
+ * `memberships`, which this layer reads — the same division of labour as the
  * `agent_name` enrichment, applied to which rows exist rather than to what they
  * are called.
  *
@@ -312,8 +306,8 @@ export interface RosterMembershipFilter<TRow> {
  * one account by a required predicate, so an agent revoked from THIS account is
  * a departure from this page even while they are active on another. A
  * tenant-level membership (`account_id IS NULL`) reaches every account and
- * therefore counts. The reasoning, and the case that made the old tenant-wide
- * test wrong, are on {@link filterRowsByMembership} beside the code.
+ * therefore counts. The reasoning, and the case that makes a tenant-wide test
+ * wrong, are on {@link filterRowsByMembership} beside the code.
  *
  * ── What this function must NOT touch, ever ────────────────────────────────
  * The `benchmark`. Its cohort is "every agent who dialled in the window,
@@ -339,12 +333,12 @@ export function filterRosterRowsByMembership<TRow extends RosterAgentRowRef>(
 }
 
 /**
- * The membership policy itself, over rows whose agent id master has to be told
- * how to find.
+ * The membership policy itself, over rows whose agent id the caller says how to
+ * find.
  *
  * ── Why the accessor is a parameter rather than a second copy of the policy ──
  * The roster's rows carry `agent_user_id` at the top level. The GROUPED read's
- * rows (phase 02a) carry a `key` object whose `agent_user_id` member exists only
+ * rows carry a `key` object whose `agent_user_id` member exists only
  * when `agent` is one of the grouped dimensions, so the same three-state
  * decision has to be made about a differently-nested id. The decision is the
  * part where a mistake is invisible in a status code — a departed agent served
@@ -371,12 +365,12 @@ export function filterRowsByMembership<TRow>(
    *
    * ── Why a Set of uuids needs normalising at all ────────────────────────────
    * The two sides of this comparison come from different places and only one of
-   * them is normalised. `memberships.user_id` is a Postgres `uuid`, which the
-   * driver renders in canonical LOWER case whatever was inserted. The row ids
-   * come from core's response body, where `agent_user_id` is an opaque string
-   * with no `uuid` column behind it (design D3) — so the same person's id in
-   * upper case is the same person to core and a different string to a JavaScript
-   * `Set`.
+   * them is guaranteed normalised. `memberships.user_id` is a Postgres `uuid`,
+   * which the driver renders in canonical LOWER case whatever was inserted. The
+   * row ids reach this function as plain strings in the handler's response body,
+   * with nothing here that promises their case — so the same person's id in
+   * upper case would be the same person to Postgres and a different string to a
+   * JavaScript `Set`.
    *
    * That mismatch is invisible one layer up, which is what makes it worth this
    * comment: `findAnyByUsersAndTenant` casts to `::uuid[]`, so an UPPER-case id
@@ -384,7 +378,7 @@ export function filterRowsByMembership<TRow>(
    * therefore exists, was read, and was paid for — and was then missed here, and
    * the row was dropped as `unattributed_omitted`. A working colleague vanishes
    * from their supervisor's roster and the payload's own counter says they were
-   * somebody master could not account for.
+   * somebody nobody could account for.
    */
   const fold = (value: string): string => value.toLowerCase();
   const scopedAccount = fold(accountId);
@@ -399,23 +393,22 @@ export function filterRowsByMembership<TRow>(
      * "Still on the roster" is answered against the account this READ is scoped
      * to, not against the tenant.
      *
-     * ── This is narrower than it used to be, and the read is why ─────────────
-     * The first version counted ANY active row in the tenant, on the reasoning
-     * that a person revoked from one account and active in another has not left
-     * the company. True, and not the question. `GET /agents/stats` is scoped to
-     * ONE account — a required predicate, not an optional filter — so every row
-     * on the page is somebody's work IN THIS ACCOUNT, and an agent revoked from
-     * this account while active on another was served as a current colleague of
-     * a supervisor who cannot see the account they moved to. The supervisor's
-     * question is "who is on my floor", and the answer must not be "somebody
-     * else's floor, also".
+     * ── Narrower than "any active row in the tenant", and the read is why ────
+     * Counting ANY active row in the tenant reasons that a person revoked from
+     * one account and active in another has not left the company. True, and not
+     * the question. `GET /agents/stats` is scoped to ONE account — a required
+     * predicate, not an optional filter — so every row on the page is somebody's
+     * work IN THIS ACCOUNT, and an agent revoked from this account while active
+     * on another would be served as a current colleague of a supervisor who
+     * cannot see the account they moved to. The supervisor's question is "who is
+     * on my floor", and the answer must not be "somebody else's floor, also".
      *
      * A TENANT-LEVEL membership (`account_id IS NULL`) reaches every account by
-     * design (migration 060), so it counts here — that is not a special case, it
-     * is what a tenant-level row means.
+     * design, so it counts here — that is not a special case, it is what a
+     * tenant-level row means.
      *
-     * Still ANY qualifying row rather than a fold over all of them, for the
-     * original reason: a person can hold several memberships that reach this
+     * Still ANY qualifying row rather than a fold over all of them: a person can
+     * hold several memberships that reach this
      * account (a tenant-level one plus an account one), and the presence of an
      * active one decides it. An all-must-be-active fold would hide a working
      * colleague depending on row order.
@@ -452,17 +445,17 @@ export function filterRowsByMembership<TRow>(
   return { rows: kept, inactiveOmitted, unknownOmitted };
 }
 
-// ─── The GROUPED read's rows (phase 02a) ────────────────────────────────────
+// ─── The GROUPED read's rows ────────────────────────────────────────────────
 
 /**
- * One grouped row, as much of it as master reads.
+ * One grouped row, as much of it as the public layer reads.
  *
- * The same hand-mirroring rule as {@link RosterAgentRowRef}: narrowed to the one
- * member master's own logic depends on, with the metrics carried through
- * untouched by the generic at the call site. `key` is typed `unknown` rather than
- * as the contract's `AgencyGroupKey` because master does not read any other
- * member of it and a fuller mirror here would be a second, drifting definition
- * of a shape core owns.
+ * The same narrowing rule as {@link RosterAgentRowRef}: the one member this
+ * module's logic depends on, with the metrics carried through untouched by the
+ * generic at the call site. `key` is typed `unknown` rather than as the
+ * contract's `AgencyGroupKey` because nothing here reads any other member of it
+ * and a fuller mirror here would be a second, drifting definition of a shape the
+ * handler owns.
  */
 export interface AgencyGroupRowRef {
   key?: unknown;
@@ -474,18 +467,18 @@ export interface AgencyGroupRowRef {
  *
  * ── Why this is a separate predicate from {@link groupedRowAgentId} ──────────
  * The contract's row key holds a member **if and only if** its dimension is in
- * `group_by`, so "the key has an `agent_user_id` member" is master's readable
- * form of "`agent` was grouped". That is a question about the KEY'S SHAPE, and
- * for a while master answered it with the id EXTRACTOR instead — `rows.some((r)
- * => groupedRowAgentId(r) !== null)` — which conflates two different facts: was
- * `agent` grouped, and is this particular id usable.
+ * `group_by`, so "the key has an `agent_user_id` member" is this layer's
+ * readable form of "`agent` was grouped". That is a question about the KEY'S
+ * SHAPE, and answering it with the id EXTRACTOR instead — `rows.some((r) =>
+ * groupedRowAgentId(r) !== null)` — conflates two different facts: was `agent`
+ * grouped, and is this particular id usable.
  *
  * The two come apart on exactly the page that matters. A page whose only agent
  * keys are empty strings, nulls or numbers is agent-grouped with unusable ids;
- * asked through the extractor it looked NOT agent-grouped, took the
- * pass-through branch, and was served **unfiltered with both omission counters
- * at 0** — every row about a person master could not account for, under a
- * payload that states nothing was hidden. A sole `{ key: { agent_user_id: '' } }`
+ * asked through the extractor it looks NOT agent-grouped, takes the
+ * pass-through branch, and is served **unfiltered with both omission counters
+ * at 0** — every row about a person nobody could account for, under a payload
+ * that states nothing was hidden. A sole `{ key: { agent_user_id: '' } }`
  * row must be dropped and counted as unattributed, and that is only reachable if
  * the branch is chosen on shape and the row is judged on value.
  *
@@ -494,12 +487,12 @@ export interface AgencyGroupRowRef {
  * not. Everything else about the path — `key` absent, null, a primitive, an
  * array — means no dimension at all.
  *
- * Reading this off the ROWS is what master can actually verify. The alternatives
- * are both worse: re-parsing the caller's `group_by` would mean master
- * reimplementing core's comma splitting, whitelist and canonicalisation (a
+ * Reading this off the ROWS is what this layer can actually verify. The
+ * alternatives are both worse: re-parsing the caller's `group_by` would mean
+ * reimplementing the handler's comma splitting, whitelist and canonicalisation (a
  * second parser that drifts from the one that produced the rows), and trusting
- * core's echoed `group_by` would make the membership filter depend on a field no
- * row is keyed to.
+ * the handler's echoed `group_by` would make the membership filter depend on a
+ * field no row is keyed to.
  */
 export function groupedRowHasAgentKey(row: AgencyGroupRowRef): boolean {
   const key = row.key;
@@ -515,12 +508,11 @@ export function groupedRowHasAgentKey(row: AgencyGroupRowRef): boolean {
  * back into one — see that function for the page a single predicate serves
  * unfiltered.
  *
- * Defensive about every hop of the path (`key` absent, null, an array, a
- * non-string or empty id) because core treats `agent_user_id` as an opaque
- * string with no user table behind it — there is nothing upstream that can
- * promise the shape. A `null` from here on an agent-grouped page is not "not
- * about a person"; it is "about a person master cannot name", which is R4's
- * third state and a dropped row.
+ * Defensive about every step of the path (`key` absent, null, an array, a
+ * non-string or empty id) because this function sees the handler's body as
+ * untyped JSON — nothing here can promise the shape. A `null` from here on an
+ * agent-grouped page is not "not about a person"; it is "about a person nobody
+ * can name", which is the membership filter's third state and a dropped row.
  */
 export function groupedRowAgentId(row: AgencyGroupRowRef): string | null {
   const key = row.key;
@@ -539,8 +531,8 @@ export function groupedRowAgentId(row: AgencyGroupRowRef): string | null {
  * ships looking like it works, which is the same reason
  * {@link enrichAgentStatsIdentity} exists for the per-agent document shape.
  * `agent_name` stays at the ROW level rather than inside `key`, because `key` is
- * the grouping identity core computed and a name master looked up is not part of
- * it.
+ * the grouping identity the handler computed and a name looked up here is not
+ * part of it.
  *
  * Same rules as every other enrichment on this feature: one query for the whole
  * page (both lookups behind {@link resolveAgentNames} de-duplicate their input,
@@ -551,13 +543,13 @@ export function groupedRowAgentId(row: AgencyGroupRowRef): string | null {
  * answer; and a failed lookup degrades rather than failing the read.
  *
  * Called only on the agent-grouped branch, which is what makes `agent_name`
- * present *iff* `agent` was grouped (contract D9). A body with no `rows` array is
- * returned by reference.
+ * present *iff* `agent` was grouped. A body with no `rows` array is returned by
+ * reference.
  *
  * Narrowed with {@link pageRows} and deliberately NOT with `asSpinePage`: this
  * function reads `rows` and nothing else, and `asSpinePage` refuses a body over
  * `next_cursor`/`limit` — paging fields a grouped page does not even carry. Under
- * that narrowing a page core echoed a STRING `limit` onto came back with no
+ * that narrowing a page carrying a STRING `limit` would come back with no
  * `agent_name` key at all, on the branch whose entire contract is that the key is
  * always present.
  */

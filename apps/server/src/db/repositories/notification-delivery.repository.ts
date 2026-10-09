@@ -38,7 +38,7 @@ class NotificationDeliveryRepository {
    * The claim is the *only* thing standing between an at-least-once trigger and
    * duplicate mail. Nothing upstream is exactly-once: EventBridge is
    * at-least-once by contract, the trigger Lambda retries any non-2xx, and a
-   * retry after a timeout lands on a DIFFERENT master instance while the first
+   * retry after a timeout lands on a DIFFERENT server instance while the first
    * is still working — which is precisely the case an in-process "already
    * running" flag cannot see.
    *
@@ -71,16 +71,15 @@ class NotificationDeliveryRepository {
       // `account_id` is resolved through a lookup rather than bound directly, and
       // that is a fix rather than a flourish.
       //
-      // `isUuid(...)` is a SHAPE check, so it correctly turns the
-      // `bulk_dispatch_jobs` sentinel `'default'` into NULL but passes through a
-      // well-formed uuid for an account that no longer exists. That column has an
-      // FK to `accounts(id)` while `bulk_dispatch_jobs.account_id` has none, so a
-      // historical job row outliving its account carries exactly that value —
-      // and the insert then raised `23503`. Because the whole multi-row INSERT is
-      // one statement, the abort took EVERY recipient of that campaign with it:
-      // `gateCampaignNotification` catches, counts `claim_error` and returns
-      // `[]`, so the notice is silently withheld from everybody, not merely
-      // mis-scoped. Reproduced against a real Postgres.
+      // `isUuid(...)` is a SHAPE check, so it turns a non-uuid into NULL but
+      // passes through a well-formed uuid for an account that no longer exists.
+      // That column has an FK to `accounts(id)` while `agency_campaigns.account_id`
+      // has none, so a campaign outliving its account carries exactly that value,
+      // and a bound insert would raise `23503`. Because the whole multi-row
+      // INSERT is one statement, the abort would take EVERY recipient of that
+      // campaign with it: the caller (`agency-campaign-completion.ts`) catches a
+      // failed claim and withholds the notice (`claim_unavailable`), so it would
+      // be silently withheld from everybody, not merely mis-scoped.
       //
       // The scalar subquery yields NULL for an account that is not there, which
       // is the same value `ON DELETE SET NULL` would have left had the row been
@@ -90,12 +89,12 @@ class NotificationDeliveryRepository {
       //
       // And it is scoped `a.tenant_id = $3`, not merely `a.id = $4`. An existence
       // test alone would have written tenant A's delivery row carrying tenant B's
-      // `account_id`: `bulk_dispatch_jobs.account_id` has NO foreign key and no
-      // tenant check of its own, so a stale or hand-repaired job row can name an
-      // account belonging to somebody else, and the bare lookup would have
+      // `account_id`: `agency_campaigns.account_id` has NO foreign key and no
+      // tenant check of its own, so a stale or hand-repaired campaign row can name
+      // an account belonging to somebody else, and the bare lookup would have
       // resolved it happily. The tenant predicate makes an unresolvable-here id
       // land on the same NULL a deleted one gets, which is the honest answer:
-      // master could not scope this delivery, so it records no scope.
+      // the server could not scope this delivery, so it records no scope.
       //
       // This column is not read by any authorization path today (it is written
       // here, aged out by `retention-purge.ts`, and served by nothing), so the

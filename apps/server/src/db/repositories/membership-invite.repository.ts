@@ -87,10 +87,9 @@ function isLiveInviteCollision(err: unknown): boolean {
  * ── The tenant boundary is IN the statement, not downstream of it ───────────
  * {@link MembershipInviteRepository.createSupersedingOutstanding} takes a
  * `tenant_id` and puts it in the same statement as its revoke, following the
- * `findByIdInTenant` convention `user.routes.ts` argues for at length and
- * docs/reference/magick-master/CLAUDE.md's RBAC rule 1: it is reachable from `POST /invites/resend` with a
- * caller-supplied `membership_id`, and a membership id travels in URLs, logs and
- * support threads, so "the caller knew the id" is never evidence that the caller
+ * `findByIdInTenant` convention `user.routes.ts` argues for at length: it is
+ * reachable from `POST /invites/resend` with a caller-supplied `membership_id`,
+ * and a membership id travels in URLs, logs and support threads, so "the caller knew the id" is never evidence that the caller
  * may act on it. The route's own tenant-scoped membership lookup already refuses
  * a foreign id; the predicate is here as well because a check in the route is a
  * read and a write that can drift apart, and this is the statement that has to
@@ -148,8 +147,8 @@ export class MembershipInviteRepository {
    * allows.
    *
    * ── `tenant_id` is in the revoke's own predicate ───────────────────────────
-   * docs/reference/magick-master/CLAUDE.md's RBAC rule 1, on the only tenant-route-reachable write in this
-   * repository. `POST /invites/resend` takes `membership_id` from a request body
+   * The tenant boundary in the statement itself, on the only
+   * tenant-route-reachable write in this repository. `POST /invites/resend` takes `membership_id` from a request body
    * and does resolve it through a tenant-scoped membership lookup first — so
    * this predicate refuses nothing that route lets through today. It is here
    * because that is a check in one place and a write in another, and the pair
@@ -407,7 +406,7 @@ export class MembershipInviteRepository {
       if (!won.ok) {
         await client.query('ROLLBACK');
         // `revoked`, `already_claimed` and `expired` are carried through
-        // verbatim — the route turns each into a different sentence, and
+        // unchanged — the route turns each into a different sentence, and
         // flattening them here would put the distinction back where it cannot be
         // recovered.
         return { ok: false, reason: won.reason };
