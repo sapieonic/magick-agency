@@ -31,6 +31,7 @@ import { RuntimeNodeInstrumentation } from '@opentelemetry/instrumentation-runti
 import {
   DEFAULT_METRICS_EXPORT_INTERVAL_MS,
   DROPPED_METRIC_PATTERNS,
+  OTEL_SHUTDOWN_TIMEOUT_MS,
   HEAP_USED_METRIC,
   RUNTIME_METRIC_ALLOW_LIST,
   buildMetricViews,
@@ -40,6 +41,7 @@ import {
   resolveMetricsExportIntervalMs,
   resolveMetricsExportTimeoutMs,
   withFreshGauges,
+  withTimeout,
 } from '../../../src/utils/otel-sdk-config.js';
 
 class CollectingReader extends MetricReader {
@@ -257,7 +259,7 @@ describe('buildMetricViews — what leaves the process', () => {
   it('drops none of OUR metrics (source audit of src/utils/metrics.ts)', async () => {
     // PORT NOTE (magick-agency): core read its one `src/utils/metrics.ts`; this app declares its
     // metrics per lane in `packages/observability/src/metrics/*.ts`, so every file is read, and
-    // the canary is 30 (34 declarations) where core's was 100.
+    // the canary is 30 (40 declarations) where core's was 100.
     const dir = resolve(process.cwd(), '../../packages/observability/src/metrics');
     const source = readdirSync(dir).filter((f) => f.endsWith('.ts'))
       .map((f) => readFileSync(resolve(dir, f), 'utf8')).join('\n');
@@ -422,6 +424,20 @@ describe('src/instrumentation.ts wiring (source audit)', () => {
       expect(index.slice(index.lastIndexOf('} finally {', flush) + '} finally {'.length, flush)).not.toMatch(/[{}]/);
       // And a failed boot flushes before exiting.
       expect(index).toMatch(/logger\.fatal\(\{ err \}, 'boot failed'\);[^]*?await shutdownOtelSdk\(\);\s+process\.exit\(1\);/);
+    });
+
+    it('bounds the final flush, so an unreachable collector cannot hold shutdown for 30s', async () => {
+      // `sdk.shutdown()` waits out the metric reader's export timeout before rejecting
+      // (30s at the default interval), past a 10s/30s stop grace period.
+      expect(OTEL_SHUTDOWN_TIMEOUT_MS).toBeLessThan(resolveMetricsExportTimeoutMs(DEFAULT_METRICS_EXPORT_INTERVAL_MS));
+      expect(src).toMatch(/await withTimeout\(sdk\.shutdown\(\), OTEL_SHUTDOWN_TIMEOUT_MS, /);
+
+      await expect(withTimeout(Promise.resolve('flushed'), 50, 'x')).resolves.toBe('flushed');
+      await expect(withTimeout(Promise.reject(new Error('export failed')), 50, 'x')).rejects.toThrow('export failed');
+      const started = Date.now();
+      await expect(withTimeout(new Promise(() => {}), 50, 'OTel SDK shutdown'))
+        .rejects.toThrow('OTel SDK shutdown timed out after 50ms');
+      expect(Date.now() - started).toBeLessThan(1_000);
     });
   });
 });

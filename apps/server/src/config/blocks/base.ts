@@ -125,21 +125,23 @@ export const baseConfigSchema = z.object({
    * `process.exit(1)` (core's rule, `src/utils/otel-sdk-config.ts` header). It reads the same
    * variables itself, with the same lenient parsing (an unusable interval falls back to the
    * default rather than failing boot), and `test/unit/config/otel-config.test.ts` pins that the
-   * two agree. `OTEL_EXPORTER_OTLP_HEADERS` carries the Grafana Cloud token and is left out.
-   * `serviceName` / `serviceInstanceIdEnabled` are what the code sets; NodeSDK still merges
-   * `OTEL_RESOURCE_ATTRIBUTES` over them, which this block does not model.
+   * two agree. Not modelled here, though the SDK side reads them: `OTEL_EXPORTER_OTLP_HEADERS`
+   * (it carries the Grafana Cloud token), `OTEL_ENVIRONMENT`, `OTEL_SERVICE_INSTANCE_ID`,
+   * `OTEL_LOG_LEVEL`, and the SDK's own standard variables (`OTEL_RESOURCE_ATTRIBUTES`,
+   * `OTEL_LOGS_EXPORTER`, …). `serviceName` / `serviceInstanceIdEnabled` are what the code sets;
+   * NodeSDK still merges `OTEL_RESOURCE_ATTRIBUTES` over them.
    */
   otel: z.object({
     /** Only the exact string `true`, like core. */
     enabled: z.string().optional().transform((v) => v === 'true'),
-    /** Base URL; the SDK appends `/v1/traces` and `/v1/metrics`. Blank = unset. */
+    /** Base URL; the SDK appends `/v1/traces`, `/v1/metrics` and `/v1/logs`. Blank = unset. */
     endpoint: z.string().optional().transform((v) => v || undefined),
     metricsExportIntervalMs: z.string().optional().transform(resolveMetricsExportIntervalMs),
     serviceName: z.string().optional().transform((v) => v || SERVICE_NAME),
     serviceInstanceIdEnabled: z.string().optional().transform((v) => v === 'true'),
   }).transform((o) => ({
     ...o,
-    /** Traces and metrics leave the process only when both are set (`instrumentation.ts`). */
+    /** Traces, metrics and logs leave the process only when both are set (`instrumentation.ts`). */
     exporting: o.enabled && o.endpoint !== undefined,
   })),
 });

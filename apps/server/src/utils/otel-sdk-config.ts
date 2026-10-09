@@ -5,8 +5,10 @@
  * it `withFreshGauges`' `lastExport` argument (`:280-292`) and the imports only that section used
  * (`:17`, `:20`, `:22`), because this app exports over OTLP only (Manas, 2026-10-09; `PORTING.md`
  * "OpenTelemetry SDK"). The default `service.name` is `SERVICE_NAME` (`:122`). Everything else
- * is verbatim, comments included: where they name
- * `:9090` or `src/utils/metrics.ts` they describe core, whose metric names this app keeps.
+ * is verbatim, comments included: where they name `:9090`, `src/utils/metrics.ts`,
+ * `grafana/README.md`, `docs/architecture/call-orchestration.md` or
+ * `webhook_fanout_abandoned_total` they describe core, whose metric names this app keeps.
+ * Agency adds `OTEL_SHUTDOWN_TIMEOUT_MS` and `withTimeout` at the end.
  *
  * The pure pieces of the OTel SDK configuration in `src/instrumentation.ts`,
  * pulled out so they can be tested without starting an SDK.
@@ -133,7 +135,7 @@ export function buildResourceAttributes(
 ): Record<string, string> {
   const attrs: Record<string, string> = {
     // PORT NOTE (magick-agency): core `src/utils/otel-sdk-config.ts:122`@4850d1d9 defaulted to
-    // 'voice-ai-orchestrator'. Same default as the logger's OTLP transport.
+    // 'voice-ai-orchestrator'. Same default as `config.otel.serviceName`.
     [ATTR_SERVICE_NAME]: env['OTEL_SERVICE_NAME'] || SERVICE_NAME,
     [ATTR_SERVICE_VERSION]: opts.version,
     [SEMRESATTRS_DEPLOYMENT_ENVIRONMENT]: env['OTEL_ENVIRONMENT'] || env['NODE_ENV'] || 'development',
@@ -308,4 +310,27 @@ export function withFreshGauges(exporter: PushMetricExporter): PushMetricExporte
   };
   if (exporter.selectAggregation) wrapped.selectAggregation = exporter.selectAggregation.bind(exporter);
   return wrapped;
+}
+
+/**
+ * PORT NOTE (magick-agency): no source has this. How long `shutdownOtelSdk` waits for the SDK's
+ * final flush. Core waited for `sdk.shutdown()` itself, which with the collector unreachable
+ * rejects only after the metric reader's export timeout (`resolveMetricsExportTimeoutMs`: 30s at
+ * the default interval). That comes on top of the app's own teardown, past a 10s (Docker) or 30s
+ * (Kubernetes) stop grace period, so the process was killed mid-flush anyway. A reachable
+ * collector answers well inside this (0.4s for a whole SIGTERM shutdown, measured).
+ */
+export const OTEL_SHUTDOWN_TIMEOUT_MS = 5_000;
+
+/**
+ * Settle with `promise`, or reject after `ms`, whichever is first. The timer is cleared on
+ * settle and `unref`ed, so it never holds the process open.
+ */
+export function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms);
+    timer.unref();
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }

@@ -12,12 +12,15 @@
  *  - The HTTP instrumentation gets master's invite-token redaction hook
  *    (`src/utils/otel-instrumentations.ts:132-134`@a1f0756a): this app serves master's
  *    `/invites/:token` routes, which core never had. The hook also scrubs credential query
- *    values, which neither source did on spans (`src/utils/redact-url.ts`).
- * Comments are otherwise core's, verbatim: the `sdkRef` story below is about core's billing
- * counter (`webhook_fanout_abandoned_total`), which this app does not have; the ordering rule it
- * argues for holds here unchanged.
+ *    values, which neither source did on spans, and outgoing `http` and `fetch` spans get the
+ *    same query rule (`src/utils/redact-url.ts`).
  *  - `APP_VERSION` and `SERVICE_NAME` come from `@magick-agency/observability` subpaths, and the
  *    heap gauge's meter is named after `SERVICE_NAME` (core: 'voice-ai-orchestrator.runtime').
+ *  - `shutdownOtelSdk` gives up after `OTEL_SHUTDOWN_TIMEOUT_MS` (see it).
+ * Comments are core's except where marked or where they described deleted code (the scrape, the
+ * `:9090` reader, core's `:64-69`, `:150-152`, `:246`). Kept as core wrote them: the `sdkRef`
+ * story below is about core's billing counter (`webhook_fanout_abandoned_total`), which this app
+ * does not have; the ordering rule it argues for holds here unchanged.
  * `PORTING.md` "OpenTelemetry SDK" has the row.
  */
 // dotenv must load BEFORE we read env vars — this file runs before config/index.ts
@@ -36,15 +39,21 @@ import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
 import { APP_VERSION } from '@magick-agency/observability/version';
 import { SERVICE_NAME } from '@magick-agency/observability/service';
 import {
+  OTEL_SHUTDOWN_TIMEOUT_MS,
   buildMetricViews,
   buildResourceAttributes,
   registerHeapUsedGauge,
   resolveMetricsExportIntervalMs,
   resolveMetricsExportTimeoutMs,
   withFreshGauges,
+  withTimeout,
 } from './utils/otel-sdk-config.js';
 // Imports nothing (see its header), so it cannot pull the app graph in ahead of the SDK.
-import { redactedRequestSpanAttributes } from './utils/redact-url.js';
+import {
+  OUTGOING_REDACTED_QUERY_PARAMS,
+  redactedOutgoingSpanAttributes,
+  redactedRequestSpanAttributes,
+} from './utils/redact-url.js';
 
 const otlpEndpoint = process.env['OTEL_EXPORTER_OTLP_ENDPOINT'];
 const otelEnabled = process.env['OTEL_ENABLED'] === 'true';
@@ -79,7 +88,11 @@ export async function shutdownOtelSdk(): Promise<void> {
   if (!sdk) return;
   sdkRef = null;
   try {
-    await sdk.shutdown();
+    // PORT NOTE (magick-agency): bounded. Core awaited `sdk.shutdown()` as is, which with the
+    // collector unreachable takes the metric reader's export timeout (30s at the default
+    // interval) before rejecting, on top of the app's own teardown, so the orchestrator's stop
+    // grace period would kill the process mid-flush anyway.
+    await withTimeout(sdk.shutdown(), OTEL_SHUTDOWN_TIMEOUT_MS, 'OTel SDK shutdown');
   } catch (err) {
     console.error('[otel] SDK shutdown failed', err);
   }
@@ -217,12 +230,23 @@ if (otelEnabled && otlpEndpoint) {
         // Keep: http, pg, ioredis, undici, openai, generic-pool (traces only —
         // their metrics are dropped by the views above)
 
-        // PORT NOTE (magick-agency): from master `src/utils/otel-instrumentations.ts:132-134`@a1f0756a.
+        // PORT NOTE (magick-agency): the hook is from master `src/utils/otel-instrumentations.ts:132-134`@a1f0756a.
         // The raw invite token is the path segment of `GET /invites/:token` and
-        // `POST /invites/:token/claim`; this hook overwrites `http.url` / `http.target` /
-        // `url.path` on those two routes' server spans. See `src/utils/redact-url.ts`.
+        // `POST /invites/:token/claim`; on server spans whose URL carries a credential (that
+        // token, a `?token=`/`sig=`/`*verify_token=` value, a media-stream path token) the hook
+        // overwrites `url.path` and, when the query changed, `url.query`. `redactedQueryParams`
+        // (agency's) does the same for outgoing `http`/`https` client spans' `url.full`.
+        // See `src/utils/redact-url.ts`.
         '@opentelemetry/instrumentation-http': {
           startIncomingSpanHook: redactedRequestSpanAttributes,
+          redactedQueryParams: [...OUTGOING_REDACTED_QUERY_PARAMS],
+        },
+
+        // PORT NOTE (magick-agency): not in core or master. Global `fetch` spans export the full
+        // request URL unredacted; the hook overwrites `url.full` / `url.query` when the query
+        // carries a credential. See `redactedOutgoingSpanAttributes`.
+        '@opentelemetry/instrumentation-undici': {
+          startSpanHook: redactedOutgoingSpanAttributes,
         },
 
         // pg: capture query text but not parameter values

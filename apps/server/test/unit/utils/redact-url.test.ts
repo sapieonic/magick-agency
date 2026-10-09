@@ -1,11 +1,18 @@
 import { describe, it, expect } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { dirname, resolve } from 'node:path';
 
 import {
   CREDENTIAL_PATH_LITERALS,
+  INSTRUMENTATION_DEFAULT_REDACTED_QUERY_PARAMS,
+  OUTGOING_REDACTED_QUERY_PARAMS,
   REDACTED_TOKEN_SEGMENT,
+  redactQuery,
+  redactSpanUrl,
   redactUrl,
+  redactedOutgoingSpanAttributes,
   redactedRequestSpanAttributes,
 } from '../../../src/utils/redact-url.js';
 // The logger's export, i.e. what its request serializer calls.
@@ -124,6 +131,10 @@ describe('redactedRequestSpanAttributes', () => {
      * does not set `OTEL_SEMCONV_STABILITY_OPT_IN`, so `http.url`/`http.target`
      * are what ships today and `url.path` is what ships if anybody opts in.
      * Writing only the stable key would have redacted nothing at all.
+     *
+     * PORT NOTE (magick-agency): true of master's 0.212.0. At 0.223.0 only the stable keys are
+     * emitted, so `url.path` is the one that overrides; the old keys are added beside it. The
+     * span-level case under "agency" below runs the real instrumentation.
      */
     const attrs = redactedRequestSpanAttributes({ url: `/invites/${TOKEN}/claim`, headers });
 
@@ -206,6 +217,79 @@ describe('redactedRequestSpanAttributes', () => {
       const raw = `/api/v1/webhooks/voicelink/webrtc-status/c?token=${SECRET}`;
       expect(redactedRequestSpanAttributes({ url: raw, headers })['http.target']).toBe(scrubMediaUrl(raw));
     });
+
+    it('matches query keys DECODED and case-insensitively, where the log scrubber matches raw text', () => {
+      // Fastify decodes `%74oken` to `token`, so the route accepts it; the raw-text scrubber
+      // does not see it.
+      expect(scrubMediaUrl(`/x?%74oken=${SECRET}`)).toContain(SECRET);
+      expect(redactQuery(`%74oken=${SECRET}&page=2`)).toBe('%74oken=[REDACTED]&page=2');
+      expect(redactQuery(`TOKEN=${SECRET}`)).toBe('TOKEN=[REDACTED]');
+      expect(redactQuery(`meta.verify_token=${SECRET}`)).toBe('meta.verify_token=[REDACTED]');
+      expect(redactQuery(`X-Amz-Signature=${SECRET}&X-Amz-Expires=60`)).toBe('X-Amz-Signature=[REDACTED]&X-Amz-Expires=60');
+      // Every other pair byte for byte, and identity when nothing matched.
+      const plain = 'next=%2Fagency&q=a+b&flag&=x';
+      expect(redactQuery(plain)).toBe(plain);
+      expect(redactQuery('%E0%A4%A=1')).toBe('%E0%A4%A=1');
+      expect(redactSpanUrl(`/x?a=1&%74oken=${SECRET}`)).toBe('/x?a=1&%74oken=[REDACTED]');
+      const attrs = redactedRequestSpanAttributes({ url: `/x?%74oken=${SECRET}`, headers });
+      expect(attrs['url.query']).toBe('%74oken=[REDACTED]');
+      for (const value of Object.values(attrs)) expect(value).not.toContain(SECRET);
+    });
+
+    it('redacts outgoing fetch spans (instrumentation-undici redacts nothing itself)', () => {
+      expect(redactedOutgoingSpanAttributes({
+        origin: 'https://bucket.s3.amazonaws.com',
+        path: `/rec.mp3?X-Amz-Credential=${SECRET}&X-Amz-Signature=${SECRET}&X-Amz-Expires=60`,
+      })).toEqual({
+        'url.full': 'https://bucket.s3.amazonaws.com/rec.mp3?X-Amz-Credential=[REDACTED]&X-Amz-Signature=[REDACTED]&X-Amz-Expires=60',
+        'url.query': '?X-Amz-Credential=[REDACTED]&X-Amz-Signature=[REDACTED]&X-Amz-Expires=60',
+      });
+      expect(redactedOutgoingSpanAttributes({ origin: 'https://api.example.test', path: '/v1/x?page=2' })).toEqual({});
+      expect(redactedOutgoingSpanAttributes({ origin: 'https://api.example.test', path: '/v1/x' })).toEqual({});
+      expect(redactedOutgoingSpanAttributes({ origin: 'not a url', path: '/x?token=1' })).toEqual({});
+    });
+
+    it("repeats instrumentation-http's own default list, since setting redactedQueryParams replaces it", () => {
+      const pkgRequire = createRequire(require.resolve('@opentelemetry/auto-instrumentations-node'));
+      const httpDir = dirname(pkgRequire.resolve('@opentelemetry/instrumentation-http/package.json'));
+      const internal = readFileSync(resolve(httpDir, 'build/src/internal-types.js'), 'utf8');
+      const block = internal.match(/DEFAULT_QUERY_STRINGS_TO_REDACT = \[([^\]]*)\]/)?.[1] ?? '';
+      const installed = [...block.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+      expect(installed.length).toBeGreaterThan(0);
+      expect([...INSTRUMENTATION_DEFAULT_REDACTED_QUERY_PARAMS]).toEqual(installed);
+      expect(OUTGOING_REDACTED_QUERY_PARAMS).toEqual(expect.arrayContaining([...installed, 'token', 'hub.verify_token']));
+    });
+
+    it('leaves no query credential on a real exported span, server or client (instrumentation probe)', () => {
+      // `test/helpers/span-redaction-probe.ts` runs the installed http and undici
+      // instrumentations in a child process with the settings `instrumentation.ts` passes.
+      const out = execFileSync(process.execPath, ['--import', 'tsx', 'test/helpers/span-redaction-probe.ts'], {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        env: { ...process.env, OTEL_LOG_LEVEL: 'none' },
+        timeout: 30_000,
+      });
+      const spans = JSON.parse(out) as { kind: number; instrumentation: string; attributes: Record<string, string> }[];
+      const server = spans.filter((s) => s.kind === 1);
+      const client = spans.filter((s) => s.kind === 2);
+      // Not vacuous: one server span per request, and client spans from both instrumentations.
+      expect(server).toHaveLength(7);
+      expect(new Set(client.map((s) => s.instrumentation))).toEqual(
+        new Set(['@opentelemetry/instrumentation-undici', '@opentelemetry/instrumentation-http']),
+      );
+      const serverText = JSON.stringify(server);
+      for (const secret of ['SECRETINVITE1', 'SECRETQ2', 'SECRETENC3', 'SECRETAMZ4', 'SECRETHTTP5', 'SECRETMEDIA6']) {
+        expect(serverText).not.toContain(secret);
+      }
+      // Client spans: query credentials only. Path tokens are inbound routes' (`/invites/:token`,
+      // media streams); the app never calls them, so outgoing paths are not rewritten.
+      const clientText = JSON.stringify(client);
+      for (const secret of ['SECRETQ2', 'SECRETENC3', 'SECRETAMZ4', 'SECRETHTTP5']) {
+        expect(clientText).not.toContain(secret);
+      }
+      expect(serverText).toContain('/invites/:token/claim');
+      expect(serverText).toContain('/media-stream/static/call-9/[REDACTED]');
+    }, 30_000);
   });
 });
 
@@ -240,14 +324,17 @@ describe('every sink actually redacts', () => {
      *
      * The traces half. `getNodeAutoInstrumentations` merges the hook's
      * attributes LAST over the instrumentation's own, so this genuinely
-     * overrides `http.url`/`http.target`/`url.path` rather than adding beside
-     * them — the property the redaction depends on, verified against
+     * overrides `url.path` (and `url.query`) rather than adding beside it —
+     * the property the redaction depends on, verified against
      * `instrumentation-http`'s `getIncomingRequestAttributes` and written up in
-     * `redact-url.ts`.
+     * `redact-url.ts`. (Agency: the old-semconv keys are added beside it at 0.223.0.)
+     *
+     * Agency: plus the outgoing settings, the same ones the span probe below runs with.
      */
     const source = SRC('instrumentation.ts');
-    expect(source).toMatch(/'@opentelemetry\/instrumentation-http': \{\n\s+startIncomingSpanHook: redactedRequestSpanAttributes,/);
-    expect(source).toContain("import { redactedRequestSpanAttributes } from './utils/redact-url.js';");
+    expect(source).toMatch(/'@opentelemetry\/instrumentation-http': \{\n\s+startIncomingSpanHook: redactedRequestSpanAttributes,\n\s+redactedQueryParams: \[\.\.\.OUTGOING_REDACTED_QUERY_PARAMS\],\n\s+\},/);
+    expect(source).toMatch(/'@opentelemetry\/instrumentation-undici': \{\n\s+startSpanHook: redactedOutgoingSpanAttributes,\n\s+\},/);
+    expect(source).toMatch(/import \{\n\s+OUTGOING_REDACTED_QUERY_PARAMS,\n\s+redactedOutgoingSpanAttributes,\n\s+redactedRequestSpanAttributes,\n\} from '\.\/utils\/redact-url\.js';/);
   });
 
   it('redact-url.ts imports NOTHING, so instrumentation.ts can reach it', () => {
@@ -260,7 +347,7 @@ describe('every sink actually redacts', () => {
      */
     // PORT NOTE (magick-agency): except the log scrubber, a leaf that itself imports nothing.
     const imports = SRC('utils/redact-url.ts').match(/^\s*import\s.*$/gm) ?? [];
-    expect(imports).toEqual(["import { scrubMediaUrl } from '@magick-agency/observability/url-scrub';"]);
+    expect(imports).toEqual(["import { isSecretQueryKey, scrubMediaUrl } from '@magick-agency/observability/url-scrub';"]);
     const leaf = readFileSync(resolve(process.cwd(), '../../packages/observability/src/url-scrub.ts'), 'utf8');
     expect(leaf).not.toMatch(/^\s*import\s/m);
   });
