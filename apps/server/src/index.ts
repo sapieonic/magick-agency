@@ -52,6 +52,8 @@ async function main(): Promise<void> {
     shuttingDown = true;
     logger.info({ signal }, 'shutting down');
     await app.close().catch((err) => logger.error({ err }, 'http close failed'));
+    // Marks the HTTP-first order in the logs (docs/operations.md, "Shutdown and grace period").
+    logger.info('http closed');
     for (const stop of [...stops].reverse()) {
       await stop().catch((err) => logger.error({ err }, 'stop failed'));
     }

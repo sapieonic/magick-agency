@@ -1,0 +1,102 @@
+# Production stack for magick-agency: the server, nginx (both UIs + the one
+# reverse proxy) and Redis. Postgres is NOT here: NODE_ENV=production turns
+# Postgres TLS on and verifies the certificate, so point DATABASE_URL at a
+# managed / TLS-enabled database (docs/operations.md, "Postgres TLS").
+#
+#   cp docker/.env.prod.example docker/.env.prod     # fill it in
+#   docker compose -f docker/docker-compose.prod.yml --env-file docker/.env.prod up -d --build
+#
+# Ported in part from core `docker/docker-compose.yml`@4850d1d9 (build context,
+# env_file, depends_on health, restart policy). Everything else is NEW.
+#
+# DEPLOYMENT INVARIANTS (docs/operations.md "Deployment invariants"):
+#   1. ONE replica of `server`. Never `--scale server=N` or `deploy.replicas`:
+#      the agency runtime, the bridge's unstored-token memo and every sweep
+#      assume one process (D2).
+#   2. `server` is reachable ONLY through `web` (exactly TRUST_PROXY_HOPS=1
+#      proxy): it publishes no port. Put a load balancer / TLS terminator in
+#      front of `web` and that is a second hop: set TRUST_PROXY_HOPS=2.
+#   3. NODE_ENV=production: Postgres TLS on and verified (Node's roots, or
+#      DB_SSL_CA, the PEM text of a private CA). DB_SSL_REJECT_UNAUTHORIZED=false
+#      is the only opt-out. No TLS parameters in DATABASE_URL (refused at boot).
+#   4. Redis persists (AOF here) and never evicts (`noeviction`): a call token
+#      lost early is refused and cuts the live call (Q6).
+#   5. stop_grace_period 45s: shutdown closes HTTP, then drains in-flight
+#      campaign-completion emails for up to 30s; Docker's default is 10s.
+#   6. Migrations run before the server starts, on every start (entrypoint.sh).
+name: magick-agency
+
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: magick-agency-server
+    env_file:
+      - .env.prod
+    environment:
+      NODE_ENV: production
+      PORT: "3021"
+      REDIS_URL: redis://redis:6379/0
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
+    # No `ports:` on purpose (invariant 2).
+    expose:
+      - "3021"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3021/readyz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      # Migrations run first; the first boot on an empty database applies the baseline.
+      start_period: 120s
+    stop_grace_period: 45s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ..
+      dockerfile: docker/web.Dockerfile
+      args:
+        VITE_BRAND: ${VITE_BRAND:-magick-agency}
+        VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:-}
+        VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN:-}
+        VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-}
+        VITE_FIREBASE_STORAGE_BUCKET: ${VITE_FIREBASE_STORAGE_BUCKET:-}
+        VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID:-}
+        VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID:-}
+        VITE_POSTHOG_KEY: ${VITE_POSTHOG_KEY:-}
+        VITE_POSTHOG_HOST: ${VITE_POSTHOG_HOST:-}
+        VITE_POSTHOG_ENVIRONMENT: ${VITE_POSTHOG_ENVIRONMENT:-production}
+    image: magick-agency-web
+    ports:
+      # Console + carrier webhooks/media. Front it with TLS (see invariant 2).
+      - "${CONSOLE_BIND:-0.0.0.0}:${CONSOLE_PORT:-8080}:8080"
+      # Super-admin: loopback by default; reach it over SSH / VPN.
+      - "${SUPER_ADMIN_BIND:-127.0.0.1}:${SUPER_ADMIN_PORT:-8081}:8081"
+    depends_on:
+      server:
+        condition: service_healthy
+        # nginx resolves `server` once, at start: restart it whenever compose
+        # recreates or restarts the server, or it keeps proxying to a stale IP.
+        restart: true
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    # AOF persistence (fsync every second) and no eviction (invariant 4). No
+    # maxmemory is set, so Redis grows rather than evicts; size the host for it.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  redisdata:

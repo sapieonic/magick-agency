@@ -10,8 +10,9 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 const workspace = /^@magick-agency\//;
 
 await build({
-  entryPoints: ['src/index.ts'],
-  outfile: 'dist/index.js',
+  // migrate.js: the pre-boot migration step docker/entrypoint.sh runs.
+  entryPoints: ['src/index.ts', 'src/migrate.ts'],
+  outdir: 'dist',
   bundle: true,
   platform: 'node',
   target: 'node22',
@@ -31,4 +32,4 @@ await build({
     },
   ],
 });
-console.log('built dist/index.js');
+console.log('built dist/index.js, dist/migrate.js');

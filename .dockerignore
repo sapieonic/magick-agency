@@ -1,0 +1,10 @@
+# Build context for docker/Dockerfile and docker/web.Dockerfile is the repo root.
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+!**/.env.example
+.git
+.test-env.local.json
