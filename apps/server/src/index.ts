@@ -1,3 +1,7 @@
+// First, as in core (`src/index.ts:1`@4850d1d9): it installs the meter provider before
+// `@magick-agency/observability` binds every metric to the global meter, and its
+// auto-instrumentations patch pg, ioredis and http before those are loaded.
+import { shutdownOtelSdk } from './instrumentation.js';
 import Redis from 'ioredis';
 import { initDbPool, closePool } from '@magick-agency/db';
 import { logger } from '@magick-agency/observability';
@@ -57,6 +61,9 @@ async function main(): Promise<void> {
     }
     await redis.quit().catch(() => {});
     await closePool();
+    // Last, after everything that records a metric or a span (core `src/index.ts:952`@4850d1d9):
+    // the SDK's final forced flush carries what the stops above recorded. No-op with OTel off.
+    await shutdownOtelSdk();
     process.exit(0);
   };
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
@@ -75,7 +82,7 @@ async function main(): Promise<void> {
   // startup reaper and `agencyRuntime.start()` complete before `app.listen`), so no
   // request — an agent going available, say — lands before the startup reap.
   await app.listen({ port: config.server.port, host: config.server.host });
-  logger.info({ port: config.server.port }, 'magick-agency listening');
+  logger.info({ port: config.server.port, otelExport: config.otel.exporting }, 'magick-agency listening');
 }
 
 main().catch((err) => {

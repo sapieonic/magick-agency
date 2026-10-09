@@ -1274,7 +1274,7 @@ New (no source twin):
 | `index.ts:977-984` (`agencyRuntime.start()` then `app.listen`) | `apps/server/src/index.ts` (lead-owned; edit authorised by the lead at review) | modified | `app.listen` + its log line moved after the four `stops.push(await start…)` calls, so no request (once Phase 8 mounts `POST /sessions`) lands before the startup reap. Doc comment's start order updated. Pinned by `runtime-boot-order` case 1 |
 | master `src/index.ts:677,720,741-770`@a1f0756a | `apps/server/src/bootstrap/agency.ts` | verbatim (relocated) | Boot-time `agencyIngestJobRepository.reapStaleJobs()` + `agencyIngestReapInterval = startAgencyIngestReaper()`, cleared on shutdown (lane B2 carry-forward) |
 | (new) | `apps/server/src/agency/campaign-completion-notice.ts` | new | The in-process body of master's `POST /webhooks/core/agency-campaign-completed` (§6.3) |
-| core `test/helpers/otel-metric-reader.ts` | `apps/server/test/helpers/otel-metric-reader.ts` | modified | Verbatim, with core's `ScrapeMetricReader` + `freshGaugeTemporality` inlined from `src/utils/otel-sdk-config.ts:242-245,268-272,320-331` (that file is not ported). Needs `@opentelemetry/sdk-metrics` (devDependency added to `apps/server`, core's major 2) |
+| core `test/helpers/otel-metric-reader.ts` | `apps/server/test/helpers/otel-metric-reader.ts` | modified | Verbatim, with core's `ScrapeMetricReader` + `freshGaugeTemporality` inlined from `src/utils/otel-sdk-config.ts:242-245,268-272,320-331` (that file was not ported then; its non-scrape half now is, see "OpenTelemetry SDK", and `ScrapeMetricReader` still is not). Needs `@opentelemetry/sdk-metrics` (now a runtime dependency of `apps/server`, core's major 2) |
 
 Deleted (not ported): `agency/attempt-batcher.ts`, `agency/attempt-batch-reference.ts` (billing; B1 listed the batch reference), `agency/dnc-outbox.ts`, `agency/dnc-resync.ts` (B8; B1 listed them), `agency/agency-s2s-contract.fixture.json` (retires).
 
@@ -2807,3 +2807,40 @@ comment and a test that was mutation-checked (break → red → restore).
 | OQ-6 (Q5) | master `src/cache/redis-cache.ts@a1f0756a` (`del` swallows); master `user.routes.ts` / agency's new super-admin membership routes | `apps/server/src/cache/redis-cache.ts` (`delForRevocation`, 3 attempts, 50/100ms backoff, ERROR log with keys), `src/cache/revocation-unavailable.ts`, `user.routes.ts`, `super-admin.routes.ts` | modified. Role changes (`PUT /users/:id/role`, `PUT /super-admin/tenants/:id/memberships/:membershipId/role`) are idempotent on retry → 503 `cache_invalidation_failed` (reviewed fixed-shape 5xx, passes the mask) AFTER the role write, staffing close and audit. Membership removals (`DELETE /users/:id/membership`, `DELETE /super-admin/tenants/:id/memberships/:membershipId`) are NOT idempotent (a retry 404s before the delete) → keep 2xx, ERROR log only. Grants (invite, add user, invite claim) and non-access invalidations (user record, tenant/account records) keep `del`. No metric added (none fits; adding one is an observability-declaration change). TTLs: membership 30 min, user 20 min, tenant/account record 5 min, local layer 5 s (off by default). No tenant/account soft-delete route exists in agency | unit `redis-cache-revocation` (3, new), `user-offboarding-staffing` (+3), `super-admin-memberships` (+2); 8 route test doubles gain `delForRevocation` forwarding to their `del` mock. Mutations: helper returns true → 1 red; 503 line removed → 2 red |
 | OQ-7 | core `src/config/schema.ts:1961@4850d1d9` (`transcriptRetentionDays` `.default(30)`, agency window falls back to it) | `apps/server/src/config/blocks/analysis.ts`, `bootstrap/analysis.ts` comment | modified. `AGENCY_TRANSCRIPT_RETENTION_DAYS` defaults to 30 (env fallback `DIALER_TRANSCRIPT_RETENTION_DAYS`, core's order), so the purge timer is armed on every parsed config. `AGENCY_RETENTION_DAYS` stays unset (core had no config default; its row window came from the retention Lambda's request, `RETENTION_DAYS=85`); the `RETENTION_MIN_DAYS` floor is unchanged | unit `schema.dialer-analysis` (2 modified: "defaults transcript retention to thirty days" restored against the agency key; row window unset), `analysis-config` (defaults), `open-questions-config` (3), `bootstrap-analysis` (+1: default parsed config schedules the purge). Mutation: `.optional()` restored → 3 red |
 | OQ-8 | master super-admin routes' `superAdminAuditRepository.log(...).catch(() => {})` | `apps/server/src/audit/super-admin-audit.ts` (`recordSuperAdminAudit`), `super-admin{,-phone,-feature-flags,-account-settings}.routes.ts` | modified. Still fire-and-forget; 20 silent catches replaced by the helper, which logs a failed write at ERROR with action, actor (id, email), target (type, id) and tenant. The two awaited concurrency writes keep master's shape (master's source-scan tests read it) with the same context added to their existing error logs | unit `super-admin-audit-failure-logged` (4, new, incl. a source scan that no route keeps the silent catch). Mutation: empty `onError` → 2 red |
+
+## OpenTelemetry SDK (branch `feat/otel-sdk`, Manas 2026-10-09)
+
+Nothing started an SDK, so every metric and `@Traced` span went to the OTel API's no-op. Export path
+ruled by Manas: **OTLP push only** (core's Grafana Cloud path); core's `:9090` scrape stays unported.
+With `OTEL_ENABLED=true` and `OTEL_EXPORTER_OTLP_ENDPOINT` set, traces and metrics export; otherwise no
+provider is installed and behaviour is as before.
+
+| Source | Destination | Kind | Notes |
+|---|---|---|---|
+| core `src/instrumentation.ts`@4850d1d9 | `apps/server/src/instrumentation.ts` | modified | Deleted: the pull-only `MeterProvider` installed with export off (`:213-228`) and both `setMetricsScrapeRenderer` calls (`:205`, `:227`); `withFreshGauges` takes no `lastExport`. Added: `import 'dotenv/config'` first (master `src/instrumentation.ts:1-2`@a1f0756a; here `.env` is otherwise loaded by `config/index.ts`, after this file), and master's invite-token hook on the HTTP instrumentation (`src/utils/otel-instrumentations.ts:132-134`@a1f0756a). `APP_VERSION`/`SERVICE_NAME` from `@magick-agency/observability/{version,service}` subpaths (the index would load `meter.ts` before the provider exists); heap gauge meter `magick-agency.runtime` |
+| core `src/utils/otel-sdk-config.ts`@4850d1d9 | `apps/server/src/utils/otel-sdk-config.ts` | modified | `:1-301` verbatim except the default `service.name` (`SERVICE_NAME`, `:120`) and `withFreshGauges`' `lastExport` (`:280-291`). Deleted: the `:9090` section `:303-457` |
+| core `src/utils/metrics-scrape.ts`@4850d1d9 | — | deleted | The `:9090` scrape seam |
+| core `src/index.ts:1, :952`@4850d1d9 | `apps/server/src/index.ts` | modified | `instrumentation.js` imported first; `await shutdownOtelSdk()` after `closePool()`, before `process.exit(0)`. The listen log line carries `otelExport` |
+| (new) | `apps/server/src/config/blocks/base.ts` (`otel`), `.env.example` | new | `config.otel` = `enabled`, `endpoint`, `exporting`, `metricsExportIntervalMs`, `serviceName`, `serviceInstanceIdEnabled`, parsed exactly as `instrumentation.ts` reads them (it cannot read config: it loads first, and config can `process.exit(1)`). `OTEL_EXPORTER_OTLP_HEADERS` (the token) is left out |
+
+Dependencies (`apps/server`): `@opentelemetry/sdk-node` 0.223, `auto-instrumentations-node` 0.81,
+`exporter-{trace,metrics}-otlp-proto` 0.223, `instrumentation-pino` 0.69, `resources` / `sdk-metrics`
+2.12, `semantic-conventions` 1.43; dev `instrumentation-runtime-node` 0.36. Core pinned 0.213 / 0.75 /
+2.6; one release train newer so `sdk-metrics` stays the single 2.12 copy already in the lockfile.
+
+Tests:
+
+| Test | Source | Source → ported | Notes |
+|---|---|---|---|
+| `test/unit/utils/otel-sdk-config.test.ts` | core `test/unit/utils/otel-sdk-config.test.ts`@4850d1d9 | 42 → 25 (+5 agency) = 30 | Deleted (17, the `:9090` scrape): "the :9090 scrape reader applies the same rule"; `renderPrometheusScrape — the local :9090 view` (4); `collection errors in the :9090 body` (3); `renderLastExportScrape — …` (8); "always builds a meter provider, so :9090 serves metrics with OTLP export off". Modified: default `service.name`; "drops none of OUR metrics" reads `packages/observability/src/metrics/*.ts` (canary 30, not 100); "exporting path has exactly ONE metric reader" (no `lastExport`). Added under `agency additions`: no provider with export off; `dotenv/config` first; observability reached only through import-free subpaths; the HTTP redaction hook (master's deleted `redact-url` case "the trace instrumentation set hands the redactor to the HTTP instrumentation", as a source audit); `index.ts` imports it first and flushes it last |
+| `test/unit/config/otel-config.test.ts` | (new) | 4 | `config.otel` agrees with the SDK's own resolvers |
+
+Mutation-checked (break → red → restore): HTTP hook removed; `dotenv/config` removed; flush moved before
+`closePool()`; a provider installed with export off; config `enabled` accepting `'1'`; config parsing the
+interval itself. Each turned one case red.
+
+End-to-end against a local `otel/opentelemetry-collector-contrib:0.111.0` (OTLP/HTTP), both the esbuild
+bundle and `tsx src/index.ts`: pg, ioredis and http spans; app metrics under scope `magick-agency`
+(e.g. `invite_claims_total`), the runtime allow-list and `nodejs_heap_size_used_bytes`; logs through
+`instrumentation-pino`; invite paths exported as `/invites/:token`; a final batch flushed on SIGTERM.
+With OTel off: no `[otel]` output, nothing sent, same shutdown.

@@ -1,8 +1,10 @@
 import { z } from 'zod';
+import { SERVICE_NAME } from '@magick-agency/observability/service';
 import type { Env } from '../env.js';
+import { resolveMetricsExportIntervalMs } from '../../utils/otel-sdk-config.js';
 
 /**
- * Lead-owned block: process, Postgres, Redis. Key shape follows core's config
+ * Lead-owned block: process, Postgres, Redis, OpenTelemetry. Key shape follows core's config
  * (`config.server`, `config.db`, `config.redis`) so ported code reads the same
  * paths.
  */
@@ -117,6 +119,27 @@ export const baseConfigSchema = z.object({
     url: z.string().url(),
     keyPrefix: z.string().default(''),
   }),
+  /**
+   * The OpenTelemetry SDK's settings, as `src/instrumentation.ts` resolves them. That file
+   * cannot read this block: it runs before any other module, and this config's module body can
+   * `process.exit(1)` (core's rule, `src/utils/otel-sdk-config.ts` header). It reads the same
+   * variables itself, with the same lenient parsing (an unusable interval falls back to the
+   * default rather than failing boot), and `test/unit/config/otel-config.test.ts` pins that the
+   * two agree. `OTEL_EXPORTER_OTLP_HEADERS` carries the Grafana Cloud token and is left out.
+   */
+  otel: z.object({
+    /** Only the exact string `true`, like core. */
+    enabled: z.string().optional().transform((v) => v === 'true'),
+    /** Base URL; the SDK appends `/v1/traces` and `/v1/metrics`. Blank = unset. */
+    endpoint: z.string().optional().transform((v) => v || undefined),
+    metricsExportIntervalMs: z.string().optional().transform(resolveMetricsExportIntervalMs),
+    serviceName: z.string().optional().transform((v) => v || SERVICE_NAME),
+    serviceInstanceIdEnabled: z.string().optional().transform((v) => v === 'true'),
+  }).transform((o) => ({
+    ...o,
+    /** Traces and metrics leave the process only when both are set (`instrumentation.ts`). */
+    exporting: o.enabled && o.endpoint !== undefined,
+  })),
 });
 
 export function readBaseEnv(env: Env) {
@@ -138,6 +161,13 @@ export function readBaseEnv(env: Env) {
     redis: {
       url: env['REDIS_URL'],
       keyPrefix: env['REDIS_KEY_PREFIX'],
+    },
+    otel: {
+      enabled: env['OTEL_ENABLED'],
+      endpoint: env['OTEL_EXPORTER_OTLP_ENDPOINT'],
+      metricsExportIntervalMs: env['OTEL_METRICS_EXPORT_INTERVAL_MS'],
+      serviceName: env['OTEL_SERVICE_NAME'],
+      serviceInstanceIdEnabled: env['OTEL_SERVICE_INSTANCE_ID_ENABLED'],
     },
   };
 }
