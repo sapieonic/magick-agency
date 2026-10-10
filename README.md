@@ -19,8 +19,9 @@ packages/observability/  logger, OTel, metric declarations
 docker/              dev Postgres + Redis; the production image, nginx and compose file
 ```
 
-Production: `docker/docker-compose.prod.yml`; see [`docs/operations.md`](docs/operations.md)
-("Production packaging").
+Production: `docker/docker-compose.prod.yml`. [`DEPLOYMENT.md`](DEPLOYMENT.md) walks through a
+cloud deployment on your own domain, step by step; [`docs/operations.md`](docs/operations.md)
+explains the settings and invariants behind it.
 
 ## Dev setup
 

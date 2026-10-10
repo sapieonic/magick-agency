@@ -47,6 +47,7 @@ Details and next steps: [`status.md`](status.md).
 | [`decisions.md`](decisions.md) | Every decision by ID: settled S1–S8, launch decisions, build decisions B1–B17, rulings Q1–Q9, still open with owner |
 | [`seams.md`](seams.md) | Where files go, module-area files and config keys, the cross-module seams, shared infrastructure |
 | [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count |
+| [`../DEPLOYMENT.md`](../DEPLOYMENT.md) | Deploying to the cloud step by step: VM, managed Postgres, S3, DNS and TLS for your domain, vendor wiring, verification, day-2 work, troubleshooting |
 | [`../README.md`](../README.md) | Dev setup: prerequisites, infra, env, migration, first super-admin, running everything |
 | [`../CLAUDE.md`](../CLAUDE.md) | Rules for agents working in this repo |
 | `../packages/db/BASELINE.md` | The baseline schema inventory |
@@ -64,6 +65,6 @@ B16, Q1, Q6, Q8, Q9) → [`architecture.md`](architecture.md) → [`modules.md`]
 files under review.
 
 **Whoever runs the launch:** [`status.md`](status.md) (not built, invariants, checklist) →
-[`operations.md`](operations.md) → phase 10 in [`intent-and-plan.md`](intent-and-plan.md) →
+[`operations.md`](operations.md) → [`../DEPLOYMENT.md`](../DEPLOYMENT.md) → phase 10 in [`intent-and-plan.md`](intent-and-plan.md) →
 [`decisions.md`](decisions.md) §2 and §5 (launch decisions still open; Q4 maps imported `api_key`
 audit rows to `system`).
