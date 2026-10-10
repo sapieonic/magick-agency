@@ -165,7 +165,12 @@ describe('agency runtime end to end — real app, real bridge, fake carrier (int
   it('session → ready → reservation → bridged call → disposition → wrap-up → analysis enqueued → attempt ended', async () => {
     // ── The campaign and its one contact. `record_calls` so the bridge requests a
     //    recording (analysis gate 6, consent); a non-empty catalog so a connected call
-    //    owes a disposition and opens a wrap-up. ─────────────────────────────────────
+    //    owes a disposition and opens a wrap-up. The account must allow recording: an
+    //    unset allow_recording means no recording at call time. ───────────────────────
+    await getTestPool().query(
+      'INSERT INTO account_settings (tenant_id, account_id, allow_recording) VALUES ($1, $2, true)',
+      [TENANT, ACCOUNT],
+    );
     const campaign = await insertAgencyCampaign({
       tenant_id: TENANT,
       account_id: ACCOUNT,

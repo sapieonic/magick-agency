@@ -351,6 +351,14 @@ describe('campaignSaveRefusal — the five refusals, in the shape they actually 
     expect(message).toContain('No summary');
   });
 
+  it('forwards `Feature Not Enabled` without the summary advice when no profile was sent', () => {
+    const message = campaignSaveRefusal(
+      apiError(403, { error: 'Feature Not Enabled', message: 'Agency dialer is not enabled for this account.' }),
+      noProfile,
+    );
+    expect(message).toBe('Agency dialer is not enabled for this account.');
+  });
+
   /**
    * ⚠️ The API's `{ error: 'Not Found', message: 'Analysis profile not found' }`
    * NEVER reaches the browser: `'Not Found'` is not on the API's allow-list and

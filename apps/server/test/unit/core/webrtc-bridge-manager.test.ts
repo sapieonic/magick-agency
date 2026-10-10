@@ -88,6 +88,8 @@ vi.mock('../../../src/analytics/posthog.js', () => mockAnalytics);
 
 import { WebRtcBridgeManager, WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
 import { encodeAlaw, decodeAlaw } from '../../../src/utils/audio.js';
+// The platform's default for an unset allow_recording; the bridge must agree with it.
+import { DEFAULT_ALLOW_RECORDING } from '../../../src/settings/agency-account-settings.js';
 
 // ── Tone helpers for media-relay fidelity assertions ───────────────────────
 function alaw8kTone(freq: number, samples: number, amp = 8000): Buffer {
@@ -702,6 +704,7 @@ describe('WebRtcBridgeManager recording intent', () => {
   });
 
   it('opts into recording: persists intent and wires the <Record> callback URL', async () => {
+    mockAccountSettings.getAllowRecording.mockResolvedValueOnce(true);
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
     await dial(mgr, { ...VL_PARAMS, record: true });
@@ -712,6 +715,19 @@ describe('WebRtcBridgeManager recording intent', () => {
     expect(mockAdapter.initiateCall.mock.calls[0]![0].enableRecording).toBe(true);
     // The resolved max duration (1800) is still what bounds the call.
     expect(mockAdapter.initiateCall.mock.calls[0]![0].maxDuration).toBe(1800);
+
+    await endByUser(mgr);
+  });
+
+  it('an unset allow_recording (NULL) does NOT record: the same default the campaign-write check uses', async () => {
+    // The default getAllowRecording mock resolves null (no settings row).
+    expect(DEFAULT_ALLOW_RECORDING).toBe(false);
+    const cm = makeCallManager();
+    const mgr = new WebRtcBridgeManager(cm as any, null);
+    await dial(mgr, { ...VL_PARAMS, record: true });
+
+    expect(mockRepo.create.mock.calls[0]![0].recording_requested).toBe(DEFAULT_ALLOW_RECORDING);
+    expect(mockAdapter.initiateCall.mock.calls[0]![0].enableRecording).toBe(DEFAULT_ALLOW_RECORDING);
 
     await endByUser(mgr);
   });

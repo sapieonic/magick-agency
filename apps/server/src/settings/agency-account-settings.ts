@@ -15,11 +15,10 @@ import type {
  *
  * ── What `null` in the row resolves to, and why ────────────────────────────
  *  - `allow_recording` → `false`. Off by default, because this dials real people
- *    at volume. The per-field campaign-write assert reads this value, so the null
- *    case must be the safe direction. NOTE: the baseline column comment says the
- *    call-start default for a NULL is `true`; that is the WebRTC bridge's concern
- *    at call time, and a campaign can only ask for recording when this resolves
- *    `true`.
+ *    at volume. The per-field campaign-write assert reads this value, and the WebRTC
+ *    bridge applies the same default at call time (`?? false`, pinned to this
+ *    constant by a test), so a NULL never records anywhere. The baseline migration's
+ *    SQL comment saying NULL inherits `true` predates that and is superseded.
  *  - `analyze_calls` → `false`, for the same reason.
  *  - `max_concurrent_calls` → the row's value, or 5 when there is no row — the
  *    column default.

@@ -516,8 +516,9 @@ describe('recording lifecycle scenarios', () => {
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
 
-    // create with recording requested
+    // create with recording requested, on an account that allows it (NULL would not)
     // borrowed browser socket at dial; no token is minted for it.
+    mockAccountSettings.getAllowRecording.mockResolvedValueOnce(true);
     const browser = fakeWs();
     const record = await mgr.createBridgedCall({ ...PARAMS, ...AGENCY, browserSocket: browser as any, record: true });
     expect(record.id).toBe('call-1');
@@ -596,6 +597,7 @@ describe('recording lifecycle scenarios', () => {
   });
 
   it('Scenario R3: recorded call never answered — busy hangup finalizes at 0 talk-time and no answer XML is ever emitted', async () => {
+    mockAccountSettings.getAllowRecording.mockResolvedValueOnce(true);
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
 
@@ -628,6 +630,7 @@ describe('recording lifecycle scenarios', () => {
   it('Scenario R4: max-duration override flows into the recording cap (3600 instead of 1800)', async () => {
     // override the max duration for this dial only: the account's `webrtc_max_duration_seconds`.
     mockAccountSettings.getWebrtcMaxDurationSeconds.mockResolvedValueOnce(3600);
+    mockAccountSettings.getAllowRecording.mockResolvedValueOnce(true);
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);
 

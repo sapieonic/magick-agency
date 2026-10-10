@@ -118,7 +118,7 @@ Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `user_id`, `assigned_by
 
 ### Settings, guard and flags
 
-**`account_settings`**. Per-account settings: `max_concurrent_calls`, `analyze_calls`, `allow_recording`, `webrtc_max_duration_seconds` (NULL = process default; CHECK `> 0`), and the concurrency allocation mode and version.
+**`account_settings`**. Per-account settings: `max_concurrent_calls`, `analyze_calls`, `allow_recording` (no row or NULL = off; the column comment saying NULL inherits true is superseded, see `docs/decisions.md` §4, 2026-10-10), `webrtc_max_duration_seconds` (NULL = process default; CHECK `> 0`), and the concurrency allocation mode and version.
 
 Columns: `id`, `tenant_id`, `account_id`, `max_concurrent_calls`, `created_at`, `updated_at`, `analyze_calls`, `allow_recording`, `concurrency_allocation_mode`, `concurrency_allocation_version`, `webrtc_max_duration_seconds`.
 

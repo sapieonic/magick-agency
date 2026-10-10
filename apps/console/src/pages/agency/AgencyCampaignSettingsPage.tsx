@@ -28,7 +28,6 @@ import {
   analysisGate,
   campaignSaveRefusal,
   payloadSetsProfile,
-  recordingGate,
   recordingPayload,
   recordingStateFromCampaign,
   resolveProfileId,
@@ -37,6 +36,7 @@ import {
 } from '../../utils/agencyCampaignRecording';
 import { CampaignBehaviourSection } from '../campaigns/agency/CampaignBehaviourSection';
 import { CallerIdPicker, AGENCY_TELEPHONY_PROVIDER } from './CallerIdPicker';
+import { CampaignRecordingField } from '../../components/agency/CampaignRecordingField';
 import { Breadcrumbs } from '../../components/common/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { ErrorAlert } from '../../components/common/ErrorAlert';
@@ -269,12 +269,7 @@ export function AgencyCampaignSettingsPage() {
   const block = configBlockReason(config);
   const isLive = campaign.status === 'running' || campaign.status === 'stopping';
 
-  const recordGate = recordingGate({ enabled: recordingEnabled, current: recording.record });
   const summaryGate = analysisGate({ enabled: analyticsEnabled, current: recording.profileId });
-  // Off→on is what the server refuses, so the box locks only in that direction: a
-  // grandfathered campaign whose capability was revoked can still be switched
-  // off, which is the whole point of the asymmetry.
-  const recordLocked = !canEdit || (!recordGate.canEnable && !recording.record);
   const storedProfileId = resolveProfileId(recording.profileId);
   const canPickProfile = analyticsEnabled;
   // Visible when the capability is on (picker, or a notice saying why the list
@@ -368,35 +363,13 @@ export function AgencyCampaignSettingsPage() {
         govern them guarded a surface that did not exist.
       */}
       <div className={styles.basics}>
-        <div className="form-group">
-          <label className={styles.flag}>
-            <input
-              type="checkbox"
-              checked={recording.record}
-              disabled={recordLocked}
-              onChange={(event) =>
-                setRecording({ ...recording, record: event.target.checked })
-              }
-            />
-            Record every call on this campaign
-          </label>
-          <p className={styles.hint}>
-            {recording.record
-              ? 'Agents and the people they reach are both on the recording. Make sure your ' +
-                'agents announce it, and that you are entitled to record in every region this ' +
-                'campaign dials.'
-              : 'Off by default. A campaign call is human-to-human, so recording one is ' +
-                'consent-sensitive in a way an AI call is not.'}
-          </p>
-          {recordGate.notice && (
-            <p className={styles.gateNotice} role="note">
-              {recordGate.notice}
-            </p>
-          )}
-          {fieldErrors['record_calls'] && (
-            <p className={styles.fieldError}>{fieldErrors['record_calls']}</p>
-          )}
-        </div>
+        <CampaignRecordingField
+          checked={recording.record}
+          onChange={(record) => setRecording({ ...recording, record })}
+          capabilityEnabled={recordingEnabled}
+          readOnly={!canEdit}
+          error={fieldErrors['record_calls']}
+        />
 
         {summaryVisible && (
           <div className="form-group">

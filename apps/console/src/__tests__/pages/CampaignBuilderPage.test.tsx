@@ -27,6 +27,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('../../contexts/GovernanceContext', () => ({
+  // The recording field reads the account's capabilities; allowed here.
+  useGovernance: () => ({ isEnabled: () => true, map: {}, loading: false, refresh: vi.fn() }),
+}));
 // The caller-ID picker is a hard gate on this page: The API rejects a campaign with
 // an empty `caller_ids`, so nothing downstream runs until one is chosen.
 vi.mock('../../hooks/usePhoneNumbers', () => ({

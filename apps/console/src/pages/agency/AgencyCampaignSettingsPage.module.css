@@ -43,19 +43,6 @@
   color: var(--danger);
 }
 
-.flag {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--text-primary);
-  cursor: pointer;
-}
-
-.flag input[disabled] {
-  cursor: not-allowed;
-}
-
 .hint {
   margin-top: 6px;
   font-size: 12px;
