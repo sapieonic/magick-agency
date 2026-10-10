@@ -55,6 +55,9 @@ and the S3 Terraform: lint clean in 7 packages; `apps/server` 6507 (307 files); 
 `packages/domain` 50; `packages/observability` 14. Integration and build were not re-run then,
 apart from the pipeline and runtime-e2e integration files.
 
+Re-run on 2026-10-11, after the brand logo and favicon (B17 amended): `apps/console` lint clean,
+4389 unit (218 files), build OK; `apps/super-admin` lint clean, 374 unit (26 files), build OK.
+
 CI (`.github/workflows/ci.yml`) runs lint, unit and build in one job, and the integration suites
 against Postgres 16 and Redis 7 service containers on the same ports in another. Per-module test
 files are listed in [`modules.md`](modules.md).

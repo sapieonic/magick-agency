@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
-import { loadBrandConfig, injectBrandName } from './src/brand/load-brand';
+import { loadBrandConfig, injectBrandName, injectBrandFavicon } from './src/brand/load-brand';
 import type { Brand } from './src/brand/types';
 
 /*
@@ -51,12 +51,13 @@ const BRANDS_DIR = resolve(ROOT, 'brands');
 const BRAND_NAME = process.env.VITE_BRAND ?? 'magick-agency';
 const brand: Brand = loadBrandConfig(BRANDS_DIR, BRAND_NAME);
 
-/** Rewrites %BRAND_NAME% placeholders in index.html with the active brand's name. */
+/** Rewrites index.html's %BRAND_NAME% placeholders with the active brand's name and
+ *  %BRAND_FAVICON% with its favicon path (or `data:,`). */
 function brandPlugin(b: Brand): Plugin {
   return {
     name: 'brand-inject',
     transformIndexHtml(html) {
-      return injectBrandName(html, b.name);
+      return injectBrandFavicon(injectBrandName(html, b.name), b.favicon);
     },
   };
 }
@@ -84,9 +85,9 @@ const API_PREFIXES = [
 export default defineConfig({
   plugins: [react(), brandPlugin(brand)],
   // The active brand's optional static assets (`brands/<id>/public/`), served at
-  // the site root. The default
-  // `magick-agency` pack ships none (decision B17), so the directory is used only when it exists; `false` turns
-  // public-dir copying off instead of pointing Vite at a missing folder.
+  // the site root: the default `magick-agency` pack ships its logo and favicon there.
+  // A pack without the folder gets `false`, which turns public-dir copying off
+  // instead of pointing Vite at a missing folder.
   publicDir: existsSync(resolve(BRANDS_DIR, BRAND_NAME, 'public'))
     ? resolve(BRANDS_DIR, BRAND_NAME, 'public')
     : false,

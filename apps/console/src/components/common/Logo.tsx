@@ -8,12 +8,25 @@ interface LogoProps {
 }
 
 /**
- * Brand mark: a text tile in the brand accent with the brand's `shortName`.
- *
- * Decision B17: no logo image asset exists, so the mark is a neutral wordmark
- * tile — the same one the super-admin app uses (`apps/super-admin/src/components/common/Logo.tsx`).
+ * Brand mark. The brand pack's `logo` image when it has one (the default
+ * `magick-agency` pack does), otherwise a text tile in the brand accent with the
+ * brand's `shortName`, so a pack without artwork still has a mark. The
+ * super-admin app draws the same mark (`apps/super-admin/src/components/common/Logo.tsx`).
  */
 export function Logo({ size = 28, className, title = brand.name }: LogoProps) {
+  if (brand.logo) {
+    return (
+      <img
+        src={brand.logo}
+        alt={title}
+        width={size}
+        height={size}
+        className={className}
+        draggable={false}
+        style={{ flexShrink: 0, objectFit: 'contain' }}
+      />
+    );
+  }
   return (
     <span
       role="img"

@@ -152,6 +152,11 @@
   max-width: 420px;
 }
 
+.logoMark {
+  display: block;
+  margin: 0 auto 12px;
+}
+
 .logo {
   font-family: var(--font-display);
   font-size: 24px;

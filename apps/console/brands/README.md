@@ -7,8 +7,9 @@ time** by the `VITE_BRAND` env var (default: `magick-agency`).
 
     brands/
       <brand-id>/
-        brand.config.json     # name, shortName, optional tagline, accent colors
+        brand.config.json     # name, shortName, optional tagline, logo, favicon, accent colors
         public/               # optional static assets, served at the site root
+        source/               # optional originals (not served), e.g. the full-size logo
 
 ## brand.config.json
 
@@ -16,6 +17,8 @@ time** by the `VITE_BRAND` env var (default: `magick-agency`).
       "name": "Acme Voice",            // full product name (UI + browser tab title)
       "shortName": "AV",               // compact label
       "tagline": "Talk to anyone",     // optional
+      "logo": "/logo.png",             // optional — brand mark image in public/
+      "favicon": "/favicon.png",       // optional — browser tab icon in public/
       "style": {                       // optional — non-color style levers
         "radius": "soft",              //   "sharp" | "default" | "soft" | <px>  (default 8px)
         "elevation": "flat",           //   "flat" | "soft" | "glow"  (default "glow")
@@ -31,15 +34,27 @@ time** by the `VITE_BRAND` env var (default: `magick-agency`).
     }
 
 Required: `name`, `shortName`, `colors.accent`, `colors.accentHover`. A missing
-required field fails the build. `tagline`, `accentLight`, and `accentLightHover`
-are optional — omit the light-theme accents to reuse the dark accent in light
-mode.
+required field fails the build. `tagline`, `logo`, `favicon`, `accentLight`, and
+`accentLightHover` are optional — omit the light-theme accents to reuse the dark
+accent in light mode.
 
-The brand mark (`src/components/common/Logo.tsx`) is a text tile: the accent
-colour with `shortName` on it. There is no logo image; `index.html` declares an
-empty favicon (`data:,`) so browsers do not request `/favicon.ico`. The default
-brand ships no `public/` folder; a pack that adds one has it served at the site
-root.
+**Logo and favicon.** `logo` and `favicon` are root paths to one image file in
+the pack's `public/` (`.png`, `.svg`, `.ico` or `.webp`; no subfolders). The
+build fails if the path is malformed or the file is missing.
+
+- The brand mark (`src/components/common/Logo.tsx`, in the sidebars and on the
+  login cards) is the `logo` image, drawn square, so use a square image with
+  little padding; 256 px covers the largest mark (56 px) on high-density
+  screens. Without `logo`, the mark is a text tile: the accent colour with
+  `shortName` on it.
+- `index.html`'s icon link is filled from `favicon`. Without it the link is an
+  empty favicon (`data:,`), so browsers do not request `/favicon.ico`.
+
+The default `magick-agency` pack ships `public/logo.png` (cropped from
+`source/logo-1024.png` and scaled to 256 px) and `public/favicon.png` (64 px).
+The super-admin app has no brand packs and carries copies of these two files in
+its own `public/`; replace both copies together (`brandAssets.test.ts` there
+checks they match).
 
 `style` is optional and fail-closed — any absent or malformed field falls back
 to the default look:
@@ -67,7 +82,8 @@ neutral/background palette stays theme-specific in `src/global.css`.
 ## Add a new whitelabel
 
 1. `cp -r brands/magick-agency brands/acme`
-2. Edit `brands/acme/brand.config.json` (name, shortName, colors).
+2. Edit `brands/acme/brand.config.json` (name, shortName, colors), and replace or
+   remove `logo` / `favicon` and the files in `brands/acme/public/`.
 3. Build/deploy with `VITE_BRAND=acme` set in the environment.
 4. Point the brand's domain at that deployment (handled separately, infra side).
 
