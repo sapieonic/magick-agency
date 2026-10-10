@@ -55,7 +55,9 @@ The two UIs can't share an origin, because both own `/` and call the API on thei
   WebSocket upgrades pass through with a 1 h read timeout (station socket, media socket).
   Request bodies up to 513 MB are streamed, not buffered, for the 512 MiB roster CSV.
 - **:8081, super-admin.** The SPA plus `/super-admin/`. The compose file publishes it on
-  `127.0.0.1` only, so reach it over SSH or a VPN (`SUPER_ADMIN_BIND` to change).
+  `127.0.0.1` only, so reach it over an SSH or Session Manager tunnel or a VPN
+  (`SUPER_ADMIN_BIND` to change), or publish it through the host's TLS terminator on its own
+  domain (`DEPLOYMENT.md` section 8.4; the bind stays loopback).
 
 **Proxy hops.** nginx serves plain HTTP, so a TLS terminator in front of :8080 is mandatory: a
 load balancer, or a host nginx or Caddy. Browsers need a secure origin for the station, and
@@ -74,7 +76,11 @@ to that machine.
 
 The :8081 block **overwrites** `X-Forwarded-For` with the address it saw instead of appending to
 it, because it is reached directly over SSH or a VPN. A client-sent header therefore never
-reaches the server, and `POST /super-admin/login`'s 5/min limit holds for any hop count.
+reaches the server, and `POST /super-admin/login`'s 5/min limit holds for any hop count. Published
+through a terminator, the address it sees is the terminator's: the limit is then one bucket shared
+by every admin (and by anyone hammering the login page), and recorded super-admin IPs are the
+terminator's. That is the accepted cost of a super-admin domain; an IP allow-list at the
+terminator keeps strangers out of the bucket.
 
 `apps/server/test/unit/deploy/production-packaging.test.ts` checks four things:
 

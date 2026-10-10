@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadBrandConfig, injectBrandName } from './load-brand';
+import { loadBrandConfig, injectBrandName, injectBrandFavicon } from './load-brand';
 
 /** The real, shipped brands directory (used for the default-brand assertions). */
 const REAL_BRANDS = join(process.cwd(), 'brands');
@@ -16,6 +16,15 @@ function writeBrand(name: string, contents: string): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'brand.config.json'), contents);
 }
+
+/** Write an empty file under TMP_BRANDS/<name>/public/. */
+function writePublicFile(name: string, file: string): void {
+  const dir = join(TMP_BRANDS, name, 'public');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, file), '');
+}
+
+const COLORS = { accent: '#010203', accentHover: '#040506' };
 
 beforeAll(() => {
   writeBrand('valid-minimal', JSON.stringify({
@@ -60,6 +69,22 @@ beforeAll(() => {
   writeBrand('no-shortname', JSON.stringify({ name: 'X', colors: { accent: '#010203', accentHover: '#040506' } }));
   writeBrand('no-colors', JSON.stringify({ name: 'X', shortName: 'X' }));
   writeBrand('no-accent-hover', JSON.stringify({ name: 'X', shortName: 'X', colors: { accent: '#010203' } }));
+  writeBrand('with-assets', JSON.stringify({
+    name: 'Assets', shortName: 'AS', logo: '/mark.svg', favicon: '/icon.png', colors: COLORS,
+  }));
+  writePublicFile('with-assets', 'mark.svg');
+  writePublicFile('with-assets', 'icon.png');
+  writeBrand('logo-missing-file', JSON.stringify({ name: 'X', shortName: 'X', logo: '/logo.png', colors: COLORS }));
+  for (const [id, logo] of [
+    ['logo-no-slash', 'logo.png'],
+    ['logo-traversal', '/../logo.png'],
+    ['logo-subdir', '/img/logo.png'],
+    ['logo-not-image', '/logo.js'],
+    ['logo-not-string', 42],
+  ] as const) {
+    writeBrand(id, JSON.stringify({ name: 'X', shortName: 'X', logo, colors: COLORS }));
+  }
+  writeBrand('favicon-missing-file', JSON.stringify({ name: 'X', shortName: 'X', favicon: '/favicon.png', colors: COLORS }));
 });
 
 afterAll(() => {
@@ -80,6 +105,13 @@ describe('loadBrandConfig — default brand', () => {
     const b = loadBrandConfig(REAL_BRANDS, 'magick-agency');
     expect(b.colors.accentLight).toBe('#6a4de4');
     expect(b.colors.accentLightHover).toBe('#5a40ce');
+  });
+
+  it('ships the logo and favicon, and both files exist in its public/', () => {
+    // loadBrandConfig throws if a named asset is missing, so loading proves the files exist.
+    const b = loadBrandConfig(REAL_BRANDS, 'magick-agency');
+    expect(b.logo).toBe('/logo.png');
+    expect(b.favicon).toBe('/favicon.png');
   });
 
   it('sets the brand id to the folder slug, not a value from the file', () => {
@@ -170,6 +202,54 @@ describe('loadBrandConfig — optional fields', () => {
   it('coerces a non-string tagline to undefined', () => {
     const b = loadBrandConfig(TMP_BRANDS, 'bad-tagline');
     expect(b.tagline).toBeUndefined();
+  });
+
+  it('omits logo and favicon when not provided', () => {
+    const b = loadBrandConfig(TMP_BRANDS, 'valid-minimal');
+    expect(b.logo).toBeUndefined();
+    expect(b.favicon).toBeUndefined();
+  });
+
+  it('passes through logo and favicon that exist in public/', () => {
+    const b = loadBrandConfig(TMP_BRANDS, 'with-assets');
+    expect(b.logo).toBe('/mark.svg');
+    expect(b.favicon).toBe('/icon.png');
+  });
+});
+
+describe('loadBrandConfig — asset paths', () => {
+  it.each([
+    'logo-no-slash',
+    'logo-traversal',
+    'logo-subdir',
+    'logo-not-image',
+    'logo-not-string',
+  ])('rejects a malformed logo path (%s)', (id) => {
+    expect(() => loadBrandConfig(TMP_BRANDS, id)).toThrow(/"logo" must be a root path/);
+  });
+
+  it('throws when the logo file is not in public/', () => {
+    expect(() => loadBrandConfig(TMP_BRANDS, 'logo-missing-file')).toThrow(/"logo" names \/logo\.png/);
+  });
+
+  it('throws when the favicon file is not in public/', () => {
+    expect(() => loadBrandConfig(TMP_BRANDS, 'favicon-missing-file')).toThrow(/"favicon" names \/favicon\.png/);
+  });
+});
+
+describe('injectBrandFavicon', () => {
+  const html = '<link rel="icon" href="%BRAND_FAVICON%" />';
+
+  it('points the icon link at the brand favicon', () => {
+    expect(injectBrandFavicon(html, '/favicon.png')).toBe('<link rel="icon" href="/favicon.png" />');
+  });
+
+  it('falls back to an empty favicon when the brand has none', () => {
+    expect(injectBrandFavicon(html, undefined)).toBe('<link rel="icon" href="data:," />');
+  });
+
+  it('leaves html without the placeholder unchanged', () => {
+    expect(injectBrandFavicon('<title>x</title>', '/favicon.png')).toBe('<title>x</title>');
   });
 });
 

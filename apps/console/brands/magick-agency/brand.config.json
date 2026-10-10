@@ -1,6 +1,8 @@
 {
   "name": "Magick Agency",
   "shortName": "MA",
+  "logo": "/logo.png",
+  "favicon": "/favicon.png",
   "colors": {
     "accent": "#7c5cfc",
     "accentHover": "#9b82ff",

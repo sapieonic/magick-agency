@@ -55,6 +55,9 @@ and the S3 Terraform: lint clean in 7 packages; `apps/server` 6507 (307 files); 
 `packages/domain` 50; `packages/observability` 14. Integration and build were not re-run then,
 apart from the pipeline and runtime-e2e integration files.
 
+Re-run on 2026-10-11, after the brand logo and favicon (B17 amended): `apps/console` lint clean,
+4389 unit (218 files), build OK; `apps/super-admin` lint clean, 374 unit (26 files), build OK.
+
 CI (`.github/workflows/ci.yml`) runs lint, unit and build in one job, and the integration suites
 against Postgres 16 and Redis 7 service containers on the same ports in another. Per-module test
 files are listed in [`modules.md`](modules.md).
@@ -133,7 +136,11 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
 - [ ] TLS terminator in front of nginx :8080; `TRUST_PROXY_HOPS=2` (terminator + nginx; one more
       per extra proxy in front); :8080 reachable only from the terminator (loopback by default);
       port 3021 not reachable at all (the compose file publishes none).
-- [ ] Super-admin :8081 not public (loopback by default; SSH tunnel or VPN).
+- [ ] Super-admin :8081: loopback by default (SSH or Session Manager tunnel, or a VPN). If it is
+      published through the TLS terminator, on its own domain, IP-allow-listed where possible, and
+      with strong passwords on every admin (`DEPLOYMENT.md` 8.4 lists the costs).
+- [ ] Host memory: the server may grow to a 4 GB heap (`docker/entrypoint.sh`). On a 4 GB VM (the
+      `aws/terraform` default) that is all of the RAM; lower the heap or size up before load.
 - [ ] `NODE_ENV=production` (the image sets it); `DATABASE_URL` without TLS parameters; `DB_SSL_CA`
       if the database uses a private CA.
 - [ ] First boot logs `migrations complete` before `magick-agency listening` (the entrypoint runs
@@ -146,7 +153,8 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
       inside the server container (`operations.md` "First super-admin").
 - [ ] Mailjet sender verified (SPF/DKIM); `MAILJET_*` and `CONSOLE_BASE_URL` set.
 - [ ] S3 bucket and keys (`S3_AUDIO_BUCKET`, `AWS_*`) for clips and CSV uploads, applied per
-      environment from `aws/terraform` (`aws/README.md`).
+      environment from `aws/terraform` (`aws/README.md`). The same module can create the VM, its
+      security group and Elastic IP (`create_server`).
 - [ ] Analysis: `DIALER_ANALYSIS_ENABLED`, transcriber and LLM keys, `RECORDING_URL_SIGNING_SECRET`.
 - [ ] Container stop grace at least 45 s (`stop_grace_period: 45s` in the compose file; set it
       too on any other runtime).
@@ -160,8 +168,10 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
    existing numbers and recording retention), Firebase authorised domain,
    Mailjet sender and domain, S3 bucket, Gemini / OpenAI keys, domain and TLS, PostHog.
 3. **Deployment packaging:** done (`docker/`, see [`operations.md`](operations.md) "Production
-   packaging") and the OpenTelemetry SDK. Left: the Grafana Cloud token, and standing the stack up
-   once on a real host with the vendor accounts from step 2.
+   packaging") and the OpenTelemetry SDK. `aws/terraform` provisions the VM too (`create_server`):
+   a staging VM exists (2026-10-11, Ubuntu 26.04, 2 vCPU / 4 GB, 20 GB) with Caddy holding a Let's
+   Encrypt certificate for its domain. Left: the Grafana Cloud token, and running the stack there
+   through `DEPLOYMENT.md` section 9 with the vendor accounts from step 2.
 4. **Real-world checks:** one real VoiceLink sandbox call; one real recording analysed; the
    Playwright happy path against real Firebase.
 5. **Parity check and dark pilot** on a staging copy and an internal tenant.

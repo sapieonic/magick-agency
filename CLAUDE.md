@@ -99,8 +99,8 @@ packages/db/         pg pool, shared repositories/models, the baseline migration
 packages/observability/  logger, OTel tracing (`@Traced`), metric declarations per module area
 grafana/             agency's alert rules + dashboard (Terraform root module, own state; routing comes
                      from the Grafana stack's shared notification policy — see grafana/README.md)
-aws/                the server's S3 bucket + IAM user per environment (Terraform root module, state
-                     per workspace = environment; see aws/README.md)
+aws/                the server's S3 bucket + IAM user per environment, and optionally its VM + Elastic IP
+                     (Terraform root module, state per workspace = environment; see aws/README.md)
 ```
 
 **Four module areas in one server**, each with its own config block, Fastify plugin and bootstrap:

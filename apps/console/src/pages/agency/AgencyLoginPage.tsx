@@ -13,6 +13,7 @@ import {
 import { SESSION_EXPIRED_MESSAGE } from '../../utils/session';
 import { RETURN_PATH_PARAM, safeReturnPath } from '../../utils/returnPath';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { Logo } from '../../components/common/Logo';
 import { brand } from '../../brand';
 import styles from './AgencyLoginPage.module.css';
 
@@ -186,6 +187,7 @@ function UnrecognisedAccount({
 }) {
   return (
     <div className={styles.card}>
+      <Logo size={56} className={styles.logoMark} />
       <div className={styles.logo}>{brand.name}</div>
       <p className={styles.tagline}>Agency Dialer</p>
       <h1 className={styles.noticeTitle}>We don’t recognise that account</h1>
@@ -504,6 +506,7 @@ export default function AgencyLoginPage() {
       <div className={styles.page}>
         <div className={styles.bgGlow} />
         <div className={styles.card}>
+          <Logo size={56} className={styles.logoMark} />
           <div className={styles.logo}>{brand.name}</div>
           <p className={styles.tagline}>Reset your password</p>
           {forgotSent ? (
@@ -593,6 +596,7 @@ export default function AgencyLoginPage() {
         </div>
 
         <div className={styles.card}>
+          <Logo size={56} className={styles.logoMark} />
           <div className={styles.logo}>{brand.name}</div>
           <p className={styles.tagline}>Sign in to the Agency Dialer</p>
 

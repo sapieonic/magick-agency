@@ -109,12 +109,16 @@ describe('no parent-product branding or links (B17)', () => {
     expect(parentBrandMentions()).toEqual([]);
   });
 
-  it('ships Magick Agency as the default brand, with no image asset from the old pack', () => {
+  // B17 as amended 2026-10-11: the default pack ships the logo artwork (its own
+  // public/logo.png and favicon.png), but the old pack folder stays gone and the
+  // tab title and icon come from the brand, never a hard-coded file.
+  it('ships Magick Agency as the default brand, and not the old brand pack', () => {
     expect(brand.id).toBe('magick-agency');
     expect(brand.name).toBe('Magick Agency');
     expect(existsSync(join(appRoot, 'brands', 'magickvoice'))).toBe(false);
-    expect(existsSync(join(appRoot, 'brands', 'magick-agency', 'public', 'logo.png'))).toBe(false);
-    expect(readFileSync(join(appRoot, 'index.html'), 'utf8')).not.toContain('logo.png');
+    const html = readFileSync(join(appRoot, 'index.html'), 'utf8');
+    expect(html).toContain('<title>%BRAND_NAME%</title>');
+    expect(html).toContain('<link rel="icon" href="%BRAND_FAVICON%" />');
   });
 
   it('attributes API calls as magick-agency-console', () => {

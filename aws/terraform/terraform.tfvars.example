@@ -14,3 +14,16 @@ environment = "dev-manas" # must equal the workspace name
 # create_access_key                  = true             # the secret is kept in this module's state
 # noncurrent_version_expiration_days = 0                # >0 turns versioning on and keeps old versions this long
 # extra_tags                         = { Owner = "manas" }
+
+# Server VM (ec2.tf): off unless create_server = true.
+# create_server  = false
+# instance_type  = "t3.medium"       # 2 vCPU / 4 GB; t4g.medium for arm64
+# root_volume_gb = 20                # the swap file comes out of this
+# swap_gb        = 2                 # 0 for none
+# ami_id         = null              # default: latest Ubuntu 26.04 for the type's architecture
+# subnet_id      = null              # default: a default subnet of the default VPC
+# ssh_cidrs      = []                # e.g. ["198.51.100.7/32"]; empty opens no SSH port
+# ssh_public_key = null              # e.g. file contents of ~/.ssh/id_ed25519.pub
+# key_name       = null              # or an existing key pair's name
+# enable_ssm     = true              # Session Manager shell + port forwarding
+# enable_instance_connect = false    # true: SSH from the console's "EC2 Instance Connect" tab

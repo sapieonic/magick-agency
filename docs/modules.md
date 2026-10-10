@@ -1015,7 +1015,7 @@ Files: `index.ts`, `load-brand.ts`, `types.ts`
 | Test file | Cases |
 |---|---|
 | `apps/console/src/brand/index.test.ts` | 14 |
-| `apps/console/src/brand/load-brand.test.ts` | 24 |
+| `apps/console/src/brand/load-brand.test.ts` | 37 |
 
 ### `apps/console/src/components/`
 
@@ -1087,7 +1087,7 @@ Files: `agency/AgencyRetryDialog.module.css`, `agency/AgencyRetryDialog.tsx`, `a
 | `apps/console/src/__tests__/components/switcherDropdownScrollCss.test.ts` | 4 |
 | `apps/console/src/components/common/DateRangeFilter.test.tsx` | 25 |
 | `apps/console/src/components/common/DateRangeFilter.timezone.test.tsx` | 1 |
-| `apps/console/src/components/common/Logo.test.tsx` | 3 |
+| `apps/console/src/components/common/Logo.test.tsx` | 5 |
 
 ### `apps/console/src/config/`
 
@@ -1314,6 +1314,7 @@ Files: `auth/RequireSuperAdmin.tsx`, `common/AdvancedSection.module.css`, `commo
 | `apps/super-admin/src/__tests__/components/BulkRolloutModal.test.tsx` | 14 |
 | `apps/super-admin/src/__tests__/components/ConfirmDialog.test.tsx` | 4 |
 | `apps/super-admin/src/__tests__/components/FlagDialog.test.tsx` | 10 |
+| `apps/super-admin/src/__tests__/components/Logo.test.tsx` | 3 |
 | `apps/super-admin/src/__tests__/components/OverrideReasonDialog.test.tsx` | 6 |
 | `apps/super-admin/src/__tests__/components/TenantFeatureFlags.test.tsx` | 45 |
 | `apps/super-admin/src/__tests__/components/TenantPicker.test.tsx` | 16 |
@@ -1382,5 +1383,6 @@ Scenario, flow, guard and setup tests that span several modules.
 | Test file | Cases |
 |---|---|
 | `apps/super-admin/src/__tests__/App.test.tsx` | 4 |
+| `apps/super-admin/src/__tests__/branding/brandAssets.test.ts` | 5 |
 | `apps/super-admin/src/__tests__/branding/noParentBrand.test.ts` | 5 |
 | `apps/super-admin/src/__tests__/saStatus.test.ts` | 21 |

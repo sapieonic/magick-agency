@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Brand, BrandColors, BrandStyle } from './types';
 
@@ -33,6 +33,34 @@ function sanitizeStyle(raw: unknown): BrandStyle | undefined {
 
 /** A brand id must be a simple slug — no path separators or `..` traversal. */
 const VALID_BRAND_ID = /^[a-z0-9][a-z0-9_-]*$/;
+
+/** A brand asset path: one file at the site root, an image type, no traversal. */
+const VALID_ASSET_PATH = /^\/[A-Za-z0-9][A-Za-z0-9._-]*\.(png|svg|ico|webp)$/;
+
+/**
+ * Validate an optional asset field (`logo`, `favicon`). Absent = undefined. Present
+ * but malformed, or naming a file the pack's `public/` does not have, throws: the
+ * operator asked for an image, and shipping a broken one is worse than failing the
+ * build.
+ */
+function assetPath(
+  brandsDir: string,
+  brandName: string,
+  field: 'logo' | 'favicon',
+  value: unknown,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !VALID_ASSET_PATH.test(value)) {
+    throw new Error(
+      `Brand "${brandName}": "${field}" must be a root path to an image in public/, like "/${field}.png"`,
+    );
+  }
+  const file = join(brandsDir, brandName, 'public', value.slice(1));
+  if (!existsSync(file)) {
+    throw new Error(`Brand "${brandName}": "${field}" names ${value}, but ${file} does not exist`);
+  }
+  return value;
+}
 
 /**
  * Read and validate a brand pack's config at build time. Used by vite.config.ts
@@ -100,6 +128,8 @@ export function loadBrandConfig(brandsDir: string, brandName: string): Brand {
     // tagline is optional; ignore non-string values rather than passing them
     // through and violating the Brand contract.
     tagline: typeof parsed.tagline === 'string' ? parsed.tagline : undefined,
+    logo: assetPath(brandsDir, brandName, 'logo', parsed.logo),
+    favicon: assetPath(brandsDir, brandName, 'favicon', parsed.favicon),
     // optional non-color style levers; omitted entirely when nothing valid.
     style: sanitizeStyle(parsed.style),
     colors,
@@ -125,4 +155,14 @@ function escapeHtml(value: string): string {
 export function injectBrandName(html: string, name: string): string {
   const escaped = escapeHtml(name);
   return html.replace(/%BRAND_NAME%/g, () => escaped);
+}
+
+/**
+ * Replace the `%BRAND_FAVICON%` placeholder (the icon link's href in index.html)
+ * with the brand's favicon path, or `data:,` when it has none, so browsers never
+ * request a missing `/favicon.ico`.
+ */
+export function injectBrandFavicon(html: string, favicon: string | undefined): string {
+  const href = favicon === undefined ? 'data:,' : escapeHtml(favicon);
+  return html.replace(/%BRAND_FAVICON%/g, () => href);
 }

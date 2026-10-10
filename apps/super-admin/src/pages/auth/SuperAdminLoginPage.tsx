@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
 import { brand } from '../../brand';
+import { Logo } from '../../components/common/Logo';
 import styles from './SuperAdminLoginPage.module.css';
 
 /**
@@ -39,6 +40,7 @@ export default function SuperAdminLoginPage() {
       <div className={styles.bgGlow} />
       <div className={styles.layoutCentered}>
         <div className={styles.card}>
+          <Logo size={56} className={styles.logoMark} />
           <div className={styles.logo}>{brand.name}</div>
           <p className={styles.tagline}>Platform Administration</p>
 

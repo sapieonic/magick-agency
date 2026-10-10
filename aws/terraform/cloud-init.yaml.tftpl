@@ -1,0 +1,40 @@
+#cloud-config
+# First-boot setup for the server VM (ec2.tf). Runs once, at launch; edits here do not
+# reach a running instance (ec2.tf ignores user_data changes). Installs what
+# DEPLOYMENT.md section 5 installs: Docker with the compose and buildx plugins, Caddy,
+# git. Written for Ubuntu 26.04; all of these are in its archive except Caddy.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - docker.io
+  - docker-compose-v2
+  # Only "suggested" by docker.io, but `docker compose build` needs it.
+  - docker-buildx
+  - git
+  # Usually preinstalled on Canonical's AMIs; the browser SSH tab (enable_instance_connect) needs it.
+  - ec2-instance-connect
+  - curl
+  - gnupg
+  - debian-keyring
+  - debian-archive-keyring
+  - apt-transport-https
+
+%{ if swap_bytes > 0 ~}
+# EC2 instances have no swap. A little keeps an image build or a memory spike from
+# reaching the OOM killer, which would end every live call.
+swap:
+  filename: /swapfile
+  size: ${swap_bytes}
+  maxsize: ${swap_bytes}
+
+%{ endif ~}
+runcmd:
+  - systemctl enable --now docker
+  - usermod -aG docker ubuntu
+  # Caddy from its official apt repository (Caddy's install docs, "Debian, Ubuntu, Raspbian").
+  - curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  - curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' -o /etc/apt/sources.list.d/caddy-stable.list
+  - apt-get update
+  - apt-get install -y caddy

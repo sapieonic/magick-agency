@@ -48,6 +48,12 @@ export interface Brand {
   shortName: string;
   /** Optional marketing tagline. */
   tagline?: string;
+  /** Optional brand mark image, a root path into the pack's `public/` (e.g. `/logo.png`).
+   *  Unset = the mark is a text tile with `shortName`. */
+  logo?: string;
+  /** Optional favicon, a root path into the pack's `public/` (e.g. `/favicon.png`).
+   *  Unset = an empty favicon (`data:,`), so browsers do not request `/favicon.ico`. */
+  favicon?: string;
   /*
    * Decision B17: there is no `promotions` flag; the console has no
    * promotional UI (such as a login "free credits" banner).
