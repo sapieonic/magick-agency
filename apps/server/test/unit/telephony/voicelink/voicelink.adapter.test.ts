@@ -8,7 +8,6 @@ const VOICELINK_CONFIG: VoicelinkConfig = {
   username: 'vl-user',
   password: 'super-secret-password',
   webhookBaseUrl: 'https://host/api/v1/webhooks/voicelink',
-  defaultCallerId: '919228130625',
   defaultCountryCode: '91',
 };
 

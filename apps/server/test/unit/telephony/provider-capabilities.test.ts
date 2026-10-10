@@ -37,7 +37,7 @@ const ADAPTERS: ReadonlyArray<{ name: string; provider: TelephonyProvider; cance
     provider: new VoicelinkAdapter({
       baseUrl: 'https://voicelink.test', username: 'u', password: 'p',
       webhookBaseUrl: 'https://server.test/api/v1/webhooks/voicelink',
-      defaultCallerId: '+919876543210', defaultCountryCode: '91',
+      defaultCountryCode: '91',
     }),
   },
 ];

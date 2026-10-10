@@ -18,7 +18,7 @@ import {
 
 const config = {
   telephony: {
-    voicelink: { baseUrl: '', username: '', password: '', webhookBaseUrl: '', defaultCallerId: '', defaultCountryCode: '91' },
+    voicelink: { baseUrl: '', username: '', password: '', webhookBaseUrl: '', defaultCountryCode: '91' },
   },
 } as unknown as AppConfig;
 

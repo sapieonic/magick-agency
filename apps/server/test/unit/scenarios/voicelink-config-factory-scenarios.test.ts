@@ -31,7 +31,6 @@ function rawTelephonyConfig(overrides: Record<string, unknown> = {}) {
       username: 'vl-user',
       password: 'vl-pass',
       webhookBaseUrl: 'https://example.com/api/v1/webhooks/voicelink',
-      defaultCallerId: '919228130625',
     },
     ...overrides,
   };

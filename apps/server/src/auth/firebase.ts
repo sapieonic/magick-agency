@@ -20,8 +20,13 @@ export interface DecodedFirebaseToken {
  * `config/blocks/platform.ts`), so a missing block leaves Firebase uninitialised
  * and every `verifyIdToken` throws — the session middleware maps that to 401,
  * i.e. fail closed. `startPlatform` refuses to boot in production without the
- * block. `serviceAccountPath` (FIREBASE_SERVICE_ACCOUNT_PATH) reads the
- * service-account JSON from a file.
+ * block.
+ *
+ * No service account: the only Admin call is `verifyIdToken` without the
+ * revocation check, which verifies the signature against Google's public keys
+ * (fetched unauthenticated) and the audience against the project id. A future
+ * call that needs Google API access (user lookup, revocation) needs a
+ * credential added back here.
  */
 export async function initFirebase(config: AppConfig): Promise<void> {
   const firebase = config.firebase;
@@ -29,7 +34,7 @@ export async function initFirebase(config: AppConfig): Promise<void> {
     log.warn('Firebase not configured (FIREBASE_PROJECT_ID unset): every ID-token verification will fail closed');
     return;
   }
-  const { initializeApp, cert, getApps } = await import('firebase-admin/app');
+  const { initializeApp, getApps } = await import('firebase-admin/app');
   const { getAuth } = await import('firebase-admin/auth');
 
   if (getApps().length > 0) {
@@ -38,24 +43,7 @@ export async function initFirebase(config: AppConfig): Promise<void> {
     return;
   }
 
-  const appOptions: any = { projectId: firebase.projectId };
-
-  let serviceAccountJson = firebase.serviceAccountKey;
-  if (!serviceAccountJson && firebase.serviceAccountPath) {
-    const { readFileSync } = await import('node:fs');
-    serviceAccountJson = readFileSync(firebase.serviceAccountPath, 'utf8');
-  }
-  if (serviceAccountJson) {
-    try {
-      const serviceAccount = JSON.parse(serviceAccountJson);
-      appOptions.credential = cert(serviceAccount);
-    } catch (err) {
-      log.error({ err }, 'Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY JSON');
-      throw new Error('Invalid FIREBASE_SERVICE_ACCOUNT_KEY');
-    }
-  }
-
-  firebaseApp = initializeApp(appOptions);
+  firebaseApp = initializeApp({ projectId: firebase.projectId });
   firebaseAuth = getAuth(firebaseApp);
   log.info({ projectId: firebase.projectId }, 'Firebase Admin initialized');
 }

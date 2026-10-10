@@ -1337,7 +1337,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Session authentication attempts by method and status. A rising `firebase` / `invalid_token` share means the Firebase project or service account no longer matches the console (`agy-firebase-auth-rejected` pages above 50%). Super-admin sign-in has its own JWT and is not counted here.",
+      "description": "Session authentication attempts by method and status. A rising `firebase` / `invalid_token` share means the server's `FIREBASE_PROJECT_ID` no longer matches the console's Firebase project (`agy-firebase-auth-rejected` pages above 50%). Super-admin sign-in has its own JWT and is not counted here.",
       "fieldConfig": {
         "defaults": {
           "color": {

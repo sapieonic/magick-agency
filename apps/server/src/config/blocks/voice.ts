@@ -35,8 +35,6 @@ const voicelinkSchema = z.object({
   password: z.string().optional().default(''),
   /** Our public base for the webhook_url + to derive the per-lead websocket_url host. */
   webhookBaseUrl: z.string().optional().default(''),
-  /** A VoiceLink-provisioned DID used as the outbound caller ID (the `did_number`). */
-  defaultCallerId: z.string().optional().default(''),
   /**
    * Default calling country code (no `+`, e.g. `91`). Used to split req.to into
    * the bare `customer_number` + separate `country_code` fields add_lead requires.
@@ -72,7 +70,6 @@ export const telephonySchema = z.object({
   requireField('voicelink.username', data.voicelink.username);
   requireField('voicelink.password', data.voicelink.password);
   requireField('voicelink.webhookBaseUrl', data.voicelink.webhookBaseUrl);
-  requireField('voicelink.defaultCallerId', data.voicelink.defaultCallerId);
 });
 
 // The sizing rationale (why webhookMax is 1000, why carrier media has its own bucket)
@@ -176,7 +173,6 @@ export function readVoiceEnv(env: Env): Record<string, unknown> {
         username: env['VOICELINK_USERNAME'],
         password: env['VOICELINK_PASSWORD'],
         webhookBaseUrl: env['VOICELINK_WEBHOOK_BASE_URL'],
-        defaultCallerId: env['VOICELINK_DEFAULT_CALLER_ID'],
         defaultCountryCode: env['VOICELINK_DEFAULT_COUNTRY_CODE'],
       },
     },

@@ -20,8 +20,6 @@ export interface VoicelinkConfig {
   password: string;
   /** Our public base for the webhook_url + to derive the per-lead websocket_url host. */
   webhookBaseUrl: string;
-  /** A VoiceLink-provisioned DID used as the outbound caller ID (the add_lead `did_number`). */
-  defaultCallerId: string;
   /**
    * Default calling country code (no `+`, e.g. `91`). Used to split req.to into
    * the bare `customer_number` + separate `country_code` fields add_lead requires.
