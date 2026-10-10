@@ -54,12 +54,15 @@ own directory. Add these as you need them:
 | Variable | Needed for |
 |---|---|
 | `SUPER_ADMIN_JWT_SECRET` (16+ chars) | The `/super-admin` API. Without it those routes are not registered and the super-admin UI cannot log in. |
-| `FIREBASE_PROJECT_ID`, plus `FIREBASE_SERVICE_ACCOUNT_PATH` or `FIREBASE_SERVICE_ACCOUNT_KEY` | Console login. Without Firebase, outside production, every token check fails with 401. `FIREBASE_AUTH_EMULATOR_HOST` is also read. |
+| `FIREBASE_PROJECT_ID` (no service account needed) | Console login. Without Firebase, outside production, every token check fails with 401. `FIREBASE_AUTH_EMULATOR_HOST` is also read. |
 | `TELEPHONY_ENABLED_PROVIDERS=voicelink`, `VOICELINK_*` | Placing real calls. Once VoiceLink is enabled, its fields are required at boot. |
+| `S3_AUDIO_BUCKET`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Contact-list (CSV) uploads, rejected-row exports and abandon clips. Without them every upload fails with "S3 client not initialized". `aws/README.md` provisions a bucket and IAM user per environment and prints these lines. |
 | `MAILJET_API_KEY`, `MAILJET_API_SECRET` | Sending invite and notification mail. |
 | `CONSOLE_BASE_URL` | Invite links, e.g. `http://localhost:5175`. |
 
-`.env.example` explains the rest (proxy hops, Postgres TLS, retention, Redis persistence).
+`.env.example` explains the rest: call analysis (transcription, the AI provider, audio input),
+recording hosts and playback links, proxy hops, Postgres TLS, retention, Redis persistence and
+OpenTelemetry.
 
 ### 4. Run the migration
 
@@ -83,15 +86,11 @@ Add `--system` if this admin should never be removable. Every later admin is cre
 
 ### 6. Configure the console (for login)
 
-The console signs in with Firebase. Put the web app config in `apps/console/.env.local`:
+The console signs in with Firebase. Put the web app config in `apps/console/.env.local`
+(git-ignored) and fill in the `VITE_FIREBASE_*` values:
 
 ```bash
-VITE_FIREBASE_API_KEY=...
-VITE_FIREBASE_AUTH_DOMAIN=...
-VITE_FIREBASE_PROJECT_ID=...
-VITE_FIREBASE_STORAGE_BUCKET=...
-VITE_FIREBASE_MESSAGING_SENDER_ID=...
-VITE_FIREBASE_APP_ID=...
+cp apps/console/.env.example apps/console/.env.local
 ```
 
 Use the same Firebase project as the server's `FIREBASE_PROJECT_ID`. `VITE_API_BASE_URL` can

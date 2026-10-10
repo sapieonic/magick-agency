@@ -49,6 +49,12 @@ Final full run on 2026-10-09, after `pnpm install --frozen-lockfile`, from insid
 30: 6 decoder-packaging tests (`apps/server/test/unit/audio/decoder-toolchain-packaging.test.ts`)
 and 24 deployment tests (`apps/server/test/unit/deploy/`).
 
+Unit re-run on 2026-10-10, after the AI client layer, audio analysis, the wizard's recording box
+and the S3 Terraform: lint clean in 7 packages; `apps/server` 6507 (307 files); `apps/console` 4374
+(218 files); `apps/super-admin` 366; `packages/db` 409; `packages/contracts` 73;
+`packages/domain` 50; `packages/observability` 14. Integration and build were not re-run then,
+apart from the pipeline and runtime-e2e integration files.
+
 CI (`.github/workflows/ci.yml`) runs lint, unit and build in one job, and the integration suites
 against Postgres 16 and Redis 7 service containers on the same ports in another. Per-module test
 files are listed in [`modules.md`](modules.md).
@@ -132,14 +138,15 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
       if the database uses a private CA.
 - [ ] First boot logs `migrations complete` before `magick-agency listening` (the entrypoint runs
       them; a failure stops the container).
-- [ ] Firebase: agency's service account in the project, agency's domain in the authorised
-      domains, `FIREBASE_PROJECT_ID` plus a key or key path set.
+- [ ] Firebase: agency's domain in the authorised domains, `FIREBASE_PROJECT_ID` set (no service
+      account: tokens are verified against Google's public keys).
 - [ ] VoiceLink: account, numbers in the super-admin inventory, `VOICELINK_*` set,
       `VOICELINK_WEBHOOK_BASE_URL` reachable by the carrier.
 - [ ] `SUPER_ADMIN_JWT_SECRET` set; first super-admin created with `node dist/create-super-admin.js`
       inside the server container (`operations.md` "First super-admin").
 - [ ] Mailjet sender verified (SPF/DKIM); `MAILJET_*` and `CONSOLE_BASE_URL` set.
-- [ ] S3 bucket and keys (`S3_AUDIO_BUCKET`, `AWS_*`) for clips and CSV uploads.
+- [ ] S3 bucket and keys (`S3_AUDIO_BUCKET`, `AWS_*`) for clips and CSV uploads, applied per
+      environment from `aws/terraform` (`aws/README.md`).
 - [ ] Analysis: `DIALER_ANALYSIS_ENABLED`, transcriber and LLM keys, `RECORDING_URL_SIGNING_SECRET`.
 - [ ] Container stop grace at least 45 s (`stop_grace_period: 45s` in the compose file; set it
       too on any other runtime).
@@ -150,7 +157,7 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
 1. **Ratify the decisions** that need no vendors: launch defaults, Q3, `supervisor_hold`, the
    shutdown grace and in-flight tick question, B15.
 2. **Vendor setup**, because it has lead time: agency's VoiceLink account (ask about moving
-   existing numbers and recording retention), Firebase service account and authorised domain,
+   existing numbers and recording retention), Firebase authorised domain,
    Mailjet sender and domain, S3 bucket, Gemini / OpenAI keys, domain and TLS, PostHog.
 3. **Deployment packaging:** done (`docker/`, see [`operations.md`](operations.md) "Production
    packaging") and the OpenTelemetry SDK. Left: the Grafana Cloud token, and standing the stack up

@@ -17,7 +17,7 @@ concern); **decided — keep** (Manas ruled the current behaviour stays); **deci
 | S1 | Magick Agency is a self-contained application: its own server, database, Redis, storage and carrier account. It depends on vendors only, never on another service at runtime |
 | S2 | It owns its voice engine (the WebRTC bridge and the VoiceLink adapter) and its own VoiceLink capacity: account, numbers and concurrency limits |
 | S3 | It owns post-call analysis and transcripts, and its identity data: users, tenants, accounts, memberships, roles, invites |
-| S4 | Sign-in uses Firebase Authentication, in a Firebase project that may be shared with other products; agency verifies tokens with its own service account. A separate identity layer may come later |
+| S4 | Sign-in uses Firebase Authentication, in a Firebase project that may be shared with other products; agency verifies ID tokens against Google's public keys and its own `FIREBASE_PROJECT_ID`, with no service account (Manas, 2026-10-10; see §4). A separate identity layer may come later |
 | S5 | Super-admins create tenants and add users, with their own login and their own console |
 | S6 | No credits, billing or credit enforcement in v1. Metering is an open item |
 | S7 | AI calling is out of scope |
@@ -116,6 +116,17 @@ Other rulings of 2026-10-09 (not numbered questions):
 | Log export | Logs reach OTLP only through the SDK's `instrumentation-pino` bridge (no `pino-opentelemetry-transport`), so no line ships twice | **Decided** |
 | Audit partitions | Dropped after 85 days (`AUDIT_RETENTION_DAYS` default, `auditPartitions.retentionDays`) | **Decided — keep** |
 | `findActiveSuccessor` | Tenant- and account-scoped (`packages/db/src/repositories/call-analysis-profile.repository.ts`: `dead.tenant_id = $2 AND dead.account_id = $3`, with the caller's scope from the route), so a profile lookup cannot cross tenants | **Decided — keep (verified)** |
+
+Rulings of 2026-10-10:
+
+| Topic | Ruling | Status |
+|---|---|---|
+| Firebase credential | No service account. The server only calls `verifyIdToken` without the revocation check, which needs the project id alone (`apps/server/src/auth/firebase.ts`). `FIREBASE_SERVICE_ACCOUNT_KEY` / `_PATH` are removed | **Decided — changed** |
+| Caller ID | No app-level default: `VOICELINK_DEFAULT_CALLER_ID` is removed, and each campaign carries the `caller_ids` its tenant sets | **Decided — changed** |
+| AI providers | Every AI request goes through one client factory, `apps/server/src/ai/`, with one implementation each for `openai_compatible` (OpenAI or any Chat Completions endpoint), `azure_openai` and `gemini`. `openai` is accepted as the older spelling. `OPENAI_API_KEY` is a fallback only when no `POST_CALL_ANALYSIS_BASE_URL` is set, so it never reaches another host | **Decided — changed** |
+| Audio analysis | `POST_CALL_ANALYSIS_INPUT=audio` gives the analysis model the recording as well as the transcript (gemini only, refused at boot otherwise). Default `transcript` | **Decided — changed** |
+| Recording at call time | An account with no settings row does not record: the bridge reads `allow_recording ?? false`, matching `DEFAULT_ALLOW_RECORDING`. The baseline migration's "NULL inherits true" column comment is superseded (the migration is applied, so it is not edited). The campaign create wizard now has the recording box | **Decided — changed** |
+| S3 provisioning | `aws/terraform`: one bucket and one IAM user (Put/Get/List, no delete) per environment, one Terraform workspace per environment | **Decided** |
 
 ## 5. Still open
 

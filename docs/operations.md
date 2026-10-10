@@ -48,8 +48,9 @@ The two UIs can't share an origin, because both own `/` and call the API on thei
 
 - **:8080, console and carrier.** The SPA, plus a proxy for the console's API prefixes (the dev
   proxy's `API_PREFIXES`) and `/api/*`. `/api/*` is VoiceLink's surface: status webhooks, the PSTN
-  media WebSocket and recording playback. That makes `VOICELINK_WEBHOOK_BASE_URL` and
-  `CONSOLE_BASE_URL` this block's public https origin. `/healthz` and `/readyz` are proxied for
+  media WebSocket and recording playback. That makes `CONSOLE_BASE_URL` this block's public https
+  origin, and `VOICELINK_WEBHOOK_BASE_URL` that origin plus `/api/v1/webhooks/voicelink` (a bare
+  origin makes every status webhook 404). `/healthz` and `/readyz` are proxied for
   the TLS terminator's health check.
   WebSocket upgrades pass through with a 1 h read timeout (station socket, media socket).
   Request bodies up to 513 MB are streamed, not buffered, for the 512 MiB roster CSV.
@@ -121,13 +122,13 @@ production.
 
 | Set this | To enable | Notes |
 |---|---|---|
-| `FIREBASE_PROJECT_ID` + `FIREBASE_SERVICE_ACCOUNT_KEY` or `FIREBASE_SERVICE_ACCOUNT_PATH` | Console sign-in | **Required in production** (boot refuses). `FIREBASE_AUTH_EMULATOR_HOST` also read |
+| `FIREBASE_PROJECT_ID` | Console sign-in. No service account: ID tokens are verified against Google's public keys | **Required in production** (boot refuses). `FIREBASE_AUTH_EMULATOR_HOST` also read |
 | `SUPER_ADMIN_JWT_SECRET` (16+ chars) | `/super-admin/*` API | Absent: routes not registered |
 | `MAILJET_API_KEY`, `MAILJET_API_SECRET` | Invite and completion mail | `MAILJET_FROM_EMAIL` default `noreply@sapionic.ai`, `MAILJET_FROM_NAME` default `Sapionic` |
 | `CONSOLE_BASE_URL` | Invite links | e.g. `https://<console host>` |
-| `TELEPHONY_ENABLED_PROVIDERS=voicelink` + `VOICELINK_BASE_URL`, `_USERNAME`, `_PASSWORD`, `_WEBHOOK_BASE_URL`, `_DEFAULT_CALLER_ID` | Real calls | Required whenever VoiceLink is enabled **or** `NODE_ENV=production`. `VOICELINK_DEFAULT_COUNTRY_CODE` default `91` |
-| `S3_AUDIO_BUCKET` + `AWS_REGION` (default `ap-south-1`), `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Abandon clips, CSV uploads | |
-| `DIALER_ANALYSIS_ENABLED=true` + a transcriber key (`DIALER_TRANSCRIBE_API_KEY` / `GEMINI_API_KEY`, or Sarvam) + an LLM key (`POST_CALL_ANALYSIS_API_KEY` / `OPENAI_API_KEY`, or Azure) | Post-call analysis worker | `DIALER_TRANSCRIBER` default `gemini`, model `gemini-3.5-flash`; worker every 60 s, concurrency 2; `POST_CALL_ANALYSIS_PROVIDER` default `openai`, model `gpt-4o-mini` |
+| `TELEPHONY_ENABLED_PROVIDERS=voicelink` + `VOICELINK_BASE_URL`, `_USERNAME`, `_PASSWORD`, `_WEBHOOK_BASE_URL` | Real calls | Required whenever VoiceLink is enabled **or** `NODE_ENV=production`. Caller IDs are per campaign (`caller_ids`), not env. `VOICELINK_DEFAULT_COUNTRY_CODE` default `91` |
+| `S3_AUDIO_BUCKET` + `AWS_REGION` (default `ap-south-1`), `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Abandon clips, CSV uploads | Unset: every upload fails ("S3 client not initialized"). Bucket and IAM user per environment: `aws/README.md` |
+| `DIALER_ANALYSIS_ENABLED=true` + a transcriber key (`DIALER_TRANSCRIBE_API_KEY` / `GEMINI_API_KEY`, or Sarvam) + an LLM key (`POST_CALL_ANALYSIS_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`, or Azure's) | Post-call analysis worker | `DIALER_TRANSCRIBER` default `gemini`, model `gemini-3.5-flash`; worker every 60 s, concurrency 2. `POST_CALL_ANALYSIS_PROVIDER`: `openai_compatible` (default; `openai` also accepted; any Chat Completions endpoint via `POST_CALL_ANALYSIS_BASE_URL`, `_HEADERS`, `_STRUCTURED_OUTPUT`), `azure_openai` or `gemini`; model default `gpt-4o-mini`; `POST_CALL_ANALYSIS_TEMPERATURE` default 0.3, `none` sends none. `POST_CALL_ANALYSIS_INPUT`: `transcript` (default) or `audio` (the recording is sent with the transcript; `gemini` only, refused at boot otherwise; timeout default 180 s instead of 30 s). Per tenant it also needs the `agency_call_analysis` flag (default off; `FF_AGENCY_CALL_ANALYSIS` sets the default). Every key: `apps/server/.env.example` |
 | `RECORDING_URL_SIGNING_SECRET` (16+ chars) | Stable signed playback URLs | Unset: a random per-process key, so signed URLs break on restart |
 | `POSTHOG_ENABLED=true` + `POSTHOG_API_KEY` | Product analytics | Host default `https://us.i.posthog.com` |
 | `OTEL_ENABLED=true` + `OTEL_EXPORTER_OTLP_ENDPOINT` + `OTEL_SERVICE_NAME` | Traces, metrics and logs over OTLP (http/protobuf) | All three or nothing starts (the server warns when only the name is missing). `OTEL_SERVICE_NAME`: `magick-agency` = production, `magick-agency-Staging`, `magick-agency-Dedicated`; anything else (e.g. `agency-dev-<you>`) is not alerted on. Grafana Cloud also needs `OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64 id:token>`. `OTEL_METRICS_EXPORT_INTERVAL_MS` default 60000. Alert rules and dashboard: `grafana/README.md` |
@@ -236,7 +237,21 @@ VoiceLink recordings are public MP3s on the carrier's host. The fetcher accepts 
 whose parsed hostname is on `VOICELINK_RECORDING_HOSTS` (exact or subdomain), checked on every
 redirect hop. Unset means `recording.app.voicelink.co.in`; a list replaces it; an explicitly empty
 value refuses every fetch and playback. Playback goes through `/api/v1/webrtc-recordings/:id` with
-an HMAC-signed query (`RECORDING_URL_SIGNING_SECRET`).
+an HMAC-signed query (`RECORDING_URL_SIGNING_SECRET`), and the console's attempt drawer through
+`/proxy/agency/campaigns/:id/attempts/:attemptId/recording`.
+
+A VoiceLink account can deliver recordings from another host (one dev account's are on
+`voiceflowai.elisiontec.com`). When the host of a stored `recording_url` is not on the list:
+
+- the server logs `Recording URL is not on the VoiceLink recording-host allow-list; refusing to
+  proxy` (playback) or `... refusing to fetch` (analysis), with the refused `host`;
+- playback answers 502 "The recording is not hosted on an allowed carrier host";
+- the analysis job fails at once, not retried, as `TRANSCRIPTION_FAILED`.
+
+Check the host with `SELECT DISTINCT split_part(recording_url, '/', 3) FROM agency_calls WHERE
+recording_url IS NOT NULL;`, confirm with VoiceLink that it is theirs, and set the list. Setting it
+replaces the default, so keep `recording.app.voicelink.co.in` in it:
+`VOICELINK_RECORDING_HOSTS=recording.app.voicelink.co.in,<other host>`. Restart; it is read at boot.
 
 ## Postgres TLS
 

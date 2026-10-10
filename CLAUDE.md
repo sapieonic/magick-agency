@@ -99,6 +99,8 @@ packages/db/         pg pool, shared repositories/models, the baseline migration
 packages/observability/  logger, OTel tracing (`@Traced`), metric declarations per module area
 grafana/             agency's alert rules + dashboard (Terraform root module, own state; routing comes
                      from the Grafana stack's shared notification policy — see grafana/README.md)
+aws/                the server's S3 bucket + IAM user per environment (Terraform root module, state
+                     per workspace = environment; see aws/README.md)
 ```
 
 **Four module areas in one server**, each with its own config block, Fastify plugin and bootstrap:
@@ -109,7 +111,8 @@ grafana/             agency's alert rules + dashboard (Terraform root module, ow
   dispositions, DNC, retries, staffing, stats).
 - **voice** (`src/core/`, `src/telephony/`): the voice engine: WebRTC bridge
   (`src/core/webrtc-bridge-manager.ts`), VoiceLink webhooks and media WS, concurrency guard, audio.
-- **analysis**: post-call transcription and analysis worker, retention.
+- **analysis**: post-call transcription and analysis worker, retention. Every AI request goes out
+  through the client factory in `src/ai/` (`openai_compatible`, `azure_openai`, `gemini`).
 
 `src/index.ts` starts them in a fixed order (platform → voice → agency → analysis, then listen) and,
 on shutdown, closes HTTP first and stops them in reverse. Voice starts before agency so the bridge's

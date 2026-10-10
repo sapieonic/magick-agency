@@ -30,7 +30,7 @@ TypeScript source (B2); `tsc --noEmit` covers `src` and tests in each package (B
 Inside `apps/server/src`, the module areas are: `api/` (plugins, routes, middleware), `auth/`,
 `rbac/`, `settings/`, `invites/`, `notifications/`, `audit/`, `cache/`, `feature-flags/` (the
 platform layer); `agency/` and `db/` (the dialer runtime and campaign management); `core/`,
-`telephony/`, `audio/`, `tts/`, `storage/` (the voice engine); `analysis/`, `transcription/`,
+`telephony/`, `audio/`, `tts/`, `storage/` (the voice engine); `ai/`, `analysis/`, `transcription/`,
 `maintenance/` (call analysis and retention); `config/`, `bootstrap/`, `seams/` (composition).
 The agency repository lives in `apps/server/src/db/` rather than `packages/db` to avoid a package
 cycle (B12). Boundaries are described in [`seams.md`](seams.md).
@@ -139,8 +139,9 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
 
 ## Identity and tenancy
 
-- **Firebase.** `auth/firebase.ts` initialises `firebase-admin` with agency's service account
-  (`FIREBASE_SERVICE_ACCOUNT_KEY` or `_PATH`). `auth/session.middleware.ts` verifies the ID token.
+- **Firebase.** `auth/firebase.ts` initialises `firebase-admin` with only the project id
+  (`FIREBASE_PROJECT_ID`), no service account: `verifyIdToken` checks the signature against
+  Google's public keys. `auth/session.middleware.ts` verifies the ID token.
 - **Session.** `POST /auth/session` (`api/routes/auth.routes.ts`) signs a user in by one of three
   paths: an existing Firebase uid; a verified email matching a `pending_` stub (created by a
   super-admin or an invite); or a re-registered uid adopted by a proven email. A user who matches
@@ -233,10 +234,21 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
 - **Runner** (`core/dialer-analysis-runner.ts`): load the call, take config from the job's profile
   snapshot, resume an existing transcript or fetch and transcribe the recording, persist, run the
   LLM analysis, complete in one transaction.
-- **Transcribers** (`transcription/`): Gemini (default `gemini-3.5-flash`, 600 s windows) or Sarvam.
+- **AI client layer** (`ai/`): the one place AI requests go out. `createAiClient` builds an
+  `AiClient` for `openai_compatible` (OpenAI or any Chat Completions endpoint), `azure_openai` or
+  `gemini` (native SDK, Files API); each does one request (the OpenAI SDK's own retries are off)
+  and returns a neutral response. Retries, windowing and prompts stay with the callers. An
+  `AiError` carries a `kind`: the runner requeues `rate_limited` without using an attempt and
+  fails `unsupported_input`, `unsupported_operation` and `invalid_config` at once. Sarvam (speech-to-text only) calls its API directly.
+- **Transcribers** (`transcription/`): Gemini (default `gemini-3.5-flash`, 600 s windows, through
+  the `ai/` gemini client) or Sarvam.
   `recording-fetcher.ts` fetches only from `VOICELINK_RECORDING_HOSTS` (default
   `recording.app.voicelink.co.in`), checked on every redirect hop.
-- **LLM analysis** (`analysis/`): OpenAI, Azure OpenAI or Gemini; profiles in
+- **LLM analysis** (`analysis/`): any `ai/` provider (`POST_CALL_ANALYSIS_PROVIDER`), on the transcript,
+  or with `POST_CALL_ANALYSIS_INPUT=audio` (gemini) on the recording plus the transcript: the runner
+  hands over the bytes it fetched (a resumed run fetches them again, from the transcript's
+  `source_url`), the service uploads them once and deletes the upload after, and heartbeats the
+  job's claim before every request so a slow run is not recovered from under it; profiles in
   `call_analysis_profiles`, served at `/proxy/call-analysis-profiles`.
 - **Playback**: `/api/v1/webrtc-recordings/:id` with an HMAC-signed query (`utils/recording-url.ts`,
   `RECORDING_URL_SIGNING_SECRET`).
