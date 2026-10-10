@@ -25,8 +25,9 @@ console 4367; super-admin 366; builds OK. Unit re-run 2026-10-10: server 6507, c
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
-but have not run on a real host. `aws/terraform` provisions the S3 bucket and IAM user per
-environment, applied from a local machine. Nothing has run against a real carrier, a real Firebase sign-in or
+but have not been verified end to end on a real host. `aws/terraform` provisions the S3 bucket and
+IAM user per environment and, optionally, the VM with its security group and Elastic IP, applied
+from a local machine; a staging VM exists (`status.md`, next steps). Nothing has run against a real carrier, a real Firebase sign-in or
 production data.
 
 **Needs Manas.** Ratify the launch defaults and Q3; `supervisor_hold`; shutdown grace (45 s,

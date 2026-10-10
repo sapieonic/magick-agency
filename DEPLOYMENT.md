@@ -21,7 +21,7 @@ server's public IP. Replace both.
  │          │  http to 127.0.0.1:8080                            │
  │          ▼                                                    │
  │  web    nginx: console SPA, reverse proxy (:8080)             │
- │         super-admin SPA (127.0.0.1:8081, SSH tunnel / VPN)    │
+ │         super-admin SPA (127.0.0.1:8081: tunnel, or own site) │
  │          │                                                    │
  │          ▼                                                    │
  │  server :3021 (never published) ◄──► redis (AOF, noeviction)  │
@@ -40,7 +40,9 @@ Rules that hold whatever cloud you pick (details in `docs/operations.md`, "Deplo
 - **Exactly two proxies in front of the server**: your TLS terminator plus the bundled nginx, so
   `TRUST_PROXY_HOPS=2`. Port 3021 is never reachable, and :8080 is reachable only from the
   terminator.
-- **The super-admin UI (:8081) is never public.** Reach it over an SSH tunnel or a VPN.
+- **The super-admin UI (:8081) is not public by default.** nginx binds it to loopback. Reach it
+  over an SSH or Session Manager tunnel or a VPN, or publish it through Caddy on its own domain
+  (section 8.4, which lists what that costs).
 - **Redis persists and never evicts.** The compose file's Redis already does both.
 - **Stop grace of at least 45 s.** The compose file sets it.
 - **One public HTTPS origin for the console and the carrier.** VoiceLink's webhooks and media
@@ -61,12 +63,19 @@ Collect these first. Some of them take days to arrive.
 | Optional: Grafana Cloud OTLP endpoint and token | Metrics, traces, alerts | `OTEL_*`, [`grafana/README.md`](grafana/README.md) |
 
 Tools on your laptop: `git`, `ssh`, the AWS CLI or console access, and Terraform 1.x (for the S3
-bucket). You do not need Node or pnpm on the server; Docker builds everything.
+bucket and, optionally, the VM). You do not need Node or pnpm on the server; Docker builds everything.
 
 ## 3. Provision the cloud resources (AWS reference)
 
 Use one region for everything. `ap-south-1` (Mumbai) is the S3 default in the config and sits
 close to the carrier.
+
+**Terraform shortcut for 3.1 (the app group) and 3.2.** `aws/terraform` can create the VM, its
+security group and the Elastic IP for you: set `create_server = true` in the environment's tfvars
+(see [`aws/README.md`](aws/README.md), "The server VM"). It also installs Docker (with the compose
+and buildx plugins), Caddy and git at first boot and makes a swap file, so step 5 shrinks to a
+check and a clone. You still create the `agency-db` group and RDS yourself; allow 5432 from
+`terraform output server_security_group_id`.
 
 ### 3.1 Network and security groups
 
@@ -74,20 +83,36 @@ The default VPC works. Create two security groups:
 
 | Group | Inbound | Notes |
 |---|---|---|
-| `agency-app` (the VM) | TCP 443 and 80 from `0.0.0.0/0`; TCP 22 from your own IP only | 80 is needed for Let's Encrypt and the http→https redirect. Do not open 8080, 8081 or 3021 |
+| `agency-app` (the VM) | TCP 443 and 80 from `0.0.0.0/0`; TCP 22 from your own IP only, or not at all (see below) | 80 is needed for Let's Encrypt and the http→https redirect. Do not open 8080, 8081 or 3021 |
 | `agency-db` (Postgres) | TCP 5432 from the `agency-app` group only | |
 
 Outbound: allow all (the server calls VoiceLink, Firebase's key endpoint, Mailjet, S3 and the AI
 APIs).
 
+**Shell access without an open SSH port.** Two AWS console options work from the browser, under
+the instance's *Connect* button:
+
+- **Session Manager:** needs an instance role with `AmazonSSMManagedInstanceCore` and no inbound
+  port. You land as `ssm-user`, which is not in the `docker` group: run `sudo -iu ubuntu` first.
+  It also forwards ports, which replaces the SSH tunnel in step 8.4.
+- **EC2 Instance Connect:** a real SSH session as `ubuntu`, with a short-lived key the console
+  pushes. It needs TCP 22 open to AWS's Instance Connect range for the region (the managed prefix
+  list `com.amazonaws.<region>.ec2-instance-connect`), not to the internet.
+
+`aws/terraform` sets up both (`enable_ssm`, on by default; `enable_instance_connect`).
+
 ### 3.2 The VM
 
-- **Image:** Ubuntu 24.04 LTS.
-- **Size:** start with 2 vCPU and 8 GB RAM (for example `t3.large`). The server process is allowed
-  up to a 4 GB heap (`docker/entrypoint.sh`), and the image build runs on the same box. This is a
-  starting point, not a measured figure; watch memory under real load.
-- **Disk:** 40 GB gp3. Docker images, build cache and logs (capped at 5 × 20 MB per container)
-  live here.
+- **Image:** Ubuntu 26.04 LTS.
+- **Size:** 2 vCPU and 4 GB RAM (`t3.medium`, or `t4g.medium` on arm64) is the `aws/terraform`
+  default, with a 2 GB swap file for the image build's peak. Two things to know at that size: the
+  server is allowed up to a 4 GB heap (`docker/entrypoint.sh`), which is all of the RAM, so under
+  memory pressure the kernel's OOM killer can end the process (and every live call) before V8 cleans
+  up; and the image build runs on the same box. 8 GB (`t3.large`) leaves headroom for both. None of
+  this is measured; watch memory under real load.
+- **Disk:** 20 GB gp3 is the `aws/terraform` default, and enough if you prune after deploys
+  (section 12, "Logs, monitoring, backups"). Docker images, build cache, the swap file and logs
+  (capped at 5 × 20 MB per container) live here.
 - **Security group:** `agency-app`.
 - **Elastic IP:** allocate one and associate it with the instance. This is the address your DNS
   record points at, and the address VoiceLink and other vendors see your server's requests come
@@ -163,7 +188,27 @@ both as valid, then use an address on that domain as `MAILJET_FROM_EMAIL`. The d
 
 ## 5. Prepare the host
 
-SSH in (`ssh ubuntu@203.0.113.10`) and install Docker and Caddy.
+Get a shell on the VM (`ssh ubuntu@203.0.113.10`, or one of the console options in 3.1) and install
+Docker and Caddy.
+
+**If `aws/terraform` created the VM (`create_server`), skip the installs.** First boot already did
+them. As `ubuntu`, check that it finished and that everything is there, then go to cloning the
+repository:
+
+```bash
+cloud-init status --wait
+```
+
+```bash
+docker compose version && docker buildx version && caddy version && swapon --show && groups
+```
+
+`status: done`, four versions, a `/swapfile` line and `docker` in the groups. If `docker buildx` is
+missing (an instance launched before the module installed it), run
+`sudo apt-get install -y docker-buildx`. If the status is `error`, the reason is in
+`/var/log/cloud-init-output.log`; the manual steps below do the same work.
+
+On any other VM:
 
 ```bash
 curl -fsSL https://get.docker.com | sudo sh
@@ -315,6 +360,12 @@ resolving to this host. Follow its log while it fetches the certificate:
 sudo journalctl -u caddy -f
 ```
 
+Wait for `certificate obtained successfully`, then Ctrl+C: that stops only the log, and Caddy keeps
+running (`systemctl is-active caddy` prints `active`). A `stapling OCSP` warning right after it
+(`no OCSP server specified in certificate`) is expected: Let's Encrypt no longer puts an OCSP
+address in its certificates, so there is nothing to staple, and browsers check revocation another
+way. It shows again at every renewal; ignore it.
+
 The chain is now client → Caddy → nginx → server, which is what `TRUST_PROXY_HOPS=2` describes.
 
 ## 8. Wire up the vendors and the first admin
@@ -348,30 +399,74 @@ Add `--system` if this admin should never be removable.
 
 ### 8.4 Reaching the super-admin UI
 
-It listens on the VM's loopback only. Open an SSH tunnel from your laptop:
+It listens on the VM's loopback only. Reach it through a tunnel, or publish it on its own domain.
+
+**Tunnel.** From your laptop, over SSH:
 
 ```bash
 ssh -N -L 8081:127.0.0.1:8081 ubuntu@203.0.113.10
 ```
 
-Then browse to `http://localhost:8081`. The tunnel encrypts the traffic, and nginx's :8081 block
-records your real address for the login rate limit.
+or, with no SSH port open, over Session Manager (needs the AWS CLI's Session Manager plugin; run
+it from `aws/terraform`):
 
-**Do you want a domain for it (`admin.example.com`)?** Prefer a VPN (Tailscale, WireGuard, a
-corporate VPN) that reaches `127.0.0.1:8081` or a private bind instead. If you do publish it
-through Caddy, restrict it to known IPs, and know the cost: the :8081 block overwrites
-`X-Forwarded-For` with the address it sees, which is now Caddy's. Every super-admin request then
-looks like it comes from one address, so the 5-per-minute login limit becomes one bucket shared by
-all admins, and any IP the server records for super-admin actions is Caddy's. A minimal,
-allow-listed block:
-
-```caddy
-admin.example.com {
-	@outside not remote_ip 198.51.100.7/32
-	respond @outside 403
-	reverse_proxy 127.0.0.1:8081
-}
+```bash
+aws ssm start-session --target "$(terraform output -raw server_instance_id)" --document-name AWS-StartPortForwardingSession --parameters 'portNumber=8081,localPortNumber=8081'
 ```
+
+Then browse to `http://localhost:8081`. The tunnel encrypts the traffic, and nginx's :8081 block
+records your real address for the login rate limit. A VPN (Tailscale, WireGuard, a corporate VPN)
+that reaches `127.0.0.1:8081` or a private bind works the same way.
+
+**Its own domain through Caddy (`admin.example.com`).** Nothing in the server or `docker/.env`
+changes: the UI calls its API on its own origin, and nginx's :8081 block already proxies it.
+
+1. Add an `A` record for the name pointing at the Elastic IP, as in step 4.1, and wait until
+   `dig +short admin.example.com` prints it.
+2. Add a site block to `/etc/caddy/Caddyfile`, next to the console's. Allow-listed (preferred;
+   space-separate several CIDRs):
+
+   ```caddy
+   admin.example.com {
+   	@outside not remote_ip 198.51.100.7/32
+   	respond @outside 403
+   	reverse_proxy 127.0.0.1:8081
+   }
+   ```
+
+   or open to everyone:
+
+   ```caddy
+   admin.example.com {
+   	reverse_proxy 127.0.0.1:8081
+   }
+   ```
+
+3. Check and reload, then watch for `certificate obtained successfully` for the new name (the
+   allow-list does not block Let's Encrypt: Caddy answers its challenge first):
+
+   ```bash
+   sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+   ```
+
+   ```bash
+   sudo systemctl reload caddy
+   ```
+
+The security group needs no change; 80 and 443 are already open.
+
+What publishing it costs:
+
+- **One shared login bucket.** The :8081 block overwrites `X-Forwarded-For` with the address it
+  sees, which is now Caddy's. Every super-admin request looks like it comes from one address, so
+  the 5-per-minute login limit is one bucket for all admins, and any IP the server records for
+  super-admin actions is Caddy's.
+- **Open to everyone, the password is the only gate** for an account that manages every tenant,
+  user, number and limit, and anyone who hammers the login page uses up the shared bucket, so real
+  admins get rate-limited too. Use long, unique passwords, keep the admin list short, and add the
+  allow-list when you can (two lines and a reload).
+- **Not Caddy's `basic_auth`** as a substitute for the allow-list: the UI sends its own
+  `Authorization: Bearer` header on every API call, so a basic-auth gate rejects them after login.
 
 ## 9. Verify the deployment
 
@@ -385,8 +480,9 @@ Run through this once before letting agents in.
       the server.
 - [ ] Ports 8080, 8081 and 3021 are closed from outside:
       `nc -zv -w 3 203.0.113.10 8080` fails.
-- [ ] Super-admin: log in over the tunnel, create a tenant, set its limits, add numbers, and invite
-      a tenant admin.
+- [ ] Super-admin: log in (over the tunnel, or at its domain if you published it), create a tenant,
+      set its limits, add numbers, and invite a tenant admin. If it is allow-listed, check that
+      another network (a phone on mobile data) gets a 403.
 - [ ] The invite mail arrives, its link starts with `https://agency.example.com`, and Google or
       email sign-in works.
 - [ ] Upload a small roster CSV (proves S3).
@@ -491,7 +587,12 @@ resend them. Calls in progress at the switch keep reporting to the old webhook b
   before every release that adds a migration.
 - Redis holds leases and call tokens, not business data. Its volume (`redisdata`) matters across
   restarts during live calls; it does not need backups.
-- Disk: clear old images now and then with `docker image prune -f`.
+- Disk: after each deploy, clear old images and build cache, which otherwise fill a 20 GB disk in a
+  few releases:
+
+  ```bash
+  docker image prune -f && docker builder prune -f
+  ```
 
 ### Rotating secrets
 
@@ -504,7 +605,12 @@ resend them. Calls in progress at the switch keep reporting to the old webhook b
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| Caddy log warns `stapling OCSP` … `no OCSP server specified in certificate` | Expected with Let's Encrypt certificates, which no longer carry an OCSP address | Nothing; the certificate is fine (step 7.2) |
 | Caddy log shows ACME / challenge errors | DNS not pointing at this host yet, port 80 closed, Cloudflare proxy on, or a `CAA` record excluding Let's Encrypt | Fix DNS or the security group; `sudo systemctl reload caddy` |
+| `permission denied` on the Docker socket | Shell is `ssm-user` (Session Manager), or the `docker` group change has not applied | `sudo -iu ubuntu`, or log out and back in |
+| `docker compose ... --build` says buildx is missing or too old | Ubuntu's `docker.io` only suggests the buildx plugin | `sudo apt-get install -y docker-buildx` |
+| The console's *EC2 Instance Connect* tab fails to connect | TCP 22 not open to the Instance Connect range, or the `ec2-instance-connect` package missing | `enable_instance_connect = true` in `aws/terraform`; `sudo apt-get install -y ec2-instance-connect` over Session Manager |
+| Super-admin domain answers 403 | Your IP is not in the Caddyfile's allow-list (it changed, or you are on another network) | Update `remote_ip`, `sudo systemctl reload caddy`; the tunnel still works meanwhile |
 | Server exits with `unable to verify the first certificate` | `DB_SSL_CA` missing or wrong | Redo step 6.1; test with step 5.1 |
 | Server exits listing missing keys (`FIREBASE_PROJECT_ID`, `VOICELINK_*`) | Production requires them | Fill them in `docker/.env` |
 | Server exits on TLS parameters in `DATABASE_URL` | `sslmode=...` or similar in the URL | Remove it; TLS comes from `DB_SSL_CA` |

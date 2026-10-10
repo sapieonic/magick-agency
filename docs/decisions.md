@@ -128,6 +128,14 @@ Rulings of 2026-10-10:
 | Recording at call time | An account with no settings row does not record: the bridge reads `allow_recording ?? false`, matching `DEFAULT_ALLOW_RECORDING`. The baseline migration's "NULL inherits true" column comment is superseded (the migration is applied, so it is not edited). The campaign create wizard now has the recording box | **Decided — changed** |
 | S3 provisioning | `aws/terraform`: one bucket and one IAM user (Put/Get/List, no delete) per environment, one Terraform workspace per environment | **Decided** |
 
+Rulings of 2026-10-11:
+
+| Topic | Ruling | Status |
+|---|---|---|
+| VM provisioning | `aws/terraform` also creates the server VM when `create_server = true` (off by default, so a bucket-only environment gets none): one EC2 instance, a security group (80/443 open, 22 only from `ssh_cidrs` or the EC2 Instance Connect range), an Elastic IP associated separately so it outlives the instance, and a Session Manager role with no S3 access. The instance ignores AMI and user-data changes, so it is only replaced deliberately (`-replace`) | **Decided** |
+| VM image and size | Ubuntu 26.04 LTS, looked up from Canonical's public SSM parameter for the instance type's architecture. Default 2 vCPU / 4 GB (`t3.medium`), 20 GB gp3, 2 GB swap. The 4 GB heap limit in `docker/entrypoint.sh` is unchanged and equals that RAM (`status.md`, pre-deploy checklist) | **Decided** |
+| Super-admin exposure | Publishing the super-admin UI through the host's TLS terminator on its own domain is allowed, open to everyone to begin with; nginx's :8081 bind stays loopback. Accepted costs: one shared login bucket, the terminator's address recorded for super-admin actions, the password as the only gate. An IP allow-list at the terminator is the next step (`DEPLOYMENT.md` 8.4) | **Decided** |
+
 ## 5. Still open
 
 | # | Question | Context | Owner |
