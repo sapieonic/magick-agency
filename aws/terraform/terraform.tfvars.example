@@ -1,0 +1,16 @@
+# One file per environment, e.g. dev-manas.tfvars, staging.tfvars, production.tfvars.
+# *.tfvars is git-ignored; only this example is committed. Apply with:
+#   terraform workspace select <environment>
+#   terraform apply -var-file=<environment>.tfvars
+
+environment = "dev-manas" # must equal the workspace name
+
+# Optional overrides (defaults shown).
+# region                             = "ap-south-1"     # must match the server's AWS_REGION
+# aws_profile                        = null             # a named profile from ~/.aws/config
+# name_prefix                        = "magick-agency"
+# bucket_name                        = null             # default: <name_prefix>-<environment>-<account id>
+# force_destroy                      = false            # true only for a throwaway dev bucket
+# create_access_key                  = true             # the secret is kept in this module's state
+# noncurrent_version_expiration_days = 0                # >0 turns versioning on and keeps old versions this long
+# extra_tags                         = { Owner = "manas" }
