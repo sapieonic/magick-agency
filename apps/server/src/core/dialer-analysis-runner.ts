@@ -10,7 +10,8 @@ import { dialerAnalysisJobRepository } from '@magick-agency/db/repositories/dial
 import { webrtcCallRepository } from '@magick-agency/db/repositories/agency-call.repository';
 import { fetchRecordingBytes } from '../transcription/recording-fetcher.js';
 import { TranscriptionError, type Transcriber, type TranscriptionResult } from '../transcription/types.js';
-import type { PostCallAnalysisService } from '../analysis/index.js';
+import type { AnalysisAudio, PostCallAnalysisService } from '../analysis/index.js';
+import { AiError, type AiErrorKind } from '../ai/index.js';
 import type { AnalyticsConfig } from '@magick-agency/db/models/prompt.model';
 import type { CallAnalysisResult } from '@magick-agency/db/models/call.model';
 import type { ConversationEntry } from '@magick-agency/db/models/conversation-entry.model';
@@ -46,9 +47,13 @@ const RETRY_BACKOFF_BASE_SECONDS = 30;
 const RETRY_BACKOFF_CAP_SECONDS = 1800;
 /** Rate-limit backoff base (s) — longer, jittered, and does NOT consume an attempt. */
 const RATE_LIMIT_BACKOFF_BASE_SECONDS = 60;
+/** AI-layer error kinds a later attempt cannot fix: the job fails at once. */
+const PERMANENT_AI_ERRORS: ReadonlySet<AiErrorKind> = new Set(['unsupported_input', 'unsupported_operation', 'invalid_config']);
 
 /** Internal control-flow signal: another replica/recovery generation owns the job. */
 class StaleAnalysisClaimError extends Error {
+  /** `utils/retry.ts` must not ask again for a run that lost its claim. */
+  readonly nonRetryable = true;
   constructor(jobId: string, generation: number) {
     super(`Dialer analysis claim was fenced out (job=${jobId}, generation=${generation})`);
     this.name = 'StaleAnalysisClaimError';
@@ -140,6 +145,7 @@ export class DialerAnalysisRunner {
       let transcriberProvider: 'gemini' | 'sarvam';
       let transcriberModel: string;
       let transcriberDurationSeconds: number;
+      let analysisAudio: AnalysisAudio | undefined;
 
       // ── 3. RESUME: a prior attempt transcribed but analysis failed. Skip 4–7. ──
       const resumed = (call.conversation_log?.length ?? 0) > 0;
@@ -155,7 +161,7 @@ export class DialerAnalysisRunner {
         //   recording returns TRUNCATED audio). The settle delay covers the common
         //   case; these retries cover the tail without burning a job attempt.
         const transcribeStart = Date.now();
-        const result = await this.fetchAndTranscribe({
+        const { result, audio } = await this.fetchAndTranscribe({
           callId, jobId, generation,
           recordingUrl: call.recording_url,
           recordingDurationSeconds: recordingDurationSeconds ?? null,
@@ -171,6 +177,8 @@ export class DialerAnalysisRunner {
         }
 
         entries = result.entries;
+        // Held only when the analysis needs the recording; otherwise released here.
+        if (this.analysisService.needsAudio) analysisAudio = audio;
         transcriberProvider = this.transcriber.provider;
         transcriberModel = result.model;
         transcriberDurationSeconds = result.durationSeconds;
@@ -221,12 +229,29 @@ export class DialerAnalysisRunner {
       await this.assertClaimActive(jobId, generation);
 
       // ── 9. Analyse (shared, call-type-agnostic service). Context from snapshot. ─
+      // Audio input: a resumed run has the transcript but not the bytes, so it
+      // fetches the recording again (same host allow-list and size cap), from the
+      // URL that transcript was made from.
+      if (this.analysisService.needsAudio && !analysisAudio) {
+        const fetched = await fetchRecordingBytes(call.transcript_meta?.source_url ?? call.recording_url, {
+          maxBytes: this.cfg.maxRecordingBytes,
+          timeoutMs: this.cfg.transcribeTimeoutMs,
+          allowedHosts: this.recordingHosts,
+        });
+        analysisAudio = { bytes: fetched.bytes, mimeType: fetched.mimeType };
+        await this.assertClaimActive(jobId, generation);
+      }
       const analyzeStart = Date.now();
       const analysis: CallAnalysisResult = await this.analysisService.analyze(
         callId,
         toAnalysisEntries(entries),
         analyticsConfig,
-        { context },
+        {
+          context,
+          ...(analysisAudio ? { audio: analysisAudio } : {}),
+          // An audio analysis can outlast the stale-claim threshold; keep the claim live.
+          heartbeat: () => this.assertClaimActive(jobId, generation),
+        },
       );
       this.observeStage('analyze', (Date.now() - analyzeStart) / 1000);
 
@@ -309,7 +334,7 @@ export class DialerAnalysisRunner {
     recordingUrl: string;
     recordingDurationSeconds: number | null;
     languageHint: string | undefined;
-  }): Promise<TranscriptionResult> {
+  }): Promise<{ result: TranscriptionResult; audio: AnalysisAudio }> {
     const {
       callId, jobId, generation, recordingUrl,
       recordingDurationSeconds, languageHint,
@@ -359,9 +384,11 @@ export class DialerAnalysisRunner {
       );
       this.observeStage('transcribe', (Date.now() - transcribeStart) / 1000);
 
+      const audio: AnalysisAudio = { bytes: fetched.bytes, mimeType: fetched.mimeType };
+
       // An empty transcript is a legitimate silent recording, not a truncation —
       // hand it back so the caller can `skip` it (retrying would never help).
-      if (result.entries.length === 0) return result;
+      if (result.entries.length === 0) return { result, audio };
 
       // Duration cross-check: far less transcribed audio than the DB reports
       // means we very likely fetched a pre-finalization (truncated) file.
@@ -388,7 +415,7 @@ export class DialerAnalysisRunner {
       if (attempt > 0) {
         log.info({ callId, jobId, attempt, turns: result.entries.length }, 'Dialer recording re-fetch succeeded');
       }
-      return result;
+      return { result, audio };
     }
 
     // Unreachable: the loop either returns or throws.
@@ -403,8 +430,8 @@ export class DialerAnalysisRunner {
 
   /**
    * Classify the error and drive the job to the right next state, never throwing.
-   *   - RATE_LIMITED           → requeue WITHOUT consuming an attempt.
-   *   - non-retryable          → fail immediately.
+   *   - RATE_LIMITED, or an AI-layer `rate_limited` → requeue WITHOUT consuming an attempt.
+   *   - non-retryable (incl. AI-layer input/config errors) → fail immediately.
    *   - retryable + attempts left → requeue with exponential backoff.
    *   - retryable + exhausted  → fail.
    */
@@ -414,15 +441,19 @@ export class DialerAnalysisRunner {
     const code = isTx ? (err as TranscriptionError).code : 'ANALYSIS_FAILED';
     const message = err instanceof Error ? err.message : String(err);
 
+    const isAi = err instanceof AiError;
+
     // Rate limit: retry with a longer jittered backoff and DON'T burn an attempt.
-    if (isTx && (err as TranscriptionError).code === 'RATE_LIMITED') {
+    if ((isTx && (err as TranscriptionError).code === 'RATE_LIMITED') || (isAi && err.kind === 'rate_limited')) {
       const backoff = jitter(Math.min(RATE_LIMIT_BACKOFF_BASE_SECONDS * Math.pow(2, attempts), RETRY_BACKOFF_CAP_SECONDS));
       await dialerAnalysisJobRepository.requeueRateLimited(jobId, generation, backoff);
       log.warn({ callId, jobId, backoff }, 'Dialer analysis rate-limited; requeued without consuming an attempt');
       return;
     }
 
-    const retryable = isTx ? (err as TranscriptionError).retryable : true;
+    const retryable = isTx
+      ? (err as TranscriptionError).retryable
+      : !(isAi && PERMANENT_AI_ERRORS.has(err.kind));
     const attemptsExhausted = attempts >= this.cfg.maxAttempts;
 
     if (!retryable || attemptsExhausted) {

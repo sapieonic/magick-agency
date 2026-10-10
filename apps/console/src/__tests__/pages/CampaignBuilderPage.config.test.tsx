@@ -21,9 +21,13 @@ const mocks = vi.hoisted(() => ({
   downloadRejectedRows: vi.fn(),
   createAgencyCampaign: vi.fn(),
   updateAgencyCampaign: vi.fn(),
+  isCapabilityEnabled: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('../../contexts/GovernanceContext', () => ({
+  useGovernance: () => ({ isEnabled: mocks.isCapabilityEnabled, map: {}, loading: false, refresh: vi.fn() }),
+}));
 // The caller-ID picker is a hard gate on this page: The API rejects a campaign with
 // an empty `caller_ids`, so nothing downstream runs until one is chosen.
 vi.mock('../../hooks/usePhoneNumbers', () => ({
@@ -95,6 +99,7 @@ async function openHours() {
 
 beforeEach(() => {
   mocks.useTenant.mockReturnValue({ tenantId: 't1', accountId: 'a1' });
+  mocks.isCapabilityEnabled.mockReturnValue(true);
   mocks.getIngestLimits.mockRejectedValue(new Error('not needed here'));
   mocks.createAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Collections', status: 'draft' });
   mocks.updateAgencyCampaign.mockResolvedValue({ id: 'camp-1', name: 'Collections', status: 'draft' });
@@ -588,3 +593,94 @@ describe('the campaign a builder actually creates', () => {
     });
   });
 });
+
+describe('call recording in the builder', () => {
+  const recordBox = () =>
+    screen.getByRole('checkbox', { name: /record every call on this campaign/i }) as HTMLInputElement;
+
+  it('is offered on the behaviour step, off by default, and sent as record_calls on save', async () => {
+    await openBehaviour();
+    expect(recordBox().checked).toBe(false);
+    expect(recordBox().disabled).toBe(false);
+
+    fireEvent.click(recordBox());
+    expect(screen.getByText(/announce it/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].record_calls).toBe(true);
+    // The builder has no call-summary picker, so it never touches the profile.
+    expect('analysis_profile_id' in mocks.updateAgencyCampaign.mock.calls[0]![1]).toBe(false);
+  });
+
+  it('sends record_calls: false when left off, so the saved value is explicit', async () => {
+    await openBehaviour();
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].record_calls).toBe(false);
+  });
+
+  it('locks the box and says why when the account may not record', async () => {
+    mocks.isCapabilityEnabled.mockImplementation((key: string) => key !== 'agency.recording');
+    await openBehaviour();
+
+    expect(recordBox().disabled).toBe(true);
+    expect(screen.getByRole('note').textContent).toContain('Call recording is turned off for this account');
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    // Off is always allowed, so it is still sent.
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].record_calls).toBe(false);
+  });
+
+  it('shows the API refusal in words and returns to the step with the box', async () => {
+    // The governance map can be stale; the API's 403 is the real answer.
+    mocks.updateAgencyCampaign.mockRejectedValueOnce(
+      Object.assign(new Error('capability_disabled'), {
+        statusCode: 403,
+        details: { error: 'capability_disabled', capability: 'agency.recording' },
+      }),
+    );
+    await openBehaviour();
+    fireEvent.click(recordBox());
+    goToStep('Review & save');
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+
+    const banner = await screen.findByTestId('builder-error');
+    expect(banner.textContent).toContain('Call recording is turned off for this account (agency.recording)');
+    expect(screen.queryByText(/^capability_disabled$/)).toBeNull();
+    expect(recordBox()).toBeTruthy(); // back on the behaviour step
+  });
+
+  it('clears the refusal once a later save succeeds', async () => {
+    mocks.updateAgencyCampaign.mockRejectedValueOnce(
+      Object.assign(new Error('capability_disabled'), {
+        statusCode: 403,
+        details: { error: 'capability_disabled', capability: 'agency.recording' },
+      }),
+    );
+    await openBehaviour();
+    fireEvent.click(recordBox());
+    goToStep('Review & save');
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await screen.findByTestId('builder-error');
+
+    fireEvent.click(recordBox()); // back off
+    goToStep('Review & save');
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalledTimes(2));
+    expect(mocks.updateAgencyCampaign.mock.calls[1]![1].record_calls).toBe(false);
+    await waitFor(() => expect(screen.queryByTestId('builder-error')).toBeNull());
+  });
+
+  it('appears on the review step', async () => {
+    await openBehaviour();
+    fireEvent.click(recordBox());
+    goToStep('Review & save');
+    expect(screen.getByText('Every call is recorded')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Edit Recording' })).toBeTruthy();
+  });
+});
+

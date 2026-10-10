@@ -7,7 +7,7 @@ import { envBoolean, type Env } from '../env.js';
  *  - `firebase` is OPTIONAL: a minimal env (DATABASE_URL + REDIS_URL) must parse, so a
  *    missing block must not fail the schema; instead `startPlatform` refuses to boot in
  *    production without it, and outside production every Firebase verify fails closed
- *    (401). The service account is given as JSON or as a path.
+ *    (401). Only the project id is read: token verification needs no service account.
  *  - `consoleBaseUrl` (`CONSOLE_BASE_URL`): the console origin invite links point at.
  *  - There are no peer-service, encryption, service-token, webhook, LLM, scheduler, SQS or
  *    credit blocks (no peer service, no API keys, no credits). `rateLimit` lives in the
@@ -16,8 +16,6 @@ import { envBoolean, type Env } from '../env.js';
 
 const firebaseSchema = z.object({
   projectId: z.string(),
-  serviceAccountKey: z.string().optional(),
-  serviceAccountPath: z.string().optional(),
   authEmulatorHost: z.string().optional(),
 });
 
@@ -104,8 +102,6 @@ export function readPlatformEnv(env: Env): Record<string, unknown> {
     firebase: env['FIREBASE_PROJECT_ID']
       ? {
           projectId: env['FIREBASE_PROJECT_ID'],
-          serviceAccountKey: env['FIREBASE_SERVICE_ACCOUNT_KEY'],
-          serviceAccountPath: env['FIREBASE_SERVICE_ACCOUNT_PATH'],
           authEmulatorHost: env['FIREBASE_AUTH_EMULATOR_HOST'],
         }
       : undefined,

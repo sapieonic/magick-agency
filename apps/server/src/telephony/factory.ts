@@ -32,7 +32,6 @@ export class ByocCredentialUnavailableError extends Error {
  *    per-tenant callback host is an SSRF sink and a call-hijack vector: the
  *    carrier would POST our answer/status webhooks — which carry the call's
  *    identity and drive its state machine — at an address the tenant chose.
- *    `defaultCallerId` comes from env for the same reason.
  */
 export function buildProviderConfig(
   provider: string,

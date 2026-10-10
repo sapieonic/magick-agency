@@ -88,6 +88,7 @@ vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: mockAuditLog
 
 import { DialerAnalysisRunner, toAnalysisEntries, type DialerAnalysisConfig } from '../../../src/core/dialer-analysis-runner.js';
 import { TranscriptionError } from '../../../src/transcription/types.js';
+import { AiError } from '../../../src/ai/index.js';
 import type { DialerAnalysisJobRecord } from '@magick-agency/db/models/dialer-analysis-job.model';
 import type { WebRtcCallRecord } from '@magick-agency/db/models/agency-call.model';
 import type { CallAnalysisResult } from '@magick-agency/db/models/call.model';
@@ -305,6 +306,100 @@ describe('DialerAnalysisRunner.run', () => {
     expect(mockJobRepo.completeWithAnalysis).toHaveBeenCalledOnce();
   });
 
+  it('audio analysis: the recording fetched for transcription is handed to analyze, with no second fetch', async () => {
+    const analysisService = { ...makeAnalysisService(), needsAudio: true };
+    const runner = new DialerAnalysisRunner({ transcriber: makeTranscriber() as never, analysisService: analysisService as never, config: CFG });
+
+    await runner.run(makeJob());
+
+    expect(mockFetchRecordingBytes).toHaveBeenCalledOnce();
+    expect(analysisService.analyze.mock.calls[0]![3]).toMatchObject({
+      audio: { bytes: Buffer.from('audio'), mimeType: 'audio/wav' },
+    });
+    expect(mockJobRepo.completeWithAnalysis).toHaveBeenCalledOnce();
+  });
+
+  it('audio analysis on RESUME: fetches the recording again (same allow-list), still skips transcription', async () => {
+    mockWebrtcRepo.findById.mockResolvedValue(makeCall({
+      conversation_log: [{ role: 'agent', content: 'prior' }],
+      transcript_meta: { provider: 'gemini', model: 'gemini-2.5-flash', detected_language: 'English', duration_seconds: 90, turn_count: 1, latency_ms: 10, transcribed_at: new Date().toISOString() },
+    }));
+    const transcriber = makeTranscriber();
+    const analysisService = { ...makeAnalysisService(), needsAudio: true };
+    const runner = new DialerAnalysisRunner({
+      transcriber: transcriber as never, analysisService: analysisService as never, config: CFG, recordingHosts: ['rec'],
+    });
+
+    await runner.run(makeJob());
+
+    expect(transcriber.transcribe).not.toHaveBeenCalled();
+    expect(mockFetchRecordingBytes).toHaveBeenCalledOnce();
+    expect(mockFetchRecordingBytes.mock.calls[0]![0]).toBe('https://rec/call-1.wav');
+    expect(mockFetchRecordingBytes.mock.calls[0]![1]).toEqual({
+      allowedHosts: ['rec'], maxBytes: CFG.maxRecordingBytes, timeoutMs: CFG.transcribeTimeoutMs,
+    });
+    expect(analysisService.analyze.mock.calls[0]![3]).toHaveProperty('audio');
+    expect(mockJobRepo.completeWithAnalysis).toHaveBeenCalledOnce();
+  });
+
+  // The audio and the transcript must be the same file.
+  it('audio analysis on RESUME: refetches the URL the transcript was made from', async () => {
+    mockWebrtcRepo.findById.mockResolvedValue(makeCall({
+      conversation_log: [{ role: 'agent', content: 'prior' }],
+      transcript_meta: {
+        provider: 'gemini', model: 'gemini-2.5-flash', detected_language: 'English', duration_seconds: 90,
+        turn_count: 1, latency_ms: 10, transcribed_at: new Date().toISOString(), source_url: 'https://rec/first.wav',
+      },
+    }));
+    const analysisService = { ...makeAnalysisService(), needsAudio: true };
+    await new DialerAnalysisRunner({ transcriber: makeTranscriber() as never, analysisService: analysisService as never, config: CFG }).run(makeJob());
+
+    expect(mockFetchRecordingBytes.mock.calls[0]![0]).toBe('https://rec/first.wav');
+  });
+
+  it('audio analysis on RESUME: abandons when the claim is fenced out during the refetch', async () => {
+    mockWebrtcRepo.findById.mockResolvedValue(makeCall({
+      conversation_log: [{ role: 'agent', content: 'prior' }],
+      transcript_meta: { provider: 'gemini', model: 'gemini-2.5-flash', detected_language: 'English', duration_seconds: 90, turn_count: 1, latency_ms: 10, transcribed_at: new Date().toISOString() },
+    }));
+    mockJobRepo.heartbeat
+      .mockResolvedValueOnce(true)   // after markAnalyzing
+      .mockResolvedValueOnce(false); // after the refetch
+    const analysisService = { ...makeAnalysisService(), needsAudio: true };
+    await new DialerAnalysisRunner({ transcriber: makeTranscriber() as never, analysisService: analysisService as never, config: CFG }).run(makeJob());
+
+    expect(mockFetchRecordingBytes).toHaveBeenCalledOnce();
+    expect(analysisService.analyze).not.toHaveBeenCalled();
+    expect(mockJobRepo.requeueForRetry).not.toHaveBeenCalled();
+    expect(mockJobRepo.markFailed).not.toHaveBeenCalled();
+  });
+
+  it('a slow analysis heartbeats the claim, and a fenced heartbeat abandons the run', async () => {
+    const analysisService = {
+      analyze: vi.fn().mockImplementation(async (_id, _log, _cfg, opts: { heartbeat: () => Promise<void> }) => {
+        await opts.heartbeat();
+        mockJobRepo.heartbeat.mockResolvedValueOnce(false);
+        await opts.heartbeat();
+        return analysisResult();
+      }),
+    };
+    await new DialerAnalysisRunner({ transcriber: makeTranscriber() as never, analysisService: analysisService as never, config: CFG }).run(makeJob());
+
+    expect(mockJobRepo.heartbeat).toHaveBeenLastCalledWith('job-1', 5);
+    expect(mockJobRepo.completeWithAnalysis).not.toHaveBeenCalled();
+    expect(mockJobRepo.requeueForRetry).not.toHaveBeenCalled();
+    expect(mockJobRepo.markFailed).not.toHaveBeenCalled();
+  });
+
+  it('transcript analysis (the default) is never handed the recording', async () => {
+    const analysisService = makeAnalysisService();
+    const runner = new DialerAnalysisRunner({ transcriber: makeTranscriber() as never, analysisService: analysisService as never, config: CFG });
+
+    await runner.run(makeJob());
+
+    expect(analysisService.analyze.mock.calls[0]![3]).not.toHaveProperty('audio');
+  });
+
   it('analysis failure leaves the transcript intact (persist happened, no complete, requeue)', async () => {
     const analysisService = { analyze: vi.fn().mockRejectedValue(new Error('LLM down')) };
     const runner = new DialerAnalysisRunner({ transcriber: makeTranscriber() as never, analysisService: analysisService as never, config: CFG });
@@ -428,7 +523,7 @@ describe('DialerAnalysisRunner.run', () => {
 
     const [, entries, cfg, opts] = analysisService.analyze.mock.calls[0]!;
     expect(cfg).toEqual({ custom_dimensions: snapshot.custom_dimensions });
-    expect(opts).toEqual({ context: 'renewals' });
+    expect(opts).toEqual({ context: 'renewals', heartbeat: expect.any(Function) });
     expect(entries.length).toBe(2);
   });
 
@@ -482,6 +577,34 @@ describe('DialerAnalysisRunner.run', () => {
 
     expect(mockJobRepo.requeueRateLimited).toHaveBeenCalledOnce();
     expect(mockJobRepo.requeueForRetry).not.toHaveBeenCalled();
+    expect(mockJobRepo.markFailed).not.toHaveBeenCalled();
+  });
+
+  it('an AI-layer rate limit during analysis ⇒ requeue without consuming an attempt', async () => {
+    const analysisService = { analyze: vi.fn().mockRejectedValue(new AiError('rate_limited', 'gemini', '429', 429)) };
+    await new DialerAnalysisRunner({ transcriber: makeTranscriber() as never, analysisService: analysisService as never, config: CFG }).run(makeJob());
+
+    expect(mockJobRepo.requeueRateLimited).toHaveBeenCalledOnce();
+    expect(mockJobRepo.requeueForRetry).not.toHaveBeenCalled();
+    expect(mockJobRepo.markFailed).not.toHaveBeenCalled();
+  });
+
+  it.each(['unsupported_input', 'unsupported_operation', 'invalid_config'] as const)(
+    'an AI-layer %s error during analysis ⇒ failed immediately',
+    async (kind) => {
+      const analysisService = { analyze: vi.fn().mockRejectedValue(new AiError(kind, 'gemini', 'no')) };
+      await new DialerAnalysisRunner({ transcriber: makeTranscriber() as never, analysisService: analysisService as never, config: CFG }).run(makeJob({ attempts: 1 }));
+
+      expect(mockJobRepo.markFailed).toHaveBeenCalledWith('job-1', 'call-1', 5, 'ANALYSIS_FAILED', 'no');
+      expect(mockJobRepo.requeueForRetry).not.toHaveBeenCalled();
+    },
+  );
+
+  it('an AI-layer request_failed during analysis is retried as usual', async () => {
+    const analysisService = { analyze: vi.fn().mockRejectedValue(new AiError('request_failed', 'gemini', '500', 500)) };
+    await new DialerAnalysisRunner({ transcriber: makeTranscriber() as never, analysisService: analysisService as never, config: CFG }).run(makeJob({ attempts: 1 }));
+
+    expect(mockJobRepo.requeueForRetry).toHaveBeenCalledOnce();
     expect(mockJobRepo.markFailed).not.toHaveBeenCalled();
   });
 

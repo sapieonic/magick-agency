@@ -14,7 +14,6 @@ vi.mock('@google/genai', () => ({
     constructor(_opts: unknown) {}
   },
   createPartFromUri: (uri: string, mimeType: string) => ({ fileData: { fileUri: uri, mimeType } }),
-  Type: { OBJECT: 'OBJECT', ARRAY: 'ARRAY', STRING: 'STRING', INTEGER: 'INTEGER', NUMBER: 'NUMBER' },
 }));
 
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
@@ -24,10 +23,20 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 
 const { GeminiTranscriber } = await import('../../../src/transcription/gemini-transcriber.js');
 const { TranscriptionError } = await import('../../../src/transcription/types.js');
+const { createAiClient } = await import('../../../src/ai/index.js');
 
 const CFG = {
   apiKey: 'k', model: 'gemini-2.5-flash', timeoutMs: 5000, windowSeconds: 600, maxOutputTokens: 16384,
 };
+// The transcriber runs on a real Gemini AI client over the mocked SDK above, so these
+// cases cover the client's request and response mapping as well as the transcriber.
+function makeTranscriber(cfg: typeof CFG) {
+  return new GeminiTranscriber({
+    client: createAiClient({ provider: 'gemini', apiKey: cfg.apiKey, model: cfg.model, timeoutMs: cfg.timeoutMs }),
+    windowSeconds: cfg.windowSeconds,
+    maxOutputTokens: cfg.maxOutputTokens,
+  });
+}
 const ACTIVE_FILE = { name: 'files/abc', uri: 'https://files/abc', mimeType: 'audio/mpeg', state: 'ACTIVE' };
 
 function turnsResp(
@@ -62,7 +71,7 @@ describe('GeminiTranscriber', () => {
       ]),
     );
 
-    const result = await new GeminiTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' });
+    const result = await makeTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' });
 
     expect(result.detectedLanguage).toBe('English');
     expect(result.model).toBe('gemini-2.5-flash');
@@ -84,7 +93,7 @@ describe('GeminiTranscriber', () => {
   it('uses Gemini 3.5 migration-safe thinking settings without sampling overrides', async () => {
     mocks.generateContent.mockResolvedValueOnce(turnsResp([{ speaker: 'agent', text: 'Hi' }]));
 
-    await new GeminiTranscriber({ ...CFG, model: 'gemini-3.5-flash' }).transcribe({
+    await makeTranscriber({ ...CFG, model: 'gemini-3.5-flash' }).transcribe({
       audio: makeAudio(), mimeType: 'audio/mpeg', expectedDurationSeconds: 10,
     });
 
@@ -105,7 +114,7 @@ describe('GeminiTranscriber', () => {
       mocks.get.mockResolvedValueOnce({ ...ACTIVE_FILE, state: 'ACTIVE' });
       mocks.generateContent.mockResolvedValueOnce(turnsResp([{ speaker: 'agent', text: 'Hi' }]));
 
-      const promise = new GeminiTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' });
+      const promise = makeTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' });
       await vi.advanceTimersByTimeAsync(1100);
       const result = await promise;
 
@@ -119,7 +128,7 @@ describe('GeminiTranscriber', () => {
   it('throws UNSUPPORTED_AUDIO when the Files API marks the upload FAILED', async () => {
     mocks.upload.mockResolvedValue({ ...ACTIVE_FILE, state: 'FAILED', uri: undefined });
     await expect(
-      new GeminiTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' }),
+      makeTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' }),
     ).rejects.toMatchObject({ code: 'UNSUPPORTED_AUDIO', retryable: false });
     expect(mocks.del).toHaveBeenCalledWith({ name: 'files/abc' });
   });
@@ -130,7 +139,7 @@ describe('GeminiTranscriber', () => {
       mocks.upload.mockResolvedValue({ ...ACTIVE_FILE, state: 'PROCESSING' });
       mocks.get.mockRejectedValueOnce(new Error('poll failed'));
 
-      const promise = new GeminiTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' });
+      const promise = makeTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' });
       const expectation = expect(promise).rejects.toMatchObject({ code: 'TRANSCRIPTION_FAILED' });
       await vi.advanceTimersByTimeAsync(1100);
       await expectation;
@@ -143,7 +152,7 @@ describe('GeminiTranscriber', () => {
   it('fails with TRANSCRIPTION_FAILED on a non-STOP finishReason', async () => {
     mocks.generateContent.mockResolvedValueOnce({ text: '{}', candidates: [{ finishReason: 'SAFETY' }] });
     await expect(
-      new GeminiTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' }),
+      makeTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' }),
     ).rejects.toMatchObject({ code: 'TRANSCRIPTION_FAILED' });
   });
 
@@ -152,14 +161,14 @@ describe('GeminiTranscriber', () => {
       promptFeedback: { blockReason: 'SAFETY', blockReasonMessage: 'blocked by policy' },
     });
     await expect(
-      new GeminiTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' }),
+      makeTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' }),
     ).rejects.toMatchObject({ code: 'TRANSCRIPTION_FAILED', retryable: false });
   });
 
   it('treats an unexplained no-candidate response as retryable, never silent audio', async () => {
     mocks.generateContent.mockResolvedValueOnce({ usageMetadata: { totalTokenCount: 10 } });
     await expect(
-      new GeminiTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' }),
+      makeTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' }),
     ).rejects.toMatchObject({ code: 'TRANSCRIPTION_FAILED', retryable: true });
   });
 
@@ -169,10 +178,10 @@ describe('GeminiTranscriber', () => {
       .mockResolvedValueOnce({ text: '{}', candidates: [{ finishReason: 'STOP' }] });
 
     await expect(
-      new GeminiTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' }),
+      makeTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' }),
     ).rejects.toMatchObject({ code: 'TRANSCRIPTION_FAILED' });
     await expect(
-      new GeminiTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' }),
+      makeTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' }),
     ).rejects.toMatchObject({ code: 'TRANSCRIPTION_FAILED' });
   });
 
@@ -186,7 +195,7 @@ describe('GeminiTranscriber', () => {
       .mockResolvedValueOnce(turnsResp([{ speaker: 'customer', text: 'second half', start_seconds: 1 }]));
 
     const onProgress = vi.fn();
-    const result = await new GeminiTranscriber({ ...CFG, model: 'gemini-3.5-flash' }).transcribe(
+    const result = await makeTranscriber({ ...CFG, model: 'gemini-3.5-flash' }).transcribe(
       { audio: makeAudio(), mimeType: 'audio/mpeg', expectedDurationSeconds: 10 },
       onProgress,
     );
@@ -208,7 +217,7 @@ describe('GeminiTranscriber', () => {
     });
 
     await expect(
-      new GeminiTranscriber({ ...CFG, model: 'gemini-3.5-flash' }).transcribe({
+      makeTranscriber({ ...CFG, model: 'gemini-3.5-flash' }).transcribe({
         audio: makeAudio(), mimeType: 'audio/mpeg', expectedDurationSeconds: 5,
       }),
     ).rejects.toMatchObject({ code: 'TRANSCRIPTION_FAILED', retryable: false });
@@ -222,7 +231,7 @@ describe('GeminiTranscriber', () => {
       .mockResolvedValueOnce({ candidates: [{ finishReason: 'MAX_TOKENS' }] })
       .mockResolvedValueOnce(turnsResp([{ speaker: 'agent', text: 'whole six seconds' }]));
 
-    const result = await new GeminiTranscriber({ ...CFG, model: 'gemini-3.5-flash' }).transcribe({
+    const result = await makeTranscriber({ ...CFG, model: 'gemini-3.5-flash' }).transcribe({
       audio: makeAudio(), mimeType: 'audio/mpeg', expectedDurationSeconds: 6,
     });
 
@@ -246,7 +255,7 @@ describe('GeminiTranscriber', () => {
     });
 
     await expect(
-      new GeminiTranscriber({ ...CFG, model: 'gemini-3.5-flash' }).transcribe({
+      makeTranscriber({ ...CFG, model: 'gemini-3.5-flash' }).transcribe({
         audio: makeAudio(), mimeType: 'audio/mpeg', expectedDurationSeconds: 600,
       }),
     ).rejects.toMatchObject({ code: 'TRANSCRIPTION_FAILED', retryable: false });
@@ -255,7 +264,7 @@ describe('GeminiTranscriber', () => {
 
   it('returns an empty transcript (no turns) without throwing — runner classifies skipped', async () => {
     mocks.generateContent.mockResolvedValueOnce(turnsResp([]));
-    const result = await new GeminiTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' });
+    const result = await makeTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' });
     expect(result.entries).toEqual([]);
     expect(result.diarizationFailed).toBe(false); // no turns ⇒ not "failed"
   });
@@ -267,7 +276,7 @@ describe('GeminiTranscriber', () => {
         { speaker: 'unknown', text: 'mumble two' },
       ]),
     );
-    const result = await new GeminiTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' });
+    const result = await makeTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' });
     expect(result.diarizationFailed).toBe(true);
     expect(result.entries.every((e) => e.role === 'unknown')).toBe(true);
   });
@@ -279,14 +288,14 @@ describe('GeminiTranscriber', () => {
         { speaker: 'unknown', text: 'noise' },
       ]),
     );
-    const result = await new GeminiTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' });
+    const result = await makeTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' });
     expect(result.diarizationFailed).toBe(false);
   });
 
   it('classifies RESOURCE_EXHAUSTED as retryable RATE_LIMITED (does not burn an attempt)', async () => {
     mocks.generateContent.mockRejectedValueOnce(Object.assign(new Error('RESOURCE_EXHAUSTED: quota'), { status: 429 }));
     await expect(
-      new GeminiTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' }),
+      makeTranscriber(CFG).transcribe({ audio: makeAudio(), mimeType: 'audio/mpeg' }),
     ).rejects.toMatchObject({ code: 'RATE_LIMITED', retryable: true });
     expect(TranscriptionError).toBeDefined();
   });
@@ -298,7 +307,7 @@ describe('GeminiTranscriber', () => {
       .mockResolvedValueOnce(turnsResp([{ speaker: 'customer', text: 'second window', start_seconds: 5, end_seconds: 7 }]));
 
     const onProgress = vi.fn().mockResolvedValue(undefined);
-    const result = await new GeminiTranscriber(CFG).transcribe(
+    const result = await makeTranscriber(CFG).transcribe(
       { audio: makeAudio(), mimeType: 'audio/mpeg', expectedDurationSeconds: 900 },
       onProgress,
     );
@@ -324,7 +333,7 @@ describe('GeminiTranscriber', () => {
       )
       .mockResolvedValueOnce(turnsResp([{ speaker: 'agent', text: 'turn three', start_seconds: 1 }]));
 
-    await new GeminiTranscriber(CFG).transcribe(
+    await makeTranscriber(CFG).transcribe(
       { audio: makeAudio(), mimeType: 'audio/mpeg', expectedDurationSeconds: 900 },
     );
 
@@ -342,7 +351,7 @@ describe('GeminiTranscriber', () => {
         { speaker: 'customer', text: 'right leg' },
       ]),
     );
-    const result = await new GeminiTranscriber(CFG).transcribe({
+    const result = await makeTranscriber(CFG).transcribe({
       audio: makeAudio(),
       mimeType: 'audio/mpeg',
       channelRoles: { 0: 'agent', 1: 'customer' },

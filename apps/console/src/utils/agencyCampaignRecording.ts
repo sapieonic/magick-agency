@@ -29,8 +29,8 @@ import type { CallAnalysisProfile } from '../types/call-analysis-profile';
 /**
  * The two capability keys, mirrored exactly from the API's frozen governance
  * catalog and from the strings
- * `assertCampaignBehavioralCapabilities` passes to `assertCapability` in
- * `proxy-agency-campaigns.routes.ts`.
+ * `assertBehavioralCapabilitiesForConfig` checks in the server's
+ * `agency/campaign-behavioral-settings.ts` (called from `proxy-agency-campaigns.routes.ts`).
  *
  * The server and this console cannot share a constant, so the unit test that pins these
  * against the same literals the API enforces is the only thing keeping them from
@@ -285,7 +285,11 @@ export function campaignSaveRefusal(
   }
 
   if (status === 403 && label === 'Feature Not Enabled' && typeof body?.['message'] === 'string') {
-    return `${body['message']} Choose “No summary” to save without one.`;
+    // "No summary" is a way out only when this save set one; the same label also
+    // answers a save on an account whose dialer flag went off.
+    return ctx.sentAnalysisProfile
+      ? `${body['message']} Choose “No summary” to save without one.`
+      : body['message'];
   }
 
   if (status === 404 && isProfile404(body, ctx.sentAnalysisProfile)) {

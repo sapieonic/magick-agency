@@ -1,0 +1,9 @@
+# Terraform state (it holds the server's secret access key), plans and local variables.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+terraform.tfstate.d/
+*.tfplan
+*.tfvars
+!terraform.tfvars.example

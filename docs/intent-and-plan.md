@@ -28,7 +28,7 @@ It is human-to-human calling, so what matters is different from automated voice:
 Approved by Manas on 2026-10-08 and not reopened. The table is [`decisions.md`](decisions.md), §1
 (S1–S8). In short: a self-contained application with its own server, database, Redis, storage and
 VoiceLink account (S1, S2); it owns analysis, transcripts and its identity data (S3); sign-in with
-Firebase Authentication through agency's own service account (S4); super-admins onboard tenants
+Firebase Authentication, verified against agency's own Firebase project id with no service account (S4); super-admins onboard tenants
 and users (S5); no credits or billing in v1 (S6); no AI calling (S7); Node 22, Fastify,
 TypeScript, raw `pg`, Vite + React (S8).
 
@@ -78,7 +78,7 @@ each stands is in [`status.md`](status.md).
 
 | Phase | What it builds | Exit check |
 |---|---|---|
-| 0 Vendor setup and decisions | Ratify the launch decisions; request the VoiceLink account, Firebase service account and authorised domain, Mailjet sender (SPF/DKIM), S3 bucket, Gemini / OpenAI keys, domain and TLS, PostHog; measure the data to import | Decisions recorded, vendors requested, measurements dated |
+| 0 Vendor setup and decisions | Ratify the launch decisions; request the VoiceLink account, Firebase project and authorised domain, Mailjet sender (SPF/DKIM), S3 bucket, Gemini / OpenAI keys, domain and TLS, PostHog; measure the data to import | Decisions recorded, vendors requested, measurements dated |
 | 1 Scaffold | Monorepo, CI (typecheck, unit, integration on Docker), dev infra on dedicated ports, Zod config that exits on invalid input | Empty apps green in CI |
 | 2 Contracts and schema | `packages/contracts` (wire types, error codes, flags, RBAC); one baseline migration covering identity, phone inventory, notifications, audit (partitioned), DNC, campaigns, contacts, sessions, attempts, calls, analysis jobs and profiles, guard tables | Baseline migrates on a fresh Postgres; trigger test passes; contracts typecheck |
 | 3 Platform layer | Identity and tenancy, per-account settings and flags, super-admin auth and API, notifications, audit, usage counts | Sign-in paths and the `no_membership` refusal; invite issue, claim, expiry, revoke; a super-admin creates a tenant and adds a user who then signs in; the `agent` role's reach; the per-field recording/analysis check |

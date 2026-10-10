@@ -155,7 +155,7 @@ locals {
         severity      = "critical"
         no_data_state = "OK"
         summary       = "More than half of Firebase ID tokens are being rejected"
-        description   = "auth_attempts_total{method=\"firebase\",status=\"invalid_token\"} has been more than 50% of Firebase auth attempts on {{ $labels.service_name }} for 15m (at least 20 rejections). Supervisors and agents cannot use the agency console, so no campaign can be run and no station can take a call. This is almost never a user problem: check that agency's FIREBASE_PROJECT_ID and FIREBASE_SERVICE_ACCOUNT_KEY match the Firebase project the console signs in against, and whether either changed in a recent deploy. Super-admin sign-in uses its own JWT and is unaffected, so it still works for triage."
+        description   = "auth_attempts_total{method=\"firebase\",status=\"invalid_token\"} has been more than 50% of Firebase auth attempts on {{ $labels.service_name }} for 15m (at least 20 rejections). Supervisors and agents cannot use the agency console, so no campaign can be run and no station can take a call. This is almost never a user problem: check that agency's FIREBASE_PROJECT_ID matches the Firebase project the console signs in against, and whether it changed in a recent deploy. Super-admin sign-in uses its own JWT and is unaffected, so it still works for triage."
       },
     ]
 

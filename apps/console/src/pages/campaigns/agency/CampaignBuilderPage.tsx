@@ -2,11 +2,19 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Upload } from 'lucide-react';
 import { useTenant } from '../../../contexts/TenantContext';
+import { useGovernance } from '../../../contexts/GovernanceContext';
 import { Breadcrumbs } from '../../../components/common/Breadcrumbs';
 import { ColumnMapper } from './ColumnMapper';
 import { IngestSummary } from './IngestSummary';
 import { CampaignBehaviourSection } from './CampaignBehaviourSection';
 import { CallerIdPicker, AGENCY_TELEPHONY_PROVIDER } from '../../agency/CallerIdPicker';
+import { CampaignRecordingField } from '../../../components/agency/CampaignRecordingField';
+import {
+  AGENCY_RECORDING_CAPABILITY,
+  NO_ANALYSIS_PROFILE,
+  campaignSaveRefusal,
+  recordingPayload,
+} from '../../../utils/agencyCampaignRecording';
 import { createAgencyCampaign, updateAgencyCampaign } from '../../../api/agencyCampaigns';
 import { buildContextDisplay, mappingBlockReason } from '../../../utils/agencyColumnMapping';
 import { useRosterIngest } from '../../../hooks/useRosterIngest';
@@ -65,6 +73,14 @@ export default function CampaignBuilderPage() {
   const [name, setName] = useState('');
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [callerIds, setCallerIds] = useState<string[]>([]);
+  /**
+   * Recording, set on the behaviour step and saved with the config. The account's
+   * `agency.recording` decides whether it can be switched on (UX gating; the API's
+   * 403 is the enforcement, and `useGovernance` fails open).
+   */
+  const [recordCalls, setRecordCalls] = useState(false);
+  const { isEnabled: isCapabilityEnabled } = useGovernance();
+  const recordingEnabled = isCapabilityEnabled(AGENCY_RECORDING_CAPABILITY);
 
   const [config, setConfig] = useState<CampaignConfigState>(emptyCampaignConfig);
   /**
@@ -185,11 +201,20 @@ export default function CampaignBuilderPage() {
     setSavingConfig(true);
     setConfigSaved(false);
     setFieldErrors({});
+    // A refusal from an earlier save must not outlive the save that fixed it.
+    setError(null);
+    // The builder has no call-summary picker, so only `record_calls` is taken: the
+    // same omit-when-it-would-be-refused rule the settings page uses.
+    const { record_calls } = recordingPayload({
+      recordingEnabled,
+      analyticsEnabled: false,
+      next: { record: recordCalls, profileId: NO_ANALYSIS_PROFILE },
+    });
     try {
       const id = await ensureCampaign();
       await updateAgencyCampaign(
         id,
-        buildConfigPayload(config),
+        { ...buildConfigPayload(config), ...(record_calls !== undefined ? { record_calls } : {}) },
         tenantId ?? undefined,
         accountId ?? undefined,
       );
@@ -212,14 +237,21 @@ export default function CampaignBuilderPage() {
           retry_policy_outcome_count: Object.keys(config.retryPolicy).length,
           wrapup_seconds: config.wrapupSeconds,
           auto_return: config.autoReturn,
-          // The builder has no recording/call-summary step yet — only the
-          // settings page (editing an existing campaign) exposes those fields.
-          recording_enabled: false,
+          recording_enabled: recordCalls,
+          // The builder has no call-summary picker; only the settings page sets one.
           analysis_profile_set: false,
           reordered,
         });
       }
     } catch (err: unknown) {
+      // A `capability_disabled` 403 (recording switched on for an account that may
+      // not record) carries no `details`; say what happened, on the step that has the box.
+      const refusal = campaignSaveRefusal(err, { sentAnalysisProfile: false });
+      if (refusal !== null) {
+        setError(refusal);
+        goTo('behaviour');
+        return;
+      }
       // The server answers `{ details: { field: message } }` keyed by the path into
       // the body, so the message lands on the field that caused it rather than
       // in one banner the operator has to map back by hand.
@@ -237,7 +269,7 @@ export default function CampaignBuilderPage() {
     } finally {
       setSavingConfig(false);
     }
-  }, [config, ensureCampaign, tenantId, accountId, goTo, setError]);
+  }, [config, recordCalls, recordingEnabled, ensureCampaign, tenantId, accountId, goTo, setError]);
 
   const backToMapping = useCallback(() => {
     setPhase('mapping');
@@ -560,6 +592,15 @@ export default function CampaignBuilderPage() {
                     layout="plain"
                     include={['behaviour']}
                   />
+                  <CampaignRecordingField
+                    checked={recordCalls}
+                    onChange={(next) => {
+                      setRecordCalls(next);
+                      setConfigSaved(false);
+                    }}
+                    capabilityEnabled={recordingEnabled}
+                    error={fieldErrors['record_calls']}
+                  />
                 </>
               ) : null}
 
@@ -610,6 +651,11 @@ export default function CampaignBuilderPage() {
                               : ', then agents mark themselves ready'
                           }`
                     }
+                    onEdit={() => goTo('behaviour')}
+                  />
+                  <ReviewRow
+                    label="Recording"
+                    value={recordCalls ? 'Every call is recorded' : 'Off'}
                     onEdit={() => goTo('behaviour')}
                   />
                   <p className={styles.reviewNote}>

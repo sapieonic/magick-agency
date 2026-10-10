@@ -37,6 +37,17 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 }));
 
 import { PostCallAnalysisService } from '../../../src/analysis/analysis.service.js';
+import { AiError, createAiClient, type AiClientConfig } from '../../../src/ai/index.js';
+
+/** The service on a real AI client over the mocked `openai` SDK. */
+function makeService(client: AiClientConfig, temperature: number | null = 0.3): PostCallAnalysisService {
+  return new PostCallAnalysisService({
+    client: createAiClient(client),
+    timeoutMs: 30000,
+    maxConversationTurns: 200,
+    temperature,
+  });
+}
 
 function makeLog(turns = 4): ConversationEntry[] {
   return Array.from({ length: turns }, (_, i) => ({
@@ -66,13 +77,7 @@ describe('PostCallAnalysisService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    service = new PostCallAnalysisService({
-      provider: 'openai',
-      apiKey: 'test-key',
-      model: 'gpt-4o-mini',
-      timeoutMs: 30000,
-      maxConversationTurns: 200,
-    });
+    service = makeService({ provider: 'openai_compatible', apiKey: 'test-key', model: 'gpt-4o-mini' });
   });
 
   it('returns structured analysis result on success', async () => {
@@ -86,7 +91,7 @@ describe('PostCallAnalysisService', () => {
     expect(result.common.overall_sentiment.label).toBe('neutral');
     expect(result.common.key_topics).toEqual(['greeting', 'scheduling']);
     expect(result.common.conversation_quality.coherence).toBe(7);
-    expect(result._meta.provider).toBe('openai');
+    expect(result._meta.provider).toBe('openai_compatible');
     expect(result._meta.model).toBe('gpt-4o-mini');
     expect(result._meta.prompt_tokens).toBe(100);
     expect(result._meta.completion_tokens).toBe(50);
@@ -211,57 +216,29 @@ describe('PostCallAnalysisService', () => {
     expect(mocks.logWarn).not.toHaveBeenCalled();
   });
 
-  it('constructs Gemini client with custom baseURL', () => {
-    new PostCallAnalysisService({
-      provider: 'gemini',
-      apiKey: 'gemini-key',
-      model: 'gemini-2.0-flash',
-      timeoutMs: 30000,
-      maxConversationTurns: 200,
-    });
-
-    expect(mocks.OpenAICtor).toHaveBeenCalledWith(
-      expect.objectContaining({
-        apiKey: 'gemini-key',
-        baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-      }),
-    );
-  });
-
-  it('omits sampling overrides for Gemini 3.x summary generation', async () => {
-    const geminiService = new PostCallAnalysisService({
-      provider: 'gemini',
-      apiKey: 'gemini-key',
-      model: 'models/gemini-3.5-flash',
-      timeoutMs: 30000,
-      maxConversationTurns: 200,
-    });
+  it('sends no temperature when configured with none (models that refuse one)', async () => {
+    const noTemp = makeService({ provider: 'openai_compatible', apiKey: 'k', model: 'o4-mini' }, null);
     mocks.chatCompletionsCreate.mockResolvedValueOnce({
       choices: [{ message: { content: JSON.stringify(validAnalysisResponse) } }],
-      usage: { prompt_tokens: 100, completion_tokens: 50 },
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
     });
 
-    await geminiService.analyze('call-gemini-3', makeLog(), emptyConfig);
+    await noTemp.analyze('call-no-temp', makeLog(), emptyConfig);
 
-    const callArgs = mocks.chatCompletionsCreate.mock.calls[0]![0];
-    expect(callArgs).not.toHaveProperty('temperature');
-    expect(callArgs).not.toHaveProperty('top_p');
-    expect(callArgs).not.toHaveProperty('top_k');
+    expect(mocks.chatCompletionsCreate.mock.calls[0]![0]).not.toHaveProperty('temperature');
   });
 
   describe('azure_openai provider', () => {
     let azureService: PostCallAnalysisService;
 
     beforeEach(() => {
-      azureService = new PostCallAnalysisService({
+      azureService = makeService({
         provider: 'azure_openai',
         apiKey: 'azure-key',
         model: 'gpt-4o',
-        timeoutMs: 30000,
-        maxConversationTurns: 200,
-        azureEndpoint: 'https://myresource.openai.azure.com',
-        azureApiVersion: '2024-12-01-preview',
-        azureDeployment: 'gpt-4o',
+        endpoint: 'https://myresource.openai.azure.com',
+        apiVersion: '2024-12-01-preview',
+        deployment: 'gpt-4o',
       });
     });
 
@@ -271,6 +248,7 @@ describe('PostCallAnalysisService', () => {
         endpoint: 'https://myresource.openai.azure.com',
         apiVersion: '2024-12-01-preview',
         deployment: 'gpt-4o',
+        maxRetries: 0,
       });
     });
 
@@ -326,22 +304,142 @@ describe('PostCallAnalysisService', () => {
       expect(callArgs.response_format.json_schema.name).toBe('call_analysis');
       expect(callArgs.response_format.json_schema.strict).toBe(true);
     });
+  });
+});
 
-    it('defaults azureApiVersion when not provided', () => {
-      new PostCallAnalysisService({
-        provider: 'azure_openai',
-        apiKey: 'azure-key-2',
-        model: 'gpt-4o-mini',
-        timeoutMs: 30000,
-        maxConversationTurns: 200,
-        azureEndpoint: 'https://other.openai.azure.com',
-      });
+describe('PostCallAnalysisService with audio input', () => {
+  const FILE = { provider: 'gemini' as const, id: 'files/rec', uri: 'https://files/rec', mimeType: 'audio/mpeg' };
+  const AUDIO = { bytes: Buffer.from('mp3-bytes'), mimeType: 'audio/mpeg' };
 
-      expect(mocks.AzureOpenAICtor).toHaveBeenCalledWith(
-        expect.objectContaining({
-          apiVersion: '2024-12-01-preview',
-        }),
-      );
-    });
+  function fakeClient(fileInput = true) {
+    return {
+      provider: 'gemini' as const,
+      model: 'gemini-3.5-flash',
+      capabilities: { fileInput },
+      generateJson: vi.fn(),
+      uploadFile: vi.fn().mockResolvedValue(FILE),
+      deleteFile: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  function audioService(client: ReturnType<typeof fakeClient>) {
+    return new PostCallAnalysisService({ client, timeoutMs: 180000, maxConversationTurns: 200, temperature: 0.3, input: 'audio' });
+  }
+
+  const okResponse = {
+    text: JSON.stringify(validAnalysisResponse), finish: 'stop', usage: { inputTokens: 900, outputTokens: 50 }, model: 'gemini-3.5-flash',
+  };
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('uploads the recording, sends it before the transcript, records input=audio, then deletes it', async () => {
+    const client = fakeClient();
+    client.generateJson.mockResolvedValueOnce(okResponse);
+
+    const result = await audioService(client).analyze('call-a1', makeLog(), emptyConfig, { audio: AUDIO });
+
+    expect(client.uploadFile).toHaveBeenCalledWith(AUDIO.bytes, 'audio/mpeg');
+    const req = client.generateJson.mock.calls[0]![0];
+    expect(req.input[0]).toEqual({ type: 'file', file: FILE });
+    expect(req.input[1].type).toBe('text');
+    expect(req.input[1].text).toContain('using the attached recording');
+    expect(req.system).toContain('## Call Recording');
+    expect(req.timeoutMs).toBe(180000);
+    expect(result._meta).toMatchObject({ input: 'audio', provider: 'gemini', prompt_tokens: 900 });
+    expect(client.deleteFile).toHaveBeenCalledWith(FILE);
+  });
+
+  it('uploads once across retries, and still deletes the upload when every attempt fails', async () => {
+    vi.useFakeTimers();
+    const client = fakeClient();
+    client.generateJson.mockRejectedValue(new Error('model overloaded'));
+    try {
+      // The retry backoff is real seconds; advance through it instead of waiting.
+      const outcome = expect(audioService(client).analyze('call-a2', makeLog(), emptyConfig, { audio: AUDIO }))
+        .rejects.toThrow('model overloaded');
+      await vi.advanceTimersByTimeAsync(30_000);
+      await outcome;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(client.generateJson).toHaveBeenCalledTimes(3);
+    expect(client.uploadFile).toHaveBeenCalledTimes(1);
+    expect(client.deleteFile).toHaveBeenCalledWith(FILE);
+  });
+
+  it('heartbeats after the upload and before every request', async () => {
+    vi.useFakeTimers();
+    const client = fakeClient();
+    const order: string[] = [];
+    client.uploadFile.mockImplementation(async () => { order.push('upload'); return FILE; });
+    client.generateJson
+      .mockImplementationOnce(async () => { order.push('request'); throw new Error('model overloaded'); })
+      .mockImplementationOnce(async () => { order.push('request'); return okResponse; });
+    const heartbeat = vi.fn(async () => { order.push('heartbeat'); });
+    try {
+      const outcome = audioService(client).analyze('call-h1', makeLog(), emptyConfig, { audio: AUDIO, heartbeat });
+      await vi.advanceTimersByTimeAsync(30_000);
+      await outcome;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(order).toEqual(['upload', 'heartbeat', 'request', 'heartbeat', 'request']);
+  });
+
+  it('a heartbeat that throws a nonRetryable error stops at once, and the upload is still deleted', async () => {
+    const client = fakeClient();
+    const fenced = Object.assign(new Error('fenced'), { nonRetryable: true });
+
+    await expect(audioService(client).analyze('call-h2', makeLog(), emptyConfig, {
+      audio: AUDIO, heartbeat: vi.fn().mockRejectedValue(fenced),
+    })).rejects.toBe(fenced);
+
+    expect(client.generateJson).not.toHaveBeenCalled();
+    expect(client.deleteFile).toHaveBeenCalledWith(FILE);
+  });
+
+  it('does not retry in place an AI error a retry cannot fix (rate limit, rejected input)', async () => {
+    for (const kind of ['rate_limited', 'unsupported_input'] as const) {
+      const client = fakeClient();
+      client.generateJson.mockRejectedValue(new AiError(kind, 'gemini', kind));
+      await expect(audioService(client).analyze('call-h3', makeLog(), emptyConfig, { audio: AUDIO })).rejects.toThrow(kind);
+      expect(client.generateJson).toHaveBeenCalledTimes(1);
+      expect(client.deleteFile).toHaveBeenCalledWith(FILE);
+    }
+  });
+
+  it('a failed delete is logged, not thrown: the analysis result still comes back', async () => {
+    const client = fakeClient();
+    client.generateJson.mockResolvedValueOnce(okResponse);
+    client.deleteFile.mockRejectedValueOnce(new Error('delete failed'));
+
+    const result = await audioService(client).analyze('call-a3', makeLog(), emptyConfig, { audio: AUDIO });
+
+    expect(result.common.overall_sentiment.label).toBe('neutral');
+    expect(mocks.logWarn).toHaveBeenCalledWith(expect.objectContaining({ fileId: 'files/rec' }), expect.any(String));
+  });
+
+  it('refuses audio input on a client without file input, and an analyze call without the recording', async () => {
+    expect(() => audioService(fakeClient(false))).toThrow(/needs a provider that accepts audio/);
+
+    const client = fakeClient();
+    expect(audioService(client).needsAudio).toBe(true);
+    await expect(audioService(client).analyze('call-a4', makeLog(), emptyConfig)).rejects.toThrow(/without the recording/);
+    expect(client.uploadFile).not.toHaveBeenCalled();
+  });
+
+  it('transcript input (the default) never uploads, even when audio is passed', async () => {
+    const client = fakeClient();
+    client.generateJson.mockResolvedValueOnce(okResponse);
+    const service = new PostCallAnalysisService({ client, timeoutMs: 30000, maxConversationTurns: 200, temperature: 0.3 });
+
+    const result = await service.analyze('call-t1', makeLog(), emptyConfig, { audio: AUDIO });
+
+    expect(service.needsAudio).toBe(false);
+    expect(client.uploadFile).not.toHaveBeenCalled();
+    expect(client.generateJson.mock.calls[0]![0].input).toEqual([{ type: 'text', text: expect.any(String) }]);
+    expect(result._meta.input).toBe('transcript');
   });
 });

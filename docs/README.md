@@ -19,12 +19,14 @@ Mailjet, S3, Gemini / OpenAI, PostHog).
 (identity, tenancy, RBAC, invites, settings, super-admin, notifications, audit), the dialer domain
 and data, the voice engine, the dialer runtime, call analysis, the public API, the console and the
 super-admin console. Manas's 2026-10-09 rulings on the open questions and branding are implemented.
-Last full run: lint clean in 7 packages; server 6457 unit / 1172 integration; console 4367;
-super-admin 366; builds OK.
+Last full run (2026-10-09): lint clean in 7 packages; server 6412 unit / 1172 integration;
+console 4367; super-admin 366; builds OK. Unit re-run 2026-10-10: server 6507, console 4374
+(`status.md`).
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
-but have not run on a real host. Nothing has run against a real carrier, a real Firebase sign-in or
+but have not run on a real host. `aws/terraform` provisions the S3 bucket and IAM user per
+environment, applied from a local machine. Nothing has run against a real carrier, a real Firebase sign-in or
 production data.
 
 **Needs Manas.** Ratify the launch defaults and Q3; `supervisor_hold`; shutdown grace (45 s,

@@ -30,7 +30,10 @@ export interface CallAnalysisResult {
   custom: Record<string, unknown>;
   _meta: {
     model: string;
-    provider: 'openai' | 'gemini' | 'azure_openai';
+    /** `openai` is how rows written before the AI layer's `openai_compatible` name read. */
+    provider: 'openai_compatible' | 'azure_openai' | 'gemini' | 'openai';
+    /** What the model was given. Absent on rows written before audio input existed (= transcript). */
+    input?: 'transcript' | 'audio';
     latency_ms: number;
     prompt_tokens: number;
     completion_tokens: number;

@@ -33,6 +33,8 @@ export interface CallAnalysisResult {
   _meta?: {
     model?: string;
     provider?: string;
+    /** `transcript` or `audio`: whether the recording itself was analysed. */
+    input?: 'transcript' | 'audio';
     latency_ms?: number;
     analyzed_at?: string;
     prompt_tokens?: number;

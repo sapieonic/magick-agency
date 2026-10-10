@@ -534,11 +534,14 @@ export class WebRtcBridgeManager {
     // VoiceLink is the only carrier.
     const provider = params.provider || 'voicelink';
     // Per-account recording ceiling: an account with allow_recording=false cannot
-    // record a human-bridge call even if record:true was requested. NULL column ⇒
-    // inherit the default (true). A plain account_settings column read; the voice
-    // engine knows nothing of why it's false.
+    // record a human-bridge call even if record:true was requested. NULL (no row, or
+    // never set) ⇒ NOT allowed: the same default the campaign-write check applies
+    // (`DEFAULT_ALLOW_RECORDING` in `settings/agency-account-settings.ts`; a test pins
+    // the two together). The baseline migration's SQL comment saying NULL inherits
+    // `true` predates this and is superseded. A plain account_settings column read;
+    // the voice engine knows nothing of why it's false.
     const allowRecording =
-      (await accountSettingsRepository.getAllowRecording(params.tenantId, params.accountId)) ?? true;
+      (await accountSettingsRepository.getAllowRecording(params.tenantId, params.accountId)) ?? false;
     const recordEnabled = params.record === true && allowRecording;
     // Concurrency key — unique per call, used purely as the Redis lock id (the
     // DB row id isn't known until after insert).
