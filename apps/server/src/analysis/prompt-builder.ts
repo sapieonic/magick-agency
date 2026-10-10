@@ -1,6 +1,7 @@
 import type { ConversationEntry } from '@magick-agency/db/models/conversation-entry.model';
 import type { AnalyticsConfig, AnalyticsDimension } from '@magick-agency/db/models/prompt.model';
 import { isSpokenEntry } from '../core/transcript-quality.js';
+import type { AiJsonSchema } from '../ai/index.js';
 
 const COMMON_ANALYSIS_INSTRUCTIONS = `You are a post-call analysis system. Analyze the following conversation transcript and produce a structured JSON analysis.
 
@@ -118,11 +119,27 @@ export interface AnalysisPrompt {
   userPrompt: string;
 }
 
+/**
+ * Added when the recording is sent with the transcript (`POST_CALL_ANALYSIS_INPUT=audio`).
+ * The transcript stays the index: `turn_index` and the custom dimensions still refer to
+ * its numbered turns, and the audio adds how things were said.
+ */
+const AUDIO_INSTRUCTIONS = `## Call Recording
+
+The call's audio recording is attached, together with its transcript. Use both:
+- Judge sentiment, emotion and tone from HOW things are said (voice, pace, hesitation, raised voices), not only from the words.
+- Take into account what the transcript cannot show: interruptions and talking over each other, long silences or hold time, background noise, a line that drops.
+- The transcript may contain recognition errors; where the audio clearly says something different, trust the audio.
+- Keep \`turn_index\` pointing at the numbered turns of the transcript.
+
+`;
+
 export function buildAnalysisPrompt(
   conversationLog: ConversationEntry[],
   analyticsConfig: AnalyticsConfig,
   maxConversationTurns: number,
   context?: string | null,
+  opts?: { audio?: boolean },
 ): AnalysisPrompt {
   const customSection = buildCustomDimensionsPrompt(uniqueDimensions(analyticsConfig.custom_dimensions));
   // Business context (dialer analysis profiles) is prepended so the model reads it
@@ -130,18 +147,22 @@ export function buildAnalysisPrompt(
   const contextSection = context && context.trim()
     ? `## Business Context\n\n${context.trim()}\n\n`
     : '';
-  const systemPrompt = contextSection + COMMON_ANALYSIS_INSTRUCTIONS + customSection;
+  const audioSection = opts?.audio ? AUDIO_INSTRUCTIONS : '';
+  const systemPrompt = contextSection + audioSection + COMMON_ANALYSIS_INSTRUCTIONS + customSection;
 
   const transcript = formatTranscript(conversationLog, maxConversationTurns);
   // Counts what the model is shown: a `[Silence]` marker is dropped from the
   // transcript (see formatTranscript), so it is not a turn either.
   const spokenTurns = conversationLog.filter(isSpokenEntry).length;
-  const userPrompt = `## Conversation Transcript (${spokenTurns} turns)\n\n${transcript}\n\nAnalyze this conversation and return the structured JSON result.`;
+  const ask = opts?.audio
+    ? 'Analyze this conversation, using the attached recording and this transcript, and return the structured JSON result.'
+    : 'Analyze this conversation and return the structured JSON result.';
+  const userPrompt = `## Conversation Transcript (${spokenTurns} turns)\n\n${transcript}\n\n${ask}`;
 
   return { systemPrompt, userPrompt };
 }
 
-export function buildJsonSchema(analyticsConfig: AnalyticsConfig): Record<string, unknown> {
+export function buildJsonSchema(analyticsConfig: AnalyticsConfig): AiJsonSchema {
   const customProperties: Record<string, unknown> = {};
   const customRequired: string[] = [];
 

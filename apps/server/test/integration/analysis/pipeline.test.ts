@@ -81,7 +81,7 @@ describe('dialer analysis pipeline over real Postgres', () => {
     expect(row.call_analysis.common.summary).toBe('the summary');
     // The snapshot, not a live profile, reached the analysis service.
     expect(svc.analyze.mock.calls[0]![2]).toEqual({ custom_dimensions: [{ key: 'ptp', description: 'd', type: 'boolean' }] });
-    expect(svc.analyze.mock.calls[0]![3]).toEqual({ context: 'ctx' });
+    expect(svc.analyze.mock.calls[0]![3]).toEqual({ context: 'ctx', heartbeat: expect.any(Function) });
     // The fetch carried no credentials and followed no redirect automatically.
     const [, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(init.headers).toBeUndefined();

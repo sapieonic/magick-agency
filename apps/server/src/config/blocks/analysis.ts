@@ -13,21 +13,99 @@ import { envBoolean, type Env } from '../env.js';
  *    means the row purge does not run (Manas, 2026-10-09: deleting call records is not a
  *    safe default); `agencyTranscriptRetentionDays` defaults to 30 days (Manas,
  *    2026-10-09), so the transcript half runs out of the box;
- *  - `postCallAnalysis.apiKey` falls back to OPENAI_API_KEY / GEMINI_API_KEY.
+ *  - `postCallAnalysis.apiKey` falls back to GEMINI_API_KEY for gemini, and to
+ *    OPENAI_API_KEY only when no base URL is set (OpenAI's key never goes to another host);
+ *  - `postCallAnalysis` and `dialerAnalysis` pick and configure a client of the AI layer
+ *    (`ai/`), which every AI call goes through.
  */
 
+const emptyToUndefined = (v: unknown) => (v === '' ? undefined : v);
+
+/** The model when POST_CALL_ANALYSIS_MODEL is unset, per provider. */
+const DEFAULT_ANALYSIS_MODEL = {
+  openai_compatible: 'gpt-4o-mini',
+  azure_openai: 'gpt-4o-mini',
+  gemini: 'gemini-3.5-flash',
+} as const;
+
+/** An RFC 9110 header name (a token). */
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+/**
+ * Post-call analysis: which AI provider (`ai/`) runs it and with what. `openai` is
+ * accepted as the older spelling of `openai_compatible` (OpenAI is the
+ * compatible endpoint with no base URL).
+ */
 const postCallAnalysisSchema = z.object({
   enabled: envBoolean.default(true),
-  provider: z.enum(['openai', 'gemini', 'azure_openai']).default('openai'),
+  provider: z.preprocess(
+    (v) => (v === 'openai' ? 'openai_compatible' : v),
+    z.enum(['openai_compatible', 'azure_openai', 'gemini']),
+  ).default('openai_compatible'),
   apiKey: z.string().optional(),
-  model: z.string().default('gpt-4o-mini'),
-  timeoutMs: z.coerce.number().default(30000),
+  /** Unset = the provider's default (`DEFAULT_ANALYSIS_MODEL`). */
+  model: z.preprocess(emptyToUndefined, z.string().optional()),
+  /** openai_compatible only: the endpoint's base URL with its version path. Unset = OpenAI. */
+  baseUrl: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  /**
+   * openai_compatible only: extra request headers, `name=value` pairs separated by
+   * commas. A malformed entry fails boot; its value is never echoed (it may be a secret).
+   */
+  headers: z.string().optional().transform((raw, ctx) => {
+    const out: Record<string, string> = {};
+    for (const entry of (raw ?? '').split(',')) {
+      const pair = entry.trim();
+      if (!pair) continue;
+      const eq = pair.indexOf('=');
+      if (eq <= 0) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'POST_CALL_ANALYSIS_HEADERS: every entry must be name=value' });
+        return z.NEVER;
+      }
+      const name = pair.slice(0, eq).trim();
+      if (!HEADER_NAME.test(name)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'POST_CALL_ANALYSIS_HEADERS: a header name is not a valid HTTP token' });
+        return z.NEVER;
+      }
+      out[name] = pair.slice(eq + 1).trim();
+    }
+    return out;
+  }),
+  /** openai_compatible only: `json_object` for endpoints without `json_schema` support. */
+  structuredOutput: z.preprocess(emptyToUndefined, z.enum(['json_schema', 'json_object']).default('json_schema')),
+  /**
+   * Sampling temperature. `none` sends none, for models that refuse one (OpenAI's
+   * reasoning models). Gemini 3.x ignores it either way (`ai/gemini.client.ts`).
+   */
+  temperature: z.preprocess(
+    (v) => (v === '' ? undefined : v === 'none' ? null : v),
+    z.union([z.null(), z.coerce.number().min(0).max(2)]).default(0.3),
+  ),
+  /**
+   * `transcript` (default): the model reads the transcript only. `audio`: the recording
+   * is sent too, so tone, emotion, interruptions and silences inform the analysis.
+   * Needs a provider that accepts audio (gemini); refused at boot otherwise.
+   */
+  input: z.preprocess(emptyToUndefined, z.enum(['transcript', 'audio']).default('transcript')),
+  /** Unset = 30 s for `transcript`, 180 s for `audio` (upload, processing and a longer request). */
+  timeoutMs: z.coerce.number().int().min(1000).optional(),
   maxConversationTurns: z.coerce.number().default(200),
   azureApiKey: z.string().optional(),
   azureEndpoint: z.string().optional(),
   azureApiVersion: z.string().default('2024-12-01-preview'),
   azureDeployment: z.string().optional(),
-});
+}).superRefine((data, ctx) => {
+  if (data.enabled && data.input === 'audio' && data.provider !== 'gemini') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['input'],
+      message: `POST_CALL_ANALYSIS_INPUT=audio needs a provider that accepts audio (gemini), not ${data.provider}`,
+    });
+  }
+}).transform((data) => ({
+  ...data,
+  model: data.model ?? DEFAULT_ANALYSIS_MODEL[data.provider],
+  timeoutMs: data.timeoutMs ?? (data.input === 'audio' ? 180_000 : 30_000),
+}));
 
 /**
  * Dialer Call Analysis — post-call transcription + analysis of agency calls.
@@ -151,15 +229,29 @@ export const analysisConfigSchema = z.object({
   retention: retentionSchema.default({}),
 });
 
+/**
+ * The shared key a provider falls back to. OPENAI_API_KEY is OpenAI's, so it is used
+ * only when no base URL points the client somewhere else.
+ */
+function fallbackAnalysisKey(env: Env, provider: string | undefined): string | undefined {
+  if (provider === 'gemini') return env['GEMINI_API_KEY'];
+  if (provider === 'azure_openai') return undefined;
+  return env['POST_CALL_ANALYSIS_BASE_URL'] ? undefined : env['OPENAI_API_KEY'];
+}
+
 export function readAnalysisEnv(env: Env): Record<string, unknown> {
   const provider = env['POST_CALL_ANALYSIS_PROVIDER'];
   return {
     postCallAnalysis: {
       enabled: env['POST_CALL_ANALYSIS_ENABLED'],
       provider,
-      apiKey: env['POST_CALL_ANALYSIS_API_KEY']
-        ?? (provider === 'gemini' ? env['GEMINI_API_KEY'] : env['OPENAI_API_KEY']),
+      apiKey: env['POST_CALL_ANALYSIS_API_KEY'] ?? fallbackAnalysisKey(env, provider),
       model: env['POST_CALL_ANALYSIS_MODEL'],
+      baseUrl: env['POST_CALL_ANALYSIS_BASE_URL'],
+      headers: env['POST_CALL_ANALYSIS_HEADERS'],
+      structuredOutput: env['POST_CALL_ANALYSIS_STRUCTURED_OUTPUT'],
+      temperature: env['POST_CALL_ANALYSIS_TEMPERATURE'],
+      input: env['POST_CALL_ANALYSIS_INPUT'],
       timeoutMs: env['POST_CALL_ANALYSIS_TIMEOUT_MS'],
       maxConversationTurns: env['POST_CALL_ANALYSIS_MAX_TURNS'],
       azureApiKey: env['POST_CALL_ANALYSIS_AZURE_API_KEY'],

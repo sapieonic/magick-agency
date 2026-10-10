@@ -1,5 +1,6 @@
 import { createChildLogger } from '@magick-agency/observability';
 import type { DialerSpeakerRole, DialerTranscriptEntry } from '@magick-agency/db/models/agency-call.model';
+import { AiError, type AiClient, type AiFile, type AiJsonResponse, type AiJsonSchema, type AiUsage } from '../ai/index.js';
 import {
   TranscriptionError,
   type Transcriber,
@@ -11,56 +12,12 @@ import {
 const log = createChildLogger({ component: 'gemini-transcriber' });
 
 export interface GeminiTranscriberConfig {
-  apiKey: string;
-  model: string;
-  /** Per-window transcription request timeout (ms). Also the Files-API poll deadline. */
-  timeoutMs: number;
+  /** A Gemini client from the AI layer (`ai/`): it does the upload, the requests and the cleanup. */
+  client: AiClient;
   /** Time-window size (seconds) for long-call chunking; each window heartbeats. */
   windowSeconds: number;
   /** Explicit per-window generation ceiling; MAX_TOKENS windows split adaptively. */
   maxOutputTokens: number;
-}
-
-// Minimal structural types for the parts of @google/genai we touch. The package
-// is ESM-only, so a TYPE-position `import('@google/genai').X` fails under the
-// project's CommonJS compile (TS1542) — the runtime dynamic `import()` is fine.
-// These also make the client trivially mockable in unit tests.
-interface GenAIFile {
-  uri?: string;
-  mimeType?: string;
-  name?: string;
-  state?: unknown;
-}
-interface GenAIUsageMetadata {
-  promptTokenCount?: number;
-  candidatesTokenCount?: number;
-  thoughtsTokenCount?: number;
-  totalTokenCount?: number;
-}
-interface GenAIGenerateResponse {
-  text?: string;
-  candidates?: Array<{
-    finishReason?: unknown;
-    finishMessage?: string;
-    tokenCount?: number;
-    content?: { parts?: Array<{ text?: string }> };
-  }>;
-  modelVersion?: string;
-  usageMetadata?: GenAIUsageMetadata;
-  promptFeedback?: {
-    blockReason?: unknown;
-    blockReasonMessage?: string;
-  };
-}
-interface GenAIClient {
-  files: {
-    upload(args: { file: Blob; config?: { mimeType?: string } }): Promise<GenAIFile>;
-    get(args: { name: string }): Promise<GenAIFile>;
-    delete(args: { name: string }): Promise<unknown>;
-  };
-  models: {
-    generateContent(args: unknown): Promise<GenAIGenerateResponse>;
-  };
 }
 
 interface RawTurn {
@@ -74,12 +31,9 @@ interface RawTurn {
  * Gemini transcriber (the default). Its shape:
  *
  *  - **Files API upload, never inline base64.** A 10-minute mp3 is ~5 MB; base64
- *    inflates ~33% and Gemini's request limit is ~20 MB.
- *  - **Poll until ACTIVE** with a generous deadline (audio processing is slower
- *    than PDF).
- *  - **Dynamic `await import('@google/genai')`** with local structural types.
- *  - **Model-aware thinking.** Gemini 3.x uses `thinkingLevel: MEDIUM` and no
- *    sampling overrides per Google's migration guide; 2.5 uses `thinkingBudget: 0`.
+ *    inflates ~33% and Gemini's request limit is ~20 MB. The client uploads, waits
+ *    until the file is usable, and owns the SDK (`ai/gemini.client.ts`), including
+ *    the model-aware thinking settings a `transcription` request gets.
  *  - **Explicit output ceiling + adaptive split.** A MAX_TOKENS time-window is
  *    bisected until it succeeds or reaches the safe minimum, avoiding identical
  *    job-level retries and truncated JSON.
@@ -100,22 +54,13 @@ export class GeminiTranscriber implements Transcriber {
   constructor(private readonly cfg: GeminiTranscriberConfig) {}
 
   async transcribe(req: TranscriptionRequest, onProgress?: TranscribeProgress): Promise<TranscriptionResult> {
-    const genai = await import('@google/genai');
-    const { GoogleGenAI, createPartFromUri, Type } = genai;
-    const ai = new GoogleGenAI({
-      apiKey: this.cfg.apiKey,
-      httpOptions: { timeout: this.cfg.timeoutMs },
-    }) as unknown as GenAIClient;
-
-    let uploaded: GenAIFile | undefined;
+    const { client } = this.cfg;
+    // The client deletes a file that never became usable itself; from here on the
+    // handle is ours, and the `finally` deletes the customer audio immediately
+    // rather than waiting for Google's automatic expiry.
+    const uploaded = await this.upload(req.audio, req.mimeType);
     try {
-      // Keep the raw uploaded handle in the outer cleanup scope. If Files API
-      // processing subsequently times out/fails, the customer audio is still
-      // deleted immediately rather than waiting for Google's automatic expiry.
-      uploaded = await this.upload(ai, req.audio, req.mimeType);
-      const readyFile = await this.waitUntilActive(ai, uploaded, req.mimeType);
-      const filePart = createPartFromUri(readyFile.uri, readyFile.mimeType);
-      const schema = buildTurnsSchema(Type);
+      const schema = TURNS_SCHEMA;
       const useChannels = req.channelRoles && Object.keys(req.channelRoles).length > 0;
       const entries: DialerTranscriptEntry[] = [];
       let detectedLanguage = '';
@@ -150,8 +95,7 @@ export class GeminiTranscriber implements Transcriber {
         let window: { detectedLanguage: string; entries: DialerTranscriptEntry[] };
         try {
           window = await this.transcribeWindow(
-            ai,
-            filePart,
+            uploaded,
             schema,
             prompt,
             win.start,
@@ -166,7 +110,7 @@ export class GeminiTranscriber implements Transcriber {
             const split = splitWindow(win);
             if (split) {
               log.warn(
-                { model: this.cfg.model, start: win.start, end: win.end, splitAt: split[0].end, ...err.usage },
+                { model: client.model, start: win.start, end: win.end, splitAt: split[0].end, ...err.usage },
                 'Gemini transcription window hit MAX_TOKENS; splitting and retrying',
               );
               pending.unshift(split[0], split[1]);
@@ -179,7 +123,7 @@ export class GeminiTranscriber implements Transcriber {
               );
               log.warn(
                 {
-                  model: this.cfg.model,
+                  model: client.model,
                   start: win.start,
                   end: win.end,
                   requestCount,
@@ -229,120 +173,90 @@ export class GeminiTranscriber implements Transcriber {
         entries,
         detectedLanguage: detectedLanguage || 'unknown',
         durationSeconds,
-        model: this.cfg.model,
+        model: client.model,
         diarizationFailed,
       };
     } finally {
-      if (uploaded?.name) {
-        try {
-          await ai.files.delete({ name: uploaded.name });
-        } catch (err) {
-          log.warn({ err, fileName: uploaded.name }, 'Failed to delete Gemini transcription upload');
-        }
-      }
-    }
-  }
-
-  /** Upload customer audio. The caller owns cleanup as soon as this succeeds. */
-  private async upload(ai: GenAIClient, audio: Buffer, mimeType: string): Promise<GenAIFile> {
-    const blob = new Blob([audio], { type: mimeType });
-    try {
-      return await ai.files.upload({ file: blob, config: { mimeType } });
-    } catch (err) {
-      throw classifyGeminiError(err, 'Failed to upload recording to Gemini Files API');
-    }
-  }
-
-  /** Poll an uploaded file until the Files API marks it ACTIVE (or FAILED). */
-  private async waitUntilActive(
-    ai: GenAIClient,
-    uploaded: GenAIFile,
-    mimeType: string,
-  ): Promise<{ uri: string; mimeType: string }> {
-    let file = uploaded;
-    const deadline = Date.now() + this.cfg.timeoutMs;
-    while (String(file.state) === 'PROCESSING') {
-      if (Date.now() > deadline) {
-        throw new TranscriptionError('TIMEOUT', 'Timed out waiting for the recording to be processed');
-      }
-      await sleep(1000);
       try {
-        file = await ai.files.get({ name: file.name! });
+        await client.deleteFile(uploaded);
       } catch (err) {
-        throw classifyGeminiError(err, 'Failed to poll Gemini Files API');
+        log.warn({ err, fileName: uploaded.id }, 'Failed to delete Gemini transcription upload');
       }
     }
-    if (String(file.state) === 'FAILED' || !file.uri) {
-      throw new TranscriptionError('UNSUPPORTED_AUDIO', 'The recording could not be processed for transcription', false);
+  }
+
+  /** Upload customer audio and wait until it is usable. The caller owns cleanup once this returns. */
+  private async upload(audio: Buffer, mimeType: string): Promise<AiFile> {
+    try {
+      return await this.cfg.client.uploadFile(audio, mimeType);
+    } catch (err) {
+      throw toTranscriptionError(err, 'Failed to upload the recording for transcription');
     }
-    return { uri: file.uri, mimeType: file.mimeType ?? mimeType };
   }
 
   /** One time-window → diarized turns, timestamps offset by the window start. */
   private async transcribeWindow(
-    ai: GenAIClient,
-    filePart: unknown,
-    schema: unknown,
+    file: AiFile,
+    schema: AiJsonSchema,
     prompt: string,
     windowStart: number,
     maxOutputTokens: number,
   ): Promise<{ detectedLanguage: string; entries: DialerTranscriptEntry[] }> {
-    let resp: GenAIGenerateResponse;
+    const { client } = this.cfg;
+    let resp: AiJsonResponse;
     try {
-      resp = await ai.models.generateContent({
-        model: this.cfg.model,
-        contents: [{ role: 'user', parts: [filePart, { text: prompt }] }],
-        config: generationConfig(this.cfg.model, maxOutputTokens, schema),
+      resp = await client.generateJson({
+        purpose: 'transcription',
+        input: [{ type: 'file', file }, { type: 'text', text: prompt }],
+        schema,
+        // Dropped for Gemini 3.x by the client; thinking is set there per model family.
+        temperature: 0,
+        maxOutputTokens,
       });
     } catch (err) {
-      throw classifyGeminiError(err, 'Gemini transcription request failed');
+      throw toTranscriptionError(err, 'Gemini transcription request failed');
     }
 
-    const candidate = resp.candidates?.[0];
-    const finishReason = candidate?.finishReason;
-    const usage = compactUsage(resp.usageMetadata);
-    const blockReason = resp.promptFeedback?.blockReason;
+    const usage = compactUsage(resp.usage);
+    const finishReason = resp.providerFinishReason;
     log.info(
       {
-        model: this.cfg.model,
+        model: client.model,
         modelVersion: resp.modelVersion,
-        finishReason: finishReason == null ? undefined : String(finishReason),
-        finishMessage: candidate?.finishMessage,
-        candidateTokenCount: candidate?.tokenCount,
-        promptBlockReason: blockReason == null ? undefined : String(blockReason),
-        promptBlockReasonMessage: resp.promptFeedback?.blockReasonMessage,
+        finishReason,
+        finishMessage: resp.finishMessage,
+        candidateTokenCount: resp.outputTokenCount,
+        promptBlockReason: resp.blockReason,
+        promptBlockReasonMessage: resp.blockReasonMessage,
         ...usage,
       },
       'Gemini transcription window response',
     );
-    if (!candidate) {
-      const blocked = blockReason != null && String(blockReason) !== 'BLOCK_REASON_UNSPECIFIED';
+    if (resp.finish === 'no_output' || (resp.finish === 'blocked' && finishReason === undefined)) {
+      const blocked = resp.finish === 'blocked';
       throw new TranscriptionError(
         'TRANSCRIPTION_FAILED',
         blocked
-          ? `Gemini blocked the transcription prompt (blockReason=${String(blockReason)}` +
-              `${resp.promptFeedback?.blockReasonMessage ? `, message=${resp.promptFeedback.blockReasonMessage}` : ''})`
+          ? `Gemini blocked the transcription prompt (blockReason=${resp.blockReason}` +
+              `${resp.blockReasonMessage ? `, message=${resp.blockReasonMessage}` : ''})`
           : 'Gemini transcription returned no candidates',
         !blocked,
       );
     }
-    if (finishReason && String(finishReason) !== 'STOP') {
-      if (String(finishReason) === 'MAX_TOKENS') {
+    if (finishReason && finishReason !== 'STOP') {
+      if (finishReason === 'MAX_TOKENS') {
         throw new WindowTooLargeError(usage);
       }
       throw new TranscriptionError(
         'TRANSCRIPTION_FAILED',
-        `Transcription did not complete (finishReason=${String(finishReason)}` +
-          `${candidate?.finishMessage ? `, finishMessage=${candidate.finishMessage}` : ''})` +
+        `Transcription did not complete (finishReason=${finishReason}` +
+          `${resp.finishMessage ? `, finishMessage=${resp.finishMessage}` : ''})` +
           formatUsageSuffix(usage),
-        !PERMANENT_FINISH_REASONS.has(String(finishReason)),
+        !PERMANENT_FINISH_REASONS.has(finishReason),
       );
     }
 
-    const raw =
-      resp.text ??
-      candidate?.content?.parts?.map((p) => (p as { text?: string }).text ?? '').join('') ??
-      '';
+    const raw = resp.text;
     if (!raw.trim()) {
       throw new TranscriptionError(
         'TRANSCRIPTION_FAILED',
@@ -435,29 +349,12 @@ function windowLabel(win: Window): string {
   return win.end === undefined ? `starting at ${win.start}s` : `${win.start}-${win.end}s`;
 }
 
-/** Gemini 3.x migration-safe config while retaining 2.5 compatibility. */
-function generationConfig(model: string, maxOutputTokens: number, schema: unknown): Record<string, unknown> {
-  const base: Record<string, unknown> = {
-    maxOutputTokens,
-    responseMimeType: 'application/json',
-    responseSchema: schema as never,
-  };
-  const major = Number(/^(?:models\/)?gemini-(\d+)/i.exec(model)?.[1]);
-  if (Number.isFinite(major) && major >= 3) {
-    base['thinkingConfig'] = { thinkingLevel: 'MEDIUM' };
-  } else {
-    base['temperature'] = 0;
-    base['thinkingConfig'] = { thinkingBudget: 0 };
-  }
-  return base;
-}
-
-function compactUsage(usage: GenAIUsageMetadata | undefined): TokenUsageSnapshot {
+function compactUsage(usage: AiUsage): TokenUsageSnapshot {
   return {
-    ...(usage?.promptTokenCount != null ? { promptTokens: usage.promptTokenCount } : {}),
-    ...(usage?.candidatesTokenCount != null ? { candidateTokens: usage.candidatesTokenCount } : {}),
-    ...(usage?.thoughtsTokenCount != null ? { thoughtTokens: usage.thoughtsTokenCount } : {}),
-    ...(usage?.totalTokenCount != null ? { totalTokens: usage.totalTokenCount } : {}),
+    ...(usage.inputTokens != null ? { promptTokens: usage.inputTokens } : {}),
+    ...(usage.outputTokens != null ? { candidateTokens: usage.outputTokens } : {}),
+    ...(usage.thoughtTokens != null ? { thoughtTokens: usage.thoughtTokens } : {}),
+    ...(usage.totalTokens != null ? { totalTokens: usage.totalTokens } : {}),
   };
 }
 
@@ -549,40 +446,50 @@ function channelPrompt(channelRoles: Record<number, DialerSpeakerRole>, win: Win
   return lines.join('\n');
 }
 
-function buildTurnsSchema(Type: Record<string, string>): unknown {
-  return {
-    type: Type.OBJECT,
+/** The turns schema, as standard JSON Schema (sent as Gemini's `responseJsonSchema`). */
+const TURNS_SCHEMA: AiJsonSchema = {
+  name: 'transcript_turns',
+  schema: {
+    type: 'object',
     properties: {
-      detected_language: { type: Type.STRING },
+      detected_language: { type: 'string' },
       turns: {
-        type: Type.ARRAY,
+        type: 'array',
         items: {
-          type: Type.OBJECT,
+          type: 'object',
           properties: {
-            speaker: { type: Type.STRING, enum: ['agent', 'customer', 'unknown'] },
-            text: { type: Type.STRING },
-            start_seconds: { type: Type.NUMBER },
-            end_seconds: { type: Type.NUMBER },
+            speaker: { type: 'string', enum: ['agent', 'customer', 'unknown'] },
+            text: { type: 'string' },
+            start_seconds: { type: 'number' },
+            end_seconds: { type: 'number' },
           },
           required: ['speaker', 'text'],
         },
       },
     },
     required: ['detected_language', 'turns'],
-  };
-}
+  },
+};
 
-/** Map a raw @google/genai error to a TranscriptionError, detecting 429/RESOURCE_EXHAUSTED. */
-function classifyGeminiError(err: unknown, context: string): TranscriptionError {
+/**
+ * Map an AI-layer error to a TranscriptionError. Rate limiting is retried with a
+ * longer backoff and does NOT consume an attempt; a file the provider could not
+ * process is permanent.
+ */
+function toTranscriptionError(err: unknown, context: string): TranscriptionError {
+  if (err instanceof TranscriptionError) return err;
   const message = (err as Error)?.message ?? String(err);
-  const status = (err as { status?: number })?.status;
-  if (status === 429 || /RESOURCE_EXHAUSTED|rate limit|quota/i.test(message)) {
-    // Retried with longer backoff and does NOT consume an attempt.
-    return new TranscriptionError('RATE_LIMITED', `${context}: ${message}`);
+  if (err instanceof AiError) {
+    switch (err.kind) {
+      case 'rate_limited':
+        return new TranscriptionError('RATE_LIMITED', `${context}: ${message}`);
+      case 'timeout':
+        return new TranscriptionError('TIMEOUT', 'Timed out waiting for the recording to be processed');
+      case 'unsupported_input':
+        return new TranscriptionError('UNSUPPORTED_AUDIO', 'The recording could not be processed for transcription', false);
+      default:
+        break;
+    }
   }
   return new TranscriptionError('TRANSCRIPTION_FAILED', `${context}: ${message}`);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

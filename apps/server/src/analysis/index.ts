@@ -1,8 +1,42 @@
 import type { AppConfig } from '../config/schema.js';
-import { PostCallAnalysisService, type AnalysisServiceConfig } from './analysis.service.js';
+import { PostCallAnalysisService } from './analysis.service.js';
+import { aiClientConfigProblem, createAiClient, type AiClientConfig } from '../ai/index.js';
 import { createChildLogger } from '@magick-agency/observability';
 
 const log = createChildLogger({ component: 'analysis-factory' });
+
+/**
+ * The AI client config post-call analysis runs on, from the `postCallAnalysis` block.
+ * The API key fallbacks (GEMINI_API_KEY; OPENAI_API_KEY only without a base URL) are
+ * already applied by the env reader; Azure's own key wins over the shared one here.
+ */
+export function postCallAnalysisClientConfig(config: AppConfig): AiClientConfig {
+  const pca = config.postCallAnalysis;
+  switch (pca.provider) {
+    case 'azure_openai':
+      return {
+        provider: 'azure_openai',
+        model: pca.model,
+        apiKey: pca.azureApiKey || pca.apiKey || '',
+        endpoint: pca.azureEndpoint ?? '',
+        apiVersion: pca.azureApiVersion,
+        deployment: pca.azureDeployment,
+        timeoutMs: pca.timeoutMs,
+      };
+    case 'gemini':
+      return { provider: 'gemini', model: pca.model, apiKey: pca.apiKey ?? '', timeoutMs: pca.timeoutMs };
+    case 'openai_compatible':
+      return {
+        provider: 'openai_compatible',
+        model: pca.model,
+        ...(pca.apiKey ? { apiKey: pca.apiKey } : {}),
+        ...(pca.baseUrl ? { baseUrl: pca.baseUrl } : {}),
+        headers: pca.headers,
+        structuredOutput: pca.structuredOutput,
+        timeoutMs: pca.timeoutMs,
+      };
+  }
+}
 
 export function createAnalysisService(config: AppConfig): PostCallAnalysisService | null {
   if (!config.postCallAnalysis.enabled) {
@@ -10,46 +44,29 @@ export function createAnalysisService(config: AppConfig): PostCallAnalysisServic
     return null;
   }
 
-  const provider = config.postCallAnalysis.provider;
-
-  // Resolve API key: dedicated > provider-specific. (The env reader in
-  // `config/blocks/analysis.ts` already falls back to OPENAI_API_KEY / GEMINI_API_KEY
-  // when it fills `postCallAnalysis.apiKey`.)
-  let apiKey: string | undefined;
-  if (provider === 'azure_openai') {
-    apiKey = config.postCallAnalysis.azureApiKey || config.postCallAnalysis.apiKey;
-  } else {
-    apiKey = config.postCallAnalysis.apiKey;
-  }
-
-  if (!apiKey) {
-    log.warn('Post-call analysis enabled but no API key available — disabling');
+  const clientConfig = postCallAnalysisClientConfig(config);
+  const problem = aiClientConfigProblem(clientConfig);
+  if (problem) {
+    log.warn({ provider: clientConfig.provider }, `Post-call analysis enabled but ${problem} — disabling`);
     return null;
   }
 
-  // Azure OpenAI requires endpoint
-  if (provider === 'azure_openai' && !config.postCallAnalysis.azureEndpoint) {
-    log.warn('Azure OpenAI provider selected but POST_CALL_ANALYSIS_AZURE_ENDPOINT not set — disabling');
-    return null;
-  }
-
-  const serviceConfig: AnalysisServiceConfig = {
-    provider,
-    apiKey,
-    model: config.postCallAnalysis.model,
+  const client = createAiClient(clientConfig);
+  log.info(
+    { provider: client.provider, model: client.model, input: config.postCallAnalysis.input },
+    'Post-call analysis service initialized',
+  );
+  return new PostCallAnalysisService({
+    client,
     timeoutMs: config.postCallAnalysis.timeoutMs,
     maxConversationTurns: config.postCallAnalysis.maxConversationTurns,
-    azureEndpoint: config.postCallAnalysis.azureEndpoint,
-    azureApiVersion: config.postCallAnalysis.azureApiVersion,
-    azureDeployment: config.postCallAnalysis.azureDeployment,
-  };
-
-  log.info({ provider: serviceConfig.provider, model: serviceConfig.model }, 'Post-call analysis service initialized');
-  return new PostCallAnalysisService(serviceConfig);
+    temperature: config.postCallAnalysis.temperature,
+    input: config.postCallAnalysis.input,
+  });
 }
 
 export { PostCallAnalysisService } from './analysis.service.js';
-export type { AnalysisServiceConfig } from './analysis.service.js';
+export type { AnalysisAudio, AnalysisServiceConfig } from './analysis.service.js';
 
 // Shipped custom-dimension presets — re-exported here so a consumer that already
 // imports the analysis layer finds them without knowing the file. A consumer that

@@ -1,56 +1,52 @@
-import OpenAI, { AzureOpenAI } from 'openai';
 import type { CallAnalysisResult } from '@magick-agency/db/models/call.model';
 import type { ConversationEntry } from '@magick-agency/db/models/conversation-entry.model';
 import type { AnalyticsConfig } from '@magick-agency/db/models/prompt.model';
 import { buildAnalysisPrompt, buildJsonSchema, uniqueDimensions } from './prompt-builder.js';
 import { withRetry } from '../utils/retry.js';
+import type { AiClient, AiInputPart, AiUsage } from '../ai/index.js';
 import { Traced } from '@magick-agency/observability';
 import { createChildLogger } from '@magick-agency/observability';
 
 const log = createChildLogger({ component: 'post-call-analysis' });
 
 export interface AnalysisServiceConfig {
-  provider: 'openai' | 'gemini' | 'azure_openai';
-  apiKey: string;
-  model: string;
+  /** The provider client (`ai/`); the factory in `./index.ts` builds it from config. */
+  client: AiClient;
   timeoutMs: number;
   maxConversationTurns: number;
-  azureEndpoint?: string;
-  azureApiVersion?: string;
-  azureDeployment?: string;
+  /** Sampling temperature; null sends none. */
+  temperature: number | null;
+  /** `audio` also sends the recording; the client must accept files. Default `transcript`. */
+  input?: 'transcript' | 'audio';
+}
+
+/** The recording, for `audio` input. */
+export interface AnalysisAudio {
+  bytes: Buffer;
+  mimeType: string;
 }
 
 export class PostCallAnalysisService {
-  private client: OpenAI;
-  private model: string;
-  private provider: 'openai' | 'gemini' | 'azure_openai';
-  private timeoutMs: number;
-  private maxConversationTurns: number;
+  private readonly client: AiClient;
+  private readonly timeoutMs: number;
+  private readonly maxConversationTurns: number;
+  private readonly temperature: number | null;
+  private readonly input: 'transcript' | 'audio';
 
   constructor(config: AnalysisServiceConfig) {
-    this.provider = config.provider;
-    this.model = config.model;
+    this.client = config.client;
     this.timeoutMs = config.timeoutMs;
     this.maxConversationTurns = config.maxConversationTurns;
-
-    if (config.provider === 'azure_openai') {
-      this.client = new AzureOpenAI({
-        apiKey: config.apiKey,
-        endpoint: config.azureEndpoint!,
-        apiVersion: config.azureApiVersion ?? '2024-12-01-preview',
-        deployment: config.azureDeployment,
-      });
-    } else {
-      const clientOptions: ConstructorParameters<typeof OpenAI>[0] = {
-        apiKey: config.apiKey,
-      };
-
-      if (config.provider === 'gemini') {
-        clientOptions.baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-      }
-
-      this.client = new OpenAI(clientOptions);
+    this.temperature = config.temperature;
+    this.input = config.input ?? 'transcript';
+    if (this.input === 'audio' && !this.client.capabilities.fileInput) {
+      throw new Error(`Post-call analysis input=audio needs a provider that accepts audio; ${this.client.provider} does not`);
     }
+  }
+
+  /** True when `analyze` must be given the recording (`opts.audio`). */
+  get needsAudio(): boolean {
+    return this.input === 'audio';
   }
 
   @Traced('analysis.run', {
@@ -64,11 +60,24 @@ export class PostCallAnalysisService {
     callId: string,
     conversationLog: ConversationEntry[],
     analyticsConfig: AnalyticsConfig,
-    opts?: { context?: string | null },
+    opts?: {
+      context?: string | null;
+      audio?: AnalysisAudio;
+      /**
+       * Called after the upload and before every request, so a caller that fences a
+       * long job by liveness sees it alive. A throw aborts the analysis; give the
+       * error `nonRetryable` or the retry loop asks again.
+       */
+      heartbeat?: () => Promise<void>;
+    },
   ): Promise<CallAnalysisResult> {
     const span = Traced.getSpan(this);
-    span?.setAttribute('analysis.provider', this.provider);
-    span?.setAttribute('analysis.model', this.model);
+    span?.setAttribute('analysis.provider', this.client.provider);
+    span?.setAttribute('analysis.model', this.client.model);
+    span?.setAttribute('analysis.input', this.input);
+    if (this.input === 'audio' && !opts?.audio) {
+      throw new Error('Post-call analysis input=audio was called without the recording');
+    }
 
     const startTime = Date.now();
 
@@ -90,59 +99,71 @@ export class PostCallAnalysisService {
       analyticsConfig,
       this.maxConversationTurns,
       opts?.context,
+      { audio: this.input === 'audio' },
     );
 
     const jsonSchema = buildJsonSchema(analyticsConfig);
 
-    log.debug({ callId, provider: this.provider, model: this.model, turns: conversationLog.length }, 'Starting post-call analysis');
-
-    const parsed = await withRetry(
-      async () => {
-        const response = await this.client.chat.completions.create(
-          {
-            model: this.model,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt },
-            ],
-            response_format: {
-              type: 'json_schema',
-              json_schema: jsonSchema as any,
-            },
-            // Gemini 3.x is tuned for its default sampling parameters and Google
-            // recommends omitting temperature/top-p/top-k. Retain the established
-            // temperature for OpenAI, Azure, and older Gemini models.
-            ...(!isGemini3Model(this.provider, this.model) ? { temperature: 0.3 } : {}),
-          },
-          { signal: AbortSignal.timeout(this.timeoutMs) },
-        );
-
-        const choice = response.choices[0];
-        if (!choice?.message?.content) {
-          throw new Error('Empty response from analysis LLM');
-        }
-
-        let result: { common: CallAnalysisResult['common']; custom: Record<string, unknown> };
-        try {
-          result = JSON.parse(choice.message.content);
-        } catch {
-          log.error({ callId, raw: choice.message.content.substring(0, 500) }, 'Failed to parse analysis JSON');
-          throw new Error('Invalid JSON in analysis response');
-        }
-
-        return {
-          result,
-          usage: response.usage,
-        };
-      },
-      {
-        maxRetries: 2,
-        baseDelayMs: 2000,
-        onRetry: (error, attempt) => {
-          log.warn({ err: error, callId, attempt }, 'Analysis LLM call retry');
-        },
-      },
+    log.debug(
+      { callId, provider: this.client.provider, model: this.client.model, turns: conversationLog.length },
+      'Starting post-call analysis',
     );
+
+    // Uploaded once, outside the retries: a retry re-asks, it does not re-upload.
+    const recording = opts?.audio && this.input === 'audio'
+      ? await this.client.uploadFile(opts.audio.bytes, opts.audio.mimeType)
+      : null;
+    const input: AiInputPart[] = recording
+      ? [{ type: 'file', file: recording }, { type: 'text', text: userPrompt }]
+      : [{ type: 'text', text: userPrompt }];
+
+    let parsed: { result: { common: CallAnalysisResult['common']; custom: Record<string, unknown> }; usage: AiUsage };
+    try {
+      parsed = await withRetry(
+        async () => {
+          await opts?.heartbeat?.();
+          const response = await this.client.generateJson({
+            purpose: 'post_call_analysis',
+            system: systemPrompt,
+            input,
+            schema: jsonSchema,
+            ...(this.temperature !== null ? { temperature: this.temperature } : {}),
+            timeoutMs: this.timeoutMs,
+          });
+
+          if (!response.text) {
+            throw new Error('Empty response from analysis LLM');
+          }
+
+          let result: { common: CallAnalysisResult['common']; custom: Record<string, unknown> };
+          try {
+            result = JSON.parse(response.text);
+          } catch {
+            log.error({ callId, raw: response.text.substring(0, 500) }, 'Failed to parse analysis JSON');
+            throw new Error('Invalid JSON in analysis response');
+          }
+
+          return {
+            result,
+            usage: response.usage,
+          };
+        },
+        {
+          maxRetries: 2,
+          baseDelayMs: 2000,
+          onRetry: (error, attempt) => {
+            log.warn({ err: error, callId, attempt }, 'Analysis LLM call retry');
+          },
+        },
+      );
+    } finally {
+      // Customer audio does not stay on the provider longer than the request needs it.
+      if (recording) {
+        await this.client.deleteFile(recording).catch((err: unknown) => {
+          log.warn({ err, callId, fileId: recording.id }, 'Failed to delete the analysis recording upload');
+        });
+      }
+    }
 
     const latencyMs = Date.now() - startTime;
 
@@ -153,11 +174,12 @@ export class PostCallAnalysisService {
       common: parsed.result.common,
       custom: parsed.result.custom,
       _meta: {
-        model: this.model,
-        provider: this.provider,
+        model: this.client.model,
+        provider: this.client.provider,
+        input: this.input,
         latency_ms: latencyMs,
-        prompt_tokens: parsed.usage?.prompt_tokens ?? 0,
-        completion_tokens: parsed.usage?.completion_tokens ?? 0,
+        prompt_tokens: parsed.usage.inputTokens ?? 0,
+        completion_tokens: parsed.usage.outputTokens ?? 0,
         analyzed_at: new Date().toISOString(),
       },
     };
@@ -172,10 +194,4 @@ export class PostCallAnalysisService {
 
     return analysisResult;
   }
-}
-
-function isGemini3Model(provider: AnalysisServiceConfig['provider'], model: string): boolean {
-  if (provider !== 'gemini') return false;
-  const major = Number(/^(?:models\/)?gemini-(\d+)/i.exec(model)?.[1]);
-  return Number.isFinite(major) && major >= 3;
 }

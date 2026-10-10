@@ -39,11 +39,14 @@ function makeConfig(overrides: Record<string, any> = {}): AppConfig {
   return {
     postCallAnalysis: {
       enabled: true,
-      provider: 'openai',
+      provider: 'openai_compatible',
       model: 'gpt-4o-mini',
       timeoutMs: 30000,
       maxConversationTurns: 200,
       apiKey: 'test-key',
+      headers: {},
+      structuredOutput: 'json_schema',
+      temperature: 0.3,
       azureApiVersion: '2024-12-01-preview',
       ...overrides,
     },
@@ -56,8 +59,8 @@ describe('createAnalysisService (factory)', () => {
     expect(service).toBeNull();
   });
 
-  it('creates openai service with dedicated API key', () => {
-    const service = createAnalysisService(makeConfig({ provider: 'openai', apiKey: 'my-openai-key' }));
+  it('creates openai_compatible service with dedicated API key', () => {
+    const service = createAnalysisService(makeConfig({ provider: 'openai_compatible', apiKey: 'my-openai-key' }));
     expect(service).not.toBeNull();
   });
 
@@ -67,8 +70,18 @@ describe('createAnalysisService (factory)', () => {
   });
 
   it('returns null when no API key available', () => {
-    const service = createAnalysisService(makeConfig({ provider: 'openai', apiKey: undefined }));
+    const service = createAnalysisService(makeConfig({ provider: 'openai_compatible', apiKey: undefined }));
     expect(service).toBeNull();
+  });
+
+  it('creates a keyless openai_compatible service only when a base URL is set (self-hosted endpoint)', () => {
+    expect(createAnalysisService(makeConfig({
+      provider: 'openai_compatible', apiKey: undefined, baseUrl: 'http://localhost:11434/v1',
+    }))).not.toBeNull();
+  });
+
+  it('returns null for gemini without an API key', () => {
+    expect(createAnalysisService(makeConfig({ provider: 'gemini', apiKey: undefined }))).toBeNull();
   });
 
   it('creates azure_openai service with dedicated azure key', () => {

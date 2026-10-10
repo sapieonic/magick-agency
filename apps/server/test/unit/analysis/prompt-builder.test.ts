@@ -84,6 +84,22 @@ describe('buildAnalysisPrompt', () => {
   });
 });
 
+describe('audio input', () => {
+  it('tells the model the recording is attached, and how to use it, only in audio mode', () => {
+    const audio = buildAnalysisPrompt(makeConversationLog(4), emptyConfig, 200, 'Collections call', { audio: true });
+    expect(audio.systemPrompt).toContain('## Call Recording');
+    expect(audio.systemPrompt).toContain('HOW things are said');
+    expect(audio.systemPrompt).toContain('`turn_index`');
+    // Business context stays first; the audio section comes before the common instructions.
+    expect(audio.systemPrompt.indexOf('## Business Context')).toBeLessThan(audio.systemPrompt.indexOf('## Call Recording'));
+    expect(audio.userPrompt).toContain('using the attached recording and this transcript');
+
+    const text = buildAnalysisPrompt(makeConversationLog(4), emptyConfig, 200, 'Collections call');
+    expect(text.systemPrompt).not.toContain('## Call Recording');
+    expect(text.userPrompt).not.toContain('attached recording');
+  });
+});
+
 describe('transcript provenance in the analysis input', () => {
   const log: ConversationEntry[] = [
     { role: 'assistant', content: 'Namaste, this is a recorded introduction.', timestamp: 't0', source: 'intro_clip' },

@@ -1,5 +1,6 @@
 import type { AppConfig } from '../config/schema.js';
 import { createChildLogger } from '@magick-agency/observability';
+import { createAiClient } from '../ai/index.js';
 import { GeminiTranscriber } from './gemini-transcriber.js';
 import { SarvamTranscriber } from './sarvam-transcriber.js';
 import type { Transcriber } from './types.js';
@@ -51,9 +52,12 @@ export function createTranscriber(config: AppConfig): Transcriber | null {
     return null;
   }
   return new GeminiTranscriber({
-    apiKey: cfg.geminiApiKey,
-    model: cfg.geminiModel,
-    timeoutMs: cfg.transcribeTimeoutMs,
+    client: createAiClient({
+      provider: 'gemini',
+      apiKey: cfg.geminiApiKey,
+      model: cfg.geminiModel,
+      timeoutMs: cfg.transcribeTimeoutMs,
+    }),
     windowSeconds: cfg.transcribeWindowSeconds,
     maxOutputTokens: cfg.transcribeMaxOutputTokens,
   });
