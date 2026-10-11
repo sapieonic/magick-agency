@@ -190,6 +190,12 @@ export class WebRtcBridgeSession {
    */
   campaignId: string | null = null;
   agencyAttemptId: string | null = null;
+  /**
+   * The tenant carrier credential the call was placed on, mirrored from the row's
+   * `telephony_credential_id` (pinned at insert, never updated: decision B20). Null =
+   * the service's own carrier account. Teardown hangs up on this credential.
+   */
+  telephonyCredentialId: string | null = null;
   /** Finalized recording URL once the carrier's terminal webhook reports it. */
   recordingUrl: string | null = null;
   /**

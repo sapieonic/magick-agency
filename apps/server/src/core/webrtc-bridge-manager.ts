@@ -33,7 +33,7 @@ import { WEBHOOK_TOKEN_POST_END_GRACE_SECONDS } from '../telephony/webhook-grace
 import { classifyVoicelinkOutcome, normalizeVoicelinkWebhook } from '../telephony/voicelink/voicelink.webhook.js';
 import type { VoicelinkWebhookBody } from '../telephony/voicelink/voicelink.types.js';
 import type { TelephonyGuardHost } from './telephony-guard-host.js';
-import type { CallEvent } from '../telephony/types.js';
+import type { CallEvent, TelephonyProvider } from '../telephony/types.js';
 import type { WebRtcCallRecord, WebRtcCallStatus } from '@magick-agency/db/models/agency-call.model';
 
 const log = createChildLogger({ component: 'webrtc-bridge-manager' });
@@ -635,6 +635,7 @@ export class WebRtcBridgeManager {
     // finalize is the one that was durably recorded.
     session.campaignId = record.campaign_id ?? null;
     session.agencyAttemptId = record.agency_attempt_id ?? null;
+    session.telephonyCredentialId = record.telephony_credential_id ?? null;
     // A carrier that negotiates the media stream via a `start` frame (VoiceLink)
     // holds the relay until a valid `start` (correct codec/rate) arrives.
     if (session.carrier?.media.negotiatesOnStart) session.providerMediaReady = false;
@@ -1682,7 +1683,19 @@ export class WebRtcBridgeManager {
    *
    * Its own method because two callers need it: {@link endCall} and the dial race
    * in {@link placeOutboundLeg}. A call tears down on the carrier account it was
-   * PLACED on — the service's own VoiceLink account, the only one there is.
+   * PLACED on: the tenant credential pinned on its row (`telephony_credential_id`,
+   * resolved for `call_control` and checked against the call's tenant), or, when
+   * that is null, the service's own account. A null id takes the synchronous
+   * `get(provider)` lookup directly, so a call on the service's own account tears
+   * down exactly as it did before credentials existed.
+   *
+   * A pinned credential that does not resolve is logged at ERROR and the hangup is
+   * skipped: there is no other account to hang the leg up on, and the leg may still
+   * be live. It never falls back to the service's own account (decision B20).
+   *
+   * Only `providerCallId` reaches the carrier (`endCall` takes no other id). A
+   * carrier whose ringing call is cancelled through a separate dial-request id
+   * (`provider_request_id`) is not wired here.
    *
    * The adapter is resolved even when there is no `providerCallId` to hang up,
    * because that combination — a teardown with no carrier handle — is exactly the
@@ -1690,9 +1703,24 @@ export class WebRtcBridgeManager {
    */
   private async hangupProviderLeg(session: WebRtcBridgeSession): Promise<void> {
     const callId = session.callId;
+    let hangupAdapter: TelephonyProvider;
     try {
-      const hangupAdapter = this.telephonyRegistry.get(session.provider);
-
+      hangupAdapter = session.telephonyCredentialId
+        ? await this.telephonyRegistry.getForCredentialId(
+          session.provider, session.telephonyCredentialId, 'call_control', session.tenantId,
+        )
+        : this.telephonyRegistry.get(session.provider);
+    } catch (err) {
+      log.error(
+        {
+          err, callId, correlationId: session.correlationId, provider: session.provider,
+          telephonyCredentialId: session.telephonyCredentialId,
+        },
+        'Cannot resolve the carrier account this call was placed on — the carrier leg was NOT hung up and may still be live',
+      );
+      return;
+    }
+    try {
       // A teardown while the far end is still RINGING, against a carrier whose
       // `endCall` cannot recall such a leg. WARN rather than a metric because
       // this file deliberately imports no metrics (suites mock that module with
