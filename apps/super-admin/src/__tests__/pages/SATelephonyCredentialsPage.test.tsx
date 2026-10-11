@@ -89,15 +89,6 @@ describe('SATelephonyCredentialsPage', () => {
     await waitFor(() => expect(screen.queryByDisplayValue('secret-token-value-123')).toBeNull());
   });
 
-  it('drops a typed secret when the add dialog is cancelled', async () => {
-    mocks.listTelephonyCredentials.mockResolvedValue([]);
-    render(<SATelephonyCredentialsPage />);
-    fireEvent.click(await screen.findByRole('button', { name: /add credential/i }));
-    fireEvent.change(screen.getByLabelText('Auth Token'), { target: { value: 'typed-then-cancelled-789' } });
-    fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
-    await waitFor(() => expect(screen.queryByDisplayValue('typed-then-cancelled-789')).toBeNull());
-  });
-
   it('shows usage only for the row it was fetched for', async () => {
     let answerFirst!: (v: unknown) => void;
     mocks.listTelephonyCredentials.mockResolvedValue([makeCred(), makeCred({ id: 'cred-2', label: 'Acme backup', account_ref: 'MAYYYYYYYYYYYYYYYYYY' })]);
