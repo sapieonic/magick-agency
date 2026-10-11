@@ -337,7 +337,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/super-admin-accounts.test.ts` | 38 |
 | `apps/server/test/unit/api/routes/super-admin-feature-flags.test.ts` | 22 |
 | `apps/server/test/unit/api/routes/super-admin-memberships.test.ts` | 57 |
-| `apps/server/test/unit/api/routes/super-admin-phone.test.ts` | 9 |
+| `apps/server/test/unit/api/routes/super-admin-phone.test.ts` | 10 |
 | `apps/server/test/unit/api/routes/super-admin-telephony-credentials.test.ts` | 24 |
 | `apps/server/test/unit/api/routes/super-admin-usage-counts.test.ts` | 22 |
 | `apps/server/test/unit/api/routes/tenant.routes.test.ts` | 9 |
@@ -679,8 +679,8 @@ Files: `carrier-module.ts`, `carrier-modules.ts`, `factory.ts`, `types.ts`, `voi
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/telephony/byoc-factory.test.ts` | 7 |
-| `apps/server/test/unit/telephony/byoc-registry.test.ts` | 15 |
-| `apps/server/test/unit/telephony/carrier-modules.test.ts` | 13 |
+| `apps/server/test/unit/telephony/byoc-registry.test.ts` | 18 |
+| `apps/server/test/unit/telephony/carrier-modules.test.ts` | 14 |
 | `apps/server/test/unit/telephony/provider-capabilities.test.ts` | 6 |
 | `apps/server/test/unit/telephony/voicelink/redact-url-tail.test.ts` | 7 |
 | `apps/server/test/unit/telephony/voicelink/voicelink-carrier.fixture.test.ts` | 178 |
@@ -691,14 +691,14 @@ Files: `carrier-module.ts`, `carrier-modules.ts`, `factory.ts`, `types.ts`, `voi
 
 ### `apps/server/src/telephony/credentials/`
 
-Per-tenant carrier credentials (BYOC, decisions B18–B22). `credential-sealer.ts`: AES-256-GCM envelope encryption under the env keyring (`TELEPHONY_CREDENTIAL_KEYS`), bound to tenant, credential, provider and version. `credential-specs.ts`: each BYOC carrier's form fields, validation and carrier check (Plivo). `credential-service.ts`: create, rotate, verify, disable, enable, revoke, and `resolve(id, purpose)` for the registry. `secret.ts`: a box that never prints its value. `safe-issues.ts`: validation messages with no submitted value. `index.ts`: the process's one service, built from config.
+Per-tenant carrier credentials (BYOC, decisions B18–B22). `credential-sealer.ts`: AES-256-GCM envelope encryption under the env keyring (`TELEPHONY_CREDENTIAL_KEYS`), bound to tenant, credential, provider and version. `credential-specs.ts`: each BYOC carrier's form fields, validation and carrier check (Plivo). `credential-service.ts`: create, rotate, verify, disable, enable, revoke, the hourly sweep (shred revoked, prune retired versions), and `resolve(id, purpose)` for the registry. `secret.ts`: a box that never prints its value. `safe-issues.ts`: validation messages with no submitted value. `index.ts`: the process's one service, built from config.
 
 Files: `credential-sealer.ts`, `credential-service.ts`, `credential-specs.ts`, `index.ts`, `safe-issues.ts`, `secret.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/unit/telephony/credential-sealer.test.ts` | 21 |
-| `apps/server/test/unit/telephony/credential-service.test.ts` | 28 |
+| `apps/server/test/unit/telephony/credential-sealer.test.ts` | 24 |
+| `apps/server/test/unit/telephony/credential-service.test.ts` | 32 |
 
 ### `apps/server/src/transcription/`
 
@@ -867,7 +867,7 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/integration/repositories/phone-number.repository.test.ts` | ~8 |
 | `packages/db/test/integration/repositories/provider-concurrency.repository.test.ts` | ~3 |
 | `packages/db/test/integration/repositories/shared-infra-coverage.test.ts` | ~8 |
-| `packages/db/test/integration/repositories/telephony-credential.repository.test.ts` | ~19 |
+| `packages/db/test/integration/repositories/telephony-credential.repository.test.ts` | 23 |
 | `packages/db/test/integration/repositories/tenant.repository.test.ts` | ~13 |
 | `packages/db/test/integration/repositories/usage-counts.repository.test.ts` | ~7 |
 | `packages/db/test/integration/repositories/user-addressable-members.repository.test.ts` | ~11 |
@@ -883,7 +883,7 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/unit/db/repositories/super-admin.repository.test.ts` | 7 |
 | `packages/db/test/unit/db/repositories/tenant.repository.test.ts` | 15 |
 | `packages/db/test/unit/db/repositories/user.repository.test.ts` | 16 |
-| `packages/db/test/unit/db/repositories/webrtc-call-repository-analysis.test.ts` | 8 |
+| `packages/db/test/unit/db/repositories/webrtc-call-repository-analysis.test.ts` | 9 |
 | `packages/db/test/unit/db/repositories/webrtc-call-scope.test.ts` | 12 |
 
 ### `packages/db/src/repositories/platform/`
@@ -1320,7 +1320,7 @@ Files: `saRoutes.ts`, `super-admin.ts`
 | Test file | Cases |
 |---|---|
 | `apps/super-admin/src/__tests__/api/saFetch.test.ts` | 29 |
-| `apps/super-admin/src/__tests__/api/saRoutes.test.ts` | 45 |
+| `apps/super-admin/src/__tests__/api/saRoutes.test.ts` | 55 |
 
 ### `apps/super-admin/src/components/`
 
@@ -1380,7 +1380,7 @@ Files: `auth/SuperAdminLoginPage.module.css`, `auth/SuperAdminLoginPage.tsx`, `s
 | `apps/super-admin/src/__tests__/pages/SAAuditPage.test.tsx` | 1 |
 | `apps/super-admin/src/__tests__/pages/SAFeatureFlagsPage.test.tsx` | 34 |
 | `apps/super-admin/src/__tests__/pages/SAPhoneNumbersPage.test.tsx` | 5 |
-| `apps/super-admin/src/__tests__/pages/SATelephonyCredentialsPage.test.tsx` | 5 |
+| `apps/super-admin/src/__tests__/pages/SATelephonyCredentialsPage.test.tsx` | 6 |
 | `apps/super-admin/src/__tests__/pages/SATenantDetailPage.new.test.tsx` | 21 |
 | `apps/super-admin/src/__tests__/pages/SATenantDetailPage.test.tsx` | 11 |
 | `apps/super-admin/src/__tests__/pages/SAUsagePage.test.tsx` | 22 |

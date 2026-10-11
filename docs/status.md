@@ -40,7 +40,7 @@ super-admins add (not env). Built in steps:
 | 1 Carrier modules | Done | The bridge asks a per-carrier module (media protocol, hangup style) instead of `provider === 'voicelink'`; `carrier-modules.test.ts`, mutation-checked against the bridge suites |
 | 2 Credential store | Done | Migration `0002_telephony_credentials.sql`; envelope sealer and env keyring; credential service and `getForCredentialId`; super-admin API and Telephony Credentials screen; unit tests and a real-Postgres repository suite, guards mutation-checked |
 | 3 Plivo adapter | Not started | Dial (`request_uuid`), answer XML with `<Stream>`, μ-law media, cancel vs hangup by id, V3 webhook signatures checked against the pinned credential, `time_limit` on every dial, per-credential calls-per-second limit, recording fetch on per-provider hosts |
-| 4 Dialler integration | Not started | Campaigns pin a credential; caller IDs limited to the credential's synced numbers; pause on carrier 401; `plivo` concurrency allocations |
+| 4 Dialler integration | Not started | Campaigns pin a credential; caller IDs limited to the credential's synced numbers; pause on carrier 401; `plivo` concurrency allocations; activate the `plivo` provider row (seeded inactive by 0002). Obligations the step-2 code leaves to this step: dial through `getForCredentialId(provider, id, 'dial', tenantId)`; insert the call row in a statement that re-checks the credential is `active` (revoke and shred lock the credential row, which waits out an insert in flight but cannot stop one that starts after them); pin a campaign only to an `active` credential; a metric and alert for missing keyring ids and failed sweeps (today they are ERROR/WARN logs) |
 | 5 Live check | Not started | One real Plivo call and one recording analysed (needs a Plivo account) |
 
 ## Test counts
@@ -78,6 +78,14 @@ Re-run on 2026-10-11, after the campaign list's `status` filter (the campaigns h
 active campaign, however old): `apps/console` lint clean, 4440 unit (221 files); `apps/server`
 lint clean, 6512 of 6513 unit (308 files), the one failure being the branding guard reading an
 uncommitted local file; integration re-run for `repository-sql-coverage.test.ts` only (12).
+
+Re-run on 2026-10-11, after Plivo steps 1–2 and their review fixes: lint clean in 7 packages;
+unit `apps/server` 6578 + 42 skipped (312 files), `packages/db` 410, `apps/super-admin` 390
+(27 files); integration `packages/db` 440 (39 files). The last full `apps/server` integration
+run (before the third review's fixes) was 1171 of 1172 (105 files): the one failure was an
+unordered partition listing in audit maintenance, now ordered and passing on its own (4). The
+`apps/server` integration suite has not been re-run in full since those fixes; run it before
+merging.
 
 CI (`.github/workflows/ci.yml`) runs lint, unit and build in one job, and the integration suites
 in three parallel jobs (db, server, server wall-clock lane), each against its own Postgres 16 and
