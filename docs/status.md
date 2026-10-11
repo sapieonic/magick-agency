@@ -30,6 +30,19 @@ carrier, a real Firebase sign-in, production data or a deployed environment. The
 | Rulings | Done | Open-question rulings and branding (`decisions.md` Q1–Q9, B17), each mutation-checked |
 | 10 Launch | **Not started** | See "Not built" |
 
+### Plivo, on tenants' own accounts (B18–B22)
+
+Plivo joins VoiceLink as a carrier, dialled on each tenant's OWN Plivo account with credentials
+super-admins add (not env). Built in steps:
+
+| Step | State | Evidence |
+|---|---|---|
+| 1 Carrier modules | Done | The bridge asks a per-carrier module (media protocol, hangup style) instead of `provider === 'voicelink'`; `carrier-modules.test.ts`, mutation-checked against the bridge suites |
+| 2 Credential store | Done | Migration `0002_telephony_credentials.sql`; envelope sealer and env keyring; credential service and `getForCredentialId`; super-admin API and Telephony Credentials screen; unit tests and a real-Postgres repository suite, guards mutation-checked |
+| 3 Plivo adapter | Not started | Dial (`request_uuid`), answer XML with `<Stream>`, μ-law media, cancel vs hangup by id, V3 webhook signatures checked against the pinned credential, `time_limit` on every dial, per-credential calls-per-second limit, recording fetch on per-provider hosts |
+| 4 Dialler integration | Not started | Campaigns pin a credential; caller IDs limited to the credential's synced numbers; pause on carrier 401; `plivo` concurrency allocations |
+| 5 Live check | Not started | One real Plivo call and one recording analysed (needs a Plivo account) |
+
 ## Test counts
 
 Final full run on 2026-10-09, after `pnpm install --frozen-lockfile`, from inside each package.

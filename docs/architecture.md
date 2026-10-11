@@ -223,6 +223,16 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   refused when Redis answered and accepted when Redis is down; the webhook token lives 2 h past the
   call end for late recording posts (Q6). `voicelink-carrier.fixture.json` pins the carrier's
   payload shapes.
+- **Carrier modules** (`telephony/carrier-modules.ts`). Each carrier declares its media-stream
+  protocol (start negotiation, codec, framing, clip encoding) and hangup style; the bridge asks
+  the session's module rather than branching on a provider name (B18).
+- **Tenant carrier credentials** (`telephony/credentials/`, B18–B22). A tenant may dial on its own
+  carrier account (Plivo). Super-admins add the credential; it is checked with the carrier, then
+  sealed (AES-256-GCM envelope under the `TELEPHONY_CREDENTIAL_KEYS` keyring) into
+  `telephony_credential_secrets`. Calls and campaigns pin `telephony_credential_id` (composite FKs
+  keep it to their own tenant and provider). `getForCredentialId` resolves the pinned credential
+  on every use and never falls back to the service's own account; a disabled credential still
+  hangs up its live calls, and a rotation keeps the old secret for 24 h for webhooks signed with it.
 - **Audio** (`audio/decode.ts`, `core/paced-audio-streamer.ts`, `tts/tts-file-cache.ts`). Uploaded
   abandon clips are decoded to PCM and cached on disk; there is no TTS (launch decision 4).
 - **Calls** are rows in `agency_calls` (`packages/db/src/repositories/agency-call.repository.ts`).
