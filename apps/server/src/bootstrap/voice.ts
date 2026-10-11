@@ -16,6 +16,7 @@ import { initTtsFileCache, sweepTtsCache, setTtsCacheSweepObserver } from '../tt
 import { reapDecodeScratchDirs } from '../audio/decode.js';
 import { getDecodeGateStats } from '../utils/decode-gate.js';
 import { shutdownAnalytics } from '../analytics/posthog.js';
+import { getTelephonyCredentialService } from '../telephony/credentials/index.js';
 
 /**
  * The voice engine's background work and process-wide singletons.
@@ -34,6 +35,9 @@ export interface VoiceEngine {
 }
 
 let engine: VoiceEngine | null = null;
+
+/** How often revoked credentials are shredded and expired secret versions dropped. */
+const CREDENTIAL_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 
 export function ensureVoiceEngine(redis: Redis | null): VoiceEngine {
   if (engine) return engine;
@@ -123,8 +127,34 @@ export async function startVoice(ctx: AppContext): Promise<() => Promise<void>> 
   await guardHost.runSelfHealSweep('startup');
   guardHost.wakeSelfHeal();
 
+  // Tenant carrier credentials (B19). A stored secret wrapped under a key id the
+  // keyring no longer holds can never be opened: say so loudly at boot. Boot carries
+  // on (the service's own VoiceLink account is unaffected); calls on those
+  // credentials fail closed until the key is restored.
+  const credentials = getTelephonyCredentialService();
+  try {
+    const missing = await credentials.missingKeyIds();
+    if (missing.length > 0) {
+      logger.error({ kekIds: missing }, 'Telephony credential secrets are sealed under keys missing from TELEPHONY_CREDENTIAL_KEYS — those credentials cannot dial');
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Telephony credential keyring check failed');
+  }
+  // Shred revoked credentials once their calls have ended, and drop secret versions
+  // past the rotation grace window.
+  const sweepCredentials = (): void => {
+    credentials.sweep().then(
+      (r) => { if (r.shredded || r.pruned) logger.info(r, 'Telephony credential sweep'); },
+      (err: unknown) => logger.warn({ err }, 'Telephony credential sweep failed'),
+    );
+  };
+  sweepCredentials();
+  const credentialSweepTimer = setInterval(sweepCredentials, CREDENTIAL_SWEEP_INTERVAL_MS);
+  credentialSweepTimer.unref();
+
   return async () => {
     if (ttsCacheSweepTimer) clearInterval(ttsCacheSweepTimer);
+    clearInterval(credentialSweepTimer);
     // End active WebRTC bridge calls (hang up carrier leg, release slots) before
     // tearing down shared infra — they live in their own session map.
     await bridge.gracefulShutdown().catch((err) => logger.error({ err }, 'webrtc-bridge shutdown failed'));

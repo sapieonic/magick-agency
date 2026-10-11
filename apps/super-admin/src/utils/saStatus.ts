@@ -71,6 +71,7 @@ const STATUS_TONE: Record<string, SaTone> = {
   reserved: 'warning',
   provisioning: 'warning',
   degraded: 'warning',
+  invalid: 'warning',
   // negative
   deleted: 'negative',
   released: 'negative',
@@ -78,6 +79,7 @@ const STATUS_TONE: Record<string, SaTone> = {
   blocked: 'negative',
   failed: 'negative',
   error: 'negative',
+  revoked: 'negative',
 };
 
 /**

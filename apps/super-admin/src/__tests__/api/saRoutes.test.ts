@@ -75,6 +75,16 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   assignPhoneNumber: () => api.assignPhoneNumber('p1', { tenant_id: 't1' }),
   unassignPhoneNumber: () => api.unassignPhoneNumber('p1', 't1'),
   getTenantPhoneNumbers: () => api.getTenantPhoneNumbers('t1'),
+  listTelephonyCredentialProviders: () => api.listTelephonyCredentialProviders(),
+  listTelephonyCredentials: () => api.listTelephonyCredentials({ tenant_id: 't1', include_revoked: true }),
+  getTelephonyCredential: () => api.getTelephonyCredential('c1'),
+  createTelephonyCredential: () => api.createTelephonyCredential({ tenant_id: 't1', provider: 'plivo', label: 'l', fields: {} }),
+  renameTelephonyCredential: () => api.renameTelephonyCredential('c1', { label: 'l' }),
+  rotateTelephonyCredentialSecret: () => api.rotateTelephonyCredentialSecret('c1', { fields: {}, expected_version: 1 }),
+  verifyTelephonyCredential: () => api.verifyTelephonyCredential('c1'),
+  disableTelephonyCredential: () => api.disableTelephonyCredential('c1'),
+  enableTelephonyCredential: () => api.enableTelephonyCredential('c1'),
+  revokeTelephonyCredential: () => api.revokeTelephonyCredential('c1'),
 };
 
 describe('api/super-admin.ts ↔ SA_ROUTES', () => {

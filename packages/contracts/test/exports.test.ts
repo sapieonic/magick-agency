@@ -7,6 +7,15 @@ import {
   AGENCY_STATS_ROUTE_FIELDS,
 } from '../src/agency';
 import { SESSION_REFUSAL_CODES } from '../src/api/platform/auth';
+import {
+  TELEPHONY_CREDENTIAL_ERROR_CODES,
+  type TelephonyCredentialErrorCode,
+} from '../src/api/platform/super-admin-telephony-credentials';
+
+// The list is exactly the union (the runtime list's own guard covers the other side).
+type Equals<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+const _credentialCodesExact: Equals<(typeof TELEPHONY_CREDENTIAL_ERROR_CODES)[number], TelephonyCredentialErrorCode> = true;
+void _credentialCodesExact;
 
 describe('package surface', () => {
   it('exposes the two API layers as namespaces', () => {
@@ -32,5 +41,24 @@ describe('package surface', () => {
 
   it('declares the session refusals agency answers with', () => {
     expect([...SESSION_REFUSAL_CODES]).toEqual(['email_unverified', 'no_membership']);
+  });
+
+  it('declares the telephony credential refusals, distinct (SNAPSHOT, written out by hand)', () => {
+    expect([...TELEPHONY_CREDENTIAL_ERROR_CODES]).toEqual([
+      'credential_store_unavailable',
+      'secret_unavailable',
+      'unknown_provider',
+      'invalid_input',
+      'tenant_not_found',
+      'not_found',
+      'duplicate_account',
+      'duplicate_label',
+      'carrier_rejected',
+      'carrier_unreachable',
+      'version_conflict',
+      'invalid_transition',
+      'in_use',
+    ]);
+    expect(new Set(TELEPHONY_CREDENTIAL_ERROR_CODES).size).toBe(TELEPHONY_CREDENTIAL_ERROR_CODES.length);
   });
 });

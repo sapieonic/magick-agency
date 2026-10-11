@@ -223,6 +223,29 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   refused when Redis answered and accepted when Redis is down; the webhook token lives 2 h past the
   call end for late recording posts (Q6). `voicelink-carrier.fixture.json` pins the carrier's
   payload shapes.
+- **Carrier modules** (`telephony/carrier-modules.ts`). Each carrier declares its media-stream
+  protocol (start negotiation, codec, framing, clip encoding) and hangup style; the bridge asks
+  the session's module rather than branching on a provider name (B18).
+- **Tenant carrier credentials** (`telephony/credentials/`, B18–B22). A tenant may dial on its own
+  carrier account (Plivo). Super-admins add the credential; it is checked with the carrier, then
+  sealed (AES-256-GCM envelope under the `TELEPHONY_CREDENTIAL_KEYS` keyring) into
+  `telephony_credential_secrets`. Calls and campaigns pin `telephony_credential_id` (composite FKs
+  keep it to their own tenant and provider). `getForCredentialId` peeks the pinned credential on
+  every use (row checks only, nothing opened), refuses one of another tenant or provider before
+  any secret is opened, and calls `resolve` only on a cache miss (the cache is keyed by the
+  versions the peek listed). Only a `CredentialUnavailableError` drops cached adapters; a
+  transient error is rethrown unchanged. It never falls back to the service's own account: the
+  bridge's teardown (`hangupProviderLeg`) hangs a pinned call up through it (`call_control`, the
+  call's tenant), and an unresolvable credential is logged at ERROR and the hangup skipped; a call
+  with no credential stays on `get(provider)`. A disabled credential still hangs up its live
+  calls, and a rotation keeps the old secret for 24 h for webhooks signed with it (opened best
+  effort: a grace version that will not open is skipped with a warning). A revoked credential is
+  shredded only once every pinned call is terminal and ended more than 2 h ago (Q6). The routes'
+  error codes are `TELEPHONY_CREDENTIAL_ERROR_CODES` in the contracts: `credential_store_unavailable`
+  (503) means no keyring is configured; `secret_unavailable` (409, not retryable) means this
+  credential's secret is shredded, missing, or sealed under a key the keyring lacks.
+  Only ciphertext reaches SQL; pg spans carry query parameters, so sealed bytes do reach the
+  trace store, where they cannot be opened without the master key.
 - **Audio** (`audio/decode.ts`, `core/paced-audio-streamer.ts`, `tts/tts-file-cache.ts`). Uploaded
   abandon clips are decoded to PCM and cached on disk; there is no TTS (launch decision 4).
 - **Calls** are rows in `agency_calls` (`packages/db/src/repositories/agency-call.repository.ts`).
@@ -288,8 +311,9 @@ bucket keyed on a client-supplied header. Buckets key on `request.ip`, which tru
 
 ## Data layer
 
-- One Postgres. The whole schema is one migration, `packages/db/migrations/0001_baseline.sql`
-  (node-pg-migrate, one transaction): 33 tables plus default partitions for the two audit tables,
+- One Postgres. The schema is the baseline migration, `packages/db/migrations/0001_baseline.sql`
+  (node-pg-migrate, one transaction; 33 tables plus default partitions for the two audit tables),
+  and the numbered migrations after it (0002: the two telephony-credential tables), all
   inventoried in `packages/db/BASELINE.md`. Tenant, account and user ids are UUIDs.
 - Repositories use raw `pg` (`packages/db/src/repositories/`, plus the agency repository in
   `apps/server/src/db/repositories/`). Repository tests run on real Postgres.
@@ -344,7 +368,8 @@ bucket keyed on a client-supplied header. Buckets key on `request.ip`, which tru
 - **Contract and guard tests**: route tables enumerated from `onRoute`
   (`apps/server/test/unit/api/*route-table*.test.ts`, the agent-reach tests); config blocks disjoint;
   the bridge seam contract; the VoiceLink carrier fixture; branding guards in all three apps; the
-  console dev-proxy test; the error-code unions in `packages/contracts/test/`.
+  console dev-proxy test; the error-code unions in `packages/contracts/test/` (including
+  `TELEPHONY_CREDENTIAL_ERROR_CODES`, held equal to its union by an exhaustiveness guard).
 - **Console** tests run in two Vitest projects (`*.timezone.test.ts(x)` and the rest), with TZ and
   locale pinned in `vite.config.ts`.
 

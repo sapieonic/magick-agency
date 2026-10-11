@@ -6,8 +6,9 @@ import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/
 
 /*
  * `GET /phone-numbers`, the caller-ID list, and the only route here:
- *  - No bring-your-own-carrier numbers: VoiceLink is the only carrier, so there is
- *    no second list to merge, and `is_byoc` is not on the row
+ *  - No bring-your-own-carrier numbers yet: every assignable number is on an active
+ *    provider (number creation refuses an inactive one, and Plivo stays inactive
+ *    until its dial path ships), so there is no second list to merge, `is_byoc` is not on the row
  *    (`@magick-agency/contracts`'s `TenantPhoneAssignment` does not carry it), and
  *    the console's `CallerIdPicker.tsx` shows no own-carrier badge.
  *  - No number administration (account tags, account defaults) or inbound config:

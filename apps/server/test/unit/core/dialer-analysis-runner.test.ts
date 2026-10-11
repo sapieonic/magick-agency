@@ -144,6 +144,8 @@ function makeCall(over: Partial<WebRtcCallRecord> = {}): WebRtcCallRecord {
     destination_phone: '+1999',
     provider: 'voicelink',
     provider_call_id: 'p1',
+    provider_request_id: null,
+    telephony_credential_id: null,
     status: 'completed',
     outcome: 'ended_by_user',
     error_code: null,

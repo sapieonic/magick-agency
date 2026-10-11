@@ -52,4 +52,15 @@ export const SA_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: 'POST', path: '/super-admin/phone-numbers/:id/assign' },
   { method: 'DELETE', path: '/super-admin/phone-numbers/:id/assign/:tenantId' },
   { method: 'GET', path: '/super-admin/tenants/:id/phone-numbers' },
+
+  { method: 'GET', path: '/super-admin/telephony-credential-providers' },
+  { method: 'GET', path: '/super-admin/telephony-credentials' },
+  { method: 'GET', path: '/super-admin/telephony-credentials/:id' },
+  { method: 'POST', path: '/super-admin/telephony-credentials' },
+  { method: 'PATCH', path: '/super-admin/telephony-credentials/:id' },
+  { method: 'PUT', path: '/super-admin/telephony-credentials/:id/secret' },
+  { method: 'POST', path: '/super-admin/telephony-credentials/:id/verify' },
+  { method: 'POST', path: '/super-admin/telephony-credentials/:id/disable' },
+  { method: 'POST', path: '/super-admin/telephony-credentials/:id/enable' },
+  { method: 'POST', path: '/super-admin/telephony-credentials/:id/revoke' },
 ];

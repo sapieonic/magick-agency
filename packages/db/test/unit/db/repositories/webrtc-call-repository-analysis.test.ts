@@ -14,9 +14,9 @@ import { WebRtcCallRepository } from '../../../../src/repositories/agency-call.r
 
 const repo = new WebRtcCallRepository();
 
-// The INSERT does not bind `telephony_credential_id` or `sip_connection_id`
-// (the baseline has neither), so the analysis fields sit at $9..$12
-// (indexes 8..11); `listByTenant` passes the only scope, `'agency'`.
+// The analysis fields sit at $9..$12 (indexes 8..11), and the pinned carrier
+// credential (0002) at $15 (index 14); there is no `sip_connection_id`.
+// `listByTenant` passes the only scope, `'agency'`.
 
 function firstQueryText(): string {
   return mocks.poolQuery.mock.calls[0]![0] as string;
@@ -32,6 +32,16 @@ describe('WebRtcCallRepository — analysis columns', () => {
   });
 
   describe('create()', () => {
+    it('binds the pinned carrier credential, and NULL when the call is on the service’s own account', async () => {
+      await repo.create({ tenant_id: 't1', account_id: 'a1', caller_id: '+91000', destination_phone: '+91999', provider: 'plivo', telephony_credential_id: 'cred-1' });
+      expect(firstQueryText()).toMatch(/telephony_credential_id\)\s*VALUES/);
+      expect(firstQueryValues()[14]).toBe('cred-1');
+      vi.clearAllMocks();
+      mocks.poolQuery.mockResolvedValue({ rows: [{ id: 'wc-2' }], rowCount: 1 });
+      await repo.create({ tenant_id: 't1', account_id: 'a1', caller_id: '+91000', destination_phone: '+91999' });
+      expect(firstQueryValues()[14]).toBeNull();
+    });
+
     it('persists the immutable analysis fields (profile/language/consent)', async () => {
       const consentAt = new Date('2026-07-28T10:00:00Z');
       await repo.create({

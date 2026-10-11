@@ -13,6 +13,7 @@ const SAUsersPage = lazy(() => import('./pages/super-admin/SAUsersPage'));
 const SAAdminsPage = lazy(() => import('./pages/super-admin/SAAdminsPage'));
 const SAAuditPage = lazy(() => import('./pages/super-admin/SAAuditPage'));
 const SAPhoneNumbersPage = lazy(() => import('./pages/super-admin/SAPhoneNumbersPage'));
+const SATelephonyCredentialsPage = lazy(() => import('./pages/super-admin/SATelephonyCredentialsPage'));
 const SAFeatureFlagsPage = lazy(() => import('./pages/super-admin/SAFeatureFlagsPage'));
 const SAUsagePage = lazy(() => import('./pages/super-admin/SAUsagePage'));
 
@@ -39,6 +40,7 @@ export function App() {
                 <Route path="users" element={<SAUsersPage />} />
                 <Route path="admins" element={<SAAdminsPage />} />
                 <Route path="phone-numbers" element={<SAPhoneNumbersPage />} />
+                <Route path="telephony-credentials" element={<SATelephonyCredentialsPage />} />
                 <Route path="feature-flags" element={<SAFeatureFlagsPage />} />
                 <Route path="usage" element={<SAUsagePage />} />
                 <Route path="audit" element={<SAAuditPage />} />

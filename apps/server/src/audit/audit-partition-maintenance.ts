@@ -150,7 +150,8 @@ export async function purgeAuditPartitions(
     FROM pg_inherits i
     JOIN pg_class c ON c.oid = i.inhrelid
     JOIN pg_class p ON p.oid = i.inhparent
-    WHERE p.relname = '${spec.table}'`);
+    WHERE p.relname = '${spec.table}'
+    ORDER BY c.relname`); // catalog order is not stable; the report lists drops oldest first
 
   for (const { relname, bound } of partitions.rows) {
     // Range partitions render as: FOR VALUES FROM ('...') TO ('2026-03-01 00:00:00+00')

@@ -1,7 +1,8 @@
 # Baseline schema — `migrations/0001_baseline.sql`
 
-The whole database schema of Magick Agency is one migration. This file is its inventory: the rules
-it follows, every table with its purpose and columns, the unique indexes that carry invariants, the
+The database schema of Magick Agency is the baseline migration plus the numbered migrations listed
+under [Later migrations](#later-migrations). This file is their inventory: the rules
+they follow, every table with its purpose and columns, the unique indexes that carry invariants, the
 triggers and functions, how it is tested, and the schema questions still open. Read it before
 writing a repository, a migration or an import script. Column lists are generated from the SQL;
 the SQL is the authority. As of 2026-10-09.
@@ -15,12 +16,13 @@ the SQL is the authority. As of 2026-10-09.
   `dnc_entries.added_by`, `agency_dnc_outbox.added_by`, `agency_calls.initiated_by`) are text.
 - **Foreign keys** only where the table pairs need them; see the open questions for candidates.
 - **Seed.** One reference row, `telephony_providers ('voicelink', 'VoiceLink')`. No super-admin.
+  (0002 adds `plivo`, inactive; see below.)
 - **Extension** `uuid-ossp` for `uuid_generate_v4()` defaults (`audit_logs`, `audio_files`,
   `announcements`); other ids use the built-in `gen_random_uuid()`.
 
 ## Tables
 
-33 tables, plus monthly partitions 2026-01 to 2027-12 and a DEFAULT partition for each of the two audit tables.
+33 tables in the baseline (35 with 0002), plus monthly partitions 2026-01 to 2027-12 and a DEFAULT partition for each of the two audit tables.
 
 | Group | Tables |
 |---|---|
@@ -256,6 +258,59 @@ Creating later months and dropping aged months is the runtime job
 Rows for a month with no partition land in DEFAULT; a month whose rows are already in DEFAULT cannot
 be attached as a partition until those rows are moved.
 
+## Later migrations
+
+### 0002 — `migrations/0002_telephony_credentials.sql`
+
+Per-tenant carrier credentials (bring-your-own-carrier, decisions B18–B22).
+
+- **Seed.** `telephony_providers ('plivo', 'Plivo', status 'inactive')`. It exists so credentials
+  can reference it; it stays inactive (hidden from number creation and the concurrency editor)
+  until the Plivo dial path ships.
+- **`telephony_credentials`**: one row per carrier account a tenant dials on. `id`, `tenant_id`
+  (→ `tenants`, RESTRICT), `provider` (→ `telephony_providers.name`), `label`, `status`
+  (`active | disabled | invalid | revoked`), `account_ref` (the carrier's public account id),
+  `public_config` (JSONB object, never a URL or host), `secret_version`, `secret_hint` (last four
+  characters), `verified_at`, `last_error`, `created_by` / `updated_by` (→ `super_admins`),
+  `created_at`, `updated_at`, `revoked_at`, `shredded_at`. CHECKs: `revoked_at` set exactly when
+  revoked; a shredded row is revoked with no hint; non-blank label and account_ref; JSONB object.
+  Rows are never deleted.
+- **`telephony_credential_secrets`**: the sealed secret, one row per version. PK
+  `(credential_id, secret_version)`; `secret_ciphertext`, `wrapped_dek`, `kek_id`
+  (scheme-prefixed, e.g. `env:v1`), `created_at`, `retired_at` (NULL = current). Retired versions
+  are pruned after the rotation grace; a revoked credential's rows are deleted (crypto-shred).
+- **Repository** (`src/repositories/telephony-credential.repository.ts`). `shredIfIdle(id,
+  postEndHoldSeconds)` refuses while any call pinned to the credential is non-terminal
+  (`WEBRTC_NON_TERMINAL_STATUSES`, bound as a parameter) or ended (`COALESCE(ended_at,
+  updated_at)`) within the hold; the server passes `WEBHOOK_TOKEN_POST_END_GRACE_SECONDS` (2 h,
+  Q6). `findRevokedUnshredded(hold, limit)` lists only credentials that pass the same check, so
+  ones a call still needs cannot fill the page and starve the rest. `markVerified(id, version,
+  updatedBy)` is one statement pinned to the checked version: it re-activates `invalid`, leaves
+  `disabled` disabled but clears its `last_error`, and is a no-op (null) on a revoked row or a
+  replaced version. `findOpenableVersions` lists the versions `findOpenableSecrets` would return,
+  without the ciphertext.
+- **Unique indexes**: `uq_telephony_credentials_scope (id, tenant_id, provider)` (FK target);
+  `uq_telephony_credentials_account (provider, account_ref) WHERE status <> 'revoked'` (one live
+  registration per carrier account, across tenants); `uq_telephony_credentials_label (tenant_id,
+  lower(label)) WHERE status <> 'revoked'`; `uq_telephony_credential_secrets_current
+  (credential_id) WHERE retired_at IS NULL`.
+- **Trigger**: `trg_telephony_credentials_updated` (`update_updated_at`).
+- **New columns and composite FKs** (both `ON DELETE RESTRICT`, so a row can only pin a credential
+  of its own tenant and provider):
+  - `agency_campaigns.telephony_credential_id` →
+    `telephony_credentials (id, tenant_id, provider)` via `(telephony_credential_id, tenant_id,
+    telephony_provider)`. NULL = the service's own VoiceLink account.
+  - `agency_calls.telephony_credential_id` → the same, via `(telephony_credential_id, tenant_id,
+    provider)`; the credential a call was placed on, pinned at dial time.
+  - `agency_calls.provider_request_id`: the carrier's dial-request id when it differs from the
+    call id (Plivo `request_uuid`).
+- **Down** drops the columns, FKs and tables, and deletes the `plivo` row unless a phone number
+  references it.
+- **Tests**: `test/integration/repositories/telephony-credential.repository.test.ts` (repository,
+  CHECKs, composite FKs, rotation, revoke, the shred hold and its sweep, `markVerified`,
+  `findOpenableVersions`) and the baseline suites, which pin the table
+  set, the trigger list and the seed rows after both migrations.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and
@@ -272,7 +327,7 @@ be attached as a partition until those rows are moved.
 - exactly one up and one down marker;
 - down then up through node-pg-migrate's runner, comparing a full object inventory (relations,
   functions, enum types, triggers, extensions) before and after;
-- the single seed row (asserted only in `baseline-down-up.test.ts`, because `truncateAll` empties
+- the seed rows (asserted only in `baseline-down-up.test.ts`, because `truncateAll` empties
   `telephony_providers`).
 
 ## Notes

@@ -43,8 +43,9 @@ const voicelinkSchema = z.object({
 });
 
 /**
- * VoiceLink is the only carrier: the app dials only on its own VoiceLink account,
- * so there is no provider selection.
+ * The service's own carrier account: VoiceLink, configured here from env. Tenant
+ * carrier accounts (BYOC, decision B18) are not configured here; they are stored
+ * per tenant, sealed under `telephonyCredentials` below.
  *
  * The VoiceLink `requireField` checks run when `requireVoicelink` is true, which
  * the env reader sets in production or when `TELEPHONY_ENABLED_PROVIDERS` names
@@ -144,9 +145,78 @@ const analyticsSchema = z.object({
   }
 });
 
+/**
+ * The master keyring that seals per-tenant carrier credentials (decision B19).
+ *
+ * `TELEPHONY_CREDENTIAL_KEYS` is `<id>:<base64 of 32 bytes>`, comma-separated, e.g.
+ * `v1:…,v2:…`; `TELEPHONY_CREDENTIAL_ACTIVE_KEY` names the one new seals use. Old ids
+ * stay listed until every row sealed under them is re-sealed. Unset = no credential
+ * store: creating a credential is refused and a call pinned to one fails closed.
+ *
+ * Errors name the key id, never the key material.
+ */
+const KEY_ID = /^[a-z0-9_-]{1,32}$/;
+
+/**
+ * The entries of a `TELEPHONY_CREDENTIAL_KEYS` value: split on commas, trimmed, blanks
+ * dropped. No entries (`""`, `" "`, `","`, `",,"`) means no credential store. The
+ * schema below, `buildSealerFromConfig` (`telephony/credentials/index.ts`) and
+ * `EnvKeyringWrapper` all read the value through this, so they cannot disagree: a
+ * value the schema accepts as "store off" must not then fail to build a keyring at
+ * first use.
+ */
+export function keyringEntries(keyring: string): string[] {
+  return keyring.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+export const telephonyCredentialsSchema = z.object({
+  keyring: z.string().optional().default(''),
+  activeKeyId: z.string().optional().default(''),
+}).superRefine((data, ctx) => {
+  const entries = keyringEntries(data.keyring);
+  if (entries.length === 0) {
+    if (data.activeKeyId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['keyring'], message: 'TELEPHONY_CREDENTIAL_ACTIVE_KEY is set but TELEPHONY_CREDENTIAL_KEYS is empty' });
+    }
+    return;
+  }
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    const sep = entry.indexOf(':');
+    const id = sep > 0 ? entry.slice(0, sep) : '';
+    if (!KEY_ID.test(id)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['keyring'], message: 'TELEPHONY_CREDENTIAL_KEYS: every entry must be <id>:<base64>, id matching [a-z0-9_-]{1,32}' });
+      continue;
+    }
+    if (seen.has(id)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['keyring'], message: `TELEPHONY_CREDENTIAL_KEYS: key id '${id}' is listed twice` });
+    }
+    seen.add(id);
+    // Guarded: a refine runs on a dirty result, and the value is a secret, so it is
+    // never echoed.
+    // Strict: the text must be the canonical base64 of the bytes it decodes to, so a
+    // stray character cannot be silently dropped (the sealer applies the same rule).
+    let ok = false;
+    try {
+      const b64 = entry.slice(sep + 1);
+      const key = Buffer.from(b64, 'base64');
+      ok = key.length === 32 && key.toString('base64') === b64;
+    } catch { ok = false; }
+    if (!ok) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['keyring'], message: `TELEPHONY_CREDENTIAL_KEYS: key '${id}' must be 32 bytes of base64` });
+    }
+  }
+  if (!data.activeKeyId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['activeKeyId'], message: 'TELEPHONY_CREDENTIAL_ACTIVE_KEY is required when TELEPHONY_CREDENTIAL_KEYS is set' });
+  } else if (!seen.has(data.activeKeyId)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['activeKeyId'], message: `TELEPHONY_CREDENTIAL_ACTIVE_KEY '${data.activeKeyId}' is not in TELEPHONY_CREDENTIAL_KEYS` });
+  }
+});
+
 export const voiceConfigSchema = z.object({
   concurrency: concurrencySchema.default({}),
   telephony: telephonySchema,
+  telephonyCredentials: telephonyCredentialsSchema.default({}),
   rateLimit: rateLimitSchema.default({}),
   s3: s3Schema.optional(),
   staticCallTts: staticCallTtsSchema.default({}),
@@ -175,6 +245,10 @@ export function readVoiceEnv(env: Env): Record<string, unknown> {
         webhookBaseUrl: env['VOICELINK_WEBHOOK_BASE_URL'],
         defaultCountryCode: env['VOICELINK_DEFAULT_COUNTRY_CODE'],
       },
+    },
+    telephonyCredentials: {
+      keyring: env['TELEPHONY_CREDENTIAL_KEYS'],
+      activeKeyId: env['TELEPHONY_CREDENTIAL_ACTIVE_KEY'],
     },
     rateLimit: {
       max: env['RATE_LIMIT_MAX'],

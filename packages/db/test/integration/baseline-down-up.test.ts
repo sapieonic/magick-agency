@@ -4,9 +4,9 @@ import { MIGRATIONS_DIR } from '../../src/migrations-dir.js';
 import { TEST_DB_URL, closeTestPool, getTestPool } from '../helpers/test-db.js';
 
 /**
- * The Down section drops everything the Up section creates, and the Up section
- * re-applies cleanly afterwards. Runs node-pg-migrate's own `runner` both ways, so
- * the marker split is exercised exactly as `migrate:down` / `migrate:up` would.
+ * Every migration's Down section drops everything its Up section creates, and the
+ * Up sections re-apply cleanly afterwards. Runs node-pg-migrate's own `runner` both
+ * ways, so the marker split is exercised exactly as `migrate:down` / `migrate:up` would.
  *
  * The database is left MIGRATED at the end (the last step is `up`), so this file
  * is safe to run before or after any other integration file.
@@ -18,7 +18,7 @@ const migrate = (direction: 'up' | 'down') =>
     dir: MIGRATIONS_DIR,
     direction,
     migrationsTable: 'pgmigrations',
-    count: direction === 'down' ? 1 : Infinity,
+    count: Infinity,
     log: () => {},
   });
 
@@ -42,10 +42,12 @@ async function inventory(): Promise<string[]> {
   return rows.map((r) => r.o).sort();
 }
 
-describe('baseline down → up', () => {
+const ALL_MIGRATIONS = ['0001_baseline', '0002_telephony_credentials'];
+
+describe('migrations down → up', () => {
   afterAll(closeTestPool);
 
-  it('down removes every object the baseline created; up restores the same set', async () => {
+  it('down removes every object the migrations created; up restores the same set', async () => {
     const before = await inventory();
     // Sanity: the baseline is applied (globalSetup ran it).
     expect(before).toContain('rel:p:platform_audit_log');
@@ -53,6 +55,8 @@ describe('baseline down → up', () => {
     expect(before).toContain('fn:agency_contact_stamp_root');
     expect(before).toContain('type:membership_role');
     expect(before).toContain('ext:uuid-ossp');
+    expect(before).toContain('rel:r:telephony_credentials');
+    expect(before).toContain('rel:r:telephony_credential_secrets');
 
     await migrate('down');
     expect(await inventory()).toEqual([]);
@@ -61,16 +65,17 @@ describe('baseline down → up', () => {
 
     await migrate('up');
     expect(await inventory()).toEqual(before);
-    const reapplied = await getTestPool().query<{ name: string }>('SELECT name FROM pgmigrations');
-    expect(reapplied.rows.map((r) => r.name)).toEqual(['0001_baseline']);
+    const reapplied = await getTestPool().query<{ name: string }>('SELECT name FROM pgmigrations ORDER BY id');
+    expect(reapplied.rows.map((r) => r.name)).toEqual(ALL_MIGRATIONS);
   });
 
-  it('a fresh apply seeds exactly one telephony provider: voicelink', async () => {
+  it('a fresh apply seeds exactly the telephony providers voicelink (active) and plivo (inactive)', async () => {
     // Checked here rather than in baseline.test.ts because that file truncates.
-    const { rows } = await getTestPool().query<{ name: string }>('SELECT name FROM telephony_providers');
-    expect(rows.map((r) => r.name)).toEqual(['voicelink']);
+    const { rows } = await getTestPool().query<{ name: string; status: string }>('SELECT name, status FROM telephony_providers ORDER BY name');
+    // Plivo stays inactive until its dial path ships: numbers and allocations cannot use it.
+    expect(rows).toEqual([{ name: 'plivo', status: 'inactive' }, { name: 'voicelink', status: 'active' }]);
     // ...and nothing else: no seed super-admin, no seed number, no feature flags.
-    for (const table of ['super_admins', 'phone_numbers', 'tenant_phone_assignments', 'feature_flag_overrides', 'tenants', 'users']) {
+    for (const table of ['super_admins', 'phone_numbers', 'tenant_phone_assignments', 'feature_flag_overrides', 'tenants', 'users', 'telephony_credentials']) {
       const { rows: n } = await getTestPool().query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`);
       expect(n[0]!.n, table).toBe(0);
     }

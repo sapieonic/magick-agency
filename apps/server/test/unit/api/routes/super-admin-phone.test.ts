@@ -178,6 +178,19 @@ describe('phone-number pool_eligible passthrough (removed in agency)', () => {
     });
   });
 
+  it('POST /phone-numbers refuses an inactive provider (plivo, before its dial path ships)', async () => {
+    mocks.findProviderById.mockResolvedValue({ id: 'prov-2', name: 'plivo', status: 'inactive' });
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/super-admin/phone-numbers',
+      payload: { phone_number: '+12025550102', provider_id: '22222222-2222-2222-2222-222222222222', max_concurrent_calls: 1 },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toBe('Telephony provider is not active');
+    expect(mocks.createPhone).not.toHaveBeenCalled();
+  });
+
   it('POST /phone-numbers defaults to dedicated (pool_eligible omitted) when not provided', async () => {
     mocks.findProviderById.mockResolvedValue({ id: 'prov-1', name: 'vobiz' });
     mocks.createPhone.mockResolvedValue({ id: 'pn-new', phone_number: '+12025550101', pool_eligible: false });

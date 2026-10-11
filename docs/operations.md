@@ -133,6 +133,7 @@ production.
 | `MAILJET_API_KEY`, `MAILJET_API_SECRET` | Invite and completion mail | `MAILJET_FROM_EMAIL` default `noreply@sapionic.ai`, `MAILJET_FROM_NAME` default `Sapionic` |
 | `CONSOLE_BASE_URL` | Invite links | e.g. `https://<console host>` |
 | `TELEPHONY_ENABLED_PROVIDERS=voicelink` + `VOICELINK_BASE_URL`, `_USERNAME`, `_PASSWORD`, `_WEBHOOK_BASE_URL` | Real calls | Required whenever VoiceLink is enabled **or** `NODE_ENV=production`. Caller IDs are per campaign (`caller_ids`), not env. `VOICELINK_DEFAULT_COUNTRY_CODE` default `91` |
+| `TELEPHONY_CREDENTIAL_KEYS` + `TELEPHONY_CREDENTIAL_ACTIVE_KEY` | Tenant carrier credentials (BYOC, B19) | Master keyring that seals the credentials super-admins add (`v1:<base64 32 bytes>,…`). Unset, or no entries after trim (blank, spaces or commas only) = adding one is refused and BYOC calls fail closed. Rotate by adding a new id and making it active; keep old ids listed while secrets are sealed under them (boot logs an ERROR naming a missing one). Back it up separately from the database: losing it makes every stored credential unopenable |
 | `S3_AUDIO_BUCKET` + `AWS_REGION` (default `ap-south-1`), `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Abandon clips, CSV uploads | Unset: every upload fails ("S3 client not initialized"). Bucket and IAM user per environment: `aws/README.md` |
 | `DIALER_ANALYSIS_ENABLED=true` + a transcriber key (`DIALER_TRANSCRIBE_API_KEY` / `GEMINI_API_KEY`, or Sarvam) + an LLM key (`POST_CALL_ANALYSIS_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`, or Azure's) | Post-call analysis worker | `DIALER_TRANSCRIBER` default `gemini`, model `gemini-3.5-flash`; worker every 60 s, concurrency 2. `POST_CALL_ANALYSIS_PROVIDER`: `openai_compatible` (default; `openai` also accepted; any Chat Completions endpoint via `POST_CALL_ANALYSIS_BASE_URL`, `_HEADERS`, `_STRUCTURED_OUTPUT`), `azure_openai` or `gemini`; model default `gpt-4o-mini`; `POST_CALL_ANALYSIS_TEMPERATURE` default 0.3, `none` sends none. `POST_CALL_ANALYSIS_INPUT`: `transcript` (default) or `audio` (the recording is sent with the transcript; `gemini` only, refused at boot otherwise; timeout default 180 s instead of 30 s). Per tenant it also needs the `agency_call_analysis` flag (default off; `FF_AGENCY_CALL_ANALYSIS` sets the default). Every key: `apps/server/.env.example` |
 | `RECORDING_URL_SIGNING_SECRET` (16+ chars) | Stable signed playback URLs | Unset: a random per-process key, so signed URLs break on restart |
@@ -222,8 +223,8 @@ choose to go available.
 
 ## Migrations
 
-One migration, `packages/db/migrations/0001_baseline.sql`, run with node-pg-migrate from
-`packages/db`:
+The baseline, `packages/db/migrations/0001_baseline.sql`, and the numbered migrations after it
+(`0002_telephony_credentials.sql`), run in order with node-pg-migrate from `packages/db`:
 
 ```bash
 DATABASE_URL=postgresql://... pnpm migrate:up

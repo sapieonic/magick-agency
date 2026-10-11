@@ -18,10 +18,11 @@ const log = createChildLogger({ component: 'super-admin-phone-routes' });
 /*
  * The super-admin phone inventory and assignment routes for the one VoiceLink
  * account. Deliberately absent:
- *  - Telephony-provider writes: the baseline seeds the single `voicelink`
- *    provider row. `provider_id` still references `telephony_providers`, so
- *    number creation still checks it, and `GET /telephony-providers` is kept so
- *    the super-admin console can pick that id.
+ *  - Telephony-provider writes: the migrations seed the provider rows (`voicelink`
+ *    active; `plivo` inactive until its dial path ships). `provider_id` still
+ *    references `telephony_providers`, so number creation checks it and refuses
+ *    an inactive provider, and `GET /telephony-providers` is kept so the
+ *    super-admin console can pick the id.
  *  - `pool_eligible` on the wire (create/update input, the create log/audit
  *    field, every response row): it marked numbers for a signup pool, and there
  *    is no pooled number. The column stays in the schema at its default.
@@ -71,6 +72,9 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
     const provider = await telephonyProviderRepository.findById(input.provider_id);
     if (!provider) {
       return reply.code(400).send({ error: 'Bad Request', message: 'Telephony provider not found' });
+    }
+    if (provider.status === 'inactive') {
+      return reply.code(400).send({ error: 'Bad Request', message: 'Telephony provider is not active' });
     }
 
     // Check phone number uniqueness

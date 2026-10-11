@@ -73,6 +73,17 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['PUT /super-admin/tenants/:_/memberships/:_/role', 'membership role change (decision Q3d)'],
   ['DELETE /super-admin/tenants/:_/memberships/:_', 'membership revoke (decision Q3d)'],
   ['GET /super-admin/feature-flags/:_', 'per-flag detail (super-admin-feature-flags.routes.ts)'],
+  // Per-tenant carrier credentials (decisions B18-B22; super-admin-telephony-credentials.routes.ts).
+  // `POST …/:_/verify` is a console-path entry instead: the inventory already named it.
+  ['GET /super-admin/telephony-credential-providers', 'carrier credential forms (BYOC, B20)'],
+  ['GET /super-admin/telephony-credentials', 'carrier credential list (BYOC, B20)'],
+  ['GET /super-admin/telephony-credentials/:_', 'carrier credential detail + usage (BYOC, B20)'],
+  ['POST /super-admin/telephony-credentials', 'carrier credential create, verified with the carrier (BYOC, B20)'],
+  ['PATCH /super-admin/telephony-credentials/:_', 'carrier credential rename (BYOC, B20)'],
+  ['PUT /super-admin/telephony-credentials/:_/secret', 'carrier credential secret rotation (BYOC, B20)'],
+  ['POST /super-admin/telephony-credentials/:_/disable', 'carrier credential disable (BYOC, B20)'],
+  ['POST /super-admin/telephony-credentials/:_/enable', 'carrier credential enable (BYOC, B20)'],
+  ['POST /super-admin/telephony-credentials/:_/revoke', 'carrier credential revoke (BYOC, B20)'],
   // The console's old `/proxy/feature-flags` path is not served. The flag map stays at
   // `GET /feature-flags`, and the console calls it there; the old path is `not_served` in the fixture.
   ['GET /feature-flags', 'client flag map at its agency path (the console calls it here)'],

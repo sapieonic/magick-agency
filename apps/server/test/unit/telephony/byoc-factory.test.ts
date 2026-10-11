@@ -1,7 +1,7 @@
-// BYOC is not supported, so only the registry's platform path and the fail-closed
-// pinned-credential branch are covered. The cases run on `voicelink` (the only
-// provider), and the `config` fixture is VoiceLink-only (`AppConfig.telephony` has
-// no other block).
+// The registry's platform path and its fail-closed pinned-credential branch, on a
+// registry built without a credential store. The cases run on `voicelink`, and the
+// `config` fixture is VoiceLink-only. The credential-store path (tenant credentials,
+// decision B20) is covered in `byoc-registry.test.ts`.
 import { describe, it, expect, vi } from 'vitest';
 import type { AppConfig } from '../../../src/config/index.js';
 
@@ -57,12 +57,12 @@ describe('TelephonyProviderRegistry — pinned-credential resolution', () => {
   it('a null pinned id resolves to the platform adapter (every pre-feature call)', async () => {
     const registry = new TelephonyProviderRegistry(config);
 
-    expect(await registry.getForCredentialId('voicelink', null)).toBe(registry.get('voicelink'));
+    expect(await registry.getForCredentialId('voicelink', null, 'call_control', 't1')).toBe(registry.get('voicelink'));
   });
 
   it('THROWS for a pinned id when the module is unconfigured on this replica', async () => {
     const registry = new TelephonyProviderRegistry(config);
-    await expect(registry.getForCredentialId('voicelink', 'cred-1'))
+    await expect(registry.getForCredentialId('voicelink', 'cred-1', 'call_control', 't1'))
       .rejects.toThrow(ByocCredentialUnavailableError);
   });
 });

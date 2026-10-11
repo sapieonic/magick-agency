@@ -319,7 +319,7 @@ _No dedicated test files._
 
 Route handlers. Public API layer: `auth`, `tenant`, `account`, `user`, `invites`, `notification`, `feature-flags`, `super-admin*`, `proxy-agency-*`, `dnc`, `phone-number`, `call-analysis-profiles`. Internal handler instance: `agency.routes.ts`, `agency-campaigns.routes.ts`, `agency-agents.routes.ts`. Voice engine: `webhooks.routes.ts`, `webrtc-call.routes.ts`. Analysis: `webrtc-recordings.routes.ts`.
 
-Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.ts`, `agency.routes.ts`, `auth.routes.ts`, `call-analysis-profiles.routes.ts`, `dnc.routes.ts`, `feature-flags.routes.ts`, `helpers/csv-attachment.ts`, `helpers/path-params.ts`, `invites.routes.ts`, `notification.routes.ts`, `phone-number.routes.ts`, `proxy-agency-agent.routes.ts`, `proxy-agency-calls.routes.ts`, `proxy-agency-campaigns.routes.ts`, `proxy-agency-performance.routes.ts`, `proxy-agency-staffing.routes.ts`, `proxy-agency-station.routes.ts`, `super-admin-account-settings.routes.ts`, `super-admin-feature-flags.routes.ts`, `super-admin-phone.routes.ts`, `super-admin-usage-counts.routes.ts`, `super-admin.routes.ts`, `tenant.routes.ts`, `user.routes.ts`, `webhooks.routes.ts`, `webrtc-call.routes.ts`, `webrtc-recordings.routes.ts`
+Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.ts`, `agency.routes.ts`, `auth.routes.ts`, `call-analysis-profiles.routes.ts`, `dnc.routes.ts`, `feature-flags.routes.ts`, `helpers/csv-attachment.ts`, `helpers/path-params.ts`, `invites.routes.ts`, `notification.routes.ts`, `phone-number.routes.ts`, `proxy-agency-agent.routes.ts`, `proxy-agency-calls.routes.ts`, `proxy-agency-campaigns.routes.ts`, `proxy-agency-performance.routes.ts`, `proxy-agency-staffing.routes.ts`, `proxy-agency-station.routes.ts`, `super-admin-account-settings.routes.ts`, `super-admin-feature-flags.routes.ts`, `super-admin-phone.routes.ts`, `super-admin-telephony-credentials.routes.ts`, `super-admin-usage-counts.routes.ts`, `super-admin.routes.ts`, `tenant.routes.ts`, `user.routes.ts`, `webhooks.routes.ts`, `webrtc-call.routes.ts`, `webrtc-recordings.routes.ts`
 
 | Test file | Cases |
 |---|---|
@@ -337,7 +337,8 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/super-admin-accounts.test.ts` | 38 |
 | `apps/server/test/unit/api/routes/super-admin-feature-flags.test.ts` | 22 |
 | `apps/server/test/unit/api/routes/super-admin-memberships.test.ts` | 57 |
-| `apps/server/test/unit/api/routes/super-admin-phone.test.ts` | 9 |
+| `apps/server/test/unit/api/routes/super-admin-phone.test.ts` | 10 |
+| `apps/server/test/unit/api/routes/super-admin-telephony-credentials.test.ts` | 38 |
 | `apps/server/test/unit/api/routes/super-admin-usage-counts.test.ts` | 22 |
 | `apps/server/test/unit/api/routes/tenant.routes.test.ts` | 9 |
 | `apps/server/test/unit/api/routes/user-cache-invalidation.wiring.test.ts` | 4 |
@@ -510,6 +511,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/webhook-url-builder.test.ts` | 6 |
 | `apps/server/test/unit/core/webrtc-answer-anchor.test.ts` | 3 |
 | `apps/server/test/unit/core/webrtc-bridge-borrowed-socket-soak.test.ts` | 2 |
+| `apps/server/test/unit/core/webrtc-bridge-credential-hangup.test.ts` | 5 |
 | `apps/server/test/unit/core/webrtc-bridge-late-binding.test.ts` | 17 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.bridged.test.ts` | 8 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.seams.test.ts` | 12 |
@@ -521,7 +523,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 
 ### `apps/server/src/db/`
 
-The agency repository (`agency.repository.ts`, decision B12), membership invites, notification deliveries and preferences, the telephony provider repository, and their models.
+The agency repository (`agency.repository.ts`, decision B12), membership invites, notification deliveries and preferences, the telephony provider repository (uncached, so a status change is seen on the next read), and their models.
 
 Files: `models/agency.model.ts`, `models/membership-invite.model.ts`, `models/notification.model.ts`, `repositories/agency.repository.ts`, `repositories/membership-invite.repository.ts`, `repositories/notification-delivery.repository.ts`, `repositories/notification-preference.repository.ts`, `repositories/telephony-provider.repository.ts`
 
@@ -535,7 +537,7 @@ Files: `models/agency.model.ts`, `models/membership-invite.model.ts`, `models/no
 | `apps/server/test/unit/db/repositories/membership-invite.repository.test.ts` | 38 |
 | `apps/server/test/unit/db/repositories/notification-delivery.repository.test.ts` | 45 |
 | `apps/server/test/unit/db/repositories/notification-preference.repository.test.ts` | 27 |
-| `apps/server/test/unit/db/repositories/telephony-provider.repository.test.ts` | 10 |
+| `apps/server/test/unit/db/repositories/telephony-provider.repository.test.ts` | 6 |
 
 ### `apps/server/src/dnc/`
 
@@ -671,13 +673,15 @@ Files: `s3.ts`
 
 ### `apps/server/src/telephony/`
 
-Telephony provider factory and types; the VoiceLink adapter, webhook normaliser, token manager and carrier fixture.
+Telephony provider factory and types; the carrier modules (each carrier's media-stream protocol and hangup style, which the bridge asks instead of branching on a provider name); the VoiceLink adapter, media protocol, webhook normaliser, token manager and carrier fixture. `factory.ts` builds the service's own adapters from env and BYOC adapters from tenant credentials (`getForCredentialId`, decisions B18–B22): it peeks the credential row on every use and refuses another tenant or provider before any secret is opened, calls `resolve` only on a cache miss (keyed by peek's version list), and drops cached adapters only on `CredentialUnavailableError`, rethrowing transient errors unchanged.
 
-Files: `factory.ts`, `types.ts`, `voicelink/voicelink-carrier.fixture.json`, `voicelink/voicelink-token-manager.ts`, `voicelink/voicelink.adapter.ts`, `voicelink/voicelink.types.ts`, `voicelink/voicelink.webhook.ts`
+Files: `carrier-module.ts`, `carrier-modules.ts`, `factory.ts`, `types.ts`, `voicelink/voicelink-carrier.fixture.json`, `voicelink/voicelink-token-manager.ts`, `voicelink/voicelink.adapter.ts`, `voicelink/voicelink.media.ts`, `voicelink/voicelink.types.ts`, `voicelink/voicelink.webhook.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/telephony/byoc-factory.test.ts` | 7 |
+| `apps/server/test/unit/telephony/byoc-registry.test.ts` | 23 |
+| `apps/server/test/unit/telephony/carrier-modules.test.ts` | 14 |
 | `apps/server/test/unit/telephony/provider-capabilities.test.ts` | 6 |
 | `apps/server/test/unit/telephony/voicelink/redact-url-tail.test.ts` | 7 |
 | `apps/server/test/unit/telephony/voicelink/voicelink-carrier.fixture.test.ts` | 178 |
@@ -685,6 +689,17 @@ Files: `factory.ts`, `types.ts`, `voicelink/voicelink-carrier.fixture.json`, `vo
 | `apps/server/test/unit/telephony/voicelink/voicelink.adapter.edge-cases.test.ts` | 14 |
 | `apps/server/test/unit/telephony/voicelink/voicelink.adapter.test.ts` | 38 |
 | `apps/server/test/unit/telephony/voicelink/voicelink.webhook.test.ts` | 125 |
+
+### `apps/server/src/telephony/credentials/`
+
+Per-tenant carrier credentials (BYOC, decisions B18–B22). `credential-sealer.ts`: AES-256-GCM envelope encryption under the env keyring (`TELEPHONY_CREDENTIAL_KEYS`), bound to tenant, credential, provider and version. `credential-specs.ts`: each BYOC carrier's form fields, validation and carrier check (Plivo). `credential-service.ts`: create, rotate, verify, disable, enable, revoke, the hourly sweep (shred revoked once their calls are past the 2 h post-end hold, prune retired versions), `peek(id, purpose)` (row checks only, nothing opened) and `resolve(id, purpose)` (grace versions opened best effort) for the registry; `CredentialUnavailableError` carries a `kind`, and `verify` opens only the current secret and answers `invalid_transition` or `version_conflict` when its version-pinned write does not land. `secret.ts`: a box that never prints its value. `safe-issues.ts`: validation messages with no submitted value. `index.ts`: the process's one service, built from config; a keyring with no entries after trim (`keyringEntries`) is no store.
+
+Files: `credential-sealer.ts`, `credential-service.ts`, `credential-specs.ts`, `index.ts`, `safe-issues.ts`, `secret.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/server/test/unit/telephony/credential-sealer.test.ts` | 30 |
+| `apps/server/test/unit/telephony/credential-service.test.ts` | 49 |
 
 ### `apps/server/src/transcription/`
 
@@ -780,7 +795,7 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `rbac.ts`
 |---|---|
 | `packages/contracts/test/console-wire-diff.test.ts` | 2 |
 | `packages/contracts/test/errors.test.ts` | 9 |
-| `packages/contracts/test/exports.test.ts` | 4 |
+| `packages/contracts/test/exports.test.ts` | 5 |
 | `packages/contracts/test/flags.test.ts` | 6 |
 | `packages/contracts/test/rbac.test.ts` | 48 |
 | `packages/contracts/test/stall.test.ts` | 4 |
@@ -795,9 +810,9 @@ _No dedicated test files._
 
 ### `packages/contracts/src/api/platform/`
 
-Wire types for the platform API: auth and session, team, invites, notifications, settings, feature flags, audit, super-admin and usage.
+Wire types for the platform API: auth and session, team, invites, notifications, settings, feature flags, audit, super-admin and usage. `super-admin-telephony-credentials.ts` also exports `TELEPHONY_CREDENTIAL_ERROR_CODES`, the runtime list of its error-code union with an exhaustiveness guard (snapshot in `exports.test.ts`).
 
-Files: `audit.ts`, `auth.ts`, `feature-flags.ts`, `index.ts`, `invite.ts`, `notifications.ts`, `settings.ts`, `super-admin-usage.ts`, `super-admin.ts`, `team.ts`
+Files: `audit.ts`, `auth.ts`, `feature-flags.ts`, `index.ts`, `invite.ts`, `notifications.ts`, `settings.ts`, `super-admin-telephony-credentials.ts`, `super-admin-usage.ts`, `super-admin.ts`, `team.ts`
 
 _No dedicated test files._
 
@@ -815,7 +830,7 @@ _No dedicated test files._
 
 Row models for the shared tables.
 
-Files: `account-settings.model.ts`, `account.model.ts`, `agency-call.model.ts`, `announcement.model.ts`, `audio-file.model.ts`, `audit.model.ts`, `call-analysis-profile.model.ts`, `call.model.ts`, `conversation-entry.model.ts`, `dialer-analysis-job.model.ts`, `feature-flag.model.ts`, `membership.model.ts`, `phone-number.model.ts`, `prompt.model.ts`, `static-call.model.ts`, `super-admin.model.ts`, `telephony-provider.model.ts`, `tenant-phone-assignment.model.ts`, `tenant.model.ts`, `user.model.ts`
+Files: `account-settings.model.ts`, `account.model.ts`, `agency-call.model.ts`, `announcement.model.ts`, `audio-file.model.ts`, `audit.model.ts`, `call-analysis-profile.model.ts`, `call.model.ts`, `conversation-entry.model.ts`, `dialer-analysis-job.model.ts`, `feature-flag.model.ts`, `membership.model.ts`, `phone-number.model.ts`, `prompt.model.ts`, `static-call.model.ts`, `super-admin.model.ts`, `telephony-credential.model.ts`, `telephony-provider.model.ts`, `tenant-phone-assignment.model.ts`, `tenant.model.ts`, `user.model.ts`
 
 _No dedicated test files._
 
@@ -831,7 +846,7 @@ _No dedicated test files._
 
 Shared repositories: tenants, accounts, users, memberships, super-admins and their audit, phone numbers and assignments, account settings, provider concurrency, agency calls, staffing, call-analysis profiles, analysis jobs, audio files, announcements, feature flags, audit, usage counts.
 
-Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.repository.ts`, `agency-campaign-agent.repository.ts`, `announcement.repository.ts`, `audio-file.repository.ts`, `audit.repository.ts`, `call-analysis-profile.repository.ts`, `dialer-analysis-job.repository.ts`, `feature-flag.repository.ts`, `membership.repository.ts`, `phone-number.repository.ts`, `provider-concurrency.repository.ts`, `super-admin-audit.repository.ts`, `super-admin.repository.ts`, `tenant-phone-assignment.repository.ts`, `tenant.repository.ts`, `usage-counts.repository.ts`, `user.repository.ts`
+Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.repository.ts`, `agency-campaign-agent.repository.ts`, `announcement.repository.ts`, `audio-file.repository.ts`, `audit.repository.ts`, `call-analysis-profile.repository.ts`, `dialer-analysis-job.repository.ts`, `feature-flag.repository.ts`, `membership.repository.ts`, `phone-number.repository.ts`, `provider-concurrency.repository.ts`, `super-admin-audit.repository.ts`, `super-admin.repository.ts`, `telephony-credential.repository.ts`, `tenant-phone-assignment.repository.ts`, `tenant.repository.ts`, `usage-counts.repository.ts`, `user.repository.ts`
 
 | Test file | Cases |
 |---|---|
@@ -853,6 +868,7 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/integration/repositories/phone-number.repository.test.ts` | ~8 |
 | `packages/db/test/integration/repositories/provider-concurrency.repository.test.ts` | ~3 |
 | `packages/db/test/integration/repositories/shared-infra-coverage.test.ts` | ~8 |
+| `packages/db/test/integration/repositories/telephony-credential.repository.test.ts` | 31 |
 | `packages/db/test/integration/repositories/tenant.repository.test.ts` | ~13 |
 | `packages/db/test/integration/repositories/usage-counts.repository.test.ts` | ~7 |
 | `packages/db/test/integration/repositories/user-addressable-members.repository.test.ts` | ~11 |
@@ -868,7 +884,7 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/unit/db/repositories/super-admin.repository.test.ts` | 7 |
 | `packages/db/test/unit/db/repositories/tenant.repository.test.ts` | 15 |
 | `packages/db/test/unit/db/repositories/user.repository.test.ts` | 16 |
-| `packages/db/test/unit/db/repositories/webrtc-call-repository-analysis.test.ts` | 8 |
+| `packages/db/test/unit/db/repositories/webrtc-call-repository-analysis.test.ts` | 9 |
 | `packages/db/test/unit/db/repositories/webrtc-call-scope.test.ts` | 12 |
 
 ### `packages/db/src/repositories/platform/`
@@ -1305,7 +1321,7 @@ Files: `saRoutes.ts`, `super-admin.ts`
 | Test file | Cases |
 |---|---|
 | `apps/super-admin/src/__tests__/api/saFetch.test.ts` | 29 |
-| `apps/super-admin/src/__tests__/api/saRoutes.test.ts` | 45 |
+| `apps/super-admin/src/__tests__/api/saRoutes.test.ts` | 55 |
 
 ### `apps/super-admin/src/components/`
 
@@ -1358,13 +1374,14 @@ Files: `useCountUp.ts`, `useSuperAdminAdmins.ts`, `useSuperAdminAudit.ts`, `useS
 
 Login, and the super-admin pages: tenants and tenant detail, users, admins, phone numbers, feature flags, usage, audit.
 
-Files: `auth/SuperAdminLoginPage.module.css`, `auth/SuperAdminLoginPage.tsx`, `super-admin/SAAdminsPage.module.css`, `super-admin/SAAdminsPage.tsx`, `super-admin/SAAuditPage.module.css`, `super-admin/SAAuditPage.tsx`, `super-admin/SAFeatureFlagsPage.module.css`, `super-admin/SAFeatureFlagsPage.tsx`, `super-admin/SAPhoneNumbersPage.module.css`, `super-admin/SAPhoneNumbersPage.tsx`, `super-admin/SATenantDetailPage.module.css`, `super-admin/SATenantDetailPage.tsx`, `super-admin/SATenantsPage.module.css`, `super-admin/SATenantsPage.tsx`, `super-admin/SAUsagePage.module.css`, `super-admin/SAUsagePage.tsx`, `super-admin/SAUsersPage.module.css`, `super-admin/SAUsersPage.tsx`
+Files: `auth/SuperAdminLoginPage.module.css`, `auth/SuperAdminLoginPage.tsx`, `super-admin/SAAdminsPage.module.css`, `super-admin/SAAdminsPage.tsx`, `super-admin/SAAuditPage.module.css`, `super-admin/SAAuditPage.tsx`, `super-admin/SAFeatureFlagsPage.module.css`, `super-admin/SAFeatureFlagsPage.tsx`, `super-admin/SAPhoneNumbersPage.module.css`, `super-admin/SAPhoneNumbersPage.tsx`, `super-admin/SATelephonyCredentialsPage.module.css`, `super-admin/SATelephonyCredentialsPage.tsx`, `super-admin/SATenantDetailPage.module.css`, `super-admin/SATenantDetailPage.tsx`, `super-admin/SATenantsPage.module.css`, `super-admin/SATenantsPage.tsx`, `super-admin/SAUsagePage.module.css`, `super-admin/SAUsagePage.tsx`, `super-admin/SAUsersPage.module.css`, `super-admin/SAUsersPage.tsx`
 
 | Test file | Cases |
 |---|---|
 | `apps/super-admin/src/__tests__/pages/SAAuditPage.test.tsx` | 1 |
 | `apps/super-admin/src/__tests__/pages/SAFeatureFlagsPage.test.tsx` | 34 |
 | `apps/super-admin/src/__tests__/pages/SAPhoneNumbersPage.test.tsx` | 5 |
+| `apps/super-admin/src/__tests__/pages/SATelephonyCredentialsPage.test.tsx` | 8 |
 | `apps/super-admin/src/__tests__/pages/SATenantDetailPage.new.test.tsx` | 21 |
 | `apps/super-admin/src/__tests__/pages/SATenantDetailPage.test.tsx` | 11 |
 | `apps/super-admin/src/__tests__/pages/SAUsagePage.test.tsx` | 22 |

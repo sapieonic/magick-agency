@@ -129,6 +129,9 @@ export async function seedUpdatedAtRows(): Promise<Array<{ trigger: string; tabl
   const membership = await insertMembership(user.id, tenant.id, backdated);
   const provider = await insertRow('telephony_providers', { name: `p-${randomUUID().slice(0, 8)}`, display_name: 'P', ...backdated });
   const number = await insertRow('phone_numbers', { phone_number: '+14155550199', provider_id: provider.id, ...backdated });
+  const credential = await insertRow('telephony_credentials', {
+    tenant_id: tenant.id, provider: provider.name, label: 'C', account_ref: 'MA1', ...backdated,
+  });
   const pref = await insertRow('user_notification_preferences', {
     user_id: user.id, tenant_id: tenant.id, event_key: 'agency.campaign_completed', enabled: true, ...backdated,
   });
@@ -161,6 +164,7 @@ export async function seedUpdatedAtRows(): Promise<Array<{ trigger: string; tabl
     { trigger: 'memberships_updated_at', table: 'memberships', id: membership.id, touch: "status = 'revoked'" },
     { trigger: 'trg_telephony_providers_updated', table: 'telephony_providers', id: provider.id, touch: "display_name = 'Q'" },
     { trigger: 'trg_phone_numbers_updated', table: 'phone_numbers', id: number.id, touch: "label = 'renamed'" },
+    { trigger: 'trg_telephony_credentials_updated', table: 'telephony_credentials', id: credential.id, touch: "label = 'renamed'" },
     { trigger: 'user_notification_preferences_updated_at', table: 'user_notification_preferences', id: pref.id, touch: 'enabled = false' },
     { trigger: 'agency_ingest_jobs_updated_at', table: 'agency_ingest_jobs', id: job.id, touch: "status = 'running'" },
     { trigger: 'agency_campaign_agents_updated_at', table: 'agency_campaign_agents', id: staffing.id, touch: 'unassigned_at = now()' },

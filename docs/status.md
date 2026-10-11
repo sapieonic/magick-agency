@@ -30,6 +30,19 @@ carrier, a real Firebase sign-in, production data or a deployed environment. The
 | Rulings | Done | Open-question rulings and branding (`decisions.md` Q1–Q9, B17), each mutation-checked |
 | 10 Launch | **Not started** | See "Not built" |
 
+### Plivo, on tenants' own accounts (B18–B22)
+
+Plivo joins VoiceLink as a carrier, dialled on each tenant's OWN Plivo account with credentials
+super-admins add (not env). Built in steps:
+
+| Step | State | Evidence |
+|---|---|---|
+| 1 Carrier modules | Done | The bridge asks a per-carrier module (media protocol, hangup style) instead of `provider === 'voicelink'`; `carrier-modules.test.ts`, mutation-checked against the bridge suites |
+| 2 Credential store | Done | Migration `0002_telephony_credentials.sql`; envelope sealer and env keyring; credential service and `getForCredentialId`; super-admin API and Telephony Credentials screen; unit tests and a real-Postgres repository suite, guards mutation-checked |
+| 3 Plivo adapter | Not started | Dial (`request_uuid`), answer XML with `<Stream>`, μ-law media, cancel vs hangup by id, V3 webhook signatures checked against the pinned credential, `time_limit` on every dial, per-credential calls-per-second limit, recording fetch on per-provider hosts |
+| 4 Dialler integration | Not started | Campaigns pin a credential; caller IDs limited to the credential's synced numbers; pause on carrier 401; `plivo` concurrency allocations; activate the `plivo` provider row (seeded inactive by 0002). Obligations the step-2 code leaves to this step: dial through `getForCredentialId(provider, id, 'dial', tenantId)`; insert the call row in a statement that re-checks the credential is `active` (revoke and shred lock the credential row, which waits out an insert in flight but cannot stop one that starts after them); pin a campaign only to an `active` credential; a metric and alert for missing keyring ids and failed sweeps (today they are ERROR/WARN logs); persist the dial's `providerRequestId` (Plivo `request_uuid`) to `provider_request_id` and the session, and give the hangup a way to cancel by it: `TelephonyProvider.endCall` takes only `providerCallId`, and `hangupProviderLeg` returns without a carrier call when that is empty, so a pre-answer teardown of a Plivo call does not reach the carrier today |
+| 5 Live check | Not started | One real Plivo call and one recording analysed (needs a Plivo account) |
+
 ## Test counts
 
 Final full run on 2026-10-09, after `pnpm install --frozen-lockfile`, from inside each package.
@@ -66,6 +79,15 @@ active campaign, however old): `apps/console` lint clean, 4440 unit (221 files);
 lint clean, 6512 of 6513 unit (308 files), the one failure being the branding guard reading an
 uncommitted local file; integration re-run for `repository-sql-coverage.test.ts` only (12).
 
+Re-run on 2026-10-11, after Plivo steps 1–2 and the credential review fixes (shred hold, verify
+races, `peek`, uncached providers, keyboard-reachable credential rows): lint clean in 7 packages;
+unit `apps/server` 6627 + 42 skipped (314 files), `packages/db` 410 (24 files),
+`packages/contracts` 74, `apps/super-admin` 392 (27 files); integration `packages/db` 448
+(39 files); `apps/server` integration lanes `rest` 1162 (103 files) and `wall-clock` 11 (2 files).
+Two of three local `rest` runs failed 3 cases of `agency-double-reservation.test.ts` (two dials per
+pacing tick instead of one); the file passes alone (10 of 10 runs) and the third full run passed,
+so the failure depends on file order and is not yet explained.
+
 CI (`.github/workflows/ci.yml`) runs lint, unit and build in one job, and the integration suites
 in three parallel jobs (db, server, server wall-clock lane), each against its own Postgres 16 and
 Redis 7 service containers on the same ports. Per-module test
@@ -91,7 +113,7 @@ files are listed in [`modules.md`](modules.md).
   `OTEL_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME` are set; it was
   checked end to end against a local OTLP collector only.
 
-**Out of scope:** metering and billing; AI calling; bring-your-own SIP and other carriers; a
+**Out of scope:** metering and billing; AI calling; bring-your-own SIP and carriers other than VoiceLink and Plivo (B18); a
 separate identity layer.
 
 ## Open decisions and owners
