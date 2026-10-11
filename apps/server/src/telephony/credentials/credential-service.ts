@@ -205,7 +205,11 @@ export class TelephonyCredentialService {
     return row ? { ok: true, value: row } : fail('version_conflict', 'The credential was changed since this form was opened');
   }
 
-  /** Re-ask the carrier with the stored secret. A refusal marks it `invalid`; success clears that. */
+  /**
+   * Re-ask the carrier with the stored secret. A refusal marks an active credential
+   * `invalid`; a disabled one stays disabled but records the refusal in `last_error`,
+   * so `enable` brings it back as `invalid`, not `active`. Success clears both.
+   */
   async verify(id: string, adminId: string | null): Promise<ServiceResult<TelephonyCredentialRecord>> {
     const current = await this.deps.repo.findById(id);
     if (!current) return fail('not_found', 'Credential not found');
@@ -222,7 +226,8 @@ export class TelephonyCredentialService {
     const check = await spec.check(current.public_config as Record<string, string>, resolved.secret.reveal(), this.deps.fetchImpl);
     if (check.result === 'unreachable') return fail('carrier_unreachable', check.reason);
     if (check.result === 'rejected') {
-      const row = await this.deps.repo.setStatus(id, 'invalid', ['active', 'invalid'], { updatedBy: adminId, lastError: check.reason });
+      const row = await this.deps.repo.setStatus(id, 'invalid', ['active', 'invalid'], { updatedBy: adminId, lastError: check.reason })
+        ?? await this.deps.repo.setStatus(id, 'disabled', ['disabled'], { updatedBy: adminId, lastError: check.reason });
       return { ok: true, value: row ?? (await this.deps.repo.findById(id))! };
     }
     if (current.status === 'invalid') {
@@ -237,9 +242,16 @@ export class TelephonyCredentialService {
     return row ? { ok: true, value: row } : this.transitionRefused(id, 'Only an active or invalid credential can be disabled');
   }
 
-  /** Re-enable a disabled credential. It returns as `active`; a stale secret shows up on the next dial or verify. */
+  /**
+   * Re-enable a disabled credential. It returns as `active`, or as `invalid` when the
+   * carrier's last check refused it (`last_error` is set only by a refusal and cleared
+   * by a passing verify or a rotation).
+   */
   async enable(id: string, adminId: string): Promise<ServiceResult<TelephonyCredentialRecord>> {
-    const row = await this.deps.repo.setStatus(id, 'active', ['disabled'], { updatedBy: adminId });
+    const current = await this.deps.repo.findById(id);
+    if (!current) return fail('not_found', 'Credential not found');
+    const to = current.last_error ? 'invalid' : 'active';
+    const row = await this.deps.repo.setStatus(id, to, ['disabled'], { updatedBy: adminId });
     return row ? { ok: true, value: row } : this.transitionRefused(id, 'Only a disabled credential can be enabled');
   }
 

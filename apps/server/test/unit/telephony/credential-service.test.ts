@@ -299,6 +299,25 @@ describe('verify, disable, enable, revoke', () => {
     expect(good.ok && good.value).toMatchObject({ status: 'active', last_error: null });
   });
 
+  it('records a refusal on a disabled credential, which then enables as invalid, not active', async () => {
+    const row = await createOk();
+    await svc.disable(row.id, ADMIN);
+    carrier.status = 401;
+    const v = await svc.verify(row.id, ADMIN);
+    expect(v.ok && v.value).toMatchObject({ status: 'disabled' });
+    expect(v.ok && v.value.last_error).toMatch(/401/);
+    const e = await svc.enable(row.id, ADMIN);
+    expect(e.ok && e.value.status).toBe('invalid');
+    await expect(svc.resolve(row.id, 'dial')).rejects.toBeInstanceOf(CredentialUnavailableError);
+  });
+
+  it('enables a disabled credential with no recorded refusal as active', async () => {
+    const row = await createOk();
+    await svc.disable(row.id, ADMIN);
+    const e = await svc.enable(row.id, ADMIN);
+    expect(e.ok && e.value.status).toBe('active');
+  });
+
   it('allows only the listed transitions', async () => {
     const row = await createOk();
     expect((await svc.enable(row.id, ADMIN)).ok).toBe(false);

@@ -233,6 +233,8 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   keep it to their own tenant and provider). `getForCredentialId` resolves the pinned credential
   on every use and never falls back to the service's own account; a disabled credential still
   hangs up its live calls, and a rotation keeps the old secret for 24 h for webhooks signed with it.
+  Only ciphertext reaches SQL; pg spans carry query parameters, so sealed bytes do reach the
+  trace store, where they cannot be opened without the master key.
 - **Audio** (`audio/decode.ts`, `core/paced-audio-streamer.ts`, `tts/tts-file-cache.ts`). Uploaded
   abandon clips are decoded to PCM and cached on disk; there is no TTS (launch decision 4).
 - **Calls** are rows in `agency_calls` (`packages/db/src/repositories/agency-call.repository.ts`).

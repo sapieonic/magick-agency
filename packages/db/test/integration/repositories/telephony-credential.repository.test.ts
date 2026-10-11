@@ -251,11 +251,14 @@ describe('telephony credentials (integration)', () => {
       expect((await pgError(getTestPool().query(`UPDATE telephony_credentials SET shredded_at = NOW(), secret_hint = NULL WHERE id = $1`, [cred.id]))).code).toBe('23514');
     });
 
-    it('counts pinned campaigns in usage', async () => {
+    it('counts only campaigns that can still dial: a finished one does not block a revoke forever', async () => {
       const cred = await create();
-      await getTestPool().query(
-        `INSERT INTO agency_campaigns (tenant_id, account_id, name, caller_ids, telephony_provider, telephony_credential_id)
-         VALUES ($1, $2, 'c', ARRAY['+14155550100'], 'plivo', $3)`, [tenantA, randomUUID(), cred.id]);
+      const insert = (status: string) => getTestPool().query(
+        `INSERT INTO agency_campaigns (tenant_id, account_id, name, caller_ids, telephony_provider, telephony_credential_id, status)
+         VALUES ($1, $2, 'c', ARRAY['+14155550100'], 'plivo', $3, $4)`, [tenantA, randomUUID(), cred.id, status]);
+      await insert('draft');
+      await insert('completed');
+      await insert('stopped');
       expect(await repo.usage(cred.id)).toEqual({ campaigns: 1, inFlightCalls: 0 });
     });
   });

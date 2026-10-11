@@ -33,6 +33,13 @@ const COLUMNS = `
 /** Call statuses that still need the credential (hangup, cancel, webhook checks). */
 const IN_FLIGHT = `('initiating', 'ringing', 'in_progress')`;
 
+/**
+ * Campaign statuses that can still dial. A completed or stopped campaign is terminal,
+ * so it no longer holds a credential live (it would otherwise block a revoke forever:
+ * campaigns are never deleted).
+ */
+const LIVE_CAMPAIGN = `('draft', 'running', 'paused', 'stopping')`;
+
 async function inTransaction<T>(fn: (client: PoolClient) => Promise<T | null>): Promise<T | null> {
   const client = await getPool().connect();
   try {
@@ -269,11 +276,12 @@ export class TelephonyCredentialRepository {
     return result.rowCount ?? 0;
   }
 
-  /** How many campaigns pin it, and how many calls are in flight on it. */
+  /** How many campaigns that can still dial pin it, and how many calls are in flight on it. */
   async usage(id: string): Promise<{ campaigns: number; inFlightCalls: number }> {
     const result = await getPool().query<{ campaigns: number; in_flight: number }>(
       `SELECT
-         (SELECT count(*)::int FROM agency_campaigns WHERE telephony_credential_id = $1) AS campaigns,
+         (SELECT count(*)::int FROM agency_campaigns
+           WHERE telephony_credential_id = $1 AND status IN ${LIVE_CAMPAIGN}) AS campaigns,
          (SELECT count(*)::int FROM agency_calls
            WHERE telephony_credential_id = $1 AND status IN ${IN_FLIGHT}) AS in_flight`,
       [id],

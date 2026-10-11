@@ -157,4 +157,7 @@ ALTER TABLE agency_campaigns
 DROP TABLE IF EXISTS telephony_credential_secrets;
 DROP TABLE IF EXISTS telephony_credentials;
 
-DELETE FROM telephony_providers WHERE name = 'plivo';
+-- Kept when a phone number still references it (phone_numbers.provider_id).
+DELETE FROM telephony_providers t
+ WHERE t.name = 'plivo'
+   AND NOT EXISTS (SELECT 1 FROM phone_numbers p WHERE p.provider_id = t.id);

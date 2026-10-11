@@ -32,13 +32,18 @@ const pool = () => getTestPool();
 
 afterAll(closeTestPool);
 
-/** Every table the baseline owns (partitions excluded). */
+/**
+ * Every table the migrations own (partitions excluded): the baseline's, plus the two
+ * tenant carrier credential tables from 0002_telephony_credentials.sql.
+ */
 const EXPECTED_TABLES = [
   // identity
   'tenants', 'accounts', 'users', 'memberships', 'membership_invites',
   'super_admins', 'super_admin_audit_log',
   // phone inventory
   'telephony_providers', 'phone_numbers', 'tenant_phone_assignments', 'phone_account_tags',
+  // tenant carrier credentials (0002, decisions B18-B22)
+  'telephony_credentials', 'telephony_credential_secrets',
   // notifications
   'user_notification_preferences', 'notification_deliveries',
   // audit (console and dialer halves, B7)
@@ -63,6 +68,7 @@ const UPDATED_AT_TRIGGERS: Array<[trigger: string, table: string]> = [
   ['memberships_updated_at', 'memberships'],
   ['trg_telephony_providers_updated', 'telephony_providers'],
   ['trg_phone_numbers_updated', 'phone_numbers'],
+  ['trg_telephony_credentials_updated', 'telephony_credentials'],
   ['user_notification_preferences_updated_at', 'user_notification_preferences'],
   ['agency_ingest_jobs_updated_at', 'agency_ingest_jobs'],
   ['agency_campaign_agents_updated_at', 'agency_campaign_agents'],
@@ -158,7 +164,8 @@ describe('baseline schema — structure', () => {
   it('does not carry the excluded columns', async () => {
     const absent: Array<[string, string]> = [
       ['agency_calls', 'sip_connection_id'],
-      ['agency_calls', 'telephony_credential_id'],
+      // `agency_calls.telephony_credential_id` came back in 0002 (BYOC, B18); see
+      // telephony-credential.repository.test.ts.
       ['agency_campaigns', 'sip_connection_id'],
       ['dialer_analysis_jobs', 'settlement_status'],
       ['dialer_analysis_jobs', 'settlement_attempts'],
