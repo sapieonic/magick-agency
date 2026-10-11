@@ -3,8 +3,8 @@ import { redisCache } from '../../cache/redis-cache.js';
 import type { TelephonyProviderRecord } from '@magick-agency/db/models/telephony-provider.model';
 
 /*
- * Reads only: agency has one carrier, seeded by the baseline, so nothing here
- * creates, updates or invalidates a provider row.
+ * Reads only: the provider rows are seeded by the migrations (`voicelink`, and
+ * `plivo` inactive), so nothing here creates, updates or invalidates one.
  */
 
 const PROVIDER_CACHE_TTL = 24 * 60 * 60; // 24 hours

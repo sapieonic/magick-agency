@@ -9,8 +9,10 @@
 
 -- Up Migration
 
-INSERT INTO telephony_providers (name, display_name)
-  VALUES ('plivo', 'Plivo')
+-- Seeded inactive: credentials need the row (foreign key), but numbers, allocations and
+-- campaigns must not use Plivo until its dial path ships, which activates it.
+INSERT INTO telephony_providers (name, display_name, status)
+  VALUES ('plivo', 'Plivo', 'inactive')
   ON CONFLICT (name) DO NOTHING;
 
 -- One row per carrier account a tenant dials on. The secret part (Plivo: auth_token)

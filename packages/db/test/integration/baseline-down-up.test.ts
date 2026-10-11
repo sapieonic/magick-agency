@@ -69,10 +69,11 @@ describe('migrations down → up', () => {
     expect(reapplied.rows.map((r) => r.name)).toEqual(ALL_MIGRATIONS);
   });
 
-  it('a fresh apply seeds exactly the telephony providers voicelink and plivo', async () => {
+  it('a fresh apply seeds exactly the telephony providers voicelink (active) and plivo (inactive)', async () => {
     // Checked here rather than in baseline.test.ts because that file truncates.
-    const { rows } = await getTestPool().query<{ name: string }>('SELECT name FROM telephony_providers ORDER BY name');
-    expect(rows.map((r) => r.name)).toEqual(['plivo', 'voicelink']);
+    const { rows } = await getTestPool().query<{ name: string; status: string }>('SELECT name, status FROM telephony_providers ORDER BY name');
+    // Plivo stays inactive until its dial path ships: numbers and allocations cannot use it.
+    expect(rows).toEqual([{ name: 'plivo', status: 'inactive' }, { name: 'voicelink', status: 'active' }]);
     // ...and nothing else: no seed super-admin, no seed number, no feature flags.
     for (const table of ['super_admins', 'phone_numbers', 'tenant_phone_assignments', 'feature_flag_overrides', 'tenants', 'users', 'telephony_credentials']) {
       const { rows: n } = await getTestPool().query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`);

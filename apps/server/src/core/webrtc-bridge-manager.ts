@@ -531,7 +531,7 @@ export class WebRtcBridgeManager {
     /** Borrowed sockets only: re-attach window on close. 0/absent ⇒ hang up now. */
     browserCloseGraceMs?: number;
   }): Promise<{ record: WebRtcCallRecord; session: WebRtcBridgeSession; browserToken: string | null }> {
-    // VoiceLink is the only carrier.
+    // No provider named: the service's own VoiceLink account (every dial today).
     const provider = params.provider || 'voicelink';
     // Per-account recording ceiling: an account with allow_recording=false cannot
     // record a human-bridge call even if record:true was requested. NULL (no row, or

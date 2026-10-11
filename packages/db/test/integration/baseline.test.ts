@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { MIGRATIONS_DIR } from '../../src/migrations-dir.js';
@@ -117,14 +117,18 @@ describe('baseline schema — structure', () => {
     expect(rows.map((r) => r.relname).sort()).toEqual(EXPECTED_TABLES);
   });
 
-  it('has exactly one up marker and one down marker, so node-pg-migrate splits it correctly', () => {
+  it('every migration has exactly one up marker and one down marker, so node-pg-migrate splits it correctly', () => {
     // node-pg-migrate's sqlMigration splits on
     // /^\s*--[\s-]*(up|down)\s+migration/im, and a stray comment line that matches
     // moves the split silently.
-    const sql = readFileSync(resolve(MIGRATIONS_DIR, '0001_baseline.sql'), 'utf8');
-    expect(sql.match(/^\s*--[\s-]*up\s+migration/gim)).toHaveLength(1);
-    expect(sql.match(/^\s*--[\s-]*down\s+migration/gim)).toHaveLength(1);
-    expect(sql.search(/^\s*--[\s-]*up\s+migration/im)).toBeLessThan(sql.search(/^\s*--[\s-]*down\s+migration/im));
+    const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql'));
+    expect(files).toContain('0001_baseline.sql');
+    for (const file of files) {
+      const sql = readFileSync(resolve(MIGRATIONS_DIR, file), 'utf8');
+      expect(sql.match(/^\s*--[\s-]*up\s+migration/gim), file).toHaveLength(1);
+      expect(sql.match(/^\s*--[\s-]*down\s+migration/gim), file).toHaveLength(1);
+      expect(sql.search(/^\s*--[\s-]*up\s+migration/im), file).toBeLessThan(sql.search(/^\s*--[\s-]*down\s+migration/im));
+    }
   });
 
   it('types every tenant, account and user id column as UUID', async () => {
