@@ -88,12 +88,6 @@ describe('telephony credentials (integration)', () => {
       expect(await repo.distinctKekIds()).toEqual(['env:v1']);
     });
 
-    it('reads another tenant’s id as absent through the tenant-scoped lookup', async () => {
-      const row = await create();
-      expect(await repo.findByIdForTenant(row.id, tenantA)).not.toBeNull();
-      expect(await repo.findByIdForTenant(row.id, tenantB)).toBeNull();
-    });
-
     it('refuses a second live registration of one carrier account, in any tenant', async () => {
       await create({ account: 'MAAAAAAAAAAAAAAAAAAA' });
       const err = await pgError(create({ tenant: tenantB, account: 'MAAAAAAAAAAAAAAAAAAA' }));
@@ -205,6 +199,53 @@ describe('telephony credentials (integration)', () => {
       const cred = await create();
       expect(await repo.setStatus(cred.id, 'active', ['disabled'], { updatedBy: admin })).toBeNull();
       expect((await repo.setStatus(cred.id, 'disabled', ['active'], { updatedBy: admin }))?.status).toBe('disabled');
+    });
+
+    it('makes a status move pinned to a secret version a no-op once a rotation replaced it', async () => {
+      const cred = await create();
+      await repo.rotateSecret(cred.id, 1, sealed('hhhh'), { updatedBy: admin, verifiedAt: null });
+      expect(await repo.setStatus(cred.id, 'invalid', ['active'], { updatedBy: admin, lastError: 'old', secretVersion: 1 })).toBeNull();
+      expect((await repo.setStatus(cred.id, 'invalid', ['active'], { updatedBy: admin, lastError: 'new', secretVersion: 2 }))?.status).toBe('invalid');
+    });
+
+    it('enables a disabled credential as invalid when the carrier last refused it, else active', async () => {
+      const clean = await create();
+      await repo.setStatus(clean.id, 'disabled', ['active'], { updatedBy: admin });
+      expect((await repo.enable(clean.id, admin))?.status).toBe('active');
+      expect(await repo.enable(clean.id, admin)).toBeNull(); // not disabled any more
+
+      const refused = await create({ account: 'MABBBBBBBBBBBBBBBBBB', label: 'Refused' });
+      await repo.setStatus(refused.id, 'disabled', ['active'], { updatedBy: admin, lastError: 'Plivo refused the credential (HTTP 401)' });
+      expect((await repo.enable(refused.id, admin))?.status).toBe('invalid');
+    });
+
+    it('will not revoke while a live campaign is pinned to it', async () => {
+      const cred = await create();
+      const { rows } = await getTestPool().query<{ id: string }>(
+        `INSERT INTO agency_campaigns (tenant_id, account_id, name, caller_ids, telephony_provider, telephony_credential_id, status)
+         VALUES ($1, $2, 'c', ARRAY['+14155550100'], 'plivo', $3, 'paused') RETURNING id`, [tenantA, randomUUID(), cred.id]);
+      expect(await repo.revoke(cred.id, admin)).toBeNull();
+      await getTestPool().query(`UPDATE agency_campaigns SET status = 'completed' WHERE id = $1`, [rows[0]!.id]);
+      expect(await repo.revoke(cred.id, admin)).toMatchObject({ status: 'revoked' });
+    });
+
+    it('sees a campaign pin that commits while the revoke waits on the row lock', async () => {
+      const cred = await create();
+      const pinner = await getTestPool().connect();
+      try {
+        await pinner.query('BEGIN');
+        // The foreign-key check takes a key-share lock on the credential row until commit.
+        await pinner.query(
+          `INSERT INTO agency_campaigns (tenant_id, account_id, name, caller_ids, telephony_provider, telephony_credential_id)
+           VALUES ($1, $2, 'c', ARRAY['+14155550100'], 'plivo', $3)`, [tenantA, randomUUID(), cred.id]);
+        const revoking = repo.revoke(cred.id, admin);
+        await new Promise((r) => setTimeout(r, 200));
+        await pinner.query('COMMIT');
+        expect(await revoking).toBeNull();
+      } finally {
+        pinner.release();
+      }
+      expect((await repo.findById(cred.id))?.status).toBe('active');
     });
 
     it('treats revoke as terminal', async () => {

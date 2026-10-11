@@ -94,6 +94,8 @@ export function sealAad(ctx: SealContext, layer: 'secret' | 'dek'): Buffer {
 }
 
 const ENV_SCHEME = 'env:';
+/** Same rule as the config schema (`config/blocks/voice.ts`). */
+const KEY_ID = /^[a-z0-9_-]{1,32}$/;
 
 /**
  * The env keyring (`TELEPHONY_CREDENTIAL_KEYS`) as a `KeyWrapper`. Keys are listed
@@ -106,11 +108,19 @@ export class EnvKeyringWrapper implements KeyWrapper {
   constructor(keyring: string, activeKeyId: string) {
     this.activeKeyId = ENV_SCHEME + activeKeyId;
     this.keys = new Map();
+    // Validated here as well as in the config schema, so no other caller can build a
+    // wrapper whose later entry silently replaces an earlier key. Messages never carry
+    // key material.
     for (const entry of keyring.split(',').map((s) => s.trim()).filter(Boolean)) {
       const sep = entry.indexOf(':');
-      const key = Buffer.from(entry.slice(sep + 1), 'base64');
-      if (sep <= 0 || key.length !== KEY_BYTES) throw new Error('Invalid telephony credential keyring entry');
-      this.keys.set(ENV_SCHEME + entry.slice(0, sep), key);
+      const id = entry.slice(0, sep);
+      const b64 = entry.slice(sep + 1);
+      const key = Buffer.from(b64, 'base64');
+      if (sep <= 0 || !KEY_ID.test(id) || key.length !== KEY_BYTES || key.toString('base64') !== b64) {
+        throw new Error('Invalid telephony credential keyring entry');
+      }
+      if (this.keys.has(ENV_SCHEME + id)) throw new Error('Duplicate telephony credential keyring id');
+      this.keys.set(ENV_SCHEME + id, key);
     }
     if (!this.keys.has(this.activeKeyId)) throw new Error('Active telephony credential key is not in the keyring');
   }

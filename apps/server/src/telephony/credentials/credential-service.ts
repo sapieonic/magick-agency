@@ -30,12 +30,12 @@ const log = createChildLogger({ component: 'telephony-credentials' });
  */
 export const ROTATION_GRACE_SECONDS = 24 * 60 * 60;
 
-/** How many opened secrets the process keeps. Keyed by credential, version and key id. */
+/** How many opened secrets the process keeps. Keyed by seal context and key id (see `open`). */
 const OPEN_CACHE_MAX = 256;
 
 export type CredentialRepo = Pick<TelephonyCredentialRepository,
   | 'create' | 'findById' | 'findOpenableSecrets' | 'list' | 'updateLabel' | 'rotateSecret'
-  | 'setStatus' | 'markVerified' | 'revoke' | 'shredIfIdle' | 'usage' | 'distinctKekIds'
+  | 'setStatus' | 'enable' | 'markVerified' | 'revoke' | 'shredIfIdle' | 'usage' | 'distinctKekIds'
   | 'findRevokedUnshredded' | 'pruneRetiredSecrets'>;
 
 export interface TenantLookup {
@@ -225,13 +225,16 @@ export class TelephonyCredentialService {
     }
     const check = await spec.check(current.public_config as Record<string, string>, resolved.secret.reveal(), this.deps.fetchImpl);
     if (check.result === 'unreachable') return fail('carrier_unreachable', check.reason);
+    // Every write below is pinned to the version that was checked: a rotation that
+    // commits while the carrier answers must not inherit the old secret's verdict.
+    const secretVersion = resolved.version;
     if (check.result === 'rejected') {
-      const row = await this.deps.repo.setStatus(id, 'invalid', ['active', 'invalid'], { updatedBy: adminId, lastError: check.reason })
-        ?? await this.deps.repo.setStatus(id, 'disabled', ['disabled'], { updatedBy: adminId, lastError: check.reason });
+      const row = await this.deps.repo.setStatus(id, 'invalid', ['active', 'invalid'], { updatedBy: adminId, lastError: check.reason, secretVersion })
+        ?? await this.deps.repo.setStatus(id, 'disabled', ['disabled'], { updatedBy: adminId, lastError: check.reason, secretVersion });
       return { ok: true, value: row ?? (await this.deps.repo.findById(id))! };
     }
     if (current.status === 'invalid') {
-      await this.deps.repo.setStatus(id, 'active', ['invalid'], { updatedBy: adminId, lastError: null });
+      await this.deps.repo.setStatus(id, 'active', ['invalid'], { updatedBy: adminId, lastError: null, secretVersion });
     }
     const row = await this.deps.repo.markVerified(id, resolved.version);
     return { ok: true, value: row ?? (await this.deps.repo.findById(id))! };
@@ -248,16 +251,13 @@ export class TelephonyCredentialService {
    * by a passing verify or a rotation).
    */
   async enable(id: string, adminId: string): Promise<ServiceResult<TelephonyCredentialRecord>> {
-    const current = await this.deps.repo.findById(id);
-    if (!current) return fail('not_found', 'Credential not found');
-    const to = current.last_error ? 'invalid' : 'active';
-    const row = await this.deps.repo.setStatus(id, to, ['disabled'], { updatedBy: adminId });
+    const row = await this.deps.repo.enable(id, adminId);
     return row ? { ok: true, value: row } : this.transitionRefused(id, 'Only a disabled credential can be enabled');
   }
 
   /**
-   * Revoke (terminal). Refused while a campaign is pinned to it: move the campaigns
-   * first. Calls already in flight keep hanging up on it; the secrets are shredded as
+   * Revoke (terminal). Refused while a live campaign is pinned to it (checked again
+   * in the revoking statement, under a row lock): move the campaigns first. Calls already in flight keep hanging up on it; the secrets are shredded as
    * soon as none is left (here, or by the sweep).
    */
   async revoke(id: string, adminId: string): Promise<ServiceResult<{ credential: TelephonyCredentialRecord; shredded: boolean }>> {
@@ -269,7 +269,14 @@ export class TelephonyCredentialService {
       return fail('in_use', `${usage.campaigns} campaign(s) still dial on this credential; move them to another first`);
     }
     const row = await this.deps.repo.revoke(id, adminId);
-    if (!row) return this.transitionRefused(id, 'The credential is already revoked');
+    if (!row) {
+      // Pinned between the check above and the revoke, or revoked concurrently.
+      const raced = await this.deps.repo.usage(id);
+      if (raced.campaigns > 0) {
+        return fail('in_use', `${raced.campaigns} campaign(s) still dial on this credential; move them to another first`);
+      }
+      return this.transitionRefused(id, 'The credential is already revoked');
+    }
     this.forget(id);
     const shredded = await this.deps.repo.shredIfIdle(id);
     return { ok: true, value: { credential: shredded ? (await this.deps.repo.findById(id))! : row, shredded } };
@@ -292,7 +299,9 @@ export class TelephonyCredentialService {
   /**
    * Open a credential for a purpose (see {@link ResolvePurpose}). The row is read on
    * every call, so a disable or revoke takes effect on the very next dial; only the
-   * opened secret is cached, keyed by credential, version and master key id.
+   * opened secret is cached, keyed by the whole seal context (credential, tenant,
+   * provider, version) and the master key id, so a row whose tenant or provider was
+   * changed in SQL is opened afresh (and fails its AAD check), never served from cache.
    *
    * @throws CredentialUnavailableError — never falls back to another account.
    */
@@ -356,7 +365,7 @@ export class TelephonyCredentialService {
   }
 
   private async open(row: TelephonyCredentialRecord, v: TelephonyCredentialSecretRecord): Promise<Secret<Record<string, string>>> {
-    const key = `${row.id}:${v.secret_version}:${v.kek_id}`;
+    const key = `${row.id}:${row.tenant_id}:${row.provider}:${v.secret_version}:${v.kek_id}`;
     const hit = this.opened.get(key);
     if (hit) return hit;
     try {
@@ -364,7 +373,8 @@ export class TelephonyCredentialService {
         { kekId: v.kek_id, wrappedDek: v.wrapped_dek, ciphertext: v.secret_ciphertext },
         { tenantId: row.tenant_id, credentialId: row.id, provider: row.provider, secretVersion: v.secret_version },
       );
-      const secret = new Secret(plain as Record<string, string>);
+      // Frozen: every caller shares this cached object, so none may change it.
+      const secret = new Secret(Object.freeze(plain as Record<string, string>));
       if (this.opened.size >= OPEN_CACHE_MAX) this.opened.delete(this.opened.keys().next().value!);
       this.opened.set(key, secret);
       return secret;

@@ -1,6 +1,7 @@
 // The carrier-module registry: every carrier the bridge can carry a call on. Adding a
-// carrier means adding its module here and its adapter in `factory.ts`; the
-// conformance test (`test/unit/telephony/carrier-modules.test.ts`) holds the two lists
+// carrier means adding its module here and its adapter in `factory.ts` (the
+// `instantiate` switch, or `BYOC_ADAPTERS` for a tenant-credential carrier); the
+// conformance test (`test/unit/telephony/carrier-modules.test.ts`) holds the lists
 // equal.
 import type { CarrierModule } from './carrier-module.js';
 import { voicelinkCarrier } from './voicelink/voicelink.media.js';

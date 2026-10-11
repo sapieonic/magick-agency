@@ -72,15 +72,20 @@ class FakeRepo implements CredentialRepo {
     this.addSecret(id, r.secret_version, s);
     return { ...r };
   }
-  async setStatus(id: string, to: Exclude<TelephonyCredentialStatus, 'revoked'>, from: ReadonlyArray<string>, o: { lastError?: string | null }) {
+  async setStatus(id: string, to: Exclude<TelephonyCredentialStatus, 'revoked'>, from: ReadonlyArray<string>, o: { lastError?: string | null; secretVersion?: number }) {
     const r = this.rows.get(id); if (!r || !from.includes(r.status)) return null;
+    if (o.secretVersion !== undefined && r.secret_version !== o.secretVersion) return null;
     r.status = to; if (o.lastError !== undefined) r.last_error = o.lastError; return { ...r };
+  }
+  async enable(id: string) {
+    const r = this.rows.get(id); if (!r || r.status !== 'disabled') return null;
+    r.status = r.last_error ? 'invalid' : 'active'; return { ...r };
   }
   async markVerified(id: string, v: number) {
     const r = this.rows.get(id); if (!r || r.secret_version !== v) return null; r.verified_at = new Date(); r.last_error = null; return { ...r };
   }
   async revoke(id: string) {
-    const r = this.rows.get(id); if (!r || r.status === 'revoked') return null;
+    const r = this.rows.get(id); if (!r || r.status === 'revoked' || (this.campaigns.get(id) ?? 0) > 0) return null;
     r.status = 'revoked'; r.revoked_at = new Date(); return { ...r };
   }
   async shredIfIdle(id: string) {
@@ -326,6 +331,33 @@ describe('verify, disable, enable, revoke', () => {
     expect((await svc.enable(row.id, ADMIN)).ok).toBe(true);
     const missing = await svc.disable(crypto.randomUUID(), ADMIN);
     expect(!missing.ok && missing.code).toBe('not_found');
+  });
+
+  it('does not let a carrier refusal of the old secret land on a rotation that committed meanwhile', async () => {
+    const row = await createOk();
+    // The carrier answers 401 for version 1; before the answer lands, a rotation to
+    // version 2 commits (active, no error).
+    const raced = new TelephonyCredentialService({
+      repo, sealer, tenants: { findById: async (id) => (id === TENANT ? { id } : null) },
+      fetchImpl: async () => {
+        const r = repo.rows.get(row.id)!;
+        r.secret_version = 2; r.status = 'active'; r.last_error = null;
+        return { status: 401 };
+      },
+    });
+    await raced.verify(row.id, ADMIN);
+    expect(repo.rows.get(row.id)).toMatchObject({ status: 'active', last_error: null, secret_version: 2 });
+  });
+
+  it('refuses a revoke whose campaign was pinned after the usage check', async () => {
+    const row = await createOk();
+    repo.campaigns.set(row.id, 1);
+    const usage = repo.usage.bind(repo);
+    let first = true;
+    repo.usage = async (id: string) => (first ? ((first = false), { campaigns: 0, inFlightCalls: 0 }) : usage(id));
+    const r = await svc.revoke(row.id, ADMIN);
+    expect(!r.ok && r.code).toBe('in_use');
+    expect(repo.rows.get(row.id)!.status).toBe('active');
   });
 
   it('refuses to revoke while a campaign dials on it', async () => {

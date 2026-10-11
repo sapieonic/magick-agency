@@ -1,11 +1,12 @@
-// VoiceLink is the only carrier here, so the registry read expects one provider
-// and the cancel-capable cohort is the empty set. There is no transfer gate (no
-// escalation).
+// The registry is the `instantiate` switch (the service's own accounts) plus
+// `BYOC_ADAPTERS` (tenant credentials); today that is VoiceLink alone, so the
+// cancel-capable cohort is the empty set. There is no transfer gate (no escalation).
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { canCancelRinging, queuesOutboundDials, type TelephonyProvider } from '../../../src/telephony/types.js';
 import { VoicelinkAdapter } from '../../../src/telephony/voicelink/voicelink.adapter.js';
+import { byocProviderNames } from '../../../src/telephony/factory.js';
 
 /**
  * `ProviderCapabilities` **substitutes for the compiler**, and that is the whole
@@ -51,11 +52,12 @@ function registryProviderNames(): string[] {
 }
 
 describe('TelephonyProvider capabilities — every adapter in the registry declares them', () => {
-  it('covers exactly the providers factory.ts can instantiate', () => {
-    const registry = registryProviderNames().sort();
+  it('covers exactly the providers factory.ts can build, including BYOC adapters', () => {
+    const own = registryProviderNames();
     // Sanity: the extraction found a switch, not an empty string. Without this a
     // renamed function would make the whole assertion vacuously true.
-    expect(registry.length).toBe(1);
+    expect(own.length).toBe(1);
+    const registry = [...new Set([...own, ...byocProviderNames()])].sort();
     expect([...ADAPTERS].map((a) => a.name).sort()).toEqual(registry);
   });
 

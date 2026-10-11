@@ -43,8 +43,9 @@ const voicelinkSchema = z.object({
 });
 
 /**
- * VoiceLink is the only carrier: the app dials only on its own VoiceLink account,
- * so there is no provider selection.
+ * The service's own carrier account: VoiceLink, configured here from env. Tenant
+ * carrier accounts (BYOC, decision B18) are not configured here; they are stored
+ * per tenant, sealed under `telephonyCredentials` below.
  *
  * The VoiceLink `requireField` checks run when `requireVoicelink` is true, which
  * the env reader sets in production or when `TELEPHONY_ENABLED_PROVIDERS` names
@@ -180,9 +181,15 @@ export const telephonyCredentialsSchema = z.object({
     seen.add(id);
     // Guarded: a refine runs on a dirty result, and the value is a secret, so it is
     // never echoed.
-    let len = 0;
-    try { len = Buffer.from(entry.slice(sep + 1), 'base64').length; } catch { len = 0; }
-    if (len !== 32) {
+    // Strict: the text must be the canonical base64 of the bytes it decodes to, so a
+    // stray character cannot be silently dropped (the sealer applies the same rule).
+    let ok = false;
+    try {
+      const b64 = entry.slice(sep + 1);
+      const key = Buffer.from(b64, 'base64');
+      ok = key.length === 32 && key.toString('base64') === b64;
+    } catch { ok = false; }
+    if (!ok) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['keyring'], message: `TELEPHONY_CREDENTIAL_KEYS: key '${id}' must be 32 bytes of base64` });
     }
   }

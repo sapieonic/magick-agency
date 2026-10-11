@@ -1,11 +1,16 @@
 // The carrier-module registry is the bridge's only source of carrier facts (media
 // protocol, hangup style, where the stream URL goes). These tests hold it equal to the
-// adapter registry in `factory.ts` and pin each module's protocol, so a carrier added
-// to one list but not the other, or a VoiceLink frame shape that drifts, goes red here.
+// adapter registries in `factory.ts` (the `instantiate` switch for the service's own
+// accounts, `BYOC_ADAPTERS` for tenant credentials) and pin each module's protocol, so
+// a carrier added to one list but not the other, or a VoiceLink frame shape that
+// drifts, goes red here. A BYOC adapter without a module would leave the bridge with
+// no carrier: no audio relay and no media-socket token check.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { carrierModuleNames, findCarrierModule } from '../../../src/telephony/carrier-modules.js';
+import { byocProviderNames } from '../../../src/telephony/factory.js';
+import { findCredentialSpec } from '../../../src/telephony/credentials/credential-specs.js';
 import { encodeAlaw } from '../../../src/utils/audio.js';
 
 /** The provider names `factory.ts`'s `instantiate` switch can construct. */
@@ -17,10 +22,15 @@ function adapterRegistryNames(): string[] {
 }
 
 describe('carrier-module registry', () => {
-  it('names exactly the providers factory.ts can instantiate', () => {
-    const adapters = adapterRegistryNames().sort();
-    expect(adapters.length).toBeGreaterThan(0);
+  it('names exactly the providers factory.ts can build, on the service’s accounts or a tenant’s', () => {
+    const own = adapterRegistryNames();
+    expect(own.length).toBeGreaterThan(0);
+    const adapters = [...new Set([...own, ...byocProviderNames()])].sort();
     expect(carrierModuleNames().sort()).toEqual(adapters);
+  });
+
+  it('every BYOC provider has a credential spec to store its credential with', () => {
+    for (const name of byocProviderNames()) expect(findCredentialSpec(name), name).toBeDefined();
   });
 
   it('has no module for an unknown name', () => {

@@ -14,8 +14,9 @@ import type {
  *  - Credential rows carry no secret material, so every listing is safe to send.
  *    The sealed secrets live in `telephony_credential_secrets`, one row per version,
  *    and only `findOpenableSecrets` (the server's resolver) reads them.
- *  - Only ciphertext reaches SQL: pg spans carry query parameters
- *    (`enhancedDatabaseReporting`), so plaintext must never be a parameter here.
+ *  - Only ciphertext and the four-character `secret_hint` reach SQL: pg spans carry
+ *    query parameters (`enhancedDatabaseReporting`), so a full plaintext secret must
+ *    never be a parameter here.
  *  - Writes are conditional (`WHERE status …`, `WHERE secret_version = $n`), so a
  *    concurrent change makes the second writer a no-op (null), never a lost update.
  *  - No Redis cache: a credential's status must take effect on the next read.
@@ -90,15 +91,6 @@ export class TelephonyCredentialRepository {
     const result = await getPool().query<TelephonyCredentialRecord>(
       `SELECT ${COLUMNS} FROM telephony_credentials WHERE id = $1`,
       [id],
-    );
-    return result.rows[0] ?? null;
-  }
-
-  /** Tenant-scoped: another tenant's id reads as absent. */
-  async findByIdForTenant(id: string, tenantId: string): Promise<TelephonyCredentialRecord | null> {
-    const result = await getPool().query<TelephonyCredentialRecord>(
-      `SELECT ${COLUMNS} FROM telephony_credentials WHERE id = $1 AND tenant_id = $2`,
-      [id, tenantId],
     );
     return result.rows[0] ?? null;
   }
@@ -192,20 +184,23 @@ export class TelephonyCredentialRepository {
   /**
    * Move between the live statuses (`active`, `disabled`, `invalid`). `from` lists
    * the statuses the move is allowed out of; revoked is terminal and never listed.
+   * `secretVersion`, when given, makes the move a no-op once a rotation has replaced
+   * that version (a carrier verdict on an old secret must not land on a new one).
    */
   async setStatus(
     id: string,
     to: Exclude<TelephonyCredentialStatus, 'revoked'>,
     from: ReadonlyArray<Exclude<TelephonyCredentialStatus, 'revoked'>>,
-    opts: { updatedBy: string | null; lastError?: string | null },
+    opts: { updatedBy: string | null; lastError?: string | null; secretVersion?: number },
   ): Promise<TelephonyCredentialRecord | null> {
     const result = await getPool().query<TelephonyCredentialRecord>(
       `UPDATE telephony_credentials
           SET status = $2, updated_by = COALESCE($4::uuid, updated_by),
               last_error = CASE WHEN $5::boolean THEN $6::varchar ELSE last_error END
         WHERE id = $1 AND status = ANY($3::varchar[])
+          AND ($7::int IS NULL OR secret_version = $7::int)
         RETURNING ${COLUMNS}`,
-      [id, to, from, opts.updatedBy, opts.lastError !== undefined, opts.lastError ?? null],
+      [id, to, from, opts.updatedBy, opts.lastError !== undefined, opts.lastError ?? null, opts.secretVersion ?? null],
     );
     return result.rows[0] ?? null;
   }
@@ -221,16 +216,45 @@ export class TelephonyCredentialRepository {
     return result.rows[0] ?? null;
   }
 
-  /** Revoke (terminal). Campaigns still pinned to it must be moved off first. */
-  async revoke(id: string, updatedBy: string): Promise<TelephonyCredentialRecord | null> {
+  /**
+   * Bring a disabled credential back: `invalid` when the carrier's last check refused
+   * it (`last_error` set), else `active`. Decided in the UPDATE, so a verify landing
+   * between a read and a write cannot be lost.
+   */
+  async enable(id: string, updatedBy: string): Promise<TelephonyCredentialRecord | null> {
     const result = await getPool().query<TelephonyCredentialRecord>(
       `UPDATE telephony_credentials
-          SET status = 'revoked', revoked_at = NOW(), updated_by = $2
-        WHERE id = $1 AND status <> 'revoked'
+          SET status = CASE WHEN last_error IS NULL THEN 'active' ELSE 'invalid' END,
+              updated_by = $2
+        WHERE id = $1 AND status = 'disabled'
         RETURNING ${COLUMNS}`,
       [id, updatedBy],
     );
     return result.rows[0] ?? null;
+  }
+
+  /**
+   * Revoke (terminal), unless a live campaign is pinned to it. The row lock (FOR
+   * UPDATE) conflicts with the key-share lock a campaign write takes through the
+   * foreign key, so a pin being written concurrently either commits first and is
+   * seen here, or waits for this revoke. Returns null when it did not land (already
+   * revoked, or pinned: the caller re-reads to tell which).
+   */
+  async revoke(id: string, updatedBy: string): Promise<TelephonyCredentialRecord | null> {
+    return inTransaction(async (client) => {
+      await client.query(`SELECT 1 FROM telephony_credentials WHERE id = $1 FOR UPDATE`, [id]);
+      const result = await client.query<TelephonyCredentialRecord>(
+        `UPDATE telephony_credentials
+            SET status = 'revoked', revoked_at = NOW(), updated_by = $2
+          WHERE id = $1 AND status <> 'revoked'
+            AND NOT EXISTS (
+              SELECT 1 FROM agency_campaigns
+               WHERE telephony_credential_id = $1 AND status IN ${LIVE_CAMPAIGN})
+          RETURNING ${COLUMNS}`,
+        [id, updatedBy],
+      );
+      return result.rows[0] ?? null;
+    });
   }
 
   /**
@@ -240,6 +264,9 @@ export class TelephonyCredentialRepository {
    */
   async shredIfIdle(id: string): Promise<boolean> {
     const done = await inTransaction(async (client) => {
+      // FOR UPDATE waits out any call insert still holding the foreign key's
+      // key-share lock, so its row is visible to the in-flight check below.
+      await client.query(`SELECT 1 FROM telephony_credentials WHERE id = $1 FOR UPDATE`, [id]);
       const result = await client.query(
         `UPDATE telephony_credentials SET shredded_at = NOW(), secret_hint = NULL
           WHERE id = $1 AND status = 'revoked' AND shredded_at IS NULL

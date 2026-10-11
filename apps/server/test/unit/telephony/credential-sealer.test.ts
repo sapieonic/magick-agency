@@ -95,6 +95,27 @@ describe('CredentialSealer', () => {
     expect(String((err as Error).message)).not.toMatch(/tok_canary|v1:/);
   });
 
+  it('binds the wrapped data key to the context on its own, not only through the secret layer', async () => {
+    // Unwrap the data key directly: a wrapper that ignored its AAD would hand it out
+    // for any context, and every other test would still pass on the secret layer.
+    const w = new EnvKeyringWrapper(`v1:${k1}`, 'v1');
+    const sealed = await new CredentialSealer(w).seal(SECRET, CTX);
+    await expect(w.unwrap(sealed.kekId, sealed.wrappedDek, sealAad(CTX, 'dek'))).resolves.toHaveLength(32);
+    for (const other of [
+      { ...CTX, tenantId: '33333333-3333-4333-8333-333333333333' }, { ...CTX, secretVersion: 2 }, { ...CTX, provider: 'twilio' },
+    ]) {
+      await expect(w.unwrap(sealed.kekId, sealed.wrappedDek, sealAad(other, 'dek'))).rejects.toBeInstanceOf(CredentialSealError);
+    }
+    await expect(w.unwrap(sealed.kekId, sealed.wrappedDek, sealAad(CTX, 'secret'))).rejects.toBeInstanceOf(CredentialSealError);
+  });
+
+  it('refuses a malformed keyring itself, not only through the config schema', () => {
+    expect(() => new EnvKeyringWrapper(`v1:${k1},v1:${k2}`, 'v1')).toThrow(/keyring/); // duplicate id
+    expect(() => new EnvKeyringWrapper(`v1:${k1}!`, 'v1')).toThrow(/keyring/); // decodes to 32 bytes, but not canonical base64
+    expect(() => new EnvKeyringWrapper(`V 1:${k1}`, 'V 1')).toThrow(/keyring/); // bad id
+    expect(() => new EnvKeyringWrapper(`v1:${k1}`, 'v2')).toThrow(/not in the keyring/);
+  });
+
   it('length-prefixes AAD fields so no value can shift a boundary', () => {
     const a = sealAad({ ...CTX, tenantId: 'a|b', credentialId: 'c' }, 'secret');
     const b = sealAad({ ...CTX, tenantId: 'a', credentialId: 'b|c' }, 'secret');
@@ -119,6 +140,7 @@ describe('telephonyCredentials config', () => {
     ['active key missing', `v1:${k1}`, undefined],
     ['active key not listed', `v1:${k1}`, 'v2'],
     ['short key', `v1:${crypto.randomBytes(16).toString('base64')}`, 'v1'],
+    ['non-canonical base64 (a stray character)', `v1:${crypto.randomBytes(32).toString('base64')}!`, 'v1'],
     ['bad id', `V 1:${k1}`, 'V 1'],
     ['duplicate id', `v1:${k1},v1:${k2}`, 'v1'],
     ['active without keyring', '', 'v1'],

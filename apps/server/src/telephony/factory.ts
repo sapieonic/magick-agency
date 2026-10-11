@@ -40,7 +40,12 @@ export type ByocAdapterFactory = (credential: ResolvedCredential, config: AppCon
  */
 const BYOC_ADAPTERS: ReadonlyMap<string, ByocAdapterFactory> = new Map();
 
-/** How many BYOC adapters the process keeps (one per credential version in use). */
+/** The providers a tenant credential can dial on. The carrier-module guard reads it. */
+export function byocProviderNames(): string[] {
+  return [...BYOC_ADAPTERS.keys()];
+}
+
+/** How many BYOC adapters the process keeps (one per credential and purpose in use). */
 const BYOC_CACHE_MAX = 256;
 
 /**
@@ -89,8 +94,8 @@ function createProviderInstance(providerName: string, config: AppConfig): Teleph
 export class TelephonyProviderRegistry {
   /** Adapters on the service's own accounts, keyed by provider name. At most one per provider. */
   private providers = new Map<string, TelephonyProvider>();
-  /** BYOC adapters, keyed `credentialId:secretVersion`, so a rotation is never served stale. */
-  private byoc = new Map<string, TelephonyProvider>();
+  /** BYOC adapters, keyed `credentialId:purpose` and tagged with the secret versions they hold. */
+  private byoc = new Map<string, { fingerprint: string; adapter: TelephonyProvider }>();
   private readonly config: AppConfig;
   private readonly credentials: (() => CredentialResolver) | null;
   private readonly byocAdapters: ReadonlyMap<string, ByocAdapterFactory>;
@@ -131,10 +136,17 @@ export class TelephonyProviderRegistry {
    * The adapter for the credential a call is pinned to. A null id means the call
    * runs on the service's own carrier account, so it resolves to that adapter.
    *
-   * `purpose` decides which credential statuses may serve (see `ResolvePurpose`):
-   * `call_control` (the default: hangup, cancel, webhook checks for a placed call)
-   * is served by a disabled credential too, `dial` only by an active one. The
-   * credential row is read on every call; only the adapter is cached.
+   * `purpose` decides which credential statuses may serve (see `ResolvePurpose`) and
+   * has no default, so a dial path cannot inherit the permissive one: `dial` is
+   * served only by an active credential, `call_control` (hangup, cancel, webhook
+   * checks for a placed call) by a disabled one too, with the previous secret
+   * versions still inside the rotation grace. `tenantId` is the tenant of the call or
+   * campaign the id came from; a credential of any other tenant is refused (the
+   * composite foreign keys already prevent such a pin; this is the in-process check).
+   *
+   * The credential row is read on every call; the adapter is cached per credential
+   * and purpose, and rebuilt when the secret version or the set of grace versions
+   * changes. A credential that stops resolving drops every adapter built on it.
    *
    * @throws ByocCredentialUnavailableError for a non-null id that cannot serve.
    *   Never substitutes the service's own account for a missing credential.
@@ -142,7 +154,8 @@ export class TelephonyProviderRegistry {
   async getForCredentialId(
     providerName: string,
     credentialId: string | null,
-    purpose: ResolvePurpose = 'call_control',
+    purpose: ResolvePurpose,
+    tenantId: string,
   ): Promise<TelephonyProvider> {
     if (!credentialId) return this.get(providerName);
     // A pinned id that cannot be resolved is NOT the service's own account —
@@ -153,21 +166,30 @@ export class TelephonyProviderRegistry {
     try {
       resolved = await this.credentials().resolve(credentialId, purpose);
     } catch (err) {
+      this.dropByoc(credentialId);
       throw new ByocCredentialUnavailableError(credentialId, err instanceof Error ? err.message : 'unresolvable');
+    }
+    if (resolved.tenantId !== tenantId) {
+      throw new ByocCredentialUnavailableError(credentialId, 'credential belongs to another tenant');
     }
     if (resolved.provider !== providerName) {
       throw new ByocCredentialUnavailableError(credentialId, `credential is for ${resolved.provider}, not ${providerName}`);
     }
-    const key = `${resolved.id}:${resolved.version}`;
-    const cached = this.byoc.get(key);
-    if (cached) return cached;
+    const slot = `${resolved.id}:${purpose}`;
+    // The versions this adapter holds: current, then any still inside the grace.
+    const fingerprint = [resolved.version, ...resolved.previous.map((p) => p.version)].join(',');
+    const cached = this.byoc.get(slot);
+    if (cached && cached.fingerprint === fingerprint) return cached.adapter;
     const factory = this.byocAdapters.get(providerName);
     if (!factory) throw new ByocCredentialUnavailableError(credentialId, `no BYOC adapter for ${providerName}`);
     const adapter = factory(resolved, this.config);
-    // Drop superseded versions of this credential, then bound the cache.
-    for (const k of [...this.byoc.keys()]) if (k.startsWith(`${resolved.id}:`)) this.byoc.delete(k);
+    this.byoc.delete(slot);
     if (this.byoc.size >= BYOC_CACHE_MAX) this.byoc.delete(this.byoc.keys().next().value!);
-    this.byoc.set(key, adapter);
+    this.byoc.set(slot, { fingerprint, adapter });
     return adapter;
+  }
+
+  private dropByoc(credentialId: string): void {
+    for (const k of [...this.byoc.keys()]) if (k.startsWith(`${credentialId}:`)) this.byoc.delete(k);
   }
 }
