@@ -29,6 +29,7 @@ import {
   type WebrtcCallEndedBy,
 } from '../analytics/posthog.js';
 import { canCancelRinging } from '../telephony/types.js';
+import { WEBHOOK_TOKEN_POST_END_GRACE_SECONDS } from '../telephony/webhook-grace.js';
 import { classifyVoicelinkOutcome, normalizeVoicelinkWebhook } from '../telephony/voicelink/voicelink.webhook.js';
 import type { VoicelinkWebhookBody } from '../telephony/voicelink/voicelink.types.js';
 import type { TelephonyGuardHost } from './telephony-guard-host.js';
@@ -189,9 +190,9 @@ export interface WebRtcLifecycleEvent {
 export type WebRtcLifecycleListener = (event: WebRtcLifecycleEvent) => void;
 
 const WS_TOKEN_MIN_TTL_SECONDS = 120;
-/**
- * Q6 (Manas, 2026-10-09): how long a call's WEBHOOK token stays verifiable after the call
- * ends. VoiceLink keeps posting to `/webrtc-status/:callId` after our teardown — the
+/*
+ * WEBHOOK_TOKEN_POST_END_GRACE_SECONDS (`telephony/webhook-grace.ts`), Q6 (Manas,
+ * 2026-10-09): how long a call's WEBHOOK token stays verifiable after the call ends. VoiceLink keeps posting to `/webrtc-status/:callId` after our teardown — the
  * carrier's own terminal report lands at dial+45–75s and carries the recording URL that
  * `persistLateVoicelinkTerminal` saves for playback and analysis (which waits up to
  * `DIALER_ANALYSIS_RECORDING_WAIT_MINUTES`, default 30). A missing key is refused, so the
@@ -205,7 +206,6 @@ const WS_TOKEN_MIN_TTL_SECONDS = 120;
  * REFUSAL: an evicted provider/webhook token cuts a live call's carrier leg and status
  * events, and a Redis restarted without persistence refuses every in-flight call's posts.
  */
-const WEBHOOK_TOKEN_POST_END_GRACE_SECONDS = 2 * 60 * 60;
 /** How long to wait for a VoiceLink `start` frame before tearing down a silent WS. */
 const PROVIDER_START_TIMEOUT_SECONDS = 30;
 /**
