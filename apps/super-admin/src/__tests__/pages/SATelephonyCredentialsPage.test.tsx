@@ -89,6 +89,30 @@ describe('SATelephonyCredentialsPage', () => {
     await waitFor(() => expect(screen.queryByDisplayValue('secret-token-value-123')).toBeNull());
   });
 
+  it('drops a typed secret when the add dialog is cancelled', async () => {
+    mocks.listTelephonyCredentials.mockResolvedValue([]);
+    render(<SATelephonyCredentialsPage />);
+    fireEvent.click(await screen.findByRole('button', { name: /add credential/i }));
+    fireEvent.change(screen.getByLabelText('Auth Token'), { target: { value: 'typed-then-cancelled-789' } });
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    await waitFor(() => expect(screen.queryByDisplayValue('typed-then-cancelled-789')).toBeNull());
+  });
+
+  it('shows usage only for the row it was fetched for', async () => {
+    let answerFirst!: (v: unknown) => void;
+    mocks.listTelephonyCredentials.mockResolvedValue([makeCred(), makeCred({ id: 'cred-2', label: 'Acme backup', account_ref: 'MAYYYYYYYYYYYYYYYYYY' })]);
+    mocks.getTelephonyCredential
+      .mockImplementationOnce(() => new Promise((r) => { answerFirst = r; }))
+      .mockResolvedValueOnce({ credential: makeCred({ id: 'cred-2' }), usage: { campaigns: 0, in_flight_calls: 0 } });
+    render(<SATelephonyCredentialsPage />);
+    fireEvent.click(await screen.findByText('Acme main'));
+    fireEvent.click(await screen.findByText('Acme backup'));
+    await waitFor(() => expect(mocks.getTelephonyCredential).toHaveBeenCalledTimes(2));
+    answerFirst({ credential: makeCred(), usage: { campaigns: 7, in_flight_calls: 0 } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText('7')).toBeNull();
+  });
+
   it('rotates with only the secret fields and the version the form was opened at', async () => {
     render(<SATelephonyCredentialsPage />);
     fireEvent.click(await screen.findByText('Acme main'));

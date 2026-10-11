@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { KeyRound, Plus, RefreshCw, ShieldCheck, Pencil, Ban, RotateCcw, Trash2 } from 'lucide-react';
 import type {
   TelephonyCredential,
@@ -121,14 +121,19 @@ export default function SATelephonyCredentialsPage() {
   const replaceRow = (row: TelephonyCredential) =>
     setCredentials((prev) => prev.map((c) => (c.id === row.id ? row : c)));
 
+  // The row whose usage the latest request is for: a slow answer for a row the admin has
+  // since collapsed or left must not land under another row.
+  const usageFor = useRef<string | null>(null);
   const toggleExpand = async (id: string) => {
-    if (expandedId === id) { setExpandedId(null); return; }
+    if (expandedId === id) { usageFor.current = null; setExpandedId(null); return; }
+    usageFor.current = id;
     setExpandedId(id);
     setUsage(null);
     try {
-      setUsage((await getTelephonyCredential(id)).usage);
+      const { usage: u } = await getTelephonyCredential(id);
+      if (usageFor.current === id) setUsage(u);
     } catch {
-      setUsage(null);
+      if (usageFor.current === id) setUsage(null);
     }
   };
 
@@ -137,6 +142,12 @@ export default function SATelephonyCredentialsPage() {
     setCreateForm({ tenant_id: filterTenant, provider: first, label: '', fields: {} });
     setCreateError(null);
     setShowCreate(true);
+  };
+
+  // Closing without saving drops what was typed, so a secret never lingers in state.
+  const closeCreate = () => {
+    setShowCreate(false);
+    setCreateForm({ tenant_id: '', provider: '', label: '', fields: {} });
   };
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -333,7 +344,7 @@ export default function SATelephonyCredentialsPage() {
                 <td colSpan={7}>
                   <EmptyState
                     title="No telephony credentials"
-                    description={filterTenant ? 'This tenant dials on the service’s own carrier account.' : 'Add a tenant’s carrier account to let it dial on its own numbers.'}
+                    description={filterTenant ? 'This tenant dials on the service’s own carrier account.' : 'Add a tenant’s own carrier account. Campaigns can dial on it once that carrier’s dial path ships.'}
                   />
                 </td>
               </tr>
@@ -344,12 +355,12 @@ export default function SATelephonyCredentialsPage() {
 
       <Modal
         open={showCreate}
-        onClose={() => setShowCreate(false)}
+        onClose={closeCreate}
         title="Add telephony credential"
         subtitle="Checked with the carrier before it is saved. The secret cannot be viewed afterwards."
         footer={
           <>
-            <button type="button" className="btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
+            <button type="button" className="btn-secondary" onClick={closeCreate}>Cancel</button>
             <button type="submit" form="create-credential-form" className="btn-primary" disabled={saving || !createForm.tenant_id}>
               {saving ? 'Verifying…' : 'Verify and save'}
             </button>
