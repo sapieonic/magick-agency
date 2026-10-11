@@ -179,6 +179,12 @@ describe('create', () => {
     expect(!r.ok && r.code).toBe('unknown_provider');
   });
 
+  it('refuses an unknown provider without echoing the submitted value', async () => {
+    const r = await svc.create({ tenantId: TENANT, provider: CANARY, label: 'x', fields: {}, adminId: ADMIN });
+    expect(!r.ok && r.code).toBe('unknown_provider');
+    expect(JSON.stringify(r)).not.toContain(CANARY);
+  });
+
   it('refuses an unknown tenant', async () => {
     const r = await svc.create({ tenantId: crypto.randomUUID(), provider: 'plivo', label: 'x', fields: { auth_id: AUTH_ID, auth_token: CANARY }, adminId: ADMIN });
     expect(!r.ok && r.code).toBe('tenant_not_found');

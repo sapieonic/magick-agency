@@ -65,7 +65,7 @@ describe('migrations down → up', () => {
 
     await migrate('up');
     expect(await inventory()).toEqual(before);
-    const reapplied = await getTestPool().query<{ name: string }>('SELECT name FROM pgmigrations');
+    const reapplied = await getTestPool().query<{ name: string }>('SELECT name FROM pgmigrations ORDER BY id');
     expect(reapplied.rows.map((r) => r.name)).toEqual(ALL_MIGRATIONS);
   });
 

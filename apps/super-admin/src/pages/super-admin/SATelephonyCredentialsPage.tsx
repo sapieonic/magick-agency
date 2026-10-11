@@ -87,7 +87,11 @@ export default function SATelephonyCredentialsPage() {
   const [confirm, setConfirm] = useState<{ cred: TelephonyCredential; action: CredentialAction } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  // Only the latest load may write: changing a filter while a load is in flight must
+  // not let the slower, superseded answer land last and show the wrong rows.
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     setError(null);
     try {
@@ -95,13 +99,15 @@ export default function SATelephonyCredentialsPage() {
         listTelephonyCredentials({ tenant_id: filterTenant || undefined, include_revoked: showRevoked }),
         listTelephonyCredentialProviders(),
       ]);
+      if (seq !== loadSeq.current) return;
       setCredentials(creds);
       setProviders(provs.providers);
       setStoreAvailable(provs.store_available);
     } catch (err) {
+      if (seq !== loadSeq.current) return;
       setError(err instanceof Error ? err.message : 'Failed to load telephony credentials');
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   }, [filterTenant, showRevoked]);
 
@@ -284,10 +290,18 @@ export default function SATelephonyCredentialsPage() {
               <Fragment key={c.id}>
                 <tr className={styles.clickableRow} onClick={() => void toggleExpand(c.id)}>
                   <td>
-                    <div className={styles.labelCell}>
+                    {/* The row is clickable for the mouse; this button is the keyboard and
+                        screen-reader way to the actions rendered in the expanded row. */}
+                    <button
+                      type="button"
+                      className={styles.labelCell}
+                      aria-expanded={expandedId === c.id}
+                      aria-controls={`credential-detail-${c.id}`}
+                      onClick={(e) => { e.stopPropagation(); void toggleExpand(c.id); }}
+                    >
                       <KeyRound size={14} className={styles.icon} />
                       <span>{c.label}</span>
-                    </div>
+                    </button>
                   </td>
                   <td>{tenantName.get(c.tenant_id) ?? <span className={styles.mono}>{c.tenant_id}</span>}</td>
                   <td><span className={styles.providerBadge}>{providerOf(c.provider)?.display_name ?? c.provider}</span></td>
@@ -299,7 +313,7 @@ export default function SATelephonyCredentialsPage() {
                   <td className={styles.muted}>{fmt(c.verified_at)}</td>
                 </tr>
                 {expandedId === c.id && (
-                  <tr>
+                  <tr id={`credential-detail-${c.id}`}>
                     <td colSpan={7} className={styles.detailCell}>
                       <dl className={styles.detailGrid}>
                         <div className={styles.detailItem}><dt>ID</dt><dd className={styles.mono}>{c.id}</dd></div>

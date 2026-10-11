@@ -147,7 +147,8 @@ export class TelephonyCredentialService {
     const sealer = this.deps.sealer;
     if (!sealer) return fail('credential_store_unavailable', 'No credential keyring is configured');
     const spec = findCredentialSpec(input.provider);
-    if (!spec) return fail('unknown_provider', `Provider '${input.provider}' does not accept tenant credentials`);
+    // Fixed text: the submitted value is never echoed (it may be a misplaced secret).
+    if (!spec) return fail('unknown_provider', 'This provider does not accept tenant credentials');
 
     const { pub, sec, unknown } = splitFields(spec, input.fields);
     if (unknown.length) return fail('invalid_input', 'Unknown credential fields', unknown.map((k) => ({ path: `fields.${k}`, message: 'Unknown field' })));

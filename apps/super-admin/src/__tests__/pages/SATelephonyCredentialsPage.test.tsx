@@ -130,6 +130,35 @@ describe('SATelephonyCredentialsPage', () => {
     await waitFor(() => expect(screen.queryByText('Acme main')).toBeNull());
   });
 
+  it('expands a row from its label button, which reports aria-expanded (keyboard reachable)', async () => {
+    render(<SATelephonyCredentialsPage />);
+    const toggle = await screen.findByRole('button', { name: /acme main/i });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle.getAttribute('aria-expanded')).toBe('true'));
+    // One toggle per activation: the row's own click handler must not undo it.
+    expect(mocks.getTelephonyCredential).toHaveBeenCalledTimes(1);
+    expect(document.getElementById(toggle.getAttribute('aria-controls')!)).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /^revoke$/i })).toBeTruthy();
+  });
+
+  it('shows the rows of the latest filter when an earlier load answers last', async () => {
+    render(<SATelephonyCredentialsPage />);
+    expect(await screen.findByText('Acme main')).toBeTruthy();
+    let answerSlow!: (rows: TelephonyCredential[]) => void;
+    mocks.listTelephonyCredentials
+      .mockImplementationOnce(() => new Promise<TelephonyCredential[]>((r) => { answerSlow = r; }))
+      .mockResolvedValueOnce([makeCred({ label: 'Latest filter row' })]);
+    const showRevoked = screen.getByRole('checkbox', { name: /show revoked/i });
+    fireEvent.click(showRevoked); // load 2: slow
+    fireEvent.click(showRevoked); // load 3: answers first
+    expect(await screen.findByText('Latest filter row')).toBeTruthy();
+    answerSlow([makeCred({ id: 'cred-r', label: 'Superseded row', status: 'revoked' })]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText('Superseded row')).toBeNull();
+    expect(screen.getByText('Latest filter row')).toBeTruthy();
+  });
+
   it('refuses to add a credential when the server has no keyring', async () => {
     mocks.listTelephonyCredentialProviders.mockResolvedValue({ store_available: false, providers: [] });
     render(<SATelephonyCredentialsPage />);
