@@ -1,12 +1,14 @@
 // Per-tenant carrier credentials against real Postgres (0002_telephony_credentials.sql,
 // decisions B18–B22): the schema's own guards (tenant- and provider-matched pinning,
 // one registration per carrier account, the status/secret invariants) and the
-// repository's conditional writes (rotation, revoke, shred, prune).
+// repository's conditional writes (rotation, verify, revoke, shred, prune), and the
+// shred's hold: no secret is destroyed while a pinned call may still need it.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { insertTenant, insertWebrtcCall } from '../setup/factories.js';
 import { isUniqueViolation } from '../../../src/pg-errors.js';
+import { WEBRTC_NON_TERMINAL_STATUSES } from '../../../src/models/agency-call.model.js';
 
 vi.mock('../../../src/connection.js', () => ({
   getPool: () => getTestPool(),
@@ -163,6 +165,20 @@ describe('telephony credentials (integration)', () => {
       expect(await repo.findOpenableSecrets(cred.id, 0)).toHaveLength(1);
     });
 
+    it('findOpenableVersions lists exactly the openable versions, in the same order, without ciphertext', async () => {
+      const cred = await create();
+      await repo.rotateSecret(cred.id, 1, sealed('v2bb'), { updatedBy: admin, verifiedAt: null });
+      await repo.rotateSecret(cred.id, 2, sealed('v3cc'), { updatedBy: admin, verifiedAt: null });
+      for (const grace of [3600, 0]) {
+        const versions = await repo.findOpenableVersions(cred.id, grace);
+        const secrets = await repo.findOpenableSecrets(cred.id, grace);
+        expect(versions).toEqual(secrets.map((s) => ({ secret_version: s.secret_version, kek_id: s.kek_id })));
+        for (const v of versions) expect(Object.keys(v).sort()).toEqual(['kek_id', 'secret_version']);
+      }
+      expect((await repo.findOpenableVersions(cred.id, 3600)).map((v) => v.secret_version)).toEqual([3, 2, 1]);
+      expect((await repo.findOpenableVersions(cred.id, 0)).map((v) => v.secret_version)).toEqual([3]);
+    });
+
     it('lets only one of two rotations from the same version land', async () => {
       const cred = await create();
       const [a, b] = await Promise.all([
@@ -209,6 +225,38 @@ describe('telephony credentials (integration)', () => {
       await repo.rotateSecret(cred.id, 1, sealed('hhhh'), { updatedBy: admin, verifiedAt: null });
       expect(await repo.setStatus(cred.id, 'invalid', ['active'], { updatedBy: admin, lastError: 'old', secretVersion: 1 })).toBeNull();
       expect((await repo.setStatus(cred.id, 'invalid', ['active'], { updatedBy: admin, lastError: 'new', secretVersion: 2 }))?.status).toBe('invalid');
+    });
+
+    it('markVerified re-activates an invalid credential and clears last_error', async () => {
+      const cred = await create();
+      await repo.setStatus(cred.id, 'invalid', ['active'], { updatedBy: null, lastError: 'Plivo refused (HTTP 401)' });
+      const row = await repo.markVerified(cred.id, 1, admin);
+      expect(row).toMatchObject({ status: 'active', last_error: null, updated_by: admin });
+      expect(row!.verified_at).not.toBeNull();
+      // A system check (no actor) keeps the last actor.
+      expect((await repo.markVerified(cred.id, 1, null))?.updated_by).toBe(admin);
+    });
+
+    it('markVerified leaves a disabled credential disabled with last_error cleared, so enable brings it back active', async () => {
+      const cred = await create();
+      await repo.setStatus(cred.id, 'disabled', ['active'], { updatedBy: admin, lastError: 'Plivo refused (HTTP 401)' });
+      expect(await repo.markVerified(cred.id, 1, null)).toMatchObject({ status: 'disabled', last_error: null });
+      expect((await repo.enable(cred.id, admin))?.status).toBe('active');
+    });
+
+    it('markVerified is a no-op on a revoked credential and on a replaced secret version', async () => {
+      const stale = await create();
+      await repo.setStatus(stale.id, 'invalid', ['active'], { updatedBy: null, lastError: 'refused' });
+      await repo.rotateSecret(stale.id, 1, sealed('iiii'), { updatedBy: admin, verifiedAt: null });
+      await repo.setStatus(stale.id, 'invalid', ['active'], { updatedBy: null, lastError: 'refused v2' });
+      expect(await repo.markVerified(stale.id, 1, admin)).toBeNull();
+      expect(await repo.findById(stale.id)).toMatchObject({ status: 'invalid', last_error: 'refused v2' });
+
+      const gone = await create();
+      await repo.revoke(gone.id, admin);
+      const before = await repo.findById(gone.id);
+      expect(await repo.markVerified(gone.id, 1, admin)).toBeNull();
+      expect(await repo.findById(gone.id)).toEqual(before);
     });
 
     it('enables a disabled credential as invalid when the carrier last refused it, else active', async () => {
@@ -326,6 +374,73 @@ describe('telephony credentials (integration)', () => {
       await insert('completed');
       await insert('stopped');
       expect(await repo.usage(cred.id)).toEqual({ campaigns: 1, inFlightCalls: 0 });
+    });
+  });
+
+  describe('shred hold: a pinned call keeps the secret alive until the post-call webhook window has passed', () => {
+    async function revokedWithCall(call: Record<string, unknown>) {
+      const cred = await create();
+      await insertWebrtcCall({ tenant_id: tenantA, provider: 'plivo', telephony_credential_id: cred.id, ...call });
+      await repo.revoke(cred.id, admin);
+      return cred;
+    }
+    const ago = (seconds: number) => new Date(Date.now() - seconds * 1000);
+
+    it('counts every status in WEBRTC_NON_TERMINAL_STATUSES as in flight, and no other', async () => {
+      const cred = await create();
+      for (const status of ['initiating', 'ringing', 'in_progress', 'completed', 'failed', 'no_answer', 'busy', 'canceled']) {
+        await insertWebrtcCall({ tenant_id: tenantA, provider: 'plivo', telephony_credential_id: cred.id, status, ended_at: ago(86400) });
+      }
+      expect(await repo.usage(cred.id)).toEqual({ campaigns: 0, inFlightCalls: WEBRTC_NON_TERMINAL_STATUSES.length });
+
+      for (const status of WEBRTC_NON_TERMINAL_STATUSES) {
+        // Even with an old end timestamp, a live status holds the secret.
+        const held = await revokedWithCall({ status, ended_at: ago(86400), updated_at: ago(86400) });
+        expect(await repo.shredIfIdle(held.id, HOLD)).toBe(false);
+      }
+    });
+
+    it('refuses the shred while a pinned call ended inside the hold, and shreds once it ended beyond it', async () => {
+      const cred = await create();
+      const call = await insertWebrtcCall({
+        tenant_id: tenantA, provider: 'plivo', telephony_credential_id: cred.id, status: 'completed',
+      });
+      await repo.revoke(cred.id, admin);
+      await getTestPool().query(`UPDATE agency_calls SET ended_at = NOW() - interval '1 minute' WHERE id = $1`, [call.id]);
+      expect(await repo.shredIfIdle(cred.id, HOLD)).toBe(false);
+      expect(await repo.findOpenableSecrets(cred.id, 0)).toHaveLength(1);
+
+      // The UPDATE moved updated_at to now: only ended_at decides once it is set.
+      await getTestPool().query(`UPDATE agency_calls SET ended_at = NOW() - interval '2 hours 1 minute' WHERE id = $1`, [call.id]);
+      expect(await repo.shredIfIdle(cred.id, HOLD)).toBe(true);
+      expect(await repo.findOpenableSecrets(cred.id, 1e6)).toEqual([]);
+    });
+
+    it('dates a terminal call without ended_at from updated_at: held while recent, shredded once old', async () => {
+      const recent = await revokedWithCall({ status: 'failed', ended_at: null });
+      expect(await repo.shredIfIdle(recent.id, HOLD)).toBe(false);
+
+      // The updated_at trigger fires on UPDATE only, so an INSERT can backdate it.
+      const old = await revokedWithCall({ status: 'failed', ended_at: null, updated_at: ago(HOLD + 60) });
+      expect(await repo.shredIfIdle(old.id, HOLD)).toBe(true);
+    });
+
+    it('the sweep skips credentials a call still needs, so they cannot starve a later idle one', async () => {
+      const inFlight = await revokedWithCall({ status: 'ringing' });
+      const recentlyEnded = await revokedWithCall({ status: 'completed', ended_at: ago(60) });
+      const idle = await revokedWithCall({ status: 'completed', ended_at: ago(HOLD + 60) });
+      const noCalls = await create();
+      await repo.revoke(noCalls.id, admin);
+
+      // Oldest revoke first; the two blocked ones were revoked earlier but are not listed.
+      expect(await repo.findRevokedUnshredded(HOLD, 1)).toEqual([idle.id]);
+      expect(await repo.findRevokedUnshredded(HOLD)).toEqual([idle.id, noCalls.id]);
+      for (const id of await repo.findRevokedUnshredded(HOLD)) expect(await repo.shredIfIdle(id, HOLD)).toBe(true);
+      expect(await repo.findRevokedUnshredded(HOLD)).toEqual([]);
+      expect(await repo.shredIfIdle(inFlight.id, HOLD)).toBe(false);
+      expect(await repo.shredIfIdle(recentlyEnded.id, HOLD)).toBe(false);
+      // With no hold, only the in-flight one is still held.
+      expect(await repo.findRevokedUnshredded(0)).toEqual([recentlyEnded.id]);
     });
   });
 });
