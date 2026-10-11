@@ -26,6 +26,9 @@ const sealed = (tag: string) => ({
   secret_hint: tag.slice(-4).padStart(4, '0'),
 });
 
+/** The post-call webhook window the server passes (two hours). */
+const HOLD = 2 * 60 * 60;
+
 let tenantA: string;
 let tenantB: string;
 let admin: string;
@@ -265,20 +268,21 @@ describe('telephony credentials (integration)', () => {
       const call = await insertWebrtcCall({ tenant_id: tenantA, provider: 'plivo', telephony_credential_id: cred.id, status: 'in_progress' });
       expect(await repo.usage(cred.id)).toEqual({ campaigns: 0, inFlightCalls: 1 });
 
-      expect(await repo.shredIfIdle(cred.id)).toBe(false); // not revoked yet
+      expect(await repo.shredIfIdle(cred.id, HOLD)).toBe(false); // not revoked yet
       await repo.revoke(cred.id, admin);
-      expect(await repo.shredIfIdle(cred.id)).toBe(false); // call still in flight
-      expect(await repo.findRevokedUnshredded()).toEqual([cred.id]);
+      expect(await repo.shredIfIdle(cred.id, HOLD)).toBe(false); // call still in flight
+      expect(await repo.findRevokedUnshredded(HOLD)).toEqual([]); // the shred would refuse it
 
-      await getTestPool().query(`UPDATE agency_calls SET status = 'completed' WHERE id = $1`, [call.id]);
-      expect(await repo.shredIfIdle(cred.id)).toBe(true);
-      expect(await repo.shredIfIdle(cred.id)).toBe(false);
+      await getTestPool().query(
+        `UPDATE agency_calls SET status = 'completed', ended_at = NOW() - interval '3 hours' WHERE id = $1`, [call.id]);
+      expect(await repo.shredIfIdle(cred.id, HOLD)).toBe(true);
+      expect(await repo.shredIfIdle(cred.id, HOLD)).toBe(false);
 
       const row = await repo.findById(cred.id);
       expect(row).toMatchObject({ status: 'revoked', secret_hint: null });
       expect(row!.shredded_at).not.toBeNull();
       expect(await repo.findOpenableSecrets(cred.id, 1e6)).toEqual([]);
-      expect(await repo.findRevokedUnshredded()).toEqual([]);
+      expect(await repo.findRevokedUnshredded(HOLD)).toEqual([]);
       // The call row survives the shred, still pinned.
       const { rows } = await getTestPool().query(`SELECT telephony_credential_id FROM agency_calls WHERE id = $1`, [call.id]);
       expect(rows[0].telephony_credential_id).toBe(cred.id);
@@ -295,7 +299,7 @@ describe('telephony credentials (integration)', () => {
         await dialer.query(
           `INSERT INTO agency_calls (tenant_id, account_id, caller_id, destination_phone, provider, status, telephony_credential_id)
            VALUES ($1, $2, '+14155550100', '+14155550199', 'plivo', 'initiating', $3)`, [tenantA, randomUUID(), cred.id]);
-        const shredding = repo.shredIfIdle(cred.id);
+        const shredding = repo.shredIfIdle(cred.id, HOLD);
         await new Promise((r) => setTimeout(r, 200));
         await dialer.query('COMMIT');
         expect(await shredding).toBe(false);

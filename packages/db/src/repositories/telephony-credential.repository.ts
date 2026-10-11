@@ -1,5 +1,6 @@
 import type { PoolClient } from 'pg';
 import { getPool } from '../connection.js';
+import { WEBRTC_NON_TERMINAL_STATUSES } from '../models/agency-call.model.js';
 import type {
   CreateTelephonyCredentialInput,
   SealedSecretInput,
@@ -13,13 +14,17 @@ import type {
  *
  *  - Credential rows carry no secret material, so every listing is safe to send.
  *    The sealed secrets live in `telephony_credential_secrets`, one row per version,
- *    and only `findOpenableSecrets` (the server's resolver) reads them.
+ *    and only `findOpenableSecrets` (the server's resolver) reads them;
+ *    `findOpenableVersions` lists the same set without the ciphertext.
  *  - Only ciphertext and the four-character `secret_hint` reach SQL: pg spans carry
  *    query parameters (`enhancedDatabaseReporting`), so a full plaintext secret must
  *    never be a parameter here.
  *  - Writes are conditional (`WHERE status …`, `WHERE secret_version = $n`), so a
  *    concurrent change makes the second writer a no-op (null), never a lost update.
  *  - No Redis cache: a credential's status must take effect on the next read.
+ *  - A revoked credential is shredded only once no pinned call can still need it:
+ *    every pinned call is terminal and ended longer ago than the post-call webhook
+ *    window (`callStillNeedsCredential`, shared by the shred and its sweep).
  */
 
 /** The unique indexes a create can trip, by name (`isUniqueViolation`). */
@@ -31,8 +36,37 @@ const COLUMNS = `
   secret_version, secret_hint, verified_at, last_error,
   created_by, updated_by, created_at, updated_at, revoked_at, shredded_at`;
 
-/** Call statuses that still need the credential (hangup, cancel, webhook checks). */
-const IN_FLIGHT = `('initiating', 'ringing', 'in_progress')`;
+/**
+ * Call statuses that are still live (hangup, cancel, webhook checks need the
+ * credential). Bound as a `varchar[]` parameter, so it cannot drift from the calls
+ * model.
+ */
+const IN_FLIGHT: readonly string[] = WEBRTC_NON_TERMINAL_STATUSES;
+
+/**
+ * SQL: a call pinned to credential `cred` may still need its secret. That is a call
+ * still in flight (`statuses`, bound to IN_FLIGHT), or a terminal call that ended
+ * less than `holdSecs` ago: the carrier's terminal-webhook retries and the recording
+ * callback arrive after the row is finalized and are checked with this secret for as
+ * long as the call's webhook token lives.
+ *
+ * The end is `COALESCE(ended_at, updated_at)`. Every finalize path sets `ended_at`;
+ * a terminal row without one falls back to `updated_at`, which the row trigger moved
+ * when the terminal status was written, so it is never earlier than the real end
+ * (later writes such as analysis only push it forward and delay the shred). Treating
+ * such a row as recent forever would instead keep the secret alive indefinitely.
+ *
+ * `cred`, `statuses` and `holdSecs` are SQL expressions (a column or a `$n`); each
+ * placeholder is cast here, at its one use. The shred and its sweep both use this,
+ * so the sweep never lists a credential the shred would refuse.
+ */
+function callStillNeedsCredential(cred: string, statuses: string, holdSecs: string): string {
+  return `EXISTS (
+    SELECT 1 FROM agency_calls c
+     WHERE c.telephony_credential_id = ${cred}
+       AND (c.status = ANY(${statuses}::varchar[])
+            OR COALESCE(c.ended_at, c.updated_at) > NOW() - make_interval(secs => ${holdSecs}::int)))`;
+}
 
 /**
  * Campaign statuses that can still dial. A completed or stopped campaign is terminal,
@@ -103,6 +137,22 @@ export class TelephonyCredentialRepository {
   async findOpenableSecrets(id: string, graceSeconds: number): Promise<TelephonyCredentialSecretRecord[]> {
     const result = await getPool().query<TelephonyCredentialSecretRecord>(
       `SELECT credential_id, secret_version, secret_ciphertext, wrapped_dek, kek_id, created_at, retired_at
+         FROM telephony_credential_secrets
+        WHERE credential_id = $1
+          AND (retired_at IS NULL OR retired_at > NOW() - make_interval(secs => $2::int))
+        ORDER BY secret_version DESC`,
+      [id, graceSeconds],
+    );
+    return result.rows;
+  }
+
+  /**
+   * The same versions as `findOpenableSecrets`, same order, without the ciphertext:
+   * for callers that only need to know which versions (and master keys) are live.
+   */
+  async findOpenableVersions(id: string, graceSeconds: number): Promise<Array<{ secret_version: number; kek_id: string }>> {
+    const result = await getPool().query<{ secret_version: number; kek_id: string }>(
+      `SELECT secret_version, kek_id
          FROM telephony_credential_secrets
         WHERE credential_id = $1
           AND (retired_at IS NULL OR retired_at > NOW() - make_interval(secs => $2::int))
@@ -205,13 +255,22 @@ export class TelephonyCredentialRepository {
     return result.rows[0] ?? null;
   }
 
-  /** Record a successful carrier check of the secret at `version`. */
-  async markVerified(id: string, version: number): Promise<TelephonyCredentialRecord | null> {
+  /**
+   * Record a successful carrier check of the secret at `version`: clears `last_error`
+   * and brings an `invalid` credential back to `active`. A `disabled` one stays
+   * disabled (a decision, not a fault), but with `last_error` cleared `enable` now
+   * brings it back as active. Null when nothing changed: revoked, or a rotation has
+   * replaced that version (the verdict was about an old secret).
+   */
+  async markVerified(id: string, version: number, updatedBy: string | null): Promise<TelephonyCredentialRecord | null> {
     const result = await getPool().query<TelephonyCredentialRecord>(
-      `UPDATE telephony_credentials SET verified_at = NOW(), last_error = NULL
-        WHERE id = $1 AND secret_version = $2
+      `UPDATE telephony_credentials
+          SET verified_at = NOW(), last_error = NULL,
+              status = CASE WHEN status = 'invalid' THEN 'active' ELSE status END,
+              updated_by = COALESCE($3::uuid, updated_by)
+        WHERE id = $1 AND secret_version = $2 AND status <> 'revoked'
         RETURNING ${COLUMNS}`,
-      [id, version],
+      [id, version, updatedBy],
     );
     return result.rows[0] ?? null;
   }
@@ -258,22 +317,21 @@ export class TelephonyCredentialRepository {
   }
 
   /**
-   * Crypto-shred a revoked credential: delete every secret version once no call is
-   * in flight on it. Returns false when it is not revoked, already shredded, or a
-   * call still needs it (the sweep retries).
+   * Crypto-shred a revoked credential: delete every secret version once no pinned
+   * call can still need it, i.e. every pinned call is terminal and ended more than
+   * `postEndHoldSeconds` ago (`callStillNeedsCredential`). Returns false when it is
+   * not revoked, already shredded, or a call still needs it (the sweep retries).
    */
-  async shredIfIdle(id: string): Promise<boolean> {
+  async shredIfIdle(id: string, postEndHoldSeconds: number): Promise<boolean> {
     const done = await inTransaction(async (client) => {
       // FOR UPDATE waits out any call insert still holding the foreign key's
-      // key-share lock, so its row is visible to the in-flight check below.
+      // key-share lock, so its row is visible to the check below.
       await client.query(`SELECT 1 FROM telephony_credentials WHERE id = $1 FOR UPDATE`, [id]);
       const result = await client.query(
         `UPDATE telephony_credentials SET shredded_at = NOW(), secret_hint = NULL
           WHERE id = $1 AND status = 'revoked' AND shredded_at IS NULL
-            AND NOT EXISTS (
-              SELECT 1 FROM agency_calls
-               WHERE telephony_credential_id = $1 AND status IN ${IN_FLIGHT})`,
-        [id],
+            AND NOT ${callStillNeedsCredential('$1', '$2', '$3')}`,
+        [id, IN_FLIGHT, postEndHoldSeconds],
       );
       if ((result.rowCount ?? 0) === 0) return null;
       await client.query(`DELETE FROM telephony_credential_secrets WHERE credential_id = $1`, [id]);
@@ -282,13 +340,18 @@ export class TelephonyCredentialRepository {
     return done === true;
   }
 
-  /** Revoked credentials still holding secrets, for the shred sweep. */
-  async findRevokedUnshredded(limit = 100): Promise<string[]> {
+  /**
+   * Revoked credentials still holding secrets that `shredIfIdle` would shred now
+   * (same predicate), oldest revoke first, for the shred sweep. Credentials a call
+   * still needs are left out, so they cannot fill the page and starve later ones.
+   */
+  async findRevokedUnshredded(postEndHoldSeconds: number, limit = 100): Promise<string[]> {
     const result = await getPool().query<{ id: string }>(
-      `SELECT id FROM telephony_credentials
-        WHERE status = 'revoked' AND shredded_at IS NULL
-        ORDER BY revoked_at LIMIT $1`,
-      [limit],
+      `SELECT t.id FROM telephony_credentials t
+        WHERE t.status = 'revoked' AND t.shredded_at IS NULL
+          AND NOT ${callStillNeedsCredential('t.id', '$1', '$2')}
+        ORDER BY t.revoked_at, t.id LIMIT $3`,
+      [IN_FLIGHT, postEndHoldSeconds, limit],
     );
     return result.rows.map((r) => r.id);
   }
@@ -310,8 +373,8 @@ export class TelephonyCredentialRepository {
          (SELECT count(*)::int FROM agency_campaigns
            WHERE telephony_credential_id = $1 AND status IN ${LIVE_CAMPAIGN}) AS campaigns,
          (SELECT count(*)::int FROM agency_calls
-           WHERE telephony_credential_id = $1 AND status IN ${IN_FLIGHT}) AS in_flight`,
-      [id],
+           WHERE telephony_credential_id = $1 AND status = ANY($2::varchar[])) AS in_flight`,
+      [id, IN_FLIGHT],
     );
     const row = result.rows[0]!;
     return { campaigns: row.campaigns, inFlightCalls: row.in_flight };
