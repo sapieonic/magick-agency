@@ -230,9 +230,20 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   carrier account (Plivo). Super-admins add the credential; it is checked with the carrier, then
   sealed (AES-256-GCM envelope under the `TELEPHONY_CREDENTIAL_KEYS` keyring) into
   `telephony_credential_secrets`. Calls and campaigns pin `telephony_credential_id` (composite FKs
-  keep it to their own tenant and provider). `getForCredentialId` resolves the pinned credential
-  on every use and never falls back to the service's own account; a disabled credential still
-  hangs up its live calls, and a rotation keeps the old secret for 24 h for webhooks signed with it.
+  keep it to their own tenant and provider). `getForCredentialId` peeks the pinned credential on
+  every use (row checks only, nothing opened), refuses one of another tenant or provider before
+  any secret is opened, and calls `resolve` only on a cache miss (the cache is keyed by the
+  versions the peek listed). Only a `CredentialUnavailableError` drops cached adapters; a
+  transient error is rethrown unchanged. It never falls back to the service's own account: the
+  bridge's teardown (`hangupProviderLeg`) hangs a pinned call up through it (`call_control`, the
+  call's tenant), and an unresolvable credential is logged at ERROR and the hangup skipped; a call
+  with no credential stays on `get(provider)`. A disabled credential still hangs up its live
+  calls, and a rotation keeps the old secret for 24 h for webhooks signed with it (opened best
+  effort: a grace version that will not open is skipped with a warning). A revoked credential is
+  shredded only once every pinned call is terminal and ended more than 2 h ago (Q6). The routes'
+  error codes are `TELEPHONY_CREDENTIAL_ERROR_CODES` in the contracts: `credential_store_unavailable`
+  (503) means no keyring is configured; `secret_unavailable` (409, not retryable) means this
+  credential's secret is shredded, missing, or sealed under a key the keyring lacks.
   Only ciphertext reaches SQL; pg spans carry query parameters, so sealed bytes do reach the
   trace store, where they cannot be opened without the master key.
 - **Audio** (`audio/decode.ts`, `core/paced-audio-streamer.ts`, `tts/tts-file-cache.ts`). Uploaded
@@ -357,7 +368,8 @@ bucket keyed on a client-supplied header. Buckets key on `request.ip`, which tru
 - **Contract and guard tests**: route tables enumerated from `onRoute`
   (`apps/server/test/unit/api/*route-table*.test.ts`, the agent-reach tests); config blocks disjoint;
   the bridge seam contract; the VoiceLink carrier fixture; branding guards in all three apps; the
-  console dev-proxy test; the error-code unions in `packages/contracts/test/`.
+  console dev-proxy test; the error-code unions in `packages/contracts/test/` (including
+  `TELEPHONY_CREDENTIAL_ERROR_CODES`, held equal to its union by an exhaustiveness guard).
 - **Console** tests run in two Vitest projects (`*.timezone.test.ts(x)` and the rest), with TZ and
   locale pinned in `vite.config.ts`.
 

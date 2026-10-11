@@ -279,6 +279,16 @@ Per-tenant carrier credentials (bring-your-own-carrier, decisions B18–B22).
   `(credential_id, secret_version)`; `secret_ciphertext`, `wrapped_dek`, `kek_id`
   (scheme-prefixed, e.g. `env:v1`), `created_at`, `retired_at` (NULL = current). Retired versions
   are pruned after the rotation grace; a revoked credential's rows are deleted (crypto-shred).
+- **Repository** (`src/repositories/telephony-credential.repository.ts`). `shredIfIdle(id,
+  postEndHoldSeconds)` refuses while any call pinned to the credential is non-terminal
+  (`WEBRTC_NON_TERMINAL_STATUSES`, bound as a parameter) or ended (`COALESCE(ended_at,
+  updated_at)`) within the hold; the server passes `WEBHOOK_TOKEN_POST_END_GRACE_SECONDS` (2 h,
+  Q6). `findRevokedUnshredded(hold, limit)` lists only credentials that pass the same check, so
+  ones a call still needs cannot fill the page and starve the rest. `markVerified(id, version,
+  updatedBy)` is one statement pinned to the checked version: it re-activates `invalid`, leaves
+  `disabled` disabled but clears its `last_error`, and is a no-op (null) on a revoked row or a
+  replaced version. `findOpenableVersions` lists the versions `findOpenableSecrets` would return,
+  without the ciphertext.
 - **Unique indexes**: `uq_telephony_credentials_scope (id, tenant_id, provider)` (FK target);
   `uq_telephony_credentials_account (provider, account_ref) WHERE status <> 'revoked'` (one live
   registration per carrier account, across tenants); `uq_telephony_credentials_label (tenant_id,
@@ -297,7 +307,8 @@ Per-tenant carrier credentials (bring-your-own-carrier, decisions B18–B22).
 - **Down** drops the columns, FKs and tables, and deletes the `plivo` row unless a phone number
   references it.
 - **Tests**: `test/integration/repositories/telephony-credential.repository.test.ts` (repository,
-  CHECKs, composite FKs, rotation, revoke and shred) and the baseline suites, which pin the table
+  CHECKs, composite FKs, rotation, revoke, the shred hold and its sweep, `markVerified`,
+  `findOpenableVersions`) and the baseline suites, which pin the table
   set, the trigger list and the seed rows after both migrations.
 
 ## Tests
