@@ -1,7 +1,8 @@
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
 import type { WebRtcCallStatus } from '@magick-agency/db/models/agency-call.model';
-import { VoicelinkTranscoder } from '../utils/audio-fir.js';
+import type { CarrierMediaCodec, CarrierModule } from '../telephony/carrier-module.js';
+import { findCarrierModule } from '../telephony/carrier-modules.js';
 
 /**
  * In-memory state for a single WebRTC human-bridge call. Holds the two media
@@ -208,11 +209,17 @@ export class WebRtcBridgeSession {
   maxRelayDwellMicros: number = 0;
 
   /**
-   * Per-session stateful A-law⇄PCM transcoder (VoiceLink only) — retains FIR
-   * history + decimation phase across frames so there are no boundary clicks.
-   * Null for a provider that passes audio through unchanged.
+   * The carrier this call runs on: its media protocol and hangup style. Null for a
+   * provider name no carrier module answers to; such a session relays no audio.
    */
-  readonly transcoder: VoicelinkTranscoder | null;
+  readonly carrier: CarrierModule | null;
+
+  /**
+   * Per-session stateful codec between the carrier's wire audio and browser PCM16
+   * 16 kHz — retains FIR history + decimation phase across frames so there are no
+   * boundary clicks. Null exactly when {@link carrier} is.
+   */
+  readonly codec: CarrierMediaCodec | null;
 
   private maxDurationTimer: NodeJS.Timeout | null = null;
   private readonly log;
@@ -231,7 +238,8 @@ export class WebRtcBridgeSession {
     this.callerId = params.callerId;
     this.destinationPhone = params.destinationPhone;
     this.provider = params.provider;
-    this.transcoder = params.provider === 'voicelink' ? new VoicelinkTranscoder() : null;
+    this.carrier = findCarrierModule(params.provider) ?? null;
+    this.codec = this.carrier ? this.carrier.media.createCodec() : null;
     this.startedAt = new Date();
     this.log = createChildLogger({
       component: 'webrtc-bridge-session',

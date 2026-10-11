@@ -17,7 +17,6 @@ import { createChildLogger } from '@magick-agency/observability';
 import { TelephonyProviderRegistry } from '../telephony/factory.js';
 import { WebhookUrlBuilder } from './webhook-url-builder.js';
 import { readTtsPcm } from '../tts/tts-file-cache.js';
-import { pcmToAlaw } from '../utils/audio.js';
 import { PacedAudioStreamer, type PacedStreamSink } from './paced-audio-streamer.js';
 import { WebRtcBridgeSession } from './webrtc-bridge-session.js';
 import { webrtcCallRepository } from '@magick-agency/db/repositories/agency-call.repository';
@@ -635,9 +634,9 @@ export class WebRtcBridgeManager {
     // finalize is the one that was durably recorded.
     session.campaignId = record.campaign_id ?? null;
     session.agencyAttemptId = record.agency_attempt_id ?? null;
-    // VoiceLink negotiates the media stream via a `start` frame — hold relay until
-    // a valid `start` (correct codec/rate) arrives.
-    if (provider === 'voicelink') session.providerMediaReady = false;
+    // A carrier that negotiates the media stream via a `start` frame (VoiceLink)
+    // holds the relay until a valid `start` (correct codec/rate) arrives.
+    if (session.carrier?.media.negotiatesOnStart) session.providerMediaReady = false;
     this.sessions.set(record.id, session);
 
     // 4. Max-duration guard (resolved above, reused for the slot TTL).
@@ -673,13 +672,13 @@ export class WebRtcBridgeManager {
     const borrowedBrowserLeg = params.borrowedBrowserLeg === true || params.browserSocket !== undefined;
     const token = borrowedBrowserLeg ? null : crypto.randomUUID();
     if (token) await this.storeWsToken(record.id, token, maxDuration + 60);
-    // VoiceLink connects the provider WS + posts webhooks itself, so those two
+    // The carrier connects the provider WS + posts webhooks itself, so those two
     // legs get their own purpose-bound tokens (embedded only in the URLs we send
-    // VoiceLink).
+    // the carrier).
     const tokenTtl = maxDuration + 60;
     let providerToken: string | undefined;
     let webhookToken: string | undefined;
-    if (provider === 'voicelink') {
+    if (session.carrier) {
       providerToken = crypto.randomUUID();
       webhookToken = crypto.randomUUID();
       await Promise.all([
@@ -705,17 +704,17 @@ export class WebRtcBridgeManager {
       const base = this.webhookUrls.baseUrl(provider);
       // The service's own carrier account only: the synchronous registry lookup.
       const adapter = this.telephonyRegistry.get(provider);
-      // VoiceLink has no answer XML — it dials OUT to a stream URL baked into the
-      // dial request, so hand it the bridge's dedicated PSTN leg explicitly.
+      // A carrier with no answer XML (VoiceLink) dials OUT to a stream URL baked
+      // into the dial request, so hand it the bridge's dedicated PSTN leg explicitly.
       const mediaStreamUrl =
-        provider === 'voicelink'
+        session.carrier?.mediaUrlInDialRequest
           ? `wss://${new URL(base).host}/api/v1/webrtc-call/${record.id}/pstn-stream?token=${providerToken}`
           : undefined;
-      // For VoiceLink, embed the webhook token so forged lifecycle events (which
-      // drive status/concurrency) are rejected. Another provider would get an
+      // Embed the webhook token so forged lifecycle events (which drive
+      // status/concurrency) are rejected. A provider with no carrier module gets an
       // untokenized URL.
       const statusCallbackUrl =
-        provider === 'voicelink'
+        webhookToken
           ? `${base}/webrtc-status/${record.id}?token=${webhookToken}`
           : `${base}/webrtc-status/${record.id}`;
       const result = await adapter.initiateCall({
@@ -1046,9 +1045,8 @@ export class WebRtcBridgeManager {
   }
 
   /**
-   * Convert a cached 8 kHz clip to this session's carrier wire format.
-   *
-   * Only VoiceLink has a carrier format here.
+   * Convert a cached clip to this session's carrier wire format (the carrier module's
+   * `encodeClip`).
    */
   private convertClipForCarrier(
     session: WebRtcBridgeSession,
@@ -1057,15 +1055,9 @@ export class WebRtcBridgeManager {
     const clip = readTtsPcm(clipHash);
     if (!clip) return null;
 
-    if (session.provider === 'voicelink') {
-      // A-law: always 8 kHz, 1 byte per sample. `pcmToAlaw` resamples for us.
-      const alaw = pcmToAlaw(clip.pcm16, clip.sampleRate);
-      return alaw.length > 0 ? { buffer: alaw, byteRate: 8000 } : null;
-    }
-
-    // A session on any other provider has no carrier format here, so there is
-    // nothing to play.
-    return null;
+    // A session with no carrier module has no wire format, so there is nothing to
+    // play.
+    return session.carrier ? session.carrier.media.encodeClip(clip.pcm16, clip.sampleRate) : null;
   }
 
   /**
@@ -1083,11 +1075,8 @@ export class WebRtcBridgeManager {
       isOpen: () => session.pstnWs?.readyState === 1 && !session.endHandled && !session.ending,
       bufferedAmount: () => (session.pstnWs as unknown as { bufferedAmount?: number } | null)?.bufferedAmount ?? 0,
       send: (payloadBase64: string) => {
-        if (!session.pstnWs) return;
-        if (session.provider === 'voicelink') {
-          this.send(session.pstnWs, { event: 'media', media: { payload: payloadBase64 } });
-          return;
-        }
+        if (!session.pstnWs || !session.carrier) return;
+        this.send(session.pstnWs, session.carrier.media.frameOutbound(payloadBase64, session.providerStreamId));
       },
     };
   }
@@ -1177,15 +1166,15 @@ export class WebRtcBridgeManager {
   // ─── PSTN leg (carrier media stream) ────────────────────────────────────────
 
   /**
-   * Verify the provider-WSS token (VoiceLink) then attach the PSTN leg.
+   * Verify the provider-WSS token then attach the PSTN leg.
    *
-   * Q6 (Manas, 2026-10-09): the check runs for every live session (all VoiceLink),
+   * Q6 (Manas, 2026-10-09): the check runs for every live session on a carrier,
    * and a missing provider key is refused unless its SET failed (`verifyWsToken`).
    * An unknown call id skips the check and is refused by `attachPstnLeg` itself.
    */
   async attachPstnLegVerified(callId: string, ws: WebSocket, token: string | undefined): Promise<boolean> {
     const session = this.sessions.get(callId);
-    if (session?.provider === 'voicelink') {
+    if (session?.carrier) {
       const ok = await this.verifyWsToken(callId, token, 'provider');
       if (!ok) {
         log.warn({ callId }, 'PSTN leg connect with invalid provider token — rejecting');
@@ -1315,13 +1304,12 @@ export class WebRtcBridgeManager {
       // throw here would crash the replica (there is no global uncaughtException
       // handler). Drop the bad frame instead.
       try {
-        if (session.provider === 'voicelink' && session.transcoder) {
-          // Browser PCM16 16kHz → VoiceLink G.711 A-law 8kHz (stateful transcode).
-          // VoiceLink uses the plain {event:'media',media:{payload}} frame (no
-          // contentType/sampleRate/stream_sid).
+        if (session.carrier && session.codec) {
+          // Browser PCM16 16kHz → carrier wire audio (stateful transcode), framed
+          // the way the carrier expects.
           const pcm = Buffer.from(data.media.payload, 'base64');
-          const alaw = session.transcoder.pcm16kToAlaw(pcm);
-          this.send(session.pstnWs, { event: 'media', media: { payload: alaw.toString('base64') } });
+          const wire = session.codec.pcm16kToCarrier(pcm);
+          this.send(session.pstnWs, session.carrier.media.frameOutbound(wire.toString('base64'), session.providerStreamId));
           this.recordRelayFrame(session, 'b2p', t0);
         }
       } catch (err) {
@@ -1340,13 +1328,14 @@ export class WebRtcBridgeManager {
       return;
     }
     if (data?.event === 'start') {
-      // VoiceLink negotiates the media stream via `start`: validate the format,
-      // capture the real carrier ids + stream id, then open the relay.
+      // A carrier that negotiates the media stream via `start` (VoiceLink):
+      // validate the format, capture the real carrier ids + stream id, then open
+      // the relay.
       //
-      // Only VoiceLink negotiates here. A `start` on another provider's socket is
-      // a no-op: it would fail handleProviderStart's A-law-8kHz format check and
-      // tear down a working call.
-      if (session.provider === 'voicelink') this.handleProviderStart(session, data);
+      // Only such a carrier negotiates here. A `start` on another socket is a
+      // no-op: its media is ready on connect, and a format check meant for a
+      // negotiating carrier would tear down a working call.
+      if (session.carrier?.media.negotiatesOnStart) this.handleProviderStart(session, data);
       return;
     }
     if (data?.event === 'media' && typeof data.media?.payload === 'string') {
@@ -1358,10 +1347,10 @@ export class WebRtcBridgeManager {
       // Guard the decode/transcode (see onBrowserMessage): a malformed payload from
       // the PSTN leg must never throw out of this ws listener and crash the replica.
       try {
-        if (session.provider === 'voicelink' && session.transcoder) {
-          // VoiceLink G.711 A-law 8kHz → browser PCM16 16kHz (stateful transcode).
-          const alaw = Buffer.from(data.media.payload, 'base64');
-          const pcm = session.transcoder.alawToPcm16k(alaw);
+        if (session.codec) {
+          // Carrier wire audio → browser PCM16 16kHz (stateful transcode).
+          const wire = Buffer.from(data.media.payload, 'base64');
+          const pcm = session.codec.carrierToPcm16k(wire);
           this.send(session.browserWs, { event: 'media', media: { payload: pcm.toString('base64') } });
           this.recordRelayFrame(session, 'p2b', t0);
         }
@@ -1379,11 +1368,11 @@ export class WebRtcBridgeManager {
   }
 
   /**
-   * Handle a VoiceLink WS `start` frame: validate `media_format` (must be A-law
-   * 8kHz — the only format the transcoder supports), capture the real carrier
-   * `call_sid`/`stream_sid`, mark the stream media-ready (which opens the relay
-   * and anchors answer), and cancel the start-timeout. An unsupported/malformed
-   * start ends the call rather than decoding garbage.
+   * Handle a carrier WS `start` frame: validate the media format against the
+   * carrier module (VoiceLink: A-law 8kHz, the only format its codec supports),
+   * capture the real carrier call id / stream id, mark the stream media-ready
+   * (which opens the relay and anchors answer), and cancel the start-timeout. An
+   * unsupported/malformed start ends the call rather than decoding garbage.
    */
   private handleProviderStart(session: WebRtcBridgeSession, data: any): void {
     // A media `start` on a call we have already torn down. Reachable on a leg that
@@ -1402,14 +1391,13 @@ export class WebRtcBridgeManager {
       );
       return;
     }
-    const start = data?.start ?? {};
-    const fmt = start.media_format ?? {};
-    const encoding = String(fmt.encoding ?? '').toLowerCase();
-    const rate = String(fmt.sample_rate ?? '');
-    if (encoding !== 'audio/alaw' || rate !== '8000') {
+    const media = session.carrier?.media;
+    if (!media) return;
+    const parsed = media.parseStart(data);
+    if (!parsed.ok) {
       log.error(
-        { callId: session.callId, encoding, rate },
-        'VoiceLink start with unsupported media format — ending call',
+        { callId: session.callId, provider: session.provider, encoding: parsed.encoding, rate: parsed.rate },
+        'Carrier start with unsupported media format — ending call',
       );
       this.endCall(session.callId, {
         status: 'failed',
@@ -1421,8 +1409,7 @@ export class WebRtcBridgeManager {
     }
 
     // Capture the carrier's real ids (distinct from our dial-time correlation id).
-    const carrierCallId = start.call_sid || data.call_sid || null;
-    const streamId = start.stream_sid || data.stream_sid || null;
+    const { carrierCallId, streamId } = parsed;
     if (carrierCallId && !session.carrierCallId) {
       session.carrierCallId = carrierCallId;
       webrtcCallRepository
@@ -1433,11 +1420,11 @@ export class WebRtcBridgeManager {
 
     session.clearEndConfirmationTimer(); // cancel the start-timeout
     session.providerMediaReady = true;
-    // The negotiated stream is the connect/answer moment for VoiceLink.
+    // The negotiated stream is the connect/answer moment for such a carrier.
     this.anchorAnswer(session);
     log.info(
-      { callId: session.callId, carrierCallId, streamId },
-      'VoiceLink stream started (A-law 8kHz) — relay open',
+      { callId: session.callId, provider: session.provider, carrierCallId, streamId },
+      `Carrier stream started (${media.formatLabel}) — relay open`,
     );
     this.emitBridgedIfLive(session);
   }
@@ -1627,7 +1614,7 @@ export class WebRtcBridgeManager {
     if (!session || session.endHandled) return;
 
     // A provider with a real hangup API → finalize now.
-    if (session.provider !== 'voicelink') {
+    if (session.carrier?.answeredHangup !== 'close_media') {
       await this.endCall(callId, { ...intent, hangupProvider: true });
       return;
     }
