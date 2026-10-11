@@ -284,6 +284,27 @@ describe('telephony credentials (integration)', () => {
       expect(rows[0].telephony_credential_id).toBe(cred.id);
     });
 
+    it('sees a call insert that commits while the shred waits on the row lock', async () => {
+      const cred = await create();
+      await repo.revoke(cred.id, admin);
+      const dialer = await getTestPool().connect();
+      try {
+        await dialer.query('BEGIN');
+        // A dial resolved before the revoke, inserting its call row now: the foreign-key
+        // check holds a key-share lock on the credential row until commit.
+        await dialer.query(
+          `INSERT INTO agency_calls (tenant_id, account_id, caller_id, destination_phone, provider, status, telephony_credential_id)
+           VALUES ($1, $2, '+14155550100', '+14155550199', 'plivo', 'initiating', $3)`, [tenantA, randomUUID(), cred.id]);
+        const shredding = repo.shredIfIdle(cred.id);
+        await new Promise((r) => setTimeout(r, 200));
+        await dialer.query('COMMIT');
+        expect(await shredding).toBe(false);
+      } finally {
+        dialer.release();
+      }
+      expect(await repo.findOpenableSecrets(cred.id, 1e6)).toHaveLength(1);
+    });
+
     it('enforces the status invariants in the schema itself', async () => {
       const cred = await create();
       // revoked_at without revoked
