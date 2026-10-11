@@ -68,7 +68,8 @@ describe('App routing', () => {
     render(<App />);
     await screen.findByRole('heading', { name: 'Tenants' });
     const nav = screen.getAllByRole('link').map((a) => a.textContent?.trim());
-    expect(nav).toEqual(['Tenants', 'Users', 'Admins', 'Phone Numbers', 'Feature Flags', 'Usage', 'Audit Log']);
+    // Telephony Credentials: decision B20 (super-admins manage tenant carrier credentials).
+    expect(nav).toEqual(['Tenants', 'Users', 'Admins', 'Phone Numbers', 'Telephony Credentials', 'Feature Flags', 'Usage', 'Audit Log']);
   });
 
   it('shows the signed-in admin and unknown paths fall back to the tenants list', async () => {

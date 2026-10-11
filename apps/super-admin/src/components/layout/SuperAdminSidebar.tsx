@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { Building2, Users, ShieldCheck, ScrollText, Phone, BarChart3, Flag, X } from 'lucide-react';
+import { Building2, Users, ShieldCheck, ScrollText, Phone, BarChart3, Flag, KeyRound, X } from 'lucide-react';
 import { Logo } from '../common/Logo';
 import { brand } from '../../brand';
 import styles from './SuperAdminSidebar.module.css';
@@ -33,6 +33,7 @@ const NAV_SECTIONS: NavSection[] = [
     heading: 'Platform',
     items: [
       { label: 'Phone Numbers', to: '/phone-numbers', icon: Phone, end: false },
+      { label: 'Telephony Credentials', to: '/telephony-credentials', icon: KeyRound, end: false },
       { label: 'Feature Flags', to: '/feature-flags', icon: Flag, end: false },
     ],
   },

@@ -36,6 +36,16 @@ import type {
   UpdateAgencyAccountSettingsBody,
 } from '@magick-agency/contracts/api/platform/settings';
 import type { UsageCountsQuery, UsageCountsResponse } from '@magick-agency/contracts/api/platform/super-admin-usage';
+import type {
+  CreateTelephonyCredentialBody,
+  RotateTelephonyCredentialSecretBody,
+  TelephonyCredential,
+  TelephonyCredentialDetailResponse,
+  TelephonyCredentialProvidersResponse,
+  TelephonyCredentialResponse,
+  TelephonyCredentialsResponse,
+  UpdateTelephonyCredentialBody,
+} from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
 
 const SA_TOKEN_KEY = 'sa_token';
 const SA_BASE = `${API_BASE}/super-admin`;
@@ -470,4 +480,78 @@ export async function getTenantPhoneNumbers(tenantId: string): Promise<TenantPho
     `${SA_BASE}/tenants/${tenantId}/phone-numbers`,
   );
   return res.phone_numbers;
+}
+
+// ── Telephony credentials (per-tenant carrier accounts, BYOC) ─────────────
+//
+// The secret is write-only: these calls send it, nothing returns it (decision B20).
+
+export async function listTelephonyCredentialProviders(): Promise<TelephonyCredentialProvidersResponse> {
+  return saFetch<TelephonyCredentialProvidersResponse>(`${SA_BASE}/telephony-credential-providers`);
+}
+
+export async function listTelephonyCredentials(filters?: {
+  tenant_id?: string; provider?: string; include_revoked?: boolean;
+}): Promise<TelephonyCredential[]> {
+  const params = new URLSearchParams();
+  if (filters?.tenant_id) params.set('tenant_id', filters.tenant_id);
+  if (filters?.provider) params.set('provider', filters.provider);
+  if (filters?.include_revoked) params.set('include_revoked', 'true');
+  const qs = params.toString();
+  const res = await saFetch<TelephonyCredentialsResponse>(`${SA_BASE}/telephony-credentials${qs ? `?${qs}` : ''}`);
+  return res.credentials;
+}
+
+export async function getTelephonyCredential(id: string): Promise<TelephonyCredentialDetailResponse> {
+  return saFetch<TelephonyCredentialDetailResponse>(`${SA_BASE}/telephony-credentials/${id}`);
+}
+
+export async function createTelephonyCredential(data: CreateTelephonyCredentialBody): Promise<TelephonyCredential> {
+  const res = await saFetch<TelephonyCredentialResponse>(`${SA_BASE}/telephony-credentials`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  return res.credential;
+}
+
+export async function renameTelephonyCredential(id: string, data: UpdateTelephonyCredentialBody): Promise<TelephonyCredential> {
+  const res = await saFetch<TelephonyCredentialResponse>(`${SA_BASE}/telephony-credentials/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+  return res.credential;
+}
+
+export async function rotateTelephonyCredentialSecret(id: string, data: RotateTelephonyCredentialSecretBody): Promise<TelephonyCredential> {
+  const res = await saFetch<TelephonyCredentialResponse>(`${SA_BASE}/telephony-credentials/${id}/secret`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+  return res.credential;
+}
+
+async function credentialAction(id: string, action: 'verify' | 'disable' | 'enable' | 'revoke'): Promise<TelephonyCredential> {
+  const res = await saFetch<TelephonyCredentialResponse>(`${SA_BASE}/telephony-credentials/${id}/${action}`, {
+    method: 'POST',
+  });
+  return res.credential;
+}
+
+/** Re-ask the carrier with the stored secret; a refusal marks it invalid. */
+export async function verifyTelephonyCredential(id: string): Promise<TelephonyCredential> {
+  return credentialAction(id, 'verify');
+}
+
+/** No new dials; calls in flight still hang up. */
+export async function disableTelephonyCredential(id: string): Promise<TelephonyCredential> {
+  return credentialAction(id, 'disable');
+}
+
+export async function enableTelephonyCredential(id: string): Promise<TelephonyCredential> {
+  return credentialAction(id, 'enable');
+}
+
+/** Terminal. Refused while a campaign dials on it. */
+export async function revokeTelephonyCredential(id: string): Promise<TelephonyCredential> {
+  return credentialAction(id, 'revoke');
 }
