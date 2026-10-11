@@ -15,6 +15,7 @@ import { superAdminPhoneRoutes } from './routes/super-admin-phone.routes.js';
 import { superAdminFeatureFlagsRoutes } from './routes/super-admin-feature-flags.routes.js';
 import { superAdminUsageCountsRoutes } from './routes/super-admin-usage-counts.routes.js';
 import { superAdminAccountSettingsRoutes } from './routes/super-admin-account-settings.routes.js';
+import { superAdminTelephonyCredentialRoutes } from './routes/super-admin-telephony-credentials.routes.js';
 
 /**
  * Every prefix the platform plugin registers a route plugin under. The route-table tests
@@ -80,5 +81,6 @@ export const platformPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = as
     await app.register(superAdminFeatureFlagsRoutes, { prefix: P.superAdmin });
     await app.register(superAdminUsageCountsRoutes, { prefix: P.superAdmin });
     await app.register(superAdminAccountSettingsRoutes, { prefix: P.superAdmin });
+    await app.register(superAdminTelephonyCredentialRoutes, { prefix: P.superAdmin });
   }
 };

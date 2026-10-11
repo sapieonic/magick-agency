@@ -26,7 +26,7 @@ describe('CredentialSealer', () => {
   it('round-trips a secret and never stores it in the clear', async () => {
     const s = sealer();
     const sealed = await s.seal(SECRET, CTX);
-    expect(sealed.kekId).toBe('v1');
+    expect(sealed.kekId).toBe('env:v1');
     expect(sealed.ciphertext.toString('latin1')).not.toContain('tok_canary');
     expect(sealed.wrappedDek.length).toBe(12 + 32 + 16);
     expect(await s.open(sealed, CTX)).toEqual(SECRET);
@@ -72,14 +72,18 @@ describe('CredentialSealer', () => {
     const s = sealer();
     const sealed = await s.seal(SECRET, CTX);
     await expect(s.open({ ...sealed, ciphertext: Buffer.alloc(10) }, CTX)).rejects.toBeInstanceOf(CredentialSealError);
-    await expect(s.open({ ...sealed, kekId: 'v9' }, CTX)).rejects.toBeInstanceOf(CredentialSealError);
+    await expect(s.open({ ...sealed, kekId: 'env:v9' }, CTX)).rejects.toBeInstanceOf(CredentialSealError);
+    // A bare id without its scheme is not a key this wrapper holds.
+    await expect(s.open({ ...sealed, kekId: 'v1' }, CTX)).rejects.toBeInstanceOf(CredentialSealError);
   });
 
   it('opens a row sealed under a retired-but-listed key after rotation, and seals new ones under the active key', async () => {
     const old = await sealer(`v1:${k1}`, 'v1').seal(SECRET, CTX);
     const rotated = sealer(`v1:${k1},v2:${k2}`, 'v2');
     expect(await rotated.open(old, CTX)).toEqual(SECRET);
-    expect((await rotated.seal(SECRET, CTX)).kekId).toBe('v2');
+    expect((await rotated.seal(SECRET, CTX)).kekId).toBe('env:v2');
+    expect(rotated.canUnwrap('env:v1')).toBe(true);
+    expect(rotated.canUnwrap('v1')).toBe(false);
     // Once v1 is dropped from the keyring, its rows no longer open.
     await expect(sealer(`v2:${k2}`, 'v2').open(old, CTX)).rejects.toBeInstanceOf(CredentialSealError);
   });

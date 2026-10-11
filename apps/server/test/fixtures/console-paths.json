@@ -1014,31 +1014,32 @@
       "method": "GET",
       "path": "/super-admin/tenants/:id/telephony-credentials",
       "status": "not_served",
-      "reason": "super-admin telephony providers / credentials / BYOC: not served (out of scope)"
+      "reason": "older BYOC credential shape: not served; credentials are managed under /super-admin/telephony-credentials (decision B20)"
     },
     {
       "method": "POST",
       "path": "/super-admin/tenants/:id/telephony-credentials",
       "status": "not_served",
-      "reason": "super-admin telephony providers / credentials / BYOC: not served (out of scope)"
+      "reason": "older BYOC credential shape: not served; credentials are managed under /super-admin/telephony-credentials (decision B20)"
     },
     {
       "method": "PUT",
       "path": "/super-admin/telephony-credentials/:id",
       "status": "not_served",
-      "reason": "super-admin telephony providers / credentials / BYOC: not served (out of scope)"
+      "reason": "older BYOC credential shape: not served; credentials are managed under /super-admin/telephony-credentials (decision B20)"
     },
     {
       "method": "DELETE",
       "path": "/super-admin/telephony-credentials/:id",
       "status": "not_served",
-      "reason": "super-admin telephony providers / credentials / BYOC: not served (out of scope) (also ?force=true)"
+      "reason": "older BYOC credential shape: not served; credentials are managed under /super-admin/telephony-credentials (decision B20) (also ?force=true)"
     },
     {
       "method": "POST",
       "path": "/super-admin/telephony-credentials/:id/verify",
-      "status": "not_served",
-      "reason": "super-admin telephony providers / credentials / BYOC: not served (out of scope)"
+      "source": "apps/super-admin/src/api/super-admin.ts",
+      "status": "served",
+      "reason": "per-tenant carrier credentials (decisions B18-B22): re-verify a stored credential with its carrier"
     },
     {
       "method": "GET",

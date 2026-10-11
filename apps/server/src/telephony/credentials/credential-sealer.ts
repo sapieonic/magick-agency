@@ -31,10 +31,16 @@ export class CredentialSealError extends Error {
   }
 }
 
-/** Wraps and unwraps data keys under a master key. */
+/**
+ * Wraps and unwraps data keys under a master key. Key ids are scheme-prefixed
+ * (`env:v1`; a KMS wrapper would use its own prefix), and the wrapped blob is opaque,
+ * so a different wrap scheme fits the same columns.
+ */
 export interface KeyWrapper {
-  /** The key id new seals use. */
+  /** The (scheme-prefixed) key id new seals use. */
   readonly activeKeyId: string;
+  /** Whether this wrapper can unwrap under a key id (a boot-time keyring check). */
+  canUnwrap(kekId: string): boolean;
   wrap(dek: Buffer, aad: Buffer): Promise<{ kekId: string; wrapped: Buffer }>;
   unwrap(kekId: string, wrapped: Buffer, aad: Buffer): Promise<Buffer>;
 }
@@ -87,23 +93,29 @@ export function sealAad(ctx: SealContext, layer: 'secret' | 'dek'): Buffer {
   }));
 }
 
-/** The env keyring (`TELEPHONY_CREDENTIAL_KEYS`) as a `KeyWrapper`. */
+const ENV_SCHEME = 'env:';
+
+/**
+ * The env keyring (`TELEPHONY_CREDENTIAL_KEYS`) as a `KeyWrapper`. Keys are listed
+ * as `v1:<base64>`; rows record them as `env:v1`.
+ */
 export class EnvKeyringWrapper implements KeyWrapper {
   private readonly keys: Map<string, Buffer>;
+  readonly activeKeyId: string;
 
-  constructor(keyring: string, readonly activeKeyId: string) {
+  constructor(keyring: string, activeKeyId: string) {
+    this.activeKeyId = ENV_SCHEME + activeKeyId;
     this.keys = new Map();
     for (const entry of keyring.split(',').map((s) => s.trim()).filter(Boolean)) {
       const sep = entry.indexOf(':');
       const key = Buffer.from(entry.slice(sep + 1), 'base64');
       if (sep <= 0 || key.length !== KEY_BYTES) throw new Error('Invalid telephony credential keyring entry');
-      this.keys.set(entry.slice(0, sep), key);
+      this.keys.set(ENV_SCHEME + entry.slice(0, sep), key);
     }
-    if (!this.keys.has(activeKeyId)) throw new Error('Active telephony credential key is not in the keyring');
+    if (!this.keys.has(this.activeKeyId)) throw new Error('Active telephony credential key is not in the keyring');
   }
 
-  /** Whether a key id is still in the keyring (rows sealed under a retired id cannot open). */
-  has(kekId: string): boolean {
+  canUnwrap(kekId: string): boolean {
     return this.keys.has(kekId);
   }
 
@@ -123,6 +135,10 @@ export class CredentialSealer {
 
   get activeKeyId(): string {
     return this.wrapper.activeKeyId;
+  }
+
+  canUnwrap(kekId: string): boolean {
+    return this.wrapper.canUnwrap(kekId);
   }
 
   async seal(secret: Record<string, unknown>, ctx: SealContext): Promise<SealedSecret> {

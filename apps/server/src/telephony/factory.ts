@@ -1,25 +1,47 @@
-// VoiceLink is the only carrier, so `buildProviderConfig` and `instantiate` have only
-// a `voicelink` case; any other name throws `Unknown telephony provider: <name>`.
-// There is no per-tenant carrier credential (BYOC) store, so `getForCredentialId`
-// with a non-null id throws `ByocCredentialUnavailableError`.
+// Two kinds of adapter. The service's own carrier accounts (VoiceLink) are built from
+// env by `buildProviderConfig` + `instantiate`; any other name there throws `Unknown
+// telephony provider: <name>`. A tenant's own carrier account (BYOC, decision B18) is
+// built by `BYOC_ADAPTERS` from a credential the credential service resolves; no BYOC
+// adapter is registered yet (Plivo's lands with its adapter), so such a credential
+// resolves and then throws `ByocCredentialUnavailableError`.
 import type { TelephonyProvider } from './types.js';
 import type { AppConfig } from '../config/index.js';
 import { VoicelinkAdapter } from './voicelink/voicelink.adapter.js';
+import type { ResolvedCredential, ResolvePurpose } from './credentials/credential-service.js';
 
 /**
- * Thrown when a call carries a carrier credential id that cannot be resolved.
- * No credential store exists here, so every non-null id throws.
+ * Thrown when a call carries a carrier credential id that cannot be resolved: no
+ * credential store, an unknown / disabled / revoked / unopenable credential, one of
+ * another provider, or a provider with no BYOC adapter.
  *
  * Fatal by design. The alternative is a hangup or a recording fetch issued
  * against the service's own carrier account for a call it has never heard of,
  * which fails anyway but reports the wrong cause.
  */
 export class ByocCredentialUnavailableError extends Error {
-  constructor(readonly credentialId: string) {
-    super(`Telephony credential ${credentialId} could not be resolved`);
+  constructor(readonly credentialId: string, readonly reason?: string) {
+    super(`Telephony credential ${credentialId} could not be resolved${reason ? `: ${reason}` : ''}`);
     this.name = 'ByocCredentialUnavailableError';
   }
 }
+
+/** What the registry needs from the credential service. */
+export interface CredentialResolver {
+  resolve(credentialId: string, purpose: ResolvePurpose): Promise<ResolvedCredential>;
+}
+
+/** Builds an adapter on a tenant's own carrier account. */
+export type ByocAdapterFactory = (credential: ResolvedCredential, config: AppConfig) => TelephonyProvider;
+
+/**
+ * BYOC adapters by provider name. **Adding a BYOC carrier means adding its factory
+ * here**, its credential spec (`credentials/credential-specs.ts`) and its carrier
+ * module (`carrier-modules.ts`).
+ */
+const BYOC_ADAPTERS: ReadonlyMap<string, ByocAdapterFactory> = new Map();
+
+/** How many BYOC adapters the process keeps (one per credential version in use). */
+const BYOC_CACHE_MAX = 256;
 
 /**
  * Map a provider name onto the config shape the adapter constructor takes.
@@ -65,12 +87,23 @@ function createProviderInstance(providerName: string, config: AppConfig): Teleph
  * name.
  */
 export class TelephonyProviderRegistry {
-  /** Adapters, keyed by provider name. At most one per provider. */
+  /** Adapters on the service's own accounts, keyed by provider name. At most one per provider. */
   private providers = new Map<string, TelephonyProvider>();
+  /** BYOC adapters, keyed `credentialId:secretVersion`, so a rotation is never served stale. */
+  private byoc = new Map<string, TelephonyProvider>();
   private readonly config: AppConfig;
+  private readonly credentials: (() => CredentialResolver) | null;
+  private readonly byocAdapters: ReadonlyMap<string, ByocAdapterFactory>;
 
-  constructor(config: AppConfig) {
+  constructor(config: AppConfig, opts: {
+    /** Lazy, so building a registry never builds the credential service. */
+    credentials?: () => CredentialResolver;
+    /** Tests only: replaces `BYOC_ADAPTERS`. */
+    byocAdapters?: ReadonlyMap<string, ByocAdapterFactory>;
+  } = {}) {
     this.config = config;
+    this.credentials = opts.credentials ?? null;
+    this.byocAdapters = opts.byocAdapters ?? BYOC_ADAPTERS;
   }
 
   /**
@@ -95,18 +128,46 @@ export class TelephonyProviderRegistry {
   }
 
   /**
-   * The post-dial entry point: the adapter for the credential a call was pinned
-   * to. A null id means the call ran on the service's own carrier account (every
-   * call here), so it resolves to that adapter.
+   * The adapter for the credential a call is pinned to. A null id means the call
+   * runs on the service's own carrier account, so it resolves to that adapter.
    *
-   * @throws ByocCredentialUnavailableError for a non-null id. Never substitutes
-   *   the service's own account for a missing credential.
+   * `purpose` decides which credential statuses may serve (see `ResolvePurpose`):
+   * `call_control` (the default: hangup, cancel, webhook checks for a placed call)
+   * is served by a disabled credential too, `dial` only by an active one. The
+   * credential row is read on every call; only the adapter is cached.
+   *
+   * @throws ByocCredentialUnavailableError for a non-null id that cannot serve.
+   *   Never substitutes the service's own account for a missing credential.
    */
-  async getForCredentialId(providerName: string, credentialId: string | null): Promise<TelephonyProvider> {
+  async getForCredentialId(
+    providerName: string,
+    credentialId: string | null,
+    purpose: ResolvePurpose = 'call_control',
+  ): Promise<TelephonyProvider> {
     if (!credentialId) return this.get(providerName);
-    // A pinned id with no store to resolve it against is NOT the service's own
-    // account — substituting it would issue the hangup against the wrong
-    // carrier and report the wrong cause.
-    throw new ByocCredentialUnavailableError(credentialId);
+    // A pinned id that cannot be resolved is NOT the service's own account —
+    // substituting it would issue the hangup against the wrong carrier and report
+    // the wrong cause.
+    if (!this.credentials) throw new ByocCredentialUnavailableError(credentialId, 'no credential store');
+    let resolved: ResolvedCredential;
+    try {
+      resolved = await this.credentials().resolve(credentialId, purpose);
+    } catch (err) {
+      throw new ByocCredentialUnavailableError(credentialId, err instanceof Error ? err.message : 'unresolvable');
+    }
+    if (resolved.provider !== providerName) {
+      throw new ByocCredentialUnavailableError(credentialId, `credential is for ${resolved.provider}, not ${providerName}`);
+    }
+    const key = `${resolved.id}:${resolved.version}`;
+    const cached = this.byoc.get(key);
+    if (cached) return cached;
+    const factory = this.byocAdapters.get(providerName);
+    if (!factory) throw new ByocCredentialUnavailableError(credentialId, `no BYOC adapter for ${providerName}`);
+    const adapter = factory(resolved, this.config);
+    // Drop superseded versions of this credential, then bound the cache.
+    for (const k of [...this.byoc.keys()]) if (k.startsWith(`${resolved.id}:`)) this.byoc.delete(k);
+    if (this.byoc.size >= BYOC_CACHE_MAX) this.byoc.delete(this.byoc.keys().next().value!);
+    this.byoc.set(key, adapter);
+    return adapter;
   }
 }

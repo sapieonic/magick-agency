@@ -15,6 +15,7 @@ import type WebSocket from 'ws';
 import { config } from '../config/index.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { TelephonyProviderRegistry } from '../telephony/factory.js';
+import { getTelephonyCredentialService } from '../telephony/credentials/index.js';
 import { WebhookUrlBuilder } from './webhook-url-builder.js';
 import { readTtsPcm } from '../tts/tts-file-cache.js';
 import { PacedAudioStreamer, type PacedStreamSink } from './paced-audio-streamer.js';
@@ -290,7 +291,7 @@ export class WebRtcBridgeManager {
     private readonly guardHost: TelephonyGuardHost,
     private readonly redis: Redis | null,
   ) {
-    this.telephonyRegistry = new TelephonyProviderRegistry(config);
+    this.telephonyRegistry = new TelephonyProviderRegistry(config, { credentials: getTelephonyCredentialService });
     this.keyPrefix = config.redis.keyPrefix;
   }
 
