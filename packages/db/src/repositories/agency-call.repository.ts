@@ -11,8 +11,10 @@ import type {
 /*
  * Notes on this repository:
  *  - every statement targets `agency_calls` (the baseline's rename of `webrtc_calls`);
- *  - `telephony_credential_id` (BYOC) and `sip_connection_id` (SIP) are gone from
- *    the INSERT and the list projection, as the baseline dropped the columns;
+ *  - `sip_connection_id` (SIP) is gone, as the baseline dropped the column;
+ *    `telephony_credential_id` (BYOC, 0002) is written once at INSERT and never
+ *    updated (a call keeps the credential it dialled on); `provider_request_id` is
+ *    updatable;
  *  - the default `provider` is `'voicelink'` (VoBiz is deleted; the baseline's
  *    column default is `'voicelink'` too);
  *  - `WebRtcCallScope` is `'agency'` only, and `analysisFlagFor` returns
@@ -52,7 +54,7 @@ import type {
 
 /** Columns the generic `update()` may write — allow-list guards against unexpected keys. */
 const WEBRTC_UPDATABLE_COLUMNS: ReadonlySet<string> = new Set([
-  'provider_call_id', 'status', 'outcome', 'error_code', 'error_message',
+  'provider_call_id', 'provider_request_id', 'status', 'outcome', 'error_code', 'error_message',
   'recording_url', 'recording_duration_seconds',
   'answered_at', 'ended_at', 'duration_seconds', 'talk_time_seconds',
   // Mutable analysis columns (the runner writes these). analysis_profile_id /
@@ -151,8 +153,8 @@ export class WebRtcCallRepository {
         (tenant_id, account_id, caller_id, destination_phone, provider,
          initiated_by, metadata, recording_requested,
          analysis_profile_id, analysis_language, analysis_consent, analysis_consent_at,
-         campaign_id, agency_attempt_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         campaign_id, agency_attempt_id, telephony_credential_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING *`,
       [
         input.tenant_id,
@@ -169,6 +171,7 @@ export class WebRtcCallRepository {
         input.analysis_consent_at ?? null,
         input.campaign_id ?? null,
         input.agency_attempt_id ?? null,
+        input.telephony_credential_id ?? null,
       ],
     );
     return result.rows[0]!;

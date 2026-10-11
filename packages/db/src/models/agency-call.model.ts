@@ -5,9 +5,9 @@
 //
 // The table is `agency_calls` (the baseline's rename of `webrtc_calls`); the
 // WebRtc* type names are kept so the bridge and the runtime import them
-// (docs/seams.md). `telephony_credential_id` (BYOC) and `sip_connection_id`
-// (SIP) are dropped from the record and the create input, as the baseline
-// dropped the columns.
+// (docs/seams.md). `sip_connection_id` (SIP) is dropped from the record and the
+// create input, as the baseline dropped the column. `telephony_credential_id`
+// (BYOC) and `provider_request_id` came back in 0002_telephony_credentials.sql.
 
 import type { CallAnalysisResult } from './call.model.js';
 
@@ -86,6 +86,16 @@ export interface WebRtcCallRecord {
   destination_phone: string;
   provider: string;
   provider_call_id: string | null;
+  /**
+   * The carrier's id for the dial REQUEST when it differs from the call id (Plivo:
+   * `request_uuid`, the only id that cancels a ringing call). Null otherwise.
+   */
+  provider_request_id: string | null;
+  /**
+   * The tenant carrier credential the call was placed on, pinned at dial time and
+   * immutable (decision B20). Null = the service's own VoiceLink account.
+   */
+  telephony_credential_id: string | null;
   status: WebRtcCallStatus;
   outcome: string | null;
   error_code: string | null;
@@ -140,6 +150,8 @@ export interface CreateWebRtcCallInput {
   caller_id: string;
   destination_phone: string;
   provider?: string;
+  /** Pinned at intake, immutable after; null = the service's own VoiceLink account. */
+  telephony_credential_id?: string | null;
   initiated_by?: string | null;
   metadata?: Record<string, unknown>;
   recording_requested?: boolean;
@@ -155,6 +167,7 @@ export interface CreateWebRtcCallInput {
 
 export interface UpdateWebRtcCallInput {
   provider_call_id?: string | null;
+  provider_request_id?: string | null;
   status?: WebRtcCallStatus;
   outcome?: string | null;
   error_code?: string | null;
