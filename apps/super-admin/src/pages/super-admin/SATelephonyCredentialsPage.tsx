@@ -477,7 +477,7 @@ export default function SATelephonyCredentialsPage() {
         title={confirm?.action === 'revoke' ? 'Revoke credential?' : 'Disable credential?'}
         message={
           confirm?.action === 'revoke'
-            ? `“${confirm.cred.label}” stops dialling for good, and its secret is destroyed once its live calls end. Earlier recordings on it can no longer be played. Campaigns still dialling on it must be moved first.`
+            ? `“${confirm.cred.label}” stops dialling for good, and its secret is destroyed two hours after its last call ends, once the carrier’s late callbacks are in. Earlier recordings on it can no longer be played. Campaigns still dialling on it must be moved first.`
             : `“${confirm?.cred.label ?? ''}” stops placing new calls. Calls already in progress finish normally. You can enable it again.`
         }
         confirmLabel={confirm?.action === 'revoke' ? 'Revoke' : 'Disable'}

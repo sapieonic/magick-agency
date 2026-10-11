@@ -283,8 +283,10 @@ export class TelephonyCredentialService {
 
   /**
    * Revoke (terminal). Refused while a live campaign is pinned to it (checked again
-   * in the revoking statement, under a row lock): move the campaigns first. Calls already in flight keep hanging up on it; the secrets are shredded as
-   * soon as none is left (here, or by the sweep).
+   * in the revoking statement, under a row lock): move the campaigns first. Calls
+   * already placed keep hanging up and checking webhooks on it; the secrets are
+   * shredded once none is in flight and the last ended more than the post-call
+   * webhook window ago (`WEBHOOK_TOKEN_POST_END_GRACE_SECONDS`), here or by the sweep.
    */
   async revoke(id: string, adminId: string): Promise<ServiceResult<{ credential: TelephonyCredentialRecord; shredded: boolean }>> {
     const current = await this.deps.repo.findById(id);
