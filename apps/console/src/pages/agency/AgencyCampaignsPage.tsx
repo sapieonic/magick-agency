@@ -16,7 +16,12 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import { listAgencyCampaignsPage, getAgencyCampaignStats } from '../../api/agencyCampaigns';
+import {
+  getAgencyCampaign,
+  listAgencyCampaigns,
+  listAgencyCampaignsPage,
+  getAgencyCampaignStats,
+} from '../../api/agencyCampaigns';
 import { hasPermission, type Permission } from '../../utils/permissions';
 import { mapWithConcurrency } from '../../utils/concurrency';
 import { listWorkedRing } from '../../utils/agencyCampaignOverview';
@@ -55,6 +60,11 @@ import styles from './AgencyCampaignsPage.module.css';
  *  - **All campaigns**: the list, grouped by filter tabs whose counts double as
  *    the account's summary, with a name search once the list is long enough to
  *    need one, and older campaigns a page at a time.
+ *
+ * The two are read separately. The history is paged, newest first; the active
+ * campaigns are read in full with the list's `status` filter, because any
+ * number can be paused and an old one would otherwise sit unseen on a page
+ * nobody loaded, while the card section said nothing was dialing.
  *  - **The rail**: the workspace's other destinations and the three rules every
  *    supervisor trips on once. On a wide screen it sits beside the list; on a
  *    narrow one it drops below it.
@@ -73,6 +83,9 @@ const REFRESH_MS = 10_000;
 
 /** Rows per request; the server caps `limit` at 100. */
 const PAGE_SIZE = 100;
+
+/** Every started-and-not-finished status: the ones read in full, however old. */
+const ACTIVE_STATUSES = ['running', 'stopping', 'paused'];
 
 /** Below this many campaigns the tabs are enough, and a search box is clutter. */
 const SEARCH_THRESHOLD = 6;
@@ -94,12 +107,18 @@ function readyStats(state: StatsState | undefined): AgencyCampaignStats | null {
 }
 
 /**
- * A poll's first page laid over the rows already on screen.
+ * A poll's first page laid over the history already on screen.
  *
- * Without older pages loaded, the first page simply replaces the list. With
- * them, rows the poll did not return are kept after it: a campaign created since
+ * Without older pages loaded, the first page simply replaces it. With them,
+ * rows the poll did not return are kept after it: a campaign created since
  * pushes the last row of page one onto page two, and dropping it would make a
  * campaign disappear for no reason the supervisor can see.
+ *
+ * That reasoning rests on campaigns never being deleted (there is no delete
+ * route), so a row missing from page one has moved down, not gone. It is also
+ * why the history's length is a safe offset for the next page: inserts only
+ * push rows down, so a later page can repeat a row already held (dropped by id)
+ * but never skip one.
  */
 function mergeFirstPage(prev: AgencyCampaign[] | null, page: AgencyCampaign[]): AgencyCampaign[] {
   if (!prev || prev.length <= PAGE_SIZE) return page;
@@ -107,9 +126,28 @@ function mergeFirstPage(prev: AgencyCampaign[] | null, page: AgencyCampaign[]): 
   return [...page, ...prev.filter((c) => !ids.has(c.id))];
 }
 
+/**
+ * The history with every active campaign in it. An active campaign's row from
+ * the active read replaces its history row, and one older than the loaded
+ * pages is added, so the cards, the Active tab and the list all agree.
+ */
+function withActive(history: AgencyCampaign[], live: AgencyCampaign[]): AgencyCampaign[] {
+  const byId = new Map(live.map((c) => [c.id, c]));
+  const merged = history.map((c) => byId.get(c.id) ?? c);
+  const held = new Set(history.map((c) => c.id));
+  return [...merged, ...live.filter((c) => !held.has(c.id))];
+}
+
+function isActive(c: AgencyCampaign): boolean {
+  return campaignGroup(c.status) === 'active';
+}
+
 export function AgencyCampaignsPage() {
   const { tenantId, accountId, role, accounts } = useTenant();
-  const [campaigns, setCampaigns] = useState<AgencyCampaign[] | null>(null);
+  /** The paged history, newest first. Its length is the next page's offset. */
+  const [history, setHistory] = useState<AgencyCampaign[] | null>(null);
+  /** Every active campaign, whatever page its history row is on. */
+  const [live, setLive] = useState<AgencyCampaign[]>([]);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -119,6 +157,8 @@ export function AgencyCampaignsPage() {
   const [filter, setFilter] = useState<CampaignFilter>('all');
   const [query, setQuery] = useState('');
 
+  const historyRef = useRef(history);
+  historyRef.current = history;
   const generation = useRef(0);
   /** Per campaign, the newest stats request. An older answer arriving later is dropped. */
   const statsSeq = useRef(new Map<string, number>());
@@ -145,8 +185,33 @@ export function AgencyCampaignsPage() {
       }
       try {
         const page = await listAgencyCampaignsPage(tenantId, accountId, 0, PAGE_SIZE);
+        // When the first page is the whole account, its active rows are all of
+        // them. Otherwise they are read in full. Filtered here as well, so a
+        // server that ignored `status` could not put a draft on a card.
+        const liveRows = (
+          page.total > page.campaigns.length
+            ? await listAgencyCampaigns(tenantId, accountId, ACTIVE_STATUSES)
+            : page.campaigns
+        ).filter(isActive);
+        // Only page one is re-read on a poll. A row on an older loaded page that
+        // still says active, but is missing from the complete active read, has
+        // finished since: re-read it, so it shows how it ended rather than a
+        // stale Paused. Usually there are none, and so no requests.
+        const liveIds = new Set(liveRows.map((c) => c.id));
+        const firstIds = new Set(page.campaigns.map((c) => c.id));
+        const stale = quiet
+          ? (historyRef.current ?? []).filter((c) => isActive(c) && !liveIds.has(c.id) && !firstIds.has(c.id))
+          : [];
+        const reread = await mapWithConcurrency(stale, (c) => getAgencyCampaign(c.id, tenantId, accountId));
+        const ended = new Map(
+          reread.flatMap((o) => (o.status === 'fulfilled' ? [[o.value.id, o.value] as const] : [])),
+        );
         if (!mounted.current || generation.current !== mine) return;
-        setCampaigns((prev) => (quiet ? mergeFirstPage(prev, page.campaigns) : page.campaigns));
+        setHistory((prev) => {
+          const next = quiet ? mergeFirstPage(prev, page.campaigns) : page.campaigns;
+          return ended.size > 0 ? next.map((c) => ended.get(c.id) ?? c) : next;
+        });
+        setLive(liveRows);
         setTotal(page.total);
       } catch (err: unknown) {
         // A failed poll keeps the list already on screen; only a full load has
@@ -166,14 +231,17 @@ export function AgencyCampaignsPage() {
   }, [load]);
 
   const loadMore = useCallback(async () => {
-    if (!tenantId || !accountId || !campaigns) return;
+    if (!tenantId || !accountId || !history) return;
     const mine = generation.current;
     setLoadingMore(true);
     setMoreError(null);
     try {
-      const page = await listAgencyCampaignsPage(tenantId, accountId, campaigns.length, PAGE_SIZE);
+      // The history's own length, never the merged list's: active campaigns
+      // added from the active read were not served by these pages, and counting
+      // them would skip as many rows.
+      const page = await listAgencyCampaignsPage(tenantId, accountId, history.length, PAGE_SIZE);
       if (!mounted.current || generation.current !== mine) return;
-      setCampaigns((prev) => {
+      setHistory((prev) => {
         const have = new Set((prev ?? []).map((c) => c.id));
         return [...(prev ?? []), ...page.campaigns.filter((c) => !have.has(c.id))];
       });
@@ -183,10 +251,11 @@ export function AgencyCampaignsPage() {
     } finally {
       if (mounted.current) setLoadingMore(false);
     }
-  }, [tenantId, accountId, campaigns]);
+  }, [tenantId, accountId, history]);
 
+  const campaigns = useMemo(() => (history ? withActive(history, live) : null), [history, live]);
   const sorted = useMemo(() => (campaigns ? sortCampaigns(campaigns) : []), [campaigns]);
-  const active = useMemo(() => sorted.filter((c) => campaignGroup(c.status) === 'active'), [sorted]);
+  const active = useMemo(() => sorted.filter(isActive), [sorted]);
   const activeIds = useRef<Set<string>>(new Set());
   activeIds.current = new Set(active.map((c) => c.id));
 
@@ -261,7 +330,7 @@ export function AgencyCampaignsPage() {
       tickBusy.current = true;
       try {
         const ids = sortedRef.current
-          .filter((c) => campaignGroup(c.status) === 'active')
+          .filter(isActive)
           .filter((c) => only === 'all' || needsPolling(c.status, readyStats(statsRef.current[c.id])))
           .map((c) => c.id);
         await Promise.all([load(true), fetchStats(ids)]);
@@ -302,7 +371,7 @@ export function AgencyCampaignsPage() {
   const accountName = accounts?.find((a) => a.id === accountId)?.name;
   const counts = useMemo(() => countCampaigns(sorted), [sorted]);
   const visible = useMemo(() => filterCampaigns(sorted, filter, query), [sorted, filter, query]);
-  const partial = sorted.length < total;
+  const partial = (history?.length ?? 0) < total;
 
   const isEmpty = !loading && campaigns?.length === 0;
   const hasCampaigns = (campaigns?.length ?? 0) > 0;
@@ -315,7 +384,7 @@ export function AgencyCampaignsPage() {
           <h1 className={styles.title}>Campaigns</h1>
           <p className={styles.subtitle}>
             {hasCampaigns
-              ? summaryLine(counts, total, partial)
+              ? summaryLine(counts, total, partial ? (history?.length ?? 0) : null)
               : 'Dial a list of contacts and connect every answered call to a live agent.'}
           </p>
         </div>
@@ -416,8 +485,8 @@ export function AgencyCampaignsPage() {
               {partial && (
                 <div className={styles.more}>
                   <p className={styles.moreText}>
-                    Showing the latest {sorted.length.toLocaleString()} of {total.toLocaleString()}.
-                    Tab counts and search cover the campaigns shown.
+                    Showing the latest {(history?.length ?? 0).toLocaleString()} of {total.toLocaleString()},
+                    and every active campaign. Tab counts and search cover the campaigns shown.
                   </p>
                   <button
                     type="button"
@@ -443,11 +512,16 @@ export function AgencyCampaignsPage() {
   );
 }
 
-function summaryLine(counts: CampaignCounts, total: number, partial: boolean): string {
+/** `shown` is how many of the history are loaded when that is not all of it, else null. */
+function summaryLine(counts: CampaignCounts, total: number, shown: number | null): string {
   const all = `${total.toLocaleString()} ${total === 1 ? 'campaign' : 'campaigns'}`;
-  // The per-group figures describe only the rows loaded, so with a partial list
-  // they would undercount; the line says what is shown instead.
-  if (partial) return `${all} · latest ${counts.all.toLocaleString()} shown`;
+  // Active campaigns are always read in full, so their count holds. The other
+  // groups describe only the rows loaded and would undercount; the line says
+  // what is shown instead.
+  if (shown !== null) {
+    const active = counts.active > 0 ? ` · ${counts.active} active` : '';
+    return `${all}${active} · latest ${shown.toLocaleString()} shown`;
+  }
   const parts = [
     counts.active > 0 ? `${counts.active} active` : null,
     counts.draft > 0 ? `${counts.draft} ${counts.draft === 1 ? 'draft' : 'drafts'}` : null,

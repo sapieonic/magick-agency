@@ -134,6 +134,13 @@ describe('needsPolling', () => {
     ).toBe(true);
   });
 
+  it('counts agents_live as the floor when the payload carries no roster', () => {
+    expect(needsPolling('paused', { attempts_live: 0, agents_live: 3 })).toBe(true);
+    expect(needsPolling('paused', { attempts_live: 0, agents_live: 0 })).toBe(false);
+    // A roster, when present, is the answer: an empty one is "nobody here".
+    expect(needsPolling('paused', { attempts_live: 0, agents: [], agents_live: 3 })).toBe(false);
+  });
+
   it('leaves a settled paused campaign alone, and one whose stats have not loaded', () => {
     expect(needsPolling('paused', { attempts_live: 0, agents: [] })).toBe(false);
     expect(needsPolling('paused', null)).toBe(false);

@@ -35,21 +35,27 @@ export function campaignGroup(status: string): CampaignGroup {
 }
 
 /**
- * Whether an active campaign's card should keep refreshing.
+ * Whether a campaign's live numbers should keep refreshing.
  *
- * The same predicate as the campaign detail page, for the same reason: status
- * alone is wrong. A paused campaign still has calls draining and agents whose
- * state changes, and a card keyed on status froze the moment Pause was pressed.
- * So it is the status, OR live attempts, OR anyone on the floor. A paused
- * campaign with none of those is read once and left alone, which is what keeps
- * an account with many paused campaigns from polling all of them.
+ * Used by this page's cards and by the campaign detail page, so the two cannot
+ * disagree. Status alone is wrong: a paused campaign still has calls draining
+ * and agents whose state changes, and a card keyed on status froze the moment
+ * Pause was pressed. So it is the status, OR live attempts, OR anyone on the
+ * floor. A paused campaign with none of those is read once and left alone,
+ * which is what keeps an account with many paused campaigns from polling all of
+ * them.
+ *
+ * "Anyone on the floor" is the roster when the payload carries one, and
+ * `agents_live` when it does not: `agents` is optional on the wire, and
+ * `undefined` there means "no roster in this payload", not "nobody here".
  */
 export function needsPolling(
   status: string,
-  stats: Pick<AgencyCampaignStats, 'attempts_live' | 'agents'> | null,
+  stats: Pick<AgencyCampaignStats, 'attempts_live' | 'agents' | 'agents_live'> | null,
 ): boolean {
   if (status === 'running' || status === 'stopping') return true;
-  return (stats?.attempts_live ?? 0) > 0 || (stats?.agents?.length ?? 0) > 0;
+  const onFloor = stats?.agents ? stats.agents.length : (stats?.agents_live ?? 0);
+  return (stats?.attempts_live ?? 0) > 0 || onFloor > 0;
 }
 
 export type CampaignFilter = 'all' | 'active' | 'draft' | 'finished';

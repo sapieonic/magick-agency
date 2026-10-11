@@ -61,6 +61,11 @@ Re-run on 2026-10-11, after the brand logo and favicon (B17 amended): `apps/cons
 Re-run on 2026-10-11, after the campaigns landing page redesign and reading the campaign list
 past its first page (analytics): `apps/console` lint clean, 4433 unit (221 files), build OK.
 
+Re-run on 2026-10-11, after the campaign list's `status` filter (the campaigns home reads every
+active campaign, however old): `apps/console` lint clean, 4440 unit (221 files); `apps/server`
+lint clean, 6512 of 6513 unit (308 files), the one failure being the branding guard reading an
+uncommitted local file; integration re-run for `repository-sql-coverage.test.ts` only (12).
+
 CI (`.github/workflows/ci.yml`) runs lint, unit and build in one job, and the integration suites
 against Postgres 16 and Redis 7 service containers on the same ports in another. Per-module test
 files are listed in [`modules.md`](modules.md).

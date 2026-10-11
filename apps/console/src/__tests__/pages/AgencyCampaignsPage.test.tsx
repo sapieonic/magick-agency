@@ -15,19 +15,25 @@ import { MemoryRouter } from 'react-router-dom';
  *    settled one is left alone; a failed refresh keeps the last good numbers; a
  *    hidden tab skips the tick; unmounting stops it;
  *  - the list is paginated server-side, so the header counts the account's real
- *    total and older campaigns load on request;
+ *    total and older campaigns load on request; active campaigns are read in
+ *    full on their own, so an old paused one still gets its card, and the next
+ *    page's offset counts only the paged history;
  *  - the filter tabs, the search box and the rail's permission gates.
  */
 
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
   listAgencyCampaignsPage: vi.fn(),
+  listAgencyCampaigns: vi.fn(),
+  getAgencyCampaign: vi.fn(),
   getAgencyCampaignStats: vi.fn(),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../api/agencyCampaigns', () => ({
   listAgencyCampaignsPage: mocks.listAgencyCampaignsPage,
+  listAgencyCampaigns: mocks.listAgencyCampaigns,
+  getAgencyCampaign: mocks.getAgencyCampaign,
   getAgencyCampaignStats: mocks.getAgencyCampaignStats,
 }));
 
@@ -99,6 +105,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.useTenant.mockReturnValue(tenant());
   mocks.getAgencyCampaignStats.mockResolvedValue(stats());
+  mocks.listAgencyCampaigns.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -211,11 +218,13 @@ describe('AgencyCampaignsPage — refreshing the cards', () => {
     const draining: AgencyCampaign = { id: 'c-drain', name: 'Draining', status: 'paused' };
     mocks.listAgencyCampaignsPage.mockResolvedValue(listing([draining, PAUSED]));
     mocks.getAgencyCampaignStats.mockImplementation(async (id: string) =>
-      id === 'c-drain' ? stats({ attempts_live: 2, agents_live: 9 }) : stats({ attempts_live: 0, agents_live: 4 }),
+      id === 'c-drain'
+        ? stats({ attempts_live: 2, agents_live: 9 })
+        : stats({ attempts_live: 0, agents_live: 0, attempts_connected: 17 }),
     );
     renderPage();
     await settle('Draining', '9');
-    await settle('Gold loan pilot', '4');
+    await settle('Gold loan pilot', '17');
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10_000);
@@ -223,6 +232,21 @@ describe('AgencyCampaignsPage — refreshing the cards', () => {
 
     expect(statsCallsFor('c-drain')).toBe(2);
     expect(statsCallsFor('c-paused')).toBe(1);
+  });
+
+  it('keeps following a drained paused campaign when a payload without the roster says agents are on it', async () => {
+    vi.useFakeTimers();
+    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([PAUSED]));
+    // `agents` is optional on the wire; `agents_live` is still the total.
+    mocks.getAgencyCampaignStats.mockResolvedValue(stats({ attempts_live: 0, agents: undefined, agents_live: 2 }));
+    renderPage();
+    await settle('Gold loan pilot', '2');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+
+    expect(statsCallsFor('c-paused')).toBe(2);
   });
 
   it('does not poll at all when nothing is moving', async () => {
@@ -362,6 +386,63 @@ describe('AgencyCampaignsPage — the list', () => {
     await waitFor(() => expect(screen.getByText('Oldest campaign')).toBeTruthy());
     expect(mocks.listAgencyCampaignsPage).toHaveBeenLastCalledWith('tenant-1', 'account-1', 100, 100);
     expect(screen.queryByRole('button', { name: 'Show older campaigns' })).toBeNull();
+  });
+
+  it('gives an old paused campaign its card, and pages the history without counting it', async () => {
+    const first = Array.from({ length: 100 }, (_, i) => ({ id: `n-${i}`, name: `New ${i}`, status: 'completed' }));
+    const oldPaused: AgencyCampaign = { id: 'o-paused', name: 'Last year pilot', status: 'paused' };
+    mocks.listAgencyCampaignsPage.mockImplementation(async (_t: string, _a: string, offset: number) =>
+      offset === 0 ? listing(first, 250) : listing([], 250),
+    );
+    mocks.listAgencyCampaigns.mockResolvedValue([oldPaused]);
+    renderPage();
+
+    expect(await screen.findByRole('article', { name: 'Last year pilot' })).toBeTruthy();
+    expect(mocks.listAgencyCampaigns).toHaveBeenCalledWith('tenant-1', 'account-1', ['running', 'stopping', 'paused']);
+    expect(screen.queryByText('Nothing is dialing right now')).toBeNull();
+    expect(screen.getByText('250 campaigns · 1 active · latest 100 shown')).toBeTruthy();
+
+    // The next page starts after the 100 history rows, not the 101 on screen.
+    fireEvent.click(screen.getByRole('button', { name: 'Show older campaigns' }));
+    await waitFor(() =>
+      expect(mocks.listAgencyCampaignsPage).toHaveBeenLastCalledWith('tenant-1', 'account-1', 100, 100),
+    );
+  });
+
+  it('never puts a draft on a card, even if the active read returned one', async () => {
+    const first = Array.from({ length: 100 }, (_, i) => ({ id: `n-${i}`, name: `New ${i}`, status: 'completed' }));
+    mocks.listAgencyCampaignsPage.mockResolvedValue(listing(first, 150));
+    mocks.listAgencyCampaigns.mockResolvedValue([{ id: 'o-draft', name: 'Old draft', status: 'draft' }]);
+    renderPage();
+
+    expect(await screen.findByText('Nothing is dialing right now')).toBeTruthy();
+    expect(screen.queryByText('Old draft')).toBeNull();
+  });
+
+  it('re-reads a row on an older page that has left the active set since it was loaded', async () => {
+    vi.useFakeTimers();
+    const first = Array.from({ length: 100 }, (_, i) => ({ id: `n-${i}`, name: `New ${i}`, status: 'completed' }));
+    const older: AgencyCampaign = { id: 'o-1', name: 'Old pilot', status: 'paused' };
+    mocks.listAgencyCampaignsPage.mockImplementation(async (_t: string, _a: string, offset: number) =>
+      offset === 0 ? listing([RUNNING, ...first.slice(1)], 101) : listing([older], 101),
+    );
+    mocks.listAgencyCampaigns.mockResolvedValue([RUNNING, older]);
+    renderPage();
+    await vi.waitFor(() => expect(screen.getByRole('article', { name: 'Old pilot' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Show older campaigns' }));
+    await vi.waitFor(() => expect(mocks.listAgencyCampaignsPage).toHaveBeenCalledTimes(2));
+
+    // It is stopped elsewhere: the active read no longer has it.
+    mocks.listAgencyCampaigns.mockResolvedValue([RUNNING]);
+    mocks.getAgencyCampaign.mockResolvedValue({ ...older, status: 'stopped', ended_at: '2026-10-10T00:00:00Z' });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+
+    await vi.waitFor(() => expect(screen.queryByRole('article', { name: 'Old pilot' })).toBeNull());
+    expect(mocks.getAgencyCampaign).toHaveBeenCalledTimes(1);
+    expect(mocks.getAgencyCampaign).toHaveBeenCalledWith('o-1', 'tenant-1', 'account-1');
+    expect(screen.getByText('Old pilot')).toBeTruthy();
   });
 });
 

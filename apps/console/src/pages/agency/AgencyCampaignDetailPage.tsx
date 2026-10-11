@@ -36,6 +36,7 @@ import { CampaignLineageStrip } from '../../components/agency/CampaignLineageStr
 import { AgencyRetryDialog } from '../../components/agency/AgencyRetryDialog';
 import { DEFAULT_RETRY_SELECTOR, retryCreatedToast } from '../../utils/agencyRetrySelector';
 import { campaignPanelFromPath } from '../../utils/agencyCampaignTabs';
+import { needsPolling } from '../../utils/agencyCampaignsHome';
 import {
   trackAgencyCampaignLifecycleAction,
   trackAgencyCampaignLifecycleFailed,
@@ -118,8 +119,6 @@ function PulseCell({
   );
 }
 
-/** Statuses where the numbers move on their own and are worth re-reading. */
-const LIVE_STATUSES = new Set(['running', 'stopping']);
 const REFRESH_MS = 10_000;
 
 export function AgencyCampaignDetailPage() {
@@ -304,10 +303,9 @@ export function AgencyCampaignDetailPage() {
     };
   }, []);
 
-  const statusMoving = campaign ? LIVE_STATUSES.has(campaign.status) : false;
-  const attemptsInFlight = (stats?.attempts_live ?? 0) > 0;
-  const agentsOnFloor = (stats?.agents?.length ?? 0) > 0;
-  const shouldPoll = statusMoving || attemptsInFlight || agentsOnFloor;
+  // The campaigns home's cards use the same predicate: running or stopping, OR
+  // calls still in flight, OR anyone on the floor.
+  const shouldPoll = needsPolling(campaign?.status ?? '', stats);
   useEffect(() => {
     if (!shouldPoll) return;
     const timer = setInterval(() => void loadRef.current(), REFRESH_MS);

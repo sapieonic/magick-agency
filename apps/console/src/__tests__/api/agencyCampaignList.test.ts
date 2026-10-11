@@ -76,6 +76,24 @@ describe('listAgencyCampaigns', () => {
     expect(await listAgencyCampaigns(TENANT, ACCOUNT)).toHaveLength(5000);
     expect(mocks.apiFetch).toHaveBeenCalledTimes(50);
   });
+
+  it('sends a status filter on every page it reads, and none when not asked', async () => {
+    mocks.apiFetch.mockImplementation(async (url: string) => {
+      const offset = Number(new URL(url, 'http://x').searchParams.get('offset'));
+      return { campaigns: rows(offset, Math.min(100, 120 - offset)), total: 120 };
+    });
+
+    await listAgencyCampaigns(TENANT, ACCOUNT, ['running', 'stopping', 'paused']);
+
+    const filters = mocks.apiFetch.mock.calls.map((c) =>
+      new URL(String(c[0]), 'http://x').searchParams.get('status'),
+    );
+    expect(filters).toEqual(['running,stopping,paused', 'running,stopping,paused']);
+
+    mocks.apiFetch.mockClear();
+    await listAgencyCampaigns(TENANT, ACCOUNT);
+    expect(String(mocks.apiFetch.mock.calls[0]![0])).not.toContain('status=');
+  });
 });
 
 describe('listAgencyCampaignsPage', () => {

@@ -31,6 +31,7 @@ import { preflightAnalysisProfile } from '../../analysis/profile-preflight.js';
 import type { AgencyCampaignConfigColumns, AgencyCampaignRecord } from '../../db/models/agency.model.js';
 import type {
   AgencyCampaignActor,
+  AgencyCampaignStatus,
   AgencyCampaignStats,
   AgencyCampaignStatsSeries,
   AgencyAttemptRow,
@@ -221,6 +222,29 @@ function evaluateCallingHours(
   }
 
   return { outsideCallingHours: outside, nextWindowOpensAt: soonest };
+}
+
+/** Every campaign status, as a record so a status added to the type must be added here. */
+const CAMPAIGN_STATUSES: Record<AgencyCampaignStatus, true> = {
+  draft: true,
+  running: true,
+  paused: true,
+  stopping: true,
+  completed: true,
+  stopped: true,
+};
+
+/**
+ * The list route's `status` filter: `undefined` when absent or blank, the
+ * statuses when every one is known, `'invalid'` otherwise.
+ */
+export function parseStatusFilter(raw: unknown): AgencyCampaignStatus[] | undefined | 'invalid' {
+  if (raw === undefined || raw === '') return undefined;
+  if (typeof raw !== 'string') return 'invalid';
+  const parts = [...new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))];
+  if (parts.length === 0) return undefined;
+  if (!parts.every((s): s is AgencyCampaignStatus => Object.hasOwn(CAMPAIGN_STATUSES, s))) return 'invalid';
+  return parts;
 }
 
 export async function agencyCampaignRoutes(
@@ -484,13 +508,25 @@ export async function agencyCampaignRoutes(
   });
 
   // ── GET /api/v1/agency-campaigns ─────────────────────────────────────────
+  //
+  // `status` is an optional comma-separated filter (`?status=running,paused`).
+  // It narrows `total` too, so a caller can page through just those. An unknown
+  // value is a 400 rather than an empty list: a typo must not read as "nothing
+  // is running".
   app.get('/', async (request: FastifyRequest, reply: FastifyReply) => {
     if (!(await gate(request, reply))) return reply;
-    const q = request.query as { limit?: string; offset?: string };
+    const q = request.query as { limit?: string; offset?: string; status?: string };
     const limit = Math.min(Math.max(Number(q?.limit ?? 50) || 50, 1), 100);
     const offset = Math.max(Number(q?.offset ?? 0) || 0, 0);
+    const statuses = parseStatusFilter(q?.status);
+    if (statuses === 'invalid') {
+      return reply.code(400).send({
+        error: 'Validation failed',
+        details: { status: `must be a comma-separated list of: ${Object.keys(CAMPAIGN_STATUSES).join(', ')}` },
+      });
+    }
     const { rows, total } = await agencyCampaignRepository.list(
-      getTenantId(request), getAccountId(request), limit, offset,
+      getTenantId(request), getAccountId(request), limit, offset, statuses,
     );
     return reply.send({
       campaigns: rows.map(formatAgencyCampaignResponse),

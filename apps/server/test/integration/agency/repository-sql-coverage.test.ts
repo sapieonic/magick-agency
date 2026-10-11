@@ -54,6 +54,28 @@ describe('agency repository — the methods no other real-Postgres suite reaches
     expect(await c.campaignLineage(randomUUID(), DEFAULTS.accountId, campaign.id)).toBeNull();
   });
 
+  it('list narrows the page AND the total by status, and an empty filter is every status', async () => {
+    const running = await insertAgencyCampaign({ status: 'running' });
+    const paused = await insertAgencyCampaign({ status: 'paused' });
+    await insertAgencyCampaign({ status: 'draft' });
+    await insertAgencyCampaign({ status: 'stopped' });
+    const c = repo.agencyCampaignRepository;
+
+    const active = await c.list(DEFAULTS.tenantId, DEFAULTS.accountId, 10, 0, ['running', 'stopping', 'paused']);
+    expect(active.total).toBe(2);
+    expect(active.rows.map((r) => r.id).sort()).toEqual([running.id, paused.id].sort());
+
+    // Paged within the filter: the total stays the filtered count.
+    const second = await c.list(DEFAULTS.tenantId, DEFAULTS.accountId, 1, 1, ['running', 'paused']);
+    expect(second.total).toBe(2);
+    expect(second.rows).toHaveLength(1);
+
+    expect((await c.list(DEFAULTS.tenantId, DEFAULTS.accountId, 10, 0, [])).total).toBe(4);
+    expect((await c.list(DEFAULTS.tenantId, DEFAULTS.accountId, 10, 0)).total).toBe(4);
+    // Scoped as ever: another account's filter sees nothing.
+    expect((await c.list(DEFAULTS.tenantId, randomUUID(), 10, 0, ['running'])).total).toBe(0);
+  });
+
   it('findByRetryIdempotencyKey and countForCampaign (the two left on a mocked pool)', async () => {
     const { campaign } = await world();
     const key = `retry-${randomUUID()}`;

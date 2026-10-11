@@ -92,7 +92,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/chaos/restart-mid-bridge.test.ts` | ~2 |
 | `apps/server/test/integration/agency/chaos/roster-exactly-once.test.ts` | ~8 |
 | `apps/server/test/integration/agency/dnc-registry.test.ts` | ~12 |
-| `apps/server/test/integration/agency/repository-sql-coverage.test.ts` | ~11 |
+| `apps/server/test/integration/agency/repository-sql-coverage.test.ts` | 12 |
 | `apps/server/test/integration/agency/runtime-boot-order.test.ts` | ~3 |
 | `apps/server/test/integration/agency/runtime-e2e.test.ts` | ~1 |
 | `apps/server/test/unit/agency/abandon-clip-cache-roundtrip.test.ts` | 5 |
@@ -138,6 +138,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/campaign-behavioral-settings.test.ts` | 52 |
 | `apps/server/test/unit/agency/campaign-completion-notice.test.ts` | 6 |
 | `apps/server/test/unit/agency/campaign-config-route.test.ts` | 57 |
+| `apps/server/test/unit/agency/campaign-list-route.test.ts` | 6 |
 | `apps/server/test/unit/agency/campaign-conversion-stats.test.ts` | 9 |
 | `apps/server/test/unit/agency/campaign-health.test.ts` | 19 |
 | `apps/server/test/unit/agency/campaign-insert-param-types.test.ts` | 3 |
@@ -995,7 +996,7 @@ Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyCampaignSeries.ts
 | `apps/console/src/__tests__/api/agency-notes.test.ts` | 17 |
 | `apps/console/src/__tests__/api/agencyActivity.test.ts` | 8 |
 | `apps/console/src/__tests__/api/agencyCampaignRetry.test.ts` | 8 |
-| `apps/console/src/__tests__/api/agencyCampaignList.test.ts` | 6 |
+| `apps/console/src/__tests__/api/agencyCampaignList.test.ts` | 7 |
 | `apps/console/src/__tests__/api/agencyCampaignSeries.test.ts` | 6 |
 | `apps/console/src/__tests__/api/agencyMyAssignments.test.ts` | 6 |
 | `apps/console/src/__tests__/api/agencySpine.test.ts` | 11 |
@@ -1143,10 +1144,10 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/AgencyCampaignActivityPage.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/AgencyCampaignAttemptsPage.test.tsx` | 23 |
 | `apps/console/src/__tests__/pages/AgencyCampaignContactsPage.test.tsx` | 6 |
-| `apps/console/src/__tests__/pages/AgencyCampaignDetailPage.test.tsx` | 94 |
+| `apps/console/src/__tests__/pages/AgencyCampaignDetailPage.test.tsx` | 95 |
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 36 |
-| `apps/console/src/__tests__/pages/AgencyCampaignsPage.test.tsx` | 19 |
+| `apps/console/src/__tests__/pages/AgencyCampaignsPage.test.tsx` | 23 |
 | `apps/console/src/__tests__/pages/AgencyContactDetailPage.test.tsx` | 25 |
 | `apps/console/src/__tests__/pages/AgencyHomeRedirect.test.tsx` | 7 |
 | `apps/console/src/__tests__/pages/AgencyJoinPage.test.tsx` | 48 |
@@ -1217,7 +1218,7 @@ Files: `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.t
 | `apps/console/src/__tests__/utils/agencyCampaignSeries.test.ts` | 91 |
 | `apps/console/src/__tests__/utils/agencyCampaignSeriesRange.timezone.test.ts` | 6 |
 | `apps/console/src/__tests__/utils/agencyCampaignTabs.test.ts` | 17 |
-| `apps/console/src/__tests__/utils/agencyCampaignsHome.test.ts` | 15 |
+| `apps/console/src/__tests__/utils/agencyCampaignsHome.test.ts` | 16 |
 | `apps/console/src/__tests__/utils/agencyCatalogSync.test.ts` | 30 |
 | `apps/console/src/__tests__/utils/agencyClock.test.ts` | 20 |
 | `apps/console/src/__tests__/utils/agencyColumnMapping.test.ts` | 28 |

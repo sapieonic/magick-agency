@@ -192,9 +192,11 @@ async function fetchCampaignPage(
   limit: number,
   tenantId?: string,
   accountId?: string,
+  statuses?: readonly string[],
 ): Promise<{ campaigns: AgencyCampaign[]; total: number }> {
+  const filter = statuses && statuses.length > 0 ? `&status=${encodeURIComponent(statuses.join(','))}` : '';
   const body = await apiFetch<AgencyCampaign[] | { campaigns?: AgencyCampaign[]; total?: number }>(
-    `${AGENCY_BASE}/campaigns?limit=${limit}&offset=${offset}`,
+    `${AGENCY_BASE}/campaigns?limit=${limit}&offset=${offset}${filter}`,
     {},
     tenantId,
     accountId,
@@ -217,14 +219,21 @@ const MAX_LIST_PAGES = 50;
  * For callers that need the whole set: name lookups, and pages that summarise
  * every campaign. A page that only shows the latest few should use
  * {@link listAgencyCampaignsPage} and load older ones on request instead.
+ *
+ * `statuses` reads only campaigns in those states (the server filters, and
+ * counts `total` within the filter), so "every active campaign" is a request or
+ * two however long the account's history is.
  */
 export async function listAgencyCampaigns(
   tenantId?: string,
   accountId?: string,
+  statuses?: readonly string[],
 ): Promise<AgencyCampaign[]> {
   const all: AgencyCampaign[] = [];
   for (let page = 0; page < MAX_LIST_PAGES; page += 1) {
-    const { campaigns, total } = await fetchCampaignPage(all.length, LIST_PAGE_SIZE, tenantId, accountId);
+    const { campaigns, total } = await fetchCampaignPage(
+      all.length, LIST_PAGE_SIZE, tenantId, accountId, statuses,
+    );
     all.push(...campaigns);
     if (campaigns.length === 0 || all.length >= total) break;
   }
