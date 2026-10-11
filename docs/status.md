@@ -80,12 +80,13 @@ lint clean, 6512 of 6513 unit (308 files), the one failure being the branding gu
 uncommitted local file; integration re-run for `repository-sql-coverage.test.ts` only (12).
 
 Re-run on 2026-10-11, after Plivo steps 1–2 and the credential review fixes (shred hold, verify
-races, `peek`, uncached providers): unit `apps/server` 6626 + 42 skipped (314 files), `packages/db`
-410 (24 files), `packages/contracts` 74, `apps/super-admin` 390 (27 files); integration
-`packages/db` 448 (39 files), with 1 timeout under a slow run in `membership.repository.test.ts`
-("leaves one owner standing across repeated concurrent demotions"), which passes alone (33/33).
-Lint clean in 7 packages. The `apps/server` integration suite was not re-run in full after
-these fixes (the local run was stopped); CI's integration job is its run.
+races, `peek`, uncached providers, keyboard-reachable credential rows): lint clean in 7 packages;
+unit `apps/server` 6627 + 42 skipped (314 files), `packages/db` 410 (24 files),
+`packages/contracts` 74, `apps/super-admin` 392 (27 files); integration `packages/db` 448
+(39 files); `apps/server` integration lanes `rest` 1162 (103 files) and `wall-clock` 11 (2 files).
+Two of three local `rest` runs failed 3 cases of `agency-double-reservation.test.ts` (two dials per
+pacing tick instead of one); the file passes alone (10 of 10 runs) and the third full run passed,
+so the failure depends on file order and is not yet explained.
 
 CI (`.github/workflows/ci.yml`) runs lint, unit and build in one job, and the integration suites
 in three parallel jobs (db, server, server wall-clock lane), each against its own Postgres 16 and

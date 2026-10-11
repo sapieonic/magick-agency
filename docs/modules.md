@@ -699,7 +699,7 @@ Files: `credential-sealer.ts`, `credential-service.ts`, `credential-specs.ts`, `
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/telephony/credential-sealer.test.ts` | 30 |
-| `apps/server/test/unit/telephony/credential-service.test.ts` | 48 |
+| `apps/server/test/unit/telephony/credential-service.test.ts` | 49 |
 
 ### `apps/server/src/transcription/`
 
@@ -1381,7 +1381,7 @@ Files: `auth/SuperAdminLoginPage.module.css`, `auth/SuperAdminLoginPage.tsx`, `s
 | `apps/super-admin/src/__tests__/pages/SAAuditPage.test.tsx` | 1 |
 | `apps/super-admin/src/__tests__/pages/SAFeatureFlagsPage.test.tsx` | 34 |
 | `apps/super-admin/src/__tests__/pages/SAPhoneNumbersPage.test.tsx` | 5 |
-| `apps/super-admin/src/__tests__/pages/SATelephonyCredentialsPage.test.tsx` | 6 |
+| `apps/super-admin/src/__tests__/pages/SATelephonyCredentialsPage.test.tsx` | 8 |
 | `apps/super-admin/src/__tests__/pages/SATenantDetailPage.new.test.tsx` | 21 |
 | `apps/super-admin/src/__tests__/pages/SATenantDetailPage.test.tsx` | 11 |
 | `apps/super-admin/src/__tests__/pages/SAUsagePage.test.tsx` | 22 |
