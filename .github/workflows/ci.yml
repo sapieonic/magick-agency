@@ -27,9 +27,25 @@ jobs:
       - run: pnpm test:grafana
       - run: pnpm build
 
+  # One job per section, in parallel. Each job has its own Postgres and Redis, so the
+  # sections cannot truncate each other. The wall-clock lane is the two files that wait
+  # on real Redis TTLs (apps/server/vitest.config.integration.ts).
   integration:
-    name: Integration (Postgres 16 + Redis 7)
+    name: Integration (${{ matrix.section }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - section: db
+            dir: packages/db
+            lane: ''
+          - section: server
+            dir: apps/server
+            lane: rest
+          - section: server wall-clock
+            dir: apps/server
+            lane: wall-clock
     services:
       postgres:
         image: postgres:16-alpine
@@ -55,4 +71,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # From inside the package directory: dotenv resolves from cwd.
       - run: pnpm test:integration
+        working-directory: ${{ matrix.dir }}
+        env:
+          INTEGRATION_LANE: ${{ matrix.lane }}

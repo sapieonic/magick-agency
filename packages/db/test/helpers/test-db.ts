@@ -43,7 +43,15 @@ export async function closeTestPool(): Promise<void> {
 
 /**
  * Empty every table in `public` except the migrations ledger, in one
- * statement. Partitioned parents truncate their partitions with them.
+ * statement. Partitioned parents delete from their partitions with them.
+ *
+ * DELETE, not TRUNCATE. Suites call this before every test, and TRUNCATE gives
+ * every table, partition and index a new file (~280 ms locally, ~550 ms on a CI
+ * runner, for tables holding a handful of rows); DELETE on these tables is ~10 ms.
+ * The end state is the same: the schema has no sequences or identity columns to
+ * restart and no DELETE triggers. Every DELETE is a CTE of one statement, so the
+ * FK checks run once at its end, against empty tables, and table order does not
+ * matter.
  */
 export async function truncateAll(client: pg.Pool | pg.PoolClient = getTestPool()): Promise<void> {
   const { rows } = await client.query<{ t: string }>(
@@ -53,19 +61,20 @@ export async function truncateAll(client: pg.Pool | pg.PoolClient = getTestPool(
         AND tablename NOT IN (SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid)`,
   );
   if (rows.length === 0) return;
-  const sql = `TRUNCATE ${rows.map((r) => r.t).join(', ')} RESTART IDENTITY CASCADE`;
+  const sql = `WITH ${rows.map((r, i) => `d${i} AS (DELETE FROM ${r.t})`).join(', ')} SELECT 1`;
   // A previous test's fire-and-forget write (e.g. the server's un-awaited super-admin
-  // audit INSERT, whose FK check takes RowShareLock on the parent) can still be in
-  // flight; TRUNCATE takes AccessExclusiveLock table by table and the two can
-  // deadlock. Postgres kills one side after deadlock_timeout. Retry ours.
+  // audit INSERT) can still be in flight. If it commits after our snapshot, its row
+  // survives our DELETE and fails the FK check at the end (23503); the two can also
+  // deadlock on row locks (40P01). Either way, retry ours: the retry sees the row.
   for (let attempt = 1; ; attempt++) {
     try {
       await client.query(sql);
       return;
     } catch (err) {
-      if ((err as { code?: string }).code !== '40P01' || attempt >= TRUNCATE_DEADLOCK_RETRIES) throw err;
+      const code = (err as { code?: string }).code;
+      if ((code !== '40P01' && code !== '23503') || attempt >= TRUNCATE_RETRIES) throw err;
     }
   }
 }
 
-const TRUNCATE_DEADLOCK_RETRIES = 3;
+const TRUNCATE_RETRIES = 3;

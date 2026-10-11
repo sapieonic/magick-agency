@@ -352,5 +352,7 @@ bucket keyed on a client-supplied header. Buckets key on `request.ip`, which tru
 
 `.github/workflows/ci.yml`, on pull requests and pushes to `main`: job 1 installs `mpg123` and
 `sndfile-programs`, then runs `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm test` and
-`pnpm build`; job 2 runs `pnpm test:integration` against Postgres 16 and Redis 7 service containers
-mapped to 5436 and 6383.
+`pnpm build`; the integration job runs as three parallel jobs, each against its own Postgres 16
+and Redis 7 service containers mapped to 5436 and 6383: `packages/db`, the server suite, and the
+server's wall-clock lane (the two files that wait on real Redis TTLs, listed in
+`apps/server/vitest.config.integration.ts` and selected by `INTEGRATION_LANE`).
