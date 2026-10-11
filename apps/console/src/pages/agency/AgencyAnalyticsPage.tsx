@@ -107,6 +107,27 @@ type StatsState =
  */
 const LIVE_STATUSES: ReadonlySet<string> = new Set(['running', 'paused', 'stopping']);
 
+/**
+ * How many campaigns get their numbers read at once.
+ *
+ * The list holds every campaign in the account (`listAgencyCampaigns` reads every
+ * page), but each campaign shown costs its own `/stats` request, so an account
+ * with three hundred lifetime campaigns would pay three hundred to open the
+ * page. Fifty, newest first, is what the page showed before the list was read in
+ * full, so opening it costs what it always did; older ones load on request.
+ */
+const STATS_BATCH = 50;
+
+/**
+ * The campaigns shown when the first `shown` are asked for: those, plus every
+ * live one wherever it sits. "Which campaign needs me" is this page's question,
+ * and a paused campaign older than the newest fifty must not be the one it hides.
+ * List order is kept, so nothing jumps when more are shown.
+ */
+function statsWindow(rows: readonly AgencyCampaign[], shown: number): AgencyCampaign[] {
+  return rows.filter((c, i) => i < shown || LIVE_STATUSES.has(c.status));
+}
+
 /** The two questions this page answers. */
 type AnalyticsTab = 'campaigns' | 'agents';
 
@@ -116,6 +137,9 @@ export function AgencyAnalyticsPage() {
   const [stats, setStats] = useState<Record<string, StatsState>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  /** How far down the list numbers have been read. See {@link statsWindow}. */
+  const [shown, setShown] = useState(STATS_BATCH);
+  const [loadingMore, setLoadingMore] = useState(false);
   /**
    * Which half of the page is on screen.
    *
@@ -174,6 +198,42 @@ export function AgencyAnalyticsPage() {
     };
   }, []);
 
+  /**
+   * Read `/stats` for `ids` and merge the answers in, leaving every other
+   * campaign's entry alone. Settled per campaign and CAPPED — see
+   * `mapWithConcurrency`: one campaign's failure must annotate its own card and
+   * leave its siblings' figures on screen. `isStale` is the caller's guard: a
+   * load that has been superseded must not write into the newer one's map.
+   */
+  const readStats = useCallback(
+    async (ids: string[], isStale: () => boolean) => {
+      if (!tenantId || !accountId || ids.length === 0) return;
+      setStats((prev) => ({
+        ...prev,
+        ...Object.fromEntries(ids.map((id) => [id, { status: 'loading' } as StatsState])),
+      }));
+      const settled = await mapWithConcurrency(ids, (id) =>
+        getAgencyCampaignStats(id, tenantId, accountId),
+      );
+      if (isStale() || !mounted.current) return;
+      setStats((prev) => ({
+        ...prev,
+        ...Object.fromEntries(
+          ids.map((id, i) => {
+            const outcome = settled[i]!;
+            return [
+              id,
+              outcome.status === 'fulfilled'
+                ? ({ status: 'ready', stats: outcome.value } as StatsState)
+                : ({ status: 'error' } as StatsState),
+            ];
+          }),
+        ),
+      }));
+    },
+    [tenantId, accountId],
+  );
+
   const load = useCallback(() => {
     /**
      * No account to scope the reads to. `loading` MUST be cleared here: the render
@@ -214,32 +274,11 @@ export function AgencyAnalyticsPage() {
       .then(async (rows) => {
         if (cancelled || isStale() || !mounted.current) return;
         setCampaigns(rows);
-        setStats(Object.fromEntries(rows.map((c) => [c.id, { status: 'loading' } as StatsState])));
-
-        /**
-         * Settled per campaign and CAPPED — see `mapWithConcurrency`. One
-         * campaign's failure must annotate its own card and leave its siblings'
-         * figures on screen; and `listAgencyCampaigns` is unpaginated, so the
-         * length of this list is a property of the account's history rather than
-         * of the screen. An account with three hundred lifetime campaigns used to
-         * open three hundred simultaneous requests here.
-         */
-        const settled = await mapWithConcurrency(rows, (c) =>
-          getAgencyCampaignStats(c.id, tenantId, accountId),
-        );
-        if (cancelled || isStale() || !mounted.current) return;
-        setStats(
-          Object.fromEntries(
-            rows.map((c, i) => {
-              const outcome = settled[i]!;
-              return [
-                c.id,
-                outcome.status === 'fulfilled'
-                  ? ({ status: 'ready', stats: outcome.value } as StatsState)
-                  : ({ status: 'error' } as StatsState),
-              ];
-            }),
-          ),
+        setShown(STATS_BATCH);
+        setStats({});
+        await readStats(
+          statsWindow(rows, STATS_BATCH).map((c) => c.id),
+          () => cancelled || isStale(),
         );
       })
       .catch((err: unknown) => {
@@ -255,9 +294,31 @@ export function AgencyAnalyticsPage() {
     return () => {
       cancelled = true;
     };
-  }, [tenantId, accountId]);
+  }, [tenantId, accountId, readStats]);
 
   useEffect(load, [load]);
+
+  const showMore = useCallback(async () => {
+    if (!campaigns) return;
+    const mine = generation.current;
+    const before = new Set(statsWindow(campaigns, shown).map((c) => c.id));
+    const next = shown + STATS_BATCH;
+    setShown(next);
+    setLoadingMore(true);
+    try {
+      await readStats(
+        statsWindow(campaigns, next).filter((c) => !before.has(c.id)).map((c) => c.id),
+        () => generation.current !== mine,
+      );
+    } finally {
+      if (mounted.current) setLoadingMore(false);
+    }
+  }, [campaigns, shown, readStats]);
+
+  const visible = campaigns ? statsWindow(campaigns, shown) : [];
+  const hidden = (campaigns?.length ?? 0) - visible.length;
+  // Exact, not `min(batch, hidden)`: live campaigns past the window are already shown.
+  const nextCount = campaigns ? statsWindow(campaigns, shown + STATS_BATCH).length - visible.length : 0;
 
   const canCreate = hasPermission(role, 'agency.campaigns.write');
   /**
@@ -373,7 +434,7 @@ export function AgencyAnalyticsPage() {
 
           {campaigns !== null && campaigns.length > 0 && (
             <div className={styles.list}>
-              {campaigns.map((campaign) => {
+              {visible.map((campaign) => {
                 const state = stats[campaign.id] ?? { status: 'loading' as const };
                 const resolved = state.status === 'ready' ? state.stats : null;
 
@@ -426,6 +487,25 @@ export function AgencyAnalyticsPage() {
                   </section>
                 );
               })}
+
+              {hidden > 0 && (
+                <div className={styles.more}>
+                  <p className={styles.moreText}>
+                    Showing {visible.length.toLocaleString()} of {campaigns.length.toLocaleString()} campaigns,
+                    newest first. Every running, paused or stopping campaign is always shown.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => void showMore()}
+                    disabled={loadingMore}
+                  >
+                    {loadingMore
+                      ? 'Loading…'
+                      : `Show ${nextCount.toLocaleString()} more`}
+                  </button>
+                </div>
+              )}
             </div>
           )}
           </>

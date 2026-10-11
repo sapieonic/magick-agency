@@ -178,17 +178,76 @@ export async function downloadRejectedRows(
 
 // ─── Campaign CRUD ───────────────────────────────────────────────────────────
 
-export async function listAgencyCampaigns(
+/**
+ * `GET /campaigns` is paginated: it answers `limit` rows (default 50, capped at
+ * 100), newest first, with the account's `total`. Reading only the first page
+ * made an account with more campaigns than that look smaller than it is: the
+ * analytics page listed the latest 50 and the per-agent tab printed raw ids for
+ * any older campaign it could not name.
+ */
+const LIST_PAGE_SIZE = 100;
+
+async function fetchCampaignPage(
+  offset: number,
+  limit: number,
   tenantId?: string,
   accountId?: string,
-): Promise<AgencyCampaign[]> {
-  const body = await apiFetch<AgencyCampaign[] | { campaigns: AgencyCampaign[] }>(
-    `${AGENCY_BASE}/campaigns`,
+  statuses?: readonly string[],
+): Promise<{ campaigns: AgencyCampaign[]; total: number }> {
+  const filter = statuses && statuses.length > 0 ? `&status=${encodeURIComponent(statuses.join(','))}` : '';
+  const body = await apiFetch<AgencyCampaign[] | { campaigns?: AgencyCampaign[]; total?: number }>(
+    `${AGENCY_BASE}/campaigns?limit=${limit}&offset=${offset}${filter}`,
     {},
     tenantId,
     accountId,
   );
-  return Array.isArray(body) ? body : body.campaigns;
+  // A bare array is the unpaginated shape: everything, in one answer.
+  if (Array.isArray(body)) return { campaigns: body, total: offset + body.length };
+  const campaigns = body.campaigns ?? [];
+  return { campaigns, total: body.total ?? offset + campaigns.length };
+}
+
+/**
+ * Bounds the walk below at 5,000 campaigns, so a server that kept reporting a
+ * larger `total` than it ever returns cannot keep this looping.
+ */
+const MAX_LIST_PAGES = 50;
+
+/**
+ * Every campaign in the account, newest first, read a page at a time.
+ *
+ * For callers that need the whole set: name lookups, and pages that summarise
+ * every campaign. A page that only shows the latest few should use
+ * {@link listAgencyCampaignsPage} and load older ones on request instead.
+ *
+ * `statuses` reads only campaigns in those states (the server filters, and
+ * counts `total` within the filter), so "every active campaign" is a request or
+ * two however long the account's history is.
+ */
+export async function listAgencyCampaigns(
+  tenantId?: string,
+  accountId?: string,
+  statuses?: readonly string[],
+): Promise<AgencyCampaign[]> {
+  const all: AgencyCampaign[] = [];
+  for (let page = 0; page < MAX_LIST_PAGES; page += 1) {
+    const { campaigns, total } = await fetchCampaignPage(
+      all.length, LIST_PAGE_SIZE, tenantId, accountId, statuses,
+    );
+    all.push(...campaigns);
+    if (campaigns.length === 0 || all.length >= total) break;
+  }
+  return all;
+}
+
+/** One page of the campaign list, newest first, with the account's total. */
+export async function listAgencyCampaignsPage(
+  tenantId: string,
+  accountId: string,
+  offset: number,
+  limit = LIST_PAGE_SIZE,
+): Promise<{ campaigns: AgencyCampaign[]; total: number }> {
+  return fetchCampaignPage(offset, limit, tenantId, accountId);
 }
 
 export async function getAgencyCampaign(

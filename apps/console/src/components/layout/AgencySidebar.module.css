@@ -28,6 +28,10 @@
   -webkit-text-fill-color: transparent;
   background-clip: text;
   user-select: none;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /*
@@ -44,6 +48,7 @@
   background: var(--accent-subtle);
   padding: 2px 6px;
   border-radius: 4px;
+  flex-shrink: 0;
 }
 
 .closeBtn {

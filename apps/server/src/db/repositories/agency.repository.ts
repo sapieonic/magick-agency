@@ -1549,17 +1549,33 @@ export class AgencyCampaignRepository {
     };
   }
 
-  async list(tenantId: string, accountId: string, limit: number, offset: number): Promise<{ rows: AgencyCampaignRecord[]; total: number }> {
+  /**
+   * One page of the account's campaigns, newest first, with the matching total.
+   *
+   * `statuses` narrows both the page and the total. The console uses it to read
+   * every started-and-not-finished campaign however old it is, while the rest of
+   * the history stays a page at a time. Omitted (or empty) is every status.
+   */
+  async list(
+    tenantId: string,
+    accountId: string,
+    limit: number,
+    offset: number,
+    statuses?: readonly string[],
+  ): Promise<{ rows: AgencyCampaignRecord[]; total: number }> {
     const pool = getPool();
+    const only = statuses && statuses.length > 0 ? [...statuses] : null;
     const [list, count] = await Promise.all([
       pool.query<AgencyCampaignRecord>(
         `SELECT * FROM agency_campaigns WHERE tenant_id = $1 AND account_id = $2
+          AND ($5::text[] IS NULL OR status = ANY($5::text[]))
           ORDER BY created_at DESC, id DESC LIMIT $3 OFFSET $4`,
-        [tenantId, accountId, limit, offset],
+        [tenantId, accountId, limit, offset, only],
       ),
       pool.query<{ n: string }>(
-        'SELECT COUNT(*)::text AS n FROM agency_campaigns WHERE tenant_id = $1 AND account_id = $2',
-        [tenantId, accountId],
+        `SELECT COUNT(*)::text AS n FROM agency_campaigns WHERE tenant_id = $1 AND account_id = $2
+          AND ($3::text[] IS NULL OR status = ANY($3::text[]))`,
+        [tenantId, accountId, only],
       ),
     ]);
     return { rows: list.rows, total: Number(count.rows[0]?.n ?? 0) };

@@ -23,7 +23,8 @@ const mocks = vi.hoisted(() => ({ useTenant: vi.fn() }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 
-import { AgencySidebar } from '../../components/layout/AgencySidebar';
+import { AgencySidebar, showsShellBadge } from '../../components/layout/AgencySidebar';
+import { brand } from '../../brand';
 
 function renderSidebar(role: string | undefined) {
   mocks.useTenant.mockReturnValue({ role });
@@ -145,5 +146,21 @@ describe('AgencySidebar — the floors, per role', () => {
     renderSidebar(undefined);
 
     expect(navLabels()).toEqual([]);
+  });
+});
+
+describe('AgencySidebar — the shell badge', () => {
+  it('is dropped when the brand name already says Agency, and kept otherwise', () => {
+    expect(showsShellBadge('Magick Agency')).toBe(false);
+    expect(showsShellBadge("Ravi's agency")).toBe(false);
+    expect(showsShellBadge('Samarthya Connect')).toBe(true);
+    // A word boundary, not a substring: "AgencyOne" is a different word.
+    expect(showsShellBadge('AgencyOne')).toBe(true);
+  });
+
+  it('renders the wordmark, with the badge only when the active brand needs it', () => {
+    renderSidebar('account_admin');
+    expect(screen.getByText(brand.name)).toBeTruthy();
+    expect(screen.queryByText('Agency') !== null).toBe(showsShellBadge(brand.name));
   });
 });

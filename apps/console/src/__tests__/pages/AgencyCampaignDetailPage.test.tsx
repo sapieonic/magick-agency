@@ -873,7 +873,7 @@ describe('campaign detail — polling', () => {
   it('stops polling once a paused campaign has drained', async () => {
     vi.useFakeTimers();
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'paused' }));
-    mocks.getAgencyCampaignStats.mockResolvedValue(stats({ attempts_live: 0 }));
+    mocks.getAgencyCampaignStats.mockResolvedValue(stats({ attempts_live: 0, agents_live: 0 }));
 
     renderPage();
     // Wait for the counters to be RENDERED, not merely requested. The poll
@@ -890,6 +890,29 @@ describe('campaign detail — polling', () => {
     // Nothing is moving; a request every ten seconds could only confirm what is
     // already on screen.
     expect(mocks.getAgencyCampaignStats.mock.calls.length).toBe(afterLoad);
+  });
+
+  /**
+   * `agents` is optional on the wire. A payload without the roster still says
+   * how many are on the floor through `agents_live`, and their state changes
+   * whether or not this payload lists them.
+   */
+  it('keeps polling a drained paused campaign while agents_live says someone is on the floor', async () => {
+    vi.useFakeTimers();
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'paused' }));
+    mocks.getAgencyCampaignStats.mockResolvedValue(
+      stats({ attempts_live: 0, agents: undefined, agents_live: 2 }),
+    );
+
+    renderPage();
+    await vi.waitFor(() => expect(screen.getByTestId('active-attempts')).toBeTruthy());
+    const afterLoad = mocks.getAgencyCampaignStats.mock.calls.length;
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+
+    expect(mocks.getAgencyCampaignStats.mock.calls.length).toBeGreaterThan(afterLoad);
   });
 });
 

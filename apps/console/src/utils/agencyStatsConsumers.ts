@@ -57,6 +57,7 @@ export type StatsFieldConsumer =
  */
 export const SUPERVISOR_SOURCES = [
   'src/pages/agency/AgencyCampaignDetailPage.tsx',
+  'src/pages/agency/AgencyCampaignsPage.tsx',
   'src/components/agency/CampaignHealthStrip.tsx',
   'src/components/agency/CampaignPerformance.tsx',
   'src/components/agency/AgentFloor.tsx',
