@@ -18,6 +18,8 @@ import type { TelephonyCredentialErrorCode } from '@magick-agency/contracts/api/
 import { CredentialSealer, CredentialSealError, type SealContext } from './credential-sealer.js';
 import { findCredentialSpec, type CredentialSpec, type FetchLike } from './credential-specs.js';
 import { Secret, secretHint } from './secret.js';
+import { safeIssues } from './safe-issues.js';
+import type { ZodIssue } from 'zod';
 
 const log = createChildLogger({ component: 'telephony-credentials' });
 
@@ -79,9 +81,9 @@ export class CredentialUnavailableError extends Error {
   }
 }
 
-/** Zod issues reduced to path and message: no `received` value can reach a response or log. */
-function issues(err: { issues: Array<{ path: PropertyKey[]; message: string }> }, prefix: string) {
-  return err.issues.map((i) => ({ path: [prefix, ...i.path.map(String)].join('.'), message: i.message }));
+/** Zod issues with no submitted value in the path or message (see `safeIssues`). */
+function issues(err: { issues: ZodIssue[] }, prefix: string) {
+  return safeIssues(err.issues, prefix);
 }
 
 function splitFields(spec: CredentialSpec, fields: Record<string, unknown>) {

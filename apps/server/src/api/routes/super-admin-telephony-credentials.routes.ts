@@ -11,6 +11,7 @@ import type {
 import { getTelephonyCredentialService } from '../../telephony/credentials/index.js';
 import type { ServiceResult, TelephonyCredentialService } from '../../telephony/credentials/credential-service.js';
 import { credentialSpecs } from '../../telephony/credentials/credential-specs.js';
+import { safeIssues } from '../../telephony/credentials/safe-issues.js';
 
 /*
  * Super-admin management of per-tenant carrier credentials (decisions B18–B22). The
@@ -62,7 +63,7 @@ function badRequest(reply: FastifyReply, err: z.ZodError) {
   return reply.code(400).send({
     error: 'invalid_input',
     message: 'Invalid request',
-    details: err.issues.map((i) => ({ path: i.path.map(String).join('.'), message: i.message })),
+    details: safeIssues(err.issues),
   });
 }
 

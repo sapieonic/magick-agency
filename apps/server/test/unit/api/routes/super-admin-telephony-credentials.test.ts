@@ -85,6 +85,13 @@ describe('super-admin telephony credential routes', () => {
     expect(svc.create).not.toHaveBeenCalled();
   });
 
+  it('rebuilds value-bearing zod messages (an enum issue writes the value into its message)', async () => {
+    const res = await app.inject({ method: 'GET', url: `/super-admin/telephony-credentials?include_revoked=${CANARY}` });
+    expect(res.statusCode).toBe(400);
+    expect(res.body).not.toContain(CANARY);
+    expect(res.json().details).toEqual([{ path: 'include_revoked', message: 'Expected one of: true, false' }]);
+  });
+
   it.each([
     ['credential_store_unavailable', 503], ['carrier_rejected', 422], ['carrier_unreachable', 502],
     ['duplicate_account', 409], ['tenant_not_found', 404], ['invalid_input', 400],
