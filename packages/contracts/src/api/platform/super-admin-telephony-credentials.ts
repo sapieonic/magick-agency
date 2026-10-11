@@ -106,8 +106,20 @@ export interface RotateTelephonyCredentialSecretBody {
   expected_version: number;
 }
 
+/**
+ * Why a credential route refused.
+ *
+ * - `credential_store_unavailable` (503): the server has no credential keyring. Retry
+ *   once it is configured.
+ * - `secret_unavailable` (409): the store is configured, but this credential's stored
+ *   secret cannot be used: shredded, missing, or sealed under a master key the keyring
+ *   no longer holds. Retrying does not help; rotate the secret or restore the key.
+ * - `version_conflict` (409): the credential changed (a rotation, or a status change)
+ *   while the request was in flight. Re-read it and try again.
+ */
 export type TelephonyCredentialErrorCode =
   | 'credential_store_unavailable'
+  | 'secret_unavailable'
   | 'unknown_provider'
   | 'invalid_input'
   | 'tenant_not_found'
@@ -119,6 +131,32 @@ export type TelephonyCredentialErrorCode =
   | 'version_conflict'
   | 'invalid_transition'
   | 'in_use';
+
+/** Runtime list of {@link TelephonyCredentialErrorCode}, in declaration order. */
+export const TELEPHONY_CREDENTIAL_ERROR_CODES = [
+  'credential_store_unavailable',
+  'secret_unavailable',
+  'unknown_provider',
+  'invalid_input',
+  'tenant_not_found',
+  'not_found',
+  'duplicate_account',
+  'duplicate_label',
+  'carrier_rejected',
+  'carrier_unreachable',
+  'version_conflict',
+  'invalid_transition',
+  'in_use',
+] as const satisfies readonly TelephonyCredentialErrorCode[];
+
+type MissingTelephonyCredentialErrorCode = Exclude<
+  TelephonyCredentialErrorCode,
+  (typeof TELEPHONY_CREDENTIAL_ERROR_CODES)[number]
+>;
+const _allTelephonyCredentialErrorCodesListed: MissingTelephonyCredentialErrorCode extends never
+  ? true
+  : MissingTelephonyCredentialErrorCode = true;
+void _allTelephonyCredentialErrorCodesListed;
 
 export interface TelephonyCredentialError {
   error: TelephonyCredentialErrorCode;

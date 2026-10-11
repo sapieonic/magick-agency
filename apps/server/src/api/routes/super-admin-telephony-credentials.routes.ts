@@ -26,6 +26,9 @@ const log = createChildLogger({ component: 'super-admin-telephony-credentials' }
 
 const STATUS: Record<TelephonyCredentialErrorCode, number> = {
   credential_store_unavailable: 503,
+  // Not a 5xx: the store works, this credential's secret cannot be used (shredded, or
+  // sealed under a key the keyring no longer holds). Retrying does not help.
+  secret_unavailable: 409,
   unknown_provider: 400,
   invalid_input: 400,
   tenant_not_found: 404,

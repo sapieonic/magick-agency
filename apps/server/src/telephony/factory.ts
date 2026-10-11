@@ -3,11 +3,17 @@
 // telephony provider: <name>`. A tenant's own carrier account (BYOC, decision B18) is
 // built by `BYOC_ADAPTERS` from a credential the credential service resolves; no BYOC
 // adapter is registered yet (Plivo's lands with its adapter), so such a credential
-// resolves and then throws `ByocCredentialUnavailableError`.
+// passes its row checks and then throws `ByocCredentialUnavailableError`, with no
+// secret opened.
 import type { TelephonyProvider } from './types.js';
 import type { AppConfig } from '../config/index.js';
 import { VoicelinkAdapter } from './voicelink/voicelink.adapter.js';
-import type { ResolvedCredential, ResolvePurpose } from './credentials/credential-service.js';
+import {
+  CredentialUnavailableError,
+  type CredentialPeek,
+  type ResolvedCredential,
+  type ResolvePurpose,
+} from './credentials/credential-service.js';
 
 /**
  * Thrown when a call carries a carrier credential id that cannot be resolved: no
@@ -25,8 +31,12 @@ export class ByocCredentialUnavailableError extends Error {
   }
 }
 
-/** What the registry needs from the credential service. */
+/**
+ * What the registry needs from the credential service: `peek` (the row checks, nothing
+ * opened) on every lookup, `resolve` (opens the secrets) only to build an adapter.
+ */
 export interface CredentialResolver {
+  peek(credentialId: string, purpose: ResolvePurpose): Promise<CredentialPeek>;
   resolve(credentialId: string, purpose: ResolvePurpose): Promise<ResolvedCredential>;
 }
 
@@ -94,7 +104,7 @@ function createProviderInstance(providerName: string, config: AppConfig): Teleph
 export class TelephonyProviderRegistry {
   /** Adapters on the service's own accounts, keyed by provider name. At most one per provider. */
   private providers = new Map<string, TelephonyProvider>();
-  /** BYOC adapters, keyed `credentialId:purpose` and tagged with the secret versions they hold. */
+  /** BYOC adapters, keyed `credentialId:purpose` and tagged with the versions `peek` listed when built. */
   private byoc = new Map<string, { fingerprint: string; adapter: TelephonyProvider }>();
   private readonly config: AppConfig;
   private readonly credentials: (() => CredentialResolver) | null;
@@ -144,9 +154,21 @@ export class TelephonyProviderRegistry {
    * campaign the id came from; a credential of any other tenant is refused (the
    * composite foreign keys already prevent such a pin; this is the in-process check).
    *
-   * The credential row is read on every call; the adapter is cached per credential
-   * and purpose, and rebuilt when the secret version or the set of grace versions
-   * changes. A credential that stops resolving drops every adapter built on it.
+   * The credential row is read on every call (`peek`: the status checks, no secret
+   * read or opened). The tenant and provider are checked on that read, before any
+   * secret is opened. The adapter is cached per credential and purpose; `resolve`
+   * opens the secrets only on a miss.
+   *
+   * The cache entry is tagged with the versions `peek` listed (current, then those
+   * inside the rotation grace), not with the versions the adapter ended up holding:
+   * `resolve` skips a retired version that will not open, and tagging with what it
+   * returned would make every lookup a miss. A rotation or a grace expiry changes the
+   * list, so the adapter is still rebuilt. If one commits between `peek` and `resolve`,
+   * the adapter is newer than its tag and the next lookup rebuilds it once.
+   *
+   * A credential that stops resolving (a `CredentialUnavailableError` from either
+   * call) drops every adapter built on it. Any other error (a database failure) is
+   * rethrown unchanged and leaves the cache alone: it says nothing about the credential.
    *
    * @throws ByocCredentialUnavailableError for a non-null id that cannot serve.
    *   Never substitutes the service's own account for a missing credential.
@@ -162,31 +184,41 @@ export class TelephonyProviderRegistry {
     // substituting it would issue the hangup against the wrong carrier and report
     // the wrong cause.
     if (!this.credentials) throw new ByocCredentialUnavailableError(credentialId, 'no credential store');
-    let resolved: ResolvedCredential;
-    try {
-      resolved = await this.credentials().resolve(credentialId, purpose);
-    } catch (err) {
-      this.dropByoc(credentialId);
-      throw new ByocCredentialUnavailableError(credentialId, err instanceof Error ? err.message : 'unresolvable');
-    }
-    if (resolved.tenantId !== tenantId) {
+    const credentials = this.credentials();
+    const peeked = await this.unavailableAsByoc(credentialId, () => credentials.peek(credentialId, purpose));
+    if (peeked.tenantId !== tenantId) {
       throw new ByocCredentialUnavailableError(credentialId, 'credential belongs to another tenant');
     }
-    if (resolved.provider !== providerName) {
-      throw new ByocCredentialUnavailableError(credentialId, `credential is for ${resolved.provider}, not ${providerName}`);
+    if (peeked.provider !== providerName) {
+      throw new ByocCredentialUnavailableError(credentialId, `credential is for ${peeked.provider}, not ${providerName}`);
     }
-    const slot = `${resolved.id}:${purpose}`;
-    // The versions this adapter holds: current, then any still inside the grace.
-    const fingerprint = [resolved.version, ...resolved.previous.map((p) => p.version)].join(',');
+    const slot = `${peeked.id}:${purpose}`;
+    const fingerprint = peeked.versions.join(',');
     const cached = this.byoc.get(slot);
     if (cached && cached.fingerprint === fingerprint) return cached.adapter;
     const factory = this.byocAdapters.get(providerName);
     if (!factory) throw new ByocCredentialUnavailableError(credentialId, `no BYOC adapter for ${providerName}`);
+    const resolved = await this.unavailableAsByoc(credentialId, () => credentials.resolve(credentialId, purpose));
+    // The row was re-read: a tenant or provider changed in SQL since `peek` is refused too.
+    if (resolved.tenantId !== tenantId || resolved.provider !== providerName) {
+      throw new ByocCredentialUnavailableError(credentialId, 'credential changed while it was resolved');
+    }
     const adapter = factory(resolved, this.config);
     this.byoc.delete(slot);
     if (this.byoc.size >= BYOC_CACHE_MAX) this.byoc.delete(this.byoc.keys().next().value!);
     this.byoc.set(slot, { fingerprint, adapter });
     return adapter;
+  }
+
+  /** Run a credential-service call; a credential that cannot serve drops its adapters. */
+  private async unavailableAsByoc<T>(credentialId: string, call: () => Promise<T>): Promise<T> {
+    try {
+      return await call();
+    } catch (err) {
+      if (!(err instanceof CredentialUnavailableError)) throw err;
+      this.dropByoc(credentialId);
+      throw new ByocCredentialUnavailableError(credentialId, err.reason);
+    }
   }
 
   private dropByoc(credentialId: string): void {

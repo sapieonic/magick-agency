@@ -7,7 +7,9 @@ import type { AppConfig } from '../../../src/config/index.js';
 import {
   TelephonyProviderRegistry, ByocCredentialUnavailableError, type ByocAdapterFactory, type CredentialResolver,
 } from '../../../src/telephony/factory.js';
-import type { ResolvedCredential } from '../../../src/telephony/credentials/credential-service.js';
+import {
+  CredentialUnavailableError, type ResolvedCredential, type ResolvePurpose,
+} from '../../../src/telephony/credentials/credential-service.js';
 import { Secret } from '../../../src/telephony/credentials/secret.js';
 import { findCredentialSpec, PLIVO_API_BASE, type FetchLike } from '../../../src/telephony/credentials/credential-specs.js';
 import type { TelephonyProvider } from '../../../src/telephony/types.js';
@@ -35,6 +37,23 @@ function registry(resolver: CredentialResolver | null, factories = new Map<strin
 
 const fakeAdapter = (tag: string) => ({ name: 'plivo', tag } as unknown as TelephonyProvider);
 
+/**
+ * A credential service whose `peek` and `resolve` agree on one state, as the real one
+ * does: `peek` lists the versions `resolve` would open. `state` may throw.
+ */
+function creds(state: (purpose: ResolvePurpose) => ResolvedCredential, opts: { peekVersions?: (r: ResolvedCredential) => number[] } = {}) {
+  const versions = opts.peekVersions ?? ((r: ResolvedCredential) => [r.version, ...r.previous.map((p) => p.version)]);
+  return {
+    peek: vi.fn(async (_id: string, purpose: ResolvePurpose) => {
+      const r = state(purpose);
+      return { id: r.id, tenantId: r.tenantId, provider: r.provider, version: r.version, versions: versions(r) };
+    }),
+    resolve: vi.fn(async (_id: string, purpose: ResolvePurpose) => state(purpose)),
+  };
+}
+
+const unavailable = (reason: string) => new CredentialUnavailableError('cred-1', 'status', reason);
+
 describe('TelephonyProviderRegistry.getForCredentialId', () => {
   it('serves the service’s own account for a null credential id', async () => {
     const r = registry(null);
@@ -45,55 +64,89 @@ describe('TelephonyProviderRegistry.getForCredentialId', () => {
     await expect(registry(null).getForCredentialId('plivo', 'cred-1', 'call_control', 't1')).rejects.toBeInstanceOf(ByocCredentialUnavailableError);
   });
 
-  it('wraps a resolver refusal, and passes the purpose through', async () => {
-    const resolve = vi.fn().mockRejectedValue(new Error('status disabled'));
-    const err = await registry({ resolve }).getForCredentialId('plivo', 'cred-1', 'dial', 't1').catch((e: unknown) => e);
+  it('wraps a credential refusal, and passes the purpose through', async () => {
+    const c = creds(() => { throw unavailable('status disabled'); });
+    const err = await registry(c, new Map([['plivo', () => fakeAdapter('a')]])).getForCredentialId('plivo', 'cred-1', 'dial', 't1').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ByocCredentialUnavailableError);
     expect((err as Error).message).toMatch(/status disabled/);
-    expect(resolve).toHaveBeenCalledWith('cred-1', 'dial');
+    expect(c.peek).toHaveBeenCalledWith('cred-1', 'dial');
+    expect(c.resolve).not.toHaveBeenCalled();
   });
 
-  it('refuses a credential of another tenant', async () => {
-    const resolve = vi.fn().mockResolvedValue(resolved({ tenantId: 't2' }));
-    await expect(registry({ resolve }, new Map([['plivo', () => fakeAdapter('a')]])).getForCredentialId('plivo', 'cred-1', 'dial', 't1'))
+  it('refuses a credential of another tenant without opening its secret', async () => {
+    const c = creds(() => resolved({ tenantId: 't2' }));
+    const factory = vi.fn(() => fakeAdapter('a'));
+    await expect(registry(c, new Map([['plivo', factory]])).getForCredentialId('plivo', 'cred-1', 'dial', 't1'))
       .rejects.toThrow(/another tenant/);
+    expect(c.resolve).not.toHaveBeenCalled();
+    expect(factory).not.toHaveBeenCalled();
   });
 
-  it('refuses a credential of another provider', async () => {
-    const resolve = vi.fn().mockResolvedValue(resolved({ provider: 'twilio' }));
-    await expect(registry({ resolve }, new Map([['plivo', () => fakeAdapter('a')]])).getForCredentialId('plivo', 'cred-1', 'call_control', 't1'))
+  it('refuses a credential of another provider without opening its secret', async () => {
+    const c = creds(() => resolved({ provider: 'twilio' }));
+    await expect(registry(c, new Map([['plivo', () => fakeAdapter('a')]])).getForCredentialId('plivo', 'cred-1', 'call_control', 't1'))
       .rejects.toThrow(/credential is for twilio, not plivo/);
+    expect(c.resolve).not.toHaveBeenCalled();
   });
 
-  it('refuses a provider with no BYOC adapter', async () => {
-    const resolve = vi.fn().mockResolvedValue(resolved());
-    await expect(registry({ resolve }).getForCredentialId('plivo', 'cred-1', 'call_control', 't1')).rejects.toThrow(/no BYOC adapter/);
+  it('refuses a provider with no BYOC adapter without opening its secret', async () => {
+    const c = creds(() => resolved());
+    await expect(registry(c).getForCredentialId('plivo', 'cred-1', 'call_control', 't1')).rejects.toThrow(/no BYOC adapter/);
+    expect(c.resolve).not.toHaveBeenCalled();
   });
 
-  it('builds one adapter per credential version, and a new one after a rotation', async () => {
+  it('refuses a credential whose tenant changed between the peek and the open', async () => {
+    let tenantId = 't1';
+    const c = creds(() => resolved({ tenantId }));
+    c.peek.mockImplementationOnce(async () => {
+      const p = { id: 'cred-1', tenantId, provider: 'plivo', version: 1, versions: [1] };
+      tenantId = 't2';
+      return p;
+    });
+    const factory = vi.fn(() => fakeAdapter('a'));
+    await expect(registry(c, new Map([['plivo', factory]])).getForCredentialId('plivo', 'cred-1', 'dial', 't1'))
+      .rejects.toThrow(/changed while it was resolved/);
+    expect(factory).not.toHaveBeenCalled();
+  });
+
+  it('builds one adapter per credential version, opens secrets only on a miss, and rebuilds after a rotation', async () => {
     let version = 1;
-    const resolve = vi.fn(async () => resolved({ version }));
-    const factory = vi.fn((c: ResolvedCredential) => fakeAdapter(`v${c.version}`));
-    const r = registry({ resolve }, new Map([['plivo', factory]]));
+    const c = creds(() => resolved({ version }));
+    const factory = vi.fn((cr: ResolvedCredential) => fakeAdapter(`v${cr.version}`));
+    const r = registry(c, new Map([['plivo', factory]]));
     const a = await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1');
     const b = await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1');
     expect(a).toBe(b);
     expect(factory).toHaveBeenCalledTimes(1);
+    // The hit re-read the row (peek) and opened nothing.
+    expect(c.resolve).toHaveBeenCalledTimes(1);
     version = 2;
-    const c = await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1');
-    expect(c).not.toBe(a);
-    expect((c as unknown as { tag: string }).tag).toBe('v2');
+    const d = await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1');
+    expect(d).not.toBe(a);
+    expect((d as unknown as { tag: string }).tag).toBe('v2');
     // The status is re-read on every call even when the adapter is cached.
-    expect(resolve).toHaveBeenCalledTimes(3);
+    expect(c.peek).toHaveBeenCalledTimes(3);
+    expect(c.resolve).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps hitting the cache when a grace version is listed but skipped as unopenable', async () => {
+    // peek lists v1 (still inside the grace); resolve skipped it because it would not open.
+    const c = creds(() => resolved({ version: 2, previous: [] }), { peekVersions: () => [2, 1] });
+    const factory = vi.fn(() => fakeAdapter('a'));
+    const r = registry(c, new Map([['plivo', factory]]));
+    const a = await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1');
+    expect(await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1')).toBe(a);
+    expect(c.resolve).toHaveBeenCalledTimes(1);
+    expect(factory).toHaveBeenCalledTimes(1);
   });
 
   it('caches per purpose: a dial adapter never stands in for call control', async () => {
     // resolve() fills `previous` (the rotation-grace secrets) only for call_control.
-    const resolve = vi.fn(async (_id: string, purpose: string) => resolved({
+    const c = creds((purpose) => resolved({
       version: 2, previous: purpose === 'call_control' ? [{ version: 1, secret: new Secret({ auth_token: 'old' }) }] : [],
     }));
-    const factory = vi.fn((c: ResolvedCredential) => fakeAdapter(`prev:${c.previous.length}`));
-    const r = registry({ resolve }, new Map([['plivo', factory]]));
+    const factory = vi.fn((cr: ResolvedCredential) => fakeAdapter(`prev:${cr.previous.length}`));
+    const r = registry(c, new Map([['plivo', factory]]));
     await r.getForCredentialId('plivo', 'cred-1', 'dial', 't1');
     const control = await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1');
     expect((control as unknown as { tag: string }).tag).toBe('prev:1');
@@ -101,22 +154,44 @@ describe('TelephonyProviderRegistry.getForCredentialId', () => {
 
   it('rebuilds when a grace version is pruned, so a pruned secret stops verifying', async () => {
     let previous = [{ version: 1, secret: new Secret({ auth_token: 'old' }) }];
-    const resolve = vi.fn(async () => resolved({ version: 2, previous }));
-    const factory = vi.fn((c: ResolvedCredential) => fakeAdapter(`prev:${c.previous.length}`));
-    const r = registry({ resolve }, new Map([['plivo', factory]]));
+    const c = creds(() => resolved({ version: 2, previous }));
+    const factory = vi.fn((cr: ResolvedCredential) => fakeAdapter(`prev:${cr.previous.length}`));
+    const r = registry(c, new Map([['plivo', factory]]));
     expect((await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1') as unknown as { tag: string }).tag).toBe('prev:1');
     previous = [];
     expect((await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1') as unknown as { tag: string }).tag).toBe('prev:0');
   });
 
-  it('drops every cached adapter of a credential that stops resolving', async () => {
-    const resolve = vi.fn().mockResolvedValueOnce(resolved()).mockRejectedValueOnce(new Error('revoked')).mockResolvedValue(resolved());
+  it.each(['peek', 'resolve'] as const)('drops every cached adapter of a credential that stops resolving (refused by %s)', async (which) => {
+    let version = 1;
+    const c = creds(() => resolved({ version }));
     const factory = vi.fn(() => fakeAdapter('a'));
-    const r = registry({ resolve }, new Map([['plivo', factory]]));
+    const r = registry(c, new Map([['plivo', factory]]));
     await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1');
-    await expect(r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1')).rejects.toThrow(/revoked/);
+    // A refusal from resolve is reached only on a miss, so move the version first.
+    if (which === 'resolve') version = 2;
+    c[which].mockRejectedValueOnce(unavailable('revoked'));
+    await expect(r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1')).rejects.toThrow(ByocCredentialUnavailableError);
+    version = 1;
     await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1');
     expect(factory).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['peek', 'resolve'] as const)('rethrows a transient %s failure unchanged and keeps the cache', async (which) => {
+    let version = 1;
+    const c = creds(() => resolved({ version }));
+    const factory = vi.fn(() => fakeAdapter('a'));
+    const r = registry(c, new Map([['plivo', factory]]));
+    const a = await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1');
+    const pgDown = Object.assign(new Error('Connection terminated due to connection timeout'), { code: 'ETIMEDOUT' });
+    if (which === 'resolve') version = 2;
+    c[which].mockRejectedValueOnce(pgDown);
+    const err = await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1').catch((e: unknown) => e);
+    expect(err).toBe(pgDown);
+    expect(err).not.toBeInstanceOf(ByocCredentialUnavailableError);
+    version = 1;
+    expect(await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1')).toBe(a);
+    expect(factory).toHaveBeenCalledTimes(1);
   });
 });
 

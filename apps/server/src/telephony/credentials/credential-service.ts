@@ -19,6 +19,7 @@ import { CredentialSealer, CredentialSealError, type SealContext } from './crede
 import { findCredentialSpec, type CredentialSpec, type FetchLike } from './credential-specs.js';
 import { Secret, secretHint } from './secret.js';
 import { safeIssues } from './safe-issues.js';
+import { WEBHOOK_TOKEN_POST_END_GRACE_SECONDS } from '../webhook-grace.js';
 import type { ZodIssue } from 'zod';
 
 const log = createChildLogger({ component: 'telephony-credentials' });
@@ -34,7 +35,7 @@ export const ROTATION_GRACE_SECONDS = 24 * 60 * 60;
 const OPEN_CACHE_MAX = 256;
 
 export type CredentialRepo = Pick<TelephonyCredentialRepository,
-  | 'create' | 'findById' | 'findOpenableSecrets' | 'list' | 'updateLabel' | 'rotateSecret'
+  | 'create' | 'findById' | 'findOpenableSecrets' | 'findOpenableVersions' | 'list' | 'updateLabel' | 'rotateSecret'
   | 'setStatus' | 'enable' | 'markVerified' | 'revoke' | 'shredIfIdle' | 'usage' | 'distinctKekIds'
   | 'findRevokedUnshredded' | 'pruneRetiredSecrets'>;
 
@@ -73,9 +74,33 @@ export interface ResolvedCredential {
   previous: Array<{ version: number; secret: Secret<Record<string, string>> }>;
 }
 
-/** Thrown by `resolve` when a credential cannot serve the purpose. Carries no secret. */
+/**
+ * What `peek` returns: the row's identity and the secret versions `resolve` would open
+ * for the purpose (current first, then any still inside the rotation grace for
+ * `call_control`), with nothing opened.
+ */
+export interface CredentialPeek {
+  id: string;
+  tenantId: string;
+  provider: string;
+  version: number;
+  versions: number[];
+}
+
+/**
+ * Why a credential cannot serve:
+ *  - `store_unconfigured`: no keyring on this server (the only store-wide cause);
+ *  - `not_found`, `shredded`, `status` (the status does not serve the purpose);
+ *  - `no_current_secret`: the row's current version has no stored secret;
+ *  - `unopenable`: the current secret failed to open (its master key is missing from
+ *    the keyring, or its sealed context does not match the row).
+ */
+export type CredentialUnavailableKind =
+  | 'store_unconfigured' | 'not_found' | 'shredded' | 'status' | 'no_current_secret' | 'unopenable';
+
+/** Thrown by `resolve` and `peek` when a credential cannot serve the purpose. Carries no secret. */
 export class CredentialUnavailableError extends Error {
-  constructor(readonly credentialId: string, readonly reason: string) {
+  constructor(readonly credentialId: string, readonly kind: CredentialUnavailableKind, readonly reason: string) {
     super(`Telephony credential ${credentialId} is unavailable: ${reason}`);
     this.name = 'CredentialUnavailableError';
   }
@@ -209,6 +234,11 @@ export class TelephonyCredentialService {
    * Re-ask the carrier with the stored secret. A refusal marks an active credential
    * `invalid`; a disabled one stays disabled but records the refusal in `last_error`,
    * so `enable` brings it back as `invalid`, not `active`. Success clears both.
+   *
+   * Every write is pinned to the version that was checked, so a rotation that commits
+   * while the carrier answers never inherits the old secret's verdict, and the success
+   * transition is one statement, decided on the row as it is then, not as it was read
+   * before the carrier call. A write that does not land is a refusal, never a success.
    */
   async verify(id: string, adminId: string | null): Promise<ServiceResult<TelephonyCredentialRecord>> {
     const current = await this.deps.repo.findById(id);
@@ -216,28 +246,24 @@ export class TelephonyCredentialService {
     if (current.status === 'revoked') return fail('invalid_transition', 'A revoked credential cannot be verified');
     const spec = findCredentialSpec(current.provider);
     if (!spec) return fail('unknown_provider', `Provider '${current.provider}' does not accept tenant credentials`);
-    let resolved: ResolvedCredential;
+    let opened: { row: TelephonyCredentialRecord; secret: Secret<Record<string, string>> };
     try {
-      resolved = await this.resolve(id, 'call_control');
+      // Only the current version: the verdict is about the secret new calls use.
+      opened = await this.openCurrent(id, 'call_control');
     } catch (err) {
-      if (err instanceof CredentialUnavailableError) return fail('credential_store_unavailable', err.reason);
+      if (err instanceof CredentialUnavailableError) return this.unavailable(err);
       throw err;
     }
-    const check = await spec.check(current.public_config as Record<string, string>, resolved.secret.reveal(), this.deps.fetchImpl);
+    const { row, secret } = opened;
+    if (row.status === 'revoked') return fail('invalid_transition', 'A revoked credential cannot be verified');
+    const check = await spec.check(row.public_config as Record<string, string>, secret.reveal(), this.deps.fetchImpl);
     if (check.result === 'unreachable') return fail('carrier_unreachable', check.reason);
-    // Every write below is pinned to the version that was checked: a rotation that
-    // commits while the carrier answers must not inherit the old secret's verdict.
-    const secretVersion = resolved.version;
-    if (check.result === 'rejected') {
-      const row = await this.deps.repo.setStatus(id, 'invalid', ['active', 'invalid'], { updatedBy: adminId, lastError: check.reason, secretVersion })
-        ?? await this.deps.repo.setStatus(id, 'disabled', ['disabled'], { updatedBy: adminId, lastError: check.reason, secretVersion });
-      return { ok: true, value: row ?? (await this.deps.repo.findById(id))! };
-    }
-    if (current.status === 'invalid') {
-      await this.deps.repo.setStatus(id, 'active', ['invalid'], { updatedBy: adminId, lastError: null, secretVersion });
-    }
-    const row = await this.deps.repo.markVerified(id, resolved.version);
-    return { ok: true, value: row ?? (await this.deps.repo.findById(id))! };
+    const secretVersion = row.secret_version;
+    const written = check.result === 'rejected'
+      ? await this.deps.repo.setStatus(id, 'invalid', ['active', 'invalid'], { updatedBy: adminId, lastError: check.reason, secretVersion })
+        ?? await this.deps.repo.setStatus(id, 'disabled', ['disabled'], { updatedBy: adminId, lastError: check.reason, secretVersion })
+      : await this.deps.repo.markVerified(id, secretVersion, adminId);
+    return written ? { ok: true, value: written } : this.verdictLost(id, secretVersion);
   }
 
   async disable(id: string, adminId: string): Promise<ServiceResult<TelephonyCredentialRecord>> {
@@ -278,7 +304,7 @@ export class TelephonyCredentialService {
       return this.transitionRefused(id, 'The credential is already revoked');
     }
     this.forget(id);
-    const shredded = await this.deps.repo.shredIfIdle(id);
+    const shredded = await this.deps.repo.shredIfIdle(id, WEBHOOK_TOKEN_POST_END_GRACE_SECONDS);
     return { ok: true, value: { credential: shredded ? (await this.deps.repo.findById(id))! : row, shredded } };
   }
 
@@ -303,30 +329,51 @@ export class TelephonyCredentialService {
    * provider, version) and the master key id, so a row whose tenant or provider was
    * changed in SQL is opened afresh (and fails its AAD check), never served from cache.
    *
+   * The current version must open. The older grace versions (`call_control` only) are
+   * best effort: one that fails to open is logged and left out, so it cannot take
+   * hangups and webhook checks for the whole credential down with it.
+   *
    * @throws CredentialUnavailableError — never falls back to another account.
    */
   async resolve(id: string, purpose: ResolvePurpose): Promise<ResolvedCredential> {
-    const sealer = this.deps.sealer;
-    if (!sealer) throw new CredentialUnavailableError(id, 'no credential keyring is configured');
-    const row = await this.deps.repo.findById(id);
-    if (!row) throw new CredentialUnavailableError(id, 'not found');
-    if (row.shredded_at) throw new CredentialUnavailableError(id, 'shredded');
-    if (purpose === 'dial' && row.status !== 'active') throw new CredentialUnavailableError(id, `status ${row.status}`);
-    if (purpose === 'recording' && row.status === 'revoked') throw new CredentialUnavailableError(id, 'revoked');
-
-    const versions = await this.deps.repo.findOpenableSecrets(id, ROTATION_GRACE_SECONDS);
-    const current = versions.find((v) => v.secret_version === row.secret_version);
-    if (!current) throw new CredentialUnavailableError(id, 'no current secret');
-    const secret = await this.open(row, current);
-    const previous = purpose === 'call_control'
-      ? await Promise.all(versions
-        .filter((v) => v.secret_version < row.secret_version)
-        .map(async (v) => ({ version: v.secret_version, secret: await this.open(row, v) })))
-      : [];
+    const { row, secret, secrets } = await this.openCurrent(id, purpose);
+    const previous: ResolvedCredential['previous'] = [];
+    if (purpose === 'call_control') {
+      for (const v of secrets.filter((x) => x.secret_version < row.secret_version).sort((a, b) => b.secret_version - a.secret_version)) {
+        try {
+          previous.push({ version: v.secret_version, secret: await this.open(row, v) });
+        } catch (err) {
+          // `open` has logged the ids; the version is skipped, the current one still serves.
+          if (!(err instanceof CredentialUnavailableError)) throw err;
+          log.warn({ credentialId: row.id, secretVersion: v.secret_version }, 'Skipping a retired telephony credential secret that could not be opened');
+        }
+      }
+    }
     return {
       id: row.id, tenantId: row.tenant_id, provider: row.provider, accountRef: row.account_ref,
       publicConfig: row.public_config, version: row.secret_version, secret, previous,
     };
+  }
+
+  /**
+   * The checks `resolve` makes for a purpose, opening nothing and reading no
+   * ciphertext: the registry calls it on every lookup and calls `resolve` only when it
+   * has no adapter for these versions. `versions` lists every version inside the grace
+   * (`call_control`), including one `resolve` would skip as unopenable, so a skipped
+   * version does not turn every lookup into a rebuild.
+   *
+   * @throws CredentialUnavailableError, for exactly the causes `resolve` throws it
+   *   short of opening (an unopenable current secret surfaces only from `resolve`).
+   */
+  async peek(id: string, purpose: ResolvePurpose): Promise<CredentialPeek> {
+    const row = await this.admit(id, purpose);
+    let versions = [row.secret_version];
+    if (purpose === 'call_control') {
+      const open = (await this.deps.repo.findOpenableVersions(id, ROTATION_GRACE_SECONDS)).map((v) => v.secret_version);
+      if (!open.includes(row.secret_version)) throw new CredentialUnavailableError(id, 'no_current_secret', 'no current secret');
+      versions = open.sort((a, b) => b - a);
+    }
+    return { id: row.id, tenantId: row.tenant_id, provider: row.provider, version: row.secret_version, versions };
   }
 
   // ── Housekeeping (voice bootstrap) ────────────────────────────────────────
@@ -341,8 +388,8 @@ export class TelephonyCredentialService {
   /** Shred revoked credentials whose calls have ended, and drop secrets past the rotation grace. */
   async sweep(): Promise<{ shredded: number; pruned: number }> {
     let shredded = 0;
-    for (const id of await this.deps.repo.findRevokedUnshredded()) {
-      if (await this.deps.repo.shredIfIdle(id)) {
+    for (const id of await this.deps.repo.findRevokedUnshredded(WEBHOOK_TOKEN_POST_END_GRACE_SECONDS)) {
+      if (await this.deps.repo.shredIfIdle(id, WEBHOOK_TOKEN_POST_END_GRACE_SECONDS)) {
         shredded++;
         this.forget(id);
       }
@@ -353,6 +400,52 @@ export class TelephonyCredentialService {
   }
 
   // ── internals ─────────────────────────────────────────────────────────────
+
+  /** Read the row and refuse it if it cannot serve the purpose. Opens nothing. */
+  private async admit(id: string, purpose: ResolvePurpose): Promise<TelephonyCredentialRecord> {
+    if (!this.deps.sealer) throw new CredentialUnavailableError(id, 'store_unconfigured', 'no credential keyring is configured');
+    const row = await this.deps.repo.findById(id);
+    if (!row) throw new CredentialUnavailableError(id, 'not_found', 'not found');
+    if (row.shredded_at) throw new CredentialUnavailableError(id, 'shredded', 'shredded');
+    if (purpose === 'dial' && row.status !== 'active') throw new CredentialUnavailableError(id, 'status', `status ${row.status}`);
+    if (purpose === 'recording' && row.status === 'revoked') throw new CredentialUnavailableError(id, 'status', 'revoked');
+    return row;
+  }
+
+  /** `admit`, then open the current version only. The secrets read are returned for `resolve`. */
+  private async openCurrent(id: string, purpose: ResolvePurpose): Promise<{
+    row: TelephonyCredentialRecord; secret: Secret<Record<string, string>>; secrets: TelephonyCredentialSecretRecord[];
+  }> {
+    const row = await this.admit(id, purpose);
+    const secrets = await this.deps.repo.findOpenableSecrets(id, ROTATION_GRACE_SECONDS);
+    const current = secrets.find((v) => v.secret_version === row.secret_version);
+    if (!current) throw new CredentialUnavailableError(id, 'no_current_secret', 'no current secret');
+    return { row, secret: await this.open(row, current), secrets };
+  }
+
+  /** A credential that cannot be opened, as a route answer. Only a missing keyring is a 503. */
+  private unavailable(err: CredentialUnavailableError): ServiceResult<never> {
+    switch (err.kind) {
+      case 'store_unconfigured': return fail('credential_store_unavailable', 'No credential keyring is configured');
+      case 'not_found': return fail('not_found', 'Credential not found');
+      case 'status': return fail('invalid_transition', 'The credential cannot be used in its current status');
+      case 'shredded': return fail('secret_unavailable', 'The credential’s secrets have been shredded');
+      case 'no_current_secret': return fail('secret_unavailable', 'The credential has no stored current secret; rotate it');
+      case 'unopenable': return fail('secret_unavailable', 'The stored secret cannot be opened with this server’s keyring; restore its master key or rotate the secret');
+    }
+  }
+
+  /** A verify whose version-pinned write matched no row: say why, on a fresh read. */
+  private async verdictLost(id: string, checkedVersion: number): Promise<ServiceResult<never>> {
+    const row = await this.deps.repo.findById(id);
+    if (!row) return fail('not_found', 'Credential not found');
+    if (row.status === 'revoked') return fail('invalid_transition', 'The credential was revoked while the carrier was answering');
+    if (row.secret_version !== checkedVersion) {
+      return fail('version_conflict', 'The secret was rotated while the carrier was answering; verify again');
+    }
+    // Same version, but its status moved between the two status-pinned writes.
+    return fail('version_conflict', 'The credential changed while the carrier was answering; verify again');
+  }
 
   private async sealFor(spec: CredentialSpec, secret: Record<string, string>, ctx: SealContext): Promise<SealedSecretInput> {
     const sealed = await this.deps.sealer!.seal(secret, ctx);
@@ -381,7 +474,7 @@ export class TelephonyCredentialService {
     } catch (err) {
       if (err instanceof CredentialSealError) {
         log.error({ credentialId: row.id, secretVersion: v.secret_version, kekId: v.kek_id }, 'Telephony credential secret could not be opened');
-        throw new CredentialUnavailableError(row.id, 'secret could not be opened');
+        throw new CredentialUnavailableError(row.id, 'unopenable', 'secret could not be opened');
       }
       throw err;
     }

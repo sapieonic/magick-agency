@@ -18,6 +18,7 @@ vi.mock('../../../../src/telephony/credentials/index.js', () => ({
 
 import { superAdminTelephonyCredentialRoutes } from '../../../../src/api/routes/super-admin-telephony-credentials.routes.js';
 import { errorMaskHook } from '../../../../src/api/middleware/error-mask.middleware.js';
+import { TELEPHONY_CREDENTIAL_ERROR_CODES } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
 
 const ID = '22222222-2222-4222-8222-222222222222';
 const TENANT = '11111111-1111-4111-8111-111111111111';
@@ -107,6 +108,25 @@ describe('super-admin telephony credential routes', () => {
     });
     expect(res.statusCode).toBe(status);
     expect(res.json()).toMatchObject({ error: code, message: 'm' });
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+
+  // Written out by hand: every code of the contract's union, and the status it answers.
+  const EXPECTED_STATUS: Record<string, number> = {
+    credential_store_unavailable: 503, secret_unavailable: 409, unknown_provider: 400, invalid_input: 400,
+    tenant_not_found: 404, not_found: 404, duplicate_account: 409, duplicate_label: 409, carrier_rejected: 422,
+    carrier_unreachable: 502, version_conflict: 409, invalid_transition: 409, in_use: 409,
+  };
+
+  it('has an expected status for every code of the contract, and no other', () => {
+    expect(Object.keys(EXPECTED_STATUS).sort()).toEqual([...TELEPHONY_CREDENTIAL_ERROR_CODES].sort());
+  });
+
+  it.each([...TELEPHONY_CREDENTIAL_ERROR_CODES])('a failed verify answering %s keeps its message and is not audited', async (code) => {
+    svc.verify!.mockResolvedValue({ ok: false, code, message: 'service message' });
+    const res = await app.inject({ method: 'POST', url: `/super-admin/telephony-credentials/${ID}/verify` });
+    expect(res.statusCode).toBe(EXPECTED_STATUS[code]);
+    expect(res.json()).toMatchObject({ error: code, message: 'service message' });
     expect(mocks.audit).not.toHaveBeenCalled();
   });
 

@@ -18,6 +18,7 @@ import {
   TelephonyCredentialService, CredentialUnavailableError, type CredentialRepo,
 } from '../../../src/telephony/credentials/credential-service.js';
 import type { FetchLike } from '../../../src/telephony/credentials/credential-specs.js';
+import { WEBHOOK_TOKEN_POST_END_GRACE_SECONDS } from '../../../src/telephony/webhook-grace.js';
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const ADMIN = '99999999-9999-4999-8999-999999999999';
@@ -30,6 +31,8 @@ class FakeRepo implements CredentialRepo {
   secrets: TelephonyCredentialSecretRecord[] = [];
   campaigns = new Map<string, number>();
   inFlight = new Map<string, number>();
+  /** The post-end holds `shredIfIdle` / `findRevokedUnshredded` were called with. */
+  holds: number[] = [];
 
   async create(i: CreateTelephonyCredentialInput) {
     for (const r of this.rows.values()) {
@@ -53,10 +56,14 @@ class FakeRepo implements CredentialRepo {
     this.secrets.push({ credential_id: id, secret_version: v, secret_ciphertext: s.secret_ciphertext, wrapped_dek: s.wrapped_dek, kek_id: s.kek_id, created_at: new Date(), retired_at: null });
   }
   async findById(id: string) { const r = this.rows.get(id); return r ? { ...r } : null; }
-  async findOpenableSecrets(id: string, grace: number) {
+  private openable(id: string, grace: number) {
     const cutoff = Date.now() - grace * 1000;
     return this.secrets.filter((s) => s.credential_id === id && (!s.retired_at || s.retired_at.getTime() > cutoff))
       .sort((a, b) => b.secret_version - a.secret_version);
+  }
+  async findOpenableSecrets(id: string, grace: number) { return this.openable(id, grace); }
+  async findOpenableVersions(id: string, grace: number) {
+    return this.openable(id, grace).map((s) => ({ secret_version: s.secret_version, kek_id: s.kek_id }));
   }
   async distinctKekIds() { return [...new Set(this.secrets.map((s) => s.kek_id))]; }
   async list() { return [...this.rows.values()]; }
@@ -81,21 +88,25 @@ class FakeRepo implements CredentialRepo {
     const r = this.rows.get(id); if (!r || r.status !== 'disabled') return null;
     r.status = r.last_error ? 'invalid' : 'active'; return { ...r };
   }
-  async markVerified(id: string, v: number) {
-    const r = this.rows.get(id); if (!r || r.secret_version !== v) return null; r.verified_at = new Date(); r.last_error = null; return { ...r };
+  async markVerified(id: string, v: number, updatedBy: string | null) {
+    const r = this.rows.get(id); if (!r || r.secret_version !== v || r.status === 'revoked') return null;
+    r.verified_at = new Date(); r.last_error = null; if (r.status === 'invalid') r.status = 'active';
+    if (updatedBy !== null) r.updated_by = updatedBy;
+    return { ...r };
   }
   async revoke(id: string) {
     const r = this.rows.get(id); if (!r || r.status === 'revoked' || (this.campaigns.get(id) ?? 0) > 0) return null;
     r.status = 'revoked'; r.revoked_at = new Date(); return { ...r };
   }
-  async shredIfIdle(id: string) {
+  async shredIfIdle(id: string, hold: number) {
+    this.holds.push(hold);
     const r = this.rows.get(id);
     if (!r || r.status !== 'revoked' || r.shredded_at || (this.inFlight.get(id) ?? 0) > 0) return false;
     r.shredded_at = new Date(); r.secret_hint = null;
     this.secrets = this.secrets.filter((s) => s.credential_id !== id);
     return true;
   }
-  async findRevokedUnshredded() { return [...this.rows.values()].filter((r) => r.status === 'revoked' && !r.shredded_at).map((r) => r.id); }
+  async findRevokedUnshredded(hold: number) { this.holds.push(hold); return [...this.rows.values()].filter((r) => r.status === 'revoked' && !r.shredded_at).map((r) => r.id); }
   async pruneRetiredSecrets(grace: number) {
     const cutoff = Date.now() - grace * 1000; const before = this.secrets.length;
     this.secrets = this.secrets.filter((s) => !s.retired_at || s.retired_at.getTime() > cutoff);
@@ -255,6 +266,63 @@ describe('resolve', () => {
     const s2 = service({ sealer: other });
     expect(await s2.missingKeyIds()).toEqual(['env:v1']);
     await expect(s2.resolve(row.id, 'dial')).rejects.toThrow(/could not be opened/);
+    await expect(s2.resolve(row.id, 'dial')).rejects.toMatchObject({ kind: 'unopenable' });
+  });
+
+  it('skips a retired version that will not open, and still serves call control on the current one', async () => {
+    const row = await createOk();
+    await svc.rotate(row.id, { fields: { auth_token: CANARY2 }, expectedVersion: 1, adminId: ADMIN });
+    const v1 = repo.secrets.find((x) => x.secret_version === 1)!;
+    v1.secret_ciphertext = Buffer.from(v1.secret_ciphertext.map((b, i) => (i === 0 ? b ^ 0xff : b)));
+    const control = await service().resolve(row.id, 'call_control');
+    expect(control.version).toBe(2);
+    expect(control.secret.reveal()).toEqual({ auth_token: CANARY2 });
+    expect(control.previous).toEqual([]);
+  });
+
+  it('still fails closed when the current version will not open, whatever the purpose', async () => {
+    const row = await createOk();
+    await svc.rotate(row.id, { fields: { auth_token: CANARY2 }, expectedVersion: 1, adminId: ADMIN });
+    const v2 = repo.secrets.find((x) => x.secret_version === 2)!;
+    v2.secret_ciphertext = Buffer.from(v2.secret_ciphertext.map((b, i) => (i === 0 ? b ^ 0xff : b)));
+    await expect(service().resolve(row.id, 'call_control')).rejects.toMatchObject({ kind: 'unopenable' });
+  });
+});
+
+describe('peek', () => {
+  it('lists the versions resolve would open, reading and opening no secret', async () => {
+    const row = await createOk();
+    await svc.rotate(row.id, { fields: { auth_token: CANARY2 }, expectedVersion: 1, adminId: ADMIN });
+    const open = vi.spyOn(sealer, 'open');
+    const secrets = vi.spyOn(repo, 'findOpenableSecrets');
+    expect(await svc.peek(row.id, 'call_control')).toEqual({ id: row.id, tenantId: TENANT, provider: 'plivo', version: 2, versions: [2, 1] });
+    expect(await svc.peek(row.id, 'dial')).toEqual({ id: row.id, tenantId: TENANT, provider: 'plivo', version: 2, versions: [2] });
+    expect(open).not.toHaveBeenCalled();
+    expect(secrets).not.toHaveBeenCalled();
+  });
+
+  it.each<[TelephonyCredentialStatus, boolean, boolean, boolean]>([
+    ['active', true, true, true],
+    ['disabled', false, true, true],
+    ['revoked', false, true, false],
+  ])('refuses exactly what resolve refuses: a %s credential', async (status, dial, control, recording) => {
+    const row = await createOk();
+    repo.rows.get(row.id)!.status = status;
+    for (const [purpose, ok] of [['dial', dial], ['call_control', control], ['recording', recording]] as const) {
+      const p = svc.peek(row.id, purpose);
+      if (ok) await expect(p).resolves.toBeTruthy();
+      else await expect(p).rejects.toMatchObject({ kind: 'status' });
+    }
+  });
+
+  it('refuses with no keyring, an unknown id, a shredded credential, and a missing current secret', async () => {
+    const row = await createOk();
+    await expect(service({ sealer: null }).peek(row.id, 'dial')).rejects.toMatchObject({ kind: 'store_unconfigured' });
+    await expect(svc.peek(crypto.randomUUID(), 'dial')).rejects.toMatchObject({ kind: 'not_found' });
+    repo.secrets = [];
+    await expect(svc.peek(row.id, 'call_control')).rejects.toMatchObject({ kind: 'no_current_secret' });
+    repo.rows.get(row.id)!.shredded_at = new Date();
+    await expect(svc.peek(row.id, 'call_control')).rejects.toMatchObject({ kind: 'shredded' });
   });
 });
 
@@ -345,8 +413,86 @@ describe('verify, disable, enable, revoke', () => {
         return { status: 401 };
       },
     });
-    await raced.verify(row.id, ADMIN);
+    const r = await raced.verify(row.id, ADMIN);
+    expect(!r.ok && r.code).toBe('version_conflict');
     expect(repo.rows.get(row.id)).toMatchObject({ status: 'active', last_error: null, secret_version: 2 });
+  });
+
+  /** A service whose carrier call runs `during` before answering `status`. */
+  function racing(status: number, during: () => Promise<void> | void) {
+    return new TelephonyCredentialService({
+      repo, sealer, tenants: { findById: async (id) => (id === TENANT ? { id } : null) },
+      fetchImpl: async (url, init) => { carrier.calls.push({ url, init }); await during(); return { status }; },
+    });
+  }
+
+  it.each([401, 200])('answers invalid_transition, not success, when a revoke commits while the carrier answers %i', async (status) => {
+    const row = await createOk();
+    const before = { ...repo.rows.get(row.id)! };
+    const r = await racing(status, async () => { await svc.revoke(row.id, ADMIN); }).verify(row.id, ADMIN);
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.code).toBe('invalid_transition');
+    expect(repo.rows.get(row.id)).toMatchObject({ status: 'revoked', last_error: null, verified_at: before.verified_at });
+  });
+
+  it('answers version_conflict, not success, when a rotation commits while the carrier accepts the old secret', async () => {
+    const row = await createOk();
+    const r = await racing(200, async () => {
+      const rot = await svc.rotate(row.id, { fields: { auth_token: CANARY2 }, expectedVersion: 1, adminId: ADMIN });
+      expect(rot.ok).toBe(true);
+    }).verify(row.id, ADMIN);
+    expect(!r.ok && r.code).toBe('version_conflict');
+    expect(repo.rows.get(row.id)!.secret_version).toBe(2);
+  });
+
+  it('two overlapping verifies (a 401 lands while a 200 is in flight) end active, with the 200 returning the row it wrote', async () => {
+    const row = await createOk();
+    const r = await racing(200, async () => {
+      carrier.status = 401;
+      const refused = await svc.verify(row.id, ADMIN);
+      expect(refused.ok && refused.value.status).toBe('invalid');
+    }).verify(row.id, ADMIN);
+    expect(r.ok && r.value).toMatchObject({ status: 'active', last_error: null });
+    expect(repo.rows.get(row.id)).toMatchObject({ status: 'active', last_error: null });
+  });
+
+  it('records who verified', async () => {
+    const row = await createOk();
+    const other = '88888888-8888-4888-8888-888888888888';
+    const r = await svc.verify(row.id, other);
+    expect(r.ok && r.value.updated_by).toBe(other);
+  });
+
+  it('answers secret_unavailable (not a 503) when the current secret is sealed under a key the keyring lacks', async () => {
+    const row = await createOk();
+    const other = new CredentialSealer(new EnvKeyringWrapper(`v2:${crypto.randomBytes(32).toString('base64')}`, 'v2'));
+    const r = await service({ sealer: other }).verify(row.id, ADMIN);
+    expect(!r.ok && r.code).toBe('secret_unavailable');
+    expect(JSON.stringify(r)).not.toContain('env:v1');
+    expect(carrier.calls).toHaveLength(1); // the create's check only
+  });
+
+  it('answers secret_unavailable when the current version has no stored secret', async () => {
+    const row = await createOk();
+    repo.secrets = [];
+    const r = await svc.verify(row.id, ADMIN);
+    expect(!r.ok && r.code).toBe('secret_unavailable');
+  });
+
+  it('answers credential_store_unavailable only when no keyring is configured', async () => {
+    const row = await createOk();
+    const r = await service({ sealer: null }).verify(row.id, ADMIN);
+    expect(!r.ok && r.code).toBe('credential_store_unavailable');
+  });
+
+  it('opens only the current secret, not the versions inside the rotation grace', async () => {
+    const row = await createOk();
+    await svc.rotate(row.id, { fields: { auth_token: CANARY2 }, expectedVersion: 1, adminId: ADMIN });
+    const open = vi.spyOn(sealer, 'open');
+    const r = await service().verify(row.id, ADMIN);
+    expect(r.ok).toBe(true);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open.mock.calls[0]![1]).toMatchObject({ secretVersion: 2 });
   });
 
   it('refuses a revoke whose campaign was pinned after the usage check', async () => {
@@ -378,6 +524,9 @@ describe('verify, disable, enable, revoke', () => {
 
     repo.inFlight.set(row.id, 0);
     expect(await svc.sweep()).toEqual({ shredded: 1, pruned: 0 });
+    // Revoke and the sweep both hold the secrets for the webhook token's post-end life.
+    expect(repo.holds.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(repo.holds)).toEqual(new Set([WEBHOOK_TOKEN_POST_END_GRACE_SECONDS]));
     expect(repo.secrets.filter((s) => s.credential_id === row.id)).toEqual([]);
     await expect(svc.resolve(row.id, 'call_control')).rejects.toBeInstanceOf(CredentialUnavailableError);
   });
