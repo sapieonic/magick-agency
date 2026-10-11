@@ -430,7 +430,11 @@ describe('AgencyCampaignsPage — the list', () => {
     renderPage();
     await vi.waitFor(() => expect(screen.getByRole('article', { name: 'Old pilot' })).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Show older campaigns' }));
-    await vi.waitFor(() => expect(mocks.listAgencyCampaignsPage).toHaveBeenCalledTimes(2));
+    // Wait for the older page to land in the history, not just to be requested: the
+    // poll finds the stale row in the history, and a poll that runs first misses it.
+    // (The button is no signal: it reads "Loading…" while the request is in flight.)
+    await vi.waitFor(() => expect(screen.queryByText(/Showing the latest/)).toBeNull());
+    expect(mocks.listAgencyCampaignsPage).toHaveBeenCalledTimes(2);
 
     // It is stopped elsewhere: the active read no longer has it.
     mocks.listAgencyCampaigns.mockResolvedValue([RUNNING]);

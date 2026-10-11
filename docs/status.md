@@ -67,7 +67,8 @@ lint clean, 6512 of 6513 unit (308 files), the one failure being the branding gu
 uncommitted local file; integration re-run for `repository-sql-coverage.test.ts` only (12).
 
 CI (`.github/workflows/ci.yml`) runs lint, unit and build in one job, and the integration suites
-against Postgres 16 and Redis 7 service containers on the same ports in another. Per-module test
+in three parallel jobs (db, server, server wall-clock lane), each against its own Postgres 16 and
+Redis 7 service containers on the same ports. Per-module test
 files are listed in [`modules.md`](modules.md).
 
 ## Not built
