@@ -5,7 +5,7 @@
  * `Promise.all(items.map(fn))` starts everything at once. That is fine for a
  * handful and wrong for a list whose length is a property of the tenant's data
  * rather than of the screen: the agency analytics page fans out one `/stats`
- * request per campaign, and `listAgencyCampaigns` is unpaginated, so an account
+ * request per campaign, and `listAgencyCampaigns` returns every campaign, so an account
  * that has run three hundred campaigns over a year opened three hundred
  * simultaneous requests through the server and three hundred onward to the dialer runtime. The
  * browser queues them, the API does not.

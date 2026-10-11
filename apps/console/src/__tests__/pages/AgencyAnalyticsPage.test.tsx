@@ -14,8 +14,10 @@ import { MemoryRouter } from 'react-router-dom';
  *     looks wrong, so one campaign's failed `/stats` read must annotate its own
  *     card and leave the other campaigns' figures on screen. `Promise.all` here
  *     would blank the page on the first 404.
- *  2. **A bounded fan-out.** `listAgencyCampaigns` is unpaginated, so the request
- *     count is a property of the account's history, not of the screen.
+ *  2. **A bounded fan-out.** `listAgencyCampaigns` returns every campaign in the
+ *     account, so the request count would be a property of the account's history,
+ *     not of the screen. Stats are read for the newest fifty plus every live
+ *     campaign, with older ones on request.
  *  3. **Terminating when there is no account.** The early return used to skip
  *     `setLoading(false)`, leaving a permanent spinner in a state that never
  *     resolves itself.
@@ -171,6 +173,47 @@ describe('AgencyAnalyticsPage — the happy path', () => {
 
     await waitFor(() => expect(mocks.getAgencyCampaignStats).toHaveBeenCalledTimes(2));
     expect(mocks.getAgencyCampaignStats.mock.calls.map((c) => c[0])).toEqual(['camp-1', 'camp-2']);
+  });
+});
+
+describe('AgencyAnalyticsPage — a long history', () => {
+  function many(count: number) {
+    return Array.from({ length: count }, (_, i) =>
+      campaign({ id: `camp-${i}`, name: `Campaign ${i}`, status: 'completed' }),
+    );
+  }
+
+  it('reads numbers for the newest fifty, and says how many more there are', async () => {
+    mocks.listAgencyCampaigns.mockResolvedValue(many(120));
+    renderPage();
+
+    await waitFor(() => expect(mocks.getAgencyCampaignStats).toHaveBeenCalledTimes(50));
+    expect(screen.getByText('Campaign 49')).toBeTruthy();
+    expect(screen.queryByText('Campaign 50')).toBeNull();
+    expect(screen.getByText(/Showing 50 of 120 campaigns/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 50 more' }));
+    await waitFor(() => expect(mocks.getAgencyCampaignStats).toHaveBeenCalledTimes(100));
+    expect(screen.getByText('Campaign 99')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 20 more' }));
+    await waitFor(() => expect(mocks.getAgencyCampaignStats).toHaveBeenCalledTimes(120));
+    expect(screen.queryByRole('button', { name: /more$/ })).toBeNull();
+    // Each campaign's numbers are read once, however many times the window grows.
+    const ids = mocks.getAgencyCampaignStats.mock.calls.map((c) => c[0]);
+    expect(new Set(ids).size).toBe(120);
+  });
+
+  it('always shows a live campaign, however far down the list it sits', async () => {
+    const rows = many(80);
+    rows[70] = campaign({ id: 'camp-70', name: 'Old but paused', status: 'paused' });
+    mocks.listAgencyCampaigns.mockResolvedValue(rows);
+    renderPage();
+
+    await waitFor(() => expect(mocks.getAgencyCampaignStats).toHaveBeenCalledTimes(51));
+    expect(screen.getByText('Old but paused')).toBeTruthy();
+    expect(mocks.getAgencyCampaignStats.mock.calls.map((c) => c[0])).toContain('camp-70');
+    expect(screen.getByRole('button', { name: 'Show 29 more' })).toBeTruthy();
   });
 });
 

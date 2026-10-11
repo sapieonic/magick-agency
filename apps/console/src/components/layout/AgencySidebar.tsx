@@ -95,6 +95,17 @@ const NAV_ITEMS: NavItem[] = [
   },
 ];
 
+/*
+  The badge tells the agency shell apart from the platform shell at `/app`. A
+  brand whose name already says "Agency" says it twice, and the extra word was
+  what pushed the wordmark onto two lines at the default sidebar width.
+*/
+export function showsShellBadge(brandName: string): boolean {
+  return !/\bagency\b/i.test(brandName);
+}
+
+const SHOW_BADGE = showsShellBadge(brand.name);
+
 export function AgencySidebar({ onClose }: Props) {
   const { role } = useTenant();
   const items = NAV_ITEMS.filter((item) => hasPermission(role, item.permission));
@@ -104,7 +115,7 @@ export function AgencySidebar({ onClose }: Props) {
       <div className={styles.logoSection}>
         <Logo size={26} />
         <span className={styles.logo}>{brand.name}</span>
-        <span className={styles.badge}>Agency</span>
+        {SHOW_BADGE && <span className={styles.badge}>Agency</span>}
         <button className={styles.closeBtn} onClick={onClose} type="button" aria-label="Close menu">
           <X size={18} />
         </button>

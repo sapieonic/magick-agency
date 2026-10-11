@@ -64,6 +64,20 @@
 
 /* One campaign's stats read failing must not blank the others, so the note is
    scoped to its own card rather than raised to the page. */
+.more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.moreText {
+  margin: 0;
+  font-size: var(--text-xs, 12px);
+  color: var(--text-muted);
+}
+
 .statsError {
   margin: 0;
   font-size: var(--text-xs, 12px);
