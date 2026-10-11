@@ -112,5 +112,5 @@ This list was not re-audited test by test when it was written.
 
 ## Out of scope
 
-Metering and billing; AI calling; bring-your-own SIP and other carriers; a separate identity layer
+Metering and billing; AI calling; bring-your-own SIP and carriers other than VoiceLink and Plivo (B18); a separate identity layer
 with scopes.

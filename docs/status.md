@@ -91,7 +91,7 @@ files are listed in [`modules.md`](modules.md).
   `OTEL_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME` are set; it was
   checked end to end against a local OTLP collector only.
 
-**Out of scope:** metering and billing; AI calling; bring-your-own SIP and other carriers; a
+**Out of scope:** metering and billing; AI calling; bring-your-own SIP and carriers other than VoiceLink and Plivo (B18); a
 separate identity layer.
 
 ## Open decisions and owners

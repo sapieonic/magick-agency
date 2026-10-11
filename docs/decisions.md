@@ -3,7 +3,7 @@
 Every decision that shapes Magick Agency, by ID, in one place. Read it when you need to know
 whether something is settled, why the code is built the way it is, or what is still waiting on
 someone. Source comments cite entries here by ID ("decision B8", "Q6 (Manas, 2026-10-09)"), so
-IDs are never renumbered or reused. As of 2026-10-09.
+IDs are never renumbered or reused. As of 2026-10-11.
 
 Status words: **settled** (a founding product decision, not reopened here); **default, pending
 Manas** (built with the recommended option, not yet ratified); **open** (no default yet; a launch
@@ -135,6 +135,11 @@ Rulings of 2026-10-11:
 | VM provisioning | `aws/terraform` also creates the server VM when `create_server = true` (off by default, so a bucket-only environment gets none): one EC2 instance, a security group (80/443 open, 22 only from `ssh_cidrs` or the EC2 Instance Connect range), an Elastic IP associated separately so it outlives the instance, and a Session Manager role with no S3 access. The instance ignores AMI and user-data changes, so it is only replaced deliberately (`-replace`) | **Decided** |
 | VM image and size | Ubuntu 26.04 LTS, looked up from Canonical's public SSM parameter for the instance type's architecture. Default 2 vCPU / 4 GB (`t3.medium`), 20 GB gp3, 2 GB swap. The 4 GB heap limit in `docker/entrypoint.sh` is unchanged and equals that RAM (`status.md`, pre-deploy checklist) | **Decided** |
 | Super-admin exposure | Publishing the super-admin UI through the host's TLS terminator on its own domain is allowed, open to everyone to begin with; nginx's :8081 bind stays loopback. Accepted costs: one shared login bucket, the terminator's address recorded for super-admin actions, the password as the only gate. An IP allow-list at the terminator is the next step (`DEPLOYMENT.md` 8.4) | **Decided** |
+| Carriers (B18) | Plivo is supported alongside VoiceLink, on the **tenant's own Plivo account** (bring-your-own-carrier, BYOC). VoiceLink stays the service's own account, configured from env. Amends S1 and S2: a tenant may dial on its own carrier account; agency still owns the voice engine. Carriers are added as provider modules under `apps/server/src/telephony/`, so a further carrier is one module, not branches in the bridge | **Decided** |
+| Carrier credentials: storage (B19) | Per-tenant credentials live in Postgres (`telephony_credentials`), never in env and never in Redis. The secret part is sealed with AES-256-GCM under a per-row data key, which is wrapped by a master key from env (`TELEPHONY_CREDENTIAL_KEYS`, a versioned keyring; `TELEPHONY_CREDENTIAL_ACTIVE_KEY` names the one new seals use). AWS KMS may replace the env keyring later without a schema change (rows record the key id). The seal is bound to tenant, credential, provider and secret version, so a ciphertext copied to another row does not open | **Decided** |
+| Carrier credentials: scope and owner (B20) | A credential belongs to one tenant and serves every account in it. Only super-admins create, rotate, disable or delete one, from the super-admin console; the secret is write-only (never returned, only a hint). Every change is audited without secret material. A call is pinned to the credential it dialled on; a missing, disabled or unopenable credential fails the call and never falls back to the service's VoiceLink account | **Decided** |
+| Carrier credentials: recordings (B21) | A BYOC carrier's recordings are fetched on demand with the tenant's credential (no copy to S3). The credential is attached only for the provider's exact recording hosts and dropped on any redirect. Revoking a credential therefore ends playback and analysis of that tenant's earlier recordings on it | **Decided** |
+| Carrier credentials: concurrency (B22) | A BYOC call is admitted exactly like a VoiceLink call: the global, account and per-account provider scopes all apply. It is not exempt from the global cap because the bridge, not the carrier, is the shared resource | **Decided** |
 
 ## 5. Still open
 
