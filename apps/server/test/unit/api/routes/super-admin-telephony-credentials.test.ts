@@ -17,6 +17,7 @@ vi.mock('../../../../src/telephony/credentials/index.js', () => ({
 }));
 
 import { superAdminTelephonyCredentialRoutes } from '../../../../src/api/routes/super-admin-telephony-credentials.routes.js';
+import { errorMaskHook } from '../../../../src/api/middleware/error-mask.middleware.js';
 
 const ID = '22222222-2222-4222-8222-222222222222';
 const TENANT = '11111111-1111-4111-8111-111111111111';
@@ -46,6 +47,9 @@ beforeEach(async () => {
     list: vi.fn().mockResolvedValue([ROW]),
   } as never;
   app = Fastify();
+  // The app-wide 5xx mask, as `buildApp` registers it, so the status mapping is tested
+  // against what an admin actually receives.
+  app.addHook('onSend', errorMaskHook);
   await app.register(superAdminTelephonyCredentialRoutes, { prefix: '/super-admin', service: () => svc as never });
   await app.ready();
 });
@@ -102,7 +106,7 @@ describe('super-admin telephony credential routes', () => {
       payload: { tenant_id: TENANT, provider: 'plivo', label: 'Main', fields: {} },
     });
     expect(res.statusCode).toBe(status);
-    expect(res.json()).toMatchObject({ error: code });
+    expect(res.json()).toMatchObject({ error: code, message: 'm' });
     expect(mocks.audit).not.toHaveBeenCalled();
   });
 

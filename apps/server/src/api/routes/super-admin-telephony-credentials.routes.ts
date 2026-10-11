@@ -68,6 +68,10 @@ function badRequest(reply: FastifyReply, err: z.ZodError) {
 }
 
 function sendFailure(reply: FastifyReply, r: Extract<ServiceResult<unknown>, { ok: false }>) {
+  // The two 5xx codes (carrier unreachable, store unavailable) are reviewed, fixed-shape
+  // bodies whose messages the service authors; the app-wide error mask would otherwise
+  // replace them with "contact support" and the admin would not know to retry.
+  if (STATUS[r.code] >= 500) reply.request.preserveReviewedUpstreamError = true;
   return reply.code(STATUS[r.code]).send({ error: r.code, message: r.message, ...(r.details ? { details: r.details } : {}) });
 }
 
