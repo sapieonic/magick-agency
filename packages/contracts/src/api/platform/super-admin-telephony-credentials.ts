@@ -46,7 +46,7 @@ export interface TelephonyCredential {
 }
 
 export interface TelephonyCredentialUsage {
-  /** Campaigns pinned to the credential. A pinned credential cannot be revoked. */
+  /** Live (draft, running, paused, stopping) campaigns pinned to the credential. While any exist it cannot be revoked. */
   campaigns: number;
   /** Calls still in flight on it. */
   in_flight_calls: number;

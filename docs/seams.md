@@ -108,6 +108,18 @@ the account guard) go through it too. The voice engine registers the implementat
 loudly. `apps/server/test/integration/app/concurrency-seam-wiring.test.ts` proves the wiring through
 `buildApp`.
 
+### 3.4 Super-admin credential routes → carrier credential service
+
+The super-admin telephony-credential routes (`api/routes/super-admin-telephony-credentials.routes.ts`,
+registered by the platform plugin) call the voice area's `TelephonyCredentialService`
+(`apps/server/src/telephony/credentials/`) directly through `getTelephonyCredentialService()`,
+not through a registered seam. This is deliberate: the service holds no runtime state that
+bootstrap must start (it is built lazily from the `telephonyCredentials` config block and the
+shared repository, so it works the same before and after voice bootstrap), and the only
+background work, the hourly sweep, is started from `bootstrap/voice.ts`. Route tests inject a
+fake through the plugin's `service` option. If the service ever gains state that needs
+bootstrap ordering, move it behind a seam like §3.3.
+
 ## 4. Shared infrastructure
 
 Read or written by more than one module area, so it has one home (decision B10):
@@ -115,7 +127,9 @@ Read or written by more than one module area, so it has one home (decision B10):
 - Repositories in `packages/db/src/repositories/`: `agency-call.repository.ts` and its model;
   `account-settings.repository.ts`; `provider-concurrency.repository.ts`;
   `agency-campaign-agent.repository.ts` (staffing; membership revocation calls `closeAllForUser`);
-  `feature-flag.repository.ts`; the two audit repositories.
+  `feature-flag.repository.ts`; the two audit repositories; `telephony-credential.repository.ts`
+  (voice resolves credentials through it; the super-admin routes manage them through the voice
+  service, §3.4).
 - `apps/server/src/feature-flags/`: the flag service, with the registry in
   `@magick-agency/contracts/flags`. The super-admin override routes are built on it.
 - `apps/server/src/audit/`: `auditLogger` (→ `audit_logs`, the "Dialer" half of the activity trail)

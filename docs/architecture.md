@@ -300,8 +300,9 @@ bucket keyed on a client-supplied header. Buckets key on `request.ip`, which tru
 
 ## Data layer
 
-- One Postgres. The whole schema is one migration, `packages/db/migrations/0001_baseline.sql`
-  (node-pg-migrate, one transaction): 33 tables plus default partitions for the two audit tables,
+- One Postgres. The schema is the baseline migration, `packages/db/migrations/0001_baseline.sql`
+  (node-pg-migrate, one transaction; 33 tables plus default partitions for the two audit tables),
+  and the numbered migrations after it (0002: the two telephony-credential tables), all
   inventoried in `packages/db/BASELINE.md`. Tenant, account and user ids are UUIDs.
 - Repositories use raw `pg` (`packages/db/src/repositories/`, plus the agency repository in
   `apps/server/src/db/repositories/`). Repository tests run on real Postgres.
