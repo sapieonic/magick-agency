@@ -7,6 +7,7 @@ import {
   CredentialSealer, CredentialSealError, EnvKeyringWrapper, sealAad, type SealContext,
 } from '../../../src/telephony/credentials/credential-sealer.js';
 import { telephonyCredentialsSchema } from '../../../src/config/blocks/voice.js';
+import { buildSealerFromConfig } from '../../../src/telephony/credentials/index.js';
 
 const k1 = crypto.randomBytes(32).toString('base64');
 const k2 = crypto.randomBytes(32).toString('base64');
@@ -150,5 +151,32 @@ describe('telephonyCredentials config', () => {
     const text = JSON.stringify(r.error?.issues);
     expect(text).not.toContain(k1);
     expect(text).not.toContain(k2);
+  });
+});
+
+// A keyring with no entries is "store off" in BOTH the schema and the sealer built from
+// config. A value the schema accepts must not then throw in `EnvKeyringWrapper` on the
+// first `getTelephonyCredentialService()`, which `startVoice` calls unconditionally.
+describe('a keyring with no entries is the store off, in the schema and the sealer alike', () => {
+  it.each([
+    ['empty', ''],
+    ['whitespace', ' '],
+    ['one comma', ','],
+    ['commas only', ',,'],
+    ['commas and spaces', ' , ,'],
+  ])('%s: config accepted, no sealer', (_label, keyring) => {
+    const parsed = telephonyCredentialsSchema.safeParse({ keyring, activeKeyId: '' });
+    expect(parsed.success).toBe(true);
+    expect(buildSealerFromConfig(parsed.data!)).toBeNull();
+  });
+
+  it('a non-blank keyring still builds a working sealer', async () => {
+    const parsed = telephonyCredentialsSchema.safeParse({ keyring: ` , v1:${k1} ,`, activeKeyId: 'v1' });
+    expect(parsed.success).toBe(true);
+    const s = buildSealerFromConfig(parsed.data!);
+    expect(s).not.toBeNull();
+    const sealed = await s!.seal(SECRET, CTX);
+    expect(sealed.kekId).toBe('env:v1');
+    expect(await s!.open(sealed, CTX)).toEqual(SECRET);
   });
 });

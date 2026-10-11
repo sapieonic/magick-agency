@@ -7,6 +7,7 @@
 // `KeyWrapper`, which is async so a KMS-backed wrapper can replace the env keyring
 // without touching callers or the schema (rows record the key id).
 import crypto from 'node:crypto';
+import { keyringEntries } from '../../config/blocks/voice.js';
 
 /** What a seal is bound to. Every field is part of the AAD. */
 export interface SealContext {
@@ -111,7 +112,7 @@ export class EnvKeyringWrapper implements KeyWrapper {
     // Validated here as well as in the config schema, so no other caller can build a
     // wrapper whose later entry silently replaces an earlier key. Messages never carry
     // key material.
-    for (const entry of keyring.split(',').map((s) => s.trim()).filter(Boolean)) {
+    for (const entry of keyringEntries(keyring)) {
       const sep = entry.indexOf(':');
       const id = entry.slice(0, sep);
       const b64 = entry.slice(sep + 1);

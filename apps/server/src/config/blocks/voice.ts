@@ -156,11 +156,24 @@ const analyticsSchema = z.object({
  * Errors name the key id, never the key material.
  */
 const KEY_ID = /^[a-z0-9_-]{1,32}$/;
+
+/**
+ * The entries of a `TELEPHONY_CREDENTIAL_KEYS` value: split on commas, trimmed, blanks
+ * dropped. No entries (`""`, `" "`, `","`, `",,"`) means no credential store. The
+ * schema below, `buildSealerFromConfig` (`telephony/credentials/index.ts`) and
+ * `EnvKeyringWrapper` all read the value through this, so they cannot disagree: a
+ * value the schema accepts as "store off" must not then fail to build a keyring at
+ * first use.
+ */
+export function keyringEntries(keyring: string): string[] {
+  return keyring.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
 export const telephonyCredentialsSchema = z.object({
   keyring: z.string().optional().default(''),
   activeKeyId: z.string().optional().default(''),
 }).superRefine((data, ctx) => {
-  const entries = data.keyring.split(',').map((s) => s.trim()).filter(Boolean);
+  const entries = keyringEntries(data.keyring);
   if (entries.length === 0) {
     if (data.activeKeyId) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['keyring'], message: 'TELEPHONY_CREDENTIAL_ACTIVE_KEY is set but TELEPHONY_CREDENTIAL_KEYS is empty' });
