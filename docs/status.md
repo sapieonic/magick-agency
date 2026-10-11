@@ -84,7 +84,8 @@ races, `peek`, uncached providers): unit `apps/server` 6626 + 42 skipped (314 fi
 410 (24 files), `packages/contracts` 74, `apps/super-admin` 390 (27 files); integration
 `packages/db` 448 (39 files), with 1 timeout under a slow run in `membership.repository.test.ts`
 ("leaves one owner standing across repeated concurrent demotions"), which passes alone (33/33).
-`apps/server` integration: PENDING.
+Lint clean in 7 packages. The `apps/server` integration suite was not re-run in full after
+these fixes (the local run was stopped); CI's integration job is its run.
 
 CI (`.github/workflows/ci.yml`) runs lint, unit and build in one job, and the integration suites
 in three parallel jobs (db, server, server wall-clock lane), each against its own Postgres 16 and
