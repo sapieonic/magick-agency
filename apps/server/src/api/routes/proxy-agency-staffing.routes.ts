@@ -7,7 +7,6 @@ import { callCore } from '../core-dispatch.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../audit/platform/audit-actor.js';
-import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { membershipRepository } from '@magick-agency/db/repositories/membership.repository';
 import {
   agencyCampaignAgentRepository,
@@ -19,45 +18,25 @@ import { enrichAssignedAgents } from '../../agency/agency-agent-identity.js';
 /*
  * Agent → campaign staffing, served at the console's paths under `/proxy/agency` (decision
  * B16). The rows are `agency_campaign_agents`, read and written here directly. The internal
- * handler instance's `GET /agency-campaigns/:id` (feature gate, then `requireOwned` on
- * tenant AND account) is reached in-process through `callCore` for two things: the
- * best-effort summary in `resolveCampaignSummary` and the ownership probe in
- * `assertCampaignInScope`. Audit rows go to `platformAuditLogger` (decision B7). There is no
+ * handler instance is reached in-process through `callCore` for two things, both behind its
+ * feature gate and `requireOwned`'s rule (tenant AND account): the best-effort labels in
+ * `resolveCampaignSummaries` (`GET /agency-campaigns/summaries`, one read for every
+ * campaign on the page) and the ownership probe in `assertCampaignInScope`
+ * (`GET /agency-campaigns/:id`). Audit rows go to `platformAuditLogger` (decision B7). There is no
  * capability gate; the RBAC floors are the gate.
  */
 
 const log = createChildLogger({ component: 'proxy-agency-staffing' });
 
 /**
- * How many campaign summaries `GET /my-assignments` resolves at once.
- *
- * Four, which is comfortably above the number of campaigns a supervisor realistically
- * staffs one agent onto while still bounding the burst if somebody staffs fifty. The
- * agent is blocked on all of them before their home renders, so latency matters more
- * here than throughput — and each one runs the internal handler's campaign read.
- */
-const SUMMARY_CONCURRENCY = 4;
-
-/**
- * How long one best-effort campaign summary may take, passed as `timeoutMs`.
- *
- * Inert in-process: `callCore` accepts `timeoutMs` and ignores it (there is no
- * transport to time out; `core-dispatch.ts`), and the handler behind it is one
- * indexed read. The bound it states is still the intent: a courtesy label on a
- * row this route already holds must never be able to hold an agent's own console
- * open; it degrades to `null`, which is the documented normal path here.
- */
-const SUMMARY_TIMEOUT_MS = 6_000;
-
-/**
  * How many DISTINCT campaigns one `/my-campaigns` page will name.
  *
- * The row cap alone does not bound the fan-out usefully: 200 rows can be 200
- * campaigns, which at {@link SUMMARY_CONCURRENCY} is 50 sequential waves of handler
- * reads with an agent's console blocked on all of them. Rows arrive
- * newest-first, so the first {@link SUMMARY_LOOKUP_MAX} distinct ids are the
- * recent ones — the half of a history anybody is actually looking at — and the
- * rest report `campaign_name: null`.
+ * The names come from ONE internal read for the whole page
+ * ({@link resolveCampaignSummaries}), and this bounds the id list it carries: 200
+ * rows can be 200 campaigns. Rows arrive newest-first, so the first
+ * {@link SUMMARY_LOOKUP_MAX} distinct ids are the recent ones — the half of a
+ * history anybody is actually looking at — and the rest report
+ * `campaign_name: null`.
  *
  * That degradation is not a new contract: this route already documents nulls as
  * its NORMAL path rather than an edge case ("a history is in fact the surface
@@ -207,21 +186,27 @@ interface CampaignSummary {
   status: string | null;
 }
 
+/** The answer for a campaign the lookup could not name. */
+const UNRESOLVED_SUMMARY: CampaignSummary = { name: null, status: null };
+
 /**
- * Resolve a campaign's name and status through the internal handler. **Never rejects.**
+ * Resolve the names and statuses of a page's campaigns in ONE internal read
+ * (`GET /agency-campaigns/summaries`). **Never rejects.**
  *
- * Every caller is enriching an answer it already has (an assignment from
+ * Every caller is enriching an answer it already has (assignments from
  * `agency_campaign_agents`), so a failure here must degrade the courtesy fields and
  * leave the answer standing — the rule `src/agency/agency-stats-enrichment.ts`
  * states: enrichment must never turn a 200 into a 500. A refusal, a campaign since
  * deleted, and an unexpected shape all land on `{ name: null, status: null }`,
  * which is indistinguishable to the client and correctly so: in all three cases
  * the id is the fact and the labels are unavailable. Concretely, any status ≥ 400
- * (403 `feature_disabled`, 404 for another account's or a deleted campaign, 400
- * for a missing account header) and a throw both land on nulls.
+ * (403 `feature_disabled`, 400 for a missing account header) and a throw land
+ * every id on nulls; a campaign in another account, another tenant or since
+ * deleted is simply absent from the handler's answer and lands on nulls alone —
+ * the handler applies `requireOwned`'s tenant-AND-account rule to the whole set.
  *
- * That total-ness is also load-bearing for the plural route's `Promise.all` — one
- * rejection there would discard every sibling's successful lookup.
+ * Callers read the map with {@link summaryOf}, so an id the answer does not name
+ * is the null pair rather than `undefined`.
  *
  * `status` is passed through rather than validated against an enum. The dialer
  * runtime owns the campaign lifecycle, and a second copy of its states here is a
@@ -229,41 +214,50 @@ interface CampaignSummary {
  * mirror, telling the agent "unknown" about a campaign the server knows perfectly
  * well. The client renders an unrecognised status as itself
  * (`AgencyCampaignStatusBadge` does exactly this).
- *
- * `recordCoreErrors` and `timeoutMs` are passed but `callCore` ignores both
- * in-process (`core-dispatch.ts`).
  */
-async function resolveCampaignSummary(
+async function resolveCampaignSummaries(
   request: FastifyRequest,
-  campaignId: string,
-): Promise<CampaignSummary> {
+  campaignIds: readonly string[],
+): Promise<Map<string, CampaignSummary>> {
+  const summaries = new Map<string, CampaignSummary>();
+  // No ids, no read: an agent nobody has staffed costs nothing.
+  if (campaignIds.length === 0) return summaries;
   try {
     const result = await callCore({
       method: 'GET',
-      path: `/agency-campaigns/${campaignId}`,
+      path: '/agency-campaigns/summaries',
+      query: { ids: campaignIds.join(',') },
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency-campaigns/:id',
-      recordCoreErrors: false,
-      // Ignored in-process — see {@link SUMMARY_TIMEOUT_MS}.
-      timeoutMs: SUMMARY_TIMEOUT_MS,
     });
-    if (result.status >= 400) return { name: null, status: null };
-    return {
-      name: extractStringField(result.body, 'name') ?? null,
-      status: extractStringField(result.body, 'status') ?? null,
-    };
+    if (result.status >= 400) return summaries;
+    const rows = (result.body as { campaigns?: unknown } | null)?.campaigns;
+    if (!Array.isArray(rows)) return summaries;
+    for (const row of rows) {
+      const id = extractStringField(row, 'id');
+      if (!id) continue;
+      summaries.set(id, {
+        name: extractStringField(row, 'name') ?? null,
+        status: extractStringField(row, 'status') ?? null,
+      });
+    }
+    return summaries;
   } catch (err) {
     log.warn(
       {
         tenantId: request.tenantId,
-        campaignId,
+        campaigns: campaignIds.length,
         err: err instanceof Error ? err.message : String(err),
       },
       'agency campaign lookup failed; answering with null name and status',
     );
-    return { name: null, status: null };
+    return summaries;
   }
+}
+
+/** One campaign's labels from {@link resolveCampaignSummaries}'s map; nulls when absent. */
+function summaryOf(summaries: Map<string, CampaignSummary>, campaignId: string): CampaignSummary {
+  return summaries.get(campaignId) ?? UNRESOLVED_SUMMARY;
 }
 
 const assignAgentSchema = z.object({
@@ -412,26 +406,14 @@ export async function proxyAgencyStaffingRoutes(app: FastifyInstance): Promise<v
    * rule `src/agency/agency-stats-enrichment.ts` states: enrichment must never
    * turn a 200 into a 500.
    *
-   * The lookups run concurrently and each is independently guarded, so one
-   * campaign's failure cannot null out its siblings. `mapWithConcurrency` carries
-   * `Promise.all` failure semantics — it rejects on the first rejection — which is
-   * safe here ONLY because {@link resolveCampaignSummary} never rejects. If that
-   * totality is ever broken, this route starts 500ing on a single unreachable
-   * campaign and needs a settled variant instead.
-   *
-   * ── The fan-out is CAPPED, not merely expected to be small ────────────────
-   * "Bounded by how many campaigns a supervisor has staffed one person onto — a
-   * handful in practice" is a convention, not a constraint: nothing limits how
-   * many active assignments an agent holds, so the fan-out is however many rows
-   * exist, on a route an agent's home calls on every sign-in and every return
-   * from a station.
-   *
-   * So it is limited explicitly. Each summary runs the internal handler's
-   * campaign read, and the agent is waiting on all of them before their own page can
-   * render — an unbounded burst is felt by the person least able to do anything
-   * about it. Still not paginated: an agent must see every assignment to choose
-   * from them, and a page cursor on a list of that size would be complexity with no
-   * case behind it.
+   * Every campaign is named by ONE internal read ({@link resolveCampaignSummaries}),
+   * however many assignments the agent holds — nothing limits how many active
+   * assignments an agent may have, and this route is called on every sign-in and
+   * every return from a station, so the cost must not grow with the rows. A
+   * campaign the read cannot name nulls its own labels and nobody else's, and a
+   * failed read nulls them all while the assignments stand. Still not paginated:
+   * an agent must see every assignment to choose from them, and a page cursor on a
+   * list of that size would be complexity with no case behind it.
    */
   app.get('/my-assignments', {
     preHandler: requirePermission('agency.station.connect'),
@@ -444,19 +426,20 @@ export async function proxyAgencyStaffingRoutes(app: FastifyInstance): Promise<v
       userId,
     );
 
-    const summaries = await mapWithConcurrency(assignments, SUMMARY_CONCURRENCY, (assignment) =>
-      resolveCampaignSummary(request, assignment.campaign_id),
+    const summaries = await resolveCampaignSummaries(
+      request,
+      [...new Set(assignments.map((assignment) => assignment.campaign_id))],
     );
 
     return reply.code(200).send({
-      assignments: assignments.map((assignment, index) => ({
+      assignments: assignments.map((assignment) => ({
         campaign_id: assignment.campaign_id,
         // Both always present, even when unresolved — a sometimes-absent key is a
         // different defect and a client cannot tell it from one it forgot to read.
-        campaign_name: summaries[index]!.name,
+        campaign_name: summaryOf(summaries, assignment.campaign_id).name,
         // What the landing page needs to say "this one isn't taking calls right
         // now" BEFORE the agent clicks into a station that would refuse them.
-        campaign_status: summaries[index]!.status,
+        campaign_status: summaryOf(summaries, assignment.campaign_id).status,
         assigned_at: assignment.assigned_at,
       })),
     });
@@ -514,11 +497,10 @@ export async function proxyAgencyStaffingRoutes(app: FastifyInstance): Promise<v
    * is the normal path here rather than an edge
    * case — which is precisely why the ids are what the response is built from.
    *
-   * The lookups are deduplicated by campaign id before the fan-out. A history
+   * The ids are deduplicated before the one read that names them. A history
    * repeats campaigns by construction (staffed in March, unstaffed in April,
-   * staffed again in June is three rows and one campaign), so resolving per ROW
-   * would spend three identical handler reads to print the same name three
-   * times.
+   * staffed again in June is three rows and one campaign), so naming per ROW
+   * would carry the same id three times to print the same name three times.
    *
    * ── BOUNDED in three places ────────────────────────────────────────────────
    * Unlike `/my-assignments`, whose rows are the ACTIVE ones and therefore self-
@@ -531,14 +513,11 @@ export async function proxyAgencyStaffingRoutes(app: FastifyInstance): Promise<v
    *  1. **Rows** — `listAllForUser` takes a hard `LIMIT` (`HISTORY_LIMIT_MAX`)
    *     that no query parameter can raise, plus the optional `from`/`to` window
    *     below, which is the shape its own docstring nominated for exactly this.
-   *  2. **Fan-out** — at most `SUMMARY_LOOKUP_MAX` DISTINCT campaigns are named.
-   *     The row cap alone does not bound this: 200 rows can be 200 campaigns, and
-   *     at `SUMMARY_CONCURRENCY` that is 50 sequential waves with the agent
-   *     waiting on all of them. Rows are newest-first, so the campaigns that get
-   *     a name are the recent ones and the rest report `null` — this route's own
-   *     documented normal path, not a new contract.
-   *  3. **Each lookup** — `SUMMARY_TIMEOUT_MS`, inert in-process (see the
-   *     constant).
+   *  2. **Names** — at most `SUMMARY_LOOKUP_MAX` DISTINCT campaigns are named, in
+   *     one internal read. The row cap alone does not bound that read's id list:
+   *     200 rows can be 200 campaigns. Rows are newest-first, so the campaigns
+   *     that get a name are the recent ones and the rest report `null` — this
+   *     route's own documented normal path, not a new contract.
    *
    * The response SHAPE is fixed: `{ assignments: [...] }`, every key on every
    * row — the console reads that key, and a change to it would render every
@@ -572,10 +551,7 @@ export async function proxyAgencyStaffingRoutes(app: FastifyInstance): Promise<v
     // caption is `null`, which is what this route degrades to anyway.
     const campaignIds = [...new Set(assignments.map((a) => a.campaign_id))]
       .slice(0, SUMMARY_LOOKUP_MAX);
-    const resolved = await mapWithConcurrency(campaignIds, SUMMARY_CONCURRENCY, (campaignId) =>
-      resolveCampaignSummary(request, campaignId),
-    );
-    const summaries = new Map(campaignIds.map((id, index) => [id, resolved[index]!]));
+    const summaries = await resolveCampaignSummaries(request, campaignIds);
 
     if (assignments.length >= HISTORY_LIMIT_MAX) {
       // A full page is not proof there is more, but it is the only signal the
@@ -588,8 +564,8 @@ export async function proxyAgencyStaffingRoutes(app: FastifyInstance): Promise<v
     return reply.code(200).send({
       assignments: assignments.map((assignment) => ({
         campaign_id: assignment.campaign_id,
-        campaign_name: summaries.get(assignment.campaign_id)?.name ?? null,
-        campaign_status: summaries.get(assignment.campaign_id)?.status ?? null,
+        campaign_name: summaryOf(summaries, assignment.campaign_id).name,
+        campaign_status: summaryOf(summaries, assignment.campaign_id).status,
         assigned_at: assignment.assigned_at,
         // `null` while the assignment stands. Kept as the raw timestamp rather
         // than folded into `active` alone: "when did I come off this campaign" is
@@ -632,8 +608,8 @@ export async function proxyAgencyStaffingRoutes(app: FastifyInstance): Promise<v
     );
     if (!assignment) return reply.code(204).send();
 
-    const summary = await resolveCampaignSummary(
-      request,
+    const summary = summaryOf(
+      await resolveCampaignSummaries(request, [assignment.campaign_id]),
       assignment.campaign_id,
     );
 

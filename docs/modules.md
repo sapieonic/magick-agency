@@ -50,6 +50,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-campaign-create.test.ts` | ~3 |
 | `apps/server/test/integration/agency/agency-campaign-stats.routes.test.ts` | ~10 |
 | `apps/server/test/integration/agency/agency-campaign-stats.test.ts` | ~18 |
+| `apps/server/test/integration/agency/agency-campaign-summaries.routes.test.ts` | 9 |
 | `apps/server/test/integration/agency/agency-campaign-update.test.ts` | 4 |
 | `apps/server/test/integration/agency/agency-contact-unclaim-many.test.ts` | ~1 |
 | `apps/server/test/integration/agency/agency-context-ordering.test.ts` | ~9 |

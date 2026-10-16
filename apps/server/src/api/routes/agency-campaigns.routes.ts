@@ -99,6 +99,9 @@ const ACTOR_NAME_MAX = 255;
  */
 const CAMPAIGN_NAME_MAX = 255;
 
+/** How many ids one `GET /summaries` may name; its one caller sends at most 25. */
+const CAMPAIGN_SUMMARIES_MAX_IDS = 100;
+
 /*
  * SIP is not supported, and there is no `sip_connection_id` column (not in the
  * baseline schema, `AgencyCampaignRecord` or the repository's INSERT). The shared leaf
@@ -532,6 +535,33 @@ export async function agencyCampaignRoutes(
       campaigns: rows.map(formatAgencyCampaignResponse),
       total, limit, offset,
     });
+  });
+
+  // ── GET /api/v1/agency-campaigns/summaries?ids=<id>,<id> ─────────────────
+  //
+  // `{ campaigns: [{ id, name, status }] }` for the named campaigns this tenant AND
+  // account own — `requireOwned`'s rule over a set, in one statement
+  // (`findOwnedSummaries`). An id that is unknown or owned elsewhere is absent, so a
+  // foreign id and a missing one stay indistinguishable. Gated like every read.
+  // The staffing plugin's `my-*` routes label an agent's assignments with it in one
+  // round trip instead of one campaign read per assignment. A static segment, so the
+  // router never hands it to `/:id`.
+  app.get('/summaries', async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await gate(request, reply))) return reply;
+    const raw = (request.query as { ids?: unknown } | undefined)?.ids;
+    const ids = typeof raw === 'string'
+      ? raw.split(',').map((id) => id.trim()).filter((id) => id.length > 0)
+      : [];
+    if (ids.length > CAMPAIGN_SUMMARIES_MAX_IDS) {
+      return reply.code(400).send({
+        error: 'Validation failed',
+        details: { ids: `at most ${CAMPAIGN_SUMMARIES_MAX_IDS} campaign ids per request` },
+      });
+    }
+    const campaigns = await agencyCampaignRepository.findOwnedSummaries(
+      ids, getTenantId(request), getAccountId(request),
+    );
+    return reply.send({ campaigns });
   });
 
   // ── GET /api/v1/agency-campaigns/:id ─────────────────────────────────────

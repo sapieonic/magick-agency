@@ -548,7 +548,7 @@ describe('agency staffing routes (integration)', () => {
 
     it('reports campaign_name: null when the internal handler answers a shape without a string name', async () => {
       await seedAssignment();
-      mocks.proxyToCore.mockResolvedValue({ status: 200, body: { id: CAMPAIGN, name: 42 } });
+      mocks.proxyToCore.mockResolvedValue({ status: 200, body: { campaigns: [{ id: CAMPAIGN, name: 42 }] } });
 
       const res = await app.inject({
         method: 'GET',
@@ -611,7 +611,7 @@ describe('agency staffing routes (integration)', () => {
       await seedAssignment({ campaignId: OTHER_CAMPAIGN });
       mocks.proxyToCore.mockResolvedValue({
         status: 200,
-        body: { id: CAMPAIGN, name: 'Q3 Renewals', status: 'running' },
+        body: { campaigns: [{ id: CAMPAIGN, name: 'Q3 Renewals', status: 'running' }] },
       });
 
       const res = await app.inject({
@@ -632,7 +632,7 @@ describe('agency staffing routes (integration)', () => {
       await seedAssignment({ campaignId: CAMPAIGN });
       mocks.proxyToCore.mockResolvedValue({
         status: 200,
-        body: { id: CAMPAIGN, name: 'Q3 Renewals', status: 'paused' },
+        body: { campaigns: [{ id: CAMPAIGN, name: 'Q3 Renewals', status: 'paused' }] },
       });
 
       const res = await app.inject({

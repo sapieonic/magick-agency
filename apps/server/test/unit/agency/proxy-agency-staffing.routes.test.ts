@@ -130,9 +130,30 @@ function assignmentRow(campaignId = CAMPAIGN) {
   };
 }
 
+/** The internal `GET /agency-campaigns/summaries` answer naming exactly these rows. */
+function summaries(...campaigns: Array<{ id: string; name?: unknown; status?: unknown }>) {
+  return { status: 200, body: { campaigns } };
+}
+
+/** The ids one summaries read asked for, in the order sent. */
+function idsAsked(call: unknown[]): string[] {
+  return ((call[0] as { query?: { ids?: string } }).query?.ids ?? '').split(',');
+}
+
+/**
+ * A `callCore` double that names EVERY campaign a summaries read asks for with
+ * `fields`, and answers any other path (the ownership probe) with an owned campaign.
+ */
+function namingEvery(fields: { name?: unknown; status?: unknown }) {
+  return async (req: { path: string; query?: { ids?: string } }) =>
+    req.path === '/agency-campaigns/summaries'
+      ? summaries(...(req.query?.ids ?? '').split(',').map((id) => ({ id, ...fields })))
+      : { status: 200, body: { id: CAMPAIGN, name: 'Q3 Renewals' } };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.proxyToCore.mockResolvedValue({ status: 200, body: { id: CAMPAIGN, name: 'Q3 Renewals' } });
+  mocks.proxyToCore.mockImplementation(namingEvery({ name: 'Q3 Renewals' }));
   mocks.findActiveForUser.mockResolvedValue(null);
   mocks.listActiveForUser.mockResolvedValue([]);
   mocks.listAllForUser.mockResolvedValue([]);
@@ -210,9 +231,10 @@ describe('GET /my-assignment — reachable by a BARE agent', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ campaign_id: CAMPAIGN, campaign_name: null });
-    // Swallowed lookups must not be recorded for the error mask, or an unrelated
-    // 4xx of our own could be flattened into a support message.
-    expect(mocks.proxyToCore.mock.calls[0]![0].recordCoreErrors).toBe(false);
+    // One summaries read, naming the one campaign.
+    expect(mocks.proxyToCore).toHaveBeenCalledTimes(1);
+    expect(mocks.proxyToCore.mock.calls[0]![0].path).toBe('/agency-campaigns/summaries');
+    expect(idsAsked(mocks.proxyToCore.mock.calls[0]!)).toEqual([CAMPAIGN]);
     await app.close();
   });
 
@@ -255,14 +277,16 @@ describe('GET /my-assignments — the plural replacement', () => {
       assignmentRow(CAMPAIGN),
       assignmentRow(OTHER_CAMPAIGN),
     ]);
-    mocks.proxyToCore
-      .mockResolvedValueOnce({ status: 200, body: { id: CAMPAIGN, name: 'Q3 Renewals', status: 'running' } })
-      .mockResolvedValueOnce({ status: 200, body: { id: OTHER_CAMPAIGN, name: 'Collections', status: 'paused' } });
+    mocks.proxyToCore.mockResolvedValue(summaries(
+      { id: OTHER_CAMPAIGN, name: 'Collections', status: 'paused' },
+      { id: CAMPAIGN, name: 'Q3 Renewals', status: 'running' },
+    ));
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
 
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/my-assignments` });
 
     expect(res.statusCode).toBe(200);
+    // Matched by id, not by position: the handler's answer is a set.
     expect(res.json().assignments).toEqual([
       {
         campaign_id: CAMPAIGN,
@@ -299,10 +323,7 @@ describe('GET /my-assignments — the plural replacement', () => {
     // Without it the landing page can only offer every assignment identically and
     // let the agent discover a paused campaign by being refused at its station.
     mocks.listActiveForUser.mockResolvedValue([assignmentRow(CAMPAIGN)]);
-    mocks.proxyToCore.mockResolvedValue({
-      status: 200,
-      body: { id: CAMPAIGN, name: 'Q3 Renewals', status: 'stopped' },
-    });
+    mocks.proxyToCore.mockResolvedValue(summaries({ id: CAMPAIGN, name: 'Q3 Renewals', status: 'stopped' }));
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
 
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/my-assignments` });
@@ -316,10 +337,7 @@ describe('GET /my-assignments — the plural replacement', () => {
     // added into "unknown" for the agent, about a campaign the internal handler knows perfectly
     // well; the client renders an unrecognised status as itself.
     mocks.listActiveForUser.mockResolvedValue([assignmentRow(CAMPAIGN)]);
-    mocks.proxyToCore.mockResolvedValue({
-      status: 200,
-      body: { id: CAMPAIGN, name: 'Q3 Renewals', status: 'draining' },
-    });
+    mocks.proxyToCore.mockResolvedValue(summaries({ id: CAMPAIGN, name: 'Q3 Renewals', status: 'draining' }));
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
 
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/my-assignments` });
@@ -349,21 +367,18 @@ describe('GET /my-assignments — the plural replacement', () => {
     await app.close();
   });
 
-  it('lets ONE campaign’s failure null only its own labels, never a sibling’s', async () => {
+  it('lets ONE campaign the handler cannot name null only its own labels, never a sibling’s', async () => {
     /**
-     * The property that makes the concurrent fan-out safe. `resolveCampaignSummary`
-     * is total — it never rejects — which is why `Promise.all` is correct here; if
-     * a rejection could escape it, the first failure would discard every other
-     * campaign's successful lookup and the agent would see a list of nameless rows
-     * because one campaign was deleted.
+     * A campaign since deleted, or owned by another account, is simply ABSENT from
+     * the one summaries answer. That must null its own row and leave every sibling
+     * named — the agent must not see a list of nameless rows because one campaign
+     * was deleted.
      */
     mocks.listActiveForUser.mockResolvedValue([
       assignmentRow(CAMPAIGN),
       assignmentRow(OTHER_CAMPAIGN),
     ]);
-    mocks.proxyToCore
-      .mockRejectedValueOnce(new Error('handler unreachable'))
-      .mockResolvedValueOnce({ status: 200, body: { id: OTHER_CAMPAIGN, name: 'Collections', status: 'running' } });
+    mocks.proxyToCore.mockResolvedValue(summaries({ id: OTHER_CAMPAIGN, name: 'Collections', status: 'running' }));
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
 
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/my-assignments` });
@@ -376,24 +391,23 @@ describe('GET /my-assignments — the plural replacement', () => {
     await app.close();
   });
 
-  it('nulls the labels when the internal handler does not know the campaign, without recording the error', async () => {
+  it('nulls the labels when the internal handler refuses the read, and keeps the id', async () => {
     mocks.listActiveForUser.mockResolvedValue([assignmentRow(CAMPAIGN)]);
-    mocks.proxyToCore.mockResolvedValue({ status: 404, body: { error: 'Not Found' } });
+    mocks.proxyToCore.mockResolvedValue({ status: 403, body: { error: 'Feature Not Enabled', code: 'feature_disabled' } });
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
 
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/my-assignments` });
 
+    expect(res.statusCode).toBe(200);
+    expect(res.json().assignments[0].campaign_id).toBe(CAMPAIGN);
     expect(res.json().assignments[0].campaign_name).toBeNull();
     expect(res.json().assignments[0].campaign_status).toBeNull();
-    // Swallowed lookups must not be recorded for the error mask, or an unrelated
-    // 4xx of our own could be flattened into a support message.
-    expect(mocks.proxyToCore.mock.calls[0]![0].recordCoreErrors).toBe(false);
     await app.close();
   });
 
-  it('resolves every campaign CONCURRENTLY, one lookup each', async () => {
-    // Sequential lookups would make an agent's landing page wait N internal
-    // round-trips before it can render anything at all.
+  it('names every campaign in ONE internal read, each id once', async () => {
+    // One read per campaign would make an agent's landing page wait on N internal
+    // round-trips (each a flag read and a campaign read) before it can render.
     mocks.listActiveForUser.mockResolvedValue([
       assignmentRow(CAMPAIGN),
       assignmentRow(OTHER_CAMPAIGN),
@@ -402,51 +416,39 @@ describe('GET /my-assignments — the plural replacement', () => {
 
     await app.inject({ method: 'GET', url: `${PREFIX}/my-assignments` });
 
-    expect(mocks.proxyToCore).toHaveBeenCalledTimes(2);
-    expect(mocks.proxyToCore.mock.calls.map((c) => c[0].path)).toEqual([
-      `/agency-campaigns/${CAMPAIGN}`,
-      `/agency-campaigns/${OTHER_CAMPAIGN}`,
-    ]);
+    expect(mocks.proxyToCore).toHaveBeenCalledTimes(1);
+    expect(mocks.proxyToCore.mock.calls[0]![0]).toMatchObject({
+      method: 'GET',
+      path: '/agency-campaigns/summaries',
+      tenantId: TENANT,
+      accountId: 'account-1',
+    });
+    expect(idsAsked(mocks.proxyToCore.mock.calls[0]!)).toEqual([CAMPAIGN, OTHER_CAMPAIGN]);
     await app.close();
   });
 
-  it('CAPS the fan-out rather than bursting one request per assignment', async () => {
+  it('spends ONE read however many assignments the agent holds', async () => {
     /**
      * Nothing in the schema bounds this: an agent can hold one assignment per
-     * campaign, so the fan-out is however many rows exist, on a route the agent's home
-     * calls on every sign-in — and the agent is blocked on all of them before their
-     * page renders.
-     *
-     * Asserted by observing peak in-flight rather than total calls: every campaign
-     * must still be resolved (the count assertion below), and it is the SIMULTANEITY
-     * that is capped.
+     * campaign, on a route the agent's home calls on every sign-in. The cost of
+     * naming them must not grow with the rows.
      */
     const many = Array.from({ length: 20 }, (_, i) =>
       assignmentRow(`aaaaaaaa-0000-4000-8000-${String(i).padStart(12, '0')}`),
     );
     mocks.listActiveForUser.mockResolvedValue(many);
-
-    let inFlight = 0;
-    let peak = 0;
-    mocks.proxyToCore.mockImplementation(async () => {
-      inFlight += 1;
-      peak = Math.max(peak, inFlight);
-      await new Promise((r) => setTimeout(r, 2));
-      inFlight -= 1;
-      return { status: 200, body: { name: 'X', status: 'running' } };
-    });
+    mocks.proxyToCore.mockImplementation(namingEvery({ name: 'X', status: 'running' }));
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
 
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/my-assignments` });
 
     expect(res.statusCode).toBe(200);
-    // Every campaign resolved…
+    // Every campaign named…
     expect(res.json().assignments).toHaveLength(20);
-    expect(mocks.proxyToCore).toHaveBeenCalledTimes(20);
-    // …but never all at once. The exact cap is an implementation choice; that it is
-    // well below the assignment count is the property.
-    expect(peak).toBeLessThanOrEqual(8);
-    expect(peak).toBeGreaterThan(0);
+    expect(res.json().assignments.every((a: { campaign_name: string }) => a.campaign_name === 'X')).toBe(true);
+    // …by one internal call.
+    expect(mocks.proxyToCore).toHaveBeenCalledTimes(1);
+    expect(idsAsked(mocks.proxyToCore.mock.calls[0]!)).toHaveLength(20);
     await app.close();
   });
 
@@ -519,9 +521,10 @@ describe('GET /my-campaigns — the staffing HISTORY, closed rows included', () 
       assignmentRow(CAMPAIGN),
       closedRow(OTHER_CAMPAIGN, '2026-04-01T00:00:00.000Z'),
     ]);
-    mocks.proxyToCore
-      .mockResolvedValueOnce({ status: 200, body: { name: 'Q3 Renewals', status: 'running' } })
-      .mockResolvedValueOnce({ status: 200, body: { name: 'Collections', status: 'stopped' } });
+    mocks.proxyToCore.mockResolvedValue(summaries(
+      { id: CAMPAIGN, name: 'Q3 Renewals', status: 'running' },
+      { id: OTHER_CAMPAIGN, name: 'Collections', status: 'stopped' },
+    ));
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
 
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/my-campaigns` });
@@ -593,24 +596,25 @@ describe('GET /my-campaigns — the staffing HISTORY, closed rows included', () 
     await app.close();
   });
 
-  it('resolves each campaign ONCE even when the history repeats it', async () => {
+  it('names each campaign ONCE even when the history repeats it', async () => {
     /**
      * A history repeats campaigns by construction — staffed in March, unstaffed in
-     * April, staffed again in June is three rows and one campaign. Resolving per ROW
-     * would spend three identical internal-handler round trips to print the same name three
-     * times, on a route an agent opens from their own console.
+     * April, staffed again in June is three rows and one campaign. Naming per ROW
+     * would carry the same id three times to print the same name three times, on a
+     * route an agent opens from their own console.
      */
     mocks.listAllForUser.mockResolvedValue([
       assignmentRow(CAMPAIGN),
       closedRow(CAMPAIGN, '2026-04-01T00:00:00.000Z'),
       closedRow(CAMPAIGN, '2026-03-01T00:00:00.000Z'),
     ]);
-    mocks.proxyToCore.mockResolvedValue({ status: 200, body: { name: 'Q3 Renewals', status: 'running' } });
+    mocks.proxyToCore.mockResolvedValue(summaries({ id: CAMPAIGN, name: 'Q3 Renewals', status: 'running' }));
     const app = await buildApp({ role: 'agent', userId: AGENT_USER });
 
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/my-campaigns` });
 
     expect(mocks.proxyToCore).toHaveBeenCalledTimes(1);
+    expect(idsAsked(mocks.proxyToCore.mock.calls[0]!)).toEqual([CAMPAIGN]);
     // …and every row still carries the label.
     expect(res.json().assignments.map((a: { campaign_name: string }) => a.campaign_name))
       .toEqual(['Q3 Renewals', 'Q3 Renewals', 'Q3 Renewals']);
@@ -703,19 +707,19 @@ describe('GET /my-campaigns — the staffing HISTORY, closed rows included', () 
 
     it('caps the DISTINCT campaigns it names, however many rows come back', async () => {
       /**
-       * The row ceiling alone does not bound the fan-out: a full page can be a
-       * full page of distinct campaigns, and each one is an internal-handler round trip an
-       * agent is blocked on. Rows are newest-first, so the campaigns that get a
-       * name are the recent ones.
+       * The row ceiling alone does not bound the one read's id list: a full page
+       * can be a full page of distinct campaigns. Rows are newest-first, so the
+       * campaigns that get a name are the recent ones.
        */
       mocks.listAllForUser.mockResolvedValue(historyRows(120));
-      mocks.proxyToCore.mockResolvedValue({ status: 200, body: { name: 'C', status: 'running' } });
+      mocks.proxyToCore.mockImplementation(namingEvery({ name: 'C', status: 'running' }));
       const app = await buildApp({ role: 'agent', userId: AGENT_USER });
 
       const res = await app.inject({ method: 'GET', url: `${PREFIX}/my-campaigns` });
 
       expect(res.statusCode).toBe(200);
-      expect(mocks.proxyToCore.mock.calls.length).toBeLessThanOrEqual(25);
+      expect(mocks.proxyToCore).toHaveBeenCalledTimes(1);
+      expect(idsAsked(mocks.proxyToCore.mock.calls[0]!)).toHaveLength(25);
       // Every row is still returned — the cap is on the LOOKUPS, not the answer.
       expect(res.json().assignments).toHaveLength(120);
       await app.close();
@@ -725,7 +729,7 @@ describe('GET /my-campaigns — the staffing HISTORY, closed rows included', () 
       // The id is what the response is built from and every key is still present;
       // `null` is this route's documented normal path, not a new contract.
       mocks.listAllForUser.mockResolvedValue(historyRows(30));
-      mocks.proxyToCore.mockResolvedValue({ status: 200, body: { name: 'C', status: 'running' } });
+      mocks.proxyToCore.mockImplementation(namingEvery({ name: 'C', status: 'running' }));
       const app = await buildApp({ role: 'agent', userId: AGENT_USER });
 
       const rows = (await app.inject({ method: 'GET', url: `${PREFIX}/my-campaigns` })).json()
