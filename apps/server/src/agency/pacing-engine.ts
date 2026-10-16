@@ -11,7 +11,7 @@ import type { AgencyCampaignRecord, AgencyContactRecord } from '../db/models/age
 import type { StationRegistry } from './station-registry.js';
 import type { AgentStateMachine } from './agent-state-machine.js';
 import type { DialDispatcher } from './dial-dispatcher.js';
-import { campaignChangeReasonFor, campaignMessageFor, isDialingStatus } from './outcome-classifier.js';
+import { campaignChangeReasonFor } from './outcome-classifier.js';
 import type { AgencyCampaignChangeReason, AgencyCampaignStatus } from '@magick-agency/contracts/agency';
 import type { DncRegistry } from './dnc-registry.js';
 import { evaluatePreDialGates, type PreDialDecision } from './pre-dial-gates.js';
@@ -20,6 +20,10 @@ import {
   agencyTickIdleTotal,
 } from '@magick-agency/observability/metrics/agency';
 import { safeEmit } from '../utils/safe-emit.js';
+import { LeaderLease, LEADER_RENEW_MS } from './pacing/leader-lease.js';
+import { InFlight } from './pacing/in-flight.js';
+import { pickCallerId, usableCallerIds } from './pacing/caller-id-pool.js';
+import { CampaignAnnouncer } from './pacing/campaign-announcer.js';
 import { getFeatureFlagService, FLAGS } from '../feature-flags/index.js';
 import { auditLogger } from '../audit/audit-logger.js';
 
@@ -29,9 +33,6 @@ const log = createChildLogger({ component: 'agency-pacing-engine' });
 const TICK_INTERVAL_MS = 250;
 /** How often a replica tries to take leadership of campaigns it does not lead. */
 const SUPERVISE_INTERVAL_MS = 2_000;
-/** Leader lease. Renewed at a third of its length. */
-const LEADER_LEASE_MS = 15_000;
-const LEADER_RENEW_MS = 5_000;
 
 /**
  * How long `stop()` waits for completion notices still in flight. Bounded, so an
@@ -49,21 +50,6 @@ export const COMPLETION_NOTICE_DRAIN_TIMEOUT_MS = 30_000;
 export const TICK_DRAIN_TIMEOUT_MS = 5_000;
 
 /**
- * Renew a leader lease only if we still hold it. Losing leadership and then
- * re-taking it by blind SET is how two leaders end up dialing one campaign.
- */
-const RENEW_LEASE = `
-if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
-redis.call('PEXPIRE', KEYS[1], ARGV[2])
-return 1
-`;
-
-const RELEASE_LEASE = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
-return 0
-`;
-
-/**
  * Written into the agent's Redis hash between reservation and dial.
  *
  * There is no attempt yet at reservation time — that is the whole point of
@@ -72,23 +58,6 @@ return 0
  * tell "reserved, attempt not created yet" from "an attempt id we lost track of".
  */
 const RESERVING_MARKER = 'reserving';
-
-/**
- * Wait for every promise in `pending` to settle, for at most `timeoutMs`. True when
- * they all settled in time. Never rejects: a rejected member counts as settled.
- */
-async function settleWithin(pending: ReadonlySet<Promise<unknown>>, timeoutMs: number): Promise<boolean> {
-  if (pending.size === 0) return true;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const timedOut = new Promise<'timeout'>((resolve) => {
-    timer = setTimeout(() => resolve('timeout'), timeoutMs);
-    timer.unref?.();
-  });
-  const settled = Promise.allSettled([...pending]).then(() => 'drained' as const);
-  const outcome = await Promise.race([settled, timedOut]);
-  if (timer) clearTimeout(timer);
-  return outcome === 'drained';
-}
 
 /** An available agent and how long they have been waiting. */
 interface AgentCandidate {
@@ -172,7 +141,13 @@ export class PacingEngine {
      * test ever wrote.
      */
     private readonly dnc: DncRegistry,
-  ) {}
+  ) {
+    this.lease = new LeaderLease(redis, keyPrefix, replicaId);
+    this.announcer = new CampaignAnnouncer(stations);
+  }
+
+  /** The per-campaign leader lease — `pacing/leader-lease.ts`. */
+  private readonly lease: LeaderLease;
 
   /**
    * The engine's "something may want to know a campaign finished" seam. What wants to
@@ -201,7 +176,7 @@ export class PacingEngine {
    * drains this set, bounded by
    * {@link noticeDrainTimeoutMs}.
    */
-  private readonly inFlightNotices = new Set<Promise<void>>();
+  private readonly inFlightNotices = new InFlight();
 
   /** The drain bound `stop()` uses. A field only so tests can shorten it. */
   noticeDrainTimeoutMs = COMPLETION_NOTICE_DRAIN_TIMEOUT_MS;
@@ -212,7 +187,7 @@ export class PacingEngine {
   }
 
   private async drainNotices(): Promise<void> {
-    if (await settleWithin(this.inFlightNotices, this.noticeDrainTimeoutMs)) return;
+    if (await this.inFlightNotices.settle(this.noticeDrainTimeoutMs)) return;
     log.error(
       { pending: this.inFlightNotices.size, timeoutMs: this.noticeDrainTimeoutMs },
       'Campaign completion notices did not settle before shutdown — those notices are lost',
@@ -227,13 +202,13 @@ export class PacingEngine {
    * bridge after its shutdown snapshot (a carrier leg nobody tears down), or
    * finalize a campaign and request a notice after `drainNotices` had already run.
    */
-  private readonly inFlightTicks = new Set<Promise<void>>();
+  private readonly inFlightTicks = new InFlight();
 
   /** The tick-drain bound `stop()` uses. A field only so tests can shorten it. */
   tickDrainTimeoutMs = TICK_DRAIN_TIMEOUT_MS;
 
   private async drainTicks(): Promise<void> {
-    if (await settleWithin(this.inFlightTicks, this.tickDrainTimeoutMs)) return;
+    if (await this.inFlightTicks.settle(this.tickDrainTimeoutMs)) return;
     log.error(
       { pending: this.inFlightTicks.size, timeoutMs: this.tickDrainTimeoutMs },
       'Agency ticks did not settle before shutdown — continuing; their dial sites refuse to dial',
@@ -248,10 +223,6 @@ export class PacingEngine {
    */
   private mayDial(campaignId: string): boolean {
     return !this.stopped && !this.revoked.has(campaignId);
-  }
-
-  private leaderKey(campaignId: string): string {
-    return `${this.keyPrefix}agency:leader:${campaignId}`;
   }
 
   start(): void {
@@ -278,15 +249,6 @@ export class PacingEngine {
   }
 
   /**
-   * Whether the flag has already been reported as off for a campaign.
-   *
-   * The supervise pass runs every 2s, so an unguarded line would emit ~43k times a
-   * day for one switched-off campaign. Cleared when the campaign comes back, so
-   * switching a tenant off, on and off again is reported both times.
-   */
-  private readonly flagGated = new Set<string>();
-
-  /**
    * Campaigns led **to drain, never to dial**.
    *
    * A `stopping` campaign is led without consulting the dialer flag (see
@@ -304,6 +266,27 @@ export class PacingEngine {
    * from it.
    */
   private readonly drainOnly = new Set<string>();
+
+  /** The campaign-state broadcasts and their latches — `pacing/campaign-announcer.ts`. */
+  private readonly announcer: CampaignAnnouncer;
+  private get flagGated(): Set<string> { return this.announcer.flagGated; }
+  private get reportedStuck(): Set<string> { return this.announcer.reportedStuck; }
+  private announceCampaignState(
+    campaign: AgencyCampaignRecord,
+    reason: AgencyCampaignChangeReason,
+    opts: { dialing?: boolean } = {},
+  ): void {
+    this.announcer.announceCampaignState(campaign, reason, opts);
+  }
+  private announceDialingResumed(campaign: AgencyCampaignRecord, why: string): void {
+    this.announcer.announceDialingResumed(campaign, why);
+  }
+  private noteMisconfigured(campaign: AgencyCampaignRecord, what: string): void {
+    this.announcer.noteMisconfigured(campaign, what);
+  }
+  private clearStuck(campaign: AgencyCampaignRecord): void {
+    this.announcer.clearStuck(campaign);
+  }
 
   /**
    * Whether this campaign's tenant still has the agency dialer switched on.
@@ -470,18 +453,7 @@ export class PacingEngine {
   }
 
   private async tryAcquireLeadership(campaignId: string): Promise<boolean> {
-    // No Redis ⇒ single replica by definition; lead everything. Fail-open is right
-    // here (unlike the DNC check): the DB claim still prevents double-dialing.
-    if (!this.redis) return true;
-    try {
-      const res = await this.redis.set(
-        this.leaderKey(campaignId), this.replicaId, 'PX', LEADER_LEASE_MS, 'NX',
-      );
-      return res === 'OK';
-    } catch (err) {
-      log.warn({ err, campaignId }, 'Leader lease acquire failed');
-      return false;
-    }
+    return this.lease.tryAcquire(campaignId);
   }
 
   private beginLeading(campaign: AgencyCampaignRecord): void {
@@ -504,15 +476,9 @@ export class PacingEngine {
   }
 
   private async renewLeadership(campaignId: string): Promise<void> {
-    if (!this.redis) return;
-    try {
-      const ok = await this.redis.eval(RENEW_LEASE, 1, this.leaderKey(campaignId), this.replicaId, LEADER_LEASE_MS);
-      if (ok !== 1) {
-        log.warn({ campaignId }, 'Lost agency campaign leadership — stopping within one tick');
-        await this.relinquish(campaignId, { alreadyLost: true });
-      }
-    } catch (err) {
-      log.warn({ err, campaignId }, 'Leader lease renew failed');
+    if ((await this.lease.renew(campaignId)) === 'lost') {
+      log.warn({ campaignId }, 'Lost agency campaign leadership — stopping within one tick');
+      await this.relinquish(campaignId, { alreadyLost: true });
     }
   }
 
@@ -537,10 +503,7 @@ export class PacingEngine {
       clearInterval(timers.renew);
       this.led.delete(campaignId);
     }
-    if (this.redis && !opts.alreadyLost) {
-      await this.redis.eval(RELEASE_LEASE, 1, this.leaderKey(campaignId), this.replicaId)
-        .catch(() => { /* it will TTL out */ });
-    }
+    if (!opts.alreadyLost) await this.lease.release(campaignId);
   }
 
   /**
@@ -568,13 +531,7 @@ export class PacingEngine {
    */
   async tickOnce(campaignId: string): Promise<void> {
     // Tracked so `stop()` can wait for it — see `inFlightTicks`.
-    const run = this.runTick(campaignId);
-    this.inFlightTicks.add(run);
-    try {
-      await run;
-    } finally {
-      this.inFlightTicks.delete(run);
-    }
+    await this.inFlightTicks.track(this.runTick(campaignId));
   }
 
   private async runTick(campaignId: string): Promise<void> {
@@ -639,7 +596,7 @@ export class PacingEngine {
       // `usableCallerIds`, NOT `caller_ids.length`: a stored `['']` is length 1 and
       // dials nothing. Testing length here while the picker tested truthiness is
       // what let a junk pool past this guard and into an unlatched 4 Hz spin.
-      if (campaign.status === 'running' && this.usableCallerIds(campaign).length === 0) {
+      if (campaign.status === 'running' && usableCallerIds(campaign).length === 0) {
         this.recordIdle(campaign.id, 'no_caller_ids');
         this.noteMisconfigured(campaign, 'has no usable caller IDs — every tick will dial nothing until one is added');
         return;
@@ -904,7 +861,7 @@ export class PacingEngine {
       // pool cannot be answered for this contact and cannot be answered for the ones
       // claimed alongside it either, so the whole remainder is returned rather than
       // half of it being carried out by a throw.
-      const callerId = this.pickCallerId(this.usableCallerIds(campaign), dialed);
+      const callerId = pickCallerId(usableCallerIds(campaign), dialed);
       if (!callerId) {
         await this.abortRemainder(contacts.slice(index), reserved.slice(index));
         // Latched, like the top-of-tick guard: this branch is only reachable if the
@@ -1118,53 +1075,6 @@ export class PacingEngine {
   }
 
   /**
-   * Round-robin the caller-ID pool. All entries belong to one provider.
-   *
-   * **Returns null rather than throwing on an empty pool.** It used to throw, from
-   * inside the dial loop's `create({ callerId: … })` argument list — which unwound
-   * the whole tick past every unwind path in it, leaving the current agent on the
-   * `reserving` marker, the current contact `in_flight`, and *every remaining*
-   * reserved agent and claimed contact in the same state. Those agents are then
-   * undialable until their lease lapses and the reaper requeues the contacts, and
-   * the next tick reproduces it, so an emptied pool took the campaign's whole roster
-   * out rather than stopping it cleanly.
-   *
-   * `PATCH /agency-campaigns/:id` now refuses an empty `caller_ids`, so this should
-   * be unreachable — that is the reason for the belt and the braces both. A pool can
-   * still empty by a direct DB write or a migration, and the failure mode has to be
-   * a halted campaign rather than a leaked one.
-   */
-  private pickCallerId(pool: readonly string[], offset: number): string | null {
-    if (pool.length === 0) return null;
-    return pool[(Date.now() + offset) % pool.length]!;
-  }
-
-  /**
-   * The caller IDs on this campaign that can actually be dialled.
-   *
-   * **THE one definition of "usable", shared by the top-of-tick guard and the
-   * picker, and they must not diverge.** They did: the guard tested
-   * `caller_ids.length === 0` while `pickCallerId` returned a *falsy* `''` for a
-   * stored `caller_ids: ['']`. So a length-1 junk pool sailed past the guard,
-   * `clearStuck` wiped the latch on the way through, the dial loop then failed on
-   * the empty string, and `noteMisconfigured` fired UNLATCHED — restoring the exact
-   * 4 Hz spin the guard exists to prevent, plus a `campaign_state` broadcast storm
-   * to every joined agent, plus the reservation churn and the fairness-ordering
-   * damage. The route validator now refuses `['']` on create and PATCH, but no
-   * migration cleans rows already stored that way, so the engine has to cope.
-   *
-   * Trimmed as well as filtered, because a padded entry is what the route now
-   * stores trimmed but older rows may not be.
-   */
-  private usableCallerIds(campaign: AgencyCampaignRecord): string[] {
-    const pool = campaign.caller_ids;
-    if (!Array.isArray(pool)) return [];
-    return pool
-      .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
-      .map((id) => id.trim());
-  }
-
-  /**
    * Finalize on an idle tick. `running → completed` and `stopping → stopped` have
    * exactly one writer — this — so a supervisor's pause cannot race it.
    *
@@ -1232,8 +1142,7 @@ export class PacingEngine {
       if (this.completionNotifier) {
         const notice: Promise<void> = this.completionNotifier.notifyCampaignFinished(updated, to).catch((err) =>
           log.error({ err, campaignId: campaign.id }, 'Campaign completion notice failed'));
-        this.inFlightNotices.add(notice);
-        void notice.then(() => { this.inFlightNotices.delete(notice); });
+        this.inFlightNotices.track(notice);
       }
       // Tell every agent BEFORE we relinquish — after this the leader is gone and
       // nothing else knows the list drained. List exhaustion is the normal end of
@@ -1245,185 +1154,6 @@ export class PacingEngine {
       this.lastStatus.delete(campaign.id);
       await this.relinquish(campaign.id);
     }
-  }
-
-  /**
-   * **The one answer to "would this campaign place a call right now?"**
-   *
-   * Returns the blocking reason, or `null` when nothing is in the way.
-   *
-   * ── Why this is derived in one place instead of cross-checked in several ────
-   *
-   * There are two independent suppressions — `flagGated` and `reportedStuck` — and
-   * each used to announce its own recovery without consulting the other. Two bugs
-   * fell straight out of that, and they are the same bug:
-   *
-   *   * the dialer flag returning fired `resumed`/`dialing: true` on a campaign
-   *     still halted for unusable caller IDs, and the next tick's
-   *     `noteMisconfigured` was a no-op because that latch was still set — so the
-   *     console kept `dialing: true` forever while nothing was dialed;
-   *   * `clearStuck` runs on any tick the empty-pool guard did not return early
-   *     from, and that guard is gated on `status === 'running'` — so a campaign
-   *     that moved to `stopping` (still led, still ticked at 4 Hz while it drains)
-   *     or was briefly ticked while `paused` cleared the latch and broadcast
-   *     `resumed`/`dialing: true` on a campaign that will never dial again.
-   *
-   * Adding a cross-check to each site fixes today's pair and drifts apart the day a
-   * third suppression appears — which is how the second one got here. So the
-   * predicate is derived from the whole state, every announcement is clamped
-   * against it below, and a new latch is one line HERE rather than N new
-   * cross-checks. The status is part of it deliberately: `dialing` must never be
-   * true for a status that cannot dial, whoever asked for it.
-   */
-  private notDialingBecause(campaign: AgencyCampaignRecord): string | null {
-    if (!isDialingStatus(campaign.status)) return `the campaign is ${campaign.status}`;
-    if (this.flagGated.has(campaign.id)) return 'the dialer is disabled for this account';
-    if (this.reportedStuck.has(campaign.id)) return 'the campaign still cannot dial';
-    return null;
-  }
-
-  /**
-   * Broadcast a campaign-state change to every agent working it.
-   *
-   * `dialing` is normally derived from the status, but a campaign can be `running`
-   * and **not** dialing — a misconfiguration halt, or the tenant's dialer flag
-   * switched off. `isDialingStatus` would answer `true` for both, which is the
-   * console lie this override exists to prevent: `dialing` is documented as "the
-   * single boolean the console should drive its idle state from".
-   *
-   * **`dialing: true` is a CLAIM, and it is checked here rather than trusted.** Both
-   * the explicit override and the status-derived default are clamped against
-   * `notDialingBecause`, so no call site — including one written later, by someone
-   * who does not know about a latch — can announce that a campaign is dialing when
-   * the engine will not dial it. A caller that asked for `false` is never
-   * second-guessed: suppression is only ever tightened.
-   */
-  private announceCampaignState(
-    campaign: AgencyCampaignRecord,
-    reason: AgencyCampaignChangeReason,
-    opts: { dialing?: boolean } = {},
-  ): void {
-    const claimed = opts.dialing ?? isDialingStatus(campaign.status);
-    const blockedBy = claimed ? this.notDialingBecause(campaign) : null;
-    if (blockedBy) {
-      // Warn, not debug: a clamped frame means a call site and the engine disagreed
-      // about whether calls are going out, and that disagreement is the entire class
-      // of defect here. Silently correcting it would hide the next one.
-      log.warn(
-        { campaignId: campaign.id, status: campaign.status, reason, blockedBy },
-        'Refused to announce dialing:true — the campaign would not dial',
-      );
-    }
-    const sent = this.stations.broadcast(campaign.id, {
-      event: 'campaign_state',
-      campaign_id: campaign.id,
-      status: campaign.status,
-      reason,
-      dialing: claimed && !blockedBy,
-      message: campaignMessageFor(reason),
-    });
-    log.info({ campaignId: campaign.id, status: campaign.status, reason, agents: sent }, 'Announced agency campaign state');
-  }
-
-  /**
-   * Campaigns already reported as unable to dial, so the report happens once.
-   *
-   * The tick runs at 4 Hz and the supervise pass at 0.5 Hz, so every "this campaign
-   * cannot dial" line needs a latch or it becomes hundreds of thousands of
-   * identical lines a day — the same reason the flag gate has one. Cleared when the
-   * campaign can dial again, so a fixed-then-rebroken campaign reports twice.
-   */
-  private readonly reportedStuck = new Set<string>();
-
-  /**
-   * Report a `running` campaign that structurally cannot dial — once per episode,
-   * to the log AND to every agent watching it.
-   *
-   * The agents are the point. A supervisor at least has the campaign row and the
-   * `agency_tick_idle_total` series; an agent has a console showing a Running badge
-   * and `dialing: true`, waiting for a call that is never coming. Without the frame
-   * this is the same "healthy-looking campaign that dials nothing" shape the rest of
-   * this work exists to eliminate, with a server-side log as its only symptom.
-   */
-  private noteMisconfigured(campaign: AgencyCampaignRecord, what: string): void {
-    if (this.reportedStuck.has(campaign.id)) return;
-    this.reportedStuck.add(campaign.id);
-    log.error(
-      { campaignId: campaign.id, tenantId: campaign.tenant_id, accountId: campaign.account_id },
-      `Agency campaign ${what}`,
-    );
-    // `auto_paused` is the closest existing reason and its copy ("paused
-    // automatically") is honest here: the engine has stopped producing calls
-    // without a supervisor asking. A dedicated reason would need a matching arm in
-    // every console's switch, and `message` already carries the fallback copy.
-    this.announceCampaignState(campaign, 'auto_paused', { dialing: false });
-  }
-
-  /**
-   * The campaign can dial again — let the next failure report itself.
-   *
-   * **Reached on a `stopping` or briefly-`paused` tick too**, because the empty-pool
-   * guard above it returns early only while `status === 'running'`. Clearing the
-   * latch there is deliberate and is the safe direction: the alternative — keeping
-   * it — means a campaign that resumes still broken finds `noteMisconfigured`
-   * latched, emits no halt frame and no error log, and the console is left with
-   * whatever the status change said. Clearing it costs one re-report on the next
-   * `running` tick if the pool is still empty, which is exactly the
-   * "fixed-then-rebroken reports twice" behaviour this latch documents.
-   *
-   * What must NOT happen there is the resume frame, since nothing verified the pool
-   * and the campaign is draining or paused anyway. That is `announceDialingResumed`'s
-   * job now, not this call site's — see `notDialingBecause`.
-   */
-  private clearStuck(campaign: AgencyCampaignRecord): void {
-    if (!this.reportedStuck.delete(campaign.id)) return;
-    // ── The recovery frame, which did not exist ───────────────────────────────
-    // We told every joined agent `dialing: false`, and `campaign_state` is the ONLY
-    // frame carrying `dialing`, so nothing else can ever undo that. The
-    // status-change detector in `tickOnce` cannot either: the status never left
-    // `running`, so there is no change for it to notice. Without this the console
-    // reads auto-paused indefinitely while calls are routed to it.
-    this.announceDialingResumed(campaign, 'caller IDs restored');
-  }
-
-  /**
-   * Tell agents dialing has restarted after we told them it stopped.
-   *
-   * Fires only when a suppression was actually announced, so an ordinary tick never
-   * broadcasts. `dialing` is passed explicitly rather than left to
-   * `isDialingStatus`: the whole class of bug here is a `dialing` boolean derived
-   * from a status that did not change.
-   *
-   * ── One suppression clearing is not recovery ────────────────────────────────
-   *
-   * Both callers clear THEIR OWN latch and then ask for this frame, which is right —
-   * the condition they own really is over. What is not right is announcing recovery
-   * on that basis alone: the caller-ID halt and the dialer flag are independent, so
-   * the last one to clear is the one that means anything, and the campaign may also
-   * have left `running` in the meantime. Asking `notDialingBecause` makes the frame
-   * fire on the transition to actually-dialing rather than on any transition
-   * towards it — and the order the suppressions clear in stops mattering, because
-   * whichever clears last finds nothing else blocking and announces.
-   *
-   * Suppressed rather than downgraded to `dialing: false`: a `resumed` frame that
-   * says "not dialing" carries contradictory copy, and the frame the console still
-   * needs — the honest halt — was already sent by whichever suppression is still in
-   * force. There is nothing to correct, so there is nothing to say.
-   */
-  private announceDialingResumed(campaign: AgencyCampaignRecord, why: string): void {
-    const blockedBy = this.notDialingBecause(campaign);
-    if (blockedBy) {
-      log.info(
-        { campaignId: campaign.id, tenantId: campaign.tenant_id, accountId: campaign.account_id, blockedBy },
-        `Agency campaign recovered one condition (${why}) but still will not dial — no resume frame sent`,
-      );
-      return;
-    }
-    log.info(
-      { campaignId: campaign.id, tenantId: campaign.tenant_id, accountId: campaign.account_id },
-      `Agency campaign can dial again (${why}) — telling agents`,
-    );
-    this.announceCampaignState(campaign, 'resumed', { dialing: true });
   }
 
   /** Last status we told agents about, per led campaign. */
