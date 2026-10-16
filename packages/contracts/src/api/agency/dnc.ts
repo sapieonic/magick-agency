@@ -9,10 +9,14 @@
 
 import type { OffsetPage } from '../../primitives';
 
-/** `dnc_entries.source`, as enumerated by `DNC_SOURCES` in the public API layer. */
-export type DncSource = 'agent' | 'import' | 'api' | 'regulator';
+/**
+ * How a number got onto the list: `dnc_entries.source`, mirroring
+ * `ck_dnc_entries_source`. The server's validators build their `z.enum` from it.
+ */
+export const DNC_SOURCES = ['agent', 'import', 'api', 'regulator'] as const;
 
-export const DNC_SOURCES: readonly DncSource[] = ['agent', 'import', 'api', 'regulator'];
+/** One of {@link DNC_SOURCES}. */
+export type DncSource = (typeof DNC_SOURCES)[number];
 
 /** Labels for the four sources. `agent` is the one an operator will see most. */
 export const DNC_SOURCE_LABELS: Record<DncSource, string> = {

@@ -2,10 +2,19 @@
  * Shapes the agency call-detail and analysis-profile files need from console type
  * modules.
  *
- *   - `AnalyticsDimension` / `StoredAnalyticsDimension`, used by
- *     `call-analysis-profile.ts`;
+ *   - `AnalyticsDimension` / `StoredAnalyticsDimension` and the dimension type
+ *     list, used by `call-analysis-profile.ts` and the server's dimension validator;
  *   - `CallAnalysisResult`, used by `webrtc-call.ts`.
  */
+
+/**
+ * The value types a dimension may declare. The server's `analyticsDimensionSchema`
+ * builds its `z.enum` from this list.
+ */
+export const ANALYTICS_DIMENSION_TYPES = ['boolean', 'string', 'number', 'enum'] as const;
+
+/** One of {@link ANALYTICS_DIMENSION_TYPES}. */
+export type AnalyticsDimensionType = (typeof ANALYTICS_DIMENSION_TYPES)[number];
 
 /** A dimension as we SEND it. The dialer runtime's `analyticsDimensionSchema` requires a
  *  non-empty key and description, so the assemblers (`toValidDimensions`) must
@@ -13,7 +22,7 @@
 export interface AnalyticsDimension {
   key: string;
   description: string;
-  type: 'boolean' | 'string' | 'number' | 'enum';
+  type: AnalyticsDimensionType;
   options?: string[];
 }
 
@@ -25,7 +34,7 @@ export interface AnalyticsDimension {
 export interface StoredAnalyticsDimension {
   key: string | null;
   description: string | null;
-  type: 'boolean' | 'string' | 'number' | 'enum';
+  type: AnalyticsDimensionType;
   options?: (string | null)[] | null;
 }
 

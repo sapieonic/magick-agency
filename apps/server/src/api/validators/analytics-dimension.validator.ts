@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { ANALYTICS_DIMENSION_TYPES } from '@magick-agency/contracts/api/agency/shared';
+import { MAX_ANALYSIS_DIMENSIONS } from '@magick-agency/contracts/api/agency/call-analysis-profile';
 
 /**
  * A single operator-defined analysis dimension — the shape behind
@@ -9,7 +11,7 @@ import { z } from 'zod';
 export const analyticsDimensionSchema = z.object({
   key: z.string().min(1).max(50).regex(/^[a-z][a-z0-9_]*$/, 'Key must be snake_case starting with a letter'),
   description: z.string().min(1).max(500),
-  type: z.enum(['boolean', 'string', 'number', 'enum']),
+  type: z.enum(ANALYTICS_DIMENSION_TYPES),
   options: z.array(z.string().min(1)).optional(),
 }).refine(
   (d) => d.type !== 'enum' || (d.options && d.options.length >= 2),
@@ -25,7 +27,7 @@ export const analyticsDimensionSchema = z.object({
  * EVERY call on that prompt/profile, long after the save that caused it succeeded.
  * Rejecting it here makes it a 400 at save time instead.
  */
-export const analyticsDimensionsSchema = z.array(analyticsDimensionSchema).max(20).superRefine((dims, ctx) => {
+export const analyticsDimensionsSchema = z.array(analyticsDimensionSchema).max(MAX_ANALYSIS_DIMENSIONS).superRefine((dims, ctx) => {
   const firstIndex = new Map<string, number>();
   dims.forEach((d, i) => {
     const prior = firstIndex.get(d.key);

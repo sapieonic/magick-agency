@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ROLES } from '@magick-agency/contracts/rbac';
 import {
   WEBRTC_MAX_DURATION_MAX_SECONDS,
   WEBRTC_MAX_DURATION_MIN_SECONDS,
@@ -22,10 +23,11 @@ export const createTenantSchema = z.object({
 });
 
 /**
- * The assignable role list, a const so the role-change schema below uses the
- * same six (the set `ROLES` in `@magick-agency/contracts/rbac` names).
+ * The assignable role list: `ROLES` from `@magick-agency/contracts/rbac`, so the
+ * add-user and role-change schemas below accept exactly the six roles the
+ * permission matrix knows.
  */
-const membershipRoleSchema = z.enum(['tenant_owner', 'tenant_admin', 'account_admin', 'operator', 'viewer', 'agent']);
+const membershipRoleSchema = z.enum(ROLES);
 
 export const addUserToTenantSchema = z.object({
   email: z.string().email(),

@@ -61,5 +61,5 @@ export interface UpdateCallAnalysisProfileInput {
   is_default?: boolean;
 }
 
-/** Upper bound on dimensions per profile — matches the dialer runtime's validator (max 20). */
+/** Upper bound on dimensions per profile. The server's dimension validator reads it as its `.max`. */
 export const MAX_ANALYSIS_DIMENSIONS = 20;
