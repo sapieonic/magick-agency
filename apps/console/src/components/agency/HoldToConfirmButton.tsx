@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { trackAgencyHoldAbandoned } from '../../analytics/events';
+import { isTextEntryTarget } from '../../utils/keyboardTarget';
 import styles from './HoldToConfirmButton.module.css';
 
 /**
@@ -337,10 +338,9 @@ export function HoldToConfirmButton({
     if (!target) return undefined;
 
     const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const tag = target?.tagName;
-      const inTextInput =
-        tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable === true;
+      // The page's own rule, not a second copy of it: a radio or a checkbox is
+      // not somewhere the agent types, so `E`,`E` still works with focus there.
+      const inTextInput = isTextEntryTarget(event.target);
 
       if (event.key === 'Escape') {
         cancel();

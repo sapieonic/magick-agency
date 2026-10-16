@@ -10,6 +10,7 @@ import {
 } from '../../api/agency';
 import { usePermission } from '../../hooks/usePermission';
 import { useLatestRef } from '../../hooks/useLatestRef';
+import { isTextEntryTarget } from '../../utils/keyboardTarget';
 import { getRoleLevel } from '../../utils/permissions';
 import { useAgencyConsole } from './useAgencyConsole';
 import { StateRail } from '../../components/agency/StateRail';
@@ -143,38 +144,6 @@ import styles from './AgentConsolePage.module.css';
  * filter input directly, since it owns no confirmation and no selection to
  * hand off.
  */
-/**
- * The `<input>` types a printable key belongs to, i.e. the positions's
- * single-key shortcuts must stay out of.
- *
- * A **deny**-list rather than an allow-list, because the unknown case has to fall
- * on the suppressing side: an `<input>` with no `type` is a text box in every
- * browser, as is one whose `type` this list has never heard of.
- *
- * The guard used to be `tag === 'INPUT'`, which is too wide by exactly these — a
- * radio, a checkbox and a range slider have no use for the letter `b`, so treating
- * them as text fields made **every** page shortcut dead while focus sat inside the
- * cue-settings popover: the one surface the agent who cannot hear the cues has to
- * open, and the same "operable but effectively unreachable" shape
- * that surface was moved to the header to avoid. suppresses these keys so that
- * typing a note containing "b" cannot open the break menu mid-sentence; a radio
- * group cannot produce that failure and so does not earn the suppression.
- *
- * This was invisible because `AgentConsolePage.cueVisual.test.tsx`'s `press()`
- * fired at `document` instead of at the focused element — the exact class of
- * test gap called out in writing.
- */
-const NON_TEXT_INPUT_TYPES = new Set([
-  'radio',
-  'checkbox',
-  'range',
-  'button',
-  'submit',
-  'reset',
-  'file',
-  'color',
-  'image',
-]);
 
 export default function AgentConsolePage() {
   const [params] = useSearchParams();
@@ -1043,14 +1012,9 @@ export default function AgentConsolePage() {
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       const { agentState, cons, bootstrap } = shortcutStateRef.current;
-      const target = event.target as HTMLElement | null;
-      const tag = target?.tagName;
-      // `NON_TEXT_INPUT_TYPES` above carries the whole argument for why an
-      // `<input>` is not automatically a text field.
-      const inTextField =
-        tag === 'TEXTAREA' ||
-        target?.isContentEditable === true ||
-        (tag === 'INPUT' && !NON_TEXT_INPUT_TYPES.has((target as HTMLInputElement).type));
+      // `isTextEntryTarget` carries the whole argument for why an `<input>` is
+      // not automatically a text field — and the hang-up's `E`,`E` reads it too.
+      const inTextField = isTextEntryTarget(event.target);
 
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
         const accepted = cons.padEnabled && cons.block === null;
