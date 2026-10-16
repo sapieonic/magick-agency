@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { render, screen, cleanup, act } from '@testing-library/react';
 import { WrapupTimer, WRAPUP_HELD_FALLBACK_COPY } from '../../components/agency/WrapupTimer';
 import { openWrapup } from '../../utils/agencyWrapup';
 import type { AgencyWrapupState } from '../../types/agency';
@@ -37,7 +37,7 @@ afterEach(cleanup);
 describe('the timed wrap-up — bar, digits, and a span captured once', () => {
   it('renders the deadline it was given, to the exact second', () => {
     const anchor = openWrapup(frame(), 0, T0);
-    render(<WrapupTimer anchor={anchor} now={T0} dispositionSubmitted={false} />);
+    render(<WrapupTimer anchor={anchor} now={() => T0} dispositionSubmitted={false} />);
     expect(digits()?.textContent).toBe('0:30');
     expect(track()).not.toBeNull();
   });
@@ -47,14 +47,14 @@ describe('the timed wrap-up — bar, digits, and a span captured once', () => {
     // bar pinned at 100% that snaps to zero — a frozen-looking UI that survives
     // review because the digits beside it count down correctly the whole time.
     const anchor = openWrapup(frame(), 0, T0);
-    const { rerender } = render(<WrapupTimer anchor={anchor} now={T0} dispositionSubmitted={false} />);
+    const { rerender } = render(<WrapupTimer anchor={anchor} now={() => T0} dispositionSubmitted={false} />);
     expect(scaleX()).toBe(1);
 
-    rerender(<WrapupTimer anchor={anchor} now={T0 + 15_000} dispositionSubmitted={false} />);
+    rerender(<WrapupTimer anchor={anchor} now={() => T0 + 15_000} dispositionSubmitted={false} />);
     expect(scaleX()).toBe(0.5);
     expect(digits()?.textContent).toBe('0:15');
 
-    rerender(<WrapupTimer anchor={anchor} now={T0 + 22_500} dispositionSubmitted={false} />);
+    rerender(<WrapupTimer anchor={anchor} now={() => T0 + 22_500} dispositionSubmitted={false} />);
     expect(scaleX()).toBe(0.25);
     expect(digits()?.textContent).toBe('0:07');
   });
@@ -65,7 +65,7 @@ describe('the timed wrap-up — bar, digits, and a span captured once', () => {
     // happy path. Here the campaign's `wrapup_seconds` would say 30s and the
     // frame says 45s; `ends_at` is authoritative.
     const anchor = openWrapup(frame({ ends_at: new Date(T0 + 45_000).toISOString() }), 0, T0);
-    render(<WrapupTimer anchor={anchor} now={T0} dispositionSubmitted={false} />);
+    render(<WrapupTimer anchor={anchor} now={() => T0} dispositionSubmitted={false} />);
     expect(digits()?.textContent).toBe('0:45');
   });
 
@@ -74,7 +74,7 @@ describe('the timed wrap-up — bar, digits, and a span captured once', () => {
     // fast renders a deadline four minutes off unless corrected. The two
     // mechanisms are complements, not alternatives.
     const anchor = openWrapup(frame(), 10_000, T0);
-    render(<WrapupTimer anchor={anchor} now={T0} dispositionSubmitted={false} />);
+    render(<WrapupTimer anchor={anchor} now={() => T0} dispositionSubmitted={false} />);
     expect(digits()?.textContent).toBe('0:20');
   });
 });
@@ -82,7 +82,7 @@ describe('the timed wrap-up — bar, digits, and a span captured once', () => {
 describe('the hold at 0:00 — the track STAYS', () => {
   it('holds at zero without counting negative', () => {
     const anchor = openWrapup(frame(), 0, T0);
-    render(<WrapupTimer anchor={anchor} now={T0 + 47_000} dispositionSubmitted={false} />);
+    render(<WrapupTimer anchor={anchor} now={() => T0 + 47_000} dispositionSubmitted={false} />);
 
     // Not "-0:17". An overrun readout is a surveillance surface pointed at the
     // agent, and its effect is rushed, low-quality dispositions.
@@ -94,20 +94,20 @@ describe('the hold at 0:00 — the track STAYS', () => {
     // The deliberate asymmetry with the held panel: a bar that genuinely ran down
     // to nothing is a true statement about a real timer.
     const anchor = openWrapup(frame(), 0, T0);
-    render(<WrapupTimer anchor={anchor} now={T0 + 47_000} dispositionSubmitted={false} />);
+    render(<WrapupTimer anchor={anchor} now={() => T0 + 47_000} dispositionSubmitted={false} />);
     expect(track()).not.toBeNull();
     expect(scaleX()).toBe(0);
   });
 
   it('states why it is waiting', () => {
     const anchor = openWrapup(frame(), 0, T0);
-    render(<WrapupTimer anchor={anchor} now={T0 + 47_000} dispositionSubmitted={false} />);
+    render(<WrapupTimer anchor={anchor} now={() => T0 + 47_000} dispositionSubmitted={false} />);
     expect(screen.getByTestId('wrapup-held-reason').textContent).toBe('Waiting on a disposition');
   });
 
   it('stops holding once the disposition is in', () => {
     const anchor = openWrapup(frame(), 0, T0);
-    render(<WrapupTimer anchor={anchor} now={T0 + 47_000} dispositionSubmitted />);
+    render(<WrapupTimer anchor={anchor} now={() => T0 + 47_000} dispositionSubmitted />);
     expect(screen.queryByTestId('wrapup-held-reason')).toBeNull();
   });
 });
@@ -133,20 +133,20 @@ describe('the held wrap-up — ends_at: null renders NO track', () => {
     // THE assertion of this file. `expect(width).toBe(0)` passes in both designs
     // and proves nothing; absence is the only thing that discriminates.
     const anchor = openWrapup(state, 0, T0);
-    render(<WrapupTimer anchor={anchor} now={T0} dispositionSubmitted={false} />);
+    render(<WrapupTimer anchor={anchor} now={() => T0} dispositionSubmitted={false} />);
     expect(track()).toBeNull();
     expect(screen.queryByTestId('wrapup-fill')).toBeNull();
   });
 
   it.each(sources)('renders no digits — %s', (_name, state) => {
     const anchor = openWrapup(state, 0, T0);
-    render(<WrapupTimer anchor={anchor} now={T0} dispositionSubmitted={false} />);
+    render(<WrapupTimer anchor={anchor} now={() => T0} dispositionSubmitted={false} />);
     expect(digits()).toBeNull();
   });
 
   it('never says expired, overdue, or shows a spinner', () => {
     const anchor = openWrapup(frame({ ends_at: null, held_reason: 'disposition_required' }), 0, T0);
-    const { container } = render(<WrapupTimer anchor={anchor} now={T0} dispositionSubmitted={false} />);
+    const { container } = render(<WrapupTimer anchor={anchor} now={() => T0} dispositionSubmitted={false} />);
     const text = container.textContent?.toLowerCase() ?? '';
     expect(text).not.toContain('expired');
     expect(text).not.toContain('overdue');
@@ -160,13 +160,13 @@ describe('the held wrap-up — ends_at: null renders NO track', () => {
     // has no deadline AND no stated reason, which answers none of the questions
     // an agent actually has.
     const anchor = openWrapup(frame({ ends_at: null, held_reason: 'disposition_required' }), 0, T0);
-    render(<WrapupTimer anchor={anchor} now={T0} dispositionSubmitted={false} />);
+    render(<WrapupTimer anchor={anchor} now={() => T0} dispositionSubmitted={false} />);
     expect(screen.getByTestId('wrapup-held-reason').textContent).toBe('Waiting on a disposition');
   });
 
   it('falls back to a sentence rather than showing a raw enum', () => {
     const anchor = openWrapup(frame({ ends_at: null, held_reason: null }), 0, T0);
-    render(<WrapupTimer anchor={anchor} now={T0} dispositionSubmitted={false} />);
+    render(<WrapupTimer anchor={anchor} now={() => T0} dispositionSubmitted={false} />);
     const shown = screen.getByTestId('wrapup-held-reason').textContent;
     expect(shown).toBe(WRAPUP_HELD_FALLBACK_COPY);
     expect(shown).not.toBe('disposition_required');
@@ -176,7 +176,7 @@ describe('the held wrap-up — ends_at: null renders NO track', () => {
     const rendered = sources.map(([, state]) => {
       cleanup();
       const anchor = openWrapup(state, 0, T0);
-      const { container } = render(<WrapupTimer anchor={anchor} now={T0} dispositionSubmitted={false} />);
+      const { container } = render(<WrapupTimer anchor={anchor} now={() => T0} dispositionSubmitted={false} />);
       return container.textContent;
     });
     expect(new Set(rendered).size).toBe(1);
@@ -190,14 +190,14 @@ describe('the countdown does not announce on every repaint', () => {
     // every wrap-up of the shift, and a screen-reader user starts ignoring the
     // region that matters.
     const anchor = openWrapup(frame(), 0, T0);
-    render(<WrapupTimer anchor={anchor} now={T0} dispositionSubmitted={false} />);
+    render(<WrapupTimer anchor={anchor} now={() => T0} dispositionSubmitted={false} />);
     expect(digits()?.getAttribute('aria-hidden')).toBe('true');
     expect(track()?.getAttribute('aria-hidden')).toBe('true');
   });
 
   it('leaves the held reason announceable — it changes once, not continuously', () => {
     const anchor = openWrapup(frame({ ends_at: null, held_reason: 'disposition_required' }), 0, T0);
-    render(<WrapupTimer anchor={anchor} now={T0} dispositionSubmitted={false} />);
+    render(<WrapupTimer anchor={anchor} now={() => T0} dispositionSubmitted={false} />);
     expect(screen.getByTestId('wrapup-held-reason').getAttribute('aria-hidden')).toBeNull();
   });
 });
@@ -206,14 +206,14 @@ describe('the countdown does not announce on every repaint', () => {
 describe('supervisor_hold', () => {
   it('names the supervisor, not the agent’s own outstanding disposition', () => {
     const anchor = openWrapup(frame({ ends_at: null, held_reason: 'supervisor_hold' }), 0, T0);
-    render(<WrapupTimer anchor={anchor} now={T0} dispositionSubmitted={false} />);
+    render(<WrapupTimer anchor={anchor} now={() => T0} dispositionSubmitted={false} />);
     expect(screen.getByTestId('wrapup-held-reason').textContent).toBe('Held by your supervisor');
     expect(track()).toBeNull();
   });
 
   it('keeps saying so after the agent has saved the disposition', () => {
     const anchor = openWrapup(frame({ ends_at: null, held_reason: 'supervisor_hold' }), 0, T0);
-    render(<WrapupTimer anchor={anchor} now={T0} dispositionSubmitted />);
+    render(<WrapupTimer anchor={anchor} now={() => T0} dispositionSubmitted />);
     expect(screen.getByTestId('wrapup-held-reason').textContent).toBe('Held by your supervisor');
   });
 
@@ -222,9 +222,60 @@ describe('supervisor_hold', () => {
     // if `holding` is still true. Unlike `disposition_required`, saving the
     // disposition does not end a supervisor's hold.
     const anchor = openWrapup(frame({ held_reason: 'supervisor_hold' }), 0, T0);
-    render(<WrapupTimer anchor={anchor} now={T0 + 10_000} dispositionSubmitted />);
+    render(<WrapupTimer anchor={anchor} now={() => T0 + 10_000} dispositionSubmitted />);
     expect(track()).not.toBeNull();
     expect(digits()).not.toBeNull();
     expect(screen.getByTestId('wrapup-held-reason').textContent).toBe('Held by your supervisor');
+  });
+});
+
+/**
+ * The repaint is the timer's own. It used to come from a 250ms interval at the
+ * console root, which re-rendered the whole page to move this bar; now the timer
+ * ticks itself, and only while it has a deadline to count towards.
+ */
+describe('the timer drives its own repaint', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('counts down with no parent re-render, from the present it reads', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    const anchor = openWrapup(frame(), 0, T0);
+    render(<WrapupTimer anchor={anchor} now={() => Date.now()} dispositionSubmitted={false} />);
+    expect(digits()?.textContent).toBe('0:30');
+
+    for (let i = 0; i < 4; i += 1) {
+      act(() => {
+        vi.advanceTimersByTime(250);
+      });
+    }
+
+    expect(digits()?.textContent).toBe('0:29');
+  });
+
+  it('does not tick a held window, which has nothing to advance', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    const anchor = openWrapup(frame({ ends_at: null, held_reason: 'disposition_required' }), 0, T0);
+    let reads = 0;
+    render(
+      <WrapupTimer
+        anchor={anchor}
+        now={() => {
+          reads += 1;
+          return Date.now();
+        }}
+        dispositionSubmitted={false}
+      />,
+    );
+    const mounted = reads;
+
+    act(() => {
+      vi.advanceTimersByTime(2_000);
+    });
+
+    expect(reads).toBe(mounted);
   });
 });

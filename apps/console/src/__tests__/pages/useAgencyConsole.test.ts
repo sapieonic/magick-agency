@@ -488,6 +488,38 @@ describe('useAgencyConsole — the 3s reconciliation window', () => {
     expect(view.result.current.presenceRefusal).toBeNull();
   });
 
+  it('submits under the account in effect NOW, not the one the callback was built with', async () => {
+    /**
+     * `submit` read `accountId` without listing it as a dependency. A 250ms
+     * repaint at the console root rebuilt the callback four times a second, so
+     * the stale closure never lasted long enough to be seen. With the repaint
+     * pushed down to the timers that need it, nothing else rebuilds `submit`
+     * when only the account changes — and the fake clock here stands still, so
+     * this reproduces the defect exactly as a quiet console would.
+     */
+    mocks.submitDisposition.mockResolvedValue(savedBody('att-1', null));
+    const view = renderHook(
+      ({ accountId }: { accountId: string }) => useAgencyConsole(BOOTSTRAP, 'tenant-1', accountId),
+      { initialProps: { accountId: 'account-1' } },
+    );
+    await act(async () => {});
+    act(() => latest().open());
+    act(() => {
+      latest().emit({ event: 'reserved', attempt: ATTEMPT });
+      latest().emit({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-08-11T10:00:04.000Z' });
+      latest().emit({ event: 'agent_state', state: 'on_call', since: '2026-08-11T10:00:04.000Z' });
+    });
+    act(() => view.result.current.setForm({ selectedCode: 'sale', notes: '', callbackAt: null }));
+
+    view.rerender({ accountId: 'account-2' });
+    await act(async () => {
+      view.result.current.submit();
+    });
+
+    expect(mocks.submitDisposition).toHaveBeenCalledTimes(1);
+    expect(mocks.submitDisposition.mock.calls[0]![3]).toBe('account-2');
+  });
+
   it('does not send a second disposition for an attempt already recorded', async () => {
     mocks.submitDisposition.mockResolvedValue(savedBody('att-1', null));
     const view = await inWrapup();

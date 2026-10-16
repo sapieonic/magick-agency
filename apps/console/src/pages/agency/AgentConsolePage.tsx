@@ -9,6 +9,7 @@ import {
   markContactDnc,
 } from '../../api/agency';
 import { usePermission } from '../../hooks/usePermission';
+import { useLatestRef } from '../../hooks/useLatestRef';
 import { getRoleLevel } from '../../utils/permissions';
 import { useAgencyConsole } from './useAgencyConsole';
 import { StateRail } from '../../components/agency/StateRail';
@@ -1031,9 +1032,17 @@ export default function AgentConsolePage() {
    * here: `HoldToConfirmButton` owns it, so the hold fill and the double-tap
    * share one state machine rather than two that can disagree — and `C` and `D`
    * follow the same rule, each delegating to the component that owns the state.
+   *
+   * **Bound once, for the life of the page.** It reads the console through a
+   * latest-value ref rather than closing over it: `cons` is a fresh object every
+   * render, so a handler depending on it was removed and re-added on every render
+   * — four times a second while the root repainted on a clock, and still on every
+   * frame since.
    */
-  const onWindowKeyDown = useCallback(
-    (event: KeyboardEvent) => {
+  const shortcutStateRef = useLatestRef({ agentState, cons, bootstrap });
+  useEffect(() => {
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      const { agentState, cons, bootstrap } = shortcutStateRef.current;
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName;
       // `NON_TEXT_INPUT_TYPES` above carries the whole argument for why an
@@ -1167,14 +1176,11 @@ export default function AgentConsolePage() {
         cons.setForm({ ...cons.form, selectedCode: entry.code });
         if (entry.requires_note) notesRef.current?.focus();
       }
-    },
-    [agentState, cons, bootstrap],
-  );
+    };
 
-  useEffect(() => {
     window.addEventListener('keydown', onWindowKeyDown);
     return () => window.removeEventListener('keydown', onWindowKeyDown);
-  }, [onWindowKeyDown]);
+  }, [shortcutStateRef]);
 
   /*
     The join conflict, ahead of `joinError` — both are "the station did not

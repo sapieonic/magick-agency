@@ -15,6 +15,7 @@ import { useAgencyAudio, type AgencyAudioState } from '../../hooks/useAgencyAudi
 import { useAgencyCues, type CueFlash } from '../../hooks/useAgencyCues';
 import type { CuePrefs } from '../../utils/agencyCuePrefs';
 import { useServerClock, type ServerClock } from '../../hooks/useServerClock';
+import { useRepaintTick } from '../../hooks/useRepaintTick';
 import {
   EMPTY_DISPOSITION_FORM,
   blockReason,
@@ -277,6 +278,11 @@ export function useAgencyConsole(
     clockOffsetMs,
   } = station;
 
+  /**
+   * Stable for a given offset, and it does not repaint anything: the timers that
+   * count run their own repaint (see `useServerClock`), so this hook — and the
+   * page it drives — re-renders on frames and actions, not four times a second.
+   */
   const clock = useServerClock(clockOffsetMs);
 
   /**
@@ -732,9 +738,21 @@ export function useAgencyConsole(
    * whitespace-only note fails `noteSatisfied`'s trim in both, which is what keeps the
    * client's rule the same rule the API enforces at `disposition.ts`.
    */
+  /**
+   * **The one block reason that changes with time is `callback_in_past`**, and it
+   * exists only while a datetime-bearing code is selected. So that is the only
+   * time this hook repaints on a clock: the picked time can slide into the past
+   * with nobody touching anything, and the Save button has to disable when it
+   * does. Every other reason moves only with the form, and ticking for them would
+   * re-render the whole console four times a second for the whole shift — which
+   * is what this used to do.
+   */
+  const datetimeSelected = findDisposition(catalog, form.selectedCode)?.requires_datetime === true;
+  const blockTick = useRepaintTick(datetimeSelected);
   const block = useMemo(
-    () => blockReason(catalog, { ...form, notes: notes || form.notes }, clock.now),
-    [catalog, form, notes, clock.now],
+    () => blockReason(catalog, { ...form, notes: notes || form.notes }, clock.now()),
+    // `blockTick` is the repaint trigger, listed only so a tick re-evaluates.
+    [catalog, form, notes, clock, blockTick],
   );
 
   const notesStatusLine = useMemo(
@@ -780,8 +798,10 @@ export function useAgencyConsole(
     if (attemptId === null) return;
 
     // Notes typed into the field travel with the disposition too, so a submit
-    // never loses an un-flushed edit.
-    const payload = buildSubmitPayload(catalog, { ...form, notes: notes || form.notes }, clock.now);
+    // never loses an un-flushed edit. The present is read HERE, at fire time —
+    // not off the render that built this callback, which nothing now rebuilds on
+    // a clock.
+    const payload = buildSubmitPayload(catalog, { ...form, notes: notes || form.notes }, clock.now());
     if (payload === null) return;
 
     // Captured at submit time. `AgencyActionErrorResponse` carries NO `attempt_id`,
@@ -1021,8 +1041,15 @@ export function useAgencyConsole(
     catalog,
     form,
     notes,
-    clock.now,
+    clock,
     tenantId,
+    /**
+     * Listed, and it was not. The 250ms repaint at the console root rebuilt this
+     * callback four times a second, so a stale `accountId` never survived long
+     * enough to be sent; with that repaint gone a submit after an account change
+     * went out under the previous account.
+     */
+    accountId,
     station.diagnostics,
     bootstrap,
     releasedAt,

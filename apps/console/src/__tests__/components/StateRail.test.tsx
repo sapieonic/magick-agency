@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, act } from '@testing-library/react';
 import { StateRail, describeRail } from '../../components/agency/StateRail';
-import type { ServerClock } from '../../hooks/useServerClock';
+import { serverClock, type ServerClock } from '../../hooks/useServerClock';
 import type { LiveAttempt } from '../../hooks/useAgencyStation';
 import type { WrapupAnchor } from '../../utils/agencyWrapup';
 import type {
@@ -74,27 +74,14 @@ const TIMED_WRAPUP: WrapupAnchor = {
 const WAITING = 'Saved — waiting for the dialer to move you on';
 
 /**
- * A real `ServerClock`, offset zero. Not a partial cast: the rail reads `since`
- * for the talk timer and hands `now` to `WrapupTimer`, so a stub missing a member
- * would compile only behind an `as` and then throw or silently skip at the point
- * the timer is asserted.
+ * A real `ServerClock`, offset zero, pinned to `now`. Not a partial cast: the rail
+ * reads `since` for the talk timer and hands `now` to `WrapupTimer`, so a stub
+ * missing a member would compile only behind an `as` and then throw or silently
+ * skip at the point the timer is asserted. Built by `serverClock` itself so the
+ * stub cannot drift from the hook's own shape.
  */
 function clockAt(now: number): ServerClock {
-  const parse = (v: string | number | null | undefined) =>
-    v === null || v === undefined ? null : typeof v === 'number' ? v : Date.parse(v);
-  return {
-    now,
-    offsetMs: 0,
-    corrected: parse,
-    since: (a) => {
-      const t = parse(a);
-      return t === null ? null : Math.max(0, now - t);
-    },
-    until: (d) => {
-      const t = parse(d);
-      return t === null ? null : Math.max(0, t - now);
-    },
-  };
+  return serverClock(0, () => now);
 }
 
 function railBase(overrides: Partial<Parameters<typeof describeRail>[0]> = {}) {
@@ -256,6 +243,27 @@ describe('StateRail — what reaches the DOM', () => {
     // seconds lower, which is the property "does not drift over a shift" is made of.
     renderRail({ clock: clockAt(T0 + 20_000) });
     expect(screen.getByTestId('wrapup-digits').textContent).toBe('0:10');
+  });
+
+  it('advances the talk timer on its own repaint, with no new props', () => {
+    // The digits are a leaf that ticks itself; the rail above them is not
+    // re-rendered to move them. A real clock reading the faked present.
+    renderRail({
+      agentState: 'on_call',
+      live: liveBridged,
+      release: null,
+      wrapup: null,
+      clock: serverClock(0),
+    });
+    expect(screen.getByTestId('talk-timer').textContent).toBe('0:12');
+
+    for (let i = 0; i < 8; i += 1) {
+      act(() => {
+        vi.advanceTimersByTime(250);
+      });
+    }
+
+    expect(screen.getByTestId('talk-timer').textContent).toBe('0:14');
   });
 
   it('anchors the talk timer to bridged_at, and shows none while still ringing', () => {

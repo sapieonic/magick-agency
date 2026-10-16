@@ -6,6 +6,7 @@ import {
   type RefObject,
 } from 'react';
 import { findDisposition, type DispositionFormState } from '../../utils/agencyDispositionForm';
+import { useRepaintTick } from '../../hooks/useRepaintTick';
 import type { AgencyDisposition } from '../../types/agency';
 import styles from './DispositionPad.module.css';
 
@@ -88,8 +89,11 @@ export interface DispositionPadProps {
   rejection?: string | null;
   /** True when an `allowed_codes` rebuild moved something a number key is bound to. */
   keysRemapped?: boolean;
-  /** Corrected client-clock ms, for the callback-in-the-past check. */
-  now: number;
+  /**
+   * Reads the agent's present, from `useServerClock().now`, for the callback
+   * chips. Called on the callback row's own repaint, never captured by the pad.
+   */
+  now: () => number;
   /** Called when the chosen code needs a note, so the page can focus the field. */
   onNeedsNote?: () => void;
   /** Lets the console's `C` shortcut select the callback code AND focus its row. */
@@ -317,16 +321,24 @@ function CallbackRow({
   firstChipRef,
 }: {
   value: string | null;
-  now: number;
+  now: () => number;
   enabled: boolean;
   onPick: (value: string) => void;
   /** A plain mutable box: the pad writes the node into it for the C shortcut. */
   firstChipRef?: { current: HTMLButtonElement | null };
 }) {
+  /**
+   * The chips are relative to the present, so this row repaints itself while it
+   * is mounted — which is exactly while a datetime code is selected. It used to
+   * be handed a `now` from a repaint at the console root, which re-rendered the
+   * whole page four times a second to keep three chips fresh.
+   */
+  useRepaintTick();
+  const present = now();
   const chips = [
-    { label: 'In 1 hour', at: now + 60 * 60 * 1000 },
-    { label: 'Tomorrow 10am', at: atLocalTime(now, 1, 10) },
-    { label: 'Tomorrow 3pm', at: atLocalTime(now, 1, 15) },
+    { label: 'In 1 hour', at: present + 60 * 60 * 1000 },
+    { label: 'Tomorrow 10am', at: atLocalTime(present, 1, 10) },
+    { label: 'Tomorrow 3pm', at: atLocalTime(present, 1, 15) },
   ];
 
   const parsed = value ? Date.parse(value) : NaN;
