@@ -95,7 +95,7 @@ export class AgencyRuntime {
     // Decision B8: the registry is one indexed read of `dnc_entries` and fails closed
     // on any read fault. The default argument is the shared `dncRepository`.
     this.dnc = new DncRegistry();
-    const dispatcher = new LocalDialDispatcher(this.replicaId, (cmd) => this.dialer.executeDial(cmd));
+    const dispatcher = new LocalDialDispatcher(this.replicaId, (cmd, opts) => this.dialer.executeDial(cmd, opts));
     this.pacing = new PacingEngine(
       redis, keyPrefix, this.replicaId, this.stations, this.agents, dispatcher, this.dnc,
     );
@@ -397,8 +397,10 @@ export class AgencyRuntime {
   }
 
   async stop(): Promise<void> {
-    // Pacing stops FIRST, so no tick can dial or finalize while the rest of the
-    // runtime is coming down.
+    // Pacing stops FIRST. `stop()` waits (bounded, `TICK_DRAIN_TIMEOUT_MS`) for any
+    // tick already in flight, and every dial site re-checks the engine before it
+    // dials, so no tick dials while the rest of the runtime is coming down; a tick
+    // that outlives the bound is logged and can only finalize, never dial.
     await this.pacing.stop();
     this.reaper.stop();
     this.stopStationSweep();

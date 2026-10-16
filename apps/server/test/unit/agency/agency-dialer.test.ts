@@ -1000,6 +1000,44 @@ describe('`on_call` reaches the durable mirror', () => {
   });
 });
 
+describe('AgencyDialer · the pacing engine can call the dial off until the carrier is contacted', () => {
+  /**
+   * `stillAuthorised` is the pacing engine's `mayDial`: false once it stopped or
+   * gave up the campaign's lease. The dial path yields several times before the
+   * carrier is contacted, so the question is asked again immediately before it.
+   */
+  it('abandons instead of dialing when the engine stopped while the dial was prepared', async () => {
+    const stations = new StationRegistry(null, '', 'r1');
+    const bridge = fakeBridge();
+    const dialer = new AgencyDialer(bridge as any, stations, reservedAgents(), fakeWrapup() as any, fakeBreaks() as any);
+    dialer.start();
+    const ws = fakeWs();
+    await attachStation(stations, 's1', ws);
+
+    let authorised = true;
+    repos.attempt.setState.mockImplementationOnce(async () => { authorised = false; return null; });
+    await dialer.executeDial(makeCmd('s1'), { stillAuthorised: () => authorised });
+
+    expect(bridge.createBridgedCall, 'dialed after the engine stopped').not.toHaveBeenCalled();
+    expect(repos.attempt.setState).toHaveBeenCalledWith('att-1', 'ended', expect.objectContaining({ outcome: 'orphaned' }));
+    expect(repos.contact.unclaim).toHaveBeenCalledWith('contact-1', expect.any(Date));
+    expect(dialer.activeAttemptIds()).toEqual([]);
+    // The early-bound panel was on the console, so it is cleared with a reason.
+    expect(ws.sent.map((f) => f.event)).toContain('released');
+  });
+
+  it('dials as before when the check still passes', async () => {
+    const stations = new StationRegistry(null, '', 'r1');
+    const bridge = fakeBridge();
+    const dialer = new AgencyDialer(bridge as any, stations, reservedAgents(), fakeWrapup() as any, fakeBreaks() as any);
+    dialer.start();
+    await attachStation(stations, 's1', fakeWs());
+
+    await dialer.executeDial(makeCmd('s1'), { stillAuthorised: () => true });
+    expect(bridge.createBridgedCall).toHaveBeenCalledTimes(1);
+  });
+});
+
 // ─── A failed settle-path write must not skip what follows it ──────────────
 
 describe('AgencyDialer · a failed `answered` write still evaluates the abandon branch', () => {

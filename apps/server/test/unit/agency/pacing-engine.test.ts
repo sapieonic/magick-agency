@@ -1446,3 +1446,108 @@ describe('`reserved` is NOT mirrored to the durable row', () => {
     expect(repos.session.setState).not.toHaveBeenCalledWith('s1', 'reserved');
   });
 });
+
+// ─── a tick in flight when stop() is called ─────────────────────────────────
+//
+// `stop()` used to clear the timers and return, which does nothing about a tick
+// already parked on an await: it resumed after the runtime came down and could
+// reach `createBridgedCall` after the bridge's shutdown snapshot (an orphaned
+// carrier leg), or finalize a campaign whose completion notice was then never
+// drained.
+
+/** A promise the test resolves by hand. */
+function gate<T = void>() {
+  let open!: (v: T) => void;
+  const promise = new Promise<T>((resolve) => { open = resolve; });
+  return { promise, open };
+}
+
+async function flush(): Promise<void> {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+}
+
+describe('PacingEngine.stop() and the tick in flight', () => {
+  it('waits for a tick that is already running', async () => {
+    const held = gate<any>();
+    repos.campaign.findById.mockImplementationOnce(() => held.promise);
+    const { e } = engine(makeStations([]), makeAgents({}));
+
+    const tick = e.tickOnce('camp-1');
+    let stopped = false;
+    const stopping = e.stop().then(() => { stopped = true; });
+    await flush();
+    expect(stopped, 'stop() returned while a tick was still in flight').toBe(false);
+
+    held.open({ ...CAMPAIGN, status: 'paused' });
+    await tick;
+    await stopping;
+    expect(stopped).toBe(true);
+  });
+
+  it('is bounded: a tick that never settles cannot hold stop() forever', async () => {
+    repos.campaign.findById.mockImplementationOnce(() => new Promise(() => { /* never */ }));
+    const { e } = engine(makeStations([]), makeAgents({}));
+    e.tickDrainTimeoutMs = 20;
+
+    void e.tickOnce('camp-1');
+    await expect(e.stop()).resolves.toBeUndefined();
+  });
+
+  it('a tick that sees stop() after the attempt insert does not dial, and returns what it took', async () => {
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }]);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1')]);
+    const agents = makeAgents({ s1: 'available' });
+    const { e, dispatch } = engine(makeStations(['s1']), agents);
+    let stopping: Promise<void> | null = null;
+    repos.attempt.create.mockImplementationOnce(async (p: any) => {
+      stopping = e.stop();
+      return { id: `att-${p.contactId}`, caller_id: p.callerId, attempt_number: 1 };
+    });
+
+    await e.tickOnce('camp-1');
+    await stopping;
+
+    expect(dispatch, 'a tick dialed after stop()').not.toHaveBeenCalled();
+    expect(repos.attempt.setState).toHaveBeenCalledWith('att-c1', 'ended', expect.objectContaining({ outcome: 'orphaned' }));
+    expect(repos.contact.unclaim.mock.calls.map((c: any) => c[0])).toEqual(['c1']);
+    expect(agents.set).toHaveBeenCalledWith('s1', 'available', expect.anything());
+  });
+
+  it('hands the dispatcher a check that turns false once the engine stops', async () => {
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }]);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1')]);
+    const { e, dispatch } = engine(makeStations(['s1']), makeAgents({ s1: 'available' }));
+
+    await e.tickOnce('camp-1');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const opts = dispatch.mock.calls[0]![1] as { stillAuthorised: () => boolean };
+    expect(opts.stillAuthorised()).toBe(true);
+
+    await e.stop();
+    expect(opts.stillAuthorised(), 'the dial site could not see the stop').toBe(false);
+  });
+
+  it('drains a completion notice requested by the tick it waited for', async () => {
+    const held = gate<any>();
+    repos.campaign.findById.mockImplementationOnce(() => held.promise);
+    repos.campaign.countOutstanding.mockResolvedValue(0);
+    repos.campaign.transitionStatus.mockResolvedValue({ ...CAMPAIGN, status: 'completed' });
+    const notice = gate();
+    let noticeSettled = false;
+    const { e } = engine(makeStations([]), makeAgents({}));
+    e.registerCompletionNotifier({
+      notifyCampaignFinished: () => notice.promise.then(() => { noticeSettled = true; }),
+    });
+
+    void e.tickOnce('camp-1');
+    let stopped = false;
+    const stopping = e.stop().then(() => { stopped = true; });
+    held.open(CAMPAIGN);
+    await flush();
+    expect(repos.campaign.transitionStatus).toHaveBeenCalled();
+    expect(stopped, 'stop() returned before the final tick\'s notice settled').toBe(false);
+    notice.open();
+    await stopping;
+    expect(noticeSettled).toBe(true);
+  });
+});

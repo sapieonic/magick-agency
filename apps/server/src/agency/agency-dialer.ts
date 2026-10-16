@@ -9,7 +9,7 @@ import {
 } from '../db/repositories/agency.repository.js';
 import type { StationRegistry } from './station-registry.js';
 import { AgentStateMachine, AGENT_LEASE_MS } from './agent-state-machine.js';
-import type { DialCommand } from './dial-dispatcher.js';
+import type { DialCommand, DialOptions } from './dial-dispatcher.js';
 import {
   classifyAttemptOutcome,
   releaseMessageFor,
@@ -319,7 +319,7 @@ export class AgencyDialer {
    * to the pacing tick instead, and a flag flipped in between would leave the
    * dial and the answer disagreeing about whether a socket was ever attached.
    */
-  async executeDial(cmd: DialCommand): Promise<void> {
+  async executeDial(cmd: DialCommand, opts: DialOptions = {}): Promise<void> {
     const { attemptId, sessionId } = cmd;
 
     // Fails closed onto `false` (early binding, today's behaviour) whenever the
@@ -528,6 +528,21 @@ export class AgencyDialer {
       return;
     }
 
+    // ── The last moment the dial can still be called off ────────────────────
+    //
+    // Everything above yields (the flag read, the priors read, the lease CAS, the
+    // `dialing` write), and the pacing engine may have given up the campaign's
+    // lease or begun shutting down inside any of it. Past this line the carrier is
+    // contacted, so this is asked here, synchronously, with nothing in between.
+    if (opts.stillAuthorised && !opts.stillAuthorised()) {
+      log.warn(
+        { attemptId, sessionId, campaignId: cmd.campaignId },
+        'Pacing stopped or lost the campaign lease while the dial was being prepared — abandoning before the carrier is contacted',
+      );
+      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
+      return;
+    }
+
     let record: Awaited<ReturnType<typeof this.bridge.createBridgedCall>>;
     try {
       // The one line late binding changes about the dial: no socket goes to the
@@ -572,7 +587,7 @@ export class AgencyDialer {
    * panel that clears with no explanation reads as a broken app.
    *
    * `notifyAgent` is an explicit parameter and deliberately not inferred here.
-   * This method has four call sites in {@link executeDial}, on both sides of the
+   * This method has six call sites in {@link executeDial}, on both sides of the
    * `reserved` send, and under late binding the send has not happened at ANY of
    * them — so the caller is the only place that knows whether there is a panel to
    * explain. Inferring it from `lateBinding` alone would be wrong for the early
@@ -595,11 +610,12 @@ export class AgencyDialer {
      *
      * `agency_attempt_hold_seconds` is observed at the settle site, which these
      * paths never reach: they delete the live record and write the attempt
-     * `ended` themselves. Two of the five callers run AFTER `liveByAttempt.set`
-     * — the late-binding socket recheck and `createBridgedCall` throwing — and
-     * on both of those **the agent was genuinely held**: the lease had been
-     * extended to `reserved_dialing`, the attempt row says `dialing`, and
-     * `releaseAgent` runs at the bottom of this method. Those seconds are in the
+     * `ended` themselves. Three of the six callers run AFTER `liveByAttempt.set`
+     * — the late-binding socket recheck, the pacing re-authorisation and
+     * `createBridgedCall` throwing — and on all three **the agent was genuinely
+     * held**: the lease had been extended to `reserved_dialing`, the attempt row
+     * says `dialing`, and `releaseAgent` runs at the bottom of this method. Those
+     * seconds are in the
      * population the pivotal series claims to cover and were appearing nowhere,
      * so `failed` and `orphaned` were silently under-reported.
      *

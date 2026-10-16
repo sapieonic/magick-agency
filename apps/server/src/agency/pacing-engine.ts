@@ -42,6 +42,14 @@ const LEADER_RENEW_MS = 5_000;
 export const COMPLETION_NOTICE_DRAIN_TIMEOUT_MS = 30_000;
 
 /**
+ * How long `stop()` waits for ticks still in flight before it drains the notices.
+ * A healthy tick is a few round trips; one that outlives this is stuck on a dead
+ * dependency, and shutdown carries on without it (logged). Its dial site still
+ * re-checks `mayDial`, so a straggler cannot place a call afterwards.
+ */
+export const TICK_DRAIN_TIMEOUT_MS = 5_000;
+
+/**
  * Renew a leader lease only if we still hold it. Losing leadership and then
  * re-taking it by blind SET is how two leaders end up dialing one campaign.
  */
@@ -65,6 +73,23 @@ return 0
  * tell "reserved, attempt not created yet" from "an attempt id we lost track of".
  */
 const RESERVING_MARKER = 'reserving';
+
+/**
+ * Wait for every promise in `pending` to settle, for at most `timeoutMs`. True when
+ * they all settled in time. Never rejects: a rejected member counts as settled.
+ */
+async function settleWithin(pending: ReadonlySet<Promise<unknown>>, timeoutMs: number): Promise<boolean> {
+  if (pending.size === 0) return true;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timedOut = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), timeoutMs);
+    timer.unref?.();
+  });
+  const settled = Promise.allSettled([...pending]).then(() => 'drained' as const);
+  const outcome = await Promise.race([settled, timedOut]);
+  if (timer) clearTimeout(timer);
+  return outcome === 'drained';
+}
 
 /** An available agent and how long they have been waiting. */
 interface AgentCandidate {
@@ -188,21 +213,42 @@ export class PacingEngine {
   }
 
   private async drainNotices(): Promise<void> {
-    if (this.inFlightNotices.size === 0) return;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const timedOut = new Promise<'timeout'>((resolve) => {
-      timer = setTimeout(() => resolve('timeout'), this.noticeDrainTimeoutMs);
-      timer.unref?.();
-    });
-    const settled = Promise.allSettled([...this.inFlightNotices]).then(() => 'drained' as const);
-    const outcome = await Promise.race([settled, timedOut]);
-    if (timer) clearTimeout(timer);
-    if (outcome === 'timeout') {
-      log.error(
-        { pending: this.inFlightNotices.size, timeoutMs: this.noticeDrainTimeoutMs },
-        'Campaign completion notices did not settle before shutdown — those notices are lost',
-      );
-    }
+    if (await settleWithin(this.inFlightNotices, this.noticeDrainTimeoutMs)) return;
+    log.error(
+      { pending: this.inFlightNotices.size, timeoutMs: this.noticeDrainTimeoutMs },
+      'Campaign completion notices did not settle before shutdown — those notices are lost',
+    );
+  }
+
+  /**
+   * Ticks started but not yet settled, so `stop()` can wait for them.
+   *
+   * Clearing the tick interval stops the NEXT tick, not one already parked on an
+   * await: that one would resume after the runtime came down and could reach the
+   * bridge after its shutdown snapshot (a carrier leg nobody tears down), or
+   * finalize a campaign and request a notice after `drainNotices` had already run.
+   */
+  private readonly inFlightTicks = new Set<Promise<void>>();
+
+  /** The tick-drain bound `stop()` uses. A field only so tests can shorten it. */
+  tickDrainTimeoutMs = TICK_DRAIN_TIMEOUT_MS;
+
+  private async drainTicks(): Promise<void> {
+    if (await settleWithin(this.inFlightTicks, this.tickDrainTimeoutMs)) return;
+    log.error(
+      { pending: this.inFlightTicks.size, timeoutMs: this.tickDrainTimeoutMs },
+      'Agency ticks did not settle before shutdown — continuing; their dial sites refuse to dial',
+    );
+  }
+
+  /**
+   * May a tick for this campaign still place a call? False once leadership was
+   * given up (`revoked`) or the engine is stopping. Asked at every await boundary
+   * a dial could follow, and handed to the dispatcher so the dialer can ask it
+   * once more immediately before the carrier is contacted.
+   */
+  private mayDial(campaignId: string): boolean {
+    return !this.stopped && !this.revoked.has(campaignId);
   }
 
   private leaderKey(campaignId: string): string {
@@ -225,8 +271,10 @@ export class PacingEngine {
     if (this.superviseTimer) clearInterval(this.superviseTimer);
     this.superviseTimer = null;
     for (const campaignId of [...this.led.keys()]) await this.relinquish(campaignId);
-    // Settle the completion notices a final tick requested, before the runtime (and
-    // then the pool) comes down. See `inFlightNotices`.
+    // Wait (bounded) for any tick already in flight — see `inFlightTicks` — and only
+    // then settle the completion notices, so a notice the final tick requested is
+    // in the set being drained rather than added after it. See `inFlightNotices`.
+    await this.drainTicks();
     await this.drainNotices();
   }
 
@@ -404,8 +452,16 @@ export class PacingEngine {
     }
 
     for (const campaign of campaigns) {
+      // A pass already in flight when `stop()` ran must not start leading again:
+      // that would arm a tick interval nothing will ever clear.
+      if (this.stopped) return;
       if (this.led.has(campaign.id)) continue;
-      if (await this.tryAcquireLeadership(campaign.id)) this.beginLeading(campaign);
+      if (!(await this.tryAcquireLeadership(campaign.id))) continue;
+      if (this.stopped) {
+        await this.relinquish(campaign.id);
+        return;
+      }
+      this.beginLeading(campaign);
     }
   }
 
@@ -507,6 +563,17 @@ export class PacingEngine {
    * guard, every tick, forever, whenever agents outnumber the account limit.
    */
   async tickOnce(campaignId: string): Promise<void> {
+    // Tracked so `stop()` can wait for it — see `inFlightTicks`.
+    const run = this.runTick(campaignId);
+    this.inFlightTicks.add(run);
+    try {
+      await run;
+    } finally {
+      this.inFlightTicks.delete(run);
+    }
+  }
+
+  private async runTick(campaignId: string): Promise<void> {
     if (this.ticking.has(campaignId)) return;
     this.ticking.add(campaignId);
     try {
@@ -584,7 +651,7 @@ export class PacingEngine {
           // `planTick` awaited on Redis and the DB; leadership may have been given
           // up in that window. Reserving and dialing past this point would place
           // calls without a lease.
-          if (this.revoked.has(campaignId)) return;
+          if (!this.mayDial(campaignId)) return;
           const dialed = await this.dialUpTo(campaign, plan);
           if (dialed > 0) return; // did work; completion is only checked on an idle tick
         }
@@ -811,7 +878,7 @@ export class PacingEngine {
       // ownership lookup and the attempt insert all yield. Checked per contact
       // rather than once, because a 5-contact batch spans several round trips and
       // each dial is a real call to a real person.
-      if (this.revoked.has(campaign.id)) {
+      if (!this.mayDial(campaign.id)) {
         await this.abortRemainder(contacts.slice(index), reserved.slice(index));
         log.warn(
           { campaignId: campaign.id, abandoned: contacts.length - index },
@@ -853,6 +920,22 @@ export class PacingEngine {
         continue;
       }
 
+      // The insert above yields too, and it is the last await before the dispatch:
+      // a stop or a lost lease inside it must not become a call. The attempt row
+      // exists by now, so it is ended `orphaned` (no dial went out) alongside the
+      // remainder being returned.
+      if (!this.mayDial(campaign.id)) {
+        await agencyAttemptRepository.setState(attempt.id, 'ended', {
+          outcome: 'orphaned', ended_at: new Date(),
+        }).catch((err) => log.error({ err, attemptId: attempt.id }, 'Failed to end an undialed attempt'));
+        await this.abortRemainder(contacts.slice(index), reserved.slice(index));
+        log.warn(
+          { campaignId: campaign.id, attemptId: attempt.id, abandoned: contacts.length - index },
+          'Agency campaign stopped or lost its lease after the attempt insert — returning the remainder undialed',
+        );
+        return dialed;
+      }
+
       try {
         await this.dispatcher.dispatch({
           attemptId: attempt.id,
@@ -867,6 +950,10 @@ export class PacingEngine {
           campaign,
           contact,
           clearance: gate.clearance,
+        }, {
+          // The dial itself is several awaits away (flag read, priors, the lease
+          // CAS); the dialer asks this once more just before contacting the carrier.
+          stillAuthorised: () => this.mayDial(campaign.id),
         });
         dialed++;
       } catch (err) {
