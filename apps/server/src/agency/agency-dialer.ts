@@ -28,7 +28,7 @@ import type {
 } from '@magick-agency/contracts/agency';
 import type { WrapupManager } from './wrapup-manager.js';
 import type { BreakRegistry } from '@magick-agency/domain/break-manager';
-import { DEFERRED_HANGUP_MS } from '@magick-agency/domain/timers';
+import { DEFERRED_HANGUP_MS, elapsedSeconds } from '@magick-agency/domain/timers';
 import { resolveOurFaultRedial, resolveRetryDecision } from './retry-policy.js';
 import { resolveAbandonClip } from './abandon-clip.js';
 import { isAbandonedAttempt } from '@magick-agency/domain/abandonment-predicate';
@@ -58,6 +58,15 @@ const log = createChildLogger({ component: 'agency-dialer' });
  * clean console anyway.
  */
 const MISSED_RELEASE_TTL_MS = 5 * 60_000;
+
+/**
+ * Await a write to the durable agent-session mirror without letting it fail the
+ * caller: Redis is the authority on agent state, so a mirror that could not be
+ * written is a stale dashboard column, logged and never a reason to stop.
+ */
+async function mirrored(write: Promise<unknown>, sessionId: string, failure: string): Promise<void> {
+  await write.catch((err) => log.warn({ err, sessionId }, failure));
+}
 
 /** An attempt this replica is currently driving, and what a reconnect needs to know. */
 interface LiveAttempt {
@@ -184,6 +193,24 @@ interface LiveAttempt {
  */
 function isUnannounced(live: LiveAttempt): boolean {
   return live.lateBinding && !live.panelDelivered;
+}
+
+/**
+ * The agent's panel for an attempt: everything the console shows about the call.
+ * Built once at dial time (see `LiveAttempt.panel`) and reused for the resume.
+ */
+function buildPanel(cmd: DialCommand, priors: AgencyPriorAttempt[]): AgencyReservedAttempt {
+  return {
+    attempt_id: cmd.attemptId,
+    campaign_id: cmd.campaignId,
+    campaign_name: cmd.campaign.name,
+    contact_id: cmd.contactId,
+    phone_e164: cmd.contact.phone_e164,
+    caller_id: cmd.callerId,
+    attempt_number: cmd.attemptNumber,
+    context: cmd.contact.context,
+    prior_attempts: priors,
+  };
 }
 
 /**
@@ -396,17 +423,7 @@ export class AgencyDialer {
       log.warn({ err, attemptId }, 'Could not load prior attempts — sending panel without history');
     }
 
-    const attempt: AgencyReservedAttempt = {
-      attempt_id: attemptId,
-      campaign_id: cmd.campaignId,
-      campaign_name: cmd.campaign.name,
-      contact_id: cmd.contactId,
-      phone_e164: cmd.contact.phone_e164,
-      caller_id: cmd.callerId,
-      attempt_number: cmd.attemptNumber,
-      context: cmd.contact.context,
-      prior_attempts: priors,
-    };
+    const attempt = buildPanel(cmd, priors);
 
     // ── 2. Push the panel. SYNCHRONOUS, and before the dial. ────────────────
     //
@@ -630,16 +647,12 @@ export class AgencyDialer {
      */
     const live = this.liveByAttempt.get(cmd.attemptId);
     if (live) {
-      const holdSeconds = Math.max(0, (Date.now() - live.dialedAt.getTime()) / 1000);
+      const holdSeconds = elapsedSeconds(live.dialedAt);
       // No `campaign_id` on the histograms (series cost) — see metrics.ts.
       const labels = { tenant_id: cmd.tenantId, outcome };
       agencyAttemptHoldSeconds.observe(labels, holdSeconds);
     }
-    this.liveByAttempt.delete(cmd.attemptId);
-    this.stopLeaseRenewal(cmd.attemptId);
-    // Paired with the lease renewer: the attempt is gone, so a pre-bind grace armed
-    // against it has nothing left to end and must not outlive it into the next dial.
-    this.clearUnboundStationGrace(cmd.sessionId);
+    this.forgetAttempt(cmd);
     await agencyAttemptRepository.setState(cmd.attemptId, 'ended', {
       // Same `outcome` the hold observation above is labelled with, so the
       // histogram bucket and the attempt row cannot disagree about what happened.
@@ -652,15 +665,7 @@ export class AgencyDialer {
     await agencyContactRepository.unclaim(cmd.contactId, new Date())
       .catch((err) => log.error({ err, contactId: cmd.contactId }, 'Failed to unclaim contact'));
 
-    if (notifyAgent) {
-      this.stations.send(cmd.sessionId, {
-        event: 'released',
-        attempt_id: cmd.attemptId,
-        reason,
-        requires_disposition: false,
-        message: releaseMessageFor(reason),
-      });
-    }
+    if (notifyAgent) this.sendReleased(cmd, reason, false, releaseMessageFor(reason));
     // Runs either way — the agent goes back to the pool (or `offline`) whether or
     // not they were told a call had been reserved for them. Suppressing the frame
     // must never suppress the release, or a silent abandon would leave the agent
@@ -699,7 +704,7 @@ export class AgencyDialer {
       // the tail beyond it would forgo) and supplies the clustering half of the
       // over-dial arithmetic, which a flat answer probability cannot. Observed HERE, before
       // the bind, so a refused bind never costs us the reading.
-      const answerLatencySeconds = Math.max(0, (answeredAt.getTime() - live.dialedAt.getTime()) / 1000);
+      const answerLatencySeconds = elapsedSeconds(live.dialedAt, answeredAt);
       // Tenant-scoped only: `campaign_id` is kept off the histograms (series cost).
       agencyAnswerLatencySeconds.observe({ tenant_id: cmd.tenantId }, answerLatencySeconds);
 
@@ -853,7 +858,7 @@ export class AgencyDialer {
         const bindResult = live.abandonReason ?? 'bound';
         agencyBindTotal.inc({ tenant_id: cmd.tenantId, campaign_id: cmd.campaignId, result: bindResult });
         if (!bindFailed) {
-          const bindSeconds = Math.max(0, (Date.now() - answeredAt.getTime()) / 1000);
+          const bindSeconds = elapsedSeconds(answeredAt);
           // `agency_bind_total` above keeps `campaign_id`; the latency histogram
           // does not (series cost) — see metrics.ts.
           agencyBindLatencySeconds.observe({ tenant_id: cmd.tenantId }, bindSeconds);
@@ -1056,8 +1061,7 @@ export class AgencyDialer {
         leaseMs: AGENT_LEASE_MS.on_call,
       });
       this.startLeaseRenewal(cmd.attemptId, cmd.sessionId, 'on_call');
-      await agencyAgentSessionRepository.setState(cmd.sessionId, 'on_call')
-        .catch((err) => log.warn({ err, sessionId: cmd.sessionId }, 'Could not mirror on_call state'));
+      await mirrored(agencyAgentSessionRepository.setState(cmd.sessionId, 'on_call'), cmd.sessionId, 'Could not mirror on_call state');
       await agencyAttemptRepository.setState(cmd.attemptId, 'bridged', {
         answered_at: ev.answeredAt,
         bridged_at: bridgedAt,
@@ -1119,11 +1123,7 @@ export class AgencyDialer {
    */
   private async onEnded(live: LiveAttempt, ev: WebRtcLifecycleEvent): Promise<void> {
     const cmd = live.cmd;
-    this.liveByAttempt.delete(cmd.attemptId);
-    this.stopLeaseRenewal(cmd.attemptId);
-    // Paired with the lease renewer: the attempt is gone, so a pre-bind grace armed
-    // against it has nothing left to end and must not outlive it into the next dial.
-    this.clearUnboundStationGrace(cmd.sessionId);
+    this.forgetAttempt(cmd);
 
     let handedToWrapup = false;
     try {
@@ -1292,13 +1292,7 @@ export class AgencyDialer {
     // `releaseAgent` below still returns the agent to the pool. Only the two
     // agent-facing announcements are suppressed.
     if (!isUnannounced(live)) {
-      const delivered = this.stations.send(cmd.sessionId, {
-        event: 'released',
-        attempt_id: cmd.attemptId,
-        reason,
-        requires_disposition: needsDisposition,
-        message,
-      });
+      const delivered = this.sendReleased(cmd, reason, needsDisposition, message);
       // The agent whose socket dropped is exactly the agent this frame explains the
       // most to, and exactly the one who cannot receive it. Hold it for their
       // reconnect rather than letting the console come back to an empty panel with
@@ -1413,7 +1407,7 @@ export class AgencyDialer {
      * are therefore real seat time counted by neither series; see the note on the
      * metric for why that residual is left explicit rather than folded in here.
      */
-    const holdSeconds = Math.max(0, (Date.now() - live.dialedAt.getTime()) / 1000);
+    const holdSeconds = elapsedSeconds(live.dialedAt);
     // No `campaign_id` on the histogram (series cost) — see metrics.ts.
     agencyAttemptHoldSeconds.observe({ tenant_id: cmd.tenantId, outcome }, holdSeconds);
 
@@ -1686,8 +1680,7 @@ export class AgencyDialer {
     if (!stillHere) {
       this.breaks.cancel(sessionId);
       await this.agents.set(sessionId, 'offline', { leaseMs: AGENT_LEASE_MS.available });
-      await agencyAgentSessionRepository.setState(sessionId, 'offline')
-        .catch((err) => log.warn({ err, sessionId }, 'Could not mirror released agent state'));
+      await mirrored(agencyAgentSessionRepository.setState(sessionId, 'offline'), sessionId, 'Could not mirror released agent state');
       return;
     }
 
@@ -1701,8 +1694,10 @@ export class AgencyDialer {
     await this.agents.set(sessionId, state, {
       leaseMs: queuedBreak ? AGENT_LEASE_MS.break : AGENT_LEASE_MS.available,
     });
-    await agencyAgentSessionRepository.setState(sessionId, state, queuedBreak?.code ?? null)
-      .catch((err) => log.warn({ err, sessionId }, 'Could not mirror released agent state'));
+    await mirrored(
+      agencyAgentSessionRepository.setState(sessionId, state, queuedBreak?.code ?? null),
+      sessionId, 'Could not mirror released agent state',
+    );
 
     this.stations.send(sessionId, {
       event: 'agent_state',
@@ -1863,6 +1858,17 @@ export class AgencyDialer {
     this.unboundStationGrace.set(sessionId, timer);
   }
 
+  /**
+   * Drop an attempt this replica no longer drives: its live record, its lease
+   * renewer and — paired with the renewer — any pre-bind grace armed against it,
+   * which has nothing left to end and must not outlive it into the next dial.
+   */
+  private forgetAttempt(cmd: DialCommand): void {
+    this.liveByAttempt.delete(cmd.attemptId);
+    this.stopLeaseRenewal(cmd.attemptId);
+    this.clearUnboundStationGrace(cmd.sessionId);
+  }
+
   /** Disarm the pre-bind grace — the station came back, or the attempt settled. */
   private clearUnboundStationGrace(sessionId: string): void {
     const timer = this.unboundStationGrace.get(sessionId);
@@ -1952,19 +1958,29 @@ export class AgencyDialer {
     if (!this.bridge.reattachBorrowedBrowserLeg(attemptId, ws)) return null;
 
     log.info({ sessionId, attemptId, state: live.state }, 'Station reconnected onto a live attempt');
+    // The panel built at dial time, plus where the call has got to: a resumed
+    // panel is identical to the one the agent was shown.
     return {
-      attempt_id: attemptId,
-      campaign_id: live.cmd.campaignId,
-      campaign_name: live.cmd.campaign.name,
-      contact_id: live.cmd.contactId,
-      phone_e164: live.cmd.contact.phone_e164,
-      caller_id: live.cmd.callerId,
-      attempt_number: live.cmd.attemptNumber,
-      context: live.cmd.contact.context,
-      prior_attempts: live.priors,
+      ...live.panel,
       bridged_at: live.bridgedAt ? live.bridgedAt.toISOString() : null,
       state: live.state,
     };
+  }
+
+  /** The `released` frame that clears the agent's panel. False when it did not reach the socket. */
+  private sendReleased(
+    cmd: DialCommand,
+    reason: AgencyReleaseReason,
+    requiresDisposition: boolean,
+    message: string,
+  ): boolean {
+    return this.stations.send(cmd.sessionId, {
+      event: 'released',
+      attempt_id: cmd.attemptId,
+      reason,
+      requires_disposition: requiresDisposition,
+      message,
+    });
   }
 
   /**

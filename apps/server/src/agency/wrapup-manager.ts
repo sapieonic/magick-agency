@@ -4,6 +4,7 @@ import type { StationRegistry } from './station-registry.js';
 import { AgentStateMachine, AGENT_LEASE_MS } from './agent-state-machine.js';
 import type { AgencyBreakReason, AgencyWrapupHoldReason, AgencyWrapupState } from '@magick-agency/contracts/agency';
 import { agencyWrapupSeconds } from '@magick-agency/observability/metrics/agency';
+import { elapsedSeconds } from '@magick-agency/domain/timers';
 
 const log = createChildLogger({ component: 'agency-wrapup' });
 
@@ -445,7 +446,7 @@ export class WrapupManager {
      * out of the pool, so there is no caller to report the failure to anyway.
      */
     {
-      const seconds = Math.max(0, (Date.now() - entry.startedAt.getTime()) / 1000);
+      const seconds = elapsedSeconds(entry.startedAt);
       // No `campaign_id` on the histogram (series cost) — see metrics.ts.
       agencyWrapupSeconds.observe({ tenant_id: entry.tenantId, resolution }, seconds);
     }
