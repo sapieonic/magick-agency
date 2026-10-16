@@ -1276,6 +1276,31 @@ describe('hang up actually hangs up', () => {
     expect(notice.getAttribute('role')).toBe('alert');
   });
 
+  it('retires the failure notice once the call it describes is over', async () => {
+    // Every sentence the notice can say ends "you are still connected", which
+    // stops being true the instant `released` lands. Left up, it would tell the
+    // agent they are on a call that is over.
+    mocks.hangupAttempt.mockRejectedValue(new Error('Service Unavailable'));
+    await onCall();
+    press('e');
+    await act(async () => {});
+    press('e');
+    await act(async () => {});
+    expect(await screen.findByTestId('hangup-failure')).toBeTruthy();
+
+    await act(async () => {
+      latest().emit({
+        event: 'released',
+        attempt_id: 'att-1',
+        reason: 'completed',
+        requires_disposition: true,
+        message: 'Call ended.',
+      });
+    });
+
+    expect(screen.queryByTestId('hangup-failure')).toBeNull();
+  });
+
   it('does not report a failed hangup over a call that has since moved on', async () => {
     // The rejection resolves after a new `reserved` may have landed. Reporting
     // the previous call's failure on the new one is the stale-response hazard
