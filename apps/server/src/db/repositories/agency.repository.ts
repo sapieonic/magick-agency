@@ -5848,7 +5848,7 @@ export class AgencyAgentStatsRepository {
          -- intervals -- about 42 days of "offline" inside a 24-hour bucket -- and a
          -- session abandoned in a non-offline state inflates shift_seconds by the
          -- same construction.
-         SELECT s.id, s.left_at, ${zone} AS zone
+         SELECT s.id, s.left_at, s.joined_at, ${zone} AS zone
            FROM agency_agent_sessions s
            JOIN agency_campaigns c ON c.id = s.campaign_id
            ${AGENCY_RESOLVED_ZONE_JOIN_SQL}
@@ -5886,6 +5886,16 @@ export class AgencyAgentStatsRepository {
            JOIN sess ON sess.id = e.session_id
           WHERE e.agent_user_id = $1
             AND e.at < $2
+            -- The lower bound is what stops this range scan reading the agent's
+            -- whole tenure, and it is EXACT: a session's events never predate its
+            -- joined_at. recordTransitions is the only writer of this table and
+            -- stamps clock_timestamp() from the statement that moved the session,
+            -- which (on a server clock that does not step backwards) reads no
+            -- earlier than the INSERT that set joined_at (DEFAULT now(), never
+            -- updated). So every row DISTINCT ON could pick for a
+            -- session in sess is at or after the earliest joined_at in sess.
+            -- agent-occupancy-carried-bound.test.ts carries a month-old state.
+            AND e.at >= (SELECT MIN(joined_at) FROM sess)
           ORDER BY e.session_id, e.at DESC, e.id DESC
        ), events AS (
          SELECT * FROM in_window
@@ -6756,7 +6766,7 @@ export class AgencyAgentStatsRepository {
          -- event before $2, so carried hands each one an interval that, having no
          -- successor inside the window, runs the window's full width. Sixty past
          -- shifts become sixty full-window offline intervals per agent.
-         SELECT s.id, s.agent_user_id, s.left_at
+         SELECT s.id, s.agent_user_id, s.left_at, s.joined_at
            FROM agency_agent_sessions s
           WHERE s.tenant_id = $4
             AND s.account_id = $5
@@ -6795,6 +6805,10 @@ export class AgencyAgentStatsRepository {
            JOIN sess ON sess.id = e.session_id
           WHERE e.agent_user_id = ANY($1::uuid[])
             AND e.at < $2
+            -- Bounded below by the earliest joined_at in sess, exactly as in
+            -- occupancyBuckets and for the reason given there: events never
+            -- predate their session's joined_at.
+            AND e.at >= (SELECT MIN(joined_at) FROM sess)
           ORDER BY e.session_id, e.at DESC, e.id DESC
        ), events AS (
          SELECT * FROM in_window
