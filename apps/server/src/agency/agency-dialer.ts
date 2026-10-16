@@ -18,6 +18,7 @@ import {
 } from './outcome-classifier.js';
 import type {
   AgencyActiveAttempt,
+  AgencyAttemptOutcome,
   AgencyAttemptState,
   AgencyMissedRelease,
   AgencyPriorAttempt,
@@ -872,10 +873,19 @@ export class AgencyDialer {
       // guard the loser's `state` wins and a bridged call reads `answered`. The
       // `answered_at` patch is deliberately outside the guard — the abandonment
       // predicate has no other source for it.
+      //
+      // Caught, because the abandon decision below must not depend on it: a
+      // rejection here used to skip the apology and the hangup, leaving a customer
+      // with no agent behind them on silence until the PSTN leg closed or the
+      // max-duration timer fired. The row is the reaper's to repair; the customer
+      // on the line is not.
       await agencyAttemptRepository.setState(cmd.attemptId, 'answered', {
         answered_at: answeredAt,
         only_from: ['dialing'],
-      });
+      }).catch((err) => log.error(
+        { err, attemptId: cmd.attemptId },
+        'Could not record the carrier answer on the attempt row — still evaluating the abandon branch',
+      ));
 
       // The compliance DENOMINATOR, counted here and nowhere else.
       // This is the only site that observes a carrier answer, and it is reached by
@@ -1077,12 +1087,43 @@ export class AgencyDialer {
     }
 
     // ── ended ──
+    await this.onEnded(live, ev);
+  }
+
+  /**
+   * The `ended` arm: settle the attempt, tell the agent, and return them to the
+   * pool — or hand them to wrap-up.
+   *
+   * **The agent is released whatever fails in between.** The row and contact
+   * writes used to be awaited uncaught ahead of the `released` frame and
+   * `releaseAgent`, so one rejected statement left the agent `reserved`/`on_call`
+   * in Redis with the renewer already stopped (so the lease lapsed into nothing),
+   * the console still showing the panel, and only the generic lifecycle log line
+   * in `start()` to say why. The release is now in a `finally`, and the writes
+   * that can fail are caught where they are made (`settleEnded`).
+   */
+  private async onEnded(live: LiveAttempt, ev: WebRtcLifecycleEvent): Promise<void> {
+    const cmd = live.cmd;
     this.liveByAttempt.delete(cmd.attemptId);
     this.stopLeaseRenewal(cmd.attemptId);
     // Paired with the lease renewer: the attempt is gone, so a pre-bind grace armed
     // against it has nothing left to end and must not outlive it into the next dial.
     this.clearUnboundStationGrace(cmd.sessionId);
 
+    let handedToWrapup = false;
+    try {
+      handedToWrapup = await this.settleEnded(live, ev);
+    } finally {
+      if (!handedToWrapup) await this.releaseAgent(cmd.sessionId);
+    }
+  }
+
+  /**
+   * Classify the ended attempt, record it, and tell the agent. Returns true when
+   * wrap-up took the agent (so `onEnded` must not release them), false otherwise.
+   */
+  private async settleEnded(live: LiveAttempt, ev: WebRtcLifecycleEvent): Promise<boolean> {
+    const cmd = live.cmd;
     // ── `bridged` means BRIDGED, from the bridge's own stamp ─────────────────
     //
     // One local, read by the classifier and by the log line below, and its source
@@ -1155,6 +1196,178 @@ export class AgencyDialer {
       ? (live.abandonReason ?? (live.bridgedAt !== null ? 'bridge_late' : 'unattributed'))
       : null;
 
+    // ── Contact release ─────────────────────────────────────────────────────
+    // `connected` still parks the contact awaiting the agent's write-up: the precedence rule gives
+    // a disposition precedence over the outcome policy, so evaluating the outcome
+    // policy now would decide a question the disposition is entitled to answer. The
+    // wrap-up route settles it, and the reaper's `no_disposition` auto-close is the
+    // backstop that routes it back here.
+    //
+    // Everything else has no disposition coming, so the outcome policy decides —
+    // which means a real retry, not a flat `completed`.
+    //
+    // ── Parked in `connected` FOREVER when none is owed ─────────────────────
+    // Computed here, so ONE function
+    // answers "is a disposition owed" for both the contact's fate and the
+    // `released` frame's `requires_disposition`. Two readings of that question is
+    // how a route that demands a write-up and a console told none is needed end up
+    // in the same build.
+    //
+    // The hazard: `connected` parks the contact awaiting an agent's write-up, and
+    // the ONLY things that release it are the disposition route and the reaper's
+    // `no_disposition` sweep. On a campaign with an empty `disposition_catalog` —
+    // a LEGITIMATE configuration meaning "outcome-driven retry, no human write-up
+    // step" — no disposition is owed, none is ever submitted, and the contact would
+    // sit in `connected` until the reaper eventually auto-closed it. So when none
+    // is owed, the outcome policy decides now.
+    //
+    // Note the else-branch already produces the right answer without a special
+    // case: `connected`'s default policy is `max_attempts: 0`, so it resolves to
+    // `completed` with reason `outcome_not_retryable`. Only the CONDITION moved.
+    //
+    // ⚠️ This gate is HALF the fix and does not stand alone. The `bridged` handler
+    // above parks the contact in `connected` while the call is live, and its write
+    // can land after this one — see the note at that site. Both ask the same
+    // function; removing either one puts the contact back in `connected` forever.
+    const needsDisposition = requiresDisposition(outcome, cmd.campaign.disposition_catalog);
+
+    // A failed write must not cost the agent their `released` frame or their
+    // release: the classification above is in hand, the frame needs nothing from
+    // the database, and the reaper is the backstop for a row left non-terminal.
+    try {
+      await this.recordEndedAttempt(live, ev, { outcome, abandoned, abandonReason, needsDisposition });
+    } catch (err) {
+      log.error(
+        { err, attemptId: cmd.attemptId, outcome },
+        'Could not record the ended attempt — telling the agent and releasing them anyway; the reaper backstops the rows',
+      );
+    }
+
+    /**
+     * **Both** vocabularies, because there are two agent-initiated hang-ups and
+     * they arrive under different names. The browser leg closing yields
+     * `ended_by_user`; the HTTP hang-up route calls
+     * `forceEndWithOutcome(attemptId, 'agent_hangup')`, which reaches this handler
+     * as `ev.outcome === 'agent_hangup'`. Matching only the first would classify the
+     * *supported* hang-up API as an ordinary `completed` release, so the agent
+     * would press hang up and be told the call had simply ended —
+     * `releaseMessageFor` never reaching "You ended the call."
+     */
+    const agentHungUp = ev.outcome === 'ended_by_user' || ev.outcome === 'agent_hangup';
+    const reason = releaseReasonFor(outcome, { agentHungUp });
+    const message = releaseMessageFor(reason);
+    // ── An agent who was never shown this call is told NOTHING about it ───────
+    //
+    // Late binding only. This is the frame the whole change exists to remove: a
+    // dial that rang out, was busy, failed or found an unreachable handset
+    // produced a `released` — "Nobody answered." — for a panel that was never on
+    // the console's screen, which is the ringing popup agents dismiss. There is
+    // nothing to explain, because nothing
+    // was announced.
+    //
+    // The missed-release record goes with it, and for a stronger reason: it is
+    // replayed on the `ready` frame of the agent's NEXT connect, so a held
+    // release for an unannounced attempt would surface a popup about an
+    // unremembered call minutes later, on a fresh session — the same defect with a
+    // delay on it.
+    //
+    // Everything else in this handler is unchanged and deliberately so: the row is
+    // still settled, the contact still routed by the retry policy, the outcome
+    // still classified, the compliance counters still incremented, and
+    // `releaseAgent` below still returns the agent to the pool. Only the two
+    // agent-facing announcements are suppressed.
+    if (!isUnannounced(live)) {
+      const delivered = this.stations.send(cmd.sessionId, {
+        event: 'released',
+        attempt_id: cmd.attemptId,
+        reason,
+        requires_disposition: needsDisposition,
+        message,
+      });
+      // The agent whose socket dropped is exactly the agent this frame explains the
+      // most to, and exactly the one who cannot receive it. Hold it for their
+      // reconnect rather than letting the console come back to an empty panel with
+      // no account of the call they were just on.
+      if (!delivered) {
+        this.missedReleases.set(cmd.sessionId, {
+          release: {
+            attempt_id: cmd.attemptId,
+            reason,
+            requires_disposition: needsDisposition,
+            message,
+            ended_at: new Date().toISOString(),
+          },
+          expiresAt: Date.now() + MISSED_RELEASE_TTL_MS,
+        });
+      }
+    }
+
+    // `lateBinding`/`announced` are on the line because they are the only record
+    // that a `released` was deliberately withheld — the suppression above is
+    // otherwise invisible, and "the agent says the call vanished with no message"
+    // is exactly the support question it produces.
+    log.info(
+      {
+        attemptId: cmd.attemptId, outcome, reason, bridged,
+        lateBinding: live.lateBinding, announced: !isUnannounced(live),
+      },
+      'Agency attempt ended',
+    );
+
+    // ── Wrap-up, or straight back to the pool. ──────────────────────────────
+    // Only a conversation earns a wrap-up: `on_call` is reachable only through a
+    // bridge, so an attempt that rang out never entered it and has nothing to write
+    // up. Handing those agents a countdown would take the pool offline for
+    // `wrapup_seconds` after every no-answer, which at power-dialing rates is most
+    // of the shift.
+    if (this.stations.isLocallyOwned(cmd.sessionId) && outcome === 'connected') {
+      const entered = await this.wrapup.enter({
+        sessionId: cmd.sessionId,
+        attemptId: cmd.attemptId,
+        campaignId: cmd.campaignId,
+        tenantId: cmd.tenantId,
+        wrapupSeconds: cmd.campaign.wrapup_seconds,
+        autoReturn: cmd.campaign.wrapup_auto_return,
+        requiresDisposition: needsDisposition,
+        // PEEKED, not taken — `releaseAgent` below is the single place a queued
+        // break is consumed, and taking it here would apply it
+        // to nothing and drop the agent's break silently. This only lets the
+        // wrap-up state frame carry "break pending" through a window in which it
+        // is the console's sole transition announcement.
+        //
+        // A closure rather than a peeked value: `enter` awaits several Redis and DB
+        // writes before it can send that frame, and a break queued or cancelled
+        // inside that window emits its own `agent_state`. Handing over the value
+        // meant this frame arrived afterwards carrying a pre-window snapshot and
+        // won — clearing a live badge, or resurrecting a cancelled one. The
+        // registry still never leaves this class, so the `take()` hazard the value
+        // form existed to avoid is unchanged.
+        readPendingBreak: () => this.breaks.peek(cmd.sessionId),
+      });
+      // `false` ⇒ `wrapup_seconds = 0`, so the agent goes straight to `available`
+      // Falling through is that path.
+      if (entered) return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * The durable half of the `ended` arm: the attempt row, the seat-time and
+   * abandonment series that follow it, and the contact's fate.
+   */
+  private async recordEndedAttempt(
+    live: LiveAttempt,
+    ev: WebRtcLifecycleEvent,
+    settled: {
+      outcome: AgencyAttemptOutcome;
+      abandoned: boolean;
+      abandonReason: AgencyAbandonReason | null;
+      needsDisposition: boolean;
+    },
+  ): Promise<void> {
+    const cmd = live.cmd;
+    const { outcome, abandoned, abandonReason, needsDisposition } = settled;
     await agencyAttemptRepository.setState(cmd.attemptId, 'ended', {
       outcome,
       ended_at: new Date(),
@@ -1231,40 +1444,6 @@ export class AgencyDialer {
       }
     }
 
-    // ── Contact release ─────────────────────────────────────────────────────
-    // `connected` still parks the contact awaiting the agent's write-up: the precedence rule gives
-    // a disposition precedence over the outcome policy, so evaluating the outcome
-    // policy now would decide a question the disposition is entitled to answer. The
-    // wrap-up route settles it, and the reaper's `no_disposition` auto-close is the
-    // backstop that routes it back here.
-    //
-    // Everything else has no disposition coming, so the outcome policy decides —
-    // which means a real retry, not a flat `completed`.
-    //
-    // ── Parked in `connected` FOREVER when none is owed ─────────────────────
-    // Computed here, so ONE function
-    // answers "is a disposition owed" for both the contact's fate and the
-    // `released` frame's `requires_disposition`. Two readings of that question is
-    // how a route that demands a write-up and a console told none is needed end up
-    // in the same build.
-    //
-    // The hazard: `connected` parks the contact awaiting an agent's write-up, and
-    // the ONLY things that release it are the disposition route and the reaper's
-    // `no_disposition` sweep. On a campaign with an empty `disposition_catalog` —
-    // a LEGITIMATE configuration meaning "outcome-driven retry, no human write-up
-    // step" — no disposition is owed, none is ever submitted, and the contact would
-    // sit in `connected` until the reaper eventually auto-closed it. So when none
-    // is owed, the outcome policy decides now.
-    //
-    // Note the else-branch already produces the right answer without a special
-    // case: `connected`'s default policy is `max_attempts: 0`, so it resolves to
-    // `completed` with reason `outcome_not_retryable`. Only the CONDITION moved.
-    //
-    // ⚠️ This gate is HALF the fix and does not stand alone. The `bridged` handler
-    // above parks the contact in `connected` while the call is live, and its write
-    // can land after this one — see the note at that site. Both ask the same
-    // function; removing either one puts the contact back in `connected` forever.
-    const needsDisposition = requiresDisposition(outcome, cmd.campaign.disposition_catalog);
     // ── Our fault, before the bridge ─────────────────────────────────────────
     //
     // An agent's station socket dropping is OUR failure. If it happened before
@@ -1457,114 +1636,6 @@ export class AgencyDialer {
         'Contact released by the outcome retry policy',
       );
     }
-
-    /**
-     * **Both** vocabularies, because there are two agent-initiated hang-ups and
-     * they arrive under different names. The browser leg closing yields
-     * `ended_by_user`; the HTTP hang-up route calls
-     * `forceEndWithOutcome(attemptId, 'agent_hangup')`, which reaches this handler
-     * as `ev.outcome === 'agent_hangup'`. Matching only the first would classify the
-     * *supported* hang-up API as an ordinary `completed` release, so the agent
-     * would press hang up and be told the call had simply ended —
-     * `releaseMessageFor` never reaching "You ended the call."
-     */
-    const agentHungUp = ev.outcome === 'ended_by_user' || ev.outcome === 'agent_hangup';
-    const reason = releaseReasonFor(outcome, { agentHungUp });
-    const message = releaseMessageFor(reason);
-    // ── An agent who was never shown this call is told NOTHING about it ───────
-    //
-    // Late binding only. This is the frame the whole change exists to remove: a
-    // dial that rang out, was busy, failed or found an unreachable handset
-    // produced a `released` — "Nobody answered." — for a panel that was never on
-    // the console's screen, which is the ringing popup agents dismiss. There is
-    // nothing to explain, because nothing
-    // was announced.
-    //
-    // The missed-release record goes with it, and for a stronger reason: it is
-    // replayed on the `ready` frame of the agent's NEXT connect, so a held
-    // release for an unannounced attempt would surface a popup about an
-    // unremembered call minutes later, on a fresh session — the same defect with a
-    // delay on it.
-    //
-    // Everything else in this handler is unchanged and deliberately so: the row is
-    // still settled, the contact still routed by the retry policy, the outcome
-    // still classified, the compliance counters still incremented, and
-    // `releaseAgent` below still returns the agent to the pool. Only the two
-    // agent-facing announcements are suppressed.
-    if (!isUnannounced(live)) {
-      const delivered = this.stations.send(cmd.sessionId, {
-        event: 'released',
-        attempt_id: cmd.attemptId,
-        reason,
-        requires_disposition: needsDisposition,
-        message,
-      });
-      // The agent whose socket dropped is exactly the agent this frame explains the
-      // most to, and exactly the one who cannot receive it. Hold it for their
-      // reconnect rather than letting the console come back to an empty panel with
-      // no account of the call they were just on.
-      if (!delivered) {
-        this.missedReleases.set(cmd.sessionId, {
-          release: {
-            attempt_id: cmd.attemptId,
-            reason,
-            requires_disposition: needsDisposition,
-            message,
-            ended_at: new Date().toISOString(),
-          },
-          expiresAt: Date.now() + MISSED_RELEASE_TTL_MS,
-        });
-      }
-    }
-
-    // `lateBinding`/`announced` are on the line because they are the only record
-    // that a `released` was deliberately withheld — the suppression above is
-    // otherwise invisible, and "the agent says the call vanished with no message"
-    // is exactly the support question it produces.
-    log.info(
-      {
-        attemptId: cmd.attemptId, outcome, reason, bridged,
-        lateBinding: live.lateBinding, announced: !isUnannounced(live),
-      },
-      'Agency attempt ended',
-    );
-
-    // ── Wrap-up, or straight back to the pool. ──────────────────────────────
-    // Only a conversation earns a wrap-up: `on_call` is reachable only through a
-    // bridge, so an attempt that rang out never entered it and has nothing to write
-    // up. Handing those agents a countdown would take the pool offline for
-    // `wrapup_seconds` after every no-answer, which at power-dialing rates is most
-    // of the shift.
-    if (this.stations.isLocallyOwned(cmd.sessionId) && outcome === 'connected') {
-      const entered = await this.wrapup.enter({
-        sessionId: cmd.sessionId,
-        attemptId: cmd.attemptId,
-        campaignId: cmd.campaignId,
-        tenantId: cmd.tenantId,
-        wrapupSeconds: cmd.campaign.wrapup_seconds,
-        autoReturn: cmd.campaign.wrapup_auto_return,
-        requiresDisposition: needsDisposition,
-        // PEEKED, not taken — `releaseAgent` below is the single place a queued
-        // break is consumed, and taking it here would apply it
-        // to nothing and drop the agent's break silently. This only lets the
-        // wrap-up state frame carry "break pending" through a window in which it
-        // is the console's sole transition announcement.
-        //
-        // A closure rather than a peeked value: `enter` awaits several Redis and DB
-        // writes before it can send that frame, and a break queued or cancelled
-        // inside that window emits its own `agent_state`. Handing over the value
-        // meant this frame arrived afterwards carrying a pre-window snapshot and
-        // won — clearing a live badge, or resurrecting a cancelled one. The
-        // registry still never leaves this class, so the `take()` hazard the value
-        // form existed to avoid is unchanged.
-        readPendingBreak: () => this.breaks.peek(cmd.sessionId),
-      });
-      // `false` ⇒ `wrapup_seconds = 0`, so the agent goes straight to `available`
-      // Falling through is that path.
-      if (entered) return;
-    }
-
-    await this.releaseAgent(cmd.sessionId);
   }
 
   /**

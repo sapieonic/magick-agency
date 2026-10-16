@@ -999,3 +999,106 @@ describe('`on_call` reaches the durable mirror', () => {
     expect(ws.sent.map((f) => f.event)).toContain('bridged');
   });
 });
+
+// ─── A failed settle-path write must not skip what follows it ──────────────
+
+describe('AgencyDialer · a failed `answered` write still evaluates the abandon branch', () => {
+  /**
+   * The `answered` row write used to be awaited uncaught, ahead of the abandon
+   * decision. A rejection there skipped the apology and the hangup, so a customer
+   * who answered with no agent behind them sat on silence until the PSTN leg
+   * closed or the max-duration timer fired (30 minutes by default).
+   */
+  it('hangs up an agentless answered call even when the row write rejects', async () => {
+    const stations = new StationRegistry(null, '', 'r1');
+    const bridge = fakeBridge();
+    const forceEnd = vi.fn().mockResolvedValue(true);
+    (bridge as any).forceEndWithOutcome = forceEnd;
+    const dialer = new AgencyDialer(
+      bridge as any, stations, reservedAgents(), fakeWrapup() as any, fakeBreaks() as any,
+    );
+    dialer.start();
+    const ws = fakeWs();
+    await attachStation(stations, 's1', ws);
+    await dialer.executeDial(makeCmd('s1'));
+
+    // The agent's socket is gone: the abandon precondition.
+    ws.close();
+    await stations.detach('s1', ws as any);
+
+    repos.attempt.setState.mockImplementationOnce(async () => { throw new Error('pg down'); });
+    bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'answered', answered: true });
+
+    await vi.waitFor(() => expect(
+      forceEnd.mock.calls.filter((c: any[]) => c[1] === 'abandoned'),
+      'the answered-row failure skipped the abandon branch',
+    ).toHaveLength(1));
+  });
+});
+
+describe('AgencyDialer · a failed `ended` settle still releases the agent', () => {
+  /**
+   * The `ended` arm's row and contact writes were awaited uncaught, and the
+   * `released` frame and `releaseAgent` came after them. A throw there left the
+   * agent `reserved`/`on_call` in Redis with the renewer already stopped, the
+   * console still showing the panel, and only a generic log line.
+   */
+  async function dialedAndEnded(failing: () => void) {
+    const stations = new StationRegistry(null, '', 'r1');
+    const agents = reservedAgents();
+    const setSpy = vi.spyOn(agents, 'set');
+    const bridge = fakeBridge();
+    const dialer = new AgencyDialer(bridge as any, stations, agents, fakeWrapup() as any, fakeBreaks() as any);
+    dialer.start();
+    const ws = fakeWs();
+    await attachStation(stations, 's1', ws);
+    await dialer.executeDial(makeCmd('s1'));
+    ws.sent.length = 0;
+
+    failing();
+    bridge.emit({
+      callId: 'call-1', correlationId: 'att-1', phase: 'ended', status: 'no_answer', outcome: 'no_answer', answered: false,
+    });
+    return { ws, setSpy, dialer };
+  }
+
+  it('releases the agent and sends `released` when the attempt row write rejects', async () => {
+    const { ws, setSpy, dialer } = await dialedAndEnded(() => {
+      repos.attempt.setState.mockImplementationOnce(async () => { throw new Error('pg down'); });
+    });
+    await vi.waitFor(() => expect(setSpy).toHaveBeenCalledWith('s1', 'available', expect.anything()));
+    expect(ws.sent.map((f) => f.event)).toContain('released');
+    expect(ws.sent.find((f) => f.event === 'agent_state')?.state).toBe('available');
+    expect(dialer.activeAttemptIds()).not.toContain('att-1');
+  });
+
+  it('releases the agent when the contact settlement rejects', async () => {
+    const { ws, setSpy } = await dialedAndEnded(() => {
+      repos.contact.chargeAttempt.mockRejectedValueOnce(new Error('deadlock detected'));
+    });
+    await vi.waitFor(() => expect(setSpy).toHaveBeenCalledWith('s1', 'available', expect.anything()));
+    expect(ws.sent.map((f) => f.event)).toContain('released');
+  });
+
+  it('releases the agent when entering wrap-up throws', async () => {
+    const stations = new StationRegistry(null, '', 'r1');
+    const agents = reservedAgents();
+    const setSpy = vi.spyOn(agents, 'set');
+    const bridge = fakeBridge();
+    const wrapup = fakeWrapup({ entered: true });
+    wrapup.enter.mockRejectedValueOnce(new Error('redis down'));
+    const dialer = new AgencyDialer(bridge as any, stations, agents, wrapup as any, fakeBreaks() as any);
+    dialer.start();
+    const ws = fakeWs();
+    await attachStation(stations, 's1', ws);
+    await dialer.executeDial(makeCmd('s1'));
+    bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'bridged', answered: true });
+    await vi.waitFor(() => expect(repos.attempt.setState).toHaveBeenCalledWith('att-1', 'bridged', expect.anything()));
+    bridge.emit({
+      callId: 'call-1', correlationId: 'att-1', phase: 'ended', status: 'completed',
+      outcome: 'remote_hangup', answered: true, talkTimeSeconds: 42,
+    });
+    await vi.waitFor(() => expect(wrapup.enter).toHaveBeenCalled());
+    await vi.waitFor(() => expect(setSpy).toHaveBeenCalledWith('s1', 'available', expect.anything()));
+  });
+});
