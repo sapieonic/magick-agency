@@ -998,9 +998,8 @@ export class PacingEngine {
     for (const sessionId of sessions) {
       await this.agents.set(sessionId, 'available', { leaseMs: AGENT_LEASE_MS.available });
     }
-    for (const contact of contacts) {
-      await agencyContactRepository.unclaim(contact.id, new Date());
-    }
+    // One statement for the whole remainder, not one round trip per contact.
+    await agencyContactRepository.unclaimMany(contacts.map((c) => c.id), new Date());
   }
 
   /**

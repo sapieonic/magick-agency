@@ -48,7 +48,11 @@ const { repos, settings } = vi.hoisted(() => ({
       countOutstanding: vi.fn().mockResolvedValue(0),
       transitionStatus: vi.fn(),
     },
-    contact: { claimDialable: vi.fn().mockResolvedValue([]), unclaim: vi.fn().mockResolvedValue(undefined) },
+    contact: {
+      claimDialable: vi.fn().mockResolvedValue([]),
+      unclaim: vi.fn().mockResolvedValue(undefined),
+      unclaimMany: vi.fn().mockResolvedValue(undefined),
+    },
     attempt: { countLive: vi.fn().mockResolvedValue(0), create: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
     session: { findLiveForCampaign: vi.fn().mockResolvedValue([]) },
   },

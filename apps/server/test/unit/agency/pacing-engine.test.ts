@@ -31,7 +31,11 @@ const { repos, settings } = vi.hoisted(() => ({
       countOutstanding: vi.fn().mockResolvedValue(0),
       transitionStatus: vi.fn(),
     },
-    contact: { claimDialable: vi.fn().mockResolvedValue([]), unclaim: vi.fn().mockResolvedValue(undefined) },
+    contact: {
+      claimDialable: vi.fn().mockResolvedValue([]),
+      unclaim: vi.fn().mockResolvedValue(undefined),
+      unclaimMany: vi.fn().mockResolvedValue(undefined),
+    },
     attempt: { countLive: vi.fn().mockResolvedValue(0), create: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
     // `setState` mirrors the winning reservation durably — the
     // supervisor's agents-by-state breakdown cannot see `reserved` otherwise.
@@ -67,6 +71,14 @@ const { audit } = vi.hoisted(() => ({ audit: { log: vi.fn() } }));
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: audit }));
 
 import { PacingEngine } from '../../../src/agency/pacing-engine.js';
+
+/** Every contact returned to the pool this test, one at a time or as a batch. */
+function returnedContactIds(): string[] {
+  return [
+    ...repos.contact.unclaim.mock.calls.map((c: any[]) => c[0] as string),
+    ...repos.contact.unclaimMany.mock.calls.flatMap((c: any[]) => c[0] as string[]),
+  ].sort();
+}
 
 // The window is deliberately ALL DAY, EVERY DAY (the pre-dial
 // calling-hours gate). These tests are about the tick's arithmetic, and a fixture
@@ -668,7 +680,7 @@ describe('PacingEngine reserve-before-dial', () => {
     expect(dispatch).not.toHaveBeenCalled();
     // The remainder is returned, not stranded: both agents back, both contacts
     // unclaimed.
-    expect(repos.contact.unclaim.mock.calls.map((c: any) => c[0]).sort()).toEqual(['c1', 'c2']);
+    expect(returnedContactIds()).toEqual(['c1', 'c2']);
   });
 });
 
@@ -1576,7 +1588,7 @@ describe('PacingEngine.stop() and the tick in flight', () => {
 
     expect(dispatch, 'a tick dialed after stop()').not.toHaveBeenCalled();
     expect(repos.attempt.setState).toHaveBeenCalledWith('att-c1', 'ended', expect.objectContaining({ outcome: 'orphaned' }));
-    expect(repos.contact.unclaim.mock.calls.map((c: any) => c[0])).toEqual(['c1']);
+    expect(returnedContactIds()).toEqual(['c1']);
     expect(agents.set).toHaveBeenCalledWith('s1', 'available', expect.anything());
   });
 
