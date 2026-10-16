@@ -20,6 +20,8 @@
  * lists field paths and messages, never submitted values.
  */
 
+import type { AllListed } from '../../primitives';
+
 export type TelephonyCredentialStatus = 'active' | 'disabled' | 'invalid' | 'revoked';
 
 /** A credential as every read returns it. No secret material. */
@@ -149,13 +151,10 @@ export const TELEPHONY_CREDENTIAL_ERROR_CODES = [
   'in_use',
 ] as const satisfies readonly TelephonyCredentialErrorCode[];
 
-type MissingTelephonyCredentialErrorCode = Exclude<
+const _allTelephonyCredentialErrorCodesListed: AllListed<
   TelephonyCredentialErrorCode,
-  (typeof TELEPHONY_CREDENTIAL_ERROR_CODES)[number]
->;
-const _allTelephonyCredentialErrorCodesListed: MissingTelephonyCredentialErrorCode extends never
-  ? true
-  : MissingTelephonyCredentialErrorCode = true;
+  typeof TELEPHONY_CREDENTIAL_ERROR_CODES
+> = true;
 void _allTelephonyCredentialErrorCodesListed;
 
 export interface TelephonyCredentialError {

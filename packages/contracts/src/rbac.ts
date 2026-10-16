@@ -9,6 +9,8 @@
  * permissions carry `agency.` names.
  */
 
+import type { AllListed } from './primitives';
+
 /**
  * The six membership roles, declared once and shared by the server and both UIs.
  */
@@ -67,8 +69,7 @@ export const ROLES = [
   'tenant_owner',
 ] as const satisfies readonly Role[];
 
-type MissingRole = Exclude<Role, (typeof ROLES)[number]>;
-const _allRolesListed: MissingRole extends never ? true : MissingRole = true;
+const _allRolesListed: AllListed<Role, typeof ROLES> = true;
 void _allRolesListed;
 
 export type Permission =

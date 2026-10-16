@@ -844,6 +844,22 @@ describe('campaignTimeline', () => {
     expect(by(undefined)).toBeNull();
   });
 
+  it('renders the id of an actor the server could not name', () => {
+    /*
+      `{ user_id, name: null }` is an id-only actor: a caller that sent an id and
+      no display name. The server sends it as such (`name ?? null`), and the
+      contract's note says the console renders the id rather than inventing a
+      name or dropping the line.
+    */
+    const timeline = campaignTimeline(
+      campaign({ status: 'stopped', last_transition_by: { user_id: 'usr-1', name: null } }),
+      'stopped',
+      NOW,
+    );
+
+    expect(timeline.actor).toBe('usr-1');
+  });
+
   it('attributes nothing on a campaign that has not finished', () => {
     // `last_transition_by` describes the CURRENT status, which on a live
     // campaign is "running" — "Stopped by Priya" above a Pause button is a

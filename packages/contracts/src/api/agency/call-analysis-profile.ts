@@ -13,6 +13,7 @@
 // existing type (in `./shared`) rather than declaring a near-duplicate that could
 // drift.
 import type { AnalyticsDimension, StoredAnalyticsDimension } from './shared';
+import type { OffsetPage } from '../../primitives';
 
 export type { AnalyticsDimension, StoredAnalyticsDimension };
 
@@ -34,11 +35,8 @@ export interface CallAnalysisProfile {
   updated_at: string;
 }
 
-export interface CallAnalysisProfilesListResponse {
+export interface CallAnalysisProfilesListResponse extends OffsetPage {
   profiles: CallAnalysisProfile[];
-  total: number;
-  limit: number;
-  offset: number;
 }
 
 export interface CreateCallAnalysisProfileInput {
@@ -63,5 +61,5 @@ export interface UpdateCallAnalysisProfileInput {
   is_default?: boolean;
 }
 
-/** Upper bound on dimensions per profile — matches the dialer runtime's validator (max 20). */
+/** Upper bound on dimensions per profile. The server's dimension validator reads it as its `.max`. */
 export const MAX_ANALYSIS_DIMENSIONS = 20;

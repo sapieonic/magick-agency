@@ -1084,7 +1084,8 @@ export function campaignTimeline(
   /*
     `undefined` is "this API did not carry the field" and says nothing;
     `null` is the server saying the transition had no human behind it, which is a fact
-    worth a line. See the field's own note.
+    worth a line. See the field's own note. An actor with a `null` name is an
+    id-only caller, and the id is what there is to render.
   */
   /*
     A `completed` campaign was not stopped BY anybody — it ran out of list — so
@@ -1097,7 +1098,7 @@ export function campaignTimeline(
       ? null
       : rawActor === null
         ? 'Automatically'
-        : rawActor.name;
+        : (rawActor.name ?? rawActor.user_id);
 
   const base: CampaignTimeline = {
     started: null,

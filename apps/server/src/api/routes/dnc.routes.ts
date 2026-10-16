@@ -5,7 +5,7 @@ import { tenantContextMiddleware } from '../middleware/tenant-context.middleware
 import { requirePermission } from '../../rbac/rbac.middleware.js';
 import { accountRepository } from '@magick-agency/db/repositories/account.repository';
 import { dncService, DNC_ADD_MAX_NUMBERS } from '../../dnc/dnc.service.js';
-import { DNC_SOURCES, dncScopeLabel, dncScopeUuid, type DncSource } from '../../dnc/dnc.repository.js';
+import { DNC_SOURCES, dncScopeLabel, dncScopeUuid } from '../../dnc/dnc.repository.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../audit/platform/audit-actor.js';
@@ -58,7 +58,7 @@ const addSchema = z.object({
    */
   account_id: dncScopeUuid().nullish(),
   campaign_id: dncScopeUuid().nullish(),
-  source: z.enum(DNC_SOURCES as unknown as [DncSource, ...DncSource[]]).default('api'),
+  source: z.enum(DNC_SOURCES).default('api'),
   reason: z.string().max(1000).optional(),
 });
 
@@ -74,7 +74,7 @@ const listSchema = z.object({
   phone: z.string().min(1).max(40).optional(),
   account_id: z.union([z.literal('tenant'), z.string().uuid()]).optional(),
   campaign_id: z.union([z.literal('tenant'), z.string().uuid()]).optional(),
-  source: z.enum(DNC_SOURCES as unknown as [DncSource, ...DncSource[]]).optional(),
+  source: z.enum(DNC_SOURCES).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });

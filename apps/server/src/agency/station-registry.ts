@@ -1,7 +1,7 @@
 import type Redis from 'ioredis';
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
-import type { AgencyStationServerFrame } from '@magick-agency/contracts/agency';
+import { AGENCY_STATION_CLOSE, type AgencyStationServerFrame } from '@magick-agency/contracts/agency';
 
 const log = createChildLogger({ component: 'agency-station-registry' });
 
@@ -69,7 +69,7 @@ export class StationRegistry {
     if (prior && prior.ws !== entry.ws) {
       log.info({ sessionId: entry.sessionId, campaignId: entry.campaignId },
         'Superseding prior station socket for this session');
-      try { prior.ws.close(4409, 'superseded'); } catch { /* already gone */ }
+      try { prior.ws.close(AGENCY_STATION_CLOSE.SUPERSEDED, 'superseded'); } catch { /* already gone */ }
     }
     this.stations.set(entry.sessionId, { ...entry, lastSeen: Date.now() });
     await this.claimOwnership(entry.sessionId);

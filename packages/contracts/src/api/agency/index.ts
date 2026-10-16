@@ -19,7 +19,3 @@ export * from './call-analysis-profile';
 export * from './webrtc-call';
 export * from './attempt-call';
 export * from './shared';
-
-// Declared identically in the console's `agency.ts` and `agency-campaign.ts`; the
-// explicit re-export picks one so the two `export *` lines do not conflict.
-export type { AgencyCampaignStatus } from './agency';

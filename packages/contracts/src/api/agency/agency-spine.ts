@@ -18,54 +18,34 @@
  * that rule was written for.
  */
 
+import type * as Core from '../../agency';
 import type { AgencyAttemptOutcome, AgencyAttemptState } from './agency';
+// Identical in the dialer contract, so re-exported rather than copied (`CONTRACT-DIFF.md` §3).
+import type {
+  AgencyContactDetail,
+  AgencyContactRow,
+  AgencyContactState,
+  AgencyKeysetPage,
+  AgencyRetrySelector,
+} from '../../agency';
+import {
+  RETRY_NO_OUTCOME,
+} from '../../agency';
 
-/**
- * Contact lifecycle, mirrored from dialer runtime's `AgencyContactState`.
- *
- * Declared here rather than in `types/agency.ts` because this is the first
- * surface that renders it: the station socket deals in attempts, not roster
- * rows, so the console never needed the contact's own state until the roster
- * became something a supervisor can read.
- */
-export type AgencyContactState =
-  | 'pending'
-  | 'in_flight'
-  | 'connected'
-  | 'completed'
-  | 'exhausted'
-  | 'suppressed';
+export type {
+  AgencyContactDetail,
+  AgencyContactState,
+  AgencyKeysetPage,
+  AgencyRetrySelector,
+};
+export {
+  RETRY_NO_OUTCOME,
+};
 
-export interface AgencyAttempt {
-  id: string;
-  contact_id: string;
-  /**
-   * Which campaign this dial belonged to.
-   *
-   * Served on every attempt row, campaign-scoped reads included, and required
-   * rather than optional — a row without it is unattributable on the one surface
-   * that needs it most. `GET /proxy/agency/my-attempts` is CROSS-campaign by
-   * design (it is the agent's whole dial history, which
-   * `/campaigns/:id/attempts` structurally cannot be), so on that list the
-   * campaign is not implied by the URL and has to travel with the row.
-   *
-   * Redundant on a campaign-scoped read, and kept there anyway: one row shape for
-   * both readers beats a conditional field whose absence a consumer has to know
-   * to expect.
-   */
-  campaign_id: string;
-  /** 1-based, per contact. */
-  attempt_number: number;
-  phone_e164: string;
-  caller_id: string;
-  /**
-   * The agent who held this attempt, as a user id.
-   *
-   * **`null` is ordinary and is not missing data**: an attempt that was
-   * abandoned, failed or never answered had no agent on it. Render it as
-   * "no agent", never as a gap.
-   */
-  agent_user_id: string | null;
+/** One roster row, without `context`: the console's name for the dialer contract's `AgencyContactRow`. */
+export type AgencyRosterContact = AgencyContactRow;
+
+export interface AgencyAttempt extends Core.AgencyAttemptRow {
   /**
    * The agent's display name, resolved by the public API layer — the dialer runtime has no user table, so
    * it can only ever serve the id, and a column of UUIDs is not one a
@@ -77,76 +57,6 @@ export interface AgencyAttempt {
    * older than this build does not send it.
    */
   agent_name?: string | null;
-  reserved_agent_id: string | null;
-  state: AgencyAttemptState;
-  /** `null` means the attempt ended before it was ever classified. Not `failed`. */
-  outcome: AgencyAttemptOutcome | null;
-  disposition_code: string | null;
-  /**
-   * Agent-typed free text. Shown deliberately because it
-   * is frequently the answer to "why was this number called four times". Always
-   * rendered as TEXT, never as markup.
-   */
-  notes: string | null;
-  callback_at: string | null;
-  /** Who filed the write-up, which is not always who took the call. */
-  dispositioned_by_user_id: string | null;
-  dispositioned_at: string | null;
-  dispositioned_on_behalf: boolean;
-  /**
-   * The media leg, for the recording.
-   *
-   * **A non-null id is NOT a promise the recording still exists.** The dialer runtime keeps
-   * this un-FK'd on purpose so an attempt outlives a purged call, so the link
-   * must degrade to "recording no longer available" rather than 404.
-   */
-  webrtc_call_id: string | null;
-  dialed_at: string | null;
-  answered_at: string | null;
-  bridged_at: string | null;
-  ended_at: string | null;
-  talk_seconds: number | null;
-  wrapup_seconds: number | null;
-  created_at: string;
-}
-
-export interface AgencyRosterContact {
-  id: string;
-  phone_e164: string;
-  state: AgencyContactState;
-  /** The customer's retry budget. Never spent on our own faults. */
-  attempt_count: number;
-  /** Redials caused by our faults, bounded independently of the budget. */
-  our_fault_attempts: number;
-  last_outcome: string | null;
-  last_disposition: string | null;
-  next_attempt_at: string;
-  /** `dnc` | `invalid` | `max_attempts` | `manual`, or `null`. */
-  suppressed_reason: string | null;
-  timezone: string | null;
-  /** The row's line in the uploaded CSV. `null` on older rows. */
-  csv_line_number: number | null;
-  created_at: string;
-  updated_at: string;
-}
-
-/** One contact with its CSV columns — the drill-down, and the only shape with `context`. */
-export interface AgencyContactDetail extends AgencyRosterContact {
-  context: Record<string, unknown>;
-}
-
-/**
- * A keyset page.
- *
- * `next_cursor` is **opaque** — never parse it. There is deliberately no
- * `total`: counting a filtered set of up to a million rows costs a second scan
- * per page, for a number that is stale before it renders on a live campaign. So
- * the UI says "showing N" and offers "Load more", never "N of M".
- */
-export interface AgencyKeysetPage<TRow> {
-  rows: TRow[];
-  next_cursor: string | null;
-  limit: number;
 }
 
 export interface AgencyAttemptFilters {
@@ -216,38 +126,6 @@ export interface AgencyContactFilters {
  * — a customer's recorded request not to be contacted is not an operator
  * choice, and a bad number does not become good.
  */
-/**
- * The dialer runtime's `RETRY_NO_OUTCOME` — the `last_outcome` member meaning "this contact
- * has no outcome at all", i.e. nobody ever dialled it.
- *
- * Declared here rather than imported from the selector util because the type
- * that uses it lives in this module and `agencyRetrySelector.ts` imports *from*
- * here; the other direction is a cycle.
- */
-export const RETRY_NO_OUTCOME = '__none__';
-
-export interface AgencyRetrySelector {
-  state?: AgencyContactState[];
-  /**
-   * The ten real outcomes, plus `'__none__'` for a contact that has no outcome
-   * at all — the dialer runtime's `RETRY_NO_OUTCOME`, and the same bucket key the preview's
-   * `by_last_outcome` breakdown uses for a NULL.
-   *
-   * It is a MEMBER of this dimension rather than a dimension of its own because
-   * "we did not reach them" is a union of "rang out" and "never dialled", and
-   * the selector algebra ANDs across dimensions — expressed as two keys those
-   * are mutually exclusive and match nothing. See the dialer runtime's
-   * `RETRY_OUTCOME_SELECTABLES` for the full argument.
-   */
-  last_outcome?: (AgencyAttemptOutcome | typeof RETRY_NO_OUTCOME)[];
-  last_disposition?: string[];
-  /** `max_attempts` | `manual`. `dnc` and `invalid` are refused — see above. */
-  suppressed_reason?: string[];
-  /** `attempt_count = 0`. Cannot be combined with `attempt_count_gte >= 1`. */
-  never_attempted?: boolean;
-  attempt_count_gte?: number;
-  attempt_count_lte?: number;
-}
 
 // ─── Vocabularies ───────────────────────────────────────────────────────────
 //

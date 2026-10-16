@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
+import { AGENCY_STATION_CLOSE } from '@magick-agency/contracts/agency';
 import { disableNagle } from '../../utils/ws-nodelay.js';
 import { isUnsafeCorePath } from '../../proxy/safe-core-path.js';
 import { handleStationSocket } from '../../agency/station-socket.js';
@@ -49,7 +50,7 @@ const log = createChildLogger({ component: 'agency-station-proxy' });
  */
 export const STATION_CLOSE_CODES = {
   /** No token on the upgrade — never reached the station handler. Re-mint and retry. */
-  MISSING_TOKEN: 4401,
+  MISSING_TOKEN: AGENCY_STATION_CLOSE.TOKEN_REJECTED,
   /** The session id would escape `/api/v1/agency/station`. Do not retry. */
   INVALID_SESSION_ID: 1008,
   /** The close for an app built without a runtime. */

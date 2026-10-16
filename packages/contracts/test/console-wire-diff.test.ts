@@ -5,14 +5,13 @@ import type {
   AgencyWrapupHoldReason,
 } from '../src/agency';
 import type { AgencyApi } from '../src/index';
+import type { Equals } from './type-equals';
 
 /**
  * The three fields the console wire types carry beyond the minimum (in
  * `api/agency/agency.ts`). Type-level: `pnpm lint` fails if a field goes missing or its
  * type drifts from the dialer runtime's frozen contract (`../src/agency.ts`).
  */
-
-type Equals<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 
 // `supervisor_hold`: the console's hold vocabulary is the dialer runtime's, exactly.
 const _holds: Equals<AgencyApi.AgencyWrapupHold, AgencyWrapupHoldReason> = true;

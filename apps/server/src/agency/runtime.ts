@@ -4,7 +4,7 @@ import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
 import type { WebRtcBridgeManager } from '../core/webrtc-bridge-manager.js';
 import { agencyAgentSessionRepository } from '../db/repositories/agency.repository.js';
-import type { AgencyAgentState } from '@magick-agency/contracts/agency';
+import { AGENCY_STATION_CLOSE, type AgencyAgentState } from '@magick-agency/contracts/agency';
 import { StationRegistry } from './station-registry.js';
 import { AgentStateMachine, AGENT_LEASE_MS } from './agent-state-machine.js';
 import { AgencyDialer } from './agency-dialer.js';
@@ -321,7 +321,7 @@ export class AgencyRuntime {
         silentForMs: now - entry.lastSeen,
       }, 'Station heartbeat lapsed past its grace — closing the socket');
       // 4408: re-mint and retry, exactly as 4401 is. The console must come back.
-      try { entry.ws.close(4408, 'station_heartbeat_timeout'); } catch { /* already gone */ }
+      try { entry.ws.close(AGENCY_STATION_CLOSE.HEARTBEAT_TIMEOUT, 'station_heartbeat_timeout'); } catch { /* already gone */ }
       acted++;
     }
     return acted;

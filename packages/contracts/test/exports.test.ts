@@ -3,6 +3,7 @@ import * as Root from '../src/index';
 import { AgencyApi, PlatformApi } from '../src/index';
 import {
   AGENCY_ABANDON_REASONS,
+  AGENCY_STATION_CLOSE,
   AGENCY_CAMPAIGN_STATS_FIELDS,
   AGENCY_STATS_ROUTE_FIELDS,
 } from '../src/agency';
@@ -11,9 +12,9 @@ import {
   TELEPHONY_CREDENTIAL_ERROR_CODES,
   type TelephonyCredentialErrorCode,
 } from '../src/api/platform/super-admin-telephony-credentials';
+import type { Equals } from './type-equals';
 
 // The list is exactly the union (the runtime list's own guard covers the other side).
-type Equals<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 const _credentialCodesExact: Equals<(typeof TELEPHONY_CREDENTIAL_ERROR_CODES)[number], TelephonyCredentialErrorCode> = true;
 void _credentialCodesExact;
 
@@ -37,6 +38,21 @@ describe('package surface', () => {
     for (const field of AGENCY_STATS_ROUTE_FIELDS) {
       expect(AGENCY_CAMPAIGN_STATS_FIELDS[field]).toBe(true);
     }
+  });
+
+  it('declares the stats bucket units once, at the root', () => {
+    expect([...Root.STATS_BUCKET_UNITS]).toEqual(['day', 'week', 'month']);
+  });
+
+  it('declares the four station close codes once (SNAPSHOT, written out by hand)', () => {
+    expect(AGENCY_STATION_CLOSE).toEqual({
+      TOKEN_REJECTED: 4401,
+      SESSION_GONE: 4404,
+      HEARTBEAT_TIMEOUT: 4408,
+      SUPERSEDED: 4409,
+    });
+    // The console layer re-exports the same object rather than a copy that could drop a code.
+    expect(AgencyApi.AGENCY_STATION_CLOSE).toBe(AGENCY_STATION_CLOSE);
   });
 
   it('declares the session refusals agency answers with', () => {
