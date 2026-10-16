@@ -7,6 +7,7 @@
  * can trust rather than raw `request.query`.
  */
 
+import { UUID_RE } from '../utils/uuid.js';
 import type {
   AgencyAttemptOutcome,
   AgencyAttemptState,
@@ -144,7 +145,7 @@ export interface AgencyContactFilters {
  * the console's own drill-down link, so a hand-edited or stale one is an
  * ordinary occurrence rather than an attack.
  */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// (`UUID_RE` itself is imported from `utils/uuid.ts`, the one copy both layers share.)
 
 export interface FilterIssue {
   param: string;
@@ -208,6 +209,53 @@ export function validateEnum<T extends string>(
     return undefined;
   }
   return values as T[];
+}
+
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * The required, half-open `?from=&to=` window of the agent-record reads, capped at
+ * `maxDays`. Both bounds are required and parsed by {@link parseFilterDate};
+ * `from >= to` is refused rather than silently emptied (a zero-width or inverted
+ * window matches nothing, and "nothing" on a record page reads as a fact about the
+ * agent rather than about the request); a window wider than the cap is refused
+ * with a message naming it, so a caller can page rather than guess. Issues are
+ * pushed onto `issues`; a bound that did not parse comes back undefined.
+ */
+export function parseRequiredWindow(
+  query: Record<string, unknown>,
+  maxDays: number,
+  issues: FilterIssue[],
+): { from: Date | undefined; to: Date | undefined } {
+  const fromRaw = singleParam(query['from']);
+  const toRaw = singleParam(query['to']);
+  if (fromRaw === undefined) issues.push({ param: 'from', message: 'is required' });
+  if (toRaw === undefined) issues.push({ param: 'to', message: 'is required' });
+  const from = parseFilterDate('from', fromRaw, issues);
+  const to = parseFilterDate('to', toRaw, issues);
+  if (from && to && from.getTime() >= to.getTime()) {
+    issues.push({ param: 'from', message: '`from` must be earlier than `to` (the window is half-open)' });
+  } else if (from && to && to.getTime() - from.getTime() > maxDays * MS_PER_DAY) {
+    issues.push({
+      param: 'from',
+      message: `the window must be at most ${maxDays} days — request a narrower range`,
+    });
+  }
+  return { from, to };
+}
+
+/**
+ * An optional `?campaign_id=`, shape-checked before it can reach a `::uuid` cast
+ * (which answers `22P02` and surfaces as a 500 carrying the database's error text —
+ * a bad request that reads as a broken service). A malformed one is recorded as an
+ * issue and still returned, so the caller's issue check is what refuses it.
+ */
+export function parseCampaignIdParam(query: Record<string, unknown>, issues: FilterIssue[]): string | undefined {
+  const campaignId = singleParam(query['campaign_id']);
+  if (campaignId !== undefined && !UUID_RE.test(campaignId)) {
+    issues.push({ param: 'campaign_id', message: 'must be a campaign id' });
+  }
+  return campaignId;
 }
 
 /**

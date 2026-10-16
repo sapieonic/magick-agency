@@ -26,7 +26,8 @@ import type {
 } from '@magick-agency/contracts/agency';
 import {
   parseAttemptFilters,
-  parseFilterDate,
+  parseCampaignIdParam,
+  parseRequiredWindow,
   singleParam,
   validateEnum,
   vocabulary,
@@ -65,8 +66,6 @@ export const AGENT_STATS_BUCKETS = vocabulary<AgencyStatsBucketUnit>({
  */
 export const AGENT_STATS_MAX_WINDOW_DAYS = 366;
 
-const MS_PER_DAY = 86_400_000;
-
 /** The window and grouping one agent-stats read runs over. */
 export interface AgentStatsParams {
   /** Inclusive lower bound on `dialed_at` / on the occupancy window. */
@@ -77,8 +76,6 @@ export interface AgentStatsParams {
   /** Restrict to one campaign; omit for the agent's whole cross-campaign record. */
   campaignId?: string;
 }
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * `?from=&to=&bucket=&campaign_id=` → {@link AgentStatsParams}, or the issues.
@@ -109,53 +106,24 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export function parseAgentStatsQuery(query: Record<string, unknown>): FilterParse<AgentStatsParams> {
   const issues: FilterIssue[] = [];
 
-  const fromRaw = singleParam(query['from']);
-  const toRaw = singleParam(query['to']);
-  if (fromRaw === undefined) issues.push({ param: 'from', message: 'is required' });
-  if (toRaw === undefined) issues.push({ param: 'to', message: 'is required' });
-  const from = parseFilterDate('from', fromRaw, issues);
-  const to = parseFilterDate('to', toRaw, issues);
-
   // Refused rather than silently emptied, exactly as `checkRange` does on the
   // spine: `from >= to` matches nothing, and "nothing" on a record page reads as
   // a fact about the agent rather than about the request. Equality is refused too
   // — a half-open window of zero width has no buckets and no honest answer.
-  if (from && to && from.getTime() >= to.getTime()) {
-    issues.push({ param: 'from', message: '`from` must be earlier than `to` (the window is half-open)' });
-  } else if (from && to && to.getTime() - from.getTime() > AGENT_STATS_MAX_WINDOW_DAYS * MS_PER_DAY) {
-    issues.push({
-      param: 'from',
-      message: `the window must be at most ${AGENT_STATS_MAX_WINDOW_DAYS} days — request a narrower range`,
-    });
-  }
+  const { from, to } = parseRequiredWindow(query, AGENT_STATS_MAX_WINDOW_DAYS, issues);
 
   // Defaulted rather than required: `day` is what a record page opens on, and
   // unlike the window there is no way to be wrong about which grouping you got
   // (it is echoed on the response).
-  const bucketRaw = singleParam(query['bucket']);
-  let bucket: AgencyStatsBucketUnit = 'day';
-  if (bucketRaw !== undefined) {
-    if (!(AGENT_STATS_BUCKETS as readonly string[]).includes(bucketRaw)) {
-      // The valid set is echoed, the way `validateEnum` and the break route's
-      // `unknown_break_reason` already do: a client holding a stale vocabulary
-      // recovers in one round trip instead of guessing.
-      issues.push({
-        param: 'bucket',
-        message: `unknown bucket: ${bucketRaw} — expected one of ${AGENT_STATS_BUCKETS.join(', ')}`,
-      });
-    } else {
-      bucket = bucketRaw as AgencyStatsBucketUnit;
-    }
-  }
+  //
+  // An unknown one echoes the valid set (`validateEnum`'s message), the way the
+  // break route's `unknown_break_reason` does: a client holding a stale vocabulary
+  // recovers in one round trip instead of guessing.
+  const bucket: AgencyStatsBucketUnit =
+    singleEnum('bucket', singleParam(query['bucket']), AGENT_STATS_BUCKETS, issues) ?? 'day';
 
-  // Shape-checked before it can reach a `::uuid` cast, which answers `22P02` and
-  // surfaces as a 500 carrying the database's error text — a bad request that
-  // reads as a broken service. Same guard, same reason, as the spine's
-  // `?contact_id=`.
-  const campaignId = singleParam(query['campaign_id']);
-  if (campaignId !== undefined && !UUID_RE.test(campaignId)) {
-    issues.push({ param: 'campaign_id', message: 'must be a campaign id' });
-  }
+  // Same guard, same reason, as the spine's `?contact_id=`.
+  const campaignId = parseCampaignIdParam(query, issues);
 
   if (issues.length > 0 || !from || !to) {
     // `!from || !to` cannot be reached with an empty issue list — both are
@@ -336,10 +304,7 @@ export function parseAgentAttemptFilters(
   const parsed = parseAttemptFilters(query);
   const issues: FilterIssue[] = parsed.ok ? [] : [...parsed.issues];
 
-  const campaignId = singleParam(query['campaign_id']);
-  if (campaignId !== undefined && !UUID_RE.test(campaignId)) {
-    issues.push({ param: 'campaign_id', message: 'must be a campaign id' });
-  }
+  const campaignId = parseCampaignIdParam(query, issues);
   if (issues.length > 0 || !parsed.ok) {
     return { ok: false, issues: issues.length > 0 ? issues : [{ param: 'campaign_id', message: 'must be a campaign id' }] };
   }
@@ -539,35 +504,13 @@ function singleEnum<T extends string>(
 export function parseRosterQuery(query: Record<string, unknown>): FilterParse<AgentRosterParams> {
   const issues: FilterIssue[] = [];
 
-  const fromRaw = singleParam(query['from']);
-  const toRaw = singleParam(query['to']);
-  if (fromRaw === undefined) issues.push({ param: 'from', message: 'is required' });
-  if (toRaw === undefined) issues.push({ param: 'to', message: 'is required' });
-  const from = parseFilterDate('from', fromRaw, issues);
-  const to = parseFilterDate('to', toRaw, issues);
-
   // Refused rather than silently emptied, exactly as `parseAgentStatsQuery` does:
-  // `from >= to` matches nothing, and an empty roster reads as a fact about the
-  // floor rather than about the request.
-  if (from && to && from.getTime() >= to.getTime()) {
-    issues.push({ param: 'from', message: '`from` must be earlier than `to` (the window is half-open)' });
-  } else if (from && to && to.getTime() - from.getTime() > ROSTER_MAX_WINDOW_DAYS * MS_PER_DAY) {
-    // The ROSTER's cap, not the per-agent read's — see `ROSTER_MAX_WINDOW_DAYS`.
-    // Same refusal shape as every other issue in this function, and it names the
-    // bound so the caller can page rather than guess.
-    issues.push({
-      param: 'from',
-      message: `the window must be at most ${ROSTER_MAX_WINDOW_DAYS} days — request a narrower range`,
-    });
-  }
+  // an empty roster reads as a fact about the floor rather than about the request.
+  // The ROSTER's cap, not the per-agent read's — see `ROSTER_MAX_WINDOW_DAYS`.
+  const { from, to } = parseRequiredWindow(query, ROSTER_MAX_WINDOW_DAYS, issues);
 
-  // Shape-checked before it can reach a `::uuid` cast, which answers `22P02` and
-  // surfaces as a 500 carrying the database's error text — a bad request that
-  // reads as a broken service. Same guard, same reason, as everywhere else here.
-  const campaignId = singleParam(query['campaign_id']);
-  if (campaignId !== undefined && !UUID_RE.test(campaignId)) {
-    issues.push({ param: 'campaign_id', message: 'must be a campaign id' });
-  }
+  // Same guard, same reason, as everywhere else here.
+  const campaignId = parseCampaignIdParam(query, issues);
 
   const sort = singleEnum('sort', singleParam(query['sort']), ROSTER_SORTS, issues);
   const order = singleEnum('order', singleParam(query['order']), ROSTER_ORDERS, issues);
@@ -997,30 +940,10 @@ export function groupedPageHasSingleZone(
 export function parseGroupedStatsQuery(query: Record<string, unknown>): AgencyGroupParse {
   const issues: AgencyGroupIssue[] = [];
 
-  const fromRaw = singleParam(query['from']);
-  const toRaw = singleParam(query['to']);
-  if (fromRaw === undefined) issues.push({ param: 'from', message: 'is required' });
-  if (toRaw === undefined) issues.push({ param: 'to', message: 'is required' });
-  const from = parseFilterDate('from', fromRaw, issues);
-  const to = parseFilterDate('to', toRaw, issues);
-
   // Refused rather than silently emptied, and capped on the ROSTER's constant —
   // see the docstring for why that is a reuse and not a coincidence.
-  if (from && to && from.getTime() >= to.getTime()) {
-    issues.push({ param: 'from', message: '`from` must be earlier than `to` (the window is half-open)' });
-  } else if (from && to && to.getTime() - from.getTime() > ROSTER_MAX_WINDOW_DAYS * MS_PER_DAY) {
-    issues.push({
-      param: 'from',
-      message: `the window must be at most ${ROSTER_MAX_WINDOW_DAYS} days — request a narrower range`,
-    });
-  }
-
-  // Shape-checked before it can reach a `::uuid` cast, which answers `22P02` and
-  // surfaces as a 500 carrying the database's error text.
-  const campaignId = singleParam(query['campaign_id']);
-  if (campaignId !== undefined && !UUID_RE.test(campaignId)) {
-    issues.push({ param: 'campaign_id', message: 'must be a campaign id' });
-  }
+  const { from, to } = parseRequiredWindow(query, ROSTER_MAX_WINDOW_DAYS, issues);
+  const campaignId = parseCampaignIdParam(query, issues);
 
   const groupBy = parseGroupBy(singleParam(query['group_by']), issues);
 

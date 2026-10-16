@@ -1,3 +1,4 @@
+import { UUID_RE } from '../utils/uuid.js';
 import type { AuditLogRecord } from '@magick-agency/db/models/platform/audit.model';
 import type { PlatformAuditActorType } from '../audit/platform/catalog.js';
 // The CSV primitives, and the formula guard in particular, live in one leaf
@@ -509,9 +510,9 @@ export function decodeActivityCursor(raw: string): ActivityCursor | null {
  * for type uuid`, which nothing catches — so a hand-edited cursor turns a route
  * whose stated contract is "never a 500" into exactly that, with the body
  * replaced by a support-ticket message. Validated here so it lands on the
- * route's existing 400 "Malformed cursor" instead.
+ * route's existing 400 "Malformed cursor" instead. The check is `UUID_RE`
+ * (`utils/uuid.ts`).
  */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** `undefined` signals malformed; `null` is a legitimate "this source has no position yet". */
 function parsePosition(value: unknown): SourcePosition | null | undefined {
