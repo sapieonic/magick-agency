@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useMountedRef } from '../../hooks/useMountedRef';
 import { Link } from 'react-router-dom';
 import { ChartNoAxesCombined, Plus } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
@@ -181,22 +182,7 @@ export function AgencyAnalyticsPage() {
    * for the life of the page and every campaign read is thrown away — a
    * permanent spinner in development, and only in development.
    */
-  const mounted = useRef(true);
-  useEffect(() => {
-    /*
-      Set on the way IN as well as cleared on the way out. `React.StrictMode`
-      (which `main.tsx` wraps the whole app in) runs every effect setup →
-      cleanup → setup in development, so a cleanup-only effect leaves this
-      `false` while the component is very much mounted — every response is then
-      discarded as stale and the surface spins forever. A defect that exists
-      only in development is still a defect: it is the build every reviewer and
-      every developer sees.
-    */
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const mounted = useMountedRef();
 
   /**
    * Read `/stats` for `ids` and merge the answers in, leaving every other

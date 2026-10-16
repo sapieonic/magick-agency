@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMountedRef } from '../../hooks/useMountedRef';
 import { Link } from 'react-router-dom';
 import {
   ChartNoAxesCombined,
@@ -164,13 +165,7 @@ export function AgencyCampaignsPage() {
   const statsSeq = useRef(new Map<string, number>());
   const statsRef = useRef(stats);
   statsRef.current = stats;
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const mounted = useMountedRef();
 
   /** `quiet` is the poll: it refreshes in place, without the spinner or a cleared error. */
   const load = useCallback(

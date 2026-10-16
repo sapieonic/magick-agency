@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMountedRef } from '../../hooks/useMountedRef';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -11,6 +12,7 @@ import {
 import { usePermission } from '../../hooks/usePermission';
 import { useLatestRef } from '../../hooks/useLatestRef';
 import { isTextEntryTarget } from '../../utils/keyboardTarget';
+import { errorCode } from '../../utils/agencyErrors';
 import { getRoleLevel } from '../../utils/permissions';
 import { useAgencyConsole } from './useAgencyConsole';
 import { StateRail } from '../../components/agency/StateRail';
@@ -188,21 +190,15 @@ export default function AgentConsolePage() {
    * that is already in flight still completes server-side either way; this
    * only stops the component from setting state once nothing is listening.
    *
-   * Set on the way IN as well as cleared on the way out — see
-   * `AgencyAnalyticsPage.tsx`'s `mounted` ref for the reason spelled out in
-   * full: `React.StrictMode` runs every effect setup → cleanup → setup in
+   * Set on the way IN as well as cleared on the way out — see `useMountedRef`
+   * for the reason spelled out in full: `React.StrictMode` runs every effect
+   * setup → cleanup → setup in
    * development, so a cleanup-only effect left this `false` for the rest of
    * the page's life. `confirmSwitch` would then set `switching` and never
    * clear it — a permanent "Switching…" with Cancel doing nothing, even once
    * the three requests had already committed.
    */
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  const mountedRef = useMountedRef();
   const consoleRef = useRef<HTMLDivElement>(null);
   const notesRef = useRef<HTMLTextAreaElement>(null);
   const breakMenuRef = useRef<BreakMenuHandle | null>(null);
@@ -563,13 +559,10 @@ export default function AgentConsolePage() {
       setHangupFailure(hangupFailureCopy(err));
       // Same structured-code read `hangupFailureCopy`/`dncFailureCopy` use —
       // `details.code`, never `err.message`.
-      const code =
-        err !== null && typeof err === 'object'
-          ? ((err as { details?: { code?: unknown } }).details?.code ?? null)
-          : null;
+      const code = errorCode(err);
       trackAgencyHangupFailed({
         campaign_id: bootstrap?.campaign_id ?? '',
-        code: typeof code === 'string' ? (code as AgencyActionErrorCode) : 'unknown',
+        code: code !== null ? (code as AgencyActionErrorCode) : 'unknown',
       });
     });
   }, [live?.attempt.attempt_id, live?.bridgedAt, tenantId, accountId, bootstrap, clock]);
@@ -702,6 +695,23 @@ export default function AgentConsolePage() {
     setSwitching(true);
     setSwitchFailure(null);
     const progress = switchProgressRef.current;
+    /**
+     * Analytics only. Fired regardless of mount — it records what actually
+     * happened server-side. `agentState` defaults to the conflict's own; only
+     * the mid-call abort reports the fresh state that decided it.
+     */
+    const reportSwitch = (
+      outcome: Parameters<typeof trackAgencyStationSwitchCampaign>[0]['outcome'],
+      failedStage: SwitchStage | null,
+      agentState: AgencySessionConflict['state'] = conflict.state,
+    ) =>
+      trackAgencyStationSwitchCampaign({
+        from_campaign_id: conflict.campaign_id,
+        to_campaign_id: campaignId,
+        agent_state: agentState,
+        outcome,
+        failed_stage: failedStage,
+      });
 
     let stage: SwitchStage = 'resume';
     try {
@@ -724,13 +734,7 @@ export default function AgentConsolePage() {
               setSwitchConfirm(false);
               setJoinConflict({ ...conflict, state: otherSession.state });
             }
-            trackAgencyStationSwitchCampaign({
-              from_campaign_id: conflict.campaign_id,
-              to_campaign_id: campaignId,
-              agent_state: otherSession.state,
-              outcome: 'blocked_mid_call',
-              failed_stage: null,
-            });
+            reportSwitch('blocked_mid_call', null, otherSession.state);
             return;
           }
           otherSessionId = otherSession.session_id;
@@ -755,13 +759,7 @@ export default function AgentConsolePage() {
         setJoinConflict(null);
         setBootstrap(session);
       }
-      trackAgencyStationSwitchCampaign({
-        from_campaign_id: conflict.campaign_id,
-        to_campaign_id: campaignId,
-        agent_state: conflict.state,
-        outcome: 'completed',
-        failed_stage: null,
-      });
+      reportSwitch('completed', null);
     } catch (err: unknown) {
       if (stage === 'rejoin') {
         /**
@@ -783,13 +781,7 @@ export default function AgentConsolePage() {
             setSwitchConfirm(false);
             setJoinConflict(rejoinConflict);
           }
-          trackAgencyStationSwitchCampaign({
-            from_campaign_id: conflict.campaign_id,
-            to_campaign_id: campaignId,
-            agent_state: conflict.state,
-            outcome: 'failed',
-            failed_stage: stage,
-          });
+          reportSwitch('failed', stage);
           return;
         }
         /**
@@ -808,26 +800,14 @@ export default function AgentConsolePage() {
           setJoinConflict(null);
           setJoinError(switchFailureCopy(stage, conflict.campaign_name, err));
         }
-        trackAgencyStationSwitchCampaign({
-          from_campaign_id: conflict.campaign_id,
-          to_campaign_id: campaignId,
-          agent_state: conflict.state,
-          outcome: 'failed',
-          failed_stage: stage,
-        });
+        reportSwitch('failed', stage);
         return;
       }
       if (mountedRef.current) {
         setSwitching(false);
         setSwitchFailure(switchFailureCopy(stage, conflict.campaign_name, err));
       }
-      trackAgencyStationSwitchCampaign({
-        from_campaign_id: conflict.campaign_id,
-        to_campaign_id: campaignId,
-        agent_state: conflict.state,
-        outcome: 'failed',
-        failed_stage: stage,
-      });
+      reportSwitch('failed', stage);
     }
   }, [joinConflict, tenantId, accountId, campaignId]);
 
@@ -921,14 +901,11 @@ export default function AgentConsolePage() {
           if (panelAttemptRef.current !== attemptId) return;
           setDncFailure(dncFailureCopy(err));
           // Same structured-code read as the hang-up above.
-          const code =
-            err !== null && typeof err === 'object'
-              ? ((err as { details?: { code?: unknown } }).details?.code ?? null)
-              : null;
+          const code = errorCode(err);
           trackAgencyDncFailed({
             campaign_id: bootstrap?.campaign_id ?? '',
             scope,
-            code: typeof code === 'string' ? (code as AgencyActionErrorCode) : null,
+            code: code as AgencyActionErrorCode | null,
           });
         })
         .finally(() => {
@@ -1021,6 +998,12 @@ export default function AgentConsolePage() {
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       const { agentState, cons, bootstrap } = shortcutStateRef.current;
+      // Analytics only: every shortcut reports against the station's campaign.
+      const stationCampaign = bootstrap?.campaign_id ?? '';
+      const shortcutUsed = (
+        key: Parameters<typeof trackAgencyShortcutUsed>[0]['key'],
+        accepted: boolean,
+      ) => trackAgencyShortcutUsed({ campaign_id: stationCampaign, key, accepted });
       // `isTextEntryTarget` carries the whole argument for why an `<input>` is
       // not automatically a text field — and the hang-up's `E`,`E` reads it too.
       const inTextField = isTextEntryTarget(event.target);
@@ -1031,14 +1014,10 @@ export default function AgentConsolePage() {
           event.preventDefault();
           cons.submit();
         }
-        trackAgencyShortcutUsed({
-          campaign_id: bootstrap?.campaign_id ?? '',
-          key: 'ctrl_enter',
-          accepted,
-        });
+        shortcutUsed('ctrl_enter', accepted);
         if (!accepted && cons.block !== null) {
           trackAgencyDispositionBlocked({
-            campaign_id: bootstrap?.campaign_id ?? '',
+            campaign_id: stationCampaign,
             reason: cons.block,
             method: 'ctrl_enter',
           });
@@ -1055,13 +1034,13 @@ export default function AgentConsolePage() {
         if (agentState === 'offline') {
           event.preventDefault();
           cons.goAvailable('shortcut');
-          trackAgencyShortcutUsed({ campaign_id: bootstrap?.campaign_id ?? '', key: 'a', accepted: true });
+          shortcutUsed('a', true);
         } else if (agentState === 'break') {
           event.preventDefault();
           cons.endBreak('shortcut');
-          trackAgencyShortcutUsed({ campaign_id: bootstrap?.campaign_id ?? '', key: 'a', accepted: true });
+          shortcutUsed('a', true);
         } else {
-          trackAgencyShortcutUsed({ campaign_id: bootstrap?.campaign_id ?? '', key: 'a', accepted: false });
+          shortcutUsed('a', false);
         }
         return;
       }
@@ -1069,7 +1048,7 @@ export default function AgentConsolePage() {
       if (key === 'b') {
         event.preventDefault();
         breakMenuRef.current?.open();
-        trackAgencyShortcutUsed({ campaign_id: bootstrap?.campaign_id ?? '', key: 'b', accepted: true });
+        shortcutUsed('b', true);
         return;
       }
 
@@ -1078,11 +1057,7 @@ export default function AgentConsolePage() {
           event.preventDefault();
           notesRef.current?.focus();
         }
-        trackAgencyShortcutUsed({
-          campaign_id: bootstrap?.campaign_id ?? '',
-          key: 'n',
-          accepted: cons.notesEnabled,
-        });
+        shortcutUsed('n', cons.notesEnabled);
         return;
       }
 
@@ -1095,7 +1070,7 @@ export default function AgentConsolePage() {
         // re-focusing a field that already has focus.
         event.preventDefault();
         fieldFilterRef.current?.focus();
-        trackAgencyShortcutUsed({ campaign_id: bootstrap?.campaign_id ?? '', key: 'slash', accepted: true });
+        shortcutUsed('slash', true);
         return;
       }
 
@@ -1111,11 +1086,7 @@ export default function AgentConsolePage() {
         // second invocation would be a second action, not a re-read.
         const selected = padRef.current?.selectCallback();
         if (selected) event.preventDefault();
-        trackAgencyShortcutUsed({
-          campaign_id: bootstrap?.campaign_id ?? '',
-          key: 'c',
-          accepted: Boolean(selected),
-        });
+        shortcutUsed('c', Boolean(selected));
         return;
       }
 
@@ -1125,7 +1096,7 @@ export default function AgentConsolePage() {
         // seconds — reachable in one key, still impossible to do by accident.
         event.preventDefault();
         dncRef.current?.open();
-        trackAgencyShortcutUsed({ campaign_id: bootstrap?.campaign_id ?? '', key: 'd', accepted: true });
+        shortcutUsed('d', true);
         return;
       }
 
@@ -1137,11 +1108,7 @@ export default function AgentConsolePage() {
         const entry = dispositionForNumberKey(cons.catalog, key);
         // Emitted once the pad is at least enabled — a digit typed while the pad
         // is closed isn't a shortcut attempt on this surface.
-        trackAgencyShortcutUsed({
-          campaign_id: bootstrap?.campaign_id ?? '',
-          key: 'digit',
-          accepted: Boolean(entry),
-        });
+        shortcutUsed('digit', Boolean(entry));
         if (!entry) return;
         event.preventDefault();
         // Analytics-only: this code was picked by a number key, not a click.

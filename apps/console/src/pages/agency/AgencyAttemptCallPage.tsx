@@ -10,6 +10,7 @@ import {
   type AgencyAttemptCallDetail,
 } from '../../api/agencySpine';
 import { getErrorMessage } from '../../utils/errors';
+import { errorCode, errorStatus } from '../../utils/agencyErrors';
 import {
   AGENCY_ANALYTICS_CAPABILITY,
   AGENCY_RECORDING_CAPABILITY,
@@ -143,10 +144,7 @@ const AGENCY_ANALYSIS_MESSAGES: Record<string, string> = {
  * offers the same failure again.
  */
 function isTerminalLoadError(err: unknown): boolean {
-  if (err === null || typeof err !== 'object') return false;
-  const shaped = err as { statusCode?: unknown; details?: { code?: unknown } };
-  if (shaped.statusCode === 403) return true;
-  return shaped.details?.code === 'attempt_not_found';
+  return errorStatus(err) === 403 || errorCode(err) === 'attempt_not_found';
 }
 
 /**

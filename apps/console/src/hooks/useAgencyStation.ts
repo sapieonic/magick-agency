@@ -23,6 +23,7 @@ import type { CueDispatcher } from '../utils/agencyCues';
 import { encodeAgencyMediaFrame, readAgencyMediaPayload } from '../utils/agencyMedia';
 import { openWrapup, type WrapupAnchor } from '../utils/agencyWrapup';
 import { DiagnosticsLog, type DiagnosticEntry } from '../utils/agencyDiagnostics';
+import { useLatestRef } from './useLatestRef';
 
 /**
  * The agent's station socket: one long-lived connection per shift.
@@ -502,7 +503,7 @@ export function useAgencyStation(
    * one, and unreachable by a tab that simply was not running.
    */
   const unansweredSinceRef = useRef(0);
-  const liveRef = useRef<LiveAttempt | null>(null);
+  const liveRef = useLatestRef<LiveAttempt | null>(live);
   /**
    * The agent state as of the **last frame**, not as of the last render.
    *
@@ -540,8 +541,7 @@ export function useAgencyStation(
    * connect effect, so a dependency that moves re-opens the socket. A sink that
    * arrived through the deps would re-open it whenever the console re-rendered.
    */
-  const audioRef = useRef(options.audio);
-  audioRef.current = options.audio;
+  const audioRef = useLatestRef(options.audio);
 
   /**
    * Analytics-only mirrors, following the same "ref beside the state" shape as
@@ -552,10 +552,8 @@ export function useAgencyStation(
    * time that callback was rebuilt — not the value at the moment the frame or
    * socket event actually landed.
    */
-  const bootstrapRef = useRef(bootstrap);
-  bootstrapRef.current = bootstrap;
-  const wrapupRef = useRef<WrapupAnchor | null>(null);
-  wrapupRef.current = wrapup;
+  const bootstrapRef = useLatestRef(bootstrap);
+  const wrapupRef = useLatestRef<WrapupAnchor | null>(wrapup);
   /** Running tally of reservations this hook instance has seen this shift — analytics only. */
   const attemptCounterRef = useRef(0);
   /** `reserved_at`, kept locally since the wire carries no such field — analytics only. */
@@ -570,7 +568,6 @@ export function useAgencyStation(
    */
   const recoveredAttemptIdRef = useRef<string | null>(null);
 
-  liveRef.current = live;
 
   /**
    * Appends without a render. It used to be a state update copying the whole
@@ -587,6 +584,29 @@ export function useAgencyStation(
       });
     },
     [diagnostics],
+  );
+
+  /**
+   * `agency_station_connection_changed`, with the three fields every report reads
+   * off the same refs at the moment it is sent — five call sites spelled them out
+   * by hand. Refs, never state: these run inside socket callbacks.
+   */
+  const reportConnection = useCallback(
+    (
+      state: Parameters<typeof trackAgencyStationConnectionChanged>[0]['state'],
+      closeCode: number | null,
+      cause?: 'heartbeat' | 'flapping',
+    ) => {
+      trackAgencyStationConnectionChanged({
+        state,
+        close_code: closeCode,
+        retry_count: retryCountRef.current,
+        had_live_attempt: liveRef.current !== null,
+        had_wrapup: wrapupRef.current !== null,
+        ...(cause ? { cause } : {}),
+      });
+    },
+    [liveRef, wrapupRef],
   );
 
   const clearTimers = useCallback(() => {
@@ -1298,17 +1318,10 @@ export function useAgencyStation(
       // -live-socket rather than retries-to-reach-open. That is the more useful
       // number for the flap it now measures, and it is a deliberate change of
       // meaning rather than a leftover.
-      const priorRetryCount = retryCountRef.current;
       pendingPingsRef.current = 0;
       setMissedPings(0);
       setConnection('open');
-      trackAgencyStationConnectionChanged({
-        state: 'open',
-        close_code: null,
-        retry_count: priorRetryCount,
-        had_live_attempt: liveRef.current !== null,
-        had_wrapup: wrapupRef.current !== null,
-      });
+      reportConnection('open', null);
 
       // Cleared, not stamped: the immediate ping below is what starts the clock.
       // Explicit because the ref outlives any one socket.
@@ -1459,25 +1472,13 @@ export function useAgencyStation(
       if (event.code === AGENCY_STATION_CLOSE.SESSION_GONE) {
         logDiagnostic('close', '4404 session gone — re-bootstrap required');
         setConnection('session_gone');
-        trackAgencyStationConnectionChanged({
-          state: 'session_gone',
-          close_code: event.code,
-          retry_count: retryCountRef.current,
-          had_live_attempt: liveRef.current !== null,
-          had_wrapup: wrapupRef.current !== null,
-        });
+        reportConnection('session_gone', event.code);
         return;
       }
       if (event.code === AGENCY_STATION_CLOSE.SUPERSEDED) {
         logDiagnostic('close', '4409 superseded by another window');
         setConnection('superseded');
-        trackAgencyStationConnectionChanged({
-          state: 'superseded',
-          close_code: event.code,
-          retry_count: retryCountRef.current,
-          had_live_attempt: liveRef.current !== null,
-          had_wrapup: wrapupRef.current !== null,
-        });
+        reportConnection('superseded', event.code);
         return;
       }
 
@@ -1511,18 +1512,11 @@ export function useAgencyStation(
       connectStampsRef.current = [];
       logDiagnostic('disconnected', `${cause}: ${detail}`);
       setConnection('disconnected');
-      trackAgencyStationConnectionChanged({
-        state: 'disconnected',
-        close_code: null,
-        retry_count: retryCountRef.current,
-        had_live_attempt: liveRef.current !== null,
-        had_wrapup: wrapupRef.current !== null,
-        // The two causes have opposite runbooks — the line is bouncing versus
-        // the API's pong path has stalled — and without this they emitted identical
-        // payloads, so the incident was detectable and not triageable. The
-        // in-tab diagnostics ring buffer never leaves the browser.
-        cause,
-      });
+      // `cause`: the two causes have opposite runbooks — the line is bouncing
+      // versus the API's pong path has stalled — and without it they emitted
+      // identical payloads, so the incident was detectable and not triageable.
+      // The in-tab diagnostics buffer never leaves the browser.
+      reportConnection('disconnected', null, cause);
     }
 
     // `closeCode` is `null` for the one caller with no WebSocket close event to
@@ -1530,13 +1524,7 @@ export function useAgencyStation(
     // rejected HTTP call rather than a socket close.
     function scheduleRetry(closeCode: number | null = null): void {
       setConnection('reconnecting');
-      trackAgencyStationConnectionChanged({
-        state: 'reconnecting',
-        close_code: closeCode,
-        retry_count: retryCountRef.current,
-        had_live_attempt: liveRef.current !== null,
-        had_wrapup: wrapupRef.current !== null,
-      });
+      reportConnection('reconnecting', closeCode);
       /**
        * The flap counter, written here rather than at connect: only a socket that
        * PROVED liveness and then died is evidence of flapping. See `FLAP_LIMIT`.
@@ -1563,7 +1551,16 @@ export function useAgencyStation(
       }, delay);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bootstrap, enabled, handleFrame, clearTimers, logDiagnostic, options.tenantId, options.accountId]);
+  }, [
+    bootstrap,
+    enabled,
+    handleFrame,
+    clearTimers,
+    logDiagnostic,
+    reportConnection,
+    options.tenantId,
+    options.accountId,
+  ]);
 
   useEffect(() => {
     if (!bootstrap || !enabled) return undefined;

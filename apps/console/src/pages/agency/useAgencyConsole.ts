@@ -8,11 +8,13 @@ import {
 } from '../../api/agency';
 import { useAgencyStation, type UseAgencyStationResult } from '../../hooks/useAgencyStation';
 import { DiagnosticsLog } from '../../utils/agencyDiagnostics';
+import { errorBody, errorStatus } from '../../utils/agencyErrors';
 import { useAgencyAudio, type AgencyAudioState } from '../../hooks/useAgencyAudio';
 import { useAgencyCues, type CueFlash } from '../../hooks/useAgencyCues';
 import type { CuePrefs } from '../../utils/agencyCuePrefs';
 import { useServerClock, type ServerClock } from '../../hooks/useServerClock';
 import { useRepaintTick } from '../../hooks/useRepaintTick';
+import { useLatestRef } from '../../hooks/useLatestRef';
 import {
   EMPTY_DISPOSITION_FORM,
   blockReason,
@@ -45,7 +47,6 @@ import {
   trackAgencyStaleResponseDiscarded,
 } from '../../analytics/events';
 import type {
-  AgencyActionErrorResponse,
   AgencyAgentState,
   AgencyBreakReason,
   AgencyDisposition,
@@ -198,32 +199,6 @@ export interface AgencyConsoleState {
   /** Non-blocking line in the idle slot after the next call completes. */
   lostDispositionNotice: string | null;
   announcement: string;
-}
-
-/**
- * Read the agency error envelope off whatever `apiFetch` threw.
- *
- * **`details`, not `body`.** `ApiError` (`src/api/client.ts`) carries `statusCode`
- * and `details`; there is no `body` field on it and never was. Reading `body` made
- * every agency failure look like an empty 400 in production: the 409
- * disposition-required refusal never surfaced the API's message, and
- * `unknown_disposition_code` / `unknown_break_reason` never delivered their
- * `allowed_codes`, which is the only way the console can resync a stale catalog.
- * `dncFailureCopy` in `utils/agencyDncCopy.ts` already read `details` — this file
- * was the one disagreeing.
- */
-function errorBody(err: unknown): AgencyActionErrorResponse | null {
-  if (!err || typeof err !== 'object') return null;
-  const body = (err as { details?: unknown }).details;
-  if (body && typeof body === 'object' && 'code' in body) return body as AgencyActionErrorResponse;
-  return null;
-}
-
-/** The HTTP status off an `ApiError`. `statusCode`, for the same reason as above. */
-function errorStatus(err: unknown): number | null {
-  if (!err || typeof err !== 'object') return null;
-  const status = (err as { statusCode?: unknown }).statusCode;
-  return typeof status === 'number' ? status : null;
 }
 
 export function useAgencyConsole(
@@ -411,8 +386,7 @@ export function useAgencyConsole(
   const notesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** The save the debounce is holding, tagged with the attempt it belongs to. */
   const pendingNotes = useRef<{ attemptId: string; hydrated: boolean; value: string } | null>(null);
-  const notesRef = useRef({ notes, hydrated, attemptId: currentAttemptId });
-  notesRef.current = { notes, hydrated, attemptId: currentAttemptId };
+  const notesRef = useLatestRef({ notes, hydrated, attemptId: currentAttemptId });
 
   /**
    * The reconciliation window's view of the station, read at **fire time**.
@@ -423,8 +397,7 @@ export function useAgencyConsole(
    * a value that is already stale — and it fails *open*, announcing "waiting for
    * the dialer" while the dialer has in fact already moved the agent on.
    */
-  const stationRef = useRef(station);
-  stationRef.current = station;
+  const stationRef = useLatestRef(station);
 
   const reconcileTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
