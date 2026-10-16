@@ -54,7 +54,9 @@ import { PRIOR_ATTEMPT_LIMIT, RETRY_MAX_SEED_ROWS } from '@magick-agency/domain/
 // row the console still labels reportable.
 import { AGENCY_ROSTER_MIN_RATE_DENOMINATOR } from '@magick-agency/contracts/agency';
 // The window the strip's copy names, imported so the SQL and the sentence agree.
-import { RECENT_FAILURE_WINDOW_MINUTES } from '../../agency/campaign-health.js';
+// From the LEAF both this repository and `campaign-health.ts` import (B9), never
+// from the campaign-management module that consumes this repository's rows.
+import { DEFAULT_ABANDONMENT_CEILING_PCT, RECENT_FAILURE_WINDOW_MINUTES } from '../../agency/campaign-thresholds.js';
 // THE null-not-zero rate rule, in one place. Imported rather than re-expressed at
 // each of the five call sites below — see the module for why a `0` on an empty
 // denominator is the failure this exists to prevent.
@@ -113,11 +115,10 @@ import type {
   AgencyRosterBenchmark,
   AgencyRosterPage,
 } from '@magick-agency/contracts/agency';
-// The compliance ceiling the supervisor gauge is drawn against, imported rather
-// than re-declared: the abandonment auto-pause fires on the same number, and two
-// copies of a regulatory threshold is how a dashboard comes to draw one line while
-// the guardrail enforces another.
-import { DEFAULT_ABANDONMENT_CEILING_PCT } from '../../agency/campaign-config.js';
+// The compliance ceiling the supervisor gauge is drawn against (imported above,
+// from the same leaf), rather than re-declared: the abandonment auto-pause fires on
+// the same number, and two copies of a regulatory threshold is how a dashboard
+// comes to draw one line while the guardrail enforces another.
 // THE single definition of "the same number", imported rather than re-expressed.
 // `DncRegistry.check` runs this on both sides of its comparison and
 // `markDnc` runs it before storing; `suppressByPhone` below must agree
@@ -140,7 +141,7 @@ import { AUTO_DISPOSITION_CODE } from '../../agency/disposition.js';
 const log = createChildLogger({ component: 'agency-repository' });
 
 /** Result of applying one roster-ingest chunk. */
-export interface AgencyIngestResult {
+interface AgencyIngestResult {
   accepted: number;
   duplicate_chunk: boolean;
   total_contacts: number;
@@ -4288,14 +4289,6 @@ export class AgencyAttemptRepository {
     return rows[0] ?? null;
   }
 
-  async findByWebrtcCallId(callId: string): Promise<AgencyCallAttemptRecord | null> {
-    const { rows } = await getPool().query<AgencyCallAttemptRecord>(
-      'SELECT * FROM agency_call_attempts WHERE webrtc_call_id = $1 AND state <> \'ended\' LIMIT 1',
-      [callId],
-    );
-    return rows[0] ?? null;
-  }
-
   /**
    * ALL non-terminal attempts, not just pre-answer ones. A bridged call still
    * holds an account concurrency slot, so excluding `answered`/`bridged` would
@@ -4805,7 +4798,7 @@ export class AgencyAttemptRepository {
  * with no name is not actionable, and re-reading the row in the route would open
  * the very window this result closes.
  */
-export type AgencyAgentJoinResult =
+type AgencyAgentJoinResult =
   | { ok: true; session: AgencyAgentSessionRecord }
   | { ok: false; reason: 'other_campaign'; session: AgencyAgentSessionRecord };
 

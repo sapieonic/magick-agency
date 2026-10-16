@@ -96,9 +96,9 @@ describe('agency repository — the methods no other real-Postgres suite reaches
     expect((await a.findForCampaign(campaign.id, attempt.id))!.id).toBe(attempt.id);
     expect(await a.findForCampaign(randomUUID(), attempt.id)).toBeNull();
     expect(await a.countLive(campaign.id)).toBeGreaterThanOrEqual(1);
-    expect(await a.findByWebrtcCallId(call.id)).toBeNull();
+    expect((await a.findById(attempt.id))!.webrtc_call_id).toBeNull();
     await a.attachWebrtcCall(attempt.id, call.id);
-    expect((await a.findByWebrtcCallId(call.id))!.id).toBe(attempt.id);
+    expect((await a.findById(attempt.id))!.webrtc_call_id).toBe(call.id);
   });
 
   it('attempt writes: setState, saveNotes, recordDisposition, recordAutoDisposition', async () => {
