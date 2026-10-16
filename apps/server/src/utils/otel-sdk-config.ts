@@ -333,7 +333,10 @@ type TraceEnv = Record<string, string | undefined>;
  *   names, sealed credential blobs. The query text (with `$1` placeholders) is
  *   recorded either way, so this loses no shape, only the customer data.
  * - `ignoreConnectSpans: true` — no `pg-pool.connect` span per checkout; it was
- *   one span per query and carried nothing a query span does not.
+ *   one span per query and carried nothing a query span does not. It also
+ *   skips the instrumentation's binding of `pool.connect` callbacks to the
+ *   caller's context, which `packages/db/src/connection.ts` restores
+ *   (`bindPoolConnectContext`).
  */
 export const PG_TRACE_CONFIG = Object.freeze({
   enhancedDatabaseReporting: false,

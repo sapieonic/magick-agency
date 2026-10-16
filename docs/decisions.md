@@ -145,7 +145,7 @@ Rulings of 2026-10-16 (Manas; trace quota exceeded on 2026-10-15):
 
 | Topic | Ruling | Status |
 |---|---|---|
-| pg span parameters | `enhancedDatabaseReporting: false`: pg spans carry query text, never parameter values (they put phone numbers, names and other customer data in Tempo). `ignoreConnectSpans: true` too. See `apps/server/src/utils/otel-sdk-config.ts`, "Traces" | **Decided — changed** |
+| pg span parameters | `enhancedDatabaseReporting: false`: pg spans carry query text, never parameter values (they put phone numbers, names and other customer data in Tempo). `ignoreConnectSpans: true` too. That option also skips the instrumentation's binding of `pool.connect` callbacks to the caller's context, so a query that waited for a connection joined the releaser's trace. `packages/db/src/connection.ts` restores the binding (`bindPoolConnectContext`). See `apps/server/src/utils/otel-sdk-config.ts`, "Traces" | **Decided — changed** |
 | Probe and analytics spans | `/healthz`, `/readyz` (and the readiness check's pg/Redis calls) and outgoing PostHog requests are not traced | **Decided** |
 | Trace sampling | Head sampling by env only: `OTEL_TRACES_SAMPLER=parentbased_traceidratio`, `OTEL_TRACES_SAMPLER_ARG` 0.5 production and dedicated, 0.1 staging. Unset keeps every trace | **Decided** |
 
