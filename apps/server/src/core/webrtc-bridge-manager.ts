@@ -8,7 +8,6 @@
 // getActiveCallIds, gracefulShutdown) and the exported types are a fixed seam, pinned by
 // `test/unit/core/webrtc-bridge-seam-contract.test.ts`.
 import crypto from 'node:crypto';
-import { acquireTelephonyConcurrency } from './telephony-concurrency.js';
 import { releaseTelephonyLease } from './telephony-release.js';
 import type Redis from 'ioredis';
 import type WebSocket from 'ws';
@@ -25,7 +24,7 @@ import { accountSettingsRepository } from '@magick-agency/db/repositories/accoun
 import { getBridgeAnalysisHooks } from '../seams/bridge-analysis-hooks.js';
 import { auditLogger } from '../audit/audit-logger.js';
 import {
-  trackWebrtcCallInitiated, trackWebrtcCallRejected, trackWebrtcCallCompleted,
+  trackWebrtcCallInitiated, trackWebrtcCallCompleted,
   type WebrtcCallEndedBy,
 } from '../analytics/posthog.js';
 import { canCancelRinging } from '../telephony/types.js';
@@ -42,6 +41,7 @@ import {
   type WebRtcOutboundParams,
 } from './bridge/bridge-types.js';
 import { BridgeWsTokens, type WsTokenPurpose } from './bridge/ws-tokens.js';
+import { admitBridgeCall } from './bridge/admission.js';
 
 export {
   WebRtcCallError,
@@ -456,36 +456,9 @@ export class WebRtcBridgeManager {
     const maxDuration = await this.resolveMaxDuration(params.tenantId, params.accountId);
     const slotTtlSeconds = maxDuration + SLOT_TTL_GRACE_SECONDS;
 
-    const admission = await acquireTelephonyConcurrency(this.guardHost,
-      concurrencyKey, params.tenantId, params.accountId, provider, slotTtlSeconds,
-    );
-    if (admission.result === 'global_full') {
-      trackWebrtcCallRejected({ tenantId: params.tenantId, accountId: params.accountId, reason: 'global_concurrency_limit', provider });
-      throw new WebRtcCallError('Global concurrency limit reached', 'global_concurrency_limit', 429);
-    }
-    if (admission.result === 'account_full') {
-      trackWebrtcCallRejected({ tenantId: params.tenantId, accountId: params.accountId, reason: 'account_concurrency_limit', provider });
-      throw new WebRtcCallError('Account concurrency limit reached', 'account_concurrency_limit', 429);
-    }
-    if (admission.result !== 'acquired') {
-      const unavailable = admission.result === 'redis_unavailable' || admission.result === 'allocation_unavailable';
-      const unallocated = admission.result === 'provider_unallocated';
-      trackWebrtcCallRejected({
-        tenantId: params.tenantId,
-        accountId: params.accountId,
-        reason: unavailable ? 'provider_concurrency_unavailable' : 'provider_concurrency_limit',
-        provider,
-      });
-      throw new WebRtcCallError(
-        unavailable
-          ? 'Provider concurrency admission is temporarily unavailable'
-          : unallocated
-            ? `No concurrency is allocated to telephony provider '${provider}'`
-            : `Concurrency limit reached for telephony provider '${provider}'`,
-        unavailable ? 'provider_concurrency_unavailable' : 'provider_concurrency_limit',
-        unavailable ? 503 : unallocated ? 422 : 429,
-      );
-    }
+    await admitBridgeCall(this.guardHost, {
+      concurrencyKey, tenantId: params.tenantId, accountId: params.accountId, provider, slotTtlSeconds,
+    });
 
     // 2. Persist the call (status initiating). Every call dials on the service's own
     // VoiceLink account. The INSERT stays inside the same try so a failure still
