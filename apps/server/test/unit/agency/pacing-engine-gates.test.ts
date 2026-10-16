@@ -100,9 +100,11 @@ function contact(id: string, over: Record<string, unknown> = {}) {
 }
 
 function makeAgents(sessionIds: string[]) {
+  const get = vi.fn(async (id: string) => (sessionIds.includes(id)
+    ? { state: 'available', attemptId: null, since: 1 } : null));
   return {
-    get: vi.fn(async (id: string) => (sessionIds.includes(id)
-      ? { state: 'available', attemptId: null, since: 1 } : null)),
+    get,
+    getMany: vi.fn(async (ids: readonly string[]) => Promise.all(ids.map((id) => get(id)))),
     reserve: vi.fn(async (id: string) => (sessionIds.includes(id) ? 'reserved' : 'lost')),
     set: vi.fn().mockResolvedValue(undefined),
   };

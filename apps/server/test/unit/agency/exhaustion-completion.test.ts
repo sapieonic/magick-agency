@@ -96,7 +96,12 @@ function makeStations(owned: string[]) {
 // The engine's "something may want to know a campaign finished" seam carries the
 // completion notice, registered through the real `registerCompletionNotifier`.
 function engine(stations: any, notifier: any = undefined) {
-  const agents = { get: vi.fn(async () => null), reserve: vi.fn(), set: vi.fn() };
+  const agents = {
+    get: vi.fn(async () => null),
+    getMany: vi.fn(async (ids: readonly string[]) => ids.map(() => null)),
+    reserve: vi.fn(),
+    set: vi.fn(),
+  };
   const e = new PacingEngine(
     null, '', 'r1', stations as any, agents as any,
     { dispatch: vi.fn() } as any, { check: vi.fn().mockResolvedValue('clear') } as any,

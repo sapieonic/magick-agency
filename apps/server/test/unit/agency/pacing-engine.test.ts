@@ -94,12 +94,15 @@ function contact(id: string) {
 
 /** Agents whose Redis state the tick reads. */
 function makeAgents(states: Record<string, string>) {
+  // `since` defaults to "just became available", so ordering tests must set it
+  // explicitly — an undefined idle clock would make the fairness sort a no-op
+  // and quietly pass a test written to prove it works.
+  const get = vi.fn(async (id: string) => (
+    states[id] ? { state: states[id], attemptId: null, since: Date.now() } : null));
   return {
-    // `since` defaults to "just became available", so ordering tests must set it
-    // explicitly — an undefined idle clock would make the fairness sort a no-op
-    // and quietly pass a test written to prove it works.
-    get: vi.fn(async (id: string) => (
-      states[id] ? { state: states[id], attemptId: null, since: Date.now() } : null)),
+    get,
+    // The tick reads through the pipelined batch; same answer per agent as `get`.
+    getMany: vi.fn(async (ids: readonly string[]) => Promise.all(ids.map((id) => get(id)))),
     reserve: vi.fn(async (id: string) => (states[id] === 'available' ? 'reserved' : 'lost')),
     set: vi.fn().mockResolvedValue(undefined),
   };
@@ -1190,8 +1193,10 @@ describe('PacingEngine candidate fairness over a run', () => {
     repos.contact.claimDialable.mockImplementation(async (_c: string, limit: number) =>
       Array.from({ length: Math.min(limit, 1) }, (_, i) => contact(`c${i}`)));
 
+    const get = vi.fn(async (id: string) => ({ state: 'available', attemptId: null, since: since[id]! }));
     const agents = {
-      get: vi.fn(async (id: string) => ({ state: 'available', attemptId: null, since: since[id]! })),
+      get,
+      getMany: vi.fn(async (ids: readonly string[]) => Promise.all(ids.map((id) => get(id)))),
       reserve: vi.fn(async (id: string) => {
         counts[id]!++;
         // The call happens and the agent returns to the pool with a fresh idle
@@ -1444,6 +1449,23 @@ describe('`reserved` is NOT mirrored to the durable row', () => {
     // transient Redis owns; `on_call` IS mirrored, because `releaseAgent` mirrors
     // the return.
     expect(repos.session.setState).not.toHaveBeenCalledWith('s1', 'reserved');
+  });
+});
+
+describe('PacingEngine tick reads', () => {
+  it('reads every local agent\'s state in ONE batched read, not one per agent', async () => {
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }, { id: 'remote' }, { id: 's3' }]);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1')]);
+    const agents = makeAgents({ s1: 'on_call', s2: 'available', s3: 'available', remote: 'available' });
+    const { e, dispatch } = engine(makeStations(['s1', 's2', 's3']), agents);
+
+    await e.tickOnce('camp-1');
+
+    expect(agents.getMany).toHaveBeenCalledTimes(1);
+    // Only agents this replica can bridge, in the order the sessions came back.
+    expect(agents.getMany).toHaveBeenCalledWith(['s1', 's2', 's3']);
+    // (`get` is called by the double's own `getMany`, so it is not asserted here.)
+    expect(dispatch).toHaveBeenCalledTimes(1);
   });
 });
 

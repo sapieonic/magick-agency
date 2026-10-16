@@ -229,3 +229,50 @@ describe('AgentStateMachine transitions', () => {
     await expect(sm.clear('s1')).resolves.toBeUndefined();
   });
 });
+
+describe('AgentStateMachine.getMany — one round trip for many agents', () => {
+  /** A pipeline double: queues `hgetall`s and answers them in one `exec`. */
+  function pipelinedRedis(hashes: Record<string, Record<string, string>>, opts: { failKey?: string; failExec?: boolean } = {}) {
+    const exec = vi.fn();
+    const hgetall = vi.fn();
+    return {
+      exec, hgetall,
+      pipeline() {
+        const keys: string[] = [];
+        const p = {
+          hgetall(k: string) { hgetall(k); keys.push(k); return p; },
+          async exec() {
+            exec();
+            if (opts.failExec) throw new Error('connection reset');
+            return keys.map((k) => (k === opts.failKey ? [new Error('WRONGTYPE'), null] : [null, hashes[k] ?? {}]));
+          },
+        };
+        return p;
+      },
+    };
+  }
+
+  it('answers each agent like `get`, in the order asked, with a single exec', async () => {
+    const redis = pipelinedRedis({
+      'agency:agent:a:state': { state: 'available', attempt: '', since: '1700' },
+      'agency:agent:c:state': { state: 'on_call', attempt: 'att-1', since: 'x' },
+    });
+    const sm = new AgentStateMachine(redis as any, '');
+    expect(await sm.getMany(['a', 'b', 'c'])).toEqual([
+      { state: 'available', attemptId: null, since: 1700 },
+      null, // lapsed lease
+      { state: 'on_call', attemptId: 'att-1', since: null },
+    ]);
+    expect(redis.exec).toHaveBeenCalledTimes(1);
+    expect(redis.hgetall).toHaveBeenCalledTimes(3);
+  });
+
+  it('fails closed per agent, and for all of them when the pipeline cannot run', async () => {
+    const hashes = { 'agency:agent:a:state': { state: 'available', since: '1' } };
+    const perKey = new AgentStateMachine(pipelinedRedis(hashes, { failKey: 'agency:agent:a:state' }) as any, '');
+    expect(await perKey.getMany(['a'])).toEqual([null]);
+    const whole = new AgentStateMachine(pipelinedRedis(hashes, { failExec: true }) as any, '');
+    expect(await whole.getMany(['a', 'b'])).toEqual([null, null]);
+    expect(await new AgentStateMachine(null, '').getMany(['a'])).toEqual([null]);
+  });
+});

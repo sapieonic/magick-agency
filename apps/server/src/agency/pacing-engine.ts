@@ -683,6 +683,7 @@ export class PacingEngine {
     const sessions = await agencyAgentSessionRepository.findLiveForCampaign(campaign.id);
     const now = Date.now();
     const candidates: AgentCandidate[] = [];
+    const local: string[] = [];
     for (const s of sessions) {
       // ── `isLocallyOwned` is CORRECT here, and is ONE of the things holding the
       //    single-replica constraint ──────────────────────────────────────────────
@@ -708,11 +709,16 @@ export class PacingEngine {
       // was created for, an advertised host on the bridge webhook URLs, and those
       // three pieces of state moved out of process. Separate work, not a comment.
       if (!this.stations.isLocallyOwned(s.id)) continue;
-      const live = await this.agents.get(s.id);
-      if (live?.state === 'available') {
-        candidates.push({ sessionId: s.id, availableSince: live.since ?? now });
-      }
+      local.push(s.id);
     }
+    // One pipelined round trip for every local agent, not one per agent.
+    const states = await this.agents.getMany(local);
+    local.forEach((sessionId, i) => {
+      const live = states[i];
+      if (live?.state === 'available') {
+        candidates.push({ sessionId, availableSince: live.since ?? now });
+      }
+    });
     if (candidates.length === 0) return { toDial: 0, candidates: [], idle: 'no_agents' };
 
     // ── Fairness: longest-idle first. ───────────────────────────────────────
