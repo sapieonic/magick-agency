@@ -45,9 +45,41 @@
   exists to prevent.
 */
 import type { AgencyAgentsByState } from './agency-campaign';
+// Identical in the dialer contract, so re-exported rather than copied (`CONTRACT-DIFF.md` §3).
+import type {
+  AgencyAgentCampaignRow,
+  AgencyGroupDimension,
+  AgencyGroupKey,
+  AgencyGroupSort,
+  AgencyRosterPercentiles,
+  AgencyRosterSort,
+  AgencyStatsBucketUnit,
+} from '../../agency';
+import {
+  AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
+} from '../../agency';
 
-/** Bucket width. `day` is the only one this console asks for — see below. */
-export type AgencyStatsBucketWidth = 'day' | 'week' | 'month';
+export type {
+  AgencyGroupDimension,
+  AgencyGroupKey,
+  AgencyGroupSort,
+  AgencyRosterPercentiles,
+  AgencyRosterSort,
+};
+export {
+  AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
+};
+
+/** Bucket width: the console's name for the dialer contract's `AgencyStatsBucketUnit`. */
+export type AgencyStatsBucketWidth = AgencyStatsBucketUnit;
+
+/**
+ * One campaign's slice of the range: the console's name for the dialer
+ * contract's `AgencyAgentCampaignRow`. There is no `campaign_name`: the caller
+ * resolves it from a list it already holds, and an id with no match renders as
+ * an id, never as a blank row.
+ */
+export type AgencyAgentStatsByCampaign = AgencyAgentCampaignRow;
 
 /**
  * Where an agent's shift went, in seconds per state.
@@ -165,25 +197,6 @@ export interface AgencyAgentStatsBucket {
   occupancy?: AgencyOccupancy | null;
 }
 
-/**
- * One campaign's slice of the range.
- *
- * **There is no `campaign_name` here, and that is the public API layer's contract rather than
- * an omission to work around.** The name has to be resolved by the caller from a
- * list it already holds — `GET /agency/my-campaigns` for an agent, the campaign
- * list for a supervisor — and an id with no match renders as an id, never as a
- * blank row. Inventing a fallback name would be a client asserting a fact the
- * server declined to.
- */
-export interface AgencyAgentStatsByCampaign {
-  campaign_id: string;
-  attempts: number;
-  connected: number;
-  successes: number;
-  talk_seconds: number;
-  wrapup_seconds: number;
-}
-
 /** `GET /agency/my-stats` and `GET /agency/agents/:userId/stats`. */
 export interface AgencyAgentStats {
   agent_user_id: string;
@@ -295,51 +308,6 @@ export interface AgencyStaffingHistory {
 // {@link AgencyRosterAgentRowWithName} is what reaches a browser, and
 // {@link AgencyRosterPage} is the public API layer's envelope — which is the only one this
 // client can ever receive, because the console never reaches the dialer runtime.
-
-/**
- * Minimum denominator before a rate is REPORTABLE.
- *
- * ── Mirrored, and deliberately almost never read here ───────────────────────
- * The server decides. Every row carries {@link AgencyRosterAgentRow.rates_reportable},
- * and the whole reason that flag exists is so one threshold is applied in one
- * place rather than three consumers each re-deriving it from a constant they
- * happen to hold. A client that compared `attempts` to this number would be a
- * second answer to "may this rate be quoted", and the two would disagree the
- * moment the dialer runtime tuned the threshold or changed which denominator it counts.
- *
- * It is mirrored anyway because the console has to SAY the threshold out loud —
- * "fewer than 20 calls" in a footnote is a sentence, and a sentence built from a
- * magic number in a component is the one that goes stale silently. Read it to
- * explain the flag; never to compute it.
- */
-export const AGENCY_ROSTER_MIN_RATE_DENOMINATOR = 20;
-
-/**
- * What the roster may be ordered by — server-side, always.
- *
- * Sorting is a request parameter rather than a client-side array sort, and that
- * is not a performance choice: `limit` truncates the roster to the top N *of the
- * chosen order*, so re-sorting the returned rows locally would re-rank a page
- * that was already selected by a different question. "Slowest handle time" over
- * the hundred agents with the most successes is not the answer to "slowest handle
- * time".
- *
- * Nulls sort LAST in both directions on the four nullable metrics — the dialer runtime's rule,
- * stated here because it is the thing a reader assumes wrongly: a row with no
- * measurable rate is not the best row and it is not the worst row, it is not
- * ranked. `agent_user_id` is the tiebreaker on every sort, so repeated reads and
- * paging are deterministic.
- */
-export type AgencyRosterSort =
-  | 'attempts'
-  | 'connected'
-  | 'connect_rate_pct'
-  | 'successes'
-  | 'success_rate_pct'
-  | 'aht_seconds'
-  | 'talk_seconds'
-  | 'occupancy_pct'
-  | 'agent_user_id';
 
 /** Sort direction. `desc` is the default, because the roster's default sort is a ranking. */
 export type AgencyRosterOrder = 'asc' | 'desc';
@@ -457,13 +425,6 @@ export interface AgencyRosterAgentRow {
  */
 export interface AgencyRosterAgentRowWithName extends AgencyRosterAgentRow {
   agent_name: string | null;
-}
-
-/** p25 / median / p75 for one metric across the cohort. All `null` when nothing was rated. */
-export interface AgencyRosterPercentiles {
-  p25: number | null;
-  median: number | null;
-  p75: number | null;
 }
 
 /**
@@ -690,50 +651,6 @@ export interface AgencyRosterPage {
 // console cannot derive it and must not invent it.
 
 /**
- * The dimensions a grouped read may be cut by.
- *
- * `day_of_week` is a NUMBER on the wire (0 = Sunday … 6 = Saturday, matching
- * Postgres `EXTRACT(DOW …)`) rather than a name: a locale-dependent day name in a
- * payload is a formatting decision that belongs in the console, and restating
- * the dialer runtime's 0=Sunday as a string invites an off-by-one against ISO's 1=Monday.
- */
-export type AgencyGroupDimension =
-  | 'agent'
-  | 'campaign'
-  | 'disposition'
-  | 'day'
-  | 'day_of_week'
-  | 'hour_of_day';
-
-/**
- * What one row is a group OF — one shape, not a union.
- *
- * A member is present if and only if its dimension is in `group_by`, and
- * {@link AgencyGroupPage.group_by} is what says which. That is why nothing here is
- * required: a reader that assumes `key.agent_user_id` must render whatever the
- * server sent, and an `agent`-less read is an ordinary request rather than a
- * violation.
- *
- * **`disposition_code: null` is a GROUP, not a gap.** An attempt with no
- * disposition submitted is precisely the number a supervisor is looking for on
- * that screen, so the dialer runtime emits it as `null` rather than folding it into an "other"
- * bucket, and the console names it. That is why the member is `string | null` and
- * "present" has to be tested against `group_by` rather than against `undefined`.
- */
-export interface AgencyGroupKey {
-  agent_user_id?: string;
-  campaign_id?: string;
-  /** `null` is a real key value — un-dispositioned work. Present (possibly null) iff grouped. */
-  disposition_code?: string | null;
-  /** `YYYY-MM-DD`, cut in the resolved campaign timezone. Same format as `bucket_start`. */
-  day?: string;
-  /** 0 = Sunday … 6 = Saturday. */
-  day_of_week?: number;
-  /** 0–23, in the resolved campaign timezone. */
-  hour_of_day?: number;
-}
-
-/**
  * One group's figures — the same eight metrics the roster carries, and no more.
  *
  * The rates obey this file's rule: **`null` on a zero denominator, never `0`**.
@@ -813,26 +730,6 @@ export interface AgencyGroupRow {
 export interface AgencyGroupRowWithName extends AgencyGroupRow {
   agent_name?: string | null;
 }
-
-/**
- * What a grouped read may be ordered by.
- *
- * `key` is the DEFAULT upstream, and it is the right default: a grouped read is
- * most often a series or a matrix and key order is the only order those read
- * correctly. A metric sort is for contribution — "who drove it" is
- * `sort=successes&order=desc`.
- *
- * Nulls sort LAST in both directions on the three nullable metrics, tie-broken by
- * key ascending — the roster's rule, so the two reads order identically.
- */
-export type AgencyGroupSort =
-  | 'key'
-  | 'attempts'
-  | 'connected'
-  | 'successes'
-  | 'connect_rate_pct'
-  | 'success_rate_pct'
-  | 'aht_seconds';
 
 /**
  * `GET /proxy/agency/agents/grouped-stats` — the grouped read's whole response.

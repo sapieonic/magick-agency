@@ -51,21 +51,36 @@ Found by walking both type trees (member name plus declared type text), then rea
 | `AgencyDisposition` | `AgencyDispositionEntry` | `retry` inline vs the named `AgencyRetryRule` (same members) |
 | `AgencyCampaignStatsSeries` | `AgencyCampaignSeries` | console `timezone?` nullable, adds `from?` / `to?`; buckets typed as the agent bucket (`AgencyAgentStatsBucket`, occupancy optional) where the dialer contract uses `Omit<…, 'occupancy'>` |
 
-## 3. Identical in both
+## 3. Identical in both: re-exported, not copied
 
-`AgencyAgentState`, `AgencyAttemptState`, `AgencyContactState`, `AgencyAttemptOutcome`,
-`AgencyCampaignStatus`, `AgencyCampaignActor` (`name: string | null`; the console renders the id when it is null), `AgencyReleaseReason`, `AgencyCampaignChangeReason`,
-`AgencyStationErrorCode`, `AgencyActionErrorCode` (18 members both sides),
-`AgencyStationServerFrame`, `AgencyAgentLiveState`, `AgencyAgentsByState`,
-`AgencyStallCode` / `AgencyStall`, `RETRY_NO_OUTCOME`, `AGENCY_ROSTER_MIN_RATE_DENOMINATOR`,
-`AgencyRosterSort`, `AgencyGroupDimension`, `AgencyGroupSort`, and every frame or request interface
-not listed in §1 (`AgencyDisposition`, `AgencyContextDisplay`, `AgencyBreakReason`,
-`AgencyRetryContext`, `AgencyStationMediaFrame`, `AgencyStationReadyFrame`, `AgencyActiveAttempt`,
-`AgencyMissedRelease`, `AgencyStationReservedFrame`, `AgencyReservedAttempt`, `AgencyPriorAttempt`,
-the countdown / bridged / released / agent_state / campaign_state / pong / error / ended frames,
-`AgencyStationTokenResponse`, `AgencyStationWrapupFrame`, `AgencyNotesResponse`,
-`AgencyActionErrorResponse`, `AgencyRetrySelector`, `AgencyRetryPreview`, `AgencyRosterPercentiles`,
-`AgencyGroupKey`, `AgencyKeysetPage`).
+These are declared once, in the dialer contract, and the console wire files re-export them
+(`export type { … } from '../../agency'`, the error list from `../../errors`), so they cannot
+drift. They stay inside the `AgencyApi` namespace; nothing here is re-exported flat into the
+package root.
+
+- `api/agency/agency.ts`: `AgencyAgentState`, `AgencyAttemptState`, `AgencyAttemptOutcome`,
+  `AgencyCampaignStatus`, `AgencyReleaseReason`, `AgencyCampaignChangeReason`,
+  `AgencyStationErrorCode`, `AgencyActionErrorCode` (18 members) and `AGENCY_ACTION_ERROR_CODES`,
+  `AgencyActionErrorResponse`, `AgencyNotesResponse`, `AgencyStationTokenResponse`,
+  `AgencyDisposition`, `AgencyContextDisplay`, `AgencyBreakReason`, `AgencyRetryContext`,
+  `AgencyActiveAttempt`, `AgencyMissedRelease`, `AgencyReservedAttempt`, `AgencyPriorAttempt`, and
+  the media / reserved / countdown / bridged / released / agent_state / campaign_state / pong /
+  error / bridge_ended frames.
+- `agency-campaign.ts`: `AgencyCampaignStatus` (the same binding again), `AgencyAgentLiveState`,
+  `AgencyAgentsByState`, `AgencyStallCode` / `AgencyStall`, `AgencyRetryPreview`,
+  `AgencyCampaignActor` (`name: string | null`; the console renders the id when it is null).
+- `agency-spine.ts`: `AgencyContactState`, `AgencyRetrySelector`, `RETRY_NO_OUTCOME`,
+  `AgencyKeysetPage`, `AgencyContactDetail`.
+- `agency-stats.ts`: `AGENCY_ROSTER_MIN_RATE_DENOMINATOR`, `AgencyRosterSort`,
+  `AgencyRosterPercentiles`, `AgencyGroupDimension`, `AgencyGroupKey`, `AgencyGroupSort`.
+
+The rename-only pairs of §2 are aliases of the dialer type: `AgencyRosterContact`,
+`AgencyAgentStatsByCampaign`, `AgencyWrapupHold`, `AgencyStatsBucketWidth`.
+
+`AgencyStationReadyFrame`, `AgencyStationWrapupFrame` and `AgencyStationServerFrame` read the
+same as their dialer counterparts but are NOT identical: the first two reference
+`AgencyWrapupState`, and the union also takes in `AgencyStationBridgeStatusFrame`, both of which
+differ (§1). They stay declared in `api/agency/agency.ts`.
 
 ## 4. Console wire types with no dialer-contract counterpart
 

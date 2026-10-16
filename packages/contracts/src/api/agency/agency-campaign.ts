@@ -10,6 +10,26 @@
 
 import type { AgencyAgentState, AgencyContextDisplay } from './agency';
 import type { AgencyRetrySelector } from './agency-spine';
+// Identical in the dialer contract, so re-exported rather than copied (`CONTRACT-DIFF.md` §3).
+import type {
+  AgencyAgentLiveState,
+  AgencyAgentsByState,
+  AgencyCampaignActor,
+  AgencyCampaignStatus,
+  AgencyRetryPreview,
+  AgencyStall,
+  AgencyStallCode,
+} from '../../agency';
+
+export type {
+  AgencyAgentLiveState,
+  AgencyAgentsByState,
+  AgencyCampaignActor,
+  AgencyCampaignStatus,
+  AgencyRetryPreview,
+  AgencyStall,
+  AgencyStallCode,
+};
 
 /** Roster ingest lifecycle. `pending` → `running` → terminal. */
 export type AgencyIngestJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -220,22 +240,6 @@ export type AgencyRetryOutcome =
 export type AgencyRetryPolicy = Partial<Record<AgencyRetryOutcome, AgencyRetryRule>>;
 
 /** The campaign as the dialer runtime stores it, as far as the builder is concerned. */
-/**
- * The six values `ck_agency_campaign_status` permits.
- *
- * `stopping` is a real, renderable state and not a transient the UI may collapse
- * into `stopped`: `POST /stop` answers 200 with `stopping`, and only the pacing
- * leader writes `stopped`, once in-flight attempts drain. A supervisor watching
- * a campaign they just stopped is looking at `stopping` for as long as the
- * longest live call.
- */
-export type AgencyCampaignStatus =
-  | 'draft'
-  | 'running'
-  | 'paused'
-  | 'stopping'
-  | 'completed'
-  | 'stopped';
 
 // ─── The health strip's diagnoses ─────────────────────────────────────
 //
@@ -244,102 +248,12 @@ export type AgencyCampaignStatus =
 // rename there and not here is an `undefined` this file vouches for.
 
 /**
- * The conditions the health strip ranks. The console shows the first that matches.
- *
- * There is no `credits_low` member: v1 has no credits, which leaves seven codes.
- */
-export type AgencyStallCode =
-  | 'auto_paused_abandonment'
-  | 'dnc_unavailable'
-  | 'no_agents_available'
-  | 'concurrency_saturated'
-  | 'outside_calling_hours'
-  | 'list_exhausted_retries_pending'
-  | 'elevated_failure_rate';
-
-/**
- * A diagnosis together with the evidence for it — a discriminated union rather
- * than an untyped bag, because each message must name its own
- * numbers and a bag would let this console read a field the producer never set,
- * rendering "NaN% is over your undefined% limit" at the moment a supervisor
- * needs the truth.
- *
- * No arm carries a pre-formatted sentence. Copy is the console's.
- */
-export type AgencyStall =
-  | {
-      code: 'auto_paused_abandonment';
-      /**
-       * The rate AS MEASURED when the guardrail fired — **frozen**, not live
-       * (the abandonment guardrail). Labelling it as a current rate is a lie that gets
-       * worse the longer the campaign sits paused.
-       */
-      measured_pct: number;
-      ceiling_pct: number;
-      /** ISO-8601. */
-      paused_at: string;
-    }
-  | {
-      code: 'dnc_unavailable';
-      /** Per-tenant, not per-campaign: the DNC set is tenant-flat. */
-      tenant_wide: true;
-    }
-  | {
-      code: 'no_agents_available';
-      agents_on_shift: number;
-      /** Break codes to counts, so the console can render "5 on break (Lunch)". */
-      on_break_by_reason: Record<string, number>;
-      on_call: number;
-      /** ISO-8601, or null when this campaign has never dialed. */
-      last_dial_at: string | null;
-    }
-  | {
-      code: 'concurrency_saturated';
-      limit: number;
-      in_use: number;
-    }
-  | {
-      code: 'outside_calling_hours';
-      contacts_waiting: number;
-      /** ISO-8601 of the next window opening, or null if none resolves. */
-      next_window_opens_at: string | null;
-    }
-  | {
-      code: 'list_exhausted_retries_pending';
-      retries_pending: number;
-      next_retry_at: string | null;
-    }
-  // There is no `credits_low` arm — see `AgencyStallCode`.
-  | {
-      code: 'elevated_failure_rate';
-      failed_pct: number;
-      attempts: number;
-      window_minutes: number;
-    };
-
-/**
  * ─── THE AGENT FLOOR ─────────────────────────────────────────────────
  *
  * The per-agent roster is part of the stats payload. A console that declared only
  * `agents_live` would throw the roster away on every poll — the strip could say
  * "5 on break" and nobody could see WHO.
  */
-
-/**
- * The dialer runtime aliases this to its own `AgencyAgentState` so the payload and the writer
- * cannot drift onto two unions. Aliased here for the same reason, against the
- * copy of that union in `./agency`.
- */
-export type AgencyAgentLiveState = AgencyAgentState;
-
-/**
- * Live agents on a campaign, counted by state.
- *
- * The dialer runtime seeds **every** state with a zero, so this is a total record rather than
- * a partial one — an absent key would mean a producer bug, not "none in that
- * state", and typing it `Partial<>` here would hide that distinction.
- */
-export type AgencyAgentsByState = Record<AgencyAgentLiveState, number>;
 
 /**
  * One agent on the supervisor's floor.
@@ -878,42 +792,6 @@ export interface AgencyCampaign {
 
 // ── Retry campaigns — the three routes' wire shapes ───────────
 
-/**
- * `GET /proxy/agency/campaigns/:id/retry/preview`. Writes nothing.
- *
- * The preview exists because `POST .../retry` creates a campaign AND seeds a
- * roster in one transaction, and a supervisor has to be able to see the count
- * before that happens. Preview and commit share one parser and one
- * predicate builder in the dialer runtime, or the preview eventually promises a count the
- * commit does not deliver.
- */
-export interface AgencyRetryPreview {
-  /** How many contacts the selector matches AFTER the DNC exclusion. */
-  matched: number;
-  by_last_outcome: Record<string, number>;
-  /**
-   * Keyed by disposition code. **`__none__` is the literal bucket key for a
-   * NULL `last_disposition`** — a contact nobody ever wrote up — and is not a
-   * code an operator can author. Render it as words.
-   */
-  by_last_disposition: Record<string, number>;
-  /**
-   * Rows the selector matched that the DNC exclusion removed, and **not decoration.**
-   *
-   * A supervisor who selects "everything suppressed" and gets 40 instead of 300
-   * needs to be told the other 260 were DNC and invalid, or they report it as a
-   * bug. This is the single field that turns a wrong-looking number into an
-   * answer.
-   */
-  excluded: { dnc: number; invalid: number };
-  /** The parent's whole roster, for the "812 of 4,000" framing. */
-  parent_contacts_total: number;
-  /** The PARENT's generation. The child would be this + 1. */
-  retry_generation: number;
-  /** `RETRY_MAX_SEED_ROWS`. Served rather than hardcoded, so the cap on screen is the real one. */
-  max_seed_rows: number;
-}
-
 /** `POST /proxy/agency/campaigns/:id/retry`. */
 export interface AgencyRetryCreateRequest {
   selector: AgencyRetrySelector;
@@ -1032,20 +910,6 @@ export interface AgencyCampaignLineageEntry {
 export interface AgencyCampaignLineage {
   root_campaign_id: string;
   campaigns: AgencyCampaignLineageEntry[];
-}
-
-/**
- * The person behind a campaign's current status.
- *
- * The dialer runtime stores the id and the name the caller sent at the moment of
- * the transition (it has no user table), so `name` is `null` for a caller that
- * sent an id and no display name. The console then renders the id and invents
- * nothing — an "Unknown user" fallback would be this client asserting a fact the
- * server declined to.
- */
-export interface AgencyCampaignActor {
-  user_id: string;
-  name: string | null;
 }
 
 // ── Agent ↔ campaign assignment (the public API layer-native) ──────────────────

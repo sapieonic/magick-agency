@@ -52,7 +52,7 @@ const _stationExact: Equals<(typeof AGENCY_STATION_ERROR_CODES)[number], AgencyS
 // The errors module re-exports the dialer runtime's unions rather than re-declaring them.
 const _actionIsCore: Equals<AgencyActionErrorCode, Core.AgencyActionErrorCode> = true;
 const _stationIsCore: Equals<AgencyStationErrorCode, Core.AgencyStationErrorCode> = true;
-// The console-facing copy still agrees with the dialer runtime's.
+// The console-facing layer re-exports the same unions.
 const _consoleActionAgrees: Equals<AgencyApi.AgencyActionErrorCode, AgencyActionErrorCode> = true;
 const _consoleStationAgrees: Equals<AgencyApi.AgencyStationErrorCode, AgencyStationErrorCode> = true;
 void [_actionExact, _rosterExact, _lifecycleExact, _stationExact, _actionIsCore, _stationIsCore,
@@ -72,8 +72,8 @@ describe('action error codes', () => {
     expectUnique(AGENCY_ACTION_ERROR_CODES);
   });
 
-  it('matches the console’s runtime list too', () => {
-    expect([...AgencyApi.AGENCY_ACTION_ERROR_CODES]).toEqual(CORE_FIXTURE_ACTION_ERROR_CODES);
+  it('is the one list the console layer re-exports, not a copy of it', () => {
+    expect(AgencyApi.AGENCY_ACTION_ERROR_CODES).toBe(AGENCY_ACTION_ERROR_CODES);
   });
 
   it('types a member as the union', () => {
