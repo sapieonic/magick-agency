@@ -3,6 +3,7 @@ import * as Root from '../src/index';
 import { AgencyApi, PlatformApi } from '../src/index';
 import {
   AGENCY_ABANDON_REASONS,
+  AGENCY_STATION_CLOSE,
   AGENCY_CAMPAIGN_STATS_FIELDS,
   AGENCY_STATS_ROUTE_FIELDS,
 } from '../src/agency';
@@ -37,6 +38,17 @@ describe('package surface', () => {
     for (const field of AGENCY_STATS_ROUTE_FIELDS) {
       expect(AGENCY_CAMPAIGN_STATS_FIELDS[field]).toBe(true);
     }
+  });
+
+  it('declares the four station close codes once (SNAPSHOT, written out by hand)', () => {
+    expect(AGENCY_STATION_CLOSE).toEqual({
+      TOKEN_REJECTED: 4401,
+      SESSION_GONE: 4404,
+      HEARTBEAT_TIMEOUT: 4408,
+      SUPERSEDED: 4409,
+    });
+    // The console layer re-exports the same object rather than a copy that could drop a code.
+    expect(AgencyApi.AGENCY_STATION_CLOSE).toBe(AGENCY_STATION_CLOSE);
   });
 
   it('declares the session refusals agency answers with', () => {

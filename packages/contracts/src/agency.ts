@@ -1048,16 +1048,18 @@ export interface AgencyStationTokenResponse {
 
 /**
  * Close codes the dialer runtime uses on the station socket, in the private-use range.
+ * The one declaration: the server closes with these names and the console
+ * switches on them.
  *
  * The distinction that matters to the console is **re-mint and retry** versus
  * **re-bootstrap**: retrying a dead session forever looks identical to a network
  * problem from the agent's side, and gives them nothing to act on.
  */
-export type AgencyStationCloseCode =
+export const AGENCY_STATION_CLOSE = {
   /** Token missing, expired, already used, or wrong. Re-mint and retry. */
-  | 4401
+  TOKEN_REJECTED: 4401,
   /** Session unknown or already left. Re-bootstrap; do not retry this session. */
-  | 4404
+  SESSION_GONE: 4404,
   /**
    * No client `ping` for `heartbeat_grace_ms`. Re-mint and retry.
    *
@@ -1070,9 +1072,13 @@ export type AgencyStationCloseCode =
    * its ordinary retry, which is what makes this safe to ship ahead of any console
    * change.
    */
-  | 4408
+  HEARTBEAT_TIMEOUT: 4408,
   /** Superseded by a newer socket for the same session. Do not retry. */
-  | 4409;
+  SUPERSEDED: 4409,
+} as const;
+
+/** One of {@link AGENCY_STATION_CLOSE}'s codes. */
+export type AgencyStationCloseCode = (typeof AGENCY_STATION_CLOSE)[keyof typeof AGENCY_STATION_CLOSE];
 
 // ─── Agent-native action routes ─────────────────────────────────────────────
 //

@@ -331,15 +331,7 @@ export type AgencyStationServerFrame =
   | AgencyStationMediaFrame;
 
 /**
- * Close codes the dialer runtime uses. The distinction that matters is **re-mint and retry**
- * versus **re-bootstrap**: retrying a dead session forever is indistinguishable
- * from a network problem to the agent, and gives them nothing to act on.
+ * The station socket's close codes (re-mint and retry versus re-bootstrap), declared
+ * once in the dialer contract.
  */
-export const AGENCY_STATION_CLOSE = {
-  /** Token missing, expired, already used or wrong. Re-mint and retry. */
-  TOKEN_REJECTED: 4401,
-  /** Session unknown or already left. Re-bootstrap; do not retry this session. */
-  SESSION_GONE: 4404,
-  /** Superseded by a newer socket for this session. Do not retry. */
-  SUPERSEDED: 4409,
-} as const;
+export { AGENCY_STATION_CLOSE } from '../../agency';
