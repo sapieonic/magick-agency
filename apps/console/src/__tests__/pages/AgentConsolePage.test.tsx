@@ -859,6 +859,15 @@ describe('criterion (c) — a required note blocks submission, and whitespace is
 });
 
 describe('the contact-panel field filter', () => {
+  /**
+   * Re-queried at every read, never held. The detail column is keyed on the
+   * panel's attempt, so a new contact mounts a fresh input — and a node held
+   * from before would keep reading its old value even after being replaced,
+   * which would also let a remount mid-wrap-up pass the "survives" checks.
+   */
+  const filterInput = () =>
+    screen.getByLabelText('Filter fields', { exact: false }) as HTMLInputElement;
+
   it('is reachable and operable from the keyboard, not just present in the DOM', async () => {
     // Same trap as the tab-order test above: a `<input tabindex="-1">` still
     // matches an `input` selector and renders correctly, so presence alone would
@@ -948,11 +957,11 @@ describe('the contact-panel field filter', () => {
     const input = screen.getByLabelText('Filter fields', { exact: false }) as HTMLInputElement;
 
     fireEvent.change(input, { target: { value: 'mum' } });
-    expect(input.value).toBe('mum');
+    expect(filterInput().value).toBe('mum');
 
     press('Escape', input);
 
-    expect(input.value).toBe('');
+    expect(filterInput().value).toBe('');
     expect(document.activeElement).not.toBe(input);
     // Cleared, not just blurred — City's sibling fields must be back.
     expect(screen.getByText('Branch')).toBeTruthy();
@@ -972,7 +981,7 @@ describe('the contact-panel field filter', () => {
     await act(async () => {
       latest().emit({ event: 'agent_state', state: 'on_call', since: '2026-08-11T10:05:00.000Z' });
     });
-    expect(input.value).toBe('mum');
+    expect(filterInput().value).toBe('mum');
     expect(screen.queryByText('Branch')).toBeNull();
 
     // Now the next contact's `reserved` — the trap this rule exists for: a
@@ -985,7 +994,7 @@ describe('the contact-panel field filter', () => {
       });
     });
 
-    expect(input.value).toBe('');
+    expect(filterInput().value).toBe('');
     expect(screen.getByText('Branch')).toBeTruthy();
   });
 
@@ -1007,7 +1016,7 @@ describe('the contact-panel field filter', () => {
     const input = screen.getByLabelText('Filter fields', { exact: false }) as HTMLInputElement;
 
     fireEvent.change(input, { target: { value: 'mum' } });
-    expect(input.value).toBe('mum');
+    expect(filterInput().value).toBe('mum');
     expect(screen.queryByText('Branch')).toBeNull();
 
     // The customer hangs up. `released` clears `live` and retains the same attempt
@@ -1026,7 +1035,7 @@ describe('the contact-panel field filter', () => {
     // this is not merely "a filter box still exists somewhere".
     expect(screen.getByText('Asha')).toBeTruthy();
     // ...and the query is intact, with the filter still doing its job.
-    expect(input.value).toBe('mum');
+    expect(filterInput().value).toBe('mum');
     expect(screen.getByText('City')).toBeTruthy();
     expect(screen.queryByText('Branch')).toBeNull();
 
@@ -1045,7 +1054,7 @@ describe('the contact-panel field filter', () => {
       });
       latest().emit({ event: 'agent_state', state: 'wrapup', since: '2026-08-11T10:05:00.000Z' });
     });
-    expect(input.value).toBe('mum');
+    expect(filterInput().value).toBe('mum');
     expect(screen.getByText('Asha')).toBeTruthy();
 
     // The next contact. This is the half that makes the assertions above mean
@@ -1057,7 +1066,7 @@ describe('the contact-panel field filter', () => {
       });
     });
 
-    expect(input.value).toBe('');
+    expect(filterInput().value).toBe('');
     expect(screen.getByText('Branch')).toBeTruthy();
   });
 });
