@@ -295,7 +295,7 @@ describe('DNC', () => {
     // Not `unclaim`: a DNC hit never returns to `pending`.
     expect(repos.contact.unclaim).not.toHaveBeenCalled();
     // The agent is not punished for the roster's contents.
-    expect(agents.set).toHaveBeenCalledWith('s1', 'available', expect.anything());
+    expect(agents.set).toHaveBeenCalledWith('s1', 'available');
   });
 
   it('does not bump the contact attempt count for a call it declined to place', async () => {
@@ -336,7 +336,7 @@ describe('DNC', () => {
     // And every reserved agent is released, or the pool shrinks by three every
     // tick until their leases lapse.
     for (const s of ['s1', 's2', 's3']) {
-      expect(agents.set).toHaveBeenCalledWith(s, 'available', expect.anything());
+      expect(agents.set).toHaveBeenCalledWith(s, 'available');
     }
     // Nothing is suppressed: the numbers are not on the list, we simply could not
     // ask. Writing them off would be a data loss caused by an outage.

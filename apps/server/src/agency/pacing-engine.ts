@@ -9,7 +9,6 @@ import {
 } from '../db/repositories/agency.repository.js';
 import type { AgencyCampaignRecord, AgencyContactRecord } from '../db/models/agency.model.js';
 import type { StationRegistry } from './station-registry.js';
-import { AGENT_LEASE_MS } from './agent-state-machine.js';
 import type { AgentStateMachine } from './agent-state-machine.js';
 import type { DialDispatcher } from './dial-dispatcher.js';
 import { campaignChangeReasonFor, campaignMessageFor, isDialingStatus } from './outcome-classifier.js';
@@ -827,7 +826,7 @@ export class PacingEngine {
     // the pool — the roster ran out, which is not their fault and must not cost
     // them their place in the idle queue any longer than this tick.
     for (const surplus of reserved.slice(contacts.length)) {
-      await this.agents.set(surplus, 'available', { leaseMs: AGENT_LEASE_MS.available });
+      await this.agents.set(surplus, 'available');
     }
     if (contacts.length === 0) {
       this.recordIdle(campaign.id, 'no_contacts');
@@ -866,7 +865,7 @@ export class PacingEngine {
         // charging a retry for a call we declined to make would exhaust a contact
         // who was never called.
         this.logSkip(campaign, contact, gate);
-        await this.agents.set(sessionId, 'available', { leaseMs: AGENT_LEASE_MS.available });
+        await this.agents.set(sessionId, 'available');
         await agencyContactRepository.markState(contact.id, 'suppressed', {
           suppressed_reason: gate.suppressedReason,
         });
@@ -878,15 +877,13 @@ export class PacingEngine {
         // window-open instant in the contact's own timezone, so the contact wakes
         // at the right local time with no scheduler — and does not spin.
         this.logSkip(campaign, contact, gate);
-        await this.agents.set(sessionId, 'available', { leaseMs: AGENT_LEASE_MS.available });
-        await agencyContactRepository.unclaim(contact.id, gate.deferUntil);
+        await this.returnPair(sessionId, contact.id, gate.deferUntil);
         continue;
       }
 
       const ownerReplica = await this.stations.ownerOf(sessionId);
       if (!ownerReplica) {
-        await this.agents.set(sessionId, 'offline');
-        await agencyContactRepository.unclaim(contact.id, new Date());
+        await this.returnPair(sessionId, contact.id, new Date(), 'offline');
         continue;
       }
 
@@ -931,8 +928,7 @@ export class PacingEngine {
         // The duplicate-dial backstop refused it. Something believed this contact
         // was dialable while a live attempt existed — release and move on. This is
         // the database doing its job, not an error.
-        await this.agents.set(sessionId, 'available');
-        await agencyContactRepository.unclaim(contact.id, new Date());
+        await this.returnPair(sessionId, contact.id, new Date());
         continue;
       }
 
@@ -977,11 +973,26 @@ export class PacingEngine {
         await agencyAttemptRepository.setState(attempt.id, 'ended', {
           outcome: 'failed', ended_at: new Date(),
         });
-        await this.agents.set(sessionId, 'available');
-        await agencyContactRepository.unclaim(contact.id, new Date());
+        await this.returnPair(sessionId, contact.id, new Date());
       }
     }
     return dialed;
+  }
+
+  /**
+   * Hand back one reserved agent and the contact claimed for them: the agent to
+   * `agentState` (the pool, or `offline` when no replica owns their station) and
+   * the contact to `pending` at `nextAttemptAt`. `set`'s default lease is the
+   * `available` one.
+   */
+  private async returnPair(
+    sessionId: string,
+    contactId: string,
+    nextAttemptAt: Date,
+    agentState: 'available' | 'offline' = 'available',
+  ): Promise<void> {
+    await this.agents.set(sessionId, agentState);
+    await agencyContactRepository.unclaim(contactId, nextAttemptAt);
   }
 
   /**
@@ -996,7 +1007,7 @@ export class PacingEngine {
    */
   private async abortRemainder(contacts: AgencyContactRecord[], sessions: string[]): Promise<void> {
     for (const sessionId of sessions) {
-      await this.agents.set(sessionId, 'available', { leaseMs: AGENT_LEASE_MS.available });
+      await this.agents.set(sessionId, 'available');
     }
     // One statement for the whole remainder, not one round trip per contact.
     await agencyContactRepository.unclaimMany(contacts.map((c) => c.id), new Date());

@@ -439,7 +439,7 @@ describe('PacingEngine reserve-before-dial', () => {
 
     await e.tickOnce('camp-1');
 
-    expect(agents.set).toHaveBeenCalledWith('s2', 'available', expect.anything());
+    expect(agents.set).toHaveBeenCalledWith('s2', 'available');
   });
 
   it('reserves the longest-idle agent first, and does not let the pool order decide', async () => {
@@ -1589,7 +1589,7 @@ describe('PacingEngine.stop() and the tick in flight', () => {
     expect(dispatch, 'a tick dialed after stop()').not.toHaveBeenCalled();
     expect(repos.attempt.setState).toHaveBeenCalledWith('att-c1', 'ended', expect.objectContaining({ outcome: 'orphaned' }));
     expect(returnedContactIds()).toEqual(['c1']);
-    expect(agents.set).toHaveBeenCalledWith('s1', 'available', expect.anything());
+    expect(agents.set).toHaveBeenCalledWith('s1', 'available');
   });
 
   it('hands the dispatcher a check that turns false once the engine stops', async () => {
