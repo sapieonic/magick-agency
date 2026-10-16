@@ -85,10 +85,11 @@ describe('what counts as a conversion', () => {
     // the same gate `disposition.ts` uses to decide whether there was a
     // conversation to write up. `outcome` is a classification that can be absent,
     // late, or say connected about a call no agent ever heard.
-    // Read the conversion subquery specifically, rather than the whole statement
+    // Read the conversion FILTER specifically, rather than the whole statement
     // — every other flow metric here also gates on `bridged_at`, so a whole-text
-    // match would pass even if this one clause were wrong.
-    const start = sql.indexOf('JOIN agency_campaigns c ON c.id = a.campaign_id');
+    // match would pass even if this one clause were wrong. It is the aggregate
+    // between `machine_connects` and `attempts_success` in the attempts pass.
+    const start = sql.indexOf('AS machine_connects,');
     const end = sql.indexOf('AS attempts_success');
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);

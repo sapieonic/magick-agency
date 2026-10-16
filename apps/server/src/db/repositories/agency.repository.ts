@@ -1663,7 +1663,7 @@ export class AgencyCampaignRepository {
    * window gauge reads, imported rather than restated, so the dashboard figure and
    * the gauge cannot drift into disagreeing.
    *
-   * Both 24h subqueries resolve `now()` to the same statement timestamp, so the
+   * Both 24h counters resolve `now()` to the same statement timestamp, so the
    * numerator can never be read against a later window than its denominator. That
    * is why every scalar aggregate — the 24h pair, the flow metrics and all six
    * `previous_hour` windows — stays in ONE statement rather than being split for
@@ -1684,157 +1684,193 @@ export class AgencyCampaignRepository {
     Omit<AgencyCampaignStats, (typeof AGENCY_STATS_ROUTE_FIELDS)[number] | 'agents'>
     & { agents: AgencySupervisorAgentRow[] }
   > {
+    // ── Two scans, not twenty ─────────────────────────────────────────────────
+    //
+    // Every contact counter is a FILTER over ONE pass of the campaign's contacts
+    // (`ct`), and every attempt counter a FILTER over ONE pass of its attempts
+    // (`att`). Spelled as one subquery per number this was about twenty scans per
+    // dashboard request, and `agency_contacts` has no `(campaign_id, state)` index
+    // to make the six per-state ones cheap. Each FILTER is the WHERE clause its
+    // subquery carried, verbatim; `campaign-stats-equivalence.test.ts` holds the
+    // per-number spelling as the oracle and compares every field.
+    //
+    // Still ONE statement, so every `now()` below is the same instant (see the
+    // header). An aggregate with no GROUP BY yields exactly one row even over no
+    // rows, so the cross join of the two CTEs is always one row.
     const { rows } = await getPool().query<Record<string, string>>(
-      `SELECT
-         (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1)::text AS contacts_total,
-         (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1 AND state = 'pending')::text AS contacts_pending,
-         (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1 AND state = 'in_flight')::text AS contacts_in_flight,
-         (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1 AND state = 'completed')::text AS contacts_completed,
-         (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1 AND state = 'suppressed')::text AS contacts_suppressed,
-         (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1 AND state = 'exhausted')::text AS contacts_exhausted,
-         (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1 AND state = 'pending' AND next_attempt_at > now())::text AS retries_pending,
-         (SELECT COUNT(*) FROM agency_call_attempts WHERE campaign_id = $1 AND state <> 'ended')::text AS attempts_live,
-         (SELECT COUNT(*) FROM agency_call_attempts WHERE campaign_id = $1)::text AS attempts_total,
-         (SELECT COUNT(*) FROM agency_call_attempts WHERE campaign_id = $1 AND outcome = 'connected')::text AS attempts_connected,
-         -- Dials that were NOT a contact's first.
-         --
-         -- A different question from retries_pending two lines up, and the pair
-         -- is the one most likely to be read as one number: that counts contacts
-         -- whose next_attempt_at is still in the future — work QUEUED — while
-         -- this counts dials already PLACED. A campaign that worked its whole
-         -- retry budget has retries_pending: 0 and a large attempts_retried,
-         -- and reporting only the first makes it look like a campaign that reached
-         -- everybody first time.
-         --
-         -- attempt_number is the attempts table's own counter, derived at insert
-         -- from MAX(attempt_number) over the contact's rows, NOT
-         -- from agency_contacts.attempt_count — the two were decoupled on
-         -- purpose, and the consequence here is that an OUR-FAULT redial (a dropped
-         -- station socket, a reaper requeue) is counted even though it never spent
-         -- the customer's allowance. That is the honest reading of "dials that were
-         -- not the first": the number was called again, whoever's fault it was.
-         --
-         -- dialed_at IS NOT NULL is what makes "PLACED" true, and it is not
-         -- defensive: attempts are INSERTed in state 'queued' with dialed_at NULL
-         -- (AgencyAttemptRepository.create), so an un-placed retry row exists by
-         -- construction for the whole gap between reservation and dial — and for good
-         -- on a campaign paused or stopped in that gap. Without the gate a paused
-         -- campaign holding 50 queued second attempts reports attempts_retried: 50
-         -- having redialled nobody. Same gate the series aggregate uses on the same
-         -- table, and for the same reason it gives (see statsSeries): a dial that
-         -- never happened is not a dial.
-         (SELECT COUNT(*) FROM agency_call_attempts
-            WHERE campaign_id = $1
-              AND attempt_number > 1
-              AND dialed_at IS NOT NULL)::text AS attempts_retried,
-         (SELECT COUNT(*) FROM agency_agent_sessions WHERE campaign_id = $1 AND left_at IS NULL)::text AS agents_live,
-         (SELECT COUNT(*) FROM agency_call_attempts
-            WHERE campaign_id = $1
-              AND state = 'ended'
-              AND answered_at IS NOT NULL
-              AND answered_at > now() - ($2 || ' hours')::interval)::text AS answered_24h,
-         (SELECT COUNT(*) FROM agency_call_attempts
-            WHERE campaign_id = $1
-              AND answered_at > now() - ($2 || ' hours')::interval
-              AND (${ABANDONED_ATTEMPT_PREDICATE_SQL}))::text AS abandoned_24h,
+      `WITH ct AS (
+         SELECT COUNT(*) AS contacts_total,
+                COUNT(*) FILTER (WHERE state = 'pending') AS contacts_pending,
+                COUNT(*) FILTER (WHERE state = 'in_flight') AS contacts_in_flight,
+                COUNT(*) FILTER (WHERE state = 'completed') AS contacts_completed,
+                COUNT(*) FILTER (WHERE state = 'suppressed') AS contacts_suppressed,
+                COUNT(*) FILTER (WHERE state = 'exhausted') AS contacts_exhausted,
+                COUNT(*) FILTER (WHERE state = 'pending' AND next_attempt_at > now()) AS retries_pending
+           FROM agency_contacts
+          WHERE campaign_id = $1
+       ), att AS (
+         -- FROM the attempts table ALONE: ABANDONED_ATTEMPT_PREDICATE_SQL and
+         -- WRAPUP_MEASURED_RESOLUTIONS_SQL name their columns unqualified, and a
+         -- joined agency_campaigns carries an ended_at and a wrapup_seconds of
+         -- its own. The one counter that needs the catalog reads it through an
+         -- uncorrelated subquery (an InitPlan, evaluated once), which also keeps
+         -- attempts_success at 0 for a campaign row that has gone, as the JOIN
+         -- it replaces did.
+         SELECT COUNT(*) FILTER (WHERE state <> 'ended') AS attempts_live,
+                COUNT(*) AS attempts_total,
+                COUNT(*) FILTER (WHERE outcome = 'connected') AS attempts_connected,
+                -- Dials that were NOT a contact's first.
+                --
+                -- A different question from retries_pending, and the pair
+                -- is the one most likely to be read as one number: that counts contacts
+                -- whose next_attempt_at is still in the future — work QUEUED — while
+                -- this counts dials already PLACED. A campaign that worked its whole
+                -- retry budget has retries_pending: 0 and a large attempts_retried,
+                -- and reporting only the first makes it look like a campaign that reached
+                -- everybody first time.
+                --
+                -- attempt_number is the attempts table's own counter, derived at insert
+                -- from MAX(attempt_number) over the contact's rows, NOT
+                -- from agency_contacts.attempt_count — the two were decoupled on
+                -- purpose, and the consequence here is that an OUR-FAULT redial (a dropped
+                -- station socket, a reaper requeue) is counted even though it never spent
+                -- the customer's allowance. That is the honest reading of "dials that were
+                -- not the first": the number was called again, whoever's fault it was.
+                --
+                -- dialed_at IS NOT NULL is what makes "PLACED" true, and it is not
+                -- defensive: attempts are INSERTed in state 'queued' with dialed_at NULL
+                -- (AgencyAttemptRepository.create), so an un-placed retry row exists by
+                -- construction for the whole gap between reservation and dial — and for good
+                -- on a campaign paused or stopped in that gap. Without the gate a paused
+                -- campaign holding 50 queued second attempts reports attempts_retried: 50
+                -- having redialled nobody. Same gate the series aggregate uses on the same
+                -- table, and for the same reason it gives (see statsSeries): a dial that
+                -- never happened is not a dial.
+                COUNT(*) FILTER (WHERE attempt_number > 1 AND dialed_at IS NOT NULL) AS attempts_retried,
+                COUNT(*) FILTER (
+                  WHERE state = 'ended'
+                    AND answered_at IS NOT NULL
+                    AND answered_at > now() - ($2 || ' hours')::interval) AS answered_24h,
+                COUNT(*) FILTER (
+                  WHERE answered_at > now() - ($2 || ' hours')::interval
+                    AND (${ABANDONED_ATTEMPT_PREDICATE_SQL})) AS abandoned_24h,
 
-         -- ── Flow, over the campaign's lifetime ─────────────────────────────
-         --
-         -- bridged_at IS NOT NULL is the denominator gate throughout, NOT
-         -- outcome = 'connected'. bridged_at is the instant media actually
-         -- joined the two parties, and it is the same gate disposition.ts uses
-         -- to decide whether there was a conversation to write up; outcome is a
-         -- classification that can be absent, late, or say connected about a
-         -- call no agent ever heard.
-         --
-         -- Three buckets, not two. IS DISTINCT FROM 'voicemail' is true of NULL,
-         -- so a two-way split books every never-written-up call as a HUMAN connect
-         -- at full duration — and that population is not small: the reaper stamps
-         -- no_disposition on every lapsed wrap-up, which skews toward exactly the
-         -- voicemails an agent walked away from rather than classify. The split
-         -- exists so voicemail time cannot inflate the human numbers; a two-way
-         -- version would have moved only the ones an agent bothered to label.
-         (SELECT COUNT(*) FROM agency_call_attempts
-            WHERE campaign_id = $1
-              AND bridged_at IS NOT NULL
-              AND disposition_code IS NOT NULL
-              AND disposition_code <> $3
-              AND disposition_code <> $4)::text AS human_connects,
-         (SELECT COUNT(*) FROM agency_call_attempts
-            WHERE campaign_id = $1
-              AND bridged_at IS NOT NULL
-              AND (disposition_code IS NULL OR disposition_code = $4))::text AS unclassified_connects,
-         (SELECT COUNT(*) FROM agency_call_attempts
-            WHERE campaign_id = $1
-              AND bridged_at IS NOT NULL
-              AND disposition_code = $3)::text AS machine_connects,
+                -- ── Flow, over the campaign's lifetime ─────────────────────────────
+                --
+                -- bridged_at IS NOT NULL is the denominator gate throughout, NOT
+                -- outcome = 'connected'. bridged_at is the instant media actually
+                -- joined the two parties, and it is the same gate disposition.ts uses
+                -- to decide whether there was a conversation to write up; outcome is a
+                -- classification that can be absent, late, or say connected about a
+                -- call no agent ever heard.
+                --
+                -- Three buckets, not two. IS DISTINCT FROM 'voicemail' is true of NULL,
+                -- so a two-way split books every never-written-up call as a HUMAN connect
+                -- at full duration — and that population is not small: the reaper stamps
+                -- no_disposition on every lapsed wrap-up, which skews toward exactly the
+                -- voicemails an agent walked away from rather than classify. The split
+                -- exists so voicemail time cannot inflate the human numbers; a two-way
+                -- version would have moved only the ones an agent bothered to label.
+                COUNT(*) FILTER (
+                  WHERE bridged_at IS NOT NULL
+                    AND disposition_code IS NOT NULL
+                    AND disposition_code <> $3
+                    AND disposition_code <> $4) AS human_connects,
+                COUNT(*) FILTER (
+                  WHERE bridged_at IS NOT NULL
+                    AND (disposition_code IS NULL OR disposition_code = $4)) AS unclassified_connects,
+                COUNT(*) FILTER (
+                  WHERE bridged_at IS NOT NULL
+                    AND disposition_code = $3) AS machine_connects,
 
-         -- Conversions -- the is_success flag. It is on every catalog entry,
-         -- and its only other reader is a type check in the config validator:
-         -- without this count the operator's answer would be confirmed as a
-         -- boolean and then thrown away.
-         --
-         -- See successDispositionSql for the two shape decisions the predicate
-         -- rests on: EXISTS rather than a JOIN (which would double-count a
-         -- catalog carrying a duplicate code), and a jsonb comparison rather
-         -- than a boolean cast (the cast raises 22P02 on a non-boolean value,
-         -- and nothing maps that to a status -- the whole stats payload would
-         -- 500 on one bad character in one operator's config).
-         --
-         -- bridged_at IS NOT NULL is the gate, like every other flow metric
-         -- here: outcome = 'connected' is a classification that can be absent,
-         -- late, or say connected about a call no agent ever heard.
-         (SELECT COUNT(*) FROM agency_call_attempts a
-            JOIN agency_campaigns c ON c.id = a.campaign_id
-            WHERE a.campaign_id = $1
-              AND a.bridged_at IS NOT NULL
-              AND ${successDispositionSql({ attempt: 'a', catalog: 'c.disposition_catalog' })})::text
-           AS attempts_success,
-         -- Does this campaign offer the code at all? An agent cannot submit one
-         -- the catalog does not carry, so without it machine_connects is
-         -- structurally 0 and measures nothing — which the console has to say
-         -- rather than render as a confident zero.
-         (SELECT EXISTS (
-            SELECT 1 FROM agency_campaigns c, LATERAL jsonb_array_elements(c.disposition_catalog) e
-             WHERE c.id = $1 AND e->>'code' = $3))::text AS machine_connects_available,
+                -- Conversions -- the is_success flag. It is on every catalog entry,
+                -- and its only other reader is a type check in the config validator:
+                -- without this count the operator's answer would be confirmed as a
+                -- boolean and then thrown away.
+                --
+                -- See successDispositionSql for the two shape decisions the predicate
+                -- rests on: EXISTS rather than a JOIN (which would double-count a
+                -- catalog carrying a duplicate code), and a jsonb comparison rather
+                -- than a boolean cast (the cast raises 22P02 on a non-boolean value,
+                -- and nothing maps that to a status -- the whole stats payload would
+                -- 500 on one bad character in one operator's config).
+                --
+                -- bridged_at IS NOT NULL is the gate, like every other flow metric
+                -- here: outcome = 'connected' is a classification that can be absent,
+                -- late, or say connected about a call no agent ever heard.
+                COUNT(*) FILTER (
+                  WHERE a.bridged_at IS NOT NULL
+                    AND ${successDispositionSql({
+                      attempt: 'a',
+                      catalog: '(SELECT cam.disposition_catalog FROM agency_campaigns cam WHERE cam.id = $1)',
+                    })}) AS attempts_success,
 
-         -- AHT is ended_at - bridged_at: the AGENT's leg. Deliberately not the
-         -- persisted talk_seconds, which is anchored on answered_at (the
-         -- carrier's answer) and is nonzero even when no agent ever bridged —
-         -- an abandoned attempt settles carrying the apology clip's talk time.
-         -- Averaging that would fold ring-to-bridge latency and
-         -- abandoned calls into the one number whose purpose is agent work.
-         -- outcome <> 'orphaned' on both: the reaper settles a crash-orphaned
-         -- attempt with ended_at = now() AT SWEEP TIME, so a conversation whose
-         -- replica died contributes its whole time-until-sweep — minutes, or
-         -- hours — to the average. One orphan moves the tile visibly on a
-         -- low-volume campaign, and the outcome column already names them.
-         (SELECT AVG(EXTRACT(EPOCH FROM (ended_at - bridged_at))) FROM agency_call_attempts
-            WHERE campaign_id = $1
-              AND state = 'ended'
-              AND bridged_at IS NOT NULL
-              AND outcome IS DISTINCT FROM 'orphaned'
-              AND disposition_code IS DISTINCT FROM $3)::text AS aht_seconds,
-         (SELECT AVG(EXTRACT(EPOCH FROM (ended_at - bridged_at))) FROM agency_call_attempts
-            WHERE campaign_id = $1
-              AND state = 'ended'
-              AND bridged_at IS NOT NULL
-              AND outcome IS DISTINCT FROM 'orphaned')::text AS aht_seconds_including_machine,
+                -- AHT is ended_at - bridged_at: the AGENT's leg. Deliberately not the
+                -- persisted talk_seconds, which is anchored on answered_at (the
+                -- carrier's answer) and is nonzero even when no agent ever bridged —
+                -- an abandoned attempt settles carrying the apology clip's talk time.
+                -- Averaging that would fold ring-to-bridge latency and
+                -- abandoned calls into the one number whose purpose is agent work.
+                -- outcome <> 'orphaned' on both: the reaper settles a crash-orphaned
+                -- attempt with ended_at = now() AT SWEEP TIME, so a conversation whose
+                -- replica died contributes its whole time-until-sweep — minutes, or
+                -- hours — to the average. One orphan moves the tile visibly on a
+                -- low-volume campaign, and the outcome column already names them.
+                AVG(EXTRACT(EPOCH FROM (ended_at - bridged_at))) FILTER (
+                  WHERE state = 'ended'
+                    AND bridged_at IS NOT NULL
+                    AND outcome IS DISTINCT FROM 'orphaned'
+                    AND disposition_code IS DISTINCT FROM $3) AS aht_seconds,
+                AVG(EXTRACT(EPOCH FROM (ended_at - bridged_at))) FILTER (
+                  WHERE state = 'ended'
+                    AND bridged_at IS NOT NULL
+                    AND outcome IS DISTINCT FROM 'orphaned') AS aht_seconds_including_machine,
 
-         -- Measured wrap-up, never the configured allotment. wrapup_seconds is
-         -- what was OWED, copied from the campaign at wrap-up entry, so averaging
-         -- it hands the operator their own setting back as if it were evidence.
-         (SELECT AVG(EXTRACT(EPOCH FROM (wrapup_ended_at - wrapup_started_at))) FROM agency_call_attempts
-            WHERE campaign_id = $1
-              AND wrapup_started_at IS NOT NULL
-              AND wrapup_ended_at IS NOT NULL
-              AND ${WRAPUP_MEASURED_RESOLUTIONS_SQL})::text AS avg_wrapup_seconds,
-         -- The campaign's own ceiling. A subquery rather than a
-         -- join because every other line here is one, and the row is already in
-         -- cache from the route's ownership check a moment earlier.
-         (SELECT abandonment_ceiling_pct FROM agency_campaigns
-            WHERE id = $1)::text AS abandonment_ceiling_pct`,
-
+                -- Measured wrap-up, never the configured allotment. wrapup_seconds is
+                -- what was OWED, copied from the campaign at wrap-up entry, so averaging
+                -- it hands the operator their own setting back as if it were evidence.
+                AVG(EXTRACT(EPOCH FROM (wrapup_ended_at - wrapup_started_at))) FILTER (
+                  WHERE wrapup_started_at IS NOT NULL
+                    AND wrapup_ended_at IS NOT NULL
+                    AND ${WRAPUP_MEASURED_RESOLUTIONS_SQL}) AS avg_wrapup_seconds
+           FROM agency_call_attempts a
+          WHERE a.campaign_id = $1
+       )
+       SELECT ct.contacts_total::text AS contacts_total,
+              ct.contacts_pending::text AS contacts_pending,
+              ct.contacts_in_flight::text AS contacts_in_flight,
+              ct.contacts_completed::text AS contacts_completed,
+              ct.contacts_suppressed::text AS contacts_suppressed,
+              ct.contacts_exhausted::text AS contacts_exhausted,
+              ct.retries_pending::text AS retries_pending,
+              att.attempts_live::text AS attempts_live,
+              att.attempts_total::text AS attempts_total,
+              att.attempts_connected::text AS attempts_connected,
+              att.attempts_retried::text AS attempts_retried,
+              (SELECT COUNT(*) FROM agency_agent_sessions WHERE campaign_id = $1 AND left_at IS NULL)::text AS agents_live,
+              att.answered_24h::text AS answered_24h,
+              att.abandoned_24h::text AS abandoned_24h,
+              att.human_connects::text AS human_connects,
+              att.unclassified_connects::text AS unclassified_connects,
+              att.machine_connects::text AS machine_connects,
+              att.attempts_success::text AS attempts_success,
+              -- Does this campaign offer the code at all? An agent cannot submit one
+              -- the catalog does not carry, so without it machine_connects is
+              -- structurally 0 and measures nothing — which the console has to say
+              -- rather than render as a confident zero.
+              (SELECT EXISTS (
+                 SELECT 1 FROM agency_campaigns c, LATERAL jsonb_array_elements(c.disposition_catalog) e
+                  WHERE c.id = $1 AND e->>'code' = $3))::text AS machine_connects_available,
+              att.aht_seconds::text AS aht_seconds,
+              att.aht_seconds_including_machine::text AS aht_seconds_including_machine,
+              att.avg_wrapup_seconds::text AS avg_wrapup_seconds,
+              -- The campaign's own ceiling. A subquery rather than a
+              -- join because the row is already in cache from the route's
+              -- ownership check a moment earlier, and a join would make the two
+              -- aggregates above depend on the campaign row existing.
+              (SELECT abandonment_ceiling_pct FROM agency_campaigns
+                 WHERE id = $1)::text AS abandonment_ceiling_pct
+         FROM ct, att`,
       [campaignId, ABANDONMENT_WINDOW_HOURS, VOICEMAIL_DISPOSITION_CODE, AUTO_DISPOSITION_CODE],
     );
     const row = rows[0] ?? {};
@@ -2411,8 +2447,8 @@ export class AgencyCampaignRepository {
    *
    * Separate from {@link stats} on purpose. `stats()` is the numbers a supervisor
    * reads; this is the evidence behind a *diagnosis*, it is only consulted when the
-   * strip is being rendered, and keeping it out of `stats()` means the ~13-subquery
-   * payload does not grow another five for a feature the caller may not want.
+   * strip is being rendered, and keeping it out of `stats()` means the dashboard's
+   * one statement does not grow four more scans for a feature the caller may not want.
    *
    * **Pending contacts are grouped BY TIMEZONE rather than evaluated per row.**
    * Calling-hours is a TypeScript rule (`callingWindowState`), and re-expressing it
@@ -2429,7 +2465,7 @@ export class AgencyCampaignRepository {
     onBreakByReason: Record<string, number>;
   }> {
     const pool = getPool();
-    const [tz, retry, dial, recent, breaks] = await Promise.all([
+    const [pending, dial, recent, breaks] = await Promise.all([
       // **Every pending contact, NOT only the ones due right now** — and this is
       // the whole correctness of the calling-hours diagnosis.
       //
@@ -2448,15 +2484,18 @@ export class AgencyCampaignRepository {
       //
       // Grouping stays the point: the calling-hours rule itself is evaluated in
       // TypeScript, once per distinct timezone, never restated in SQL.
-      pool.query<{ timezone: string | null; n: string }>(
-        `SELECT timezone, COUNT(*)::text AS n FROM agency_contacts
+      //
+      // The next scheduled retry rides the SAME scan as a per-zone
+      // `MIN(...) FILTER`, folded to the overall minimum below: both read the
+      // campaign's pending contacts, and the minimum of the per-group minima is the
+      // minimum over the union.
+      pool.query<{ timezone: string | null; n: string; next_attempt_at: Date | null }>(
+        `SELECT timezone,
+                COUNT(*)::text AS n,
+                MIN(next_attempt_at) FILTER (WHERE next_attempt_at > now()) AS next_attempt_at
+           FROM agency_contacts
           WHERE campaign_id = $1 AND state = 'pending'
           GROUP BY timezone`,
-        [campaignId],
-      ),
-      pool.query<{ next_attempt_at: Date | null }>(
-        `SELECT MIN(next_attempt_at) AS next_attempt_at FROM agency_contacts
-          WHERE campaign_id = $1 AND state = 'pending' AND next_attempt_at > now()`,
         [campaignId],
       ),
       pool.query<{ dialed_at: Date | null }>(
@@ -2489,9 +2528,14 @@ export class AgencyCampaignRepository {
     const onBreakByReason: Record<string, number> = {};
     for (const r of breaks.rows) onBreakByReason[r.break_reason ?? 'unspecified'] = Number(r.n);
 
+    let nextRetryAt: Date | null = null;
+    for (const r of pending.rows) {
+      if (r.next_attempt_at && (!nextRetryAt || r.next_attempt_at < nextRetryAt)) nextRetryAt = r.next_attempt_at;
+    }
+
     return {
-      pendingByTimezone: tz.rows.map((r) => ({ timezone: r.timezone, count: Number(r.n) })),
-      nextRetryAt: retry.rows[0]?.next_attempt_at ?? null,
+      pendingByTimezone: pending.rows.map((r) => ({ timezone: r.timezone, count: Number(r.n) })),
+      nextRetryAt,
       lastDialAt: dial.rows[0]?.dialed_at ?? null,
       recent: {
         attempts: Number(recent.rows[0]?.attempts ?? 0),
