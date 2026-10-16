@@ -516,6 +516,17 @@ describe('AgencyCampaignRepository.update — the allow-list', () => {
     expect(values[2]).toBe(45);
   });
 
+  it('serialises break_reasons too — bound raw, a JS array is a pg ARRAY literal (22P02)', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 'camp-1' }] });
+    await new AgencyCampaignRepository().update('camp-1', {
+      break_reasons: [{ code: 'lunch', label: 'Lunch' }],
+    } as any);
+
+    const [sql, values] = pool.query.mock.calls[0]!;
+    expect(sql).toContain('break_reasons = $2::jsonb');
+    expect(values[1]).toBe('[{"code":"lunch","label":"Lunch"}]');
+  });
+
   it('ALLOWS abandon_announcement_id, and lets null clear it', async () => {
     // The column, the model field and the dial-time resolver all shipped before
     // anything could write it — so the apology clip was unreachable in production

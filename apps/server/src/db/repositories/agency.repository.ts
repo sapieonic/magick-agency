@@ -425,6 +425,42 @@ const isoOrEpoch = (value: Date | string): string => {
   return Number.isNaN(at.getTime()) ? new Date(0).toISOString() : at.toISOString();
 };
 
+/**
+ * The columns {@link AgencyCampaignRepository.update} may write. Deliberately not
+ * `status` — lifecycle is `transitionStatus` only.
+ */
+const CAMPAIGN_PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
+  'name', 'caller_ids', 'telephony_provider',
+  'calling_window_start', 'calling_window_end', 'calling_days', 'default_timezone',
+  'wrapup_seconds', 'wrapup_auto_return', 'retry_policy', 'disposition_catalog',
+  'break_reasons',
+  'context_display', 'record_calls', 'analysis_profile_id',
+  // The abandonment ceiling is an operator setting, so it is
+  // patchable on a live campaign. NOT nullable — the column is NOT NULL with
+  // a DEFAULT, so "unset it" means "put it back to the default", which the
+  // caller expresses by sending the default rather than by sending null.
+  'abandonment_ceiling_pct',
+  // The abandon announcement. Patchable, and `null` legitimately clears it back to
+  // "hang up without an apology" — so this key must survive `v === undefined`
+  // filtering in `update()`, which it does, and must not be defaulted anywhere.
+  'abandon_announcement_id',
+]);
+
+/**
+ * The patchable columns that are JSONB, which `update()` binds as `JSON.stringify`
+ * text cast `::jsonb`.
+ *
+ * Every JSONB column in {@link CAMPAIGN_PATCHABLE_COLUMNS} must be here. A JS array
+ * bound raw is serialised by node-pg as a Postgres ARRAY literal, which a jsonb
+ * column refuses (`22P02`); `break_reasons` was missing, so every PATCH carrying a
+ * non-empty list 500'd and an empty one (`{}`, a jsonb object) failed
+ * `ck_agency_campaign_break_reasons`. Pinned on a real database by
+ * `agency-campaign-update.test.ts`.
+ */
+const CAMPAIGN_JSONB_COLUMNS: ReadonlySet<string> = new Set([
+  'retry_policy', 'disposition_catalog', 'context_display', 'break_reasons',
+]);
+
 /** Every live state at zero. See {@link AgencyAgentsByState}. */
 const zeroAgentsByState = (): AgencyAgentsByState => ({
   offline: 0,
@@ -1587,29 +1623,13 @@ export class AgencyCampaignRepository {
    * leader's `running → completed` / `stopping → stopped` transitions.
    */
   async update(id: string, patch: Record<string, unknown>): Promise<AgencyCampaignRecord | null> {
-    const allowed = new Set([
-      'name', 'caller_ids', 'telephony_provider',
-      'calling_window_start', 'calling_window_end', 'calling_days', 'default_timezone',
-      'wrapup_seconds', 'wrapup_auto_return', 'retry_policy', 'disposition_catalog',
-      'break_reasons',
-      'context_display', 'record_calls', 'analysis_profile_id',
-      // The abandonment ceiling is an operator setting, so it is
-      // patchable on a live campaign. NOT nullable — the column is NOT NULL with
-      // a DEFAULT, so "unset it" means "put it back to the default", which the
-      // caller expresses by sending the default rather than by sending null.
-      'abandonment_ceiling_pct',
-      // The abandon announcement. Patchable, and `null` legitimately clears it back to
-      // "hang up without an apology" — so this key must survive `v === undefined`
-      // filtering below, which it does, and must not be defaulted anywhere.
-      'abandon_announcement_id',
-    ]);
-    const json = new Set(['retry_policy', 'disposition_catalog', 'context_display']);
     const sets: string[] = [];
     const values: unknown[] = [id];
     for (const [k, v] of Object.entries(patch)) {
-      if (!allowed.has(k) || v === undefined) continue;
-      values.push(json.has(k) ? JSON.stringify(v) : v);
-      sets.push(`${k} = $${values.length}${json.has(k) ? '::jsonb' : ''}`);
+      if (!CAMPAIGN_PATCHABLE_COLUMNS.has(k) || v === undefined) continue;
+      const json = CAMPAIGN_JSONB_COLUMNS.has(k);
+      values.push(json ? JSON.stringify(v) : v);
+      sets.push(`${k} = $${values.length}${json ? '::jsonb' : ''}`);
     }
     if (sets.length === 0) return this.findById(id);
     const { rows } = await getPool().query<AgencyCampaignRecord>(
