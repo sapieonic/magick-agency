@@ -1,16 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef } from 'react';
 import type {
   AgencyAgentState,
-  AgencyMissedRelease,
-  AgencyReservedAttempt,
   AgencySessionBootstrap,
-  AgencyStationErrorFrame,
-  AgencyStationReleasedFrame,
   AgencyStationServerFrame,
 } from '../types/agency';
 import { AGENCY_STATION_CLOSE } from '../types/agency';
 import { mintStationToken } from '../api/agency';
-import { API_BASE } from '../config';
 import {
   trackAgencyStationConnectionChanged,
   trackAgencyStationTokenMintFailed,
@@ -22,7 +17,23 @@ import { ClockOffsetEstimator, elapsedSince } from '../utils/agencyClock';
 import type { CueDispatcher } from '../utils/agencyCues';
 import { encodeAgencyMediaFrame, readAgencyMediaPayload } from '../utils/agencyMedia';
 import { openWrapup, type WrapupAnchor } from '../utils/agencyWrapup';
-import { DiagnosticsLog, type DiagnosticEntry } from '../utils/agencyDiagnostics';
+import { DiagnosticsLog } from '../utils/agencyDiagnostics';
+import {
+  FLAP_WINDOW_MS,
+  TOKEN_MINT_TIMEOUT_MS,
+  backoffFor,
+  recordLiveThenDead,
+  silentTooLong,
+  withDeadline,
+} from '../utils/agencyStationLiveness';
+import { INITIAL_STATION_STATE, stationReducer } from '../utils/agencyStationReducer';
+import { toAbsoluteWsUrl } from '../utils/agencyStationWsUrl';
+import { useStationUnloadGuard } from './useStationUnloadGuard';
+import type {
+  AgencyStationAudioSink,
+  LiveAttempt,
+  UseAgencyStationResult,
+} from './agencyStation/types';
 import { useLatestRef } from './useLatestRef';
 
 /**
@@ -61,276 +72,13 @@ import { useLatestRef } from './useLatestRef';
  * `media` is handled explicitly, routed to the audio sink, and **never logged**.
  */
 
-export type StationConnection =
-  | 'idle'
-  | 'connecting'
-  | 'open'
-  /** Socket lost, retry scheduled. Do NOT say "call ended" here. */
-  | 'reconnecting'
-  /** Terminal: this session cannot be reconnected. Re-bootstrap required. */
-  | 'session_gone'
-  /** Terminal: another window took this session. */
-  | 'superseded'
-  /**
-   * Terminal *by choice*: the console has stopped retrying and is waiting for the
-   * agent to say so. Reached two ways, both meaning "you are not receiving calls
-   * and we are no longer pretending otherwise":
-   *
-   * - three missed pings — 30 s of silence on an open socket. The API's
-   *   `OWNERSHIP_TTL_MS` is 30 s, so by this point the server really has dropped
-   *   the agent; the socket is closed here so the API's registry stops claiming a
-   *   station this console cannot use.
-   * - the flap cap — more than `FLAP_LIMIT` connects inside `FLAP_WINDOW_MS`,
-   *   which is not a network to wait out.
-   *
-   * Distinct from `session_gone`: the session is still joinable, so `reconnect()`
-   * is a real way back and the rail offers it.
-   */
-  | 'disconnected';
-
+export type {
+  StationConnection,
+  AgencyStationAudioSink,
+  LiveAttempt,
+  UseAgencyStationResult,
+} from './agencyStation/types';
 export type { DiagnosticEntry } from '../utils/agencyDiagnostics';
-
-/**
- * Where inbound audio goes.
- *
- * An interface rather than a callback prop so the console can hand over one
- * object with a **stable identity** for the life of the shift. That is
- * load-bearing here for the same reason the clock estimator lives in a ref: a
- * sink whose identity changed per render would change `handleFrame`, which
- * changes `connect`, which tears down and re-opens the station socket. An
- * inline arrow function in the caller's options object would do exactly that.
- */
-export interface AgencyStationAudioSink {
-  /** Base64 PCM16 mono 16 kHz — see `utils/agencyMedia.ts` for the provenance. */
-  onMedia(payload: string): void;
-}
-
-export interface LiveAttempt {
-  attempt: AgencyReservedAttempt;
-  /**
-   * Set only by `bridged` (or read off `ready.active_attempt.bridged_at` on a
-   * reconnect). Its presence IS "the call is up", and **its absence IS "still
-   * ringing"** — that is the whole pre-answer/post-answer discriminator, and the
-   * only one the API supplies.
-   *
-   * `secondsRemaining` and `ringing` used to sit beside this, fed exclusively by
-   * the `countdown` frame. The API emits no such frame and nothing read either field;
-   * both went with the handler. `StateRail` has always derived "Ringing — get
-   * ready" from `bridgedAt === null`, so nothing on screen changed.
-   */
-  bridgedAt: string | null;
-}
-
-export interface UseAgencyStationResult {
-  connection: StationConnection;
-  agentState: AgencyAgentState;
-  /** `agent_state.since` — the ONLY anchor for break elapsed time. */
-  agentStateSince: string | null;
-  /** `agent_state.break_reason`, the code in effect while on break. */
-  breakReasonCode: string | null;
-  /**
-   * `agent_state.pending_break_reason` — a break ACCEPTED BUT NOT YET APPLIED.
-   *
-   * Distinct from `breakReasonCode` above, which is the break in effect. This one
-   * is the queue, and it is read off the socket because **the queue outlives the
-   * request that created it**: the HTTP response was the console's only source
-   * until now, so a break queued mid-call went invisible — and therefore
-   * uncancellable — the moment the socket blipped or another window queued it.
-   *
-   * **`null` means the last transition said nothing is queued, not "unknown".**
-   * The API's `/break/cancel` sends an `agent_state` with the pending fields omitted
-   * for exactly this purpose, so absence is a statement. Read it together with
-   * `agentStateSince`, which moves on every transition and is what tells a
-   * consumer a frame has actually spoken.
-   *
-   * The API pairs `pending_state: 'break'` with `pending_break_reason` at all three of
-   * its emitters (the `/break` route, wrap-up entry, and `ready`), so a queued
-   * break with no code is not a state the API can produce and is not defended against
-   * here.
-   */
-  pendingBreakCode: string | null;
-  /**
-   * How many authoritative frames have **stated** the queue. Monotonic; the value
-   * means nothing and the *change* is the whole signal.
-   *
-   * A consumer that keeps its own copy of the queue — the console does, because the
-   * HTTP response that queues a break is the fastest answer to the agent's own
-   * click — cannot reconcile off `pendingBreakCode` alone. Absence is a statement
-   * (`/break/cancel` omits the fields to say the queue is empty), so the second
-   * statement of the same value has to be visible, and a value that is already
-   * `null` moves nothing. `agentStateSince` used to serve as that marker and no
-   * longer can: `ready` restates the queue and carries no `since`, deliberately —
-   * a reconnect is not a transition, and the API refuses to invent the instant a break
-   * was queued (`contracts.ts`, `AgencyStationReadyFrame.pending_state`).
-   *
-   * `0` therefore means "no frame has spoken yet", which is a different thing from
-   * "the API says nothing is queued".
-   */
-  pendingBreakStatements: number;
-  live: LiveAttempt | null;
-  /**
-   * The released attempt whose panel and pad **stay up** through wrap-up.
-   *
-   * on a `released` with `requires_disposition: true` the console takes
-   * wrap-up shape *immediately* — "panel stays up and readable, pad enabled". The
-   * Phase 1 hook cleared `live` on every `released`, which is correct for the
-   * agent's *call* and wrong for the agent's *screen*: it left them dispositioning
-   * a contact whose details had just vanished.
-   *
-   * Cleared by a new `reserved` (a new reservation always wins) and by
-   * `agent_state` leaving `wrapup`.
-   */
-  retainedAttempt: AgencyReservedAttempt | null;
-  /**
-   * The attempt the station holds **now**, for the stale-response guard: the live
-   * or reserved one, else the one being dispositioned. `null` only when there is
-   * genuinely none — which is deliberately not a discard.
-   */
-  currentAttemptId: string | null;
-  /**
-   * Wrap-up, captured **once, on the frame**.
-   *
-   * `null` means **no wrap-up frame**, which is a different state from a frame
-   * carrying `ends_at: null` — that one is a real held window and produces an
-   * anchor with a null `deadlineMs`. There is deliberately no companion "waiting
-   * for the frame" flag here: a flag beside a nullable anchor is how the two get
-   * merged back together.
-   */
-  wrapup: WrapupAnchor | null;
-  /**
-   * Rolling median offset from `pong`, in ms, to subtract from a server instant
-   *. Zero until the first sample, which is the honest position.
-   */
-  clockOffsetMs: number;
-  release: AgencyStationReleasedFrame | null;
-  /**
-   * `Date.now()` when `release` was last set to a non-null frame — analytics only.
-   * The wire's `released` frame carries no timestamp of its own (confirmed on
-   * `AgencyStationReleasedFrame`), so this is the client's own stamp, cleared at
-   * every site that clears `release` so the two never drift apart.
-   */
-  releasedAt: number | null;
-  /**
-   * The `released` that landed while this session had no socket (`ready`).
-   *
-   * Held **separately from `release`** rather than folded into it, and the reason
-   * is the one the API states in the contract: this is history, not a transition. It
-   * must not fire the disconnect cue, must not clear a panel, and must not open a
-   * wrap-up — everything the `released` handler does is right for a call ending
-   * now and wrong for one that ended nine minutes ago. Keeping it in its own field
-   * means the distinction is structural instead of a comment asking for care.
-   *
-   * **The API consumes it on read**, so this frame is the only offer. Dropped, the
-   * record is gone for good and the agent comes back to an empty station.
-   */
-  missedRelease: AgencyMissedRelease | null;
-  lastError: AgencyStationErrorFrame | null;
-  /** Whether the engine will produce further calls (from `campaign_state`). */
-  dialing: boolean;
-  /** Consecutive missed heartbeats, for the connection health pill. */
-  missedPings: number;
-  /**
-   * The diagnostics buffer's entries — oldest first, one array for the life of
-   * the hook, appended in place without a render (see `utils/agencyDiagnostics`).
-   */
-  diagnostics: readonly DiagnosticEntry[];
-  // `hangup` removed — see the note where its implementation was.
-  // Hanging up is `hangupAttempt()` in `src/api/agency.ts`, not a socket frame.
-  /** Force a reconnect (the "Reconnect" button on a dropped station). */
-  reconnect: () => void;
-  /**
-   * Push one captured audio frame to the API. Returns whether it went on the wire.
-   *
-   * **Reads the socket ref at call time, never a closed-over socket**, so a
-   * reconnect mid-call resumes the agent's uplink onto the new socket with no
-   * re-wiring by the caller — and a `false` during the gap is a dropped 20 ms
-   * frame, which is the correct outcome and is inaudible.
-   *
-   * Unlike the removed `hangup` frame, this one is read: the API's borrowed-leg
-   * listener acts on `media` and nothing else
-   * (`webrtc-bridge-manager.ts:1083`).
-   */
-  sendMedia: (payload: string) => boolean;
-}
-
-/**
- * Reconnect backoff. Deliberately NOT read from `intervals`: those are the
- * server's liveness parameters, and reusing `heartbeat_ms` as a retry delay
- * would couple two unrelated things so that retuning one silently retunes the
- * other. These are the client's own retry policy.
- */
-const BACKOFF_MS = [500, 1000, 2000, 5000, 10_000, 15_000];
-
-function backoffFor(attempt: number): number {
-  return BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)]!;
-}
-
-/**
- * the third row. Three missed pings is 30 s of silence, which is also the API's
- * `OWNERSHIP_TTL_MS` — so the server has genuinely dropped the agent and the
- * console must say so rather than keep a dead socket open.
- */
-const MISSED_PING_LIMIT = 3;
-
-/**
- * The flap cap the ticket asks for. More than `FLAP_LIMIT` connects inside
- * `FLAP_WINDOW_MS` is not a connection to wait out, and retrying it forever is
- * the incident this whole change exists to stop: the console reconnects ~1/s,
- * the API supersedes and re-attaches at the same rate, and the agent strobes in and
- * out of the dialable pool while the screen looks busy but fine.
- *
- * **It counts one specific thing: a socket that PROVED liveness and then died.**
- * Not connect attempts. An earlier version counted every `connect()`, and two
- * reviews showed that was mis-targeted in both directions:
- *
- * - **It capped a healthy console during any outage over ~34 s.** Walking
- *   `BACKOFF_MS` from cold puts attempts at t = 0, 0.5, 1.5, 3.5, 8.5, 18.5 and
- *   33.5 s, so the seventh tripped it — and a rolling deploy, a pod restart or an
- *   LB drain all exceed 34 s. That parked every agent on the floor behind a
- *   manual click simultaneously, which is the opposite of a hook whose whole job
- *   is to survive a shift across wifi blips and an API deploy.
- * - **It could not see the only pattern that still loops fast.** Now that the
- *   ladder resets on a `pong` rather than on `open`, a socket that never proves
- *   liveness walks out to the 15 s ceiling on its own — the cadence decays and
- *   there is nothing to cap. What does NOT decay is a socket that pongs, dies,
- *   and pongs again: two windows duelling over one session reset each other's
- *   ladder to 500 ms forever. That is the shape this exists for.
- *
- * So the stamp is written in `scheduleRetry`, and only when the socket that just
- * died had answered a ping. Six such cycles in a minute is not a line to wait
- * out; an unreachable server never reaches the counter at all and keeps retrying
- * at the ceiling, so it self-heals the moment the server returns.
- */
-const FLAP_LIMIT = 6;
-const FLAP_WINDOW_MS = 60_000;
-
-/**
- * A bound on the token mint, because `apiFetch` has none.
- *
- * `mintStationToken` is awaited inside `connect()`, and **both** safety nets live
- * inside `connect()` — so a request that hangs rather than rejecting left the hook
- * with no socket, no heartbeat, no pending retry and `connection: 'reconnecting'`,
- * which is the one state the rail deliberately offers no button in. A stuck
- * console recoverable only by reload is precisely the failure this whole change
- * set out to remove, so the mint gets a deadline and a rejection is a path the
- * retry ladder already knows how to walk.
- */
-const TOKEN_MINT_TIMEOUT_MS = 15_000;
-
-/**
- * `promise`, or a rejection with `message` once `ms` pass — whichever is first.
- *
- * The deadline's timer is cleared the moment the race settles either way. It used
- * to be left running after the mint won, so every reconnect left a stray timer
- * behind, rejecting a promise nothing listened to any more.
- */
-function withDeadline<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
-  });
-  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
-}
 
 /**
  * Retire a socket so nothing it does afterwards can be mistaken for the live
@@ -397,22 +145,30 @@ export function useAgencyStation(
   const enabled = options.enabled ?? true;
   const cues = options.cues;
 
-  const [connection, setConnection] = useState<StationConnection>('idle');
-  const [agentState, setAgentState] = useState<AgencyAgentState>('offline');
-  const [agentStateSince, setAgentStateSince] = useState<string | null>(null);
-  const [breakReasonCode, setBreakReasonCode] = useState<string | null>(null);
-  const [pendingBreakCode, setPendingBreakCode] = useState<string | null>(null);
-  const [pendingBreakStatements, setPendingBreakStatements] = useState(0);
-  const [missedRelease, setMissedRelease] = useState<AgencyMissedRelease | null>(null);
-  const [live, setLive] = useState<LiveAttempt | null>(null);
-  const [retainedAttempt, setRetainedAttempt] = useState<AgencyReservedAttempt | null>(null);
-  const [wrapup, setWrapup] = useState<WrapupAnchor | null>(null);
-  const [clockOffsetMs, setClockOffsetMs] = useState(0);
-  const [release, setRelease] = useState<AgencyStationReleasedFrame | null>(null);
-  const [releasedAt, setReleasedAt] = useState<number | null>(null);
-  const [lastError, setLastError] = useState<AgencyStationErrorFrame | null>(null);
-  const [dialing, setDialing] = useState(true);
-  const [missedPings, setMissedPings] = useState(0);
+  /**
+   * Every field the console renders, moved by one pure transition per frame —
+   * see `utils/agencyStationReducer` for the groups that used to be sixteen
+   * `useState`s written together by hand.
+   */
+  const [state, dispatch] = useReducer(stationReducer, INITIAL_STATION_STATE);
+  const {
+    connection,
+    agentState,
+    agentStateSince,
+    breakReasonCode,
+    pendingBreakCode,
+    pendingBreakStatements,
+    missedRelease,
+    live,
+    retainedAttempt,
+    wrapup,
+    clockOffsetMs,
+    release,
+    releasedAt,
+    lastError,
+    dialing,
+    missedPings,
+  } = state;
   const diagnosticsRef = useRef<DiagnosticsLog | null>(null);
   if (diagnosticsRef.current === null) {
     diagnosticsRef.current = options.diagnostics ?? new DiagnosticsLog();
@@ -507,19 +263,17 @@ export function useAgencyStation(
   /**
    * The agent state as of the **last frame**, not as of the last render.
    *
-   * Written by `applyAgentState` at the moment a state frame is handled, which is
-   * what makes it usable *inside* the handler: `liveRef` above is assigned during
-   * render and therefore still holds the pre-batch value while several frames are
-   * being dispatched in one task — exactly the situation this is read in (the API sends
+   * Written at the moment a state frame is handled (`ready`, `agent_state`),
+   * which is what makes it usable from a listener that registered once: `liveRef`
+   * above is assigned during render and therefore still holds the pre-batch value
+   * while several frames are being dispatched in one task (the API sends
    * `released` → `agent_state` → `wrapup` back to back).
    *
-   * Its consumers — the `agent_state` handler and `ready`'s wrap-up-is-over branch —
-   * both ask it the one question "did a wrap-up actually happen?", which decides
-   * whether the `released` frame has already been explained to the agent or still
-   * owes them an account. A boolean flag beside `wrapup` would
-   * answer the same question and is deliberately avoided — "no frame"
-   * and "a frame with no deadline" structurally distinct, and a companion flag next
-   * to that anchor is how the two get merged back together.
+   * Its consumer is the unload guard, which asks whether a customer is on the
+   * line. The frame handlers' own question — "did a wrap-up actually happen?" —
+   * used to be asked of this ref too; the reducer now answers it from the state
+   * as of the last action, which is the same value (see
+   * `utils/agencyStationReducer`).
    */
   const agentStateRef = useRef<AgencyAgentState>('offline');
   /**
@@ -617,43 +371,6 @@ export function useAgencyStation(
   }, []);
 
   /**
-   * One authoritative statement of the break queue, from either frame that makes
-   * one (`agent_state` and `ready`).
-   *
-   * The code and the statement counter are written **here and nowhere else** so
-   * they cannot come apart: a consumer reconciling its own copy needs the counter to
-   * move even when the code does not, and a caller that set one without the other
-   * would silently break the clearing case — which is the case that matters, since
-   * absence is how the API says the queue is empty.
-   *
-   * Stable identity (`[]`, setters only), because `handleFrame` depends on it and
-   * `handleFrame` → `connect` → the connect effect: a dependency that moved would
-   * re-open the station socket.
-   */
-  const stateBreakQueue = useCallback(
-    (pending: AgencyAgentState | undefined, reason: string | undefined) => {
-      setPendingBreakCode(pending === 'break' ? (reason ?? null) : null);
-      setPendingBreakStatements((n) => n + 1);
-    },
-    [],
-  );
-
-  /**
-   * The one writer of `agentState`, so `agentStateRef` cannot fall out of step with
-   * it. Returns the state that was in effect **before** this frame, which is the
-   * only way the handler can tell a wrap-up that happened from one that never did.
-   *
-   * Stable identity for the same reason as `stateBreakQueue`: `handleFrame` depends
-   * on it, and `handleFrame` → `connect` → the connect effect.
-   */
-  const applyAgentState = useCallback((next: AgencyAgentState): AgencyAgentState => {
-    const previous = agentStateRef.current;
-    agentStateRef.current = next;
-    setAgentState(next);
-    return previous;
-  }, []);
-
-  /**
    * Route one frame. Switches on the AUTHORITATIVE set only; everything else
    * — bridge frames, and anything the API adds later — falls through to the
    * diagnostic sink rather than throwing.
@@ -748,10 +465,10 @@ export function useAgencyStation(
            *
            * So: replace or clear, field by field, and never merely add.
            */
-          // The return value is read below, for the same question the `agent_state`
-          // handler asks it: did a wrap-up actually happen, and has it therefore
-          // already put the release copy in front of the agent?
-          const previousState = applyAgentState(frame.state);
+          // The state transition for the whole snapshot is ONE dispatch at the end
+          // of this case (`stationReducer`'s `ready`); what sits here is the
+          // reasoning for each field, beside the side effects that share the frame.
+          agentStateRef.current = frame.state;
           // A socket that reconnected onto a still-live attempt rehydrates it,
           // rather than leaving the agent staring at an empty panel while a
           // customer is on the line.
@@ -769,8 +486,8 @@ export function useAgencyStation(
              */
             const bridgedAt = frame.active_attempt.bridged_at;
             // Pre-answer ⇒ the rail says "Ringing — get ready". Post-answer ⇒ the
-            // talk timer anchors to `bridged_at`. One field, both readings.
-            setLive({ attempt: frame.active_attempt, bridgedAt });
+            // talk timer anchors to `bridged_at`. One field, both readings — the
+            // reducer sets `live` from it.
             /**
              * **A rehydrated socket is not a connect event**, so this fires nothing
              * — it only tells the dispatcher what it missed, so that a later
@@ -826,9 +543,8 @@ export function useAgencyStation(
              *
              * Clearing it here needs no companion change in the console: the audio
              * effect and the panel both already derive from `live`, so they disarm
-             * and re-render on their own.
+             * and re-render on their own. (The reducer's `ready` clears it.)
              */
-            setLive(null);
           }
           /**
            * ── The wrap-up window: `state` decides whether, `active_wrapup` decides
@@ -852,15 +568,12 @@ export function useAgencyStation(
             // `held` treatment, "ends when you act", which is the honest reading of
             // "the API says you are in wrap-up and cannot tell us until when".
             if (frame.active_wrapup) {
-              setWrapup(openWrapup(frame.active_wrapup, offsetRef.current, Date.now()));
               /**
                * A consistency check with a real, if rare, subject: if the API names a
                * different attempt's wrap-up than the one whose panel we are holding,
                * ours is from a call that finished while the socket was away and the
                * contact details beside the pad belong to the wrong customer.
                */
-              const anchored = frame.active_wrapup.attempt_id;
-              setRetainedAttempt((prev) => (prev && prev.attempt_id !== anchored ? null : prev));
             }
           } else {
             /**
@@ -905,12 +618,6 @@ export function useAgencyStation(
              * reason. Pad route (b) is unaffected — it is gated on `retainedAttempt`,
              * which is cleared unconditionally above.
              */
-            setWrapup(null);
-            setRetainedAttempt(null);
-            if (previousState === 'wrapup' || frame.missed_release || frame.active_attempt) {
-              setRelease(null);
-              setReleasedAt(null);
-            }
           }
           /**
            * **Consumed-on-read on the API's side, so this is the only offer.** Stored,
@@ -934,7 +641,6 @@ export function useAgencyStation(
               missed: true,
             });
           }
-          setMissedRelease(frame.missed_release ?? null);
           /**
            * ── The queued break, and the gap this used to record ────────────────
            *
@@ -958,16 +664,22 @@ export function useAgencyStation(
            * away, or already applied), so keeping what we hold would leave a badge up
            * for a break that will never happen.
            */
-          stateBreakQueue(frame.pending_state, frame.pending_break_reason);
+          dispatch({
+            type: 'ready',
+            frame,
+            // Opened HERE, from the present and the offset, never in the reducer.
+            wrapup: frame.active_wrapup
+              ? openWrapup(frame.active_wrapup, offsetRef.current, Date.now())
+              : null,
+          });
           return;
         }
 
         case 'agent_state': {
           // Authoritative. Any optimistic render is reconciled here and never
           // left standing.
-          const previousState = applyAgentState(frame.state);
-          setAgentStateSince(frame.since);
-          setBreakReasonCode(frame.break_reason ?? null);
+          agentStateRef.current = frame.state;
+          dispatch({ type: 'agent_state', frame });
           /**
            * **The queue, read off every transition — including the ones that say it
            * is empty.**
@@ -979,14 +691,11 @@ export function useAgencyStation(
            * `if (frame.pending_state)` here would leave a cancelled break's pill on
            * screen forever, which is worse than never showing it.
            */
-          stateBreakQueue(frame.pending_state, frame.pending_break_reason);
           if (frame.state !== 'wrapup') {
             // **`agent_state` is the one authority for wrap-up ENDING**.
             // Not the countdown reaching zero, not the wrap-up frame, and not the
             // disposition response — so there is no second frame to race and no
             // case where the console has to decide which of two frames won.
-            setWrapup(null);
-            setRetainedAttempt(null);
             /**
              * **`release` outlives wrap-up only when there was no wrap-up** (see above).
              *
@@ -1003,14 +712,10 @@ export function useAgencyStation(
              * call ended. It is cleared by the next `reserved`, the same lifetime the
              * missed-release notice has, and for the same reason.
              *
-             * The previous state is read from `agentStateRef` rather than from
-             * `agentState`: these frames arrive in one task and the rendered value is
-             * still pre-batch here.
+             * The previous state is the reducer's, as of the last action — not the
+             * rendered `agentState`, which is still pre-batch while these frames
+             * arrive in one task.
              */
-            if (previousState === 'wrapup') {
-              setRelease(null);
-              setReleasedAt(null);
-            }
           }
           return;
         }
@@ -1022,7 +727,7 @@ export function useAgencyStation(
           // remainder: the bar sits pinned at 100% and then snaps to zero while
           // the digits beside it count down correctly. That reads as a frozen UI,
           // and it survives review precisely because the digits look right.
-          setWrapup(openWrapup(frame.wrapup, offsetRef.current, Date.now()));
+          dispatch({ type: 'wrapup', anchor: openWrapup(frame.wrapup, offsetRef.current, Date.now()) });
           return;
         }
 
@@ -1032,17 +737,13 @@ export function useAgencyStation(
           // The context push. Panel renders fully populated, in a connecting
           // state, with zero HTTP — there is no request that could lose the
           // race against the carrier answering.
-          setRelease(null);
-          setReleasedAt(null);
-          // A new reservation always wins and replaces the panel, so any
-          // wrap-up still on screen belongs to a call that is over.
-          setRetainedAttempt(null);
-          setWrapup(null);
-          // Same rule for the account of a call the agent missed: it was about the
-          // previous customer, and leaving it beside this one's details is the
-          // stale-notice defect refused everywhere else on this screen.
-          setMissedRelease(null);
-          setLive({ attempt: frame.attempt, bridgedAt: null });
+          //
+          // A new reservation always wins and replaces the panel, so any wrap-up
+          // or release still on screen belongs to a call that is over — and so
+          // does the account of a call the agent missed: it was about the previous
+          // customer, and leaving it beside this one's details is the stale-notice
+          // defect refused everywhere else on this screen.
+          dispatch({ type: 'reserved', attempt: frame.attempt });
           /**
            * Analytics: the shift's running reservation tally. A local counter —
            * `frame.attempt.attempt_number` is the API's per-CONTACT retry count, not
@@ -1096,11 +797,7 @@ export function useAgencyStation(
            * argument.
            */
           cues?.onBridged(frame.attempt_id, receivedAt);
-          setLive((prev) =>
-            prev && prev.attempt.attempt_id === frame.attempt_id
-              ? { ...prev, bridgedAt: frame.bridged_at }
-              : prev,
-          );
+          dispatch({ type: 'bridged', attemptId: frame.attempt_id, bridgedAt: frame.bridged_at });
           /**
            * Analytics. `0` when this hook instance never saw the `reserved` frame
            * for this attempt (a reconnect landing after the ring began) — there is
@@ -1126,17 +823,8 @@ export function useAgencyStation(
           // end of a call that never connected is a report of something that did not
           // happen.
           cues?.onReleased(frame.attempt_id);
-          setRelease(frame);
-          setReleasedAt(Date.now());
-          // The panel and pad stay up when there is still work to do.
-          // The call is over — `live` goes — but the contact the agent is about to
-          // disposition must not vanish from under them.
-          if (frame.requires_disposition) {
-            const attempt = liveRef.current?.attempt ?? null;
-            if (attempt && attempt.attempt_id === frame.attempt_id) setRetainedAttempt(attempt);
-          }
           /**
-           * Analytics, read off `liveRef` before `setLive(null)` below clears it —
+           * Analytics, read off `liveRef` before the `released` dispatch below clears `live` —
            * `bridgedAt` is the only authority this hook has for "did the customer
            * actually answer", the same discriminator `LiveAttempt` documents.
            */
@@ -1161,21 +849,29 @@ export function useAgencyStation(
               missed: false,
             });
           }
-          setLive(null);
+          // The panel and pad stay up when there is still work to do. The call is
+          // over — `live` goes — but the contact the agent is about to disposition
+          // must not vanish from under them. The attempt is read off `liveRef`,
+          // as it always was, and handed to the reducer.
+          dispatch({
+            type: 'released',
+            frame,
+            at: Date.now(),
+            retain: liveRef.current?.attempt ?? null,
+          });
           return;
         }
 
         case 'campaign_state': {
           // `dialing` and not `status`: deriving the predicate from `status`
           // forces every client to re-derive it, and they will disagree.
-          setDialing(frame.dialing);
+          dispatch({ type: 'campaign_state', dialing: frame.dialing });
           logDiagnostic('campaign_state', `${frame.status} (${frame.reason})`);
           return;
         }
 
         case 'pong': {
           pendingPingsRef.current = 0;
-          setMissedPings(0);
           /**
            * **This — not `onopen` — is what resets the backoff ladder.**
            *
@@ -1205,6 +901,7 @@ export function useAgencyStation(
           // A machine minutes out of NTP would otherwise render a countdown
           // minutes out — looking exactly like a product bug and reproducing on
           // nobody's development machine.
+          let offsetMs: number | null = null;
           if (typeof frame.ts === 'number' && typeof frame.server_ts === 'number') {
             estimatorRef.current = estimatorRef.current.push({
               ts: frame.ts,
@@ -1212,14 +909,16 @@ export function useAgencyStation(
               receivedAt: Date.now(),
             });
             offsetRef.current = estimatorRef.current.offsetMs;
-            setClockOffsetMs(offsetRef.current);
+            offsetMs = offsetRef.current;
           }
+          // Misses cleared, and the offset moved when there was a sample.
+          dispatch({ type: 'pong', offsetMs });
           return;
         }
 
         case 'error': {
           // Non-fatal by contract; the socket stays open.
-          setLastError(frame);
+          dispatch({ type: 'error', frame });
           logDiagnostic('error', `${frame.code}: ${frame.message}`);
           return;
         }
@@ -1236,7 +935,7 @@ export function useAgencyStation(
         }
       }
     },
-    [logDiagnostic, cues, stateBreakQueue, applyAgentState],
+    [logDiagnostic, cues, audioRef, bootstrapRef, liveRef],
   );
 
   const connect = useCallback(async () => {
@@ -1269,7 +968,7 @@ export function useAgencyStation(
     abandon(incumbent);
     clearTimers();
 
-    setConnection(retryCountRef.current === 0 ? 'connecting' : 'reconnecting');
+    dispatch({ type: 'connection', connection: retryCountRef.current === 0 ? 'connecting' : 'reconnecting' });
 
     let url: string;
     if (!tokenSpentRef.current) {
@@ -1319,8 +1018,8 @@ export function useAgencyStation(
       // number for the flap it now measures, and it is a deliberate change of
       // meaning rather than a leftover.
       pendingPingsRef.current = 0;
-      setMissedPings(0);
-      setConnection('open');
+      dispatch({ type: 'missed_pings', count: 0 });
+      dispatch({ type: 'connection', connection: 'open' });
       reportConnection('open', null);
 
       // Cleared, not stamped: the immediate ping below is what starts the clock.
@@ -1362,7 +1061,7 @@ export function useAgencyStation(
          * it is a miss.
          */
         pendingPingsRef.current += 1;
-        setMissedPings(pendingPingsRef.current);
+        dispatch({ type: 'missed_pings', count: pendingPingsRef.current });
 
         /**
          * ── NEVER TEAR DOWN A LIVE CALL ON THIS TIMER ──────────────────────
@@ -1416,11 +1115,13 @@ export function useAgencyStation(
          * review asked — nothing decides on it.
          */
         const unansweredForMs = Date.now() - unansweredSinceRef.current;
-        const silentTooLong =
-          unansweredSinceRef.current !== 0
-          && unansweredForMs >= MISSED_PING_LIMIT * bootstrap.intervals.heartbeat_ms;
+        const silent = silentTooLong(
+          unansweredSinceRef.current,
+          Date.now(),
+          bootstrap.intervals.heartbeat_ms,
+        );
 
-        if (silentTooLong && liveRef.current !== null) {
+        if (silent && liveRef.current !== null) {
           // Held, not resolved: the counting and the pinging both continue, so a
           // line that recovers mid-call clears itself, and one that does not is
           // given up on as soon as `released` clears `liveRef`.
@@ -1430,7 +1131,7 @@ export function useAgencyStation(
           );
           return;
         }
-        if (silentTooLong) {
+        if (silent) {
           giveUp('heartbeat', `${Math.round(unansweredForMs / 1000)}s without a pong`);
         }
       }, bootstrap.intervals.heartbeat_ms);
@@ -1471,13 +1172,13 @@ export function useAgencyStation(
       // indistinguishable from a network problem and gives them nothing to do.
       if (event.code === AGENCY_STATION_CLOSE.SESSION_GONE) {
         logDiagnostic('close', '4404 session gone — re-bootstrap required');
-        setConnection('session_gone');
+        dispatch({ type: 'connection', connection: 'session_gone' });
         reportConnection('session_gone', event.code);
         return;
       }
       if (event.code === AGENCY_STATION_CLOSE.SUPERSEDED) {
         logDiagnostic('close', '4409 superseded by another window');
-        setConnection('superseded');
+        dispatch({ type: 'connection', connection: 'superseded' });
         reportConnection('superseded', event.code);
         return;
       }
@@ -1511,7 +1212,7 @@ export function useAgencyStation(
       abandon(dying, cause);
       connectStampsRef.current = [];
       logDiagnostic('disconnected', `${cause}: ${detail}`);
-      setConnection('disconnected');
+      dispatch({ type: 'connection', connection: 'disconnected' });
       // `cause`: the two causes have opposite runbooks — the line is bouncing
       // versus the API's pong path has stalled — and without it they emitted
       // identical payloads, so the incident was detectable and not triageable.
@@ -1523,7 +1224,7 @@ export function useAgencyStation(
     // report — the token-mint failure above, which schedules a retry off a
     // rejected HTTP call rather than a socket close.
     function scheduleRetry(closeCode: number | null = null): void {
-      setConnection('reconnecting');
+      dispatch({ type: 'connection', connection: 'reconnecting' });
       reportConnection('reconnecting', closeCode);
       /**
        * The flap counter, written here rather than at connect: only a socket that
@@ -1531,14 +1232,12 @@ export function useAgencyStation(
        * Pruned to the window on every pass, so the array cannot exceed the limit.
        */
       if (provedLiveRef.current) {
-        const now = Date.now();
-        const recent = connectStampsRef.current.filter((at) => now - at < FLAP_WINDOW_MS);
-        recent.push(now);
-        connectStampsRef.current = recent;
-        if (recent.length > FLAP_LIMIT) {
+        const { stamps, flapping } = recordLiveThenDead(connectStampsRef.current, Date.now());
+        connectStampsRef.current = stamps;
+        if (flapping) {
           giveUp(
             'flapping',
-            `${recent.length} live-then-dead sockets in ${FLAP_WINDOW_MS / 1000}s`,
+            `${stamps.length} live-then-dead sockets in ${FLAP_WINDOW_MS / 1000}s`,
           );
           return;
         }
@@ -1640,87 +1339,27 @@ export function useAgencyStation(
     retryCountRef.current = 0;
     connectStampsRef.current = [];
     pendingPingsRef.current = 0;
-    setMissedPings(0);
+    dispatch({ type: 'missed_pings', count: 0 });
     void connect();
   }, [connect]);
 
   /**
-   * Leaving the page — the prompt, the close, and the cancel.
-   *
-   * ── Two events, because they answer two different questions ────────────────
-   * `beforeunload` fires when the browser is *asking*, and the agent may still
-   * say no. `pagehide` fires when the page is actually going away. Closing the
-   * socket in the first is the defect this split exists to fix, and it was ours:
-   * the handler prompted and then closed the socket **synchronously, before the
-   * dialog was even shown**. An agent mid-call who pressed Ctrl-W and then chose
-   * *Stay* — the exact outcome the prompt exists to produce — was left on a live
-   * page with no socket, no heartbeat and no media path. `onclose` took the
-   * deliberate-teardown branch, so nothing retried; the API expired the lease into
-   * `agent_disconnected`; and the health pill has no `'idle'` arm, so the console
-   * read "Connecting" while the customer sat on dead air. The damage landed
-   * whether or not the browser ever showed the dialog.
-   *
-   * So: **`beforeunload` only prompts, and touches nothing.** `pagehide` does the
-   * close, which is where that reasoning still holds — an unloading tab
-   * that told the API nothing leaves a customer on dead air until the heartbeat
-   * grace expires, and `pagehide` is the last point at which we can say so.
-   *
-   * ── The prompt itself ──────────────────────────────────────────────────────
-   * `preventDefault()` asks for the "leave site?" dialog while a customer is on
-   * the line, is about to be (`reserved` — the bridge is already coming), or is
-   * still owed a disposition (`wrapup`). It is only ever a request: a browser
-   * honours it after a user gesture and none of them let a page word it. Safari,
-   * and Firefox before 131, ignore `preventDefault()` alone, so `returnValue` is
-   * set too — the value is never displayed, it exists only to be set.
-   *
-   * State is read off `agentStateRef`, not `agentState`: this effect registers
-   * once, and closing over the render-time value would arm the prompt with
-   * whatever state was in effect at mount — `offline`, for the whole shift.
-   *
-   * ── `pageshow` is the other way back from a closed socket ──────────────────
-   * A page put into the back/forward cache gets `pagehide` and can be restored
-   * later. Restored, it is alive with a socket we closed and a retired
-   * generation that suppresses retries — the same dead console by a different
-   * route. A
-   * `persisted` restore therefore reconnects, and `reconnect()` claims a fresh
-   * generation so the unload close cannot undo it. It mints a token rather than
-   * replaying bootstrap's spent one, so the restore no longer costs a `4401` and
-   * a retry lap the way it did.
+   * Leaving the page: `beforeunload` only prompts, `pagehide` closes, and a
+   * back/forward-cache `pageshow` reconnects — the reasoning for each lives in
+   * `useStationUnloadGuard`. This hook supplies the two acts.
    */
-  useEffect(() => {
-    const onBeforeUnload = (event: BeforeUnloadEvent): void => {
-      const state = agentStateRef.current;
-      if (state !== 'reserved' && state !== 'on_call' && state !== 'wrapup') return;
-      event.preventDefault();
-      event.returnValue = '';
-    };
-
-    const onPageHide = (): void => {
-      // Bumping the generation is load-bearing on this path, not tidiness: the
-      // socket closed here fires `onclose` asynchronously, and on a bfcache
-      // restore that close can land AFTER `pageshow` has already reconnected.
-      // Without the bump it would tear down the socket the restore just opened.
-      generationRef.current += 1;
-      clearTimers();
-      const socket = socketRef.current;
-      socketRef.current = null;
-      abandon(socket, 'unload');
-    };
-
-    const onPageShow = (event: PageTransitionEvent): void => {
-      if (!event.persisted) return;
-      reconnect();
-    };
-
-    window.addEventListener('beforeunload', onBeforeUnload);
-    window.addEventListener('pagehide', onPageHide);
-    window.addEventListener('pageshow', onPageShow);
-    return () => {
-      window.removeEventListener('beforeunload', onBeforeUnload);
-      window.removeEventListener('pagehide', onPageHide);
-      window.removeEventListener('pageshow', onPageShow);
-    };
-  }, [reconnect, clearTimers]);
+  const retireForUnload = useCallback((): void => {
+    // Bumping the generation is load-bearing on this path, not tidiness: the
+    // socket closed here fires `onclose` asynchronously, and on a bfcache
+    // restore that close can land AFTER `pageshow` has already reconnected.
+    // Without the bump it would tear down the socket the restore just opened.
+    generationRef.current += 1;
+    clearTimers();
+    const socket = socketRef.current;
+    socketRef.current = null;
+    abandon(socket, 'unload');
+  }, [clearTimers]);
+  useStationUnloadGuard({ agentStateRef, onPageHide: retireForUnload, onRestore: reconnect });
 
   return {
     connection,
@@ -1760,40 +1399,5 @@ export function useAgencyStation(
   };
 }
 
-/**
- * The server rewrites the dialer runtime's absolute URL onto its own `/proxy/...` prefix, which
- * arrives here as a PATH. A relative path is not a valid WebSocket URL, so it
- * has to be resolved against a host — and the host is **`API_BASE`, not the
- * page's origin**, because the SPA and the API are not the same origin on any
- * real deployment.
- *
- * This resolved against `window.location.host` alone, which is correct in dev
- * (`API_BASE` empty, Vite proxying `/proxy` to the API) and correct on any
- * single-origin deploy — and wrong everywhere else. On staging the page is
- * served from one host while `API_BASE` is
- * another host, so the upgrade went to the SPA's own
- * host, matched its history fallback, and came back **`200 text/html`** — the
- * index page. A WebSocket handshake that gets a 200 instead of a 101 never
- * opens, so the API's own close codes are never reached and the console has
- * nothing to report but a bare transport failure. It then re-mints a token and
- * retries forever on the backoff below, which is what turns one misresolved
- * host into a wall of console errors and a steady stream of token mints.
- *
- * Only the **origin** is taken from `API_BASE` — a base with a path prefix is
- * not joined onto the socket path, because the path is the API's own rewrite and
- * is already absolute from the host root.
- *
- * An absolute `ws(s)://` URL is still passed through untouched: that is
- * `rewriteStationWsUrl`'s documented degradation (an unrecognised the API URL is
- * left alone so the client talks to the API directly), and rewriting its host to
- * the API's would break exactly the case that fallback exists for.
- */
-export function toAbsoluteWsUrl(pathOrUrl: string): string {
-  if (/^wss?:\/\//i.test(pathOrUrl)) return pathOrUrl;
-  const path = pathOrUrl.startsWith('/') ? pathOrUrl : `/${pathOrUrl}`;
-  // Resolved against the page URL so a RELATIVE `API_BASE` (`/api`) is handled
-  // rather than throwing out of `new URL` — a bare `new URL(API_BASE)` would.
-  const base = API_BASE ? new URL(API_BASE, window.location.href) : window.location;
-  const scheme = base.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${scheme}//${base.host}${path}`;
-}
+/** Moved to `utils/agencyStationWsUrl`; re-exported so existing imports keep working. */
+export { toAbsoluteWsUrl } from '../utils/agencyStationWsUrl';
