@@ -496,12 +496,11 @@ export interface AgencyRetryContext {
  * `allowed_codes` is a code-specific extra that only three of its members set.
  * `campaign_id` / `campaign_name` / `state` are the same thing for one member.
  *
- * The consequence that decided it is `message`. The public API layer's error mask is keyed on
- * `AGENCY_ACTION_ERROR_CODES`, and unless this code is listed there the mask
- * rewrites the body into "contact support and quote this request id" — so a
- * structured-fields-only payload degrades to no explanation at all. `message` is
- * the FLOOR: a sentence that stands on its own in any generic error handler that
- * has never heard of this code. The structured fields are the ceiling — the console
+ * The consequence that decided it is `message`. A client that does not know this
+ * code (an older console, a generic error handler) has only `message` to show, so
+ * a structured-fields-only payload would degrade to no explanation at all.
+ * `message` is the FLOOR: a sentence that stands on its own in any generic error
+ * handler that has never heard of this code. The structured fields are the ceiling — the console
  * composes richer copy from them, and should, but nothing depends on it doing so.
  *
  * Reassignment deliberately does NOT resolve itself: the public API layer moves only its own
@@ -1569,7 +1568,7 @@ export interface AgencyNotesResponse {
 /**
  * Why an agent action was refused.
  *
- * These exist as a closed union because the public API layer must to surface
+ * These exist as a closed union because the public API layer must surface
  * the dialer runtime's validation errors **intact**, and "intact" is not a property a free-text
  * message has: a proxy that re-words or flattens them leaves the console unable to
  * do anything but show a red box. The console keys its copy off `code`; `message`
@@ -1625,13 +1624,6 @@ export type AgencyActionErrorCode =
    * `state`; see {@link AgencySessionCampaignConflict}, which narrows this shape
    * for it. Those fields are read against this code exactly as `allowed_codes` is
    * read against its three producers — nothing else sets them.
-   *
-   * Carries the same OPEN obligation on the public API layer that `invalid_dnc_scope` carries:
-   * it must be added to `AGENCY_ACTION_ERROR_CODES` there, or the error mask
-   * rewrites it into "contact support and quote this request id" and the agent is
-   * told to raise a ticket instead of to leave their other station. The
-   * degradation is bounded and loud — the join is still refused with a 409 — which
-   * is why the dialer runtime ships the code rather than waiting.
    */
   | 'session_on_other_campaign'
   /**
@@ -1650,9 +1642,11 @@ export type AgencyActionErrorCode =
    * is `POST /attempts/:id/hangup`, or finishing the call — the dialer runtime will not end a
    * live conversation as a side effect of an agent tidying up.
    *
-   * Same obligation as the code above: list it in
-   * `AGENCY_ACTION_ERROR_CODES` or the public API layer's mask replaces this explanation with
-   * "contact support and quote this request id".
+   * The console has no copy for this one, a narrow gap rather than an oversight:
+   * `agencyStationExit.ts` blocks Leave client-side for `reserved` / `on_call` /
+   * `wrapup`, so this refusal is the backstop for the race where state changes
+   * between render and click. It is listed because the union is the full contract,
+   * not the subset the console renders.
    */
   | 'agent_on_live_call'
   /** The agent has no attached station socket, so they cannot go available. */

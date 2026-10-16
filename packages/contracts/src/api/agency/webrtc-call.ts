@@ -99,9 +99,9 @@ export interface DialerTranscriptEntry {
  * One `null` for every failure was the previous shape, and it collapsed four
  * different sentences into "Recording not available." — an entitlement refusal, a
  * call that aged out, a call that was never recorded, and a carrier we could not
- * reach. The public API layer goes to specific trouble to forward the dialer runtime's `call_purged`,
- * `call_never_placed` and `no_recording` codes unmasked (four allow-list entries
- * in its `error-mask.middleware.ts`) precisely so this distinction can be made,
+ * reach. The public API layer forwards the dialer runtime's `call_purged`,
+ * `call_never_placed` and `no_recording` codes unchanged (the error mask passes
+ * every 4xx through) precisely so this distinction can be made,
  * and the central claim is that *"the call is no longer available" must be
  * distinguishable from an error.* This union is that work's consumer.
  */

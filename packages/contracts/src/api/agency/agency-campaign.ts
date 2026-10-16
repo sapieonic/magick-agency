@@ -586,8 +586,7 @@ export interface AgencyRetryCreateResponse {
 /**
  * The three `409` refusals `POST .../retry` can answer with.
  *
- * They carry only a `code`, so the public API layer allow-lists all three in the
- * campaign-lifecycle block of its error mask — **not** in
+ * They carry only a `code`, and they are campaign refusals — **not** members of
  * `AGENCY_ACTION_ERROR_CODES`, which is attempt-action codes only and is pinned
  * in several places. Widening that union is the mistake the
  * agency build made three times.

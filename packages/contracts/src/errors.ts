@@ -1,13 +1,20 @@
 /**
  * The agency error vocabularies, each as a closed union plus an `as const` list.
  *
+ * `AgencyStationErrorCode` (the `code` on a station `error` frame) is re-exported
+ * here as a union only: no server path sends that frame today, so it has no
+ * runtime list.
+ *
  * ── Why this file exists ────────────────────────────────────────────────────
  * Each vocabulary is declared exactly once, here. Separate copies (the
- * dialer runtime's union, the public API layer's mirror and error-mask
- * allow-list, the console's own copy) would drift: a code added in one place and
- * not the others would be rewritten by the error mask into "contact support and
- * quote this request id" — status intact, explanation destroyed, nothing red
+ * dialer runtime's union, the public API layer's mirror, the console's own copy)
+ * would drift: a code the server raises and the console's copy lacks reaches the
+ * agent as a generic failure instead of the sentence keyed to it, with nothing red
  * anywhere. One application, one file.
+ *
+ * The app-wide error mask (`apps/server/src/api/middleware/error-mask.middleware.ts`)
+ * passes every 4xx through unchanged and masks only 5xx, so none of these lists is
+ * an allow-list: they are the vocabularies the console switches on.
  *
  * ── The two-sided exhaustiveness trick ──────────────────────────────────────
  * For every vocabulary:
@@ -24,7 +31,7 @@
  * drift this file exists to end.
  */
 
-import type { AgencyActionErrorCode, AgencyStationErrorCode } from './agency';
+import type { AgencyActionErrorCode } from './agency';
 import type { AllListed } from './primitives';
 
 export type { AgencyActionErrorCode, AgencyStationErrorCode } from './agency';
@@ -72,8 +79,12 @@ void _allCodesListed;
 
 // ─── 2. Roster refusal codes ────────────────────────────────────────────────
 //
-// The destructive roster change is in-process, and these are simply the refusals
-// it answers with (see `AGENCY_ROSTER_REPLACE_ENABLED`).
+// The 409 codes of the destructive roster change (`POST /proxy/agency/campaigns/:id/
+// roster/clear`, registered only under `AGENCY_ROSTER_REPLACE_ENABLED`). That route
+// forwards the supersede's `coreCode` unchanged. Nothing emits these yet: the
+// supersede is not implemented (decision B15) and always fails `unsupported`. The
+// specification of record is `supersedeRoster` in `agency-roster.client.ts`; this
+// is that specification as a value.
 
 /**
  * Why a destructive roster change was refused.
@@ -100,7 +111,7 @@ export type AgencyRosterRefusalCode =
  * Runtime list of the union above.
  *
  * `satisfies` pins it to the type, so a code added to the union and forgotten
- * here is a compile error rather than a silently masked error body.
+ * here is a compile error rather than a code the console cannot name.
  */
 export const AGENCY_ROSTER_REFUSAL_CODES = [
   'campaign_dialing',
@@ -122,8 +133,8 @@ void _allRosterCodesListed;
 // ─── 3. Campaign-lifecycle codes ────────────────────────────────────────────
 //
 // These are deliberately OUTSIDE `AGENCY_ACTION_ERROR_CODES` because they are not
-// members of the action union; the error mask forwards them by allow-list. The
-// member set is exactly the seven campaign-lifecycle codes below.
+// members of the action union: they are the campaign routes' refusals, not an
+// agent action's. The member set is exactly the seven campaign-lifecycle codes below.
 
 export type AgencyCampaignLifecycleErrorCode =
   /**
@@ -164,29 +175,3 @@ const _allLifecycleCodesListed: AllListed<
   typeof AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES
 > = true;
 void _allLifecycleCodesListed;
-
-// ─── 4. Station frame error codes ───────────────────────────────────────────
-
-/**
- * Runtime list of {@link AgencyStationErrorCode} — the `code` on an
- * `AgencyStationErrorFrame` (authority: the union in `./agency`).
- *
- * `not_your_attempt` and `campaign_not_running` are ALSO members of
- * {@link AgencyActionErrorCode}; the two vocabularies overlap by design (one is a
- * socket frame, one an HTTP body), and each list states its own union whole.
- * `session_ended` is NOT a station frame code — it is listed beside
- * these only because the error mask allow-lists it via the action list.
- */
-export const AGENCY_STATION_ERROR_CODES = [
-  'unauthorized',
-  'unknown_attempt',
-  'not_your_attempt',
-  'invalid_frame',
-  'campaign_not_running',
-] as const satisfies readonly AgencyStationErrorCode[];
-
-const _allStationCodesListed: AllListed<
-  AgencyStationErrorCode,
-  typeof AGENCY_STATION_ERROR_CODES
-> = true;
-void _allStationCodesListed;

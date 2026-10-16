@@ -3,7 +3,6 @@ import {
   AGENCY_ACTION_ERROR_CODES,
   AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES,
   AGENCY_ROSTER_REFUSAL_CODES,
-  AGENCY_STATION_ERROR_CODES,
   type AgencyActionErrorCode,
   type AgencyCampaignLifecycleErrorCode,
   type AgencyRosterRefusalCode,
@@ -48,14 +47,13 @@ const _lifecycleExact: Equals<
   (typeof AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES)[number],
   AgencyCampaignLifecycleErrorCode
 > = true;
-const _stationExact: Equals<(typeof AGENCY_STATION_ERROR_CODES)[number], AgencyStationErrorCode> = true;
 // The errors module re-exports the dialer runtime's unions rather than re-declaring them.
 const _actionIsCore: Equals<AgencyActionErrorCode, Core.AgencyActionErrorCode> = true;
 const _stationIsCore: Equals<AgencyStationErrorCode, Core.AgencyStationErrorCode> = true;
 // The console-facing layer re-exports the same unions.
 const _consoleActionAgrees: Equals<AgencyApi.AgencyActionErrorCode, AgencyActionErrorCode> = true;
 const _consoleStationAgrees: Equals<AgencyApi.AgencyStationErrorCode, AgencyStationErrorCode> = true;
-void [_actionExact, _rosterExact, _lifecycleExact, _stationExact, _actionIsCore, _stationIsCore,
+void [_actionExact, _rosterExact, _lifecycleExact, _actionIsCore, _stationIsCore,
   _consoleActionAgrees, _consoleStationAgrees];
 
 function expectUnique(list: readonly string[]): void {
@@ -110,25 +108,5 @@ describe('campaign-lifecycle codes', () => {
     const action = new Set<string>(AGENCY_ACTION_ERROR_CODES);
     for (const code of AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES) expect(action.has(code)).toBe(false);
     for (const code of AGENCY_ROSTER_REFUSAL_CODES) expect(action.has(code)).toBe(false);
-  });
-});
-
-describe('station frame error codes', () => {
-  it('are the five', () => {
-    expect([...AGENCY_STATION_ERROR_CODES]).toEqual([
-      'unauthorized',
-      'unknown_attempt',
-      'not_your_attempt',
-      'invalid_frame',
-      'campaign_not_running',
-    ]);
-  });
-
-  it('overlap the action codes exactly where the contract says they do', () => {
-    const action = new Set<string>(AGENCY_ACTION_ERROR_CODES);
-    expect(AGENCY_STATION_ERROR_CODES.filter((c) => action.has(c))).toEqual([
-      'not_your_attempt',
-      'campaign_not_running',
-    ]);
   });
 });
