@@ -85,8 +85,10 @@ import {
 } from '../../utils/agencyPriorAttempts';
 import type {
   AgencyActionErrorCode,
+  AgencyMissedRelease,
   AgencySessionBootstrap,
   AgencySessionConflict,
+  AgencyStationReleasedFrame,
 } from '../../types/agency';
 import { agencyPersona } from '../../utils/agencyPersona';
 import {
@@ -529,9 +531,10 @@ export default function AgentConsolePage() {
     trackAgencyHangupRequested({
       campaign_id: bootstrap?.campaign_id ?? '',
       was_bridged: Boolean(live?.bridgedAt),
-      talk_seconds: live?.bridgedAt
-        ? Math.floor((Date.now() - new Date(live.bridgedAt).getTime()) / 1000)
-        : 0,
+      // Through the corrected clock, as the rail's talk timer is — `bridged_at`
+      // is a SERVER instant, and against the raw client clock a machine 10s fast
+      // reported ten seconds the agent never talked.
+      talk_seconds: live?.bridgedAt ? Math.floor((clock.since(live.bridgedAt) ?? 0) / 1000) : 0,
     });
     /**
      * **The HTTP route is the only hangup path**.
@@ -569,7 +572,7 @@ export default function AgentConsolePage() {
         code: typeof code === 'string' ? (code as AgencyActionErrorCode) : 'unknown',
       });
     });
-  }, [live?.attempt.attempt_id, live?.bridgedAt, tenantId, accountId, bootstrap]);
+  }, [live?.attempt.attempt_id, live?.bridgedAt, tenantId, accountId, bootstrap, clock]);
 
   /**
    * Where `Exit station` goes, and who is offered it at all.
@@ -1914,8 +1917,8 @@ function IdlePanel({
   lostDisposition,
 }: {
   dialing: boolean;
-  release: ReturnType<typeof useAgencyConsole>['station']['release'];
-  missedRelease: ReturnType<typeof useAgencyConsole>['station']['missedRelease'];
+  release: AgencyStationReleasedFrame | null;
+  missedRelease: AgencyMissedRelease | null;
   lostDisposition: string | null;
 }) {
   return (
@@ -2026,6 +2029,27 @@ function IdleGuide({ dialing }: { dialing: boolean }) {
   );
 }
 
+/**
+ * The pill's word for each connection state.
+ *
+ * A `Record` over the closed `StationConnection` union, so a state added without
+ * a label is a compile error rather than a fall-through. It was a six-deep ternary
+ * ending in `'Connecting'`, which is exactly how `disconnected` once read as
+ * "Connecting" — a stopped console claiming to be on its way. `idle` is named
+ * too: it is the moment before the first connect, so "Connecting" is true there
+ * (the other way into it, closing the socket on `beforeunload`, is gone — see
+ * `useAgencyStation`'s unload note).
+ */
+const CONNECTION_LABEL: Record<StationConnection, string> = {
+  idle: 'Connecting',
+  connecting: 'Connecting',
+  open: 'Connected',
+  reconnecting: 'Reconnecting',
+  superseded: 'Moved to another window',
+  session_gone: 'Session ended',
+  disconnected: 'Disconnected',
+};
+
 function ConnectionHealthPill({
   connection,
   missedPings,
@@ -2042,23 +2066,7 @@ function ConnectionHealthPill({
 }) {
   // One missed ping is not an alarm — a single 10s gap is normal on wifi.
   const label =
-    connection === 'open'
-      ? missedPings >= 2
-        ? 'Weak connection'
-        : 'Connected'
-      : connection === 'reconnecting'
-        ? 'Reconnecting'
-        : connection === 'superseded'
-          ? 'Moved to another window'
-          : connection === 'session_gone'
-            ? 'Session ended'
-            : // Named, not left to the fallback. The `idle` arm's absence is the
-              // documented defect a few lines up — a stopped console reading
-              // "Connecting" — and `disconnected` is that same state reached
-              // deliberately, so it must not repeat it.
-              connection === 'disconnected'
-              ? 'Disconnected'
-              : 'Connecting';
+    connection === 'open' && missedPings >= 2 ? 'Weak connection' : CONNECTION_LABEL[connection];
 
   return (
     <span className={styles.healthPill} data-state={connection}>

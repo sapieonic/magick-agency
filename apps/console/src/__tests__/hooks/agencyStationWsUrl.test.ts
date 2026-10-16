@@ -74,9 +74,9 @@ describe('toAbsoluteWsUrl', () => {
   });
 
   it('handles a RELATIVE API_BASE instead of throwing', () => {
-    // `new URL('/api')` throws. The sibling resolvers (`useBrowserCall`,
-    // `buildWsUrl`) would take that exception on a same-origin-with-prefix
-    // deployment; this one resolves against the page URL.
+    // `new URL('/api')` throws, so a bare `new URL(API_BASE)` would take that
+    // exception on a same-origin-with-prefix deployment; this one resolves
+    // against the page URL.
     cfg.apiBase = '/api';
     expect(toAbsoluteWsUrl(STATION_PATH)).toBe(
       `ws://${window.location.host}${STATION_PATH}`,

@@ -1764,6 +1764,37 @@ describe('useAgencyStation', () => {
       }
     });
 
+    it('clears the mint deadline once the mint answers', async () => {
+      /**
+       * The deadline is a timer raced against the request, and it used to be left
+       * running after the request won: one stray 15s timer per reconnect, each
+       * rejecting a promise nothing listened to any more.
+       */
+      vi.useFakeTimers();
+      try {
+        renderHook(() => useAgencyStation(BOOTSTRAP));
+        await vi.waitFor(() => expect(FakeSocket.instances.length).toBe(1));
+        mocks.mintStationToken.mockResolvedValue({
+          session_id: 'sess-1',
+          station_ws_url: '/proxy/agency/station/sess-1?token=MINTED',
+          expires_at: '2026-08-11T10:05:00.000Z',
+        });
+        act(() => latest().open());
+        act(() => latest().serverClose(1006, ''));
+
+        // The retry fires, the mint answers, and the second socket is created.
+        await act(async () => { await vi.advanceTimersByTimeAsync(600); });
+        expect(FakeSocket.instances).toHaveLength(2);
+        expect(latest().url).toContain('token=MINTED');
+
+        // Nothing is pending: no retry (it fired), no heartbeat (not open yet), and
+        // no leftover mint deadline.
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('treats the server’s 4408 as a retry, not a terminal state', async () => {
       // The server's heartbeat-grace sweep closes a silent socket with 4408. The
       // contract's stated safety property — a client that does not recognise the

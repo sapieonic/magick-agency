@@ -13,12 +13,17 @@ vi.mock('../../api/agency', () => mocks);
 
 const analyticsMocks = vi.hoisted(() => ({
   trackAgencyDispositionSubmitted: vi.fn(),
+  trackAgencyAttemptReleased: vi.fn(),
 }));
 // Every other emitter passes through to the real (no-op-without-a-key)
-// implementation — only `trackAgencyDispositionSubmitted` is spied on here.
+// implementation — only the two named here are spied on.
 vi.mock('../../analytics/events', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../analytics/events')>();
-  return { ...actual, trackAgencyDispositionSubmitted: analyticsMocks.trackAgencyDispositionSubmitted };
+  return {
+    ...actual,
+    trackAgencyDispositionSubmitted: analyticsMocks.trackAgencyDispositionSubmitted,
+    trackAgencyAttemptReleased: analyticsMocks.trackAgencyAttemptReleased,
+  };
 });
 
 import {
@@ -486,6 +491,33 @@ describe('useAgencyConsole — the 3s reconciliation window', () => {
     // disposition — the stale-stated-reason defect, in the one place the agent has
     // no way to check.
     expect(view.result.current.presenceRefusal).toBeNull();
+  });
+
+  it('analytics: the released talk_seconds is measured on the corrected clock', async () => {
+    // The same correction the rail's talk timer applies. A client 10s fast used
+    // to report ten seconds of talk that never happened.
+    analyticsMocks.trackAgencyAttemptReleased.mockReset();
+    const clientNow = Date.parse('2026-08-11T10:00:34.000Z');
+    vi.setSystemTime(clientNow);
+    const view = await opened();
+    act(() => {
+      latest().emit({ event: 'pong', ts: clientNow, server_ts: clientNow - 10_000 });
+      latest().emit({ event: 'reserved', attempt: ATTEMPT });
+      latest().emit({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-08-11T10:00:04.000Z' });
+    });
+    act(() => {
+      latest().emit({
+        event: 'released',
+        attempt_id: 'att-1',
+        reason: 'customer_hangup',
+        requires_disposition: false,
+        message: 'Call ended.',
+      });
+    });
+    expect(view.result.current.station.clockOffsetMs).toBe(-10_000);
+    expect(analyticsMocks.trackAgencyAttemptReleased).toHaveBeenCalledWith(
+      expect.objectContaining({ was_bridged: true, talk_seconds: 20 }),
+    );
   });
 
   it('submits under the account in effect NOW, not the one the callback was built with', async () => {

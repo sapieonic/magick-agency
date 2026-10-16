@@ -18,7 +18,7 @@ import {
   trackAgencyAttemptBridged,
   trackAgencyAttemptReleased,
 } from '../analytics/events';
-import { ClockOffsetEstimator } from '../utils/agencyClock';
+import { ClockOffsetEstimator, elapsedSince } from '../utils/agencyClock';
 import type { CueDispatcher } from '../utils/agencyCues';
 import { encodeAgencyMediaFrame, readAgencyMediaPayload } from '../utils/agencyMedia';
 import { openWrapup, type WrapupAnchor } from '../utils/agencyWrapup';
@@ -27,13 +27,11 @@ import { DiagnosticsLog, type DiagnosticEntry } from '../utils/agencyDiagnostics
 /**
  * The agent's station socket: one long-lived connection per shift.
  *
- * ── This is NOT a copy of `useWebRtcCall`, deliberately ────────────────────
- * That hook has no reconnect at all — `ws.onclose` tears down and sets a
- * terminal state, and the user presses "New call". That is correct for a
- * socket whose lifetime is one call the user initiated. It is unusable for a
- * socket that must survive an eight-hour shift across wifi blips, laptop
- * sleeps and an API deploy. So reconnect, backoff, heartbeat and token
- * re-minting are all new here rather than adapted.
+ * ── Built for a shift, not a call ──────────────────────────────────────────
+ * A socket whose lifetime is one call the user initiated can tear down on
+ * `onclose` and let the user start again. This one must survive an eight-hour
+ * shift across wifi blips, laptop sleeps and an API deploy, so reconnect,
+ * backoff, heartbeat and token re-minting all live here.
  *
  * ── The frame rule that matters most ───────────────────────────
  * The socket carries TWO vocabularies and only one may move the UI. The bridge
@@ -317,6 +315,21 @@ const FLAP_WINDOW_MS = 60_000;
  * retry ladder already knows how to walk.
  */
 const TOKEN_MINT_TIMEOUT_MS = 15_000;
+
+/**
+ * `promise`, or a rejection with `message` once `ms` pass — whichever is first.
+ *
+ * The deadline's timer is cleared the moment the race settles either way. It used
+ * to be left running after the mint won, so every reconnect left a stray timer
+ * behind, rejecting a promise nothing listened to any more.
+ */
+function withDeadline<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
 
 /**
  * Retire a socket so nothing it does afterwards can be mistaken for the live
@@ -1113,9 +1126,11 @@ export function useAgencyStation(
               current !== null &&
               current.attempt.attempt_id === frame.attempt_id &&
               current.bridgedAt !== null;
+            // Through the corrected clock, like the rail's talk timer: `bridged_at`
+            // is a server instant, and the raw client clock can be minutes out.
             const talkSeconds =
               wasBridged && current?.bridgedAt
-                ? Math.max(0, Math.round((Date.now() - new Date(current.bridgedAt).getTime()) / 1000))
+                ? Math.round((elapsedSince(current.bridgedAt, offsetRef.current, Date.now()) ?? 0) / 1000)
                 : 0;
             trackAgencyAttemptReleased({
               campaign_id: bootstrapRef.current?.campaign_id ?? '',
@@ -1249,15 +1264,11 @@ export function useAgencyStation(
         // Bounded — see `TOKEN_MINT_TIMEOUT_MS`. A rejection lands in the catch
         // below and walks the ordinary retry ladder; without the bound a hung
         // request left the hook with no socket, no timer and no way back.
-        const minted = await Promise.race([
+        const minted = await withDeadline(
           mintStationToken(bootstrap.session_id, options.tenantId, options.accountId),
-          new Promise<never>((_, reject) => {
-            setTimeout(
-              () => reject(new Error(`token mint exceeded ${TOKEN_MINT_TIMEOUT_MS}ms`)),
-              TOKEN_MINT_TIMEOUT_MS,
-            );
-          }),
-        ]);
+          TOKEN_MINT_TIMEOUT_MS,
+          `token mint exceeded ${TOKEN_MINT_TIMEOUT_MS}ms`,
+        );
         // The mint is an await, and neither `clearTimers()` nor the effect
         // cleanup can cancel one. Without this check a connect abandoned while
         // its token was in flight came back and opened a socket anyway — the
@@ -1771,13 +1782,9 @@ export function useAgencyStation(
  * retries forever on the backoff below, which is what turns one misresolved
  * host into a wall of console errors and a steady stream of token mints.
  *
- * `useBrowserCall` and `buildWsUrl` (the WebRTC dialer leg) have always had the
- * `API_BASE` branch; this is the third socket in the codebase and the one that
- * skipped it. Keep all three in step.
- *
- * Only the **origin** is taken from `API_BASE`, matching the other two — a base
- * with a path prefix is not joined onto the socket path, because the path is
- * the API's own rewrite and is already absolute from the host root.
+ * Only the **origin** is taken from `API_BASE` — a base with a path prefix is
+ * not joined onto the socket path, because the path is the API's own rewrite and
+ * is already absolute from the host root.
  *
  * An absolute `ws(s)://` URL is still passed through untouched: that is
  * `rewriteStationWsUrl`'s documented degradation (an unrecognised the API URL is
@@ -1788,8 +1795,7 @@ export function toAbsoluteWsUrl(pathOrUrl: string): string {
   if (/^wss?:\/\//i.test(pathOrUrl)) return pathOrUrl;
   const path = pathOrUrl.startsWith('/') ? pathOrUrl : `/${pathOrUrl}`;
   // Resolved against the page URL so a RELATIVE `API_BASE` (`/api`) is handled
-  // rather than throwing out of `new URL` — the bare `new URL(API_BASE)` the
-  // other two use would.
+  // rather than throwing out of `new URL` — a bare `new URL(API_BASE)` would.
   const base = API_BASE ? new URL(API_BASE, window.location.href) : window.location;
   const scheme = base.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${scheme}//${base.host}${path}`;

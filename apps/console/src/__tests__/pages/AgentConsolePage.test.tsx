@@ -15,6 +15,12 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('../../api/agency', () => mocks);
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+const analyticsMocks = vi.hoisted(() => ({ trackAgencyHangupRequested: vi.fn() }));
+// Every other emitter passes through to the real (no-op-without-a-key) one.
+vi.mock('../../analytics/events', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../analytics/events')>();
+  return { ...actual, trackAgencyHangupRequested: analyticsMocks.trackAgencyHangupRequested };
+});
 vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({
     user: { id: 'u-1', display_name: 'Asha Kumar', email: 'asha@example.com', avatar_url: null },
@@ -1201,6 +1207,32 @@ describe('hang up actually hangs up', () => {
     press('e');
 
     expect(mocks.hangupAttempt).toHaveBeenCalledWith('att-1', 'tenant-1', 'account-1');
+  });
+
+  it('analytics: talk_seconds is measured on the corrected clock, as the rail’s timer is', async () => {
+    /**
+     * The rail's talk timer reads `bridged_at` through the offset-corrected clock;
+     * the hang-up's `talk_seconds` read it against the raw client clock, so on a
+     * machine 10s fast the event reported ten seconds the agent never talked.
+     */
+    analyticsMocks.trackAgencyHangupRequested.mockReset();
+    mocks.hangupAttempt.mockResolvedValue(undefined);
+    vi.useFakeTimers();
+    const clientNow = Date.parse('2026-08-11T10:00:34.000Z');
+    vi.setSystemTime(clientNow);
+    await onCall();
+    // A pong saying the server is 10s behind this client: offset −10s.
+    await act(async () => {
+      latest().emit({ event: 'pong', ts: clientNow, server_ts: clientNow - 10_000 });
+    });
+
+    press('e');
+    press('e');
+
+    // Bridged at 10:00:04 server time = 10:00:14 on this client: 20s, not 30s.
+    expect(analyticsMocks.trackAgencyHangupRequested).toHaveBeenCalledWith(
+      expect.objectContaining({ was_bridged: true, talk_seconds: 20 }),
+    );
   });
 
   it('sends no socket frame — the console has exactly one hangup path', async () => {
