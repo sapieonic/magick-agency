@@ -6,6 +6,16 @@ import { withTransaction } from '../../../src/utils/transaction.js';
 
 const TABLE = 'tx_helper_probe';
 
+/** The error `promise` rejects with; fails the test if it resolves. */
+async function errorOf(promise: Promise<unknown>): Promise<{ code?: string }> {
+  try {
+    await promise;
+  } catch (err) {
+    return err as { code?: string };
+  }
+  throw new Error('expected the transaction to throw');
+}
+
 async function rows(): Promise<string[]> {
   const { rows: r } = await getTestPool().query<{ v: string }>(`SELECT v FROM ${TABLE} ORDER BY v`);
   return r.map((x) => x.v);
@@ -35,11 +45,11 @@ describe('withTransaction (integration)', () => {
 
   it('rolls back on a throw: nothing the body wrote survives, and the error is the body\'s', async () => {
     const pool = getTestPool();
-    const err = await withTransaction(async (c) => {
+    const err = await errorOf(withTransaction(async (c) => {
       await c.query(`INSERT INTO ${TABLE} (v) VALUES ('a')`);
       // A real 23505, rethrown unchanged for the caller's own error mapping.
       await c.query(`INSERT INTO ${TABLE} (v) VALUES ('a')`);
-    }, { pool }).catch((e: unknown) => e as { code?: string });
+    }, { pool }));
     expect(err.code).toBe('23505');
     expect(await rows()).toEqual([]);
   });
@@ -68,9 +78,9 @@ describe('withTransaction (integration)', () => {
     }, { pool, isolation: 'REPEATABLE READ' });
     expect(level).toBe('repeatable read');
 
-    const err = await withTransaction(async (c) => {
+    const err = await errorOf(withTransaction(async (c) => {
       await c.query(`INSERT INTO ${TABLE} (v) VALUES ('ro')`);
-    }, { pool, isolation: 'REPEATABLE READ', readOnly: true }).catch((e: unknown) => e as { code?: string });
+    }, { pool, isolation: 'REPEATABLE READ', readOnly: true }));
     expect(err.code).toBe('25006');
     expect(await rows()).toEqual([]);
   });
