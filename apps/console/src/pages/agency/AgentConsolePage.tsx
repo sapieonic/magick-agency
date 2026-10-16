@@ -447,10 +447,16 @@ export default function AgentConsolePage() {
    * Focus moves exactly ONCE per call — to the console root, on reservation — and
    * never at connect. Stealing focus at connect would interrupt a screen-reader
    * user mid-sentence at the worst possible moment.
+   *
+   * **Keyed on the ringing attempt's id, never on `live` itself.** A `ready` on
+   * reconnect replaces `live` with a fresh object for the same attempt, and an
+   * effect keyed on the object read that as a new call and pulled focus back to
+   * the console root a second time, mid-ring, from wherever the agent had put it.
    */
+  const ringingAttemptId = live && live.bridgedAt === null ? live.attempt.attempt_id : null;
   useEffect(() => {
-    if (live && live.bridgedAt === null) consoleRef.current?.focus();
-  }, [live?.attempt.attempt_id, live]);
+    if (ringingAttemptId !== null) consoleRef.current?.focus();
+  }, [ringingAttemptId]);
 
   /**
    * The **live** attempt as of *now*, for the hang-up rejection to check itself

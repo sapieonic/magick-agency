@@ -306,6 +306,39 @@ describe('AgentConsolePage — the Phase 2 surfaces are actually composed', () =
   });
 });
 
+describe('focus moves once per call, on the reservation', () => {
+  it('moves to the console when a call is reserved', async () => {
+    await mounted();
+    await act(async () => {
+      latest().emit({ event: 'reserved', attempt: ATTEMPT });
+    });
+    expect(document.activeElement?.getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('does NOT move again when a reconnect restates the same ringing attempt', async () => {
+    /**
+     * A `ready` on reconnect replaces `live` with a fresh object for the SAME
+     * attempt. Keyed on the whole `live`, the focus effect read that as a new call
+     * and pulled focus back to the console root — a second steal, mid-ring, from
+     * wherever the agent had moved it (the notes, the break menu). Focus moves
+     * exactly once per call, so it is keyed on the attempt id.
+     */
+    await mounted();
+    await act(async () => {
+      latest().emit({ event: 'reserved', attempt: ATTEMPT });
+    });
+    const elsewhere = screen.getByRole('button', { name: /^break/i });
+    act(() => elsewhere.focus());
+    expect(document.activeElement).toBe(elsewhere);
+
+    await act(async () => {
+      latest().emit({ event: 'ready', state: 'reserved', active_attempt: { ...ATTEMPT, bridged_at: null } });
+    });
+
+    expect(document.activeElement).toBe(elsewhere);
+  });
+});
+
 describe('criterion (d) — reachable and operable from the keyboard', () => {
   it('A goes available from offline, without the pointer', async () => {
     await mounted();
