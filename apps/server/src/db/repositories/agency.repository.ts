@@ -4,6 +4,9 @@ import { getPool } from '@magick-agency/db';
 // header) so the catch arms below can ask the question without dragging config
 // into the graph of every test that exercises them.
 import { isUniqueViolation } from '@magick-agency/db/pg-errors';
+// BEGIN / COMMIT / ROLLBACK / release, and joining a caller's transaction (decision
+// B8). A leaf too: the pool is passed in, so the `getPool` mock stays in charge.
+import { withTransaction } from '@magick-agency/db/utils/transaction';
 import { createChildLogger } from '@magick-agency/observability';
 import type {
   AgencyAgentSessionRecord,
@@ -899,6 +902,38 @@ function projectContactRow(row: AgencyContactRecord): AgencyContactRow {
   };
 }
 
+/** What {@link AgencyCampaignRepository.retryFromCampaign} answers. */
+type AgencyRetryCreateResult =
+  | {
+      status: 'created';
+      campaign: AgencyCampaignRecord;
+      contacts_seeded: number;
+      /**
+       * How many matched rows the seed COLLAPSED rather than copied.
+       *
+       * `matched - contacts_seeded`, and it is normally 0. The seed's
+       * `ON CONFLICT (campaign_id, row_fingerprint) DO NOTHING` exists because a
+       * parent may legitimately hold two byte-identical roster rows — the
+       * fingerprint index is per-campaign — and the child collapses them to one.
+       *
+       * Reported rather than left to be noticed, because the preview's `matched`
+       * is a PROMISE about this commit: a supervisor shown 812 and then handed a
+       * campaign of 809 has no way to tell a duplicate collapse from rows lost to
+       * a bug, and the difference decides whether they escalate.
+       */
+      duplicates_collapsed: number;
+      excluded: { dnc: number; invalid: number };
+    }
+  /**
+   * This exact key already created a campaign. **Nothing was created now**, and
+   * the campaign returned is the ORIGINAL — which is what makes this idempotent
+   * rather than merely a duplicate guard: the client that lost a 201 and pressed
+   * the button again gets the campaign it already made, and can navigate to it.
+   */
+  | { status: 'replayed'; campaign: AgencyCampaignRecord }
+  | { status: 'empty'; excluded: { dnc: number; invalid: number } }
+  | { status: 'too_large'; matched: number };
+
 export class AgencyCampaignRepository {
   async findById(id: string): Promise<AgencyCampaignRecord | null> {
     const { rows } = await getPool().query<AgencyCampaignRecord>(
@@ -1118,9 +1153,10 @@ export class AgencyCampaignRepository {
    * delete route, so a bad partial result is not something the
    * supervisor can clean up.
    *
-   * Shape follows `applyIngestChunk` — `connect`/`BEGIN`/`ROLLBACK` on any throw/
-   * `release` in `finally` — because it is the same guarantee over the same
-   * table and a second spelling of it is how one of them acquires a leak.
+   * Both this and `applyIngestChunk` run through `withTransaction` —
+   * `connect`/`BEGIN`/`ROLLBACK` on any throw/`release` on every path — because it
+   * is the same guarantee over the same table and a second spelling of it is how
+   * one of them acquires a leak.
    *
    * ── The counts are taken INSIDE the transaction ───────────────────────────
    *
@@ -1173,37 +1209,7 @@ export class AgencyCampaignRepository {
      * `idempotency_key` and creates the retry unkeyed.
      */
     idempotencyKey: string | null;
-  }): Promise<
-    | {
-        status: 'created';
-        campaign: AgencyCampaignRecord;
-        contacts_seeded: number;
-        /**
-         * How many matched rows the seed COLLAPSED rather than copied.
-         *
-         * `matched - contacts_seeded`, and it is normally 0. The seed's
-         * `ON CONFLICT (campaign_id, row_fingerprint) DO NOTHING` exists because a
-         * parent may legitimately hold two byte-identical roster rows — the
-         * fingerprint index is per-campaign — and the child collapses them to one.
-         *
-         * Reported rather than left to be noticed, because the preview's `matched`
-         * is a PROMISE about this commit: a supervisor shown 812 and then handed a
-         * campaign of 809 has no way to tell a duplicate collapse from rows lost to
-         * a bug, and the difference decides whether they escalate.
-         */
-        duplicates_collapsed: number;
-        excluded: { dnc: number; invalid: number };
-      }
-    /**
-     * This exact key already created a campaign. **Nothing was created now**, and
-     * the campaign returned is the ORIGINAL — which is what makes this idempotent
-     * rather than merely a duplicate guard: the client that lost a 201 and pressed
-     * the button again gets the campaign it already made, and can navigate to it.
-     */
-    | { status: 'replayed'; campaign: AgencyCampaignRecord }
-    | { status: 'empty'; excluded: { dnc: number; invalid: number } }
-    | { status: 'too_large'; matched: number }
-  > {
+  }): Promise<AgencyRetryCreateResult> {
     const pool = getPool();
 
     // ── Fast path: this key has already been spent ────────────────────────────
@@ -1219,248 +1225,244 @@ export class AgencyCampaignRepository {
       if (prior) return { status: 'replayed', campaign: prior };
     }
 
-    const client: PoolClient = await pool.connect();
     try {
-      // ── REPEATABLE READ, not the default ─────────────────────────────────────
-      //
-      // The count that decides `empty` / `too_large` and the `INSERT … SELECT`
-      // that seeds the roster are two statements over the parent's contacts, and
-      // under READ COMMITTED each takes its OWN snapshot. The parent may still be
-      // `running` — the design explicitly supports authoring a retry against a
-      // live campaign — so its pacing leader is mutating exactly the rows being
-      // counted, and the two statements could legitimately disagree:
-      //
-      //   * rows leave the cohort between them ⇒ `matched > 0` passes the empty
-      //     check, the INSERT writes 0 rows, and the route answers 201 with
-      //     `contacts_seeded: 0` — a draft campaign that cannot be started
-      //     (`409 campaign_roster_empty`) and that no service can delete;
-      //   * rows enter it ⇒ the seed can exceed `RETRY_MAX_SEED_ROWS`, the cap
-      //     that was just checked.
-      //
-      // One snapshot for the whole transaction makes the decision and the write
-      // agree by construction. Nothing here UPDATEs a row another writer might
-      // have changed — the child campaign and its contacts are rows this
-      // transaction creates — so there is no serialization-failure retry to
-      // write: `40001` is unreachable on this path.
-      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+      return await withTransaction<AgencyRetryCreateResult>(async (client, tx) => {
+        // ── REPEATABLE READ, not the default (`isolation` below) ─────────────────
+        //
+        // The count that decides `empty` / `too_large` and the `INSERT … SELECT`
+        // that seeds the roster are two statements over the parent's contacts, and
+        // under READ COMMITTED each takes its OWN snapshot. The parent may still be
+        // `running` — the design explicitly supports authoring a retry against a
+        // live campaign — so its pacing leader is mutating exactly the rows being
+        // counted, and the two statements could legitimately disagree:
+        //
+        //   * rows leave the cohort between them ⇒ `matched > 0` passes the empty
+        //     check, the INSERT writes 0 rows, and the route answers 201 with
+        //     `contacts_seeded: 0` — a draft campaign that cannot be started
+        //     (`409 campaign_roster_empty`) and that no service can delete;
+        //   * rows enter it ⇒ the seed can exceed `RETRY_MAX_SEED_ROWS`, the cap
+        //     that was just checked.
+        //
+        // One snapshot for the whole transaction makes the decision and the write
+        // agree by construction. Nothing here UPDATEs a row another writer might
+        // have changed — the child campaign and its contacts are rows this
+        // transaction creates — so there is no serialization-failure retry to
+        // write: `40001` is unreachable on this path.
+        const countParams = params();
+        const countConditions = [
+          `c.campaign_id = ${countParams.add(input.parent.id)}`,
+          ...retrySelectionConditions(input.selector, 'c', countParams),
+        ];
+        // `matched` counts DISTINCT FINGERPRINTS, not rows — see `retryPreview`'s
+        // header for the argument. This is the number the `INSERT … ON CONFLICT`
+        // below will actually write, so the cap and the empty check decide on the
+        // roster that will exist rather than on the one the selector touched.
+        // `matched_rows` is the pre-collapse count, kept only to report
+        // `duplicates_collapsed`.
+        const counted = await client.query<{
+          matched: string; matched_rows: string; dnc: string; invalid: string;
+        }>(
+          `SELECT
+             COUNT(DISTINCT agency_contact_row_fingerprint(c.phone_e164, c.context, c.timezone))
+               FILTER (WHERE NOT (${neverSeededSuppressionSql('c')}))::text            AS matched,
+             COUNT(*) FILTER (WHERE NOT (${neverSeededSuppressionSql('c')}))::text     AS matched_rows,
+             COUNT(*) FILTER (WHERE c.suppressed_reason = 'dnc')::text                 AS dnc,
+             COUNT(*) FILTER (WHERE c.suppressed_reason = 'invalid')::text             AS invalid
+             FROM agency_contacts c
+            WHERE ${countConditions.join(' AND ')}`,
+          countParams.values,
+        );
+        const matched = Number(counted.rows[0]?.matched ?? 0);
+        const matchedRows = Number(counted.rows[0]?.matched_rows ?? 0);
+        const excluded = {
+          dnc: Number(counted.rows[0]?.dnc ?? 0),
+          invalid: Number(counted.rows[0]?.invalid ?? 0),
+        };
 
-      const countParams = params();
-      const countConditions = [
-        `c.campaign_id = ${countParams.add(input.parent.id)}`,
-        ...retrySelectionConditions(input.selector, 'c', countParams),
-      ];
-      // `matched` counts DISTINCT FINGERPRINTS, not rows — see `retryPreview`'s
-      // header for the argument. This is the number the `INSERT … ON CONFLICT`
-      // below will actually write, so the cap and the empty check decide on the
-      // roster that will exist rather than on the one the selector touched.
-      // `matched_rows` is the pre-collapse count, kept only to report
-      // `duplicates_collapsed`.
-      const counted = await client.query<{
-        matched: string; matched_rows: string; dnc: string; invalid: string;
-      }>(
-        `SELECT
-           COUNT(DISTINCT agency_contact_row_fingerprint(c.phone_e164, c.context, c.timezone))
-             FILTER (WHERE NOT (${neverSeededSuppressionSql('c')}))::text            AS matched,
-           COUNT(*) FILTER (WHERE NOT (${neverSeededSuppressionSql('c')}))::text     AS matched_rows,
-           COUNT(*) FILTER (WHERE c.suppressed_reason = 'dnc')::text                 AS dnc,
-           COUNT(*) FILTER (WHERE c.suppressed_reason = 'invalid')::text             AS invalid
-           FROM agency_contacts c
-          WHERE ${countConditions.join(' AND ')}`,
-        countParams.values,
-      );
-      const matched = Number(counted.rows[0]?.matched ?? 0);
-      const matchedRows = Number(counted.rows[0]?.matched_rows ?? 0);
-      const excluded = {
-        dnc: Number(counted.rows[0]?.dnc ?? 0),
-        invalid: Number(counted.rows[0]?.invalid ?? 0),
-      };
+        if (matched === 0) {
+          await tx.rollback();
+          return { status: 'empty', excluded };
+        }
+        if (matched > RETRY_MAX_SEED_ROWS) {
+          await tx.rollback();
+          return { status: 'too_large', matched };
+        }
 
-      if (matched === 0) {
-        await client.query('ROLLBACK');
-        return { status: 'empty', excluded };
-      }
-      if (matched > RETRY_MAX_SEED_ROWS) {
-        await client.query('ROLLBACK');
-        return { status: 'too_large', matched };
-      }
+        // ── The child row ────────────────────────────────────────────────────
+        //
+        // Every placeholder is BARE — no COALESCE anywhere — and that is deliberate
+        // rather than incidental. A bare `$n` in `VALUES (...)` takes its type from
+        // the target column; a `$n` inside `COALESCE(...)` does not, which is the
+        // 42804 that once made `POST /agency-campaigns` fail outright (see
+        // `create()`'s header and `campaign-insert-param-types.test.ts`). There is
+        // nothing to default here: the parent row supplies a value for every column,
+        // so the defaults `create()` restates in SQL have no work to do and the
+        // whole class of defect is absent rather than avoided.
+        //
+        // ── What is NOT copied, and why each one ────────────────────────────
+        //
+        // `status` (the child starts `draft` — creation and starting stay
+        // separate verbs, and it side-steps `uq_agency_campaign_running` at creation
+        // time rather than failing the create for a reason that has nothing to do
+        // with the retry), `started_at`, `ended_at`, `completed_at`,
+        // `contacts_total`, `last_transition_by_*`, `pause_reason`, `paused_at`,
+        // `pause_abandonment_rate_pct`. Every one of them describes THE PARENT'S
+        // RUN. "Copy the config columns" applied naively would carry a stale
+        // auto-pause record onto a campaign that has never dialled.
+        //
+        // `status` is omitted from the column list entirely rather than written as
+        // `'draft'`: the column DEFAULT is `draft`, and naming it here would be a second
+        // copy of that default with nothing keeping the two in step.
+        const created = await client.query<AgencyCampaignRecord>(
+          `INSERT INTO agency_campaigns
+             (tenant_id, account_id, name, caller_ids, telephony_provider,
+              calling_window_start, calling_window_end, calling_days, default_timezone,
+              wrapup_seconds, wrapup_auto_return, retry_policy, disposition_catalog,
+              context_display, break_reasons, record_calls, analysis_profile_id, created_by,
+              abandon_announcement_id, abandonment_ceiling_pct,
+              parent_campaign_id, root_campaign_id, retry_generation, retry_selector,
+              retry_idempotency_key)
+           VALUES ($1,$2,$3,$4,$5,
+                   $6,$7,$8,$9,
+                   $10,$11,$12::jsonb,$13::jsonb,
+                   $14::jsonb,$15::jsonb,$16,$17,$18,
+                   $19,$20,
+                   $21,$22,$23,$24::jsonb,
+                   $25)
+           RETURNING *`,
+          [
+            input.parent.tenant_id, input.parent.account_id, input.name,
+            input.config.caller_ids, input.config.telephony_provider,
+            input.config.calling_window_start, input.config.calling_window_end,
+            input.config.calling_days, input.config.default_timezone,
+            input.config.wrapup_seconds, input.config.wrapup_auto_return,
+            JSON.stringify(input.config.retry_policy ?? {}),
+            JSON.stringify(input.config.disposition_catalog ?? []),
+            JSON.stringify(input.config.context_display ?? {}),
+            JSON.stringify(input.config.break_reasons ?? []),
+            input.config.record_calls, input.config.analysis_profile_id, input.createdBy,
+            input.config.abandon_announcement_id, input.config.abandonment_ceiling_pct,
+            input.parent.id,
+            // The chain head. A generation-0 parent carries NULL here (it
+            // deliberately does not stamp itself), so the child of a first retry gets
+            // the parent's own id and every deeper generation inherits it unchanged.
+            input.parent.root_campaign_id ?? input.parent.id,
+            input.parent.retry_generation + 1,
+            // The selector as a RECORD, never re-executed. Stored normalised
+            // (see `parseRetrySelector`) so the agent's banner can be rendered from
+            // it without re-parsing against a catalog it was not validated against.
+            JSON.stringify(input.selector),
+            // NULL for an unkeyed caller, which the partial unique
+            // index treats as no constraint at all.
+            input.idempotencyKey,
+          ],
+        );
+        const campaign = created.rows[0]!;
 
-      // ── The child row ────────────────────────────────────────────────────
-      //
-      // Every placeholder is BARE — no COALESCE anywhere — and that is deliberate
-      // rather than incidental. A bare `$n` in `VALUES (...)` takes its type from
-      // the target column; a `$n` inside `COALESCE(...)` does not, which is the
-      // 42804 that once made `POST /agency-campaigns` fail outright (see
-      // `create()`'s header and `campaign-insert-param-types.test.ts`). There is
-      // nothing to default here: the parent row supplies a value for every column,
-      // so the defaults `create()` restates in SQL have no work to do and the
-      // whole class of defect is absent rather than avoided.
-      //
-      // ── What is NOT copied, and why each one ────────────────────────────
-      //
-      // `status` (the child starts `draft` — creation and starting stay
-      // separate verbs, and it side-steps `uq_agency_campaign_running` at creation
-      // time rather than failing the create for a reason that has nothing to do
-      // with the retry), `started_at`, `ended_at`, `completed_at`,
-      // `contacts_total`, `last_transition_by_*`, `pause_reason`, `paused_at`,
-      // `pause_abandonment_rate_pct`. Every one of them describes THE PARENT'S
-      // RUN. "Copy the config columns" applied naively would carry a stale
-      // auto-pause record onto a campaign that has never dialled.
-      //
-      // `status` is omitted from the column list entirely rather than written as
-      // `'draft'`: the column DEFAULT is `draft`, and naming it here would be a second
-      // copy of that default with nothing keeping the two in step.
-      const created = await client.query<AgencyCampaignRecord>(
-        `INSERT INTO agency_campaigns
-           (tenant_id, account_id, name, caller_ids, telephony_provider,
-            calling_window_start, calling_window_end, calling_days, default_timezone,
-            wrapup_seconds, wrapup_auto_return, retry_policy, disposition_catalog,
-            context_display, break_reasons, record_calls, analysis_profile_id, created_by,
-            abandon_announcement_id, abandonment_ceiling_pct,
-            parent_campaign_id, root_campaign_id, retry_generation, retry_selector,
-            retry_idempotency_key)
-         VALUES ($1,$2,$3,$4,$5,
-                 $6,$7,$8,$9,
-                 $10,$11,$12::jsonb,$13::jsonb,
-                 $14::jsonb,$15::jsonb,$16,$17,$18,
-                 $19,$20,
-                 $21,$22,$23,$24::jsonb,
-                 $25)
-         RETURNING *`,
-        [
-          input.parent.tenant_id, input.parent.account_id, input.name,
-          input.config.caller_ids, input.config.telephony_provider,
-          input.config.calling_window_start, input.config.calling_window_end,
-          input.config.calling_days, input.config.default_timezone,
-          input.config.wrapup_seconds, input.config.wrapup_auto_return,
-          JSON.stringify(input.config.retry_policy ?? {}),
-          JSON.stringify(input.config.disposition_catalog ?? []),
-          JSON.stringify(input.config.context_display ?? {}),
-          JSON.stringify(input.config.break_reasons ?? []),
-          input.config.record_calls, input.config.analysis_profile_id, input.createdBy,
-          input.config.abandon_announcement_id, input.config.abandonment_ceiling_pct,
-          input.parent.id,
-          // The chain head. A generation-0 parent carries NULL here (it
-          // deliberately does not stamp itself), so the child of a first retry gets
-          // the parent's own id and every deeper generation inherits it unchanged.
-          input.parent.root_campaign_id ?? input.parent.id,
-          input.parent.retry_generation + 1,
-          // The selector as a RECORD, never re-executed. Stored normalised
-          // (see `parseRetrySelector`) so the agent's banner can be rendered from
-          // it without re-parsing against a catalog it was not validated against.
-          JSON.stringify(input.selector),
-          // NULL for an unkeyed caller, which the partial unique
-          // index treats as no constraint at all.
-          input.idempotencyKey,
-        ],
-      );
-      const campaign = created.rows[0]!;
+        // ── The roster, in ONE statement ─────────────────────────────────────
+        //
+        // ⚠️ `source_row_number` IS DELIBERATELY NOT IN THIS COLUMN LIST, for the
+        // same reason it is absent from `applyIngestChunk`'s:
+        // `uq_agency_contacts_source_row` is still live and partial on
+        // `source_row_number IS NOT NULL`, so a row that stores NULL sits outside it.
+        // Writing it here would make two seeded rows that happened to share a CSV
+        // line number collide on an index this INSERT does not name — a 23505 that
+        // aborts the whole transaction rather than being swallowed. `csv_line_number`
+        // carries the provenance instead, and it is unindexed.
+        //
+        // `row_fingerprint` is recomputed by the SAME SQL function the ingest path
+        // uses, from the copied values, so "the same roster row" has ONE definition
+        // across both seeding paths. `ON CONFLICT` names that index rather than being
+        // bare, so only a content collision is swallowed and a genuine constraint
+        // problem still throws — and the collision it swallows is real: a parent may
+        // legitimately hold two byte-identical rows (the fingerprint index is
+        // per-campaign, and a row with a NULL fingerprint sits outside it), which
+        // would otherwise 23505 the transaction.
+        //
+        // ── The omitted columns are the retry reset ─────────────────────────
+        //
+        // `state`, `attempt_count`, `our_fault_attempts`, `next_attempt_at`,
+        // `last_outcome`, `last_disposition` and `suppressed_reason` are all absent
+        // and take their column defaults — `pending`, `0`, `0`, `now()`, NULL, NULL,
+        // NULL. A retry campaign is a FRESH ALLOWANCE, which is the whole point of a
+        // supervisor authoring one.
+        //
+        // ⚠️ That includes `our_fault_attempts`, which is bounded by
+        // `OUR_FAULT_REDIAL_BOUND` — a regulated repeat-dial limit no campaign config
+        // can raise — and which therefore DOES reset per retry campaign. Three retry
+        // campaigns is nine our-fault redials on one number. The bound exists to stop
+        // one broken agent workstation redialling without limit inside a single run,
+        // which a supervisor deliberately authoring a second campaign is not; but it
+        // is now technically reachable, and it is left as an open compliance
+        // decision rather than quietly settled here. Do not "fix" it by carrying the
+        // counter across — that is a decision about a regulation nobody has
+        // established, not an implementation detail.
+        //
+        // `root_contact_id` is passed through explicitly, which is what makes a
+        // generation-3 contact still point at generation 0; `trg_agency_contacts_root`
+        // only fires when the column arrives NULL, so it leaves these rows alone.
+        const seedParams = params();
+        const childId = seedParams.add(campaign.id);
+        const seedConditions = [
+          `c.campaign_id = ${seedParams.add(input.parent.id)}`,
+          ...retrySelectionConditions(input.selector, 'c', seedParams),
+          `NOT (${neverSeededSuppressionSql('c')})`,
+        ];
+        const seeded = await client.query(
+          `INSERT INTO agency_contacts
+             (campaign_id, tenant_id, account_id, phone_e164, context, timezone,
+              csv_line_number, row_fingerprint, source_contact_id, root_contact_id)
+           SELECT ${childId}, c.tenant_id, c.account_id, c.phone_e164, c.context, c.timezone,
+                  c.csv_line_number,
+                  agency_contact_row_fingerprint(c.phone_e164, c.context, c.timezone),
+                  c.id,
+                  c.root_contact_id
+             FROM agency_contacts c
+            WHERE ${seedConditions.join(' AND ')}
+           ON CONFLICT (campaign_id, row_fingerprint) WHERE row_fingerprint IS NOT NULL
+             DO NOTHING`,
+          seedParams.values,
+        );
 
-      // ── The roster, in ONE statement ─────────────────────────────────────
-      //
-      // ⚠️ `source_row_number` IS DELIBERATELY NOT IN THIS COLUMN LIST, for the
-      // same reason it is absent from `applyIngestChunk`'s:
-      // `uq_agency_contacts_source_row` is still live and partial on
-      // `source_row_number IS NOT NULL`, so a row that stores NULL sits outside it.
-      // Writing it here would make two seeded rows that happened to share a CSV
-      // line number collide on an index this INSERT does not name — a 23505 that
-      // aborts the whole transaction rather than being swallowed. `csv_line_number`
-      // carries the provenance instead, and it is unindexed.
-      //
-      // `row_fingerprint` is recomputed by the SAME SQL function the ingest path
-      // uses, from the copied values, so "the same roster row" has ONE definition
-      // across both seeding paths. `ON CONFLICT` names that index rather than being
-      // bare, so only a content collision is swallowed and a genuine constraint
-      // problem still throws — and the collision it swallows is real: a parent may
-      // legitimately hold two byte-identical rows (the fingerprint index is
-      // per-campaign, and a row with a NULL fingerprint sits outside it), which
-      // would otherwise 23505 the transaction.
-      //
-      // ── The omitted columns are the retry reset ─────────────────────────
-      //
-      // `state`, `attempt_count`, `our_fault_attempts`, `next_attempt_at`,
-      // `last_outcome`, `last_disposition` and `suppressed_reason` are all absent
-      // and take their column defaults — `pending`, `0`, `0`, `now()`, NULL, NULL,
-      // NULL. A retry campaign is a FRESH ALLOWANCE, which is the whole point of a
-      // supervisor authoring one.
-      //
-      // ⚠️ That includes `our_fault_attempts`, which is bounded by
-      // `OUR_FAULT_REDIAL_BOUND` — a regulated repeat-dial limit no campaign config
-      // can raise — and which therefore DOES reset per retry campaign. Three retry
-      // campaigns is nine our-fault redials on one number. The bound exists to stop
-      // one broken agent workstation redialling without limit inside a single run,
-      // which a supervisor deliberately authoring a second campaign is not; but it
-      // is now technically reachable, and it is left as an open compliance
-      // decision rather than quietly settled here. Do not "fix" it by carrying the
-      // counter across — that is a decision about a regulation nobody has
-      // established, not an implementation detail.
-      //
-      // `root_contact_id` is passed through explicitly, which is what makes a
-      // generation-3 contact still point at generation 0; `trg_agency_contacts_root`
-      // only fires when the column arrives NULL, so it leaves these rows alone.
-      const seedParams = params();
-      const childId = seedParams.add(campaign.id);
-      const seedConditions = [
-        `c.campaign_id = ${seedParams.add(input.parent.id)}`,
-        ...retrySelectionConditions(input.selector, 'c', seedParams),
-        `NOT (${neverSeededSuppressionSql('c')})`,
-      ];
-      const seeded = await client.query(
-        `INSERT INTO agency_contacts
-           (campaign_id, tenant_id, account_id, phone_e164, context, timezone,
-            csv_line_number, row_fingerprint, source_contact_id, root_contact_id)
-         SELECT ${childId}, c.tenant_id, c.account_id, c.phone_e164, c.context, c.timezone,
-                c.csv_line_number,
-                agency_contact_row_fingerprint(c.phone_e164, c.context, c.timezone),
-                c.id,
-                c.root_contact_id
-           FROM agency_contacts c
-          WHERE ${seedConditions.join(' AND ')}
-         ON CONFLICT (campaign_id, row_fingerprint) WHERE row_fingerprint IS NOT NULL
-           DO NOTHING`,
-        seedParams.values,
-      );
+        // Recomputed by COUNT rather than set to `seeded.rowCount`, matching
+        // `applyIngestChunk`: the column's meaning is "how many rows are on this
+        // roster", and deriving it from the same statement that wrote them is how it
+        // stays true if a later path ever adds rows too.
+        const seededRows = seeded.rowCount ?? 0;
 
-      // Recomputed by COUNT rather than set to `seeded.rowCount`, matching
-      // `applyIngestChunk`: the column's meaning is "how many rows are on this
-      // roster", and deriving it from the same statement that wrote them is how it
-      // stays true if a later path ever adds rows too.
-      const seededRows = seeded.rowCount ?? 0;
+        const totalled = await client.query<AgencyCampaignRecord>(
+          `UPDATE agency_campaigns
+              SET contacts_total = (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1),
+                  updated_at = now()
+            WHERE id = $1
+          RETURNING *`,
+          [campaign.id],
+        );
 
-      const totalled = await client.query<AgencyCampaignRecord>(
-        `UPDATE agency_campaigns
-            SET contacts_total = (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1),
-                updated_at = now()
-          WHERE id = $1
-        RETURNING *`,
-        [campaign.id],
-      );
-
-      await client.query('COMMIT');
-      return {
-        status: 'created',
-        // The row AFTER the `contacts_total` write, not `created.rows[0]` — that one
-        // still says 0, and it is what the route serialises straight back to the
-        // console as the new campaign. `RETURNING *` rather than a second SELECT so
-        // there is no window in which the two could disagree.
-        campaign: totalled.rows[0] ?? campaign,
-        contacts_seeded: seededRows,
-        // Under REPEATABLE READ both numbers come from ONE snapshot, so this is a
-        // real count of collapsed duplicates and never a race between two reads.
-        // `Math.max(…, 0)` is belt and braces: negative would mean the seed wrote
-        // rows the count did not match, which is a defect rather than a number to
-        // publish.
-        duplicates_collapsed: Math.max(matchedRows - seededRows, 0),
-        excluded,
-      };
+        return {
+          status: 'created',
+          // The row AFTER the `contacts_total` write, not `created.rows[0]` — that one
+          // still says 0, and it is what the route serialises straight back to the
+          // console as the new campaign. `RETURNING *` rather than a second SELECT so
+          // there is no window in which the two could disagree.
+          campaign: totalled.rows[0] ?? campaign,
+          contacts_seeded: seededRows,
+          // Under REPEATABLE READ both numbers come from ONE snapshot, so this is a
+          // real count of collapsed duplicates and never a race between two reads.
+          // `Math.max(…, 0)` is belt and braces: negative would mean the seed wrote
+          // rows the count did not match, which is a defect rather than a number to
+          // publish.
+          duplicates_collapsed: Math.max(matchedRows - seededRows, 0),
+          excluded,
+        };
+      }, { pool, isolation: 'REPEATABLE READ' });
     } catch (err) {
-      await client.query('ROLLBACK').catch(() => { /* connection already broken */ });
-
       // ── The race the fast path cannot close ─────────────────────────────────
       //
       // Two requests carrying one key can both miss the pre-check and reach the
       // INSERT; the unique index lets exactly one through and answers the other
-      // `23505`. That loser has created NOTHING (the whole transaction is rolled
-      // back above), so the correct answer is the winner's campaign — the same
+      // `23505`. That loser has created NOTHING (`withTransaction` has rolled the
+      // whole transaction back and released its client), so the correct answer is the winner's campaign — the same
       // answer the fast path gives, arrived at a few milliseconds later.
       //
       // Matched on the CONSTRAINT NAME, never on the message text: another unique
@@ -1477,8 +1479,6 @@ export class AgencyCampaignRepository {
         if (winner) return { status: 'replayed', campaign: winner };
       }
       throw err;
-    } finally {
-      client.release();
     }
   }
 
@@ -3280,11 +3280,10 @@ export class AgencyContactRepository {
     }
 
     // One transaction, SELECT FOR UPDATE then UPDATE: claimDialable uses
-    // SKIP LOCKED, so a duplicate we hold cannot be taken between the two.
-    const own = !deps.client;
-    const client: PoolClient = deps.client ?? await pool.connect();
-    try {
-      if (own) await client.query('BEGIN');
+    // SKIP LOCKED, so a duplicate we hold cannot be taken between the two. With
+    // `deps.client` both run inside the caller's transaction instead, and
+    // `withTransaction` issues nothing of its own.
+    return withTransaction(async (client, tx) => {
       const { rows } = await client.query<{ id: string; phone_e164: string }>(
         `SELECT id, phone_e164 FROM agency_contacts
           WHERE campaign_id = $1
@@ -3304,18 +3303,11 @@ export class AgencyContactRepository {
         if (normalizeE164(row.phone_e164) === target) ids.add(row.id);
       }
       if (ids.size === 0) {
-        if (own) await client.query('ROLLBACK');
+        await tx.rollback();
         return [];
       }
-      const updated = await write(client);
-      if (own) await client.query('COMMIT');
-      return updated;
-    } catch (err) {
-      if (own) await client.query('ROLLBACK').catch(() => { /* connection already broken */ });
-      throw err;
-    } finally {
-      if (own) client.release();
-    }
+      return write(client);
+    }, { pool, client: deps.client });
   }
 
 
@@ -6519,21 +6511,12 @@ export class AgencyAgentStatsRepository {
     if (zoneCampaignId === undefined) {
       ({ rows } = await getPool().query<AgencyGroupRawRow>(groupedSql, values));
     } else {
-      const client: PoolClient = await getPool().connect();
-      try {
-        await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY');
-        ({ rows } = await client.query<AgencyGroupRawRow>(groupedSql, values));
-        resolvedTimezone = await this.resolvedCampaignZone(scope, zoneCampaignId, client);
-        await client.query('COMMIT');
-      } catch (err) {
-        // Nothing to undo — the transaction is READ ONLY — so this releases the
-        // snapshot rather than reverting anything. Swallowed because a connection
-        // that is already broken must not mask the error that broke it.
-        await client.query('ROLLBACK').catch(() => { /* connection already broken */ });
-        throw err;
-      } finally {
-        client.release();
-      }
+      // On a throw `withTransaction` rolls back, which here undoes nothing — the
+      // transaction is READ ONLY — and only releases the snapshot.
+      ({ rows, resolvedTimezone } = await withTransaction(async (client) => ({
+        rows: (await client.query<AgencyGroupRawRow>(groupedSql, values)).rows,
+        resolvedTimezone: await this.resolvedCampaignZone(scope, zoneCampaignId, client),
+      }), { pool: getPool(), isolation: 'REPEATABLE READ', readOnly: true }));
     }
 
     return {

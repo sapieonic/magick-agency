@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { PoolClient } from 'pg';
 import { getPool } from '@magick-agency/db';
+import { withTransaction } from '@magick-agency/db/utils/transaction';
 
 /**
  * `dnc_entries` access.
@@ -209,11 +210,7 @@ export class DncRepository {
     input: DncEntryInput,
     opts: { client?: PoolClient } = {},
   ): Promise<DncInsertManyResult> {
-    const own = opts.client === undefined;
-    const client: PoolClient = opts.client ?? (await getPool().connect());
-    try {
-      if (own) await client.query('BEGIN');
-
+    return withTransaction(async (client) => {
       const results: DncInsertResult[] = [];
 
       for (const phone of input.phones) {
@@ -261,14 +258,8 @@ export class DncRepository {
         results.push({ phone_e164: phone, entry, created: false });
       }
 
-      if (own) await client.query('COMMIT');
       return { results };
-    } catch (err) {
-      if (own) await client.query('ROLLBACK').catch(() => undefined);
-      throw err;
-    } finally {
-      if (own) client.release();
-    }
+    }, { pool: getPool(), client: opts.client });
   }
 
   /**

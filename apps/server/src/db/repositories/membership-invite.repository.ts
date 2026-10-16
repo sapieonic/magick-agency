@@ -1,4 +1,5 @@
 import { getPool } from '@magick-agency/db';
+import { withTransaction } from '@magick-agency/db/utils/transaction';
 import {
   adoptFirebaseIdentity,
   isFirebaseUidCollision,
@@ -164,52 +165,42 @@ export class MembershipInviteRepository {
   async createSupersedingOutstanding(
     input: CreateMembershipInviteInput,
   ): Promise<MembershipInviteRecord> {
-    const pool = getPool();
-    const client = await pool.connect();
-    // See `claimWithIdentity` for why a failed ROLLBACK destroys the client
-    // instead of returning it to the pool.
-    let rollbackFailed = false;
+    // `withTransaction` destroys a client whose ROLLBACK failed instead of
+    // returning it to the pool: it may still hold an open transaction.
     try {
-      await client.query('BEGIN');
+      return await withTransaction(async (client) => {
+        await client.query(
+          `UPDATE membership_invites
+              SET revoked_at = NOW()
+            WHERE membership_id = $1
+              AND tenant_id = $2
+              AND claimed_at IS NULL
+              AND revoked_at IS NULL`,
+          [input.membership_id, input.tenant_id],
+        );
 
-      await client.query(
-        `UPDATE membership_invites
-            SET revoked_at = NOW()
-          WHERE membership_id = $1
-            AND tenant_id = $2
-            AND claimed_at IS NULL
-            AND revoked_at IS NULL`,
-        [input.membership_id, input.tenant_id],
-      );
+        const result = await client.query<MembershipInviteRecord>(
+          `INSERT INTO membership_invites
+             (membership_id, tenant_id, email, role, token_hash, expires_at, invited_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING *`,
+          [
+            input.membership_id,
+            input.tenant_id,
+            input.email,
+            input.role,
+            input.token_hash,
+            input.expires_at,
+            input.invited_by ?? null,
+          ],
+        );
 
-      const result = await client.query<MembershipInviteRecord>(
-        `INSERT INTO membership_invites
-           (membership_id, tenant_id, email, role, token_hash, expires_at, invited_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING *`,
-        [
-          input.membership_id,
-          input.tenant_id,
-          input.email,
-          input.role,
-          input.token_hash,
-          input.expires_at,
-          input.invited_by ?? null,
-        ],
-      );
-
-      await client.query('COMMIT');
-      return result.rows[0]!;
+        return result.rows[0]!;
+      }, { pool: getPool() });
     } catch (err) {
-      try {
-        await client.query('ROLLBACK');
-      } catch {
-        rollbackFailed = true;
-      }
+      // Mapped AFTER the rollback, which `withTransaction` has already issued.
       if (isLiveInviteCollision(err)) throw new LiveInviteConflictError();
       throw err;
-    } finally {
-      client.release(rollbackFailed ? true : undefined);
     }
   }
 
@@ -393,168 +384,158 @@ export class MembershipInviteRepository {
      */
     identity: Pick<DecodedFirebaseToken, 'uid' | 'name' | 'picture' | 'email' | 'email_verified'>;
   }): Promise<ClaimInviteResult> {
-    const pool = getPool();
-    const client = await pool.connect();
-    // Set when ROLLBACK itself fails; such a client may still hold an open
-    // transaction, so it is destroyed rather than returned to the pool. Same
+    // `withTransaction` destroys a client whose ROLLBACK failed instead of
+    // returning it to the pool: it may still hold an open transaction. Same
     // guard, for the same reason, as `membershipRepository.withLastOwnerGuard`.
-    let rollbackFailed = false;
     try {
-      await client.query('BEGIN');
+      return await withTransaction<ClaimInviteResult>(async (client, tx) => {
+        const won = await this.markClaimed(input.inviteId, input.userId, client);
+        if (!won.ok) {
+          await tx.rollback();
+          // `revoked`, `already_claimed` and `expired` are carried through
+          // unchanged — the route turns each into a different sentence, and
+          // flattening them here would put the distinction back where it cannot be
+          // recovered.
+          return { ok: false, reason: won.reason };
+        }
 
-      const won = await this.markClaimed(input.inviteId, input.userId, client);
-      if (!won.ok) {
-        await client.query('ROLLBACK');
-        // `revoked`, `already_claimed` and `expired` are carried through
-        // unchanged — the route turns each into a different sentence, and
-        // flattening them here would put the distinction back where it cannot be
-        // recovered.
-        return { ok: false, reason: won.reason };
-      }
-
-      /**
-       * ── Lock the user row BEFORE the bind decides anything about it ────────
-       * `confineStubToTenantId` asks whether this row carries active
-       * memberships in other tenants, and a `NOT EXISTS` is a snapshot read: it
-       * takes no lock on rows that do not exist yet. A concurrent
-       * `POST /users/invite` resolving the same address can INSERT exactly such
-       * a membership after that subquery is evaluated and before this
-       * transaction commits, and the bind then lands on a row that now grants
-       * the foreign membership — the takeover the predicate exists to stop,
-       * reached through an interleaving.
-       *
-       * Taking the row lock as its own statement first is what makes the check
-       * sound, and the ordering is the whole point: under READ COMMITTED each
-       * statement takes a fresh snapshot, so the UPDATE below is planned AFTER
-       * this lock is held and therefore sees every membership committed by an
-       * invite that got there first. An invite that arrives second blocks on
-       * this lock until the claim commits, and the guard on its own write
-       * (`membershipRepository.create`'s `requireProvenEmail`) then finds the
-       * row flagged and declines to attach anything.
-       *
-       * Deliberately NOT relying on the UPDATE's own row lock to do this. That
-       * would leave the re-check to EvalPlanQual re-evaluating a subquery
-       * against a new row version, which is subtle enough that nobody reading
-       * this later should have to reason about it.
-       */
-      await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [input.userId]);
-
-      /**
-       * Both options are load-bearing security, and they close different halves
-       * of the same problem — see {@link AdoptIdentityOptions} for the full
-       * chain behind each.
-       *
-       * `onlyUnclaimedStub` keeps this from being an account takeover: the claim
-       * binds an identity with no relation to the invited address, and
-       * `POST /users/invite` will happily aim a membership at an EXISTING user
-       * row when the address is already known, so binding is safe only against a
-       * row nobody ELSE can sign in as. (A row already carrying the incoming uid
-       * is bound again idempotently — that is the ordinary "invite somebody who
-       * already has a login" case, not a takeover.)
-       *
-       * `confineStubToTenantId` closes the half `onlyUnclaimedStub` cannot see.
-       * That predicate asks whether anybody has signed in as this row, and for a
-       * `pending_` stub the honest answer is no — even when the stub is ALSO
-       * another workspace's pending owner, which the same reuse rule makes
-       * routine. Activating it then returned every active membership on the row
-       * through `buildSessionPayload`, so a token minted in the attacker's own
-       * tenant conferred a `tenant_owner` membership in somebody else's. A claim
-       * may only ever activate the tenant its token names.
-       *
-       * `adoptEmail` keeps the row findable only under the identity that bound
-       * it. Without it, a mismatched claim leaves `users.email` naming the
-       * INVITED address while `firebase_uid` names the CLAIMANT, and
-       * `POST /auth/session` path 2 — which looks up by that column and adopts
-       * with no `onlyUnclaimedStub` — hands the row to whoever next presents a
-       * token for the invited address.
-       *
-       * It runs INSIDE this transaction rather than as a follow-up statement for
-       * the same reason the claim and the bind share one: a bind that landed
-       * with the email write missing is precisely the swapped-identity row this
-       * option exists to prevent, and a second statement afterwards can fail on
-       * its own.
-       */
-      const user = await adoptFirebaseIdentity(
-        client,
-        input.userId,
-        input.identity,
-        null,
-        {
-          onlyUnclaimedStub: true,
-          adoptEmail: true,
-          confineStubToTenantId: input.tenantId,
-        },
-      );
-      if (!user) {
-        /*
-         * THREE different states arrive here and they owe the recipient
-         * different sentences, so the row is re-read to tell them apart. Inside
-         * the same transaction, so the answer cannot be stale — and in ONE
-         * statement, because "is this row still a stub" and "does it belong to
-         * another workspace too" read against each other and two statements
-         * could see a membership written in between.
+        /**
+         * ── Lock the user row BEFORE the bind decides anything about it ────────
+         * `confineStubToTenantId` asks whether this row carries active
+         * memberships in other tenants, and a `NOT EXISTS` is a snapshot read: it
+         * takes no lock on rows that do not exist yet. A concurrent
+         * `POST /users/invite` resolving the same address can INSERT exactly such
+         * a membership after that subquery is evaluated and before this
+         * transaction commits, and the bind then lands on a row that now grants
+         * the foreign membership — the takeover the predicate exists to stop,
+         * reached through an interleaving.
          *
-         * The invite is rolled back in EVERY case: an invite that could not be
-         * spent must stay outstanding, or a supervisor's fix (a resend) would be
-         * spent against a link the recipient never successfully used.
+         * Taking the row lock as its own statement first is what makes the check
+         * sound, and the ordering is the whole point: under READ COMMITTED each
+         * statement takes a fresh snapshot, so the UPDATE below is planned AFTER
+         * this lock is held and therefore sees every membership committed by an
+         * invite that got there first. An invite that arrives second blocks on
+         * this lock until the claim commits, and the guard on its own write
+         * (`membershipRepository.create`'s `requireProvenEmail`) then finds the
+         * row flagged and declines to attach anything.
+         *
+         * Deliberately NOT relying on the UPDATE's own row lock to do this. That
+         * would leave the re-check to EvalPlanQual re-evaluating a subquery
+         * against a new row version, which is subtle enough that nobody reading
+         * this later should have to reason about it.
          */
-        const current = await client.query<{
-          firebase_uid: string;
-          has_foreign_membership: boolean;
-        }>(
-          `SELECT u.firebase_uid,
-                  EXISTS (
-                    SELECT 1
-                      FROM memberships m
-                     WHERE m.user_id = u.id
-                       AND m.status = 'active'
-                       AND m.tenant_id <> $2
-                  ) AS has_foreign_membership
-             FROM users u
-            WHERE u.id = $1`,
-          [input.userId, input.tenantId],
+        await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [input.userId]);
+
+        /**
+         * Both options are load-bearing security, and they close different halves
+         * of the same problem — see {@link AdoptIdentityOptions} for the full
+         * chain behind each.
+         *
+         * `onlyUnclaimedStub` keeps this from being an account takeover: the claim
+         * binds an identity with no relation to the invited address, and
+         * `POST /users/invite` will happily aim a membership at an EXISTING user
+         * row when the address is already known, so binding is safe only against a
+         * row nobody ELSE can sign in as. (A row already carrying the incoming uid
+         * is bound again idempotently — that is the ordinary "invite somebody who
+         * already has a login" case, not a takeover.)
+         *
+         * `confineStubToTenantId` closes the half `onlyUnclaimedStub` cannot see.
+         * That predicate asks whether anybody has signed in as this row, and for a
+         * `pending_` stub the honest answer is no — even when the stub is ALSO
+         * another workspace's pending owner, which the same reuse rule makes
+         * routine. Activating it then returned every active membership on the row
+         * through `buildSessionPayload`, so a token minted in the attacker's own
+         * tenant conferred a `tenant_owner` membership in somebody else's. A claim
+         * may only ever activate the tenant its token names.
+         *
+         * `adoptEmail` keeps the row findable only under the identity that bound
+         * it. Without it, a mismatched claim leaves `users.email` naming the
+         * INVITED address while `firebase_uid` names the CLAIMANT, and
+         * `POST /auth/session` path 2 — which looks up by that column and adopts
+         * with no `onlyUnclaimedStub` — hands the row to whoever next presents a
+         * token for the invited address.
+         *
+         * It runs INSIDE this transaction rather than as a follow-up statement for
+         * the same reason the claim and the bind share one: a bind that landed
+         * with the email write missing is precisely the swapped-identity row this
+         * option exists to prevent, and a second statement afterwards can fail on
+         * its own.
+         */
+        const user = await adoptFirebaseIdentity(
+          client,
+          input.userId,
+          input.identity,
+          null,
+          {
+            onlyUnclaimedStub: true,
+            adoptEmail: true,
+            confineStubToTenantId: input.tenantId,
+          },
         );
-        await client.query('ROLLBACK');
-        const row = current.rows[0];
-        // The membership pointed at a user row that is no longer there. Nothing
-        // to bind, so nothing to spend the invite on either.
-        if (!row) return { ok: false, reason: 'already_claimed' };
-        // Bound to a DIFFERENT real Firebase account — the claimant's own uid
-        // would have matched both predicates' "already this identity" arm and
-        // bound. Reported ahead of the confinement arm because it is the more
-        // actionable of the two ("sign in with the other account"), and because
-        // a row that is already somebody's is no longer a stub to confine.
-        if (
-          !row.firebase_uid.startsWith(PENDING_UID_PREFIX)
-          && row.firebase_uid !== input.identity.uid
-        ) {
+        if (!user) {
+          /*
+           * THREE different states arrive here and they owe the recipient
+           * different sentences, so the row is re-read to tell them apart. Inside
+           * the same transaction, so the answer cannot be stale — and in ONE
+           * statement, because "is this row still a stub" and "does it belong to
+           * another workspace too" read against each other and two statements
+           * could see a membership written in between.
+           *
+           * The invite is rolled back in EVERY case: an invite that could not be
+           * spent must stay outstanding, or a supervisor's fix (a resend) would be
+           * spent against a link the recipient never successfully used.
+           */
+          const current = await client.query<{
+            firebase_uid: string;
+            has_foreign_membership: boolean;
+          }>(
+            `SELECT u.firebase_uid,
+                    EXISTS (
+                      SELECT 1
+                        FROM memberships m
+                       WHERE m.user_id = u.id
+                         AND m.status = 'active'
+                         AND m.tenant_id <> $2
+                    ) AS has_foreign_membership
+               FROM users u
+              WHERE u.id = $1`,
+            [input.userId, input.tenantId],
+          );
+          await tx.rollback();
+          const row = current.rows[0];
+          // The membership pointed at a user row that is no longer there. Nothing
+          // to bind, so nothing to spend the invite on either.
+          if (!row) return { ok: false, reason: 'already_claimed' };
+          // Bound to a DIFFERENT real Firebase account — the claimant's own uid
+          // would have matched both predicates' "already this identity" arm and
+          // bound. Reported ahead of the confinement arm because it is the more
+          // actionable of the two ("sign in with the other account"), and because
+          // a row that is already somebody's is no longer a stub to confine.
+          if (
+            !row.firebase_uid.startsWith(PENDING_UID_PREFIX)
+            && row.firebase_uid !== input.identity.uid
+          ) {
+            return { ok: false, reason: 'identity_already_bound' };
+          }
+          // A stub that several workspaces are waiting on. See
+          // `AdoptIdentityOptions.confineStubToTenantId`.
+          if (row.has_foreign_membership) return { ok: false, reason: 'cross_tenant_identity' };
+          // Neither predicate explains it — the residual shape, which the shared
+          // transaction should make unreachable. Answered as the refusal it most
+          // likely is rather than as a masked 500.
           return { ok: false, reason: 'identity_already_bound' };
         }
-        // A stub that several workspaces are waiting on. See
-        // `AdoptIdentityOptions.confineStubToTenantId`.
-        if (row.has_foreign_membership) return { ok: false, reason: 'cross_tenant_identity' };
-        // Neither predicate explains it — the residual shape, which the shared
-        // transaction should make unreachable. Answered as the refusal it most
-        // likely is rather than as a masked 500.
-        return { ok: false, reason: 'identity_already_bound' };
-      }
 
-      await client.query('COMMIT');
-      return { ok: true, user };
+        return { ok: true, user };
+      }, { pool: getPool() });
     } catch (err) {
-      try {
-        await client.query('ROLLBACK');
-      } catch {
-        rollbackFailed = true;
-      }
+      // Mapped AFTER the rollback, which `withTransaction` has already issued.
       // The one error this layer answers rather than raises. See
       // `isFirebaseUidCollision` for why the constraint name is checked and not
       // just the SQLSTATE, and `ClaimInviteResult` for why the route needs it as
       // a distinct arm rather than as a masked 500.
       if (isFirebaseUidCollision(err)) return { ok: false, reason: 'identity_in_use' };
       throw err;
-    } finally {
-      client.release(rollbackFailed ? true : undefined);
     }
   }
 }
