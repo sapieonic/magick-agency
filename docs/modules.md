@@ -787,22 +787,33 @@ Files: `README.md`, `dashboards/magick-agency-overview.json`, `scripts/metric-de
 
 ### `packages/contracts/src/`
 
-Dialer types (`agency.ts`), error-code unions (`errors.ts`), feature flags (`flags.ts`), roles and permission matrix (`rbac.ts`), barrel.
+Dialer types (`agency.ts`, a barrel over `agency/`), error-code unions and lists including the action error union (`errors.ts`), feature flags (`flags.ts`), roles and permission matrix (`rbac.ts`), shared primitives (`primitives.ts`: `SortOrder`, `STATS_BUCKET_UNITS`, `OffsetPage`, the `AllListed` exhaustiveness check), barrel.
 
-Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `rbac.ts`
+Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.ts`
 
 | Test file | Cases |
 |---|---|
+| `packages/contracts/test/console-wire-derived.test.ts` | 1 (plus 24 type-level pins) |
 | `packages/contracts/test/console-wire-diff.test.ts` | 2 |
-| `packages/contracts/test/errors.test.ts` | 9 |
-| `packages/contracts/test/exports.test.ts` | 5 |
+| `packages/contracts/test/errors.test.ts` | 7 |
+| `packages/contracts/test/exports.test.ts` | 7 |
 | `packages/contracts/test/flags.test.ts` | 6 |
 | `packages/contracts/test/rbac.test.ts` | 48 |
 | `packages/contracts/test/stall.test.ts` | 4 |
 
+`packages/contracts/test/type-equals.ts` is the shared type-level `Equals` / `Same` helper.
+
+### `packages/contracts/src/agency/`
+
+The dialer contract, one file per surface, re-exported by `../agency.ts`: shared enumerations (`enums.ts`), campaign-derived config and the session bootstrap (`session.ts`), the station socket and its close codes (`station.ts`), action and session-state routes with the Phase 2 pool (`actions.ts`), campaign stats (`campaign-stats.ts`), lifecycle and retry campaigns (`campaign-lifecycle.ts`), series, agent record, roster and grouped reads (`performance.ts`), the attempt spine (`spine.ts`).
+
+Files: `actions.ts`, `campaign-lifecycle.ts`, `campaign-stats.ts`, `enums.ts`, `performance.ts`, `session.ts`, `spine.ts`, `station.ts`
+
+_No dedicated test files._
+
 ### `packages/contracts/src/api/agency/`
 
-Console wire types for the agency API: campaigns, series, stats, spine, activity, analysis profiles, DNC, calls, attempt call; `CONTRACT-DIFF.md` lists where they differ from `agency.ts`.
+Console wire types for the agency API: campaigns, series, stats, spine, activity, analysis profiles, DNC, calls, attempt call. Declarations identical to the dialer contract are re-exported from it, and the ones that differ are derived from it; `CONTRACT-DIFF.md` lists each.
 
 Files: `agency-activity.ts`, `agency-campaign-series.ts`, `agency-campaign.ts`, `agency-spine.ts`, `agency-stats.ts`, `agency.ts`, `attempt-call.ts`, `call-analysis-profile.ts`, `dnc.ts`, `index.ts`, `shared.ts`, `webrtc-call.ts`
 
