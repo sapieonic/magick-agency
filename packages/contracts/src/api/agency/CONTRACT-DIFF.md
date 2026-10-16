@@ -14,6 +14,13 @@ Found by walking both type trees (member name plus declared type text), then rea
 
 ## 1. Same name, different shape
 
+Each console type in this table except `AgencyRetryCreateResponse` is DERIVED from its dialer
+counterpart (`interface X extends Omit<Core.X, …> { …the members that differ }`), so a member added
+to the dialer type reaches the console type with no second edit, and only the differences below
+are written out. `packages/contracts/test/console-wire-derived.test.ts` pins each derived type to
+the shape it had when it was hand-declared, so the derivation changed nothing the console compiles
+against.
+
 | Type | Dialer contract (`agency.ts`) | Console wire type (`api/agency/*`) | Note |
 |---|---|---|---|
 | `AgencySessionBootstrap` | `station_token_expires_at: string` | `station_token_expires_at?: string` | The server always sends it |
@@ -25,31 +32,33 @@ Found by walking both type trees (member name plus declared type text), then rea
 | `AgencyWrapupState` | `seconds_total: number`; `held_reason: AgencyWrapupHoldReason \| null` (required; 2 members) | no `seconds_total`; `held_reason?: AgencyWrapupHold \| null` (2 members) | `supervisor_hold` is declared on both sides but nothing produces it (`docs/decisions.md`, still open) |
 | `AgencySupervisorAgent` | no name | `agent_name: string \| null` | Public API layer enrichment: it joins the name from `users` |
 | `AgencyCampaignStats` | every counter required | every counter optional; adds `agents_peak?: number \| null` | `agents_peak` has no producer; the console degrades on absence. `stall` / `other_stalls` are identical |
-| `AgencyRetryCreateResponse` | generic discriminated union `AgencyRetryCreated<T> \| AgencyRetryReplayed<T>` on `idempotent_replay` | one interface: `campaign: AgencyCampaign`, `idempotent_replay?: boolean`, `contacts_seeded: number \| null`, `duplicates_collapsed?: number \| null`, `excluded: … \| null` | Same wire; the console flattens the union |
+| `AgencyRetryCreateResponse` (declared, not derived) | generic discriminated union `AgencyRetryCreated<T> \| AgencyRetryReplayed<T>` on `idempotent_replay` | one interface: `campaign: AgencyCampaign`, `idempotent_replay?: boolean`, `contacts_seeded: number \| null`, `duplicates_collapsed?: number \| null`, `excluded: … \| null` | Same wire; the console flattens the union |
 | `AgencyCampaignLineage` | `campaigns: AgencyLineageCampaign[]` | `campaigns: AgencyCampaignLineageEntry[]` | Entries differ only in `status: string` (§2) |
 | `AgencyAgentStatsBucket` / `AgencyAgentStatsTotals` | `occupancy: AgencyAgentOccupancy` (required) | `occupancy?: AgencyOccupancy \| null` | The console treats occupancy as possibly unmeasured |
-| `AgencyAgentStats` | `bucket: AgencyStatsBucketUnit`; `by_campaign: AgencyAgentCampaignRow[]` | `AgencyStatsBucketWidth`; `AgencyAgentStatsByCampaign[]` | Renames only, same members (§2) |
+| `AgencyAgentStats` | `totals` / `buckets` of the dialer types | the console's `AgencyAgentStatsTotals` / `AgencyAgentStatsBucket` | `bucket` and `by_campaign` use aliases of the dialer types (§2) |
 | `AgencyRosterAgentRow` | `success_rate_reportable: boolean` | optional | Additive |
 | `AgencyRosterBenchmark` | `shift_seconds`, `break_seconds`, `aht` required | optional | Additive |
 | `AgencyRosterPage` | `order: 'asc' \| 'desc'`; `rows: AgencyRosterAgentRow[]` | `order: AgencyRosterOrder` (same literals); `rows: AgencyRosterAgentRowWithName[]`; adds `inactive_omitted: number`, `unattributed_omitted?: number` | Public API layer enrichment: names and the two omission counts, computed while joining identities |
 | `AgencyGroupRow` | `rates_reportable`, `success_rate_reportable` required | optional | Additive |
 | `AgencyGroupPage` | `resolved_timezone: string \| null`; `rows: AgencyGroupRow[]` | `resolved_timezone?`; `rows: AgencyGroupRowWithName[]`; adds `inactive_omitted`, `unattributed_omitted?` | Same enrichment as the roster page |
-| `AgencyContactDetail` | `extends AgencyContactRow` | `extends AgencyRosterContact` | The base types have identical members (§2) |
 
 ## 2. Different name, same concept
 
+"Alias" means the console name is `export type ConsoleName = DialerName`; "derived" means it
+extends the dialer type and declares only the difference.
+
 | Dialer contract | Console wire type | Difference |
 |---|---|---|
-| `AgencyContactRow` | `AgencyRosterContact` | identical members |
-| `AgencyAttemptRow` | `AgencyAttempt` | console adds `agent_name?: string \| null` (enrichment) |
-| `AgencyLineageCampaign` | `AgencyCampaignLineageEntry` | `status: AgencyCampaignStatus` vs `string` |
-| `AgencyAgentOccupancy` | `AgencyOccupancy` | `by_state: Record<AgencyAgentState, number>` vs `AgencyAgentsByState` (same type) |
-| `AgencyStatsBucketUnit` | `AgencyStatsBucketWidth` | identical (`'day' \| 'week' \| 'month'`) |
-| `AgencyAgentCampaignRow` | `AgencyAgentStatsByCampaign` | identical members |
-| `AgencySessionCampaignConflict` | `AgencySessionConflict` | the dialer type `extends AgencyActionErrorResponse` (`error`, `message` required); the console declares `error` and an optional `message` |
-| `AgencyWrapupHoldReason` | `AgencyWrapupHold` | same two members |
-| `AgencyDisposition` | `AgencyDispositionEntry` | `retry` inline vs the named `AgencyRetryRule` (same members) |
-| `AgencyCampaignStatsSeries` | `AgencyCampaignSeries` | console `timezone?` nullable, adds `from?` / `to?`; buckets typed as the agent bucket (`AgencyAgentStatsBucket`, occupancy optional) where the dialer contract uses `Omit<…, 'occupancy'>` |
+| `AgencyContactRow` | `AgencyRosterContact` | alias |
+| `AgencyAttemptRow` | `AgencyAttempt` | derived: adds `agent_name?: string \| null` (enrichment) |
+| `AgencyLineageCampaign` | `AgencyCampaignLineageEntry` | derived: `status: string` |
+| `AgencyAgentOccupancy` | `AgencyOccupancy` | alias |
+| `AgencyStatsBucketUnit` | `AgencyStatsBucketWidth` | alias (`'day' \| 'week' \| 'month'`) |
+| `AgencyAgentCampaignRow` | `AgencyAgentStatsByCampaign` | alias |
+| `AgencySessionCampaignConflict` | `AgencySessionConflict` | declared: the dialer type `extends AgencyActionErrorResponse` (`error`, `message` required, `allowed_codes?`); the console declares `error` and an optional `message` |
+| `AgencyWrapupHoldReason` | `AgencyWrapupHold` | alias |
+| `AgencyDisposition` | `AgencyDispositionEntry` | alias; `AgencyRetryRule` is `NonNullable<AgencyDisposition['retry']>` |
+| `AgencyCampaignStatsSeries` | `AgencyCampaignSeries` | declared: console `timezone?` nullable, adds `from?` / `to?`; buckets typed as the agent bucket (`AgencyAgentStatsBucket`, occupancy optional) where the dialer contract uses `Omit<…, 'occupancy'>` |
 
 ## 3. Identical in both: re-exported, not copied
 

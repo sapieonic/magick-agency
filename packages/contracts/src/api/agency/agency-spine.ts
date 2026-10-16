@@ -18,6 +18,7 @@
  * that rule was written for.
  */
 
+import type * as Core from '../../agency';
 import type { AgencyAttemptOutcome, AgencyAttemptState } from './agency';
 // Identical in the dialer contract, so re-exported rather than copied (`CONTRACT-DIFF.md` §3).
 import type {
@@ -44,36 +45,7 @@ export {
 /** One roster row, without `context`: the console's name for the dialer contract's `AgencyContactRow`. */
 export type AgencyRosterContact = AgencyContactRow;
 
-export interface AgencyAttempt {
-  id: string;
-  contact_id: string;
-  /**
-   * Which campaign this dial belonged to.
-   *
-   * Served on every attempt row, campaign-scoped reads included, and required
-   * rather than optional — a row without it is unattributable on the one surface
-   * that needs it most. `GET /proxy/agency/my-attempts` is CROSS-campaign by
-   * design (it is the agent's whole dial history, which
-   * `/campaigns/:id/attempts` structurally cannot be), so on that list the
-   * campaign is not implied by the URL and has to travel with the row.
-   *
-   * Redundant on a campaign-scoped read, and kept there anyway: one row shape for
-   * both readers beats a conditional field whose absence a consumer has to know
-   * to expect.
-   */
-  campaign_id: string;
-  /** 1-based, per contact. */
-  attempt_number: number;
-  phone_e164: string;
-  caller_id: string;
-  /**
-   * The agent who held this attempt, as a user id.
-   *
-   * **`null` is ordinary and is not missing data**: an attempt that was
-   * abandoned, failed or never answered had no agent on it. Render it as
-   * "no agent", never as a gap.
-   */
-  agent_user_id: string | null;
+export interface AgencyAttempt extends Core.AgencyAttemptRow {
   /**
    * The agent's display name, resolved by the public API layer — the dialer runtime has no user table, so
    * it can only ever serve the id, and a column of UUIDs is not one a
@@ -85,37 +57,6 @@ export interface AgencyAttempt {
    * older than this build does not send it.
    */
   agent_name?: string | null;
-  reserved_agent_id: string | null;
-  state: AgencyAttemptState;
-  /** `null` means the attempt ended before it was ever classified. Not `failed`. */
-  outcome: AgencyAttemptOutcome | null;
-  disposition_code: string | null;
-  /**
-   * Agent-typed free text. Shown deliberately because it
-   * is frequently the answer to "why was this number called four times". Always
-   * rendered as TEXT, never as markup.
-   */
-  notes: string | null;
-  callback_at: string | null;
-  /** Who filed the write-up, which is not always who took the call. */
-  dispositioned_by_user_id: string | null;
-  dispositioned_at: string | null;
-  dispositioned_on_behalf: boolean;
-  /**
-   * The media leg, for the recording.
-   *
-   * **A non-null id is NOT a promise the recording still exists.** The dialer runtime keeps
-   * this un-FK'd on purpose so an attempt outlives a purged call, so the link
-   * must degrade to "recording no longer available" rather than 404.
-   */
-  webrtc_call_id: string | null;
-  dialed_at: string | null;
-  answered_at: string | null;
-  bridged_at: string | null;
-  ended_at: string | null;
-  talk_seconds: number | null;
-  wrapup_seconds: number | null;
-  created_at: string;
 }
 
 export interface AgencyAttemptFilters {

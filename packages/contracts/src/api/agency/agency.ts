@@ -40,6 +40,7 @@ import type {
   AgencyStationTokenResponse,
   AgencyWrapupHoldReason,
 } from '../../agency';
+import type * as Core from '../../agency';
 import type { AgencyActionErrorCode, AgencyStationErrorCode } from '../../errors';
 
 export type {
@@ -82,11 +83,7 @@ export { AGENCY_ACTION_ERROR_CODES } from '../../errors';
  * of these**: the console's countdown and the server's lease would drift the
  * first time either is retuned, and the drift is silent.
  */
-export interface AgencyStationIntervals {
-  heartbeat_ms: number;
-  heartbeat_grace_ms: number;
-  reservation_lease_ms: number;
-  countdown_ms: number;
+export interface AgencyStationIntervals extends Omit<Core.AgencyStationIntervals, 'deferred_hangup_ms'> {
   /**
    * How long a live call is held open after the station socket drops, waiting
    * for this session to reconnect. Optional here so a payload that lacks it
@@ -95,45 +92,17 @@ export interface AgencyStationIntervals {
   deferred_hangup_ms?: number;
 }
 
-export interface AgencySessionBootstrap {
-  session_id: string;
-  campaign_id: string;
-  campaign_name: string;
-  agent_user_id: string;
-  state: AgencyAgentState;
-  campaign_status: AgencyCampaignStatus;
-  station_ws_url: string;
+/**
+ * The dialer's bootstrap, read with the console's {@link AgencyStationIntervals}.
+ *
+ * `retry_context` is absent for every non-retry campaign, so `undefined` is the
+ * ordinary case and renders as nothing at all, not as an empty banner.
+ */
+export interface AgencySessionBootstrap
+  extends Omit<Core.AgencySessionBootstrap, 'station_token_expires_at' | 'intervals'> {
   /** ISO-8601. Single-use and short — re-mint before each connect attempt. */
   station_token_expires_at?: string;
-  disposition_catalog: AgencyDisposition[];
-  wrapup_seconds: number;
-  wrapup_auto_return: boolean;
-  record_calls: boolean;
-  break_reasons: AgencyBreakReason[];
-  context_display: AgencyContextDisplay;
   intervals: AgencyStationIntervals;
-  /**
-   * Set only when this campaign is a retry of another one.
-   *
-   * **Absent for every non-retry campaign**, which is 100% of them today — so an
-   * `undefined` here is the ordinary case and must render as *nothing at all*,
-   * not as an empty banner reserving space.
-   *
-   * ── Why it is on the bootstrap and not on the `reserved` frame ─────────────
-   * It is campaign-constant: it is the same three values for the whole shift.
-   * `AgencyStationReservedFrame` is the one payload whose latency the dialer
-   * design guards hardest — it is written synchronously, before the dial, with
-   * no interleaved `await` — and repeating a fixed sentence on it once per call
-   * would spend that budget on copy.
-   *
-   * ── `selection_summary` is BUILT SERVER-SIDE and rendered unchanged ─────────────
-   * The dialer runtime composes it from the frozen `retry_selector` on the child campaign row,
-   * so the sentence the agent reads and the query that produced their roster
-   * cannot disagree. Re-deriving it here from anything this client holds would
-   * be a second answer to the same question, and this client does not even have
-   * the input — the selector is not on the bootstrap, deliberately.
-   */
-  retry_context?: AgencyRetryContext;
 }
 
 /**
@@ -189,11 +158,8 @@ export interface AgencySessionConflict {
  * nothing. Everything else here is reconciliation only: `agent_state` frames remain
  * the sole authority for the rail.
  */
-export interface AgencySessionStateResponse {
-  session_id: string;
-  state: AgencyAgentState;
-  /** ISO-8601. */
-  since: string;
+export interface AgencySessionStateResponse
+  extends Omit<Core.AgencySessionStateResponse, 'campaign_id' | 'pending_state' | 'break_reason'> {
   /** Set when a break was requested mid-call and is queued until wrap-up ends. */
   pending_state?: AgencyAgentState | null;
   /**
@@ -214,39 +180,20 @@ export interface AgencySessionStateResponse {
   break_reason?: string | null;
 }
 
-export interface AgencyDispositionResponse {
-  attempt_id: string;
-  contact_id: string;
-  disposition_code: string;
+/**
+ * The dialer's disposition answer without `campaign_id`, and with
+ * `contact_state` read as a string.
+ *
+ * `agent_state` is ADVISORY: it races the socket by design, so the console reads
+ * it only through `advisoryAgentState()` in `utils/agencyStaleResponse.ts`,
+ * never directly. `callback_requested_at` is what the agent asked for, echoed
+ * unchanged; `next_attempt_at` is the window-adjusted instant the dialer will
+ * actually call, and when the two differ the console says what will happen
+ * (`confirmationCopy`).
+ */
+export interface AgencyDispositionResponse
+  extends Omit<Core.AgencyDispositionResponse, 'campaign_id' | 'contact_state'> {
   contact_state: string;
-  /** ISO-8601; set when the disposition scheduled a retry or a callback. */
-  next_attempt_at: string | null;
-  /**
-   * What the agent ASKED for, echoed unchanged. `next_attempt_at` is the window-adjusted
-   * instant the dialer will actually call; when the two differ the console says what will
-   * happen (`confirmationCopy`).
-   */
-  callback_requested_at?: string | null;
-  /**
-   * The agent's state after release. **ADVISORY, NOT AUTHORITATIVE.**
-   *
-   * ⚠️ **This field races the socket by design, and assigning from it
-   * unconditionally drops a live call.** Submitting releases the agent; the pacing
-   * tick runs every 250ms; so a new call can be reserved and its `reserved` frame
-   * delivered **before this HTTP response lands**. A console that writes this
-   * value into its agent state then overwrites a fresh `reserved` with a stale
-   * `available` — and the panel for a customer who is already on the line
-   * disappears.
-   *
-   * The socket is the authority. This is a hint, usable **only** to reconcile when
-   * no `agent_state` frame has arrived within 3s, and only through
-   * `advisoryAgentState()` in `utils/agencyStaleResponse.ts`, which will not hand
-   * it over once the attempt has moved on. Do not read this property directly.
-   *
-   * It also must not be hard-coded around: after a submit with a queued break the
-   * correct state is `break`, not `available`.
-   */
-  agent_state: AgencyAgentState;
 }
 
 /**
@@ -259,31 +206,23 @@ export interface AgencyDispositionResponse {
  * true. The dialer runtime populates it from the public API layer's answer and can only know it by asking —
  * so `false` is a real, reachable state, not a defensive default.
  */
-export interface AgencyDncResponse {
-  attempt_id: string;
-  contact_id: string;
-  phone_e164: string;
+export interface AgencyDncResponse
+  extends Omit<Core.AgencyDncResponse, 'campaign_id' | 'contact_state'> {
   /** Always `suppressed` on success. */
   contact_state: string;
-  /** False when the suppression landed locally but the list write is in flight. */
-  dnc_recorded: boolean;
 }
 
 // ─── Station socket frames ──────────────────────────────────────────────────
 
-export interface AgencyStationReadyFrame {
-  event: 'ready';
-  session_id: string;
-  state: AgencyAgentState;
-  /**
-   * Set when the socket reconnected onto an attempt that is still live.
-   *
-   * **`AgencyActiveAttempt`, not `AgencyReservedAttempt`** — the difference is
-   * `bridged_at`, and it is the whole reconnect story. Typing it as
-   * the base type would drop `bridged_at`, and a reconnect onto a live call would
-   * render as ringing for the rest of the conversation.
-   */
-  active_attempt?: AgencyActiveAttempt;
+/**
+ * The dialer's `ready` frame, carrying the console's {@link AgencyWrapupState}.
+ *
+ * `missed_release` is consumed-on-read in the dialer runtime, so this frame is
+ * the only time it is offered: a console that drops it destroys it. `pending_state`
+ * `undefined` means nothing is queued, and must CLEAR a badge rather than leave
+ * one standing.
+ */
+export interface AgencyStationReadyFrame extends Omit<Core.AgencyStationReadyFrame, 'active_wrapup'> {
   /**
    * Set when the reconnecting socket is in `wrapup`.
    *
@@ -295,46 +234,6 @@ export interface AgencyStationReadyFrame {
    * to submit the disposition the dialer runtime is about to refuse `/available` over.
    */
   active_wrapup?: AgencyWrapupState;
-  /**
-   * The `released` this session missed while it was disconnected.
-   *
-   * **Consumed-on-read in the dialer runtime.** `takeMissedRelease` clears as it reads
-   * (`agency.routes.ts`, "read it here, not inline in the frame, because … a
-   * second call would return null"), so this frame is the *only* time it is ever
-   * offered. A console that drops it does not merely delay the information — it
-   * destroys it, and the agent who dropped mid-call comes back to an empty
-   * station with no account of the call they were on, which reads as data loss.
-   */
-  missed_release?: AgencyMissedRelease;
-  /**
-   * A break the agent asked for that dialer runtime has accepted and not yet applied — the
-   * same name, type and meaning as on `AgencyStationAgentStateFrame`, chosen that
-   * way deliberately so one badge renders from either frame with no new
-   * vocabulary.
-   *
-   * A
-   * queued break is announced exactly twice — on the HTTP response that queued it,
-   * and on the `agent_state` beside it — and both die with the socket. The next
-   * `agent_state` the agent gets is the one `releaseAgent` sends at the *end* of
-   * wrap-up, by which time the break has been applied. So a console that
-   * reconnected mid-wrap-up was told its state and its countdown and nothing about
-   * the break waiting behind them.
-   *
-   * **The dialer runtime reads the queue with `peek`, not `take`** (`agency.routes.ts`,
-   * `runtime.breaks.peek(sessionId)`), so reporting it here does not consume it:
-   * `releaseAgent` still `take`s it when wrap-up ends and the agent still leaves
-   * the pool. This is notice of something about to happen, not a receipt for a
-   * request.
-   *
-   * **Not gated on `active_wrapup`.** A break can also be queued from `reserved`
-   * or `on_call`, and those reconnects arrive carrying `active_attempt` instead.
-   *
-   * `undefined` means nothing is queued — the same load-bearing absence as on
-   * `agent_state`, so it must CLEAR a badge rather than leave one standing.
-   */
-  pending_state?: AgencyAgentState;
-  /** Present when `pending_state` is `break`. */
-  pending_break_reason?: string;
 }
 
 /**
@@ -346,8 +245,9 @@ export interface AgencyStationReadyFrame {
  * `status: 'answered'` means the far end went off-hook, which is NOT the same
  * as audio reaching this agent.
  */
-export interface AgencyStationBridgeStatusFrame {
-  event: 'status';
+export interface AgencyStationBridgeStatusFrame
+  extends Omit<Core.AgencyStationBridgeStatusFrame, 'status'> {
+  /** Deliberately wide: the dialer's ten-member union, read as a string. */
   status: string;
 }
 
@@ -377,12 +277,8 @@ export type AgencyWrapupHold = AgencyWrapupHoldReason;
  * the timer has lapsed into a hold. Rendering it as an elapsed or zero countdown
  * tells the agent they are out of time when they are not.
  */
-export interface AgencyWrapupState {
-  attempt_id: string;
-  /** ISO-8601, absolute. Null ⇒ no deadline; see above. */
-  ends_at: string | null;
-  requires_disposition: boolean;
-  disposition_submitted: boolean;
+export interface AgencyWrapupState
+  extends Omit<Core.AgencyWrapupState, 'seconds_total' | 'held_reason'> {
   /**
    * Why the window is held rather than counting down. Set **at entry** for a
    * timerless wrap-up, not only on a later expiry — there is no countdown that
@@ -390,17 +286,6 @@ export interface AgencyWrapupState {
    * no reason and nothing to act on.
    */
   held_reason?: AgencyWrapupHold | null;
-  /**
-   * Whether the window will return the agent to the pool on its own.
-   *
-   * **Trust this, not the campaign config.** For a timerless wrap-up the dialer runtime reports
-   * `false` even when the campaign sets `wrapup_auto_return: true`, because with
-   * no window it cannot mean what it says. Echoing the config would pair
-   * `auto_return: true` with `ends_at: null`, which is indistinguishable from
-   * "the countdown frame failed to arrive" — and the console would render a
-   * spinner on a wrap-up that is actually waiting for the agent.
-   */
-  auto_return: boolean;
 }
 
 /**
