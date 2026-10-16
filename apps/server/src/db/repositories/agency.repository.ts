@@ -3768,6 +3768,31 @@ export class AgencyContactRepository {
     contacts: AgencyContactInput[];
   }): Promise<AgencyIngestResult> {
     return withTransaction<AgencyIngestResult>(async (client, tx) => {
+      // ── The campaign row is locked FIRST, before anything is written ────────
+      //
+      // `contacts_total` below is a COUNT taken by an UPDATE of this row. Under READ
+      // COMMITTED, a second chunk whose UPDATE blocked on the first's row lock resumes
+      // after the first commits but evaluates the COUNT with its own statement
+      // snapshot, which predates that commit: it answered, and stored, a total
+      // short by the other chunk. Taking the lock as the transaction's first
+      // statement makes a concurrent chunk for the same campaign wait here, holding
+      // nothing, and every statement after the wait sees the committed chunk.
+      //
+      // `FOR NO KEY UPDATE`, not `FOR UPDATE`: it is exactly the lock the UPDATE
+      // below takes anyway, taken earlier, so it adds no lock mode to this row. It
+      // does not conflict with the `FOR KEY SHARE` that foreign-key checks take
+      // (calls, attempts, sessions, retry children inserted against a running
+      // campaign); `FOR UPDATE` would make each of those wait for the chunk.
+      //
+      // Lock order: the campaign row, then only rows this transaction creates. No
+      // other path holds this row's lock while waiting on an ingest's rows, so this
+      // cannot deadlock. Chunks of one ingest job are sent one at a time, so the
+      // only serialisation this adds is between two ingests on one campaign.
+      await client.query(
+        'SELECT 1 FROM agency_campaigns WHERE id = $1 FOR NO KEY UPDATE',
+        [input.campaignId],
+      );
+
       const marker = await client.query<{ id: string }>(
         `INSERT INTO agency_ingest_chunks
            (campaign_id, ingest_job_id, chunk_index, idempotency_key, chunk_count, row_count)
@@ -3936,7 +3961,8 @@ export class AgencyContactRepository {
 
       // Recomputed as a COUNT rather than incremented, which is what makes it
       // self-healing under replay; `RETURNING` hands the new total back from the
-      // same statement instead of a second count of the roster.
+      // same statement instead of a second count of the roster. Exact under
+      // concurrent chunks only because of the row lock taken at the top.
       const totalled = await client.query<{ contacts_total: number }>(
         `UPDATE agency_campaigns
             SET contacts_total = (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1),

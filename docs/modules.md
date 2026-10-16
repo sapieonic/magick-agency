@@ -63,6 +63,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-duplicate-dial.test.ts` | ~11 |
 | `apps/server/test/integration/agency/agency-gate-skip-logging.test.ts` | ~2 |
 | `apps/server/test/integration/agency/agency-ingest-chunk-fate.test.ts` | 4 |
+| `apps/server/test/integration/agency/agency-ingest-concurrent-total.test.ts` | 1 |
 | `apps/server/test/integration/agency/agency-ingest-idempotency.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-ingest-job-repository-sql.test.ts` | ~12 |
 | `apps/server/test/integration/agency/agency-ingest-roundtrip.test.ts` | ~7 |
