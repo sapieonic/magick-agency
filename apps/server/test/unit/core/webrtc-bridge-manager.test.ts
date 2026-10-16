@@ -979,7 +979,7 @@ describe('WebRtcBridgeManager oversized-frame gate (MAX_MEDIA_FRAME_BYTES)', () 
 });
 
 describe('WebRtcBridgeManager.verifyWsToken — fail-open under Redis degradation', () => {
-  const PURPOSES = ['browser', 'provider', 'webhook'] as const;
+  const PURPOSES = ['provider', 'webhook'] as const;
 
   it('returns true for every purpose when redis is null (degraded)', async () => {
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);

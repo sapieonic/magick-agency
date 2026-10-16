@@ -349,7 +349,7 @@ describe('verifyWsToken — the length-mismatch outcome (Q6)', () => {
   it('rejects a presented token of a different length without throwing (timingSafeEqual is length-guarded)', async () => {
     const redis = { get: vi.fn().mockResolvedValue('stored-token'), set: vi.fn(), del: vi.fn() };
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, redis as any);
-    for (const purpose of ['browser', 'provider', 'webhook'] as const) {
+    for (const purpose of ['provider', 'webhook'] as const) {
       await expect(mgr.verifyWsToken('call-x', 'stored-token-but-longer', purpose)).resolves.toBe(false);
       await expect(mgr.verifyWsToken('call-x', 'short', purpose)).resolves.toBe(false);
       await expect(mgr.verifyWsToken('call-x', '', purpose)).resolves.toBe(false);

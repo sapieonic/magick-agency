@@ -190,6 +190,8 @@ export interface WebRtcLifecycleEvent {
 export type WebRtcLifecycleListener = (event: WebRtcLifecycleEvent) => void;
 
 const WS_TOKEN_MIN_TTL_SECONDS = 120;
+/** The per-call credentials the bridge mints: the carrier's media socket and its webhooks. */
+type WsTokenPurpose = 'provider' | 'webhook';
 /**
  * Hard ceiling on the unstored-token memory (`unstoredWsTokens`). Expired entries
  * are pruned first; past this the oldest go, because a sustained Redis outage can
@@ -512,11 +514,10 @@ export class WebRtcBridgeManager {
    * The shared dial path behind both entry points: resolve the recording ceiling,
    * reserve the shared concurrency slots, persist the row, register the session,
    * arm the max-duration guard, attach a borrowed socket if one was supplied, mint
-   * the per-call credentials, and place the outbound leg.
+   * the carrier's per-call credentials, and place the outbound leg.
    *
-   * Returns the browser WS token only when the browser leg is ours to mint — a
-   * borrowed socket needs none, and deliberately gets none. Both entry points
-   * borrow, so in practice it is always null.
+   * Every leg is borrowed (both entry points), so no browser WS token is minted:
+   * there is no browser connect to gate.
    */
   private async placeOutboundLeg(params: WebRtcOutboundParams & {
     campaignId?: string | null;
@@ -528,16 +529,15 @@ export class WebRtcBridgeManager {
      * been supplied yet.
      *
      * Separate from `browserSocket` because late binding has no socket at dial
-     * time and must still mint no token — keying the token decision on the
-     * socket's presence would hand a browser token to an unbound call for the
-     * whole ring window.
+     * time and must still be marked borrowed (`markBorrowedUnbound`), so the
+     * ownership guards treat the leg as the caller's for the whole ring window.
      */
     borrowedBrowserLeg?: boolean;
     /** Terminal outcome recorded when the browser leg closes mid-call. */
     browserHangupOutcome: string;
     /** Borrowed sockets only: re-attach window on close. 0/absent ⇒ hang up now. */
     browserCloseGraceMs?: number;
-  }): Promise<{ record: WebRtcCallRecord; session: WebRtcBridgeSession; browserToken: string | null }> {
+  }): Promise<{ record: WebRtcCallRecord; session: WebRtcBridgeSession }> {
     // No provider named: the service's own VoiceLink account (every dial today).
     const provider = params.provider || 'voicelink';
     // Per-account recording ceiling: an account with allow_recording=false cannot
@@ -675,15 +675,9 @@ export class WebRtcBridgeManager {
       session.markBorrowedUnbound(params.browserHangupOutcome, params.browserCloseGraceMs ?? 0);
     }
 
-    // 5. Issue the browser WS token (best-effort). A borrowed leg has no browser
-    // connect to gate, so no token is minted. Read from the flag AND the socket,
-    // so a caller that supplies a socket without the flag still cannot mint one.
-    const borrowedBrowserLeg = params.borrowedBrowserLeg === true || params.browserSocket !== undefined;
-    const token = borrowedBrowserLeg ? null : crypto.randomUUID();
-    if (token) await this.storeWsToken(record.id, token, maxDuration + 60);
-    // The carrier connects the provider WS + posts webhooks itself, so those two
+    // 5. The carrier connects the provider WS + posts webhooks itself, so those two
     // legs get their own purpose-bound tokens (embedded only in the URLs we send
-    // the carrier).
+    // the carrier). No browser token: every leg is borrowed.
     const tokenTtl = maxDuration + 60;
     let providerToken: string | undefined;
     let webhookToken: string | undefined;
@@ -776,7 +770,7 @@ export class WebRtcBridgeManager {
     }
 
     trackWebrtcCallInitiated(record);
-    return { record, session, browserToken: token };
+    return { record, session };
   }
 
   // ─── Browser leg ───────────────────────────────────────────────────────────
@@ -1959,11 +1953,9 @@ export class WebRtcBridgeManager {
 
   // ── Purpose-bound per-call credentials ─────────────────────────────────────
   // Random nonces in Redis (replica-safe). Separate high-entropy tokens per purpose
-  // keep the browser, provider-WSS and webhook trust domains distinct: the provider +
-  // webhook tokens live only in the URLs we send VoiceLink, so a leaked browser token
-  // can't forge a provider socket or a webhook. (A borrowed leg mints no browser
-  // token; see `verifyWsToken`.)
-  private wsTokenKey(callId: string, purpose: 'browser' | 'provider' | 'webhook' = 'browser'): string {
+  // keep the provider-WSS and webhook trust domains distinct; both live only in the
+  // URLs we send VoiceLink. (Every leg is borrowed, so there is no browser token.)
+  private wsTokenKey(callId: string, purpose: WsTokenPurpose): string {
     return `${this.keyPrefix}webrtc:ws-token:${purpose}:${callId}`;
   }
 
@@ -1971,7 +1963,7 @@ export class WebRtcBridgeManager {
     callId: string,
     token: string,
     ttlSeconds: number,
-    purpose: 'browser' | 'provider' | 'webhook' = 'browser',
+    purpose: WsTokenPurpose,
   ): Promise<void> {
     if (!this.redis) return;
     const ttl = Math.max(WS_TOKEN_MIN_TTL_SECONDS, ttlSeconds);
@@ -1989,11 +1981,11 @@ export class WebRtcBridgeManager {
     }
   }
 
-  private unstoredWsTokenKey(callId: string, purpose: 'browser' | 'provider' | 'webhook'): string {
+  private unstoredWsTokenKey(callId: string, purpose: WsTokenPurpose): string {
     return `${purpose}:${callId}`;
   }
 
-  private noteUnstoredWsToken(callId: string, purpose: 'browser' | 'provider' | 'webhook', forMs: number): void {
+  private noteUnstoredWsToken(callId: string, purpose: WsTokenPurpose, forMs: number): void {
     const now = Date.now();
     // Bounded: prune expired entries before growing (a sustained Redis outage adds two
     // entries per call, each dropped once its window passes).
@@ -2013,7 +2005,7 @@ export class WebRtcBridgeManager {
     this.unstoredWsTokens.set(this.unstoredWsTokenKey(callId, purpose), now + forMs);
   }
 
-  private wasUnstored(callId: string, purpose: 'browser' | 'provider' | 'webhook'): boolean {
+  private wasUnstored(callId: string, purpose: WsTokenPurpose): boolean {
     const key = this.unstoredWsTokenKey(callId, purpose);
     const expiresAt = this.unstoredWsTokens.get(key);
     if (expiresAt === undefined) return false;
@@ -2027,7 +2019,7 @@ export class WebRtcBridgeManager {
   async verifyWsToken(
     callId: string,
     token: string | undefined,
-    purpose: 'browser' | 'provider' | 'webhook' = 'browser',
+    purpose: WsTokenPurpose,
   ): Promise<boolean> {
     // Q6 (Manas, 2026-10-09) — the middle option. A present-but-wrong token is refused, and
     // so is a missing key while Redis ANSWERS, because every token this bridge verifies is
@@ -2035,9 +2027,7 @@ export class WebRtcBridgeManager {
     //  - `provider` / `webhook`: stored in `placeOutboundLeg` (step 5) BEFORE the dial
     //    (step 6) that hands them to VoiceLink, for the whole call (maxDuration + 60s), and
     //    the webhook token is kept WEBHOOK_TOKEN_POST_END_GRACE_SECONDS past the end
-    //    (`clearWsToken`) for the carrier's late terminal posts;
-    //  - `browser`: no caller verifies it (borrowed legs never mint or check one), so
-    //    refusing changes nothing live.
+    //    (`clearWsToken`) for the carrier's late terminal posts.
     // A key can still be missing legitimately when its SET failed (Redis errored at dial
     // time and recovered since): that is remembered in `unstoredWsTokens` and still
     // accepted. Redis absent or erroring here still accepts — never hard-fail a live call
@@ -2071,7 +2061,6 @@ export class WebRtcBridgeManager {
     // Q6: the media legs' tokens die with the call; the WEBHOOK token (and a remembered
     // unstored one) outlives it by the grace window, because the carrier's terminal report
     // and recording URL arrive after teardown and a missing key is refused.
-    this.unstoredWsTokens.delete(this.unstoredWsTokenKey(callId, 'browser'));
     this.unstoredWsTokens.delete(this.unstoredWsTokenKey(callId, 'provider'));
     if (this.unstoredWsTokens.has(this.unstoredWsTokenKey(callId, 'webhook'))) {
       this.unstoredWsTokens.set(this.unstoredWsTokenKey(callId, 'webhook'), Date.now() + WEBHOOK_TOKEN_POST_END_GRACE_SECONDS * 1000);
@@ -2079,7 +2068,6 @@ export class WebRtcBridgeManager {
     if (!this.redis) return;
     try {
       await Promise.all([
-        this.redis.del(this.wsTokenKey(callId, 'browser')),
         this.redis.del(this.wsTokenKey(callId, 'provider')),
         // Q6: kept for the post-end grace rather than deleted. `EXPIRE` on a missing key is
         // a no-op, so a call that never stored one gains nothing here.
