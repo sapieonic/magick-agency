@@ -227,6 +227,32 @@ describe('useAgencyStation', () => {
       expect(view.result.current.live).not.toBeNull();
     });
 
+    it('records a diagnostic without re-rendering anything', async () => {
+      /**
+       * The buffer used to be React state copied whole on every entry, so each
+       * bridge `status` frame re-rendered the console to update a value nothing
+       * on screen reads. It is a ref-held log now: the entry lands, the render
+       * does not.
+       */
+      let renders = 0;
+      const view = renderHook(() => {
+        renders += 1;
+        return useAgencyStation(BOOTSTRAP);
+      });
+      await waitFor(() => expect(FakeSocket.instances.length).toBe(1));
+      act(() => latest().open());
+      await waitFor(() => expect(view.result.current.connection).toBe('open'));
+      const held = view.result.current.diagnostics;
+      const before = renders;
+
+      act(() => latest().emit({ event: 'status', status: 'ringing' }));
+      act(() => latest().emit({ event: 'ended', reason: 'remote_hangup' }));
+
+      expect(renders).toBe(before);
+      expect(held.map((d) => d.event).slice(-2)).toEqual(['status', 'ended']);
+      view.unmount();
+    });
+
     it('routes an unknown future frame to diagnostics without throwing', async () => {
       // The server ships independently; an unrecognised frame is expected traffic.
       const view = await mounted();

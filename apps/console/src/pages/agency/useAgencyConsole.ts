@@ -6,11 +6,8 @@ import {
   submitDisposition,
   saveAttemptNotes,
 } from '../../api/agency';
-import {
-  useAgencyStation,
-  type DiagnosticEntry,
-  type UseAgencyStationResult,
-} from '../../hooks/useAgencyStation';
+import { useAgencyStation, type UseAgencyStationResult } from '../../hooks/useAgencyStation';
+import { DiagnosticsLog } from '../../utils/agencyDiagnostics';
 import { useAgencyAudio, type AgencyAudioState } from '../../hooks/useAgencyAudio';
 import { useAgencyCues, type CueFlash } from '../../hooks/useAgencyCues';
 import type { CuePrefs } from '../../utils/agencyCuePrefs';
@@ -246,25 +243,27 @@ export function useAgencyConsole(
   /**
    * **The connect cue, declared here for the same reason as the audio sink.** The
    * station needs the dispatcher at construction — a dispatcher handed in later
-   * would miss the `bridged` that matters most, the first one — while the
-   * diagnostics buffer it logs into belongs to the station that does not exist
-   * yet. The ref below is what breaks that circle, pointed at the station's buffer
-   * one line after it is created.
+   * would miss the `bridged` that matters most, the first one. The diagnostics log
+   * both of them write to is created here, ahead of either, and handed to both:
+   * that is what breaks the circle (it used to be the station's own state array,
+   * reached through a ref pointed at it after the fact and pushed into in place).
    *
    * `CueDispatcher` and `WebAudioCueSink` were built and tested with **no caller
    * at all** until this line: `cues` was simply omitted here, so an agent on a
    * power dialer heard nothing when a call connected.
    */
-  const cueDiagnostics = useRef<DiagnosticEntry[] | null>(null);
-  const cues = useAgencyCues(cueDiagnostics);
+  const diagnosticsRef = useRef<DiagnosticsLog | null>(null);
+  if (diagnosticsRef.current === null) diagnosticsRef.current = new DiagnosticsLog();
+  const diagnostics = diagnosticsRef.current;
+  const cues = useAgencyCues(diagnostics);
 
   const station = useAgencyStation(bootstrap, {
     tenantId,
     accountId,
     audio: audio.sink,
     cues: cues.dispatcher,
+    diagnostics,
   });
-  cueDiagnostics.current = station.diagnostics;
   const {
     agentState,
     agentStateSince,
@@ -831,7 +830,7 @@ export function useAgencyConsole(
           // Never shown to the agent while they are on the next call: an alert about
           // customer A is worse than the loss it reports. It surfaces as one
           // non-blocking line in the idle slot after B completes.
-          station.diagnostics.push({
+          diagnostics.push({
             at: Date.now(),
             attemptId: inFlight.attemptId,
             event: 'disposition_discarded',
@@ -1050,7 +1049,7 @@ export function useAgencyConsole(
      * went out under the previous account.
      */
     accountId,
-    station.diagnostics,
+    diagnostics,
     bootstrap,
     releasedAt,
   ]);

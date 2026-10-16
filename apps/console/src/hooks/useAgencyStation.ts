@@ -22,6 +22,7 @@ import { ClockOffsetEstimator } from '../utils/agencyClock';
 import type { CueDispatcher } from '../utils/agencyCues';
 import { encodeAgencyMediaFrame, readAgencyMediaPayload } from '../utils/agencyMedia';
 import { openWrapup, type WrapupAnchor } from '../utils/agencyWrapup';
+import { DiagnosticsLog, type DiagnosticEntry } from '../utils/agencyDiagnostics';
 
 /**
  * The agent's station socket: one long-lived connection per shift.
@@ -88,12 +89,7 @@ export type StationConnection =
    */
   | 'disconnected';
 
-export interface DiagnosticEntry {
-  at: number;
-  attemptId: string | null;
-  event: string;
-  detail: string;
-}
+export type { DiagnosticEntry } from '../utils/agencyDiagnostics';
 
 /**
  * Where inbound audio goes.
@@ -234,7 +230,11 @@ export interface UseAgencyStationResult {
   dialing: boolean;
   /** Consecutive missed heartbeats, for the connection health pill. */
   missedPings: number;
-  diagnostics: DiagnosticEntry[];
+  /**
+   * The diagnostics buffer's entries — oldest first, one array for the life of
+   * the hook, appended in place without a render (see `utils/agencyDiagnostics`).
+   */
+  diagnostics: readonly DiagnosticEntry[];
   // `hangup` removed — see the note where its implementation was.
   // Hanging up is `hangupAttempt()` in `src/api/agency.ts`, not a socket frame.
   /** Force a reconnect (the "Reconnect" button on a dropped station). */
@@ -253,9 +253,6 @@ export interface UseAgencyStationResult {
    */
   sendMedia: (payload: string) => boolean;
 }
-
-/** Bounded so an eight-hour shift cannot grow it without limit. */
-const DIAGNOSTIC_LIMIT = 200;
 
 /**
  * Reconnect backoff. Deliberately NOT read from `intervals`: those are the
@@ -374,6 +371,13 @@ export function useAgencyStation(
      * still keeps them out of the diagnostic sink.
      */
     audio?: AgencyStationAudioSink;
+    /**
+     * The diagnostics buffer to write into. The console hands in the one its cue
+     * dispatcher also writes to, so both land in one log; absent, the hook keeps
+     * its own. Read once — a different log on a later render is ignored, because
+     * the frame handler that writes it must keep one identity for the shift.
+     */
+    diagnostics?: DiagnosticsLog;
   } = {},
 ): UseAgencyStationResult {
   const enabled = options.enabled ?? true;
@@ -395,7 +399,11 @@ export function useAgencyStation(
   const [lastError, setLastError] = useState<AgencyStationErrorFrame | null>(null);
   const [dialing, setDialing] = useState(true);
   const [missedPings, setMissedPings] = useState(0);
-  const [diagnostics, setDiagnostics] = useState<DiagnosticEntry[]>([]);
+  const diagnosticsRef = useRef<DiagnosticsLog | null>(null);
+  if (diagnosticsRef.current === null) {
+    diagnosticsRef.current = options.diagnostics ?? new DiagnosticsLog();
+  }
+  const diagnostics = diagnosticsRef.current;
 
   const socketRef = useRef<WebSocket | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -551,15 +559,22 @@ export function useAgencyStation(
 
   liveRef.current = live;
 
-  const logDiagnostic = useCallback((event: string, detail: string) => {
-    setDiagnostics((prev) => {
-      const next = [
-        ...prev,
-        { at: Date.now(), attemptId: liveRef.current?.attempt.attempt_id ?? null, event, detail },
-      ];
-      return next.length > DIAGNOSTIC_LIMIT ? next.slice(-DIAGNOSTIC_LIMIT) : next;
-    });
-  }, []);
+  /**
+   * Appends without a render. It used to be a state update copying the whole
+   * buffer, so every bridge `status` frame re-rendered the console to change a
+   * value nothing on screen reads.
+   */
+  const logDiagnostic = useCallback(
+    (event: string, detail: string) => {
+      diagnostics.push({
+        at: Date.now(),
+        attemptId: liveRef.current?.attempt.attempt_id ?? null,
+        event,
+        detail,
+      });
+    },
+    [diagnostics],
+  );
 
   const clearTimers = useCallback(() => {
     if (heartbeatRef.current !== null) clearInterval(heartbeatRef.current);
@@ -642,11 +657,14 @@ export function useAgencyStation(
            * everything else.
            *
            * Logged nowhere because this is where the old default arm's cost
-           * was: `logDiagnostic` is a `setDiagnostics` call, so routing media
+           * was: `logDiagnostic` was then a state update, so routing media
            * through it committed React state fifty times a second, re-rendering
            * the entire console — while the audio it was describing went
-           * nowhere. There is deliberately no "media frames received" counter
-           * either; a counter is the same defect with a smaller payload.
+           * nowhere. The log no longer renders, but fifty entries a second would
+           * still flush a 200-entry buffer every four seconds and bury every
+           * frame worth reading. There is deliberately no "media frames
+           * received" counter either; a counter is the same defect with a
+           * smaller payload.
            *
            * A missing sink is silence, not an error: the sink is optional so
            * that a caller which does not want audio (a supervisor's read-only
@@ -1728,7 +1746,7 @@ export function useAgencyStation(
     lastError,
     dialing,
     missedPings,
-    diagnostics,
+    diagnostics: diagnostics.entries,
     reconnect,
     sendMedia,
   };

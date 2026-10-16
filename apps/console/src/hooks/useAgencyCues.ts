@@ -18,7 +18,7 @@ import {
   createUnlockedAudioContext,
   unlockAudioContext,
 } from '../utils/agencyWebAudioCueSink';
-import type { DiagnosticEntry } from './useAgencyStation';
+import type { DiagnosticsSink } from '../utils/agencyDiagnostics';
 
 /**
  * The connect cue, wired to a real speaker.
@@ -108,14 +108,13 @@ export interface AgencyCuesState {
 
 export function useAgencyCues(
   /**
-   * Where the cue's lag measurement goes. A **ref to the station's diagnostics
-   * array**, pushed into rather than set, for the same reason the console pushes
-   * its discarded-disposition entry there: the array is created by a hook that
-   * does not exist yet at this point in the render, and re-rendering the console
-   * fifty times a shift to show a diagnostic nobody has opened is not worth a
-   * second state cell. `null` until the console points it at the station.
+   * Where the cue's lag measurement goes: the console's diagnostics log, which
+   * the station writes to as well. Appending to it costs no render — re-rendering
+   * the console fifty times a shift to record a diagnostic nobody has opened is
+   * not worth a state cell. Read through the dispatcher's closure, so it must
+   * keep one identity for the life of the hook (the console's does).
    */
-  diagnostics: { current: DiagnosticEntry[] | null },
+  diagnostics: DiagnosticsSink,
 ): AgencyCuesState {
   const ctxRef = useRef<ReturnType<typeof createUnlockedAudioContext>>(null);
   const [cueFlash, setCueFlash] = useState<CueFlash | null>(null);
@@ -178,8 +177,7 @@ export function useAgencyCues(
         }),
       now: () => (typeof performance !== 'undefined' ? performance.now() : Date.now()),
       log: (event, detail) => {
-        const buffer = diagnostics.current;
-        if (buffer) buffer.push({ at: Date.now(), attemptId: null, event, detail });
+        diagnostics.push({ at: Date.now(), attemptId: null, event, detail });
       },
       onEscalatedVisual: ({ attemptId, cue }) => {
         setCueFlash({ cue, attemptId });
