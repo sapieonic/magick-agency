@@ -990,6 +990,10 @@ export class AgencyDialer {
    * the console still showing the panel, and only the generic lifecycle log line
    * in `start()` to say why. The release is now in a `finally`, and the writes
    * that can fail are caught where they are made (`settleEnded`).
+   *
+   * That includes `wrapup.enter` throwing: it then leaves no wrap-up entry or
+   * timer behind and has not called its own return path (`WrapupManager.enter`'s
+   * contract), so the release here is the only one.
    */
   private async onEnded(live: LiveAttempt, ev: WebRtcLifecycleEvent): Promise<void> {
     const cmd = live.cmd;

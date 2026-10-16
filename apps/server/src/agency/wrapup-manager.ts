@@ -197,124 +197,159 @@ export class WrapupManager {
     };
     this.entries.set(params.sessionId, entry);
 
-    await this.agents.set(params.sessionId, 'wrapup', {
-      attemptId: params.attemptId,
-      // The FLAT heartbeat lease — never `wrapupSeconds`. See the class comment.
-      leaseMs: AGENT_LEASE_MS.wrapup,
-    });
-    await agencyAgentSessionRepository.setState(params.sessionId, 'wrapup')
-      .catch((err) => log.warn({ err, sessionId: params.sessionId }, 'Could not mirror wrapup state'));
-    // The durable half: what was owed, and from when.
+    // ── A throwing `enter` leaves NOTHING behind ────────────────────────────────
     //
-    // `wrapup_started_at` is stamped HERE rather than read off `ended_at`, even
-    // though the two are equal today. `ended_at` is written by whoever settles the
-    // attempt, through a patch this call does not send, so treating it as the wrap-up
-    // anchor is an inference about two writers agreeing — the abandonment predicate
-    // once went vacuous exactly that way, when `answered_at` written from `bridgedAt`
-    // made it read 0 while its test passed. The average wrap-up the supervisor tunes
-    // against measures this anchor, so it owns one.
-    const attempt = await agencyAttemptRepository.setState(params.attemptId, 'ended', {
-      wrapup_seconds: params.wrapupSeconds,
-      wrapup_started_at: new Date(),
-    }).catch((err) => {
-      log.warn({ err, attemptId: params.attemptId }, 'Could not persist wrapup window');
-      return null;
-    });
+    // The entry is in the map from here on, and the caller's answer to a throw is
+    // to return the agent itself (`AgencyDialer.onEnded`'s fallback release). An
+    // entry that outlived that throw would be a wrap-up for an agent already back
+    // in the pool: `stateFor` reporting it, its timer later firing `onReturn` (a
+    // second release, possibly of an agent the tick has since reserved), `force` /
+    // `noteDisposition` finding it. So every step up to the hand-off is inside this
+    // `try`, and a throw drops the entry (through `cancel`, so the end is recorded
+    // like any other dropped wrap-up) before it is rethrown.
+    //
+    // The contract the caller relies on: `enter` either returns `true` having
+    // handed the agent to `onReturn` or to a live entry, returns `false` having
+    // touched nothing, or throws having left no entry and no timer and never
+    // having called `onReturn`. Exactly one release, whichever it is.
+    let handOff = false;
+    try {
+      await this.agents.set(params.sessionId, 'wrapup', {
+        attemptId: params.attemptId,
+        // The FLAT heartbeat lease — never `wrapupSeconds`. See the class comment.
+        leaseMs: AGENT_LEASE_MS.wrapup,
+      });
+      await agencyAgentSessionRepository.setState(params.sessionId, 'wrapup')
+        .catch((err) => log.warn({ err, sessionId: params.sessionId }, 'Could not mirror wrapup state'));
+      // The durable half: what was owed, and from when.
+      //
+      // `wrapup_started_at` is stamped HERE rather than read off `ended_at`, even
+      // though the two are equal today. `ended_at` is written by whoever settles the
+      // attempt, through a patch this call does not send, so treating it as the wrap-up
+      // anchor is an inference about two writers agreeing — the abandonment predicate
+      // once went vacuous exactly that way, when `answered_at` written from `bridgedAt`
+      // made it read 0 while its test passed. The average wrap-up the supervisor tunes
+      // against measures this anchor, so it owns one.
+      const attempt = await agencyAttemptRepository.setState(params.attemptId, 'ended', {
+        wrapup_seconds: params.wrapupSeconds,
+        wrapup_started_at: new Date(),
+      }).catch((err) => {
+        log.warn({ err, attemptId: params.attemptId }, 'Could not persist wrapup window');
+        return null;
+      });
 
-    /**
-     * **The disposition may already be in, and if it is this wrap-up is over
-     * before it starts.**
-     *
-     * `noteDisposition` resolves a *live* entry, and the entry does not exist
-     * until this method creates it — so a disposition submitted before the call
-     * ended found no entry, returned false, and was discarded. Filling the form
-     * and *then* hanging up is an ordinary agent habit, so this is not an edge
-     * case: an agent who dispositioned and hung up three seconds later would, 60 s
-     * later, have `onExpiry` find `dispositionSubmitted` false and **be held,
-     * demanded a disposition the system had already accepted**. The only ways out of
-     * that hold are a supervisor force or re-submitting.
-     *
-     * Read from the attempt row rather than an in-process record of early
-     * submissions, for two reasons. It is the **durable** fact — `setDisposition`
-     * writes `disposition_code` before the route calls `noteDisposition` — so it
-     * is also correct when the disposition's HTTP request landed on a **different
-     * replica** than the one holding the wrap-up, which an in-process map cannot
-     * be. And it costs nothing: this is the row we are already writing, and
-     * `setState` returns it.
-     *
-     * Resolving (rather than merely marking submitted) is what `noteDisposition`
-     * does for the same fact one millisecond later, and for the same reason:
-     * holding an agent for the remainder of a window they no longer need is time
-     * the pool cannot use.
-     *
-     * ── Known residual: the agent does not see the release copy ────────────────
-     * Returning here skips both the `agent_state{wrapup}` frame and the `wrapup`
-     * frame below. Traced through the console, and the client handles the truncated
-     * sequence cleanly — `released` clears `live`, the following `agent_state`
-     * clears `wrapup`/`retainedAttempt`, the pad re-locks, notes reset. What is
-     * lost is cosmetic: the "Call ended." / "The customer hung up." headline is
-     * rendered in the wrap-up rail, and on this path there is no wrap-up to
-     * render it in, so the panel simply empties instead of explaining itself.
-     * Fixing that is a console-side change (surface release copy outside the
-     * wrap-up rail) and is deliberately not smuggled into this one.
-     */
-    if (params.requiresDisposition && attempt?.disposition_code) {
-      entry.dispositionSubmitted = true;
-      log.info(
-        { sessionId: params.sessionId, attemptId: params.attemptId },
-        'Disposition already recorded when wrap-up began — returning the agent',
-      );
-      await this.resolve(params.sessionId, 'disposition_submitted');
-      return true;
+      /**
+       * **The disposition may already be in, and if it is this wrap-up is over
+       * before it starts.**
+       *
+       * `noteDisposition` resolves a *live* entry, and the entry does not exist
+       * until this method creates it — so a disposition submitted before the call
+       * ended found no entry, returned false, and was discarded. Filling the form
+       * and *then* hanging up is an ordinary agent habit, so this is not an edge
+       * case: an agent who dispositioned and hung up three seconds later would, 60 s
+       * later, have `onExpiry` find `dispositionSubmitted` false and **be held,
+       * demanded a disposition the system had already accepted**. The only ways out of
+       * that hold are a supervisor force or re-submitting.
+       *
+       * Read from the attempt row rather than an in-process record of early
+       * submissions, for two reasons. It is the **durable** fact — `setDisposition`
+       * writes `disposition_code` before the route calls `noteDisposition` — so it
+       * is also correct when the disposition's HTTP request landed on a **different
+       * replica** than the one holding the wrap-up, which an in-process map cannot
+       * be. And it costs nothing: this is the row we are already writing, and
+       * `setState` returns it.
+       *
+       * Resolving (rather than merely marking submitted) is what `noteDisposition`
+       * does for the same fact one millisecond later, and for the same reason:
+       * holding an agent for the remainder of a window they no longer need is time
+       * the pool cannot use.
+       *
+       * ── Known residual: the agent does not see the release copy ────────────────
+       * Returning here skips both the `agent_state{wrapup}` frame and the `wrapup`
+       * frame below. Traced through the console, and the client handles the truncated
+       * sequence cleanly — `released` clears `live`, the following `agent_state`
+       * clears `wrapup`/`retainedAttempt`, the pad re-locks, notes reset. What is
+       * lost is cosmetic: the "Call ended." / "The customer hung up." headline is
+       * rendered in the wrap-up rail, and on this path there is no wrap-up to
+       * render it in, so the panel simply empties instead of explaining itself.
+       * Fixing that is a console-side change (surface release copy outside the
+       * wrap-up rail) and is deliberately not smuggled into this one.
+       */
+      if (params.requiresDisposition && attempt?.disposition_code) {
+        entry.dispositionSubmitted = true;
+        log.info(
+          { sessionId: params.sessionId, attemptId: params.attemptId },
+          'Disposition already recorded when wrap-up began — returning the agent',
+        );
+        handOff = true;
+      } else {
+        if (willAutoReturn) {
+          entry.timer = setTimeout(() => {
+            void this.onExpiry(params.sessionId).catch((err) =>
+              log.error({ err, sessionId: params.sessionId }, 'Wrap-up expiry failed'));
+          }, params.wrapupSeconds * 1000);
+          entry.timer.unref?.();
+        }
+
+        // ── Announce the transition, not just the wrap-up's contents. ─────────────
+        // `wrapup` is a real state in the agent state machine and every OTHER entry into it is
+        // announced (`AgencyStationAgentStateFrame` is the console's only authorised
+        // source — "the console must not infer state"). This one was not, so the
+        // console's disposition pad — which unlocks on `agent_state === 'wrapup'` —
+        // greyed out the instant the call ended and stayed grey: `/available` then 409s
+        // `attempt_not_dispositionable`, and the agent is stuck until the
+        // `no_disposition` sweep closes the attempt. Every disposition on a
+        // `requires_disposition` campaign was lost that way.
+        //
+        // The deadline deliberately does NOT ride on this frame. `AgencyWrapupState`
+        // already carries `ends_at`/`seconds_total`/`held_reason` on the `wrapup` frame
+        // pushed immediately below, and duplicating a countdown onto the state frame
+        // would give the console two sources for one number that can disagree on a
+        // held wrap-up (where `push` re-fires and this frame does not).
+        //
+        // A queued break DOES ride on it, and must. `pending_state` exists on the frame
+        // rather than only on the HTTP response precisely so the queue survives a lost
+        // socket — and a break queued mid-call stays pending for the whole wrap-up
+        // window, consumed only by `releaseAgent` at the end of it. Since this is now
+        // the ONLY transition frame in that window, omitting it would leave the console
+        // unable to answer the agent's live question: am I getting another call after
+        // this one?
+        //
+        // **The break is read HERE, not at the top of the method.** Every await is
+        // already behind us and `StationRegistry.send` is synchronous, so nothing can
+        // run between the read and the frame it rides on — which is what makes the last
+        // writer the winner instead of whichever `agent_state` happened to be emitted
+        // last. See `readPendingBreak` for the race this closes.
+        const pendingBreak = params.readPendingBreak?.() ?? null;
+        this.stations.send(params.sessionId, {
+          event: 'agent_state',
+          state: 'wrapup',
+          since: new Date().toISOString(),
+          ...(pendingBreak
+            ? { pending_state: 'break' as const, pending_break_reason: pendingBreak.code }
+            : {}),
+        });
+        this.push(entry);
+      }
+    } catch (err) {
+      // Only OUR entry: a re-entrant `enter` for this session during the awaits
+      // above has already cancelled this one and owns the slot now.
+      if (entry.timer) clearTimeout(entry.timer);
+      if (this.entries.get(params.sessionId) === entry) this.cancel(params.sessionId);
+      throw err;
     }
 
-    if (willAutoReturn) {
-      entry.timer = setTimeout(() => {
-        void this.onExpiry(params.sessionId).catch((err) =>
-          log.error({ err, sessionId: params.sessionId }, 'Wrap-up expiry failed'));
-      }, params.wrapupSeconds * 1000);
-      entry.timer.unref?.();
+    if (handOff) {
+      // `resolve` deletes the entry before it awaits, so nothing is left behind
+      // here whatever `onReturn` does. Its rejection is NOT rethrown: `onReturn`
+      // IS the release, it has run, and a throw would make the caller release
+      // the agent a second time — after a queued break was already consumed by
+      // the first, so the second would put an agent who asked for a break back
+      // in the pool. A failed release is the release path's to report, as it is
+      // when there is no wrap-up at all.
+      await this.resolve(params.sessionId, 'disposition_submitted').catch((err) =>
+        log.error({ err, sessionId: params.sessionId }, 'Returning the agent after a recorded disposition failed'));
     }
-
-    // ── Announce the transition, not just the wrap-up's contents. ─────────────
-    // `wrapup` is a real state in the agent state machine and every OTHER entry into it is
-    // announced (`AgencyStationAgentStateFrame` is the console's only authorised
-    // source — "the console must not infer state"). This one was not, so the
-    // console's disposition pad — which unlocks on `agent_state === 'wrapup'` —
-    // greyed out the instant the call ended and stayed grey: `/available` then 409s
-    // `attempt_not_dispositionable`, and the agent is stuck until the
-    // `no_disposition` sweep closes the attempt. Every disposition on a
-    // `requires_disposition` campaign was lost that way.
-    //
-    // The deadline deliberately does NOT ride on this frame. `AgencyWrapupState`
-    // already carries `ends_at`/`seconds_total`/`held_reason` on the `wrapup` frame
-    // pushed immediately below, and duplicating a countdown onto the state frame
-    // would give the console two sources for one number that can disagree on a
-    // held wrap-up (where `push` re-fires and this frame does not).
-    //
-    // A queued break DOES ride on it, and must. `pending_state` exists on the frame
-    // rather than only on the HTTP response precisely so the queue survives a lost
-    // socket — and a break queued mid-call stays pending for the whole wrap-up
-    // window, consumed only by `releaseAgent` at the end of it. Since this is now
-    // the ONLY transition frame in that window, omitting it would leave the console
-    // unable to answer the agent's live question: am I getting another call after
-    // this one?
-    //
-    // **The break is read HERE, not at the top of the method.** Every await is
-    // already behind us and `StationRegistry.send` is synchronous, so nothing can
-    // run between the read and the frame it rides on — which is what makes the last
-    // writer the winner instead of whichever `agent_state` happened to be emitted
-    // last. See `readPendingBreak` for the race this closes.
-    const pendingBreak = params.readPendingBreak?.() ?? null;
-    this.stations.send(params.sessionId, {
-      event: 'agent_state',
-      state: 'wrapup',
-      since: new Date().toISOString(),
-      ...(pendingBreak
-        ? { pending_state: 'break' as const, pending_break_reason: pendingBreak.code }
-        : {}),
-    });
-    this.push(entry);
     return true;
   }
 

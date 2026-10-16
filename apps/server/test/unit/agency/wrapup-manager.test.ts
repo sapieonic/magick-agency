@@ -538,6 +538,57 @@ describe('WrapupManager acceptance', () => {
   });
 });
 
+// ─── A failed `enter` and the caller's fallback release ──────────────────
+//
+// `AgencyDialer.onEnded` releases the agent itself when `enter` throws. That is
+// only one release if a throwing `enter` leaves no entry (nothing for `stateFor`,
+// `force` or `noteDisposition` to find) and no timer (nothing to call `onReturn`
+// later), and if `enter` never throws after `onReturn` has already run.
+
+describe('WrapupManager — a failed enter leaves nothing behind', () => {
+  it('a rejected wrap-up state write leaves no entry for anything to find', async () => {
+    const agents = fakeAgents();
+    agents.set.mockRejectedValueOnce(new Error('redis down'));
+    const onReturn = vi.fn(async () => {});
+    const w = new WrapupManager(fakeStations() as any, agents as any, onReturn);
+
+    await expect(w.enter(enterParams({ wrapupSeconds: 30 }))).rejects.toThrow('redis down');
+
+    expect(w.active()).toBe(0);
+    expect(w.stateFor('s1')).toBeNull();
+    expect(await w.noteDisposition('s1', 'att-1')).toBe(false);
+    expect(await w.force('s1')).toBe(false);
+    expect(onReturn).not.toHaveBeenCalled();
+  });
+
+  it('a throw after the timer is armed leaves no timer to release the agent again', async () => {
+    const stations = fakeStations();
+    stations.send.mockImplementationOnce(() => { throw new Error('socket write failed'); });
+    const onReturn = vi.fn(async () => {});
+    const w = new WrapupManager(stations as any, fakeAgents() as any, onReturn);
+
+    await expect(w.enter(enterParams({ wrapupSeconds: 30, autoReturn: true })))
+      .rejects.toThrow('socket write failed');
+    expect(w.active()).toBe(0);
+
+    // The caller has released the agent; the window passing must not do it again.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(onReturn).not.toHaveBeenCalled();
+  });
+
+  it('when returning an already-dispositioned agent rejects, enter does not throw into a second release', async () => {
+    repos.attempt.setState.mockResolvedValueOnce({ id: 'att-1', disposition_code: 'callback' });
+    const onReturn = vi.fn(async () => { throw new Error('release failed'); });
+    const w = new WrapupManager(fakeStations() as any, fakeAgents() as any, onReturn);
+
+    // `onReturn` IS the release and it ran: a throw here would make the dialer's
+    // fallback release the agent a second time.
+    await expect(w.enter(enterParams({ wrapupSeconds: 60, requiresDisposition: true }))).resolves.toBe(true);
+    expect(onReturn).toHaveBeenCalledTimes(1);
+    expect(w.active()).toBe(0);
+  });
+});
+
 // ─── wrap-up becomes measurable ─────────────────────────────────────────
 //
 // `avg_wrapup_seconds` is the supervisor's tuning input for `wrapup_seconds`, so it
