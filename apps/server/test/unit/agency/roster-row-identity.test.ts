@@ -36,8 +36,16 @@ describe('roster row identity — repository against the schema', () => {
     // Cross-file, because the danger is drift: if the INSERT ever computes the
     // hash a different way from the stored function, rows and new rows stop being
     // comparable and the guard silently stops guarding a re-upload.
+    // The chunk is one INSERT … SELECT over unnest(): the fingerprint is computed
+    // from the same unnested columns that are stored, and it is THAT value the
+    // row writes.
     const repository = readFileSync(REPOSITORY, 'utf8');
-    expect(repository).toContain('agency_contact_row_fingerprint($4, $5::jsonb, $7)');
+    expect(repository).toContain(
+      'agency_contact_row_fingerprint(u.phone_e164, u.context, u.timezone) AS fingerprint',
+    );
+    expect(repository).toMatch(
+      /SELECT \$1::uuid, \$2::uuid, \$3::uuid,\s+i\.phone_e164, i\.context, i\.csv_line_number, i\.timezone, i\.fingerprint/,
+    );
     expect(repository).not.toMatch(/md5\(/);
   });
 

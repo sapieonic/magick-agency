@@ -167,19 +167,9 @@ export const CAMPAIGN_CONFIG_COLUMN_DEFAULTS = {
   calling_window_end: '20:00:00',
 } as const;
 
-/**
- * The default abandonment ceiling, as a percentage: the `abandonment_ceiling_pct`
- * column's DEFAULT, and what the repository applies when a create omits the field.
- * The per-campaign value is validated by `validateAbandonmentCeiling` below.
- *
- * It lives here, exported, rather than beside either of its readers — the
- * supervisor payload's `abandonment_ceiling_pct` and the auto-pause guardrail —
- * because a compliance threshold with two copies is a compliance threshold that
- * drifts, and the dashboard drawing a gauge against one number while the
- * guardrail fires on another is the specific failure that is invisible until an
- * audit.
- */
-export const DEFAULT_ABANDONMENT_CEILING_PCT = 3;
+// The default abandonment ceiling. Lives in the leaf the repository also imports
+// (B9 layering); re-exported so this module's importers are unchanged.
+export { DEFAULT_ABANDONMENT_CEILING_PCT } from './campaign-thresholds.js';
 
 /** What the effective config is, before this body is applied. */
 export interface CampaignConfigBase {

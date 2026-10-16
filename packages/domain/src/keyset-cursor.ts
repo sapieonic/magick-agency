@@ -22,7 +22,7 @@
  * BOTH sides to milliseconds in SQL — and pays for it with an `ORDER BY` over an
  * expression that no index can serve. That is the right trade there (one
  * campaign's control trail is tens of rows). It is the wrong trade here: this
- * pages a million-row table and the whole point of `idx_agency_attempts_reporting`
+ * pages a million-row table and the whole point of `idx_agency_attempts_keyset`
  * is that the sort comes free. So the cursor carries the microsecond value
  * verbatim — Postgres renders it with `to_char(... 'US')` and parses it back
  * exactly — and the comparison is against the raw column, which the index serves.

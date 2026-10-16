@@ -36,7 +36,7 @@ Files: `app-context.ts`, `app.ts`, `db-tls.ts`, `index.ts`, `instrumentation.ts`
 
 The dialer runtime and campaign management: `AgencyRuntime` (`runtime.ts`), the agent state machine and leases, pacing engine and leader lease, dial dispatcher and dialer, pre-dial gates, station registry, socket and tokens, wrap-up, breaks, reaper, abandonment clip, guardrail and metrics, live-concurrency metrics, DNC registry and mark, outcome classification, dispositions, retry policy, calling hours, campaign config, health, series and completion notice; and the campaign-management layer: CSV ingest and its jobs, staffing, activity trail, agent identity, the spine, campaign wire shapes, stats enrichment.
 
-Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, `agency-activity-actions.ts`, `agency-activity.service.ts`, `agency-activity.ts`, `agency-actor.ts`, `agency-agent-identity.ts`, `agency-campaign-config.ts`, `agency-campaign-wire.ts`, `agency-column-analysis.ts`, `agency-csv-ingest.ts`, `agency-csv.ts`, `agency-dialer.ts`, `agency-ingest-job.repository.ts`, `agency-ingest-keys.ts`, `agency-ingest.service.ts`, `agency-rejected-csv.ts`, `agency-roster.client.ts`, `agency-spine.ts`, `agency-stats-enrichment.ts`, `agent-record.ts`, `agent-state-machine.ts`, `calling-hours.ts`, `campaign-behavioral-settings.ts`, `campaign-completion-notice.ts`, `campaign-config.ts`, `campaign-health.ts`, `campaign-series.ts`, `dial-dispatcher.ts`, `disposition-policy.ts`, `disposition.ts`, `dnc-availability.ts`, `dnc-mark.ts`, `dnc-registry.ts`, `live-concurrency-metrics.ts`, `outcome-classifier.ts`, `pacing-engine.ts`, `pre-dial-gates.ts`, `reaper.ts`, `retry-policy.ts`, `runtime.ts`, `spine-filters.ts`, `station-registry.ts`, `station-socket.ts`, `station-token.ts`, `wrapup-manager.ts`
+Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, `agency-activity-actions.ts`, `agency-activity.service.ts`, `agency-activity.ts`, `agency-actor.ts`, `agency-agent-identity.ts`, `agency-campaign-config.ts`, `agency-campaign-wire.ts`, `agency-column-analysis.ts`, `agency-csv-ingest.ts`, `agency-csv.ts`, `agency-dialer.ts`, `agency-ingest-job.repository.ts`, `agency-ingest-keys.ts`, `agency-ingest.service.ts`, `agency-rejected-csv.ts`, `agency-roster.client.ts`, `agency-spine.ts`, `agency-stats-enrichment.ts`, `agent-record.ts`, `agent-state-machine.ts`, `calling-hours.ts`, `campaign-behavioral-settings.ts`, `campaign-completion-notice.ts`, `campaign-config.ts`, `campaign-health.ts`, `campaign-series.ts`, `campaign-thresholds.ts`, `dial-dispatcher.ts`, `disposition-policy.ts`, `disposition.ts`, `dnc-availability.ts`, `dnc-mark.ts`, `dnc-registry.ts`, `live-concurrency-metrics.ts`, `outcome-classifier.ts`, `pacing-engine.ts`, `pre-dial-gates.ts`, `reaper.ts`, `retry-policy.ts`, `runtime.ts`, `spine-filters.ts`, `station-registry.ts`, `station-socket.ts`, `station-token.ts`, `wrapup-manager.ts`
 
 | Test file | Cases |
 |---|---|
@@ -49,6 +49,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-campaign-create.test.ts` | ~3 |
 | `apps/server/test/integration/agency/agency-campaign-stats.routes.test.ts` | ~10 |
 | `apps/server/test/integration/agency/agency-campaign-stats.test.ts` | ~18 |
+| `apps/server/test/integration/agency/agency-campaign-update.test.ts` | 4 |
 | `apps/server/test/integration/agency/agency-context-ordering.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-conversion-counting.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-crash-recovery.test.ts` | ~6 |
@@ -59,6 +60,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-double-reservation.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-duplicate-dial.test.ts` | ~11 |
 | `apps/server/test/integration/agency/agency-gate-skip-logging.test.ts` | ~2 |
+| `apps/server/test/integration/agency/agency-ingest-chunk-fate.test.ts` | 4 |
 | `apps/server/test/integration/agency/agency-ingest-idempotency.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-ingest-job-repository-sql.test.ts` | ~12 |
 | `apps/server/test/integration/agency/agency-ingest-roundtrip.test.ts` | ~7 |
@@ -75,12 +77,14 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-stats-enrichment.test.ts` | ~16 |
 | `apps/server/test/integration/agency/agent-grouped-read.test.ts` | ~14 |
 | `apps/server/test/integration/agency/agent-multi-session.test.ts` | ~7 |
+| `apps/server/test/integration/agency/agent-occupancy-carried-bound.test.ts` | 2 |
 | `apps/server/test/integration/agency/agent-occupancy-window.test.ts` | ~8 |
 | `apps/server/test/integration/agency/agent-record-tenant-isolation.test.ts` | ~7 |
 | `apps/server/test/integration/agency/agent-stats-timezone-buckets.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agent-transition-ordering.test.ts` | ~11 |
 | `apps/server/test/integration/agency/agent-window-boundaries.test.ts` | ~11 |
 | `apps/server/test/integration/agency/campaign-behavioral-settings.test.ts` | ~4 |
+| `apps/server/test/integration/agency/campaign-stats-equivalence.test.ts` | 4 |
 | `apps/server/test/integration/agency/campaign-stats-series.test.ts` | ~16 |
 | `apps/server/test/integration/agency/chaos/abandonment-counter-vs-table.test.ts` | ~9 |
 | `apps/server/test/integration/agency/chaos/abandonment-predicate-agreement.test.ts` | ~3 |
@@ -170,6 +174,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/left-session-guards.test.ts` | 37 |
 | `apps/server/test/unit/agency/live-concurrency-metrics.test.ts` | 18 |
 | `apps/server/test/unit/agency/live-concurrency-repository.test.ts` | 8 |
+| `apps/server/test/unit/agency/occupancy-ctes.test.ts` | 4 |
 | `apps/server/test/unit/agency/our-fault-redial.test.ts` | 20 |
 | `apps/server/test/unit/agency/outcome-classifier.test.ts` | 45 |
 | `apps/server/test/unit/agency/pacing-engine-gates.test.ts` | 22 |
@@ -910,14 +915,16 @@ Files: `audit.repository.ts`
 
 ### `packages/db/src/utils/`
 
-Single-flight, SQL update builder, TTL cache.
+Single-flight, SQL update builder, TTL cache, and `withTransaction` (`transaction.ts`): BEGIN with an isolation level and READ ONLY, COMMIT, ROLLBACK on a throw, release on every path, destroy a client whose ROLLBACK failed, `tx.rollback()` to end early without throwing, and `client` to join a caller's open transaction (decision B8). Import-free: the caller passes its pool. Imported as `@magick-agency/db/utils/transaction`.
 
-Files: `single-flight.ts`, `sql-update.ts`, `ttl-cache.ts`
+Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 
 | Test file | Cases |
 |---|---|
+| `packages/db/test/integration/db/transaction.test.ts` | 8 |
 | `packages/db/test/unit/utils/single-flight.test.ts` | 16 |
 | `packages/db/test/unit/utils/sql-update.test.ts` | 8 |
+| `packages/db/test/unit/utils/transaction.test.ts` | 14 |
 | `packages/db/test/unit/utils/ttl-cache.test.ts` | 51 |
 
 ### Cross-cutting tests (`packages/db`)
@@ -927,6 +934,7 @@ Scenario, flow, guard and setup tests that span several modules.
 | Test file | Cases |
 |---|---|
 | `packages/db/test/integration/agency/webrtc-call-scope-isolation.test.ts` | ~11 |
+| `packages/db/test/integration/db/attempt-indexes-migration.test.ts` | 4 |
 | `packages/db/test/integration/baseline-down-up.test.ts` | ~2 |
 | `packages/db/test/integration/baseline.test.ts` | ~55 |
 | `packages/db/test/integration/db/audio-file-pcm-migration.test.ts` | ~4 |
