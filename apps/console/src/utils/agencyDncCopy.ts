@@ -1,4 +1,5 @@
 import type { AgencyDncResponse } from '../types/agency';
+import { errorCode } from './agencyErrors';
 
 /**
  * Mark-DNC copy — the scope statement, and the promise the console is
@@ -155,10 +156,7 @@ export function dncBlockReason(input: {
  * on an agent's screen between live calls is indistinguishable from an outage.
  */
 export function dncFailureCopy(err: unknown): string {
-  const code =
-    err !== null && typeof err === 'object'
-      ? ((err as { details?: { code?: unknown } }).details?.code ?? null)
-      : null;
+  const code = errorCode(err);
 
   if (code === 'not_your_attempt') {
     return 'This call has moved on — it isn’t yours to mark any more.';
@@ -188,10 +186,7 @@ export function dncFailureCopy(err: unknown): string {
  * agent is still connected, the only fact they can act on.
  */
 export function hangupFailureCopy(err: unknown): string {
-  const code =
-    err !== null && typeof err === 'object'
-      ? ((err as { details?: { code?: unknown } }).details?.code ?? null)
-      : null;
+  const code = errorCode(err);
 
   if (code === 'not_your_attempt') {
     return 'This call has moved on — it isn’t yours to end any more.';

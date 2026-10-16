@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMountedRef } from './useMountedRef';
 import { useTenant } from '../contexts/TenantContext';
 import { getAgencyGroupedStats, type AgencyGroupQuery } from '../api/agencyStats';
 import { windowRange, type AgentStatsWindow } from '../utils/agencyAgentPerformance';
@@ -80,19 +81,7 @@ export function useBestHours(filters: BestHoursFilters): UseBestHours {
    * mounted flag answers "is there still a component here?".
    */
   const generation = useRef(0);
-  const mounted = useRef(true);
-  useEffect(() => {
-    /*
-      Set on the way IN as well as cleared on the way out. `React.StrictMode` runs
-      every effect setup → cleanup → setup, so a cleanup-only effect leaves this
-      `false` while the component is very much mounted — every response is then
-      discarded as stale and the surface spins forever.
-    */
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const mounted = useMountedRef();
 
   /* The filters as primitives, so `load`'s identity does not change because the
      caller passed a fresh object literal — which is what every caller does. */

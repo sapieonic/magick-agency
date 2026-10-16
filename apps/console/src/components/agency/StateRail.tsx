@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import { RailPresenceRegion } from './RailPresenceRegion';
 import { WrapupTimer } from './WrapupTimer';
 import { formatDuration } from '../../utils/agencyClock';
+import { useRepaintTick } from '../../hooks/useRepaintTick';
 import { resolveReleaseCopy } from '../../utils/agencyReleaseCopy';
 import { hasWrapup, type WrapupAnchor } from '../../utils/agencyWrapup';
 import { VISUAL_CUE_SPECS } from '../../utils/agencyCues';
@@ -350,7 +351,7 @@ export function StateRail({
    */
   const callIsUnreachable =
     connection === 'disconnected' || connection === 'superseded' || connection === 'session_gone';
-  const talkMs = !callIsUnreachable && live?.bridgedAt ? clock.since(live.bridgedAt) : null;
+  const talkAnchor = !callIsUnreachable && live?.bridgedAt ? live.bridgedAt : null;
 
   return (
     <div
@@ -420,11 +421,7 @@ export function StateRail({
         rail is this screen's only polite live region, and a timer inside it would
         announce every 250ms for the length of every call.
       */}
-      {talkMs !== null ? (
-        <span className={styles.talkTimer} data-testid="talk-timer" aria-hidden="true">
-          {formatDuration(talkMs)}
-        </span>
-      ) : null}
+      {talkAnchor !== null ? <TalkTimer bridgedAt={talkAnchor} clock={clock} /> : null}
 
       {/* Only when a frame actually arrived. No frame ⇒ no clock, and no spinner. */}
       {hasWrapup(wrapup) ? (
@@ -474,5 +471,25 @@ export function StateRail({
         <span className={styles.blockedReason}>Waiting for the station connection…</span>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The talk timer, as its own leaf so that **only it** repaints.
+ *
+ * The rail used to be re-rendered four times a second from the console root to
+ * advance these digits, which re-rendered every component on the page with it.
+ * Ticking here instead keeps the rail — this screen's polite live region — still
+ * between frames, and the digits still recompute from `bridged_at` on every
+ * repaint, never from a counter.
+ */
+function TalkTimer({ bridgedAt, clock }: { bridgedAt: string; clock: ServerClock }) {
+  useRepaintTick();
+  const talkMs = clock.since(bridgedAt);
+  if (talkMs === null) return null;
+  return (
+    <span className={styles.talkTimer} data-testid="talk-timer" aria-hidden="true">
+      {formatDuration(talkMs)}
+    </span>
   );
 }

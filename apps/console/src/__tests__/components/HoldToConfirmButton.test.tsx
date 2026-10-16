@@ -266,6 +266,44 @@ describe('E is suppressed inside a text input', () => {
     textarea.remove();
   });
 
+  it.each(['radio', 'checkbox', 'range'])(
+    'still ends the call on E,E while focus sits on a %s — it is not a text field',
+    (type) => {
+      /**
+       * The page's own shortcut guard learned this and this one did not: a
+       * `tag === 'INPUT'` test treats the cue-settings popover's radios as text
+       * fields, so `E`,`E` was dead while focus was there — the surface the agent
+       * who cannot hear the cues is most likely to have just used. Fired at the
+       * focused element, as a real keyboard does.
+       */
+      const { onConfirm } = setup();
+      const input = document.createElement('input');
+      input.type = type;
+      document.body.appendChild(input);
+      input.focus();
+
+      fireEvent.keyDown(input, { key: 'e' });
+      fireEvent.keyDown(input, { key: 'e' });
+
+      expect(onConfirm).toHaveBeenCalledTimes(1);
+      input.remove();
+    },
+  );
+
+  it('does not arm on E typed into a text-typed input', () => {
+    const { onConfirm } = setup();
+    const input = document.createElement('input');
+    input.type = 'search';
+    document.body.appendChild(input);
+    input.focus();
+
+    fireEvent.keyDown(input, { key: 'e' });
+    fireEvent.keyDown(input, { key: 'e' });
+
+    expect(onConfirm).not.toHaveBeenCalled();
+    input.remove();
+  });
+
   it('a third E after the window lapses restarts it rather than ending the call', () => {
     const { onConfirm } = setup();
     fireEvent.keyDown(window, { key: 'e' });

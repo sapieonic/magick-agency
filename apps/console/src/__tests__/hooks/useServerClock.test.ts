@@ -66,7 +66,7 @@ describe('the interval is a repaint trigger, never a time source', () => {
 
     // 200 x 30s = 6,000,000ms elapsed, so exactly zero remains — not "about zero".
     expect(result.current.until(endsAt)).toBe(0);
-    expect(result.current.now).toBe(T0 + 6_000_000);
+    expect(result.current.now()).toBe(T0 + 6_000_000);
   });
 });
 
@@ -129,42 +129,54 @@ describe('absent and unparseable instants render nothing, never 1970', () => {
   });
 });
 
-describe('the enabled gate', () => {
-  it('stops repainting when disabled, and the value freezes rather than lying', () => {
-    const endsAt = new Date(T0 + 30_000).toISOString();
-    const { result } = renderHook(() => useServerClock(0, false));
-    const first = result.current.until(endsAt);
-
-    advance(5_000);
-
-    // No repaint fired, so no re-render happened and the last computed value
-    // stands. It is stale, not wrong — nothing on screen is counting.
-    expect(result.current.until(endsAt)).toBe(first);
-  });
-
-  it('repaints on the 250ms boundary and not before it', () => {
-    // picks 250ms over 1s deliberately: at 1s the visible digit can lag
-    // the true boundary by nearly the whole one-second tolerance, spent on repaint
-    // alone. So the cadence is a real requirement and worth pinning at its edge.
-    //
-    // Measured one step at a time. Advancing 1000ms inside a single `act` runs all
-    // four callbacks before React flushes, which batches them into ONE render —
-    // a render count over a long advance measures React's batching, not this
-    // hook's cadence, and the first draft of this test asserted exactly that.
+/**
+ * The clock no longer repaints anything; the counting leaves do (`useRepaintTick`,
+ * pinned in its own file). What this hook owes them instead is a clock that can be
+ * held across renders: one identity per offset, and helpers that read the present
+ * when they are called rather than when the render ran.
+ */
+describe('a stable clock that reads the present at call time', () => {
+  it('does not re-render its caller on a timer', () => {
+    // The defect this replaces: called at the console root, the old hook
+    // re-rendered the whole page four times a second for the whole shift.
     let renders = 0;
     renderHook(() => {
       renders += 1;
       return useServerClock(0);
     });
-
     const mounted = renders;
-    advance(249);
+
+    advance(5_000);
+
     expect(renders).toBe(mounted);
+  });
 
-    advance(1);
-    expect(renders).toBe(mounted + 1);
+  it('answers with the present even when nothing has re-rendered', () => {
+    const endsAt = new Date(T0 + 30_000).toISOString();
+    const { result } = renderHook(() => useServerClock(0));
+    const clock = result.current;
 
-    advance(250);
-    expect(renders).toBe(mounted + 2);
+    advance(12_000);
+
+    // The same object, asked again, gives today's answer — so a callback built
+    // renders ago (a submit, a timer leaf between ticks) is never reading a
+    // captured instant.
+    expect(result.current).toBe(clock);
+    expect(clock.until(endsAt)).toBe(18_000);
+    expect(clock.now()).toBe(T0 + 12_000);
+  });
+
+  it('keeps its identity for one offset, and changes it when the offset moves', () => {
+    const { result, rerender } = renderHook(({ offset }) => useServerClock(offset), {
+      initialProps: { offset: 0 },
+    });
+    const first = result.current;
+
+    rerender({ offset: 0 });
+    expect(result.current).toBe(first);
+
+    rerender({ offset: 250 });
+    expect(result.current).not.toBe(first);
+    expect(result.current.offsetMs).toBe(250);
   });
 });

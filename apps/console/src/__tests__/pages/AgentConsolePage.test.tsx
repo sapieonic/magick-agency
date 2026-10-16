@@ -15,6 +15,12 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('../../api/agency', () => mocks);
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+const analyticsMocks = vi.hoisted(() => ({ trackAgencyHangupRequested: vi.fn() }));
+// Every other emitter passes through to the real (no-op-without-a-key) one.
+vi.mock('../../analytics/events', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../analytics/events')>();
+  return { ...actual, trackAgencyHangupRequested: analyticsMocks.trackAgencyHangupRequested };
+});
 vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({
     user: { id: 'u-1', display_name: 'Asha Kumar', email: 'asha@example.com', avatar_url: null },
@@ -303,6 +309,39 @@ describe('AgentConsolePage — the Phase 2 surfaces are actually composed', () =
       latest().emit({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-08-11T10:00:04.000Z' });
     });
     expect(screen.getByTestId('rail-label').textContent).toBe('On call');
+  });
+});
+
+describe('focus moves once per call, on the reservation', () => {
+  it('moves to the console when a call is reserved', async () => {
+    await mounted();
+    await act(async () => {
+      latest().emit({ event: 'reserved', attempt: ATTEMPT });
+    });
+    expect(document.activeElement?.getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('does NOT move again when a reconnect restates the same ringing attempt', async () => {
+    /**
+     * A `ready` on reconnect replaces `live` with a fresh object for the SAME
+     * attempt. Keyed on the whole `live`, the focus effect read that as a new call
+     * and pulled focus back to the console root — a second steal, mid-ring, from
+     * wherever the agent had moved it (the notes, the break menu). Focus moves
+     * exactly once per call, so it is keyed on the attempt id.
+     */
+    await mounted();
+    await act(async () => {
+      latest().emit({ event: 'reserved', attempt: ATTEMPT });
+    });
+    const elsewhere = screen.getByRole('button', { name: /^break/i });
+    act(() => elsewhere.focus());
+    expect(document.activeElement).toBe(elsewhere);
+
+    await act(async () => {
+      latest().emit({ event: 'ready', state: 'reserved', active_attempt: { ...ATTEMPT, bridged_at: null } });
+    });
+
+    expect(document.activeElement).toBe(elsewhere);
   });
 });
 
@@ -820,6 +859,15 @@ describe('criterion (c) — a required note blocks submission, and whitespace is
 });
 
 describe('the contact-panel field filter', () => {
+  /**
+   * Re-queried at every read, never held. The detail column is keyed on the
+   * panel's attempt, so a new contact mounts a fresh input — and a node held
+   * from before would keep reading its old value even after being replaced,
+   * which would also let a remount mid-wrap-up pass the "survives" checks.
+   */
+  const filterInput = () =>
+    screen.getByLabelText('Filter fields', { exact: false }) as HTMLInputElement;
+
   it('is reachable and operable from the keyboard, not just present in the DOM', async () => {
     // Same trap as the tab-order test above: a `<input tabindex="-1">` still
     // matches an `input` selector and renders correctly, so presence alone would
@@ -909,11 +957,11 @@ describe('the contact-panel field filter', () => {
     const input = screen.getByLabelText('Filter fields', { exact: false }) as HTMLInputElement;
 
     fireEvent.change(input, { target: { value: 'mum' } });
-    expect(input.value).toBe('mum');
+    expect(filterInput().value).toBe('mum');
 
     press('Escape', input);
 
-    expect(input.value).toBe('');
+    expect(filterInput().value).toBe('');
     expect(document.activeElement).not.toBe(input);
     // Cleared, not just blurred — City's sibling fields must be back.
     expect(screen.getByText('Branch')).toBeTruthy();
@@ -933,7 +981,7 @@ describe('the contact-panel field filter', () => {
     await act(async () => {
       latest().emit({ event: 'agent_state', state: 'on_call', since: '2026-08-11T10:05:00.000Z' });
     });
-    expect(input.value).toBe('mum');
+    expect(filterInput().value).toBe('mum');
     expect(screen.queryByText('Branch')).toBeNull();
 
     // Now the next contact's `reserved` — the trap this rule exists for: a
@@ -946,7 +994,7 @@ describe('the contact-panel field filter', () => {
       });
     });
 
-    expect(input.value).toBe('');
+    expect(filterInput().value).toBe('');
     expect(screen.getByText('Branch')).toBeTruthy();
   });
 
@@ -968,7 +1016,7 @@ describe('the contact-panel field filter', () => {
     const input = screen.getByLabelText('Filter fields', { exact: false }) as HTMLInputElement;
 
     fireEvent.change(input, { target: { value: 'mum' } });
-    expect(input.value).toBe('mum');
+    expect(filterInput().value).toBe('mum');
     expect(screen.queryByText('Branch')).toBeNull();
 
     // The customer hangs up. `released` clears `live` and retains the same attempt
@@ -987,7 +1035,7 @@ describe('the contact-panel field filter', () => {
     // this is not merely "a filter box still exists somewhere".
     expect(screen.getByText('Asha')).toBeTruthy();
     // ...and the query is intact, with the filter still doing its job.
-    expect(input.value).toBe('mum');
+    expect(filterInput().value).toBe('mum');
     expect(screen.getByText('City')).toBeTruthy();
     expect(screen.queryByText('Branch')).toBeNull();
 
@@ -1006,7 +1054,7 @@ describe('the contact-panel field filter', () => {
       });
       latest().emit({ event: 'agent_state', state: 'wrapup', since: '2026-08-11T10:05:00.000Z' });
     });
-    expect(input.value).toBe('mum');
+    expect(filterInput().value).toBe('mum');
     expect(screen.getByText('Asha')).toBeTruthy();
 
     // The next contact. This is the half that makes the assertions above mean
@@ -1018,7 +1066,7 @@ describe('the contact-panel field filter', () => {
       });
     });
 
-    expect(input.value).toBe('');
+    expect(filterInput().value).toBe('');
     expect(screen.getByText('Branch')).toBeTruthy();
   });
 });
@@ -1170,6 +1218,32 @@ describe('hang up actually hangs up', () => {
     expect(mocks.hangupAttempt).toHaveBeenCalledWith('att-1', 'tenant-1', 'account-1');
   });
 
+  it('analytics: talk_seconds is measured on the corrected clock, as the rail’s timer is', async () => {
+    /**
+     * The rail's talk timer reads `bridged_at` through the offset-corrected clock;
+     * the hang-up's `talk_seconds` read it against the raw client clock, so on a
+     * machine 10s fast the event reported ten seconds the agent never talked.
+     */
+    analyticsMocks.trackAgencyHangupRequested.mockReset();
+    mocks.hangupAttempt.mockResolvedValue(undefined);
+    vi.useFakeTimers();
+    const clientNow = Date.parse('2026-08-11T10:00:34.000Z');
+    vi.setSystemTime(clientNow);
+    await onCall();
+    // A pong saying the server is 10s behind this client: offset −10s.
+    await act(async () => {
+      latest().emit({ event: 'pong', ts: clientNow, server_ts: clientNow - 10_000 });
+    });
+
+    press('e');
+    press('e');
+
+    // Bridged at 10:00:04 server time = 10:00:14 on this client: 20s, not 30s.
+    expect(analyticsMocks.trackAgencyHangupRequested).toHaveBeenCalledWith(
+      expect.objectContaining({ was_bridged: true, talk_seconds: 20 }),
+    );
+  });
+
   it('sends no socket frame — the console has exactly one hangup path', async () => {
     mocks.hangupAttempt.mockResolvedValue(undefined);
     await onCall();
@@ -1200,6 +1274,31 @@ describe('hang up actually hangs up', () => {
     // `role="alert"` is the load-bearing half — a polite region would let the
     // agent keep talking to a customer they think they hung up on.
     expect(notice.getAttribute('role')).toBe('alert');
+  });
+
+  it('retires the failure notice once the call it describes is over', async () => {
+    // Every sentence the notice can say ends "you are still connected", which
+    // stops being true the instant `released` lands. Left up, it would tell the
+    // agent they are on a call that is over.
+    mocks.hangupAttempt.mockRejectedValue(new Error('Service Unavailable'));
+    await onCall();
+    press('e');
+    await act(async () => {});
+    press('e');
+    await act(async () => {});
+    expect(await screen.findByTestId('hangup-failure')).toBeTruthy();
+
+    await act(async () => {
+      latest().emit({
+        event: 'released',
+        attempt_id: 'att-1',
+        reason: 'completed',
+        requires_disposition: true,
+        message: 'Call ended.',
+      });
+    });
+
+    expect(screen.queryByTestId('hangup-failure')).toBeNull();
   });
 
   it('does not report a failed hangup over a call that has since moved on', async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
 import {
   DispositionPad,
   NUMBER_KEY_COUNT,
@@ -40,7 +40,7 @@ function setup(props: Partial<Parameters<typeof DispositionPad>[0]> = {}) {
       form={EMPTY_DISPOSITION_FORM}
       onChange={onChange}
       enabled
-      now={T0}
+      now={() => T0}
       onNeedsNote={onNeedsNote}
       {...props}
     />,
@@ -275,6 +275,35 @@ describe('the callback row — the copy in the one place it is read aloud', () =
     // `buildSubmitPayload` silently treats it as absent.
     expect(value).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
     expect(Date.parse(value)).toBeGreaterThan(T0);
+  });
+
+  it('keeps the chips relative to the present on the row’s own repaint', () => {
+    /**
+     * The row used to be handed a `now` from a repaint at the console root. It
+     * now ticks itself while mounted — so a chip pressed two minutes after the
+     * row appeared books two minutes later, with nothing above it re-rendering.
+     */
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    try {
+      const { onChange } = setup({
+        form: { ...EMPTY_DISPOSITION_FORM, selectedCode: 'callback' },
+        now: () => Date.now(),
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'In 1 hour' }));
+      act(() => {
+        vi.advanceTimersByTime(120_000);
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'In 1 hour' }));
+
+      const [first, second] = onChange.mock.calls.map(
+        (call) => Date.parse((call[0] as DispositionFormState).callbackAt!),
+      );
+      expect(first).toBe(T0 + 3_600_000);
+      expect(second! - first!).toBe(120_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('renders the resolved zone beside the choice rather than leaving it implicit', () => {

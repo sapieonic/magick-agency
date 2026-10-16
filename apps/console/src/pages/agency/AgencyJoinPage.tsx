@@ -1,15 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Mail, KeyRound, Headset, ListChecks } from 'lucide-react';
 import { useAuth, type InviteCredential } from '../../contexts/AuthContext';
 import { getInvite, InviteIdentityInUseError, InviteUnavailableError } from '../../api/invites';
 import type { AgencyInvite, InviteUnavailableStatus } from '../../types/invite';
-import type { Role } from '../../types/auth';
 import { AGENCY_LOGIN_PATH } from '../../utils/returnPath';
 import { getErrorMessage } from '../../utils/errors';
 import { formatDate } from '../../utils/format';
 import {
-  type AccountRole,
+  analyticsRole,
+  assessPassword,
+  credentialMessage,
+  firebaseCode,
+  roleLabel,
+  sameAddress,
+} from '../../utils/agencyInviteJoinCopy';
+import {
   trackAgencyInviteAddressMismatch,
   trackAgencyInviteClaimAttempted,
   trackAgencyInviteClaimFailed,
@@ -17,8 +23,15 @@ import {
   trackAgencyInviteViewed,
 } from '../../analytics/events';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
-import { brand } from '../../brand';
-import styles from './AgencyJoinPage.module.css';
+import { GoogleMark } from '../../components/agency/GoogleMark';
+import { JoinCardHeader } from '../../components/agency/join/JoinCardHeader';
+import { Unavailable } from '../../components/agency/join/Unavailable';
+import { Unreachable } from '../../components/agency/join/Unreachable';
+import { AddressMismatch } from '../../components/agency/join/AddressMismatch';
+import { GuardedLink } from '../../components/agency/join/GuardedLink';
+import { CredentialForm } from '../../components/agency/join/CredentialForm';
+import type { JoinPending } from '../../components/agency/join/joinPending';
+import styles from '../../components/agency/join/AgencyJoin.module.css';
 
 /**
  * Where an emailed agency invite lands: `/agency/join/:token`.
@@ -45,9 +58,9 @@ import styles from './AgencyJoinPage.module.css';
  *  1. **Email + password.** The invited address is pre-filled and READ-ONLY. It is
  *     the one value that must not drift, and locking it removes an entire class of
  *     typo failure at the exact moment somebody is typing an address for the first
- *     time. See {@link CredentialForm}.
+ *     time. See `CredentialForm` (`components/agency/join/`).
  *  2. **Google, on a different address.** Allowed — a personal Gmail is a real
- *     answer — but never silently. {@link AddressMismatch} is the confirmation
+ *     answer — but never silently. `AddressMismatch` is the confirmation
  *     step, and it is the single most valuable interaction on the page: today this
  *     exact case produces a stray empty tenant and nobody is told.
  *
@@ -77,35 +90,6 @@ import styles from './AgencyJoinPage.module.css';
  * answer this page already has in its hands.
  */
 const DESTINATION = '/dialer';
-
-/** Human labels for the roles an invite can carry. Rendered, never branched on. */
-const ROLE_LABELS: Record<Role, string> = {
-  agent: 'Agent',
-  viewer: 'Viewer',
-  operator: 'Operator',
-  account_admin: 'Account admin',
-  tenant_admin: 'Workspace admin',
-  tenant_owner: 'Workspace owner',
-};
-
-/** The role as copy. Falls back to the raw value so a role the server adds before this
- *  client knows about it renders as itself rather than as blank space. */
-function roleLabel(role: Role): string {
-  return ROLE_LABELS[role] ?? role;
-}
-
-/**
- * The role as the analytics catalog spells it.
- *
- * `Role` carries `tenant_owner` and `AccountRole` deliberately does not — an
- * invite cannot grant ownership of a workspace — so the narrowing happens here
- * rather than by widening the analytics enum to a role no event can carry. `null`
- * for that impossible case, which reads in the funnel as "an invite we could not
- * classify" and is the honest answer if the server ever sends one.
- */
-function analyticsRole(role: Role): AccountRole | null {
-  return role === 'tenant_owner' ? null : role;
-}
 
 /**
  * What happens after they finish, in order.
@@ -141,489 +125,6 @@ type Lookup =
   | { phase: 'unavailable'; status: InviteUnavailableStatus }
   | { phase: 'unreachable'; message: string };
 
-/** Which async action is in flight. One value, so nothing can double-submit:
- *  every control on the page is disabled while this is non-null. */
-type Pending = null | 'google' | 'create' | 'sign_in' | 'confirm' | 'decline';
-
-/** Addresses are compared case-insensitively and trimmed. Gmail's dot and `+tag`
- *  equivalences are deliberately NOT normalised away: the server matches on the exact
- *  string, so treating `a.b@gmail.com` as the invited `ab@gmail.com` here would
- *  suppress a confirmation for a mismatch the backend still sees. */
-function sameAddress(a: string | null, b: string): boolean {
-  return typeof a === 'string' && a.trim().toLowerCase() === b.trim().toLowerCase();
-}
-
-/** Firebase throws `FirebaseError`, whose `code` is the only stable part of it —
- *  the message is localised and reworded between SDK releases. */
-function firebaseCode(err: unknown): string {
-  if (typeof err === 'object' && err !== null && 'code' in err) {
-    const code = (err as { code?: unknown }).code;
-    if (typeof code === 'string') return code;
-  }
-  return '';
-}
-
-/**
- * A Firebase failure as something worth reading.
- *
- * Firebase's own messages are written for developers ("Firebase: Error
- * (auth/wrong-password)."), and this page is read by somebody who has never seen
- * the product. Anything unrecognised falls through to the raw message rather than
- * a generic apology: an unknown failure the user can quote is more useful than a
- * known-looking one they cannot.
- */
-function credentialMessage(err: unknown): string {
-  switch (firebaseCode(err)) {
-    case 'auth/wrong-password':
-    case 'auth/invalid-credential':
-      return 'That password does not match this address. Try again, or use Google instead.';
-    case 'auth/user-not-found':
-      return 'That address has no password yet. Create one below.';
-    case 'auth/too-many-requests':
-      return 'Too many attempts. Wait a minute and try again.';
-    case 'auth/popup-closed-by-user':
-    case 'auth/cancelled-popup-request':
-      return 'The Google window closed before you finished. Try again.';
-    case 'auth/popup-blocked':
-      return 'Your browser blocked the Google window. Allow pop-ups for this site, or create a password instead.';
-    case 'auth/network-request-failed':
-      return 'We could not reach the network. Check your connection and try again.';
-    case 'auth/weak-password':
-      return 'That password is too easy to guess. Make it longer.';
-    default:
-      return getErrorMessage(err, 'That did not work. Try again.');
-  }
-}
-
-/** How a password is doing, as something to show WHILE it is typed. */
-interface PasswordAssessment {
-  /** 0–4, for the meter. */
-  score: number;
-  /** The reason it cannot be submitted, or `null` when it can. */
-  blocker: string | null;
-  /** Advice. Never a reason to refuse — only ever how to do better. */
-  hint: string;
-}
-
-/**
- * Assess a password as it is typed.
- *
- * ── Why the page has a rule of its own instead of letting Firebase answer ──
- * Firebase's floor is six characters and it reports a violation only after a
- * round trip, as `auth/weak-password` — which on this page means an agent who has
- * chosen a password, pressed the button, waited, and been refused with no idea
- * what would have worked. The floor here is eight, stated up front and enforced
- * before the network, so the refusal cannot arrive as a surprise; everything above
- * the floor is advice rather than a gate, because a page that argues with somebody
- * about their password is a page they leave.
- *
- * The address rule is the one non-length blocker and it is worth the exception:
- * the local part is pre-filled, on screen, and unchangeable, so "the bit before
- * the @, twice" is the single likeliest password anybody types here.
- */
-function assessPassword(password: string, email: string): PasswordAssessment {
-  const local = email.split('@')[0] ?? '';
-
-  if (password.length === 0) {
-    return { score: 0, blocker: 'Choose a password.', hint: 'At least 8 characters.' };
-  }
-  if (password.length < 8) {
-    return {
-      score: 0,
-      blocker: `At least 8 characters — ${8 - password.length} to go.`,
-      hint: 'At least 8 characters.',
-    };
-  }
-  if (local.length >= 3 && password.toLowerCase().includes(local.toLowerCase())) {
-    return {
-      score: 1,
-      blocker: 'That contains your own address. Pick something unrelated to it.',
-      hint: 'Pick something unrelated to your address.',
-    };
-  }
-
-  const score =
-    (password.length >= 12 ? 1 : 0) +
-    (/[a-z]/.test(password) && /[A-Z]/.test(password) ? 1 : 0) +
-    (/\d/.test(password) ? 1 : 0) +
-    (/[^A-Za-z0-9]/.test(password) ? 1 : 0);
-
-  const hint =
-    score >= 3
-      ? 'Strong enough. You will not be asked for it again on this device.'
-      : password.length < 12
-        ? 'Longer is the easiest way to make this stronger — try three unrelated words.'
-        : 'Add a number or a symbol to make this stronger.';
-
-  return { score: Math.max(score, 1), blocker: null, hint };
-}
-
-/** The meter's four rungs, in the order they light up. */
-const STRENGTH_LABELS = ['Too short', 'Weak', 'Fair', 'Good', 'Strong'];
-
-// ── Screens ────────────────────────────────────────────────────────────────
-
-/**
- * The invite cannot be used, and each reason gets its own words and its own way
- * out.
- *
- * ── Why four screens and not one "invalid link" ────────────────────────────
- * The recipient can act on exactly one of these on their own. Collapsing them
- * into a generic refusal costs the other three their next step: an expired invite
- * needs a resend and the person who can send it is named in the copy, a claimed
- * one means they already did this and belong at the sign-in page, a revoked one is
- * a decision somebody made and a resend request would be answered with "no", and a
- * not-found one is overwhelmingly a link an email client wrapped across two lines
- * — which is fixable by the recipient alone, in ten seconds, if anybody tells them
- * that is what happened.
- *
- * `identity_already_bound` is the server's fifth, added after this page was first
- * written. It means the invited user row already has a real account behind it —
- * they were invited, and then signed in by some other route before opening the
- * link. The server refuses to rebind the row and leaves the invitation outstanding,
- * so the honest reading is not "your invitation is broken" but "you are already
- * set up": the account exists, at that address, and the sign-in page is the whole
- * remedy. Told as its own screen rather than folded into `claimed`, because the
- * two differ in the one detail that decides what to do when signing in does not
- * work — `claimed` means this link was used, this one means it never had to be.
- */
-const UNAVAILABLE_COPY: Record<
-  InviteUnavailableStatus,
-  { title: string; body: string; action: 'sign_in' | 'none' }
-> = {
-  expired: {
-    title: 'This invitation has expired',
-    body: 'Invitations are only good for a few days. Ask your supervisor to send a new one — it will arrive at the same address and work the same way.',
-    action: 'none',
-  },
-  claimed: {
-    title: 'This invitation has already been used',
-    body: 'The workspace is set up and waiting for you. Sign in with the account you created and your station will open.',
-    action: 'sign_in',
-  },
-  revoked: {
-    title: 'This invitation is no longer valid',
-    body: 'It was withdrawn before it was used. Your supervisor will know why, and can send a new one if it was withdrawn by mistake.',
-    action: 'none',
-  },
-  not_found: {
-    title: 'We cannot find that invitation',
-    body: 'Links like this are long, and email programs often break them across two lines. Go back to the message and copy the whole link, or ask your supervisor to send it again.',
-    action: 'none',
-  },
-  identity_already_bound: {
-    title: 'You are already set up',
-    body: 'This address already has an account, so there is nothing left to accept. Sign in and your station will open. If signing in does not work, ask your supervisor to send a new invitation.',
-    action: 'sign_in',
-  },
-};
-
-function Unavailable({ status }: { status: InviteUnavailableStatus }) {
-  const copy = UNAVAILABLE_COPY[status];
-  const heading = useRef<HTMLHeadingElement>(null);
-
-  /*
-    Focus moves to the heading, for the reason {@link AddressMismatch} does the
-    same: this screen routinely REPLACES the card mid-claim — a supervisor
-    revoked the invitation while the form was open, or a second tab won the race
-    — so the button somebody just pressed disappears, focus falls to `<body>`,
-    and a screen-reader user is told nothing at all about a page that changed
-    completely under them. The heading is where the outcome is; it is also the
-    top of the only content there is, so doing it on a cold load costs nothing.
-  */
-  useEffect(() => { heading.current?.focus(); }, []);
-
-  return (
-    <div className={styles.card}>
-      <div className={styles.wordmark}>{brand.name}</div>
-      <p className={styles.eyebrow}>Agency Dialer</p>
-      <h1 className={styles.outcomeTitle} tabIndex={-1} ref={heading}>{copy.title}</h1>
-      <p className={styles.outcomeBody}>{copy.body}</p>
-      {copy.action === 'sign_in' && (
-        <Link to={AGENCY_LOGIN_PATH} className="btn-primary" style={{ width: '100%' }}>
-          Go to sign in
-        </Link>
-      )}
-    </div>
-  );
-}
-
-/**
- * The lookup itself failed — a network blip, or the server being unreachable.
- *
- * Separate from the four above because it is the only one that may resolve by
- * itself, which is exactly what makes a retry button the right control and a
- * "contact your supervisor" the wrong one. Telling somebody to chase a colleague
- * over a five-second outage is how a working invite becomes a support ticket.
- */
-function Unreachable({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <div className={styles.card}>
-      <div className={styles.wordmark}>{brand.name}</div>
-      <p className={styles.eyebrow}>Agency Dialer</p>
-      <h1 className={styles.outcomeTitle}>We could not open your invitation</h1>
-      <p className={styles.outcomeBody}>
-        The link looks fine — we just could not reach us to read it. This is usually
-        the connection rather than the invitation.
-      </p>
-      <p className={styles.errorText} role="alert">{message}</p>
-      {/*
-        No busy state on this button, and that is not an omission: `load()` puts
-        the page back into `loading`, so pressing it replaces this whole screen
-        with the skeleton. A disabled "Trying again…" would be a state that can
-        never be seen.
-      */}
-      <button type="button" className="btn-primary" onClick={onRetry} style={{ width: '100%' }}>
-        Try again
-      </button>
-    </div>
-  );
-}
-
-/**
- * The Google account signed in with is not the address the invite was sent to.
- *
- * ── Why this stops the flow instead of proceeding ──────────────────────────
- * Because today, this exact case is how agency onboarding fails in silence. An
- * agent invited at `priya@acme.com` presses Continue with Google, the browser
- * hands over the personal account it is already signed into, and `POST
- * /auth/session` provisions a tenant for THAT address — leaving the agent as the
- * owner of an empty workspace, the real membership unclaimed, and neither of them
- * told anything at all. The claim endpoint means linking the two accounts is now
- * a legitimate answer rather than an accident, so the page does not refuse it. It
- * refuses to do it QUIETLY: the two addresses are shown side by side, the sentence
- * names what will happen, and nothing is claimed until somebody says yes.
- *
- * ── The decline is a sign-out, not a state reset ───────────────────────────
- * "Use a different account" drops the Firebase credential as well as this screen.
- * Without it the wrong Google account stays the browser's current user, and the
- * next popup re-selects it without asking — so the escape hatch would return them
- * to the same screen and read as a page that does not work.
- */
-function AddressMismatch({
-  signedInAs,
-  invitedAs,
-  onConfirm,
-  onDecline,
-  pending,
-}: {
-  signedInAs: string;
-  invitedAs: string;
-  onConfirm: () => void;
-  onDecline: () => void;
-  pending: Pending;
-}) {
-  const heading = useRef<HTMLHeadingElement>(null);
-
-  /*
-    Focus moves to the heading when this replaces the options, not to a button.
-    The heading is where the question is; landing on "Continue" would put a screen
-    reader user on an answer before they had been asked, and this is the one
-    decision on the page that must not be made by reflex.
-  */
-  useEffect(() => { heading.current?.focus(); }, []);
-
-  return (
-    <div className={styles.mismatch}>
-      <h2 className={styles.mismatchTitle} tabIndex={-1} ref={heading}>
-        That is a different address
-      </h2>
-      <p className={styles.mismatchBody}>
-        You signed in as <strong className={styles.strong}>{signedInAs}</strong>. This
-        invitation was sent to <strong className={styles.strong}>{invitedAs}</strong>.
-      </p>
-      <p className={styles.mismatchBody}>
-        You can use this Google account anyway — it will become how you sign in, and
-        the invitation will still be claimed. Only do it if the account is yours.
-      </p>
-      <div className={styles.mismatchActions}>
-        <button
-          type="button"
-          className="btn-primary"
-          onClick={onConfirm}
-          disabled={pending !== null}
-        >
-          {pending === 'confirm' ? 'Linking…' : 'Use this account'}
-        </button>
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={onDecline}
-          disabled={pending !== null}
-        >
-          {pending === 'decline' ? 'Signing out…' : 'Use a different account'}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/**
- * A `<Link>` off this page that must not be taken while a claim is in flight.
- *
- * ── The race it closes ─────────────────────────────────────────────────────
- * `pending` disables every BUTTON on the card, which is what stops a double
- * claim — but the two links out of here were never part of that, and they are
- * reachable at exactly the wrong moment. Confirm the address mismatch, and while
- * `claimInvite` is in flight press "Sign in instead": this page unmounts, its
- * cleanup signs out, and that sign-out races the `adoptSession` that has just
- * bound the membership. The agent ends up signed out, on a door telling them to
- * use an account they were signed out of, holding an invitation that is already
- * spent — the one failure on this page that cannot be retried, because the token
- * is single-use.
- *
- * `aria-disabled` plus a suppressed default rather than removing the link.
- * Removal moves focus to `<body>` mid-action and takes the affordance away
- * without saying why; this keeps it in the document and in the tab order,
- * announced as unavailable, and it comes back the moment the claim settles —
- * which for a refused claim is immediately, because that is when the visitor
- * most needs it.
- *
- * Its `onClick` is what actually refuses, not the styling: `pointer-events` would
- * leave a keyboard Enter working, and this is a `<Link>`, so the default it must
- * suppress is a router navigation rather than a form submit.
- */
-function GuardedLink({
-  to,
-  disabled,
-  className,
-  children,
-}: {
-  to: string;
-  disabled: boolean;
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <Link
-      to={to}
-      className={className}
-      aria-disabled={disabled || undefined}
-      onClick={(e) => { if (disabled) e.preventDefault(); }}
-    >
-      {children}
-    </Link>
-  );
-}
-
-/**
- * The email + password half, revealed under the Google button.
- *
- * ── The address field is read-only, and that is the design ─────────────────
- * It is pre-filled from the invite and cannot be edited. The invited address is
- * the one value on this page that must not drift, and an editable field here would
- * reintroduce — one keystroke at a time — the very mismatch the token was minted
- * to make survivable. `readOnly` rather than `disabled` on purpose: a disabled
- * input is skipped by keyboard navigation and read as unavailable, when what is
- * true is the opposite — it is the most important value on the screen and it is
- * settled.
- */
-function CredentialForm({
-  invite,
-  password,
-  onPasswordChange,
-  assessment,
-  existing,
-  pending,
-  onSubmit,
-}: {
-  invite: AgencyInvite;
-  password: string;
-  onPasswordChange: (value: string) => void;
-  assessment: PasswordAssessment;
-  existing: boolean;
-  pending: Pending;
-  onSubmit: (e: React.FormEvent) => void;
-}) {
-  const field = useRef<HTMLInputElement>(null);
-
-  /*
-    Focus lands in the password box the moment this reveals, and again when the
-    form flips to "you already have a password" — both are moments where the page
-    changed under somebody and the next thing to do is type. Without it a keyboard
-    user has to tab back past the Google button to reach the only field that just
-    appeared.
-  */
-  useEffect(() => { field.current?.focus(); }, [existing]);
-
-  return (
-    <form className={styles.form} onSubmit={onSubmit}>
-      <div className={styles.field}>
-        <label htmlFor="join-email">Your address</label>
-        <input
-          id="join-email"
-          type="email"
-          value={invite.email}
-          readOnly
-          aria-describedby="join-email-note"
-          className={styles.readOnlyInput}
-        />
-        <p id="join-email-note" className={styles.fieldNote}>
-          This is the address the invitation was sent to, so it cannot be changed here.
-        </p>
-      </div>
-
-      <div className={styles.field}>
-        <label htmlFor="join-password">
-          {existing ? 'Your password' : 'Choose a password'}
-        </label>
-        <input
-          id="join-password"
-          ref={field}
-          type="password"
-          value={password}
-          onChange={(e) => onPasswordChange(e.target.value)}
-          autoComplete={existing ? 'current-password' : 'new-password'}
-          aria-describedby="join-password-note"
-          required
-        />
-        {existing ? (
-          <p id="join-password-note" className={styles.fieldNote}>
-            This address already has a password on {brand.name}. Enter it and we will
-            add this workspace to it.
-          </p>
-        ) : (
-          <div id="join-password-note" className={styles.strength}>
-            {/*
-              A meter and a sentence, updated as they type. The whole reason this
-              exists is that the alternative — Firebase answering `auth/weak-password`
-              after a round trip — tells somebody their password is wrong without
-              ever telling them what would be right.
-            */}
-            <div className={styles.strengthTrack} aria-hidden="true">
-              <span
-                className={styles.strengthFill}
-                data-score={assessment.score}
-                style={{ width: `${(assessment.score / 4) * 100}%` }}
-              />
-            </div>
-            <p className={styles.strengthText}>
-              {password.length > 0 && (
-                <span className={styles.strengthLabel} data-score={assessment.score}>
-                  {STRENGTH_LABELS[assessment.score]}
-                </span>
-              )}
-              {assessment.blocker && password.length > 0 ? assessment.blocker : assessment.hint}
-            </p>
-          </div>
-        )}
-      </div>
-
-      <button
-        type="submit"
-        className="btn-primary"
-        disabled={pending !== null}
-        style={{ width: '100%' }}
-      >
-        {pending === 'create' || pending === 'sign_in'
-          ? 'Joining…'
-          : existing
-            ? 'Sign in and join'
-            : 'Create my sign-in'}
-      </button>
-    </form>
-  );
-}
 
 // ── The page ───────────────────────────────────────────────────────────────
 
@@ -636,7 +137,7 @@ export default function AgencyJoinPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [existing, setExisting] = useState(false);
   const [password, setPassword] = useState('');
-  const [pending, setPending] = useState<Pending>(null);
+  const [pending, setPending] = useState<JoinPending>(null);
   const [error, setError] = useState<string | null>(null);
   /**
    * The way onward from the error, when the error has one.
@@ -1050,8 +551,7 @@ export default function AgencyJoinPage() {
           before the lookup returns is that it is an invitation.
         */}
         <div className={styles.card} aria-busy="true">
-          <div className={styles.wordmark}>{brand.name}</div>
-          <p className={styles.eyebrow}>Agency Dialer</p>
+          <JoinCardHeader />
           <div className={styles.skeleton}>
             <span className={styles.skelLine} style={{ width: '82%' }} />
             <span className={styles.skelLine} style={{ width: '64%' }} />
@@ -1128,8 +628,7 @@ export default function AgencyJoinPage() {
           class does not touch.
         */}
         <div className={`${styles.card} ph-no-capture`}>
-          <div className={styles.wordmark}>{brand.name}</div>
-          <p className={styles.eyebrow}>Agency Dialer</p>
+          <JoinCardHeader />
 
           <h1 className={styles.title}>
             You have been added to {pendingInvite.product_name}
@@ -1151,18 +650,13 @@ export default function AgencyJoinPage() {
               <>
                 <strong className={styles.strong}>{pendingInvite.inviter_name}</strong> has
                 set you up as {roleLabel(pendingInvite.role)}
-                {pendingInvite.tenant_name ? (
-                  <> at <strong className={styles.strong}>{pendingInvite.tenant_name}</strong></>
-                ) : null}.
               </>
             ) : (
-              <>
-                You have been set up as {roleLabel(pendingInvite.role)}
-                {pendingInvite.tenant_name ? (
-                  <> at <strong className={styles.strong}>{pendingInvite.tenant_name}</strong></>
-                ) : null}.
-              </>
+              <>You have been set up as {roleLabel(pendingInvite.role)}</>
             )}
+            {pendingInvite.tenant_name ? (
+              <> at <strong className={styles.strong}>{pendingInvite.tenant_name}</strong></>
+            ) : null}.
           </p>
 
           {/*
@@ -1200,12 +694,7 @@ export default function AgencyJoinPage() {
                 onClick={handleGoogle}
                 disabled={pending !== null}
               >
-                <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
-                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-                </svg>
+                <GoogleMark />
                 {pending === 'google' ? 'Waiting for Google…' : 'Continue with Google'}
               </button>
 
@@ -1304,3 +793,4 @@ export default function AgencyJoinPage() {
     </div>
   );
 }
+
