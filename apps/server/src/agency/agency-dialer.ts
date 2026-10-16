@@ -452,7 +452,10 @@ export class AgencyDialer {
     }
     this.startLeaseRenewal(attemptId, sessionId, 'reserved');
 
-    await agencyAttemptRepository.setState(attemptId, 'dialing', { dialed_at: new Date() });
+    // One instant for the column and its in-process twin below (`LiveAttempt.dialedAt`
+    // documents itself as the same value), not two `new Date()`s a few ms apart.
+    const dialedAt = new Date();
+    await agencyAttemptRepository.setState(attemptId, 'dialing', { dialed_at: dialedAt });
 
     // Registered BEFORE the dial: a carrier can answer inside createBridgedCall —
     // and under late binding that is no longer the rare case the map was built
@@ -461,7 +464,7 @@ export class AgencyDialer {
     // and no record of the attempt to abandon.
     this.liveByAttempt.set(attemptId, {
       cmd, state: 'dialing', bridgedAt: null, answeredAt: null, priors,
-      lateBinding, panel: attempt, panelDelivered, dialedAt: new Date(),
+      lateBinding, panel: attempt, panelDelivered, dialedAt,
       abandonReason: null,
     });
 
@@ -966,29 +969,25 @@ export class AgencyDialer {
         bridged_at: bridgedAt.toISOString(),
       });
 
-      // ── The COMPLIANCE write goes before the agent-state writes ────────────
+      // ── The COMPLIANCE write goes LAST, after the agent-state writes ────────
       //
-      // Same discipline as the frame above, for a stronger reason. `bridged_at` is
-      // not bookkeeping: with late binding it is the SOLE discriminator between a
-      // conversation and an abandoned call. `ABANDONED_ATTEMPT_PREDICATE_SQL`
-      // counts `bridged_at IS NULL` as abandoned, so an attempt that never gets
-      // this write is a fully-conversed call charged against the 3% regulatory
-      // ceiling — and it feeds the auto-pause, so it can stop a campaign.
+      // `bridged_at` is not bookkeeping: with late binding it is the SOLE
+      // discriminator between a conversation and an abandoned call.
+      // `ABANDONED_ATTEMPT_PREDICATE_SQL` counts `bridged_at IS NULL` as abandoned,
+      // so an attempt that never gets this write is a fully-conversed call charged
+      // against the 3% regulatory ceiling — and it feeds the auto-pause, so it can
+      // stop a campaign. Nothing retries it: the `bridged` phase fires once.
       //
-      // It used to sit third, behind `agents.set` (Redis) and the `on_call` mirror
-      // (a `SELECT … FOR UPDATE` + UPDATE + a `recordTransitions` INSERT, on a pool
-      // with `connectionTimeoutMillis` but NO `statement_timeout`). Neither can
-      // fail in a way that skips this write — the mirror is `.catch`-guarded and
-      // `AgentStateMachine.set` swallows internally — but both can BLOCK it for an
-      // unbounded time under row-lock contention, and anything that ends the
-      // process in that window (SIGTERM on a deploy, an OOM, a starved event loop)
-      // loses `bridged_at` permanently. Nothing retries it: the `bridged` phase
-      // fires once.
+      // It still sits behind `agents.set` (Redis) and the `on_call` mirror, and
+      // that is deliberate. Moving it first was tried and reverted: dispatching the
+      // attempt UPDATE ahead of the mirror delays the mirror enough that it can land
+      // after a teardown has already written the agent away, leaving an agent
+      // durably `on_call` on a call that ended (the `restart-mid-bridge` chaos
+      // suite fails on it). The trade is a rare lost `bridged_at` on an unclean
+      // shutdown against a reproducible stuck agent; closing the gap needs the
+      // mirror write made order-safe, not a reshuffle of these statements.
+      // `late-binding.test.ts` ('keeps the compliance write LAST…') pins the order.
       //
-      // Moving it first costs nothing. It depends only on `ev` and `bridgedAt`,
-      // both already in hand, and none of the writes below it depend on this one.
-      // The ordering is therefore: the agent's ears, then the regulator's record,
-      // then the bookkeeping.
       // `answered_at` comes from the bridge's own anchor, never from `bridgedAt`.
       //
       // **The protection here is the ARGUMENT, not the column's write rule, and the
@@ -1824,28 +1823,6 @@ export class AgencyDialer {
   }
 
   /**
-   * The agent hangs up the call they are on.
-   *
-   * Returns `false` when this replica holds no live attempt by that id — which is
-   * the honest answer for **both** "the call already ended" and "another replica
-   * is bridging it", and the caller distinguishes them from the attempt row. It
-   * deliberately does not guess: the bridge session is in-process memory,
-   * so a `true` from somewhere that does not hold it would be a fabrication.
-   *
-   * `agent_hangup` rather than a generic outcome because the outcome vocabulary is
-   * what the retry policy keys on: an agent ending a conversation is a completed
-   * call, not a failure to reach anybody, and classifying it as the latter would
-   * feed the contact straight back into the roster for a redial.
-   *
-   * ── Why an HTTP route, given the contract describes a socket frame ─────────
-   * The station socket carries exactly two `message` listeners for the duration
-   * of an attempt — the borrowed-leg listener via `registerBrowserLegHandlers`
-   * (`webrtc-bridge-manager.ts`), which acts only on `event === 'media'`, and the
-   * station socket's own (`station-socket.ts`), which acts only on
-   * `event === 'ping'`. **A `hangup` frame is handled by neither**, so the
-   * hang-up is `POST /agency/attempts/:id/hangup`.
-   */
-  /**
    * The station socket for this session has closed. Arms the pre-bind grace when
    * the session is holding an attempt the agent was never told about.
    *
@@ -1897,6 +1874,28 @@ export class AgencyDialer {
     this.unboundStationGrace.delete(sessionId);
   }
 
+  /**
+   * The agent hangs up the call they are on.
+   *
+   * Returns `false` when this replica holds no live attempt by that id — which is
+   * the honest answer for **both** "the call already ended" and "another replica
+   * is bridging it", and the caller distinguishes them from the attempt row. It
+   * deliberately does not guess: the bridge session is in-process memory,
+   * so a `true` from somewhere that does not hold it would be a fabrication.
+   *
+   * `agent_hangup` rather than a generic outcome because the outcome vocabulary is
+   * what the retry policy keys on: an agent ending a conversation is a completed
+   * call, not a failure to reach anybody, and classifying it as the latter would
+   * feed the contact straight back into the roster for a redial.
+   *
+   * ── Why an HTTP route, given the contract describes a socket frame ─────────
+   * The station socket carries exactly two `message` listeners for the duration
+   * of an attempt — the borrowed-leg listener via `registerBrowserLegHandlers`
+   * (`webrtc-bridge-manager.ts`), which acts only on `event === 'media'`, and the
+   * station socket's own (`station-socket.ts`), which acts only on
+   * `event === 'ping'`. **A `hangup` frame is handled by neither**, so the
+   * hang-up is `POST /agency/attempts/:id/hangup`.
+   */
   async hangupAttempt(attemptId: string): Promise<boolean> {
     if (!this.liveByAttempt.has(attemptId)) return false;
     // Correlation id IS the attempt id here — the same key `executeDial` registers
