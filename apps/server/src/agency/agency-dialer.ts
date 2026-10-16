@@ -1304,15 +1304,12 @@ export class AgencyDialer {
       // reconnect rather than letting the console come back to an empty panel with
       // no account of the call they were just on.
       if (!delivered) {
-        this.missedReleases.set(cmd.sessionId, {
-          release: {
-            attempt_id: cmd.attemptId,
-            reason,
-            requires_disposition: needsDisposition,
-            message,
-            ended_at: new Date().toISOString(),
-          },
-          expiresAt: Date.now() + MISSED_RELEASE_TTL_MS,
+        this.holdMissedRelease(cmd.sessionId, {
+          attempt_id: cmd.attemptId,
+          reason,
+          requires_disposition: needsDisposition,
+          message,
+          ended_at: new Date().toISOString(),
         });
       }
     }
@@ -1968,6 +1965,18 @@ export class AgencyDialer {
       bridged_at: live.bridgedAt ? live.bridgedAt.toISOString() : null,
       state: live.state,
     };
+  }
+
+  /**
+   * Hold a `released` for this session's reconnect. Expired holds are dropped
+   * here as well as on `takeMissedRelease`, because an agent who never comes back
+   * never takes theirs: without this the map grew by one entry per such agent for
+   * the life of the process.
+   */
+  private holdMissedRelease(sessionId: string, release: AgencyMissedRelease): void {
+    const now = Date.now();
+    for (const [id, held] of this.missedReleases) if (held.expiresAt <= now) this.missedReleases.delete(id);
+    this.missedReleases.set(sessionId, { release, expiresAt: now + MISSED_RELEASE_TTL_MS });
   }
 
   /** The `released` this session missed while away, consumed exactly once. */

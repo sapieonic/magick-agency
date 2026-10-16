@@ -436,7 +436,7 @@ export class PacingEngine {
     // mid-run stops the dialing within one supervise pass, not at the next restart.
     const active = new Set(campaigns.map((c) => c.id));
 
-    // All three latches are keyed by campaign id and are otherwise only cleared on
+    // All three latches (and `revoked`, below) are keyed by campaign id and are otherwise only cleared on
     // the way back to healthy, so a campaign that is deleted, completed or stopped
     // while gated would leak its id for the life of the process. Pruned against the
     // rows that actually came back — which is also what retires a `drainOnly` mark
@@ -445,6 +445,11 @@ export class PacingEngine {
     for (const id of this.flagGated) if (!known.has(id)) this.flagGated.delete(id);
     for (const id of this.reportedStuck) if (!known.has(id)) this.reportedStuck.delete(id);
     for (const id of this.drainOnly) if (!known.has(id)) this.drainOnly.delete(id);
+    // `revoked` too, which `beginLeading` alone used to clear — except under a tick
+    // still in flight, whose dial sites are what the mark exists to stop. A campaign
+    // absent from `findActive` is neither running nor stopping, so no later tick of
+    // it can reach a dial without being led again (which clears the mark anyway).
+    for (const id of this.revoked) if (!known.has(id) && !this.ticking.has(id)) this.revoked.delete(id);
 
     // Drop leadership of anything no longer running.
     for (const id of [...this.led.keys()]) {
@@ -579,6 +584,7 @@ export class PacingEngine {
     try {
       const campaign = await agencyCampaignRepository.findById(campaignId);
       if (!campaign) {
+        this.lastStatus.delete(campaignId);
         await this.relinquish(campaignId);
         return;
       }
@@ -603,7 +609,11 @@ export class PacingEngine {
       if (lastStatus && lastStatus !== campaign.status) {
         this.announceCampaignState(campaign, campaignChangeReasonFor(campaign));
       }
-      this.lastStatus.set(campaignId, campaign.status);
+      // A terminal status is never left, so there is no later change to detect
+      // and nothing to hold: keeping it would leak one entry per campaign that
+      // ended under another writer (`maybeFinalize` deletes its own).
+      if (campaign.status === 'completed' || campaign.status === 'stopped') this.lastStatus.delete(campaignId);
+      else this.lastStatus.set(campaignId, campaign.status);
 
       // ── Refuse BEFORE reserving anything, not after. ────────────────────────
       //

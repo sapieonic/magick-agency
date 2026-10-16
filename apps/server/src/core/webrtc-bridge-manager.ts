@@ -190,6 +190,13 @@ export interface WebRtcLifecycleEvent {
 export type WebRtcLifecycleListener = (event: WebRtcLifecycleEvent) => void;
 
 const WS_TOKEN_MIN_TTL_SECONDS = 120;
+/**
+ * Hard ceiling on the unstored-token memory (`unstoredWsTokens`). Expired entries
+ * are pruned first; past this the oldest go, because a sustained Redis outage can
+ * add entries faster than their windows close (each webhook entry outlives its call
+ * by the post-end grace). The oldest are the windows nearest to ending.
+ */
+export const UNSTORED_WS_TOKEN_CAP = 10_000;
 /*
  * WEBHOOK_TOKEN_POST_END_GRACE_SECONDS (`telephony/webhook-grace.ts`), Q6 (Manas,
  * 2026-10-09): how long a call's WEBHOOK token stays verifiable after the call ends. VoiceLink keeps posting to `/webrtc-status/:callId` after our teardown — the
@@ -1992,6 +1999,16 @@ export class WebRtcBridgeManager {
     // entries per call, each dropped once its window passes).
     if (this.unstoredWsTokens.size >= 1000) {
       for (const [key, expiresAt] of this.unstoredWsTokens) if (expiresAt <= now) this.unstoredWsTokens.delete(key);
+    }
+    // ...and capped even when nothing has expired (Map order is insertion order).
+    if (this.unstoredWsTokens.size >= UNSTORED_WS_TOKEN_CAP) {
+      let evicted = 0;
+      for (const key of this.unstoredWsTokens.keys()) {
+        if (this.unstoredWsTokens.size < UNSTORED_WS_TOKEN_CAP) break;
+        this.unstoredWsTokens.delete(key);
+        evicted++;
+      }
+      log.warn({ evicted, cap: UNSTORED_WS_TOKEN_CAP }, 'Unstored WebRTC token memory full — forgetting the oldest');
     }
     this.unstoredWsTokens.set(this.unstoredWsTokenKey(callId, purpose), now + forMs);
   }

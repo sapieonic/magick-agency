@@ -1038,6 +1038,28 @@ describe('AgencyDialer · the pacing engine can call the dial off until the carr
   });
 });
 
+describe('AgencyDialer · held missed releases are bounded', () => {
+  it('drops expired held releases when a new one is held, even if nobody reconnects', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const dialer = new AgencyDialer(
+        fakeBridge() as any, new StationRegistry(null, '', 'r1'), reservedAgents(), fakeWrapup() as any, fakeBreaks() as any,
+      );
+      const release = (id: string) => ({
+        attempt_id: id, reason: 'no_answer', requires_disposition: false, message: 'x', ended_at: new Date().toISOString(),
+      });
+      (dialer as any).holdMissedRelease('s1', release('a1'));
+      (dialer as any).holdMissedRelease('s2', release('a2'));
+      vi.setSystemTime(Date.now() + 6 * 60_000);
+      (dialer as any).holdMissedRelease('s3', release('a3'));
+      expect([...(dialer as any).missedReleases.keys()]).toEqual(['s3']);
+      expect(dialer.takeMissedRelease('s3')?.attempt_id).toBe('a3');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 // ─── A failed settle-path write must not skip what follows it ──────────────
 
 describe('AgencyDialer · a failed `answered` write still evaluates the abandon branch', () => {

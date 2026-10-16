@@ -1447,6 +1447,51 @@ describe('`reserved` is NOT mirrored to the durable row', () => {
   });
 });
 
+// ─── per-campaign state is bounded by the campaigns that still exist ────────
+
+describe('PacingEngine per-campaign bookkeeping does not grow forever', () => {
+  it('forgets the revocation mark of a campaign that left `findActive`', async () => {
+    repos.campaign.findActive.mockResolvedValue([CAMPAIGN]);
+    const { e } = engine(makeStations([]), makeAgents({}));
+    await (e as any).superviseOnce();
+    expect(e.leading()).toContain('camp-1');
+
+    repos.campaign.findActive.mockResolvedValue([]);
+    await (e as any).superviseOnce(); // relinquishes: the mark is set
+    await (e as any).superviseOnce(); // the campaign is gone: the mark is pruned
+    expect((e as any).revoked.size).toBe(0);
+    await e.stop();
+  });
+
+  it('keeps the revocation mark while a tick for the campaign is still in flight', async () => {
+    repos.campaign.findActive.mockResolvedValue([]);
+    const held = gate<any>();
+    repos.campaign.findById.mockImplementationOnce(() => held.promise);
+    const { e } = engine(makeStations([]), makeAgents({}));
+    await (e as any).relinquish('camp-1');
+    const tick = e.tickOnce('camp-1');
+    await (e as any).superviseOnce();
+    expect((e as any).revoked.has('camp-1'), 'pruned under an in-flight tick').toBe(true);
+    held.open({ ...CAMPAIGN, status: 'paused' });
+    await tick;
+  });
+
+  it('does not hold the last status of a campaign that is terminal or gone', async () => {
+    const { e } = engine(makeStations([]), makeAgents({}));
+    repos.campaign.findById.mockResolvedValueOnce({ ...CAMPAIGN, status: 'stopped' });
+    await e.tickOnce('camp-1');
+    expect((e as any).lastStatus.has('camp-1')).toBe(false);
+
+    repos.campaign.findById.mockResolvedValueOnce({ ...CAMPAIGN, id: 'camp-2', status: 'paused' });
+    await e.tickOnce('camp-2');
+    // A paused campaign keeps it: the resume announcement is decided from it.
+    expect((e as any).lastStatus.get('camp-2')).toBe('paused');
+    repos.campaign.findById.mockResolvedValueOnce(null);
+    await e.tickOnce('camp-2');
+    expect((e as any).lastStatus.has('camp-2')).toBe(false);
+  });
+});
+
 // ─── a tick in flight when stop() is called ─────────────────────────────────
 //
 // `stop()` used to clear the timers and return, which does nothing about a tick
