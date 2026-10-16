@@ -17,7 +17,7 @@
  * exports with a DIFFERENT shape (the console's `AgencyCampaignStats` is the public API layer's
  * enriched payload, not the dialer runtime's):
  *   - `AgencyApi`    console agency surfaces (`./api/agency/*`);
- *   - `PlatformApi`  auth/session, settings, team, invites, notifications, audit,
+ *   - `PlatformApi`  auth/session, settings, team, invites, notifications,
  *                    flags map, super-admin (`./api/platform/*`).
  *
  *     import { AgencyApi, hasPermission } from '@magick-agency/contracts';

@@ -1,7 +1,7 @@
 /**
  * The platform API wire shapes the console and the super-admin console consume:
  * identity and session, per-account settings, team and invites, notification
- * preferences, the feature-flag map, audit reads, and the super-admin surface.
+ * preferences, the feature-flag map, and the super-admin surface.
  * Re-exported from the package root as the `PlatformApi` namespace; also
  * importable per file, e.g. `@magick-agency/contracts/api/platform/super-admin`.
  */
@@ -12,7 +12,6 @@ export * from './team';
 export * from './invite';
 export * from './notifications';
 export * from './feature-flags';
-export * from './audit';
 export * from './super-admin';
 export * from './super-admin-usage';
 export * from './super-admin-telephony-credentials';

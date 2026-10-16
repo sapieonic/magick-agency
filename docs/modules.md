@@ -810,9 +810,9 @@ _No dedicated test files._
 
 ### `packages/contracts/src/api/platform/`
 
-Wire types for the platform API: auth and session, team, invites, notifications, settings, feature flags, audit, super-admin and usage. `super-admin-telephony-credentials.ts` also exports `TELEPHONY_CREDENTIAL_ERROR_CODES`, the runtime list of its error-code union with an exhaustiveness guard (snapshot in `exports.test.ts`).
+Wire types for the platform API: auth and session, team, invites, notifications, settings, feature flags, super-admin and usage. `super-admin-telephony-credentials.ts` also exports `TELEPHONY_CREDENTIAL_ERROR_CODES`, the runtime list of its error-code union with an exhaustiveness guard (snapshot in `exports.test.ts`).
 
-Files: `audit.ts`, `auth.ts`, `feature-flags.ts`, `index.ts`, `invite.ts`, `notifications.ts`, `settings.ts`, `super-admin-telephony-credentials.ts`, `super-admin-usage.ts`, `super-admin.ts`, `team.ts`
+Files: `auth.ts`, `feature-flags.ts`, `index.ts`, `invite.ts`, `notifications.ts`, `settings.ts`, `super-admin-telephony-credentials.ts`, `super-admin-usage.ts`, `super-admin.ts`, `team.ts`
 
 _No dedicated test files._
 
