@@ -311,6 +311,205 @@ const AGENCY_RESOLVED_ZONE_JOIN_SQL =
   + ' WHERE lower(z.name) = lower(c.default_timezone) LIMIT 1) z ON true';
 
 /**
+ * ── THE OCCUPANCY INTERVALS, IN ONE SPELLING ────────────────────────────────
+ *
+ * The `sess` / `in_window` / `carried` / `events` / `intervals` CTEs both occupancy
+ * reads open with: `occupancyBuckets` (one agent, bucketed in the campaign's zone)
+ * and `rosterOccupancyTotals` (a known set of agents, no buckets). The two must
+ * agree — the roster's `shift_seconds` and the per-agent record's buckets are one
+ * measurement asked at two altitudes, and a supervisor comparing them is entitled
+ * to one answer — so the clips, the tiebreaks and the carried-in bound are written
+ * ONCE, here. `occupancy-ctes.test.ts` asserts the two variants differ only in the
+ * places listed in {@link OCCUPANCY_VARIANTS}.
+ *
+ * Both bind the same five values at the same positions: `$1` the agent selector,
+ * `$2`/`$3` the window, `$4`/`$5` tenant and account. A swapped from/to would
+ * survive review because `WHERE i.ended > i.started` absorbs an inverted window as
+ * an empty result rather than as an error. `campaignFilter` is the optional
+ * `AND s.campaign_id = $n::uuid` line, appended to `sess`.
+ *
+ * Callers append their own outer SELECT over `intervals i` (columns `state`,
+ * `started`, `ended`, plus the variant's key).
+ */
+const OCCUPANCY_VARIANTS = {
+  // The per-agent record: one agent, and the campaign's resolved zone carried down
+  // to the buckets.
+  agent: {
+    agentMatch: '= $1',
+    intervalKey: 'sess.zone',
+    sess: `         -- The agent's sessions that OVERLAP the window, never all of them. A
+         -- session's life is [joined_at, left_at), the window is [$2, $3), and two
+         -- half-open intervals overlap iff each starts before the other ends.
+         --
+         -- Unbounded, this CTE is what makes the whole read scale with the agent's
+         -- TENURE rather than with the window: every closed session the agent has
+         -- ever had still has a terminal event before $2, so carried hands each one
+         -- a carried-in interval that, having no successor inside the window, runs
+         -- the full width of it. Sixty past shifts become sixty full-window offline
+         -- intervals -- about 42 days of "offline" inside a 24-hour bucket -- and a
+         -- session abandoned in a non-offline state inflates shift_seconds by the
+         -- same construction.
+         SELECT s.id, s.left_at, s.joined_at, ${AGENCY_RESOLVED_ZONE_SQL} AS zone
+           FROM agency_agent_sessions s
+           JOIN agency_campaigns c ON c.id = s.campaign_id
+           ${AGENCY_RESOLVED_ZONE_JOIN_SQL}
+          WHERE s.agent_user_id = $1
+            AND s.tenant_id = $4
+            AND s.account_id = $5
+            AND s.joined_at < $3
+            AND (s.left_at IS NULL OR s.left_at > $2)\${campaignFilter}
+`,
+  },
+  // The roster: a known SET of agents, and no zone (a duration is
+  // zone-independent, and nothing here buckets).
+  roster: {
+    agentMatch: '= ANY($1::uuid[])',
+    intervalKey: 'sess.agent_user_id',
+    sess: `         -- The sessions that OVERLAP the window, never all of them. A session's
+         -- life is [joined_at, left_at), the window is [$2, $3), and two half-open
+         -- intervals overlap iff each starts before the other ends.
+         --
+         -- Unbounded, this CTE is what would make the read scale with TENURE
+         -- rather than with the window: every closed session still has a terminal
+         -- event before $2, so carried hands each one an interval that, having no
+         -- successor inside the window, runs the window's full width. Sixty past
+         -- shifts become sixty full-window offline intervals per agent.
+         SELECT s.id, s.agent_user_id, s.left_at, s.joined_at
+           FROM agency_agent_sessions s
+          WHERE s.tenant_id = $4
+            AND s.account_id = $5
+            AND s.agent_user_id = ANY($1::uuid[])
+            AND s.joined_at < $3
+            AND (s.left_at IS NULL OR s.left_at > $2)\${campaignFilter}
+`,
+  },
+} as const;
+
+type OccupancyVariant = keyof typeof OCCUPANCY_VARIANTS;
+
+/** The shared occupancy CTEs for `variant`; see {@link OCCUPANCY_VARIANTS}. */
+export function occupancyIntervalsCtes(variant: OccupancyVariant, campaignFilter: string): string {
+  const v = OCCUPANCY_VARIANTS[variant];
+  return `WITH sess AS (
+${v.sess.replace('${campaignFilter}', campaignFilter)}       ), in_window AS (
+         -- The predicate on e.agent_user_id is the denormalised copy the event
+         -- log carries, and it is what makes idx_agency_session_events_agent
+         -- (agent_user_id, at) usable: without it the planner has no predicate on
+         -- the index's leading column, so the range on at cannot be driven from it,
+         -- and session_id is indexed by nothing at all. The join to sess stays --
+         -- it applies the tenant/account scope and the optional campaign narrowing.
+         -- e.id rides along for the lead() tiebreak in intervals, for the same
+         -- reason carried's ORDER BY carries it: at alone is not unique.
+         SELECT e.session_id, e.to_state, e.at, e.id
+           FROM agency_agent_session_events e
+           JOIN sess ON sess.id = e.session_id
+          WHERE e.agent_user_id ${v.agentMatch}
+            AND e.at >= $2 AND e.at < $3
+       ), carried AS (
+         -- e.id DESC breaks a tie on at. DISTINCT ON returns whichever row the
+         -- executor reached first among rows equal on the ORDER BY, so two events
+         -- on one session sharing a timestamp make the state carried into the
+         -- window non-reproducible between two runs of the same query -- one run
+         -- reports the agent went on break at 08:55, the next reports available.
+         -- Ties are real in rows already in the table: before at was carried from
+         -- the mutation, the batch INSERT took the column's DEFAULT now(), which
+         -- is the transaction timestamp and therefore identical for every row of a
+         -- markAllOffline sweep of the whole floor.
+         SELECT DISTINCT ON (e.session_id) e.session_id, e.to_state, e.at, e.id
+           FROM agency_agent_session_events e
+           JOIN sess ON sess.id = e.session_id
+          WHERE e.agent_user_id ${v.agentMatch}
+            AND e.at < $2
+            -- The lower bound is what stops this range scan reading the agent's
+            -- whole tenure, and it is EXACT: a session's events never predate its
+            -- joined_at. recordTransitions is the only writer of this table and
+            -- stamps clock_timestamp() from the statement that moved the session,
+            -- which (on a server clock that does not step backwards) reads no
+            -- earlier than the INSERT that set joined_at (DEFAULT now(), never
+            -- updated). So every row DISTINCT ON could pick for a
+            -- session in sess is at or after the earliest joined_at in sess.
+            -- agent-occupancy-carried-bound.test.ts carries a month-old state.
+            AND e.at >= (SELECT MIN(joined_at) FROM sess)
+          ORDER BY e.session_id, e.at DESC, e.id DESC
+       ), events AS (
+         SELECT * FROM in_window
+         UNION ALL
+         SELECT * FROM carried
+       ), intervals AS (
+         -- Three clips on the close, and the third is not decoration.
+         --
+         -- lead() gives the next event on the same SESSION; its absence means the
+         -- newest event, i.e. the state the agent is in now, which has no end.
+         -- now() closes that, $3 closes it again for a historical window -- and
+         -- sess.left_at closes it for a session that ENDED. leave() sets left_at
+         -- and writes the closing offline event in the same call, but that write is
+         -- the best-effort one recordTransitions swallows with a warn: drop it and
+         -- a session closed at 11:30 in state available credits every remaining
+         -- second of the window to available, inflating shift_seconds and
+         -- deflating the occupancy read that divides by it. left_at is the one
+         -- clip whose source is the sessions table rather than the log, so it
+         -- survives exactly the failure the other two cannot see.
+         --
+         -- LEAST already ignores NULLs, so the COALESCE is for the reader: a live
+         -- session has no left_at and must not be clipped at all, and 'infinity'
+         -- says that rather than leaving it to a function's null semantics.
+         --
+         -- ev.id breaks a tie on ev.at, the same tie carried breaks above and for
+         -- the same reason -- markAllOffline's batch INSERT shares one transaction
+         -- timestamp across the whole floor. Where two tied events are followed by
+         -- a third, lead() without the tiebreak leaves it undefined WHICH of the
+         -- tied states keeps the surviving interval, so two reads of one window can
+         -- attribute the same seconds to different states. id is a random uuid, so
+         -- the order it imposes on a tie is arbitrary -- but it is TOTAL and it is
+         -- STABLE, which is the whole ask: tied events have no chronology to
+         -- recover, and the failure being fixed is a number that moves between
+         -- reads, not a number that is wrong.
+         SELECT ${v.intervalKey},
+                ev.to_state AS state,
+                GREATEST(ev.at, $2::timestamptz) AS started,
+                LEAST(
+                  COALESCE(lead(ev.at) OVER (PARTITION BY ev.session_id ORDER BY ev.at, ev.id), now()),
+                  $3::timestamptz,
+                  -- The left_at clip applies to every state EXCEPT offline, and
+                  -- that exception is the point of the clip rather than a
+                  -- softening of it.
+                  --
+                  -- What the clip defends is shift_seconds, which foldOccupancy
+                  -- sums over the NON-offline states only. A session closed in
+                  -- 'available' -- because leave()'s closing write is the
+                  -- best-effort one recordTransitions swallows with a warn --
+                  -- would credit every remaining second of the window to
+                  -- 'available' and inflate the shift. That failure is a failure
+                  -- of a SHIFT state, by construction.
+                  --
+                  -- offline cannot commit it. It is excluded from the shift, so
+                  -- extending it past left_at adds nothing to the denominator
+                  -- occupancy divides by. And extending it is the DOCUMENTED
+                  -- contract on this method: "a session that ended hours ago
+                  -- cannot dilute occupancy merely by having its final offline
+                  -- interval run to the end of the window" -- a sentence that is
+                  -- only true of a read where that interval DOES run to the
+                  -- window's end.
+                  --
+                  -- Clipping offline too made by_state.offline 0 for every
+                  -- properly closed session, because leave() writes the offline
+                  -- event AT left_at: the interval then starts and ends on one
+                  -- instant. agent-occupancy-window.test.ts pins the 12:00 to
+                  -- 24:00 tail and is what caught it. A unit test over a mocked
+                  -- pool never could -- the bug was in what the SQL MEANS, not in
+                  -- what it says.
+                  CASE
+                    WHEN ev.to_state = 'offline' THEN 'infinity'::timestamptz
+                    ELSE COALESCE(sess.left_at, 'infinity'::timestamptz)
+                  END
+                ) AS ended
+           FROM events ev
+           JOIN sess ON sess.id = ev.session_id
+       )
+`;
+}
+
+/**
  * The FIVE metric expressions every agency attempts aggregate selects, in ONE
  * spelling.
  *
@@ -369,6 +568,28 @@ const AGENCY_ATTEMPT_METRICS_SQL = `COUNT(*)::text AS attempts,
                   AND a.wrapup_ended_at IS NOT NULL
                   AND ${WRAPUP_MEASURED_RESOLUTIONS_SQL.replace('wrapup_resolution', 'a.wrapup_resolution')}), 0)::text
                 AS wrapup_seconds`;
+
+/** The five {@link AGENCY_ATTEMPT_METRICS_SQL} columns, as numbers. */
+interface AgencyAttemptMetrics {
+  attempts: number; connected: number; successes: number;
+  talk_seconds: number; wrapup_seconds: number;
+}
+
+/**
+ * Read {@link AGENCY_ATTEMPT_METRICS_SQL}'s five `::text` columns off a row — the
+ * other half of that frozen string, shared by every statement that selects it.
+ */
+function readAttemptMetrics(row: {
+  attempts: string; connected: string; successes: string; talk_seconds: string; wrapup_seconds: string;
+}): AgencyAttemptMetrics {
+  return {
+    attempts: Number(row.attempts),
+    connected: Number(row.connected),
+    successes: Number(row.successes),
+    talk_seconds: Number(row.talk_seconds),
+    wrapup_seconds: Number(row.wrapup_seconds),
+  };
+}
 
 /**
  * A machine connect is an agent who sat through an answering machine, and the
@@ -525,7 +746,7 @@ function params(): { values: unknown[]; add: (value: unknown) => string } {
 function phoneCondition(
   filter: PhoneFilter,
   alias: string,
-  p: ReturnType<typeof params>,
+  bind: ReturnType<typeof params>,
 ): string {
   const digits = CONTACT_PHONE_DIGITS_SQL.replace('phone_e164', `${alias}.phone_e164`);
   // Re-stripped here, not trusted from the caller. `parsePhoneFilter` already
@@ -544,7 +765,7 @@ function phoneCondition(
   if (term.length === 0) return 'FALSE';
   if (filter.mode === 'exact') {
     // The `+` was stripped by the parser; the indexed expression holds digits only.
-    return `${digits} = ${p.add(term)}`;
+    return `${digits} = ${bind.add(term)}`;
   }
   // A suffix search on the number is a PREFIX search on its reverse, which is
   // what `idx_agency_contacts_phone_suffix` indexes. Written as
@@ -552,7 +773,7 @@ function phoneCondition(
   // `~>=~ / ~<~` rewrite itself — getting the upper bound wrong by hand is a
   // silently short result set. The literal `%` is appended in SQL, so the
   // parameter carries no wildcard and a `%` typed into the search box is data.
-  return `reverse(${digits}) LIKE ${p.add(reverseString(term))} || '%'`;
+  return `reverse(${digits}) LIKE ${bind.add(reverseString(term))} || '%'`;
 }
 
 /** Reverse a string of digits — the search term, to match the reversed column. */
@@ -592,20 +813,20 @@ function reverseString(value: string): string {
 function contactFilterConditions(
   filters: AgencyContactFilters,
   alias: string,
-  p: ReturnType<typeof params>,
+  bind: ReturnType<typeof params>,
 ): string[] {
   const conditions: string[] = [];
   if (filters.states?.length) {
-    conditions.push(`${alias}.state = ANY(${p.add(filters.states)}::varchar[])`);
+    conditions.push(`${alias}.state = ANY(${bind.add(filters.states)}::varchar[])`);
   }
   if (filters.suppressedReasons?.length) {
-    conditions.push(`${alias}.suppressed_reason = ANY(${p.add(filters.suppressedReasons)}::varchar[])`);
+    conditions.push(`${alias}.suppressed_reason = ANY(${bind.add(filters.suppressedReasons)}::varchar[])`);
   }
   if (filters.lastOutcomes?.length) {
-    conditions.push(`${alias}.last_outcome = ANY(${p.add(filters.lastOutcomes)}::varchar[])`);
+    conditions.push(`${alias}.last_outcome = ANY(${bind.add(filters.lastOutcomes)}::varchar[])`);
   }
   if (filters.lastDispositions?.length) {
-    conditions.push(`${alias}.last_disposition = ANY(${p.add(filters.lastDispositions)}::varchar[])`);
+    conditions.push(`${alias}.last_disposition = ANY(${bind.add(filters.lastDispositions)}::varchar[])`);
   }
   return conditions;
 }
@@ -687,7 +908,7 @@ function neverSeededSuppressionSql(alias: string): string {
 function retrySelectionConditions(
   selector: AgencyRetrySelector,
   alias: string,
-  p: ReturnType<typeof params>,
+  bind: ReturnType<typeof params>,
 ): string[] {
   // `__none__` is a MEMBER of the outcome dimension, not a dimension of its own
   // — `RETRY_OUTCOME_SELECTABLES`' docstring carries the argument. Split it out
@@ -702,7 +923,7 @@ function retrySelectionConditions(
     ...(named.length ? { lastOutcomes: named } : {}),
     ...(selector.last_disposition ? { lastDispositions: selector.last_disposition } : {}),
     ...(selector.suppressed_reason ? { suppressedReasons: selector.suppressed_reason } : {}),
-  }, alias, p);
+  }, alias, bind);
 
   // OR *within* the dimension, which is what the algebra already promises for
   // every other key. The delegate has just pushed the named-outcome term, so it
@@ -729,10 +950,10 @@ function retrySelectionConditions(
   if (selector.never_attempted === true) conditions.push(`${alias}.attempt_count = 0`);
   if (selector.never_attempted === false) conditions.push(`${alias}.attempt_count > 0`);
   if (selector.attempt_count_gte !== undefined) {
-    conditions.push(`${alias}.attempt_count >= ${p.add(selector.attempt_count_gte)}`);
+    conditions.push(`${alias}.attempt_count >= ${bind.add(selector.attempt_count_gte)}`);
   }
   if (selector.attempt_count_lte !== undefined) {
-    conditions.push(`${alias}.attempt_count <= ${p.add(selector.attempt_count_lte)}`);
+    conditions.push(`${alias}.attempt_count <= ${bind.add(selector.attempt_count_lte)}`);
   }
 
   // ── Never the contact we are calling RIGHT NOW ────────────────────────────
@@ -794,6 +1015,58 @@ function retrySelectionConditions(
 }
 
 /**
+ * The attempt-row projection the three attempt reads serve (`listForCampaign`,
+ * `findForCampaign`, `listForAgent`), in the order {@link projectAttemptRow} reads
+ * it. `a` is the attempt, `c` the contact, `s` the session (LEFT-joined on the
+ * campaign spine, INNER on the agent's).
+ */
+const ATTEMPT_ROW_SELECT_SQL = `a.id, a.campaign_id, a.contact_id, a.attempt_number, c.phone_e164, a.caller_id,
+             s.agent_user_id, a.reserved_agent_id, a.state, a.outcome,
+             a.disposition_code, a.notes, a.callback_at,
+             a.dispositioned_by_user_id, a.dispositioned_at, a.dispositioned_on_behalf,
+             a.webrtc_call_id, a.dialed_at, a.answered_at, a.bridged_at, a.ended_at,
+             a.talk_seconds, a.wrapup_seconds, a.created_at`;
+
+/**
+ * The contact join of every attempt read. `c.campaign_id = a.campaign_id` is
+ * redundant for correctness and load-bearing for the plan — see
+ * {@link AgencyAttemptRepository.listForCampaign}: both phone indexes are keyed
+ * `(campaign_id, <expr>)`.
+ */
+const ATTEMPT_CONTACT_JOIN_SQL = `JOIN agency_contacts c
+          ON c.id = a.contact_id AND c.campaign_id = a.campaign_id`;
+
+/**
+ * The attempt filters both attempt lists share, as SQL — the attempt-side
+ * counterpart of {@link contactFilterConditions}.
+ *
+ * `scoped` is the caller's own term, placed after the three vocabulary filters
+ * (the campaign spine's agent subquery); `listForAgent` has none, its agent IS the
+ * scope. `from`/`to` bound `created_at`, the column the keyset orders by — NOT
+ * `dialed_at`, which is NULL on an attempt that never left the building and would
+ * drop those rows from a date-filtered view.
+ */
+function attemptFilterConditions(
+  f: AgencyAttemptFilters | AgentAttemptFilters,
+  bind: ReturnType<typeof params>,
+  scoped?: () => string | null,
+): string[] {
+  const conditions: string[] = [];
+  if (f.states?.length) conditions.push(`a.state = ANY(${bind.add(f.states)}::varchar[])`);
+  if (f.outcomes?.length) conditions.push(`a.outcome = ANY(${bind.add(f.outcomes)}::varchar[])`);
+  if (f.dispositionCodes?.length) {
+    conditions.push(`a.disposition_code = ANY(${bind.add(f.dispositionCodes)}::varchar[])`);
+  }
+  const term = scoped?.();
+  if (term) conditions.push(term);
+  if (f.contactId) conditions.push(`a.contact_id = ${bind.add(f.contactId)}::uuid`);
+  if (f.phone) conditions.push(phoneCondition(f.phone, 'c', bind));
+  if (f.from) conditions.push(`a.created_at >= ${bind.add(f.from)}`);
+  if (f.to) conditions.push(`a.created_at <= ${bind.add(f.to)}`);
+  return conditions;
+}
+
+/**
  * The keyset predicate, as a row-wise comparison.
  *
  * `(created_at, id) < ($a, $b)` rather than the expanded
@@ -810,9 +1083,9 @@ function retrySelectionConditions(
 function keysetCondition(
   position: AgencyKeysetPosition,
   alias: string,
-  p: ReturnType<typeof params>,
+  bind: ReturnType<typeof params>,
 ): string {
-  return `(${alias}.created_at, ${alias}.id) < (${p.add(position.at)}::timestamptz, ${p.add(position.id)}::uuid)`;
+  return `(${alias}.created_at, ${alias}.id) < (${bind.add(position.at)}::timestamptz, ${bind.add(position.id)}::uuid)`;
 }
 
 /**
@@ -902,6 +1175,19 @@ function projectContactRow(row: AgencyContactRecord): AgencyContactRow {
   };
 }
 
+/**
+ * The twenty columns a campaign is created with, in the order `create()` and
+ * `retryFromCampaign` bind `$1..$20`. A retry appends its five lineage columns
+ * after them. One list, so a column added to the config is added to both writers or
+ * to neither — an optional input field beside an explicit column list typechecks
+ * and silently drops the value.
+ */
+const CAMPAIGN_INSERT_COLUMNS_SQL = `tenant_id, account_id, name, caller_ids, telephony_provider,
+          calling_window_start, calling_window_end, calling_days, default_timezone,
+          wrapup_seconds, wrapup_auto_return, retry_policy, disposition_catalog,
+          context_display, break_reasons, record_calls, analysis_profile_id, created_by,
+          abandon_announcement_id, abandonment_ceiling_pct`;
+
 /** What {@link AgencyCampaignRepository.retryFromCampaign} answers. */
 type AgencyRetryCreateResult =
   | {
@@ -985,11 +1271,7 @@ export class AgencyCampaignRepository {
     // If you change a default here, change it in the schema too.
     const { rows } = await getPool().query<AgencyCampaignRecord>(
       `INSERT INTO agency_campaigns
-         (tenant_id, account_id, name, caller_ids, telephony_provider,
-          calling_window_start, calling_window_end, calling_days, default_timezone,
-          wrapup_seconds, wrapup_auto_return, retry_policy, disposition_catalog,
-          context_display, break_reasons, record_calls, analysis_profile_id, created_by,
-          abandon_announcement_id, abandonment_ceiling_pct)
+         (${CAMPAIGN_INSERT_COLUMNS_SQL})
        VALUES ($1,$2,$3,$4,COALESCE($5,'voicelink'),
                COALESCE($6::time,'09:00'),COALESCE($7::time,'20:00'),COALESCE($8::smallint[],'{1,2,3,4,5}'),COALESCE($9,'UTC'),
                COALESCE($10,30),COALESCE($11,true),COALESCE($12,'{}')::jsonb,COALESCE($13,'[]')::jsonb,
@@ -1071,11 +1353,11 @@ export class AgencyCampaignRepository {
    * than the parent's matching rows.
    */
   async retryPreview(parentId: string, selector: AgencyRetrySelector): Promise<AgencyRetryPreview | null> {
-    const p = params();
-    const parent = p.add(parentId);
+    const bind = params();
+    const parent = bind.add(parentId);
     // THE shared builder — the same conditions the commit's INSERT will run. See
     // `retrySelectionConditions`.
-    const conditions = [`c.campaign_id = ${parent}`, ...retrySelectionConditions(selector, 'c', p)];
+    const conditions = [`c.campaign_id = ${parent}`, ...retrySelectionConditions(selector, 'c', bind)];
 
     const { rows } = await getPool().query<{
       matched: string;
@@ -1116,7 +1398,7 @@ export class AgencyCampaignRepository {
         FROM agency_campaigns cam
        WHERE cam.id = ${parent}
       `,
-      p.values,
+      bind.values,
     );
 
     const row = rows[0];
@@ -1315,11 +1597,7 @@ export class AgencyCampaignRepository {
         // copy of that default with nothing keeping the two in step.
         const created = await client.query<AgencyCampaignRecord>(
           `INSERT INTO agency_campaigns
-             (tenant_id, account_id, name, caller_ids, telephony_provider,
-              calling_window_start, calling_window_end, calling_days, default_timezone,
-              wrapup_seconds, wrapup_auto_return, retry_policy, disposition_catalog,
-              context_display, break_reasons, record_calls, analysis_profile_id, created_by,
-              abandon_announcement_id, abandonment_ceiling_pct,
+             (${CAMPAIGN_INSERT_COLUMNS_SQL},
               parent_campaign_id, root_campaign_id, retry_generation, retry_selector,
               retry_idempotency_key)
            VALUES ($1,$2,$3,$4,$5,
@@ -2290,11 +2568,7 @@ export class AgencyCampaignRepository {
 
     const buckets: AgencyCampaignStatsBucket[] = rows.map((r) => ({
       bucket_start: r.bucket_start,
-      attempts: Number(r.attempts),
-      connected: Number(r.connected),
-      successes: Number(r.successes),
-      talk_seconds: Number(r.talk_seconds),
-      wrapup_seconds: Number(r.wrapup_seconds),
+      ...readAttemptMetrics(r),
     }));
 
     return {
@@ -3388,21 +3662,21 @@ export class AgencyContactRepository {
     after?: AgencyKeysetPosition;
     limit: number;
   }): Promise<AgencyKeysetPage<AgencyContactRow>> {
-    const p = params();
+    const bind = params();
     const f = input.filters;
     // The four vocabulary dimensions come from the SHARED builder, because this
     // list is where a retry selection is authored and the seeding statement has to
     // mean the same thing by them — see `contactFilterConditions`. The three below
     // are this route's own: they are deliberately not retry-selector dimensions.
     const conditions = [
-      `c.campaign_id = ${p.add(input.campaignId)}`,
-      ...contactFilterConditions(f, 'c', p),
+      `c.campaign_id = ${bind.add(input.campaignId)}`,
+      ...contactFilterConditions(f, 'c', bind),
     ];
 
-    if (f.phone) conditions.push(phoneCondition(f.phone, 'c', p));
-    if (f.from) conditions.push(`c.created_at >= ${p.add(f.from)}`);
-    if (f.to) conditions.push(`c.created_at <= ${p.add(f.to)}`);
-    if (input.after) conditions.push(keysetCondition(input.after, 'c', p));
+    if (f.phone) conditions.push(phoneCondition(f.phone, 'c', bind));
+    if (f.from) conditions.push(`c.created_at >= ${bind.add(f.from)}`);
+    if (f.to) conditions.push(`c.created_at <= ${bind.add(f.to)}`);
+    if (input.after) conditions.push(keysetCondition(input.after, 'c', bind));
 
     const sql = `
       SELECT c.id, c.phone_e164, c.state, c.attempt_count, c.our_fault_attempts,
@@ -3413,9 +3687,9 @@ export class AgencyContactRepository {
         FROM agency_contacts c
        WHERE ${conditions.join(' AND ')}
        ORDER BY c.created_at DESC, c.id DESC
-       LIMIT ${p.add(input.limit + 1)}`;
+       LIMIT ${bind.add(input.limit + 1)}`;
 
-    const { rows } = await getPool().query<AgencyContactRecord & { cursor_at: string }>(sql, p.values);
+    const { rows } = await getPool().query<AgencyContactRecord & { cursor_at: string }>(sql, bind.values);
     return toKeysetPage(rows, input.limit, projectContactRow);
   }
 
@@ -3776,7 +4050,7 @@ export class AgencyAttemptRepository {
    * rather than a permanent wedge, and `uq_agency_attempt_live` already makes two
    * live attempts per contact impossible.
    */
-  async create(params: {
+  async create(input: {
     campaignId: string;
     contactId: string;
     tenantId: string;
@@ -3795,8 +4069,8 @@ export class AgencyAttemptRepository {
           WHERE contact_id = $2
          RETURNING *`,
         [
-          params.campaignId, params.contactId, params.tenantId, params.accountId,
-          params.callerId, params.reservedAgentId,
+          input.campaignId, input.contactId, input.tenantId, input.accountId,
+          input.callerId, input.reservedAgentId,
         ],
       );
       return rows[0] ?? null;
@@ -3808,16 +4082,16 @@ export class AgencyAttemptRepository {
       // an attempt-number refusal is a lost race that should be vanishingly rare,
       // and a *steady stream* of them means numbers are colliding systematically.
       // Alert on the second, never on the first.
-      const e = err as { code?: string; constraint?: string };
-      if (e.code === '23505') {
-        if (e.constraint === 'uq_agency_attempt_number') {
+      if (isUniqueViolation(err)) {
+        const constraint = (err as { constraint?: string }).constraint;
+        if (isUniqueViolation(err, 'uq_agency_attempt_number')) {
           log.warn(
-            { contactId: params.contactId, constraint: e.constraint },
+            { contactId: input.contactId, constraint },
             'Attempt-number collision — lost a concurrent insert race; retrying next tick',
           );
         } else {
           log.warn(
-            { contactId: params.contactId, constraint: e.constraint },
+            { contactId: input.contactId, constraint },
             'Duplicate-dial backstop refused an attempt',
           );
         }
@@ -3965,7 +4239,7 @@ export class AgencyAttemptRepository {
    * COALESCEd: an agent correcting their own note has to be able to shorten or
    * clear it, and COALESCE would make an empty string un-writable.
    */
-  async recordDisposition(params: {
+  async recordDisposition(input: {
     attemptId: string;
     dispositionCode: string;
     notes: string | null;
@@ -3992,8 +4266,8 @@ export class AgencyAttemptRepository {
           AND (disposition_code IS NULL OR disposition_code = $2)
       RETURNING *`,
       [
-        params.attemptId, params.dispositionCode, params.notes,
-        params.callbackAt, params.actorUserId, params.onBehalf,
+        input.attemptId, input.dispositionCode, input.notes,
+        input.callbackAt, input.actorUserId, input.onBehalf,
       ],
     );
     return rows[0] ?? null;
@@ -4095,15 +4369,10 @@ export class AgencyAttemptRepository {
     after?: AgencyKeysetPosition;
     limit: number;
   }): Promise<AgencyKeysetPage<AgencyAttemptRow>> {
-    const p = params();
-    const conditions = [`a.campaign_id = ${p.add(input.campaignId)}`];
+    const bind = params();
+    const conditions = [`a.campaign_id = ${bind.add(input.campaignId)}`];
     const f = input.filters;
 
-    if (f.states?.length) conditions.push(`a.state = ANY(${p.add(f.states)}::varchar[])`);
-    if (f.outcomes?.length) conditions.push(`a.outcome = ANY(${p.add(f.outcomes)}::varchar[])`);
-    if (f.dispositionCodes?.length) {
-      conditions.push(`a.disposition_code = ANY(${p.add(f.dispositionCodes)}::varchar[])`);
-    }
     // Through the session, because the attempt row holds a SESSION id and a
     // session id is meaningless to the person reading this page.
     //
@@ -4118,41 +4387,26 @@ export class AgencyAttemptRepository {
     // The filter is campaign-scoped as well as agent-scoped so that an agent
     // who has worked several campaigns matches only their sessions on THIS one.
     // Sessions are per-shift, so this is a handful of ids.
-    if (f.agentUserId) {
-      conditions.push(
-        `a.reserved_agent_id = ANY(ARRAY(
+    conditions.push(...attemptFilterConditions(f, bind, () => (f.agentUserId
+      ? `a.reserved_agent_id = ANY(ARRAY(
            SELECT id FROM agency_agent_sessions
-            WHERE campaign_id = ${p.add(input.campaignId)} AND agent_user_id = ${p.add(f.agentUserId)}))`,
-      );
-    }
-    if (f.contactId) conditions.push(`a.contact_id = ${p.add(f.contactId)}::uuid`);
-    if (f.phone) conditions.push(phoneCondition(f.phone, 'c', p));
-    // Bound on `created_at`, the same column the index and the keyset order by —
-    // NOT on `dialed_at`, which is NULL on an attempt that never left the
-    // building and would drop those rows from a date-filtered view.
-    if (f.from) conditions.push(`a.created_at >= ${p.add(f.from)}`);
-    if (f.to) conditions.push(`a.created_at <= ${p.add(f.to)}`);
-    if (input.after) conditions.push(keysetCondition(input.after, 'a', p));
+            WHERE campaign_id = ${bind.add(input.campaignId)} AND agent_user_id = ${bind.add(f.agentUserId)}))`
+      : null)));
+    if (input.after) conditions.push(keysetCondition(input.after, 'a', bind));
 
     const sql = `
-      SELECT a.id, a.campaign_id, a.contact_id, a.attempt_number, c.phone_e164, a.caller_id,
-             s.agent_user_id, a.reserved_agent_id, a.state, a.outcome,
-             a.disposition_code, a.notes, a.callback_at,
-             a.dispositioned_by_user_id, a.dispositioned_at, a.dispositioned_on_behalf,
-             a.webrtc_call_id, a.dialed_at, a.answered_at, a.bridged_at, a.ended_at,
-             a.talk_seconds, a.wrapup_seconds, a.created_at,
+      SELECT ${ATTEMPT_ROW_SELECT_SQL},
              ${keysetAtSql('a.created_at')} AS cursor_at
         FROM agency_call_attempts a
-        JOIN agency_contacts c
-          ON c.id = a.contact_id AND c.campaign_id = a.campaign_id
+        ${ATTEMPT_CONTACT_JOIN_SQL}
         LEFT JOIN agency_agent_sessions s ON s.id = a.reserved_agent_id
        WHERE ${conditions.join(' AND ')}
        ORDER BY a.created_at DESC, a.id DESC
-       LIMIT ${p.add(input.limit + 1)}`;
+       LIMIT ${bind.add(input.limit + 1)}`;
 
     const { rows } = await getPool().query<AgencyCallAttemptRecord & {
       phone_e164: string; agent_user_id: string | null; cursor_at: string;
-    }>(sql, p.values);
+    }>(sql, bind.values);
 
     return toKeysetPage(rows, input.limit, projectAttemptRow);
   }
@@ -4175,15 +4429,9 @@ export class AgencyAttemptRepository {
     const { rows } = await getPool().query<AgencyCallAttemptRecord & {
       phone_e164: string; agent_user_id: string | null;
     }>(
-      `SELECT a.id, a.campaign_id, a.contact_id, a.attempt_number, c.phone_e164, a.caller_id,
-              s.agent_user_id, a.reserved_agent_id, a.state, a.outcome,
-              a.disposition_code, a.notes, a.callback_at,
-              a.dispositioned_by_user_id, a.dispositioned_at, a.dispositioned_on_behalf,
-              a.webrtc_call_id, a.dialed_at, a.answered_at, a.bridged_at, a.ended_at,
-              a.talk_seconds, a.wrapup_seconds, a.created_at
+      `SELECT ${ATTEMPT_ROW_SELECT_SQL}
          FROM agency_call_attempts a
-         JOIN agency_contacts c
-           ON c.id = a.contact_id AND c.campaign_id = a.campaign_id
+         ${ATTEMPT_CONTACT_JOIN_SQL}
          LEFT JOIN agency_agent_sessions s ON s.id = a.reserved_agent_id
         WHERE a.id = $1 AND a.campaign_id = $2`,
       [attemptId, campaignId],
@@ -4258,7 +4506,7 @@ export class AgencyAttemptRepository {
     after?: AgencyKeysetPosition;
     limit: number;
   }): Promise<AgencyKeysetPage<AgencyAttemptRow>> {
-    const p = params();
+    const bind = params();
     const f = input.filters;
     // The PATH's agent, never `filters.agentUserId`. The query parameter is part
     // of the imported filter vocabulary and is ignored here on purpose — see
@@ -4279,49 +4527,32 @@ export class AgencyAttemptRepository {
     // makes the attempt this person's work; both rows are stamped from the same
     // campaign, so they cannot disagree.
     const conditions = [
-      `s.agent_user_id = ${p.add(input.agentUserId)}`,
-      `s.tenant_id = ${p.add(input.tenantId)}`,
-      `s.account_id = ${p.add(input.accountId)}`,
+      `s.agent_user_id = ${bind.add(input.agentUserId)}`,
+      `s.tenant_id = ${bind.add(input.tenantId)}`,
+      `s.account_id = ${bind.add(input.accountId)}`,
     ];
 
-    if (f.campaignId) conditions.push(`a.campaign_id = ${p.add(f.campaignId)}::uuid`);
-    if (f.states?.length) conditions.push(`a.state = ANY(${p.add(f.states)}::varchar[])`);
-    if (f.outcomes?.length) conditions.push(`a.outcome = ANY(${p.add(f.outcomes)}::varchar[])`);
-    if (f.dispositionCodes?.length) {
-      conditions.push(`a.disposition_code = ANY(${p.add(f.dispositionCodes)}::varchar[])`);
-    }
-    if (f.contactId) conditions.push(`a.contact_id = ${p.add(f.contactId)}::uuid`);
-    if (f.phone) conditions.push(phoneCondition(f.phone, 'c', p));
-    // Bound on `created_at`, the column the keyset orders by — the same choice
-    // `listForCampaign` makes, and for the same reason: `dialed_at` is NULL on an
-    // attempt that never left the building, so bounding on it would drop those
-    // rows from a date-filtered view. Note this is the opposite of the STATS
-    // endpoint, which buckets on `dialed_at` precisely because it is aggregating
-    // dials rather than listing attempts; the two are different questions and the
-    // divergence is deliberate.
-    if (f.from) conditions.push(`a.created_at >= ${p.add(f.from)}`);
-    if (f.to) conditions.push(`a.created_at <= ${p.add(f.to)}`);
-    if (input.after) conditions.push(keysetCondition(input.after, 'a', p));
+    if (f.campaignId) conditions.push(`a.campaign_id = ${bind.add(f.campaignId)}::uuid`);
+    // The created_at bound inside is the opposite of the STATS endpoint, which
+    // buckets on `dialed_at` precisely because it is aggregating dials rather than
+    // listing attempts; the two are different questions and the divergence is
+    // deliberate.
+    conditions.push(...attemptFilterConditions(f, bind));
+    if (input.after) conditions.push(keysetCondition(input.after, 'a', bind));
 
     const sql = `
-      SELECT a.id, a.campaign_id, a.contact_id, a.attempt_number, c.phone_e164, a.caller_id,
-             s.agent_user_id, a.reserved_agent_id, a.state, a.outcome,
-             a.disposition_code, a.notes, a.callback_at,
-             a.dispositioned_by_user_id, a.dispositioned_at, a.dispositioned_on_behalf,
-             a.webrtc_call_id, a.dialed_at, a.answered_at, a.bridged_at, a.ended_at,
-             a.talk_seconds, a.wrapup_seconds, a.created_at,
+      SELECT ${ATTEMPT_ROW_SELECT_SQL},
              ${keysetAtSql('a.created_at')} AS cursor_at
         FROM agency_call_attempts a
-        JOIN agency_contacts c
-          ON c.id = a.contact_id AND c.campaign_id = a.campaign_id
+        ${ATTEMPT_CONTACT_JOIN_SQL}
         JOIN agency_agent_sessions s ON s.id = a.reserved_agent_id
        WHERE ${conditions.join(' AND ')}
        ORDER BY a.created_at DESC, a.id DESC
-       LIMIT ${p.add(input.limit + 1)}`;
+       LIMIT ${bind.add(input.limit + 1)}`;
 
     const { rows } = await getPool().query<AgencyCallAttemptRecord & {
       phone_e164: string; agent_user_id: string | null; cursor_at: string;
-    }>(sql, p.values);
+    }>(sql, bind.values);
 
     return toKeysetPage(rows, input.limit, projectAttemptRow);
   }
@@ -4621,6 +4852,34 @@ interface AgencySessionTransitionRow {
   at: Date;
 }
 
+/**
+ * The session-transition UPDATE every writer of `agency_agent_sessions.state`
+ * except the join upsert runs: `setState`, `leave`, `markAllOffline`.
+ *
+ * `prev` locks the rows `FOR UPDATE` in the same statement as the write, so
+ * `prev.state` is the state being left with no window in between — see
+ * {@link AgencyAgentSessionRepository.setState} for why a plain subquery is the
+ * bug. `RETURNING` projects {@link AgencySessionTransitionRow}, whose `at` is the
+ * transition's own instant: `clock_timestamp()` per row, which
+ * `recordTransitions` inserts verbatim rather than letting the column's DEFAULT
+ * now() stamp the log write (and which keeps a sweep of the whole floor from
+ * collapsing to a single instant).
+ */
+function sessionTransitionSql(input: { prevWhere: string; set: string; where?: string }): string {
+  return `WITH prev AS (
+         SELECT id, state, break_reason FROM agency_agent_sessions
+          WHERE ${input.prevWhere} FOR UPDATE
+       )
+       UPDATE agency_agent_sessions s
+          SET ${input.set}
+         FROM prev
+        WHERE s.id = prev.id${input.where ? ` AND ${input.where}` : ''}
+       RETURNING s.id AS session_id, s.tenant_id, s.account_id, s.campaign_id, s.agent_user_id,
+                 prev.state AS from_state, prev.break_reason AS from_break_reason,
+                 s.state AS to_state, s.break_reason,
+                 clock_timestamp() AS at`;
+}
+
 export class AgencyAgentSessionRepository {
   /**
    * Append the transition log rows for a write that just happened.
@@ -4766,7 +5025,7 @@ export class AgencyAgentSessionRepository {
    *     another campaign, i.e. quietly hijack the ownership of an agent who may
    *     be mid-conversation, and only then report a conflict.
    */
-  async joinOrRehydrate(params: {
+  async joinOrRehydrate(input: {
     tenantId: string;
     accountId: string;
     campaignId: string;
@@ -4817,7 +5076,7 @@ export class AgencyAgentSessionRepository {
          SELECT upserted.*, prev.state AS from_state, prev.break_reason AS from_break_reason,
                 clock_timestamp() AS at
            FROM upserted LEFT JOIN prev ON prev.id = upserted.id`,
-        [params.tenantId, params.accountId, params.campaignId, params.agentUserId, params.replicaId],
+        [input.tenantId, input.accountId, input.campaignId, input.agentUserId, input.replicaId],
       );
       const row = rows[0];
       if (row) {
@@ -4850,9 +5109,9 @@ export class AgencyAgentSessionRepository {
       //
       // This read is NOT synchronised with the upsert, and both branches below
       // exist because of that gap rather than in spite of it.
-      const blocker = await this.findLiveForAgent(params.tenantId, params.agentUserId);
+      const blocker = await this.findLiveForAgent(input.tenantId, input.agentUserId);
 
-      if (blocker && blocker.campaign_id !== params.campaignId) {
+      if (blocker && blocker.campaign_id !== input.campaignId) {
         return { ok: false, reason: 'other_campaign', session: blocker };
       }
 
@@ -4938,20 +5197,10 @@ export class AgencyAgentSessionRepository {
    */
   async setState(id: string, state: AgencyAgentState, breakReason?: string | null): Promise<void> {
     const { rows } = await getPool().query<AgencySessionTransitionRow>(
-      `WITH prev AS (
-         SELECT id, state, break_reason FROM agency_agent_sessions WHERE id = $1 FOR UPDATE
-       )
-       UPDATE agency_agent_sessions s
-          SET state = $2, break_reason = $3, state_since = now(), updated_at = now()
-         FROM prev
-        WHERE s.id = prev.id
-       RETURNING s.id AS session_id, s.tenant_id, s.account_id, s.campaign_id, s.agent_user_id,
-                 prev.state AS from_state, prev.break_reason AS from_break_reason,
-                 s.state AS to_state, s.break_reason,
-                 -- The transition's own instant, projected by the statement that
-                 -- performed it. recordTransitions inserts it verbatim rather than
-                 -- letting the column's DEFAULT now() stamp the log write.
-                 clock_timestamp() AS at`,
+      sessionTransitionSql({
+        prevWhere: 'id = $1',
+        set: 'state = $2, break_reason = $3, state_since = now(), updated_at = now()',
+      }),
       [id, state, breakReason ?? null],
     );
     await this.recordTransitions(rows);
@@ -4974,20 +5223,11 @@ export class AgencyAgentSessionRepository {
    */
   async leave(id: string): Promise<void> {
     const { rows } = await getPool().query<AgencySessionTransitionRow>(
-      `WITH prev AS (
-         SELECT id, state, break_reason FROM agency_agent_sessions WHERE id = $1 FOR UPDATE
-       )
-       UPDATE agency_agent_sessions s
-          SET state = 'offline', left_at = now(), updated_at = now()
-         FROM prev
-        WHERE s.id = prev.id AND s.left_at IS NULL
-       RETURNING s.id AS session_id, s.tenant_id, s.account_id, s.campaign_id, s.agent_user_id,
-                 prev.state AS from_state, prev.break_reason AS from_break_reason,
-                 s.state AS to_state, s.break_reason,
-                 -- The transition's own instant, projected by the statement that
-                 -- performed it. recordTransitions inserts it verbatim rather than
-                 -- letting the column's DEFAULT now() stamp the log write.
-                 clock_timestamp() AS at`,
+      sessionTransitionSql({
+        prevWhere: 'id = $1',
+        set: "state = 'offline', left_at = now(), updated_at = now()",
+        where: 's.left_at IS NULL',
+      }),
       [id],
     );
     await this.recordTransitions(rows);
@@ -5023,20 +5263,10 @@ export class AgencyAgentSessionRepository {
    */
   async markAllOffline(): Promise<number> {
     const { rows } = await getPool().query<AgencySessionTransitionRow>(
-      `WITH prev AS (
-         SELECT id, state, break_reason FROM agency_agent_sessions
-          WHERE left_at IS NULL AND state <> 'offline' FOR UPDATE
-       )
-       UPDATE agency_agent_sessions s
-          SET state = 'offline', updated_at = now()
-         FROM prev
-        WHERE s.id = prev.id
-       RETURNING s.id AS session_id, s.tenant_id, s.account_id, s.campaign_id, s.agent_user_id,
-                 prev.state AS from_state, prev.break_reason AS from_break_reason,
-                 s.state AS to_state, s.break_reason,
-                 -- Per row, so a sweep of the whole floor does not collapse to a
-                 -- single instant. See recordTransitions for why not now().
-                 clock_timestamp() AS at`,
+      sessionTransitionSql({
+        prevWhere: "left_at IS NULL AND state <> 'offline'",
+        set: "state = 'offline', updated_at = now()",
+      }),
     );
     await this.recordTransitions(rows);
     return rows.length;
@@ -5407,11 +5637,9 @@ function groupRowFromSql(row: AgencyGroupRawRow, groupBy: readonly AgencyGroupDi
   const key: AgencyGroupKey = {};
   for (const dimension of groupBy) GROUP_KEY_READERS[dimension](row, key);
 
-  const attempts = Number(row.attempts);
-  const connected = Number(row.connected);
-  const successes = Number(row.successes);
-  const talkSeconds = Number(row.talk_seconds);
-  const wrapupSeconds = Number(row.wrapup_seconds);
+  const {
+    attempts, connected, successes, talk_seconds: talkSeconds, wrapup_seconds: wrapupSeconds,
+  } = readAttemptMetrics(row);
 
   return {
     key,
@@ -5504,10 +5732,10 @@ export class AgencyAgentStatsRepository {
    */
   async stats(
     scope: { tenantId: string; accountId: string; agentUserId: string },
-    params: AgentStatsParams,
+    query: AgentStatsParams,
   ): Promise<AgencyAgentStats> {
     const [attemptRows, occupancyRows] = await Promise.all([
-      this.attemptBuckets(scope, params),
+      this.attemptBuckets(scope, query),
       // ── Occupancy degrades ALONE; the rest of the record does not ─────────
       //
       // The two reads answer different questions and only one of them depends on
@@ -5532,13 +5760,13 @@ export class AgencyAgentStatsRepository {
       // events at all (a session with no recorded transitions). Making the two distinguishable is
       // a contract change, not a catch block; until then the log line below is the
       // only place the difference exists.
-      this.occupancyBuckets(scope, params).catch((err: unknown) => {
+      this.occupancyBuckets(scope, query).catch((err: unknown) => {
         log.warn(
           {
             err,
             agentUserId: scope.agentUserId,
-            from: params.from.toISOString(),
-            to: params.to.toISOString(),
+            from: query.from.toISOString(),
+            to: query.to.toISOString(),
           },
           'Agent occupancy read failed — serving the record with occupancy at zero',
         );
@@ -5630,9 +5858,9 @@ export class AgencyAgentStatsRepository {
 
     return {
       agent_user_id: agentUserId,
-      bucket: params.bucket,
-      from: params.from.toISOString(),
-      to: params.to.toISOString(),
+      bucket: query.bucket,
+      from: query.from.toISOString(),
+      to: query.to.toISOString(),
       totals: {
         attempts: totals.attempts,
         connected: totals.connected,
@@ -5710,12 +5938,11 @@ export class AgencyAgentStatsRepository {
     talk_seconds: number; wrapup_seconds: number;
   }[]> {
     const zone = AGENCY_RESOLVED_ZONE_SQL;
-    const values: unknown[] = [scope.agentUserId, p.from, p.to, scope.tenantId, scope.accountId];
-    let campaignFilter = '';
-    if (p.campaignId) {
-      values.push(p.campaignId);
-      campaignFilter = `\n          AND a.campaign_id = $${values.length}::uuid`;
-    }
+    const bind = params();
+    for (const value of [scope.agentUserId, p.from, p.to, scope.tenantId, scope.accountId]) bind.add(value);
+    const campaignFilter = p.campaignId
+      ? `\n          AND a.campaign_id = ${bind.add(p.campaignId)}::uuid`
+      : '';
 
     const { rows } = await getPool().query<{
       bucket_start: string; campaign_id: string;
@@ -5737,17 +5964,13 @@ export class AgencyAgentStatsRepository {
           AND a.dialed_at < $3${campaignFilter}
         GROUP BY 1, a.campaign_id
         ORDER BY 1, a.campaign_id`,
-      values,
+      bind.values,
     );
 
     return rows.map((r) => ({
       bucket_start: r.bucket_start,
       campaign_id: r.campaign_id,
-      attempts: Number(r.attempts),
-      connected: Number(r.connected),
-      successes: Number(r.successes),
-      talk_seconds: Number(r.talk_seconds),
-      wrapup_seconds: Number(r.wrapup_seconds),
+      ...readAttemptMetrics(r),
     }));
   }
 
@@ -5818,12 +6041,11 @@ export class AgencyAgentStatsRepository {
   ): Promise<{
     bucket_start: string; state: string; seconds: number;
   }[]> {
-    const values: unknown[] = [scope.agentUserId, p.from, p.to, scope.tenantId, scope.accountId];
-    let campaignFilter = '';
-    if (p.campaignId) {
-      values.push(p.campaignId);
-      campaignFilter = `\n            AND s.campaign_id = $${values.length}::uuid`;
-    }
+    const bind = params();
+    for (const value of [scope.agentUserId, p.from, p.to, scope.tenantId, scope.accountId]) bind.add(value);
+    const campaignFilter = p.campaignId
+      ? `\n            AND s.campaign_id = ${bind.add(p.campaignId)}::uuid`
+      : '';
     // The clipped overlap of one interval with one bucket. Named because it is
     // needed twice — in the SUM and in the HAVING that drops a zero-width bucket
     // (the series is inclusive of the bucket containing `ended`, so an interval
@@ -5835,144 +6057,7 @@ export class AgencyAgentStatsRepository {
     const { rows } = await getPool().query<{
       bucket_start: string; state: string; seconds: string;
     }>(
-      `WITH sess AS (
-         -- The agent's sessions that OVERLAP the window, never all of them. A
-         -- session's life is [joined_at, left_at), the window is [$2, $3), and two
-         -- half-open intervals overlap iff each starts before the other ends.
-         --
-         -- Unbounded, this CTE is what makes the whole read scale with the agent's
-         -- TENURE rather than with the window: every closed session the agent has
-         -- ever had still has a terminal event before $2, so carried hands each one
-         -- a carried-in interval that, having no successor inside the window, runs
-         -- the full width of it. Sixty past shifts become sixty full-window offline
-         -- intervals -- about 42 days of "offline" inside a 24-hour bucket -- and a
-         -- session abandoned in a non-offline state inflates shift_seconds by the
-         -- same construction.
-         SELECT s.id, s.left_at, s.joined_at, ${zone} AS zone
-           FROM agency_agent_sessions s
-           JOIN agency_campaigns c ON c.id = s.campaign_id
-           ${AGENCY_RESOLVED_ZONE_JOIN_SQL}
-          WHERE s.agent_user_id = $1
-            AND s.tenant_id = $4
-            AND s.account_id = $5
-            AND s.joined_at < $3
-            AND (s.left_at IS NULL OR s.left_at > $2)${campaignFilter}
-       ), in_window AS (
-         -- e.agent_user_id = $1 is the denormalised copy the event
-         -- log carries, and it is what makes idx_agency_session_events_agent
-         -- (agent_user_id, at) usable: without it the planner has no predicate on
-         -- the index's leading column, so the range on at cannot be driven from it.
-         -- The join to sess stays -- it is what carries the campaign's zone and
-         -- applies the tenant/account scope.
-         -- e.id rides along for the lead() tiebreak in intervals, for the same
-         -- reason carried's ORDER BY carries it: at alone is not unique.
-         SELECT e.session_id, e.to_state, e.at, e.id
-           FROM agency_agent_session_events e
-           JOIN sess ON sess.id = e.session_id
-          WHERE e.agent_user_id = $1
-            AND e.at >= $2 AND e.at < $3
-       ), carried AS (
-         -- e.id DESC breaks a tie on at. DISTINCT ON returns whichever row the
-         -- executor reached first among rows equal on the ORDER BY, so two events
-         -- on one session sharing a timestamp make the state carried into the
-         -- window non-reproducible between two runs of the same query -- one run
-         -- reports the agent went on break at 08:55, the next reports available.
-         -- Ties are real in rows already in the table: before at was carried from
-         -- the mutation, the batch INSERT took the column's DEFAULT now(), which
-         -- is the transaction timestamp and therefore identical for every row of a
-         -- markAllOffline sweep of the whole floor.
-         SELECT DISTINCT ON (e.session_id) e.session_id, e.to_state, e.at, e.id
-           FROM agency_agent_session_events e
-           JOIN sess ON sess.id = e.session_id
-          WHERE e.agent_user_id = $1
-            AND e.at < $2
-            -- The lower bound is what stops this range scan reading the agent's
-            -- whole tenure, and it is EXACT: a session's events never predate its
-            -- joined_at. recordTransitions is the only writer of this table and
-            -- stamps clock_timestamp() from the statement that moved the session,
-            -- which (on a server clock that does not step backwards) reads no
-            -- earlier than the INSERT that set joined_at (DEFAULT now(), never
-            -- updated). So every row DISTINCT ON could pick for a
-            -- session in sess is at or after the earliest joined_at in sess.
-            -- agent-occupancy-carried-bound.test.ts carries a month-old state.
-            AND e.at >= (SELECT MIN(joined_at) FROM sess)
-          ORDER BY e.session_id, e.at DESC, e.id DESC
-       ), events AS (
-         SELECT * FROM in_window
-         UNION ALL
-         SELECT * FROM carried
-       ), intervals AS (
-         -- Three clips on the close, and the third is not decoration.
-         --
-         -- lead() gives the next event on the same SESSION; its absence means the
-         -- newest event, i.e. the state the agent is in now, which has no end.
-         -- now() closes that, $3 closes it again for a historical window -- and
-         -- sess.left_at closes it for a session that ENDED. leave() sets left_at
-         -- and writes the closing offline event in the same call, but that write is
-         -- the best-effort one recordTransitions swallows with a warn: drop it and
-         -- a session closed at 11:30 in state available credits every remaining
-         -- second of the window to available, inflating shift_seconds and
-         -- deflating the occupancy read that divides by it. left_at is the one
-         -- clip whose source is the sessions table rather than the log, so it
-         -- survives exactly the failure the other two cannot see.
-         --
-         -- LEAST already ignores NULLs, so the COALESCE is for the reader: a live
-         -- session has no left_at and must not be clipped at all, and 'infinity'
-         -- says that rather than leaving it to a function's null semantics.
-         --
-         -- ev.id breaks a tie on ev.at, the same tie carried breaks above and for
-         -- the same reason -- markAllOffline's batch INSERT shares one transaction
-         -- timestamp across the whole floor. Where two tied events are followed by
-         -- a third, lead() without the tiebreak leaves it undefined WHICH of the
-         -- tied states keeps the surviving interval, so two reads of one window can
-         -- attribute the same seconds to different states. id is a random uuid, so
-         -- the order it imposes on a tie is arbitrary -- but it is TOTAL and it is
-         -- STABLE, which is the whole ask: tied events have no chronology to
-         -- recover, and the failure being fixed is a number that moves between
-         -- reads, not a number that is wrong.
-         SELECT ev.to_state AS state,
-                sess.zone,
-                GREATEST(ev.at, $2::timestamptz) AS started,
-                LEAST(
-                  COALESCE(lead(ev.at) OVER (PARTITION BY ev.session_id ORDER BY ev.at, ev.id), now()),
-                  $3::timestamptz,
-                  -- The left_at clip applies to every state EXCEPT offline, and
-                  -- that exception is the point of the clip rather than a
-                  -- softening of it.
-                  --
-                  -- What the clip defends is shift_seconds, which foldOccupancy
-                  -- sums over the NON-offline states only. A session closed in
-                  -- 'available' -- because leave()'s closing write is the
-                  -- best-effort one recordTransitions swallows with a warn --
-                  -- would credit every remaining second of the window to
-                  -- 'available' and inflate the shift. That failure is a failure
-                  -- of a SHIFT state, by construction.
-                  --
-                  -- offline cannot commit it. It is excluded from the shift, so
-                  -- extending it past left_at adds nothing to the denominator
-                  -- occupancy divides by. And extending it is the DOCUMENTED
-                  -- contract on this method: "a session that ended hours ago
-                  -- cannot dilute occupancy merely by having its final offline
-                  -- interval run to the end of the window" -- a sentence that is
-                  -- only true of a read where that interval DOES run to the
-                  -- window's end.
-                  --
-                  -- Clipping offline too made by_state.offline 0 for every
-                  -- properly closed session, because leave() writes the offline
-                  -- event AT left_at: the interval then starts and ends on one
-                  -- instant. agent-occupancy-window.test.ts pins the 12:00 to
-                  -- 24:00 tail and is what caught it. A unit test over a mocked
-                  -- pool never could -- the bug was in what the SQL MEANS, not in
-                  -- what it says.
-                  CASE
-                    WHEN ev.to_state = 'offline' THEN 'infinity'::timestamptz
-                    ELSE COALESCE(sess.left_at, 'infinity'::timestamptz)
-                  END
-                ) AS ended
-           FROM events ev
-           JOIN sess ON sess.id = ev.session_id
-       )
-       SELECT ${bucketStartSql(p.bucket, 'b.bucket_start', 'i.zone')} AS bucket_start,
+      `${occupancyIntervalsCtes('agent', campaignFilter)}       SELECT ${bucketStartSql(p.bucket, 'b.bucket_start', 'i.zone')} AS bucket_start,
               i.state,
               SUM(${overlap})::text AS seconds
          FROM intervals i
@@ -5988,7 +6073,7 @@ export class AgencyAgentStatsRepository {
         GROUP BY 1, i.state
        HAVING SUM(${overlap}) > 0
         ORDER BY 1, i.state`,
-      values,
+      bind.values,
     );
 
     return rows.map((r) => ({
@@ -6089,9 +6174,9 @@ export class AgencyAgentStatsRepository {
    */
   async roster(
     scope: { tenantId: string; accountId: string },
-    params: AgentRosterParams,
+    query: AgentRosterParams,
   ): Promise<AgencyRosterPage> {
-    const attemptRows = await this.rosterAttemptTotals(scope, params);
+    const attemptRows = await this.rosterAttemptTotals(scope, query);
     const agentIds = attemptRows.map((row) => row.agent_user_id);
 
     // Skipped rather than issued with an empty array: nobody dialled, so there is
@@ -6099,7 +6184,7 @@ export class AgencyAgentStatsRepository {
     // statement whose answer is known.
     const occupancyRows = agentIds.length === 0
       ? []
-      : await this.rosterOccupancyTotals(scope, params, agentIds).catch((err: unknown) => {
+      : await this.rosterOccupancyTotals(scope, query, agentIds).catch((err: unknown) => {
         // Same catch, same warning, same reasoning as `stats()`: the realistic
         // failure is the event table being unreadable, which is
         // the drift the WRITE path already swallows in `recordTransitions`. Both
@@ -6111,8 +6196,8 @@ export class AgencyAgentStatsRepository {
             tenantId: scope.tenantId,
             accountId: scope.accountId,
             agents: agentIds.length,
-            from: params.from.toISOString(),
-            to: params.to.toISOString(),
+            from: query.from.toISOString(),
+            to: query.to.toISOString(),
           },
           'Agent roster occupancy read failed — serving the roster with occupancy at zero',
         );
@@ -6199,17 +6284,17 @@ export class AgencyAgentStatsRepository {
     });
 
     return {
-      from: params.from.toISOString(),
-      to: params.to.toISOString(),
-      campaign_id: params.campaignId ?? null,
-      sort: params.sort,
-      order: params.order,
-      limit: params.limit,
+      from: query.from.toISOString(),
+      to: query.to.toISOString(),
+      campaign_id: query.campaignId ?? null,
+      sort: query.sort,
+      order: query.order,
+      limit: query.limit,
       // PRE-`limit`, post-scope. Taken from `rows` rather than from a third
       // `COUNT(*)` statement, which is what makes it structurally equal to
       // `benchmark.agents` instead of a number two reads have to keep agreeing on.
       total_agents: rows.length,
-      rows: sortRosterRows(rows, params.sort, params.order).slice(0, params.limit),
+      rows: sortRosterRows(rows, query.sort, query.order).slice(0, query.limit),
       // Computed over EVERY row, before the slice. A benchmark drawn from the page
       // would move when the caller changed `limit` — a different number under the
       // same name, which is the failure its own doc comment names about
@@ -6254,12 +6339,11 @@ export class AgencyAgentStatsRepository {
     talk_seconds: number; wrapup_seconds: number;
     campaigns: number; last_dialed_at: string | null;
   }[]> {
-    const values: unknown[] = [p.from, p.to, scope.tenantId, scope.accountId];
-    let campaignFilter = '';
-    if (p.campaignId) {
-      values.push(p.campaignId);
-      campaignFilter = `\n          AND a.campaign_id = $${values.length}::uuid`;
-    }
+    const bind = params();
+    for (const value of [p.from, p.to, scope.tenantId, scope.accountId]) bind.add(value);
+    const campaignFilter = p.campaignId
+      ? `\n          AND a.campaign_id = ${bind.add(p.campaignId)}::uuid`
+      : '';
 
     const { rows } = await getPool().query<{
       agent_user_id: string;
@@ -6289,16 +6373,12 @@ export class AgencyAgentStatsRepository {
           AND a.dialed_at < $2${campaignFilter}
         GROUP BY s.agent_user_id
         ORDER BY s.agent_user_id`,
-      values,
+      bind.values,
     );
 
     return rows.map((r) => ({
       agent_user_id: r.agent_user_id,
-      attempts: Number(r.attempts),
-      connected: Number(r.connected),
-      successes: Number(r.successes),
-      talk_seconds: Number(r.talk_seconds),
-      wrapup_seconds: Number(r.wrapup_seconds),
+      ...readAttemptMetrics(r),
       campaigns: Number(r.campaigns),
       last_dialed_at: r.last_dialed_at,
     }));
@@ -6419,12 +6499,11 @@ export class AgencyAgentStatsRepository {
     // inverted window is an empty result rather than an error. `limit` goes last
     // because it is the only parameter that belongs to the page rather than to the
     // rows.
-    const values: unknown[] = [p.from, p.to, scope.tenantId, scope.accountId];
-    let campaignFilter = '';
-    if (p.campaignId) {
-      values.push(p.campaignId);
-      campaignFilter = `\n          AND a.campaign_id = $${values.length}::uuid`;
-    }
+    const bind = params();
+    for (const value of [p.from, p.to, scope.tenantId, scope.accountId]) bind.add(value);
+    const campaignFilter = p.campaignId
+      ? `\n          AND a.campaign_id = ${bind.add(p.campaignId)}::uuid`
+      : '';
 
     // Every fragment below comes from a `Record` keyed on a validated union member.
     // `p.groupBy` is already canonical and deduplicated (`parseGroupedStatsQuery`),
@@ -6455,8 +6534,7 @@ export class AgencyAgentStatsRepository {
       ? keyOrder(direction)
       : `${GROUP_SORT_ORDER_SQL[p.sort]} ${direction} NULLS LAST, ${keyOrder('ASC')}`;
 
-    values.push(p.limit);
-    const limitPlaceholder = `$${values.length}`;
+    const limitPlaceholder = bind.add(p.limit);
 
     // ── The SECOND statement, and why there is one at all ────────────────────
     //
@@ -6601,12 +6679,12 @@ export class AgencyAgentStatsRepository {
     let rows: AgencyGroupRawRow[];
     let resolvedTimezone: string | null = null;
     if (zoneCampaignId === undefined) {
-      ({ rows } = await getPool().query<AgencyGroupRawRow>(groupedSql, values));
+      ({ rows } = await getPool().query<AgencyGroupRawRow>(groupedSql, bind.values));
     } else {
       // On a throw `withTransaction` rolls back, which here undoes nothing — the
       // transaction is READ ONLY — and only releases the snapshot.
       ({ rows, resolvedTimezone } = await withTransaction(async (client) => ({
-        rows: (await client.query<AgencyGroupRawRow>(groupedSql, values)).rows,
+        rows: (await client.query<AgencyGroupRawRow>(groupedSql, bind.values)).rows,
         resolvedTimezone: await this.resolvedCampaignZone(scope, zoneCampaignId, client),
       }), { pool: getPool(), isolation: 'REPEATABLE READ', readOnly: true }));
     }
@@ -6746,137 +6824,23 @@ export class AgencyAgentStatsRepository {
     // because `WHERE i.ended > i.started` absorbs an inverted window as an empty
     // result rather than as an error. One convention across both: the selector, if
     // the statement has one, is $1.
-    const values: unknown[] = [[...agentUserIds], p.from, p.to, scope.tenantId, scope.accountId];
-    let campaignFilter = '';
-    if (p.campaignId) {
-      values.push(p.campaignId);
-      campaignFilter = `\n            AND s.campaign_id = $${values.length}::uuid`;
-    }
+    const bind = params();
+    for (const value of [[...agentUserIds], p.from, p.to, scope.tenantId, scope.accountId]) bind.add(value);
+    const campaignFilter = p.campaignId
+      ? `\n            AND s.campaign_id = ${bind.add(p.campaignId)}::uuid`
+      : '';
 
     const { rows } = await getPool().query<{
       agent_user_id: string; state: string; seconds: string;
     }>(
-      `WITH sess AS (
-         -- The sessions that OVERLAP the window, never all of them. A session's
-         -- life is [joined_at, left_at), the window is [$2, $3), and two half-open
-         -- intervals overlap iff each starts before the other ends.
-         --
-         -- Unbounded, this CTE is what would make the read scale with TENURE
-         -- rather than with the window: every closed session still has a terminal
-         -- event before $2, so carried hands each one an interval that, having no
-         -- successor inside the window, runs the window's full width. Sixty past
-         -- shifts become sixty full-window offline intervals per agent.
-         SELECT s.id, s.agent_user_id, s.left_at, s.joined_at
-           FROM agency_agent_sessions s
-          WHERE s.tenant_id = $4
-            AND s.account_id = $5
-            AND s.agent_user_id = ANY($1::uuid[])
-            AND s.joined_at < $3
-            AND (s.left_at IS NULL OR s.left_at > $2)${campaignFilter}
-       ), in_window AS (
-         -- e.agent_user_id = ANY($1) is the denormalised copy the event log
-         -- carries, and it is what makes idx_agency_session_events_agent
-         -- (agent_user_id, at) usable: without a predicate on the leading column
-         -- the range on at cannot be driven from it, and session_id is indexed by
-         -- nothing at all. The join to sess stays -- it is what applies the
-         -- tenant/account scope and the optional campaign narrowing.
-         --
-         -- e.id rides along for the lead() tiebreak in intervals, for the same
-         -- reason carried's ORDER BY carries it: at alone is not unique.
-         SELECT e.session_id, e.to_state, e.at, e.id
-           FROM agency_agent_session_events e
-           JOIN sess ON sess.id = e.session_id
-          WHERE e.agent_user_id = ANY($1::uuid[])
-            AND e.at >= $2 AND e.at < $3
-       ), carried AS (
-         -- The state at $2 is set by the last event BEFORE $2, which is not in the
-         -- window. Exactly one row per session, clipped to the window's start
-         -- below. Without it an agent who went available at 08:55 and first dialled
-         -- at 09:30 shows 35 minutes of nothing in a window starting at 09:00.
-         --
-         -- e.id DESC breaks a tie on at, and ties are real in rows already in the
-         -- table: before at was carried from the mutation, the batch INSERT took
-         -- the column's DEFAULT now() -- the transaction timestamp, identical
-         -- for every row of a markAllOffline sweep of the whole floor. Without the
-         -- tiebreak DISTINCT ON returns whichever row the executor reached first,
-         -- so the carried-in state is not reproducible between two runs.
-         SELECT DISTINCT ON (e.session_id) e.session_id, e.to_state, e.at, e.id
-           FROM agency_agent_session_events e
-           JOIN sess ON sess.id = e.session_id
-          WHERE e.agent_user_id = ANY($1::uuid[])
-            AND e.at < $2
-            -- Bounded below by the earliest joined_at in sess, exactly as in
-            -- occupancyBuckets and for the reason given there: events never
-            -- predate their session's joined_at.
-            AND e.at >= (SELECT MIN(joined_at) FROM sess)
-          ORDER BY e.session_id, e.at DESC, e.id DESC
-       ), events AS (
-         SELECT * FROM in_window
-         UNION ALL
-         SELECT * FROM carried
-       ), intervals AS (
-         -- The log records instants, so a duration is the gap to the next event on
-         -- the same SESSION. Three clips on that close, and the third is not
-         -- decoration.
-         --
-         -- An open final interval -- the newest event, with nothing after it -- is
-         -- the agent's current state and has no end: now() closes it, and $3
-         -- closes it again to the window's own upper bound when the window is
-         -- historical. Without those the state an agent has been in all afternoon
-         -- is the one the roster does not mention.
-         --
-         -- sess.left_at closes it for a session that ENDED. leave() sets left_at
-         -- and writes the closing offline event in the same call, but that write is
-         -- the best-effort one recordTransitions swallows with a warn: drop it and
-         -- a session closed at 11:30 in state available credits every remaining
-         -- second of the window to available -- inflating shift_seconds, deflating
-         -- that agent's occupancy_pct, and dragging the cohort percentiles down
-         -- with it. left_at is the one clip whose source is the sessions table
-         -- rather than the log, so it survives exactly the failure the other two
-         -- cannot see.
-         --
-         -- LEAST already ignores NULLs, so the COALESCE is for the reader: a live
-         -- session has no left_at and must not be clipped at all, and 'infinity'
-         -- says that rather than leaving it to a function's null semantics.
-         --
-         -- ev.id breaks a tie on ev.at, the same tie carried breaks above and for
-         -- the same reason. Where two tied events are followed by a third, lead()
-         -- without the tiebreak leaves it undefined WHICH of the tied states keeps
-         -- the surviving interval, so two reads of one window can attribute the
-         -- same seconds to different states. id is a random uuid, so the order it
-         -- imposes on a tie is arbitrary -- but it is TOTAL and it is STABLE, which
-         -- is the whole ask: tied events have no chronology to recover, and the
-         -- failure being fixed is a number that moves between reads.
-         SELECT sess.agent_user_id,
-                ev.to_state AS state,
-                GREATEST(ev.at, $2::timestamptz) AS started,
-                LEAST(
-                  COALESCE(lead(ev.at) OVER (PARTITION BY ev.session_id ORDER BY ev.at, ev.id), now()),
-                  $3::timestamptz,
-                  -- offline is exempt from the left_at clip, for the reason set out
-                  -- at length in occupancyBuckets: the clip exists to stop a SHIFT
-                  -- state surviving a swallowed closing write and inflating
-                  -- shift_seconds, and offline is excluded from the shift. Both
-                  -- reads must agree on this -- the roster's shift_seconds and the
-                  -- per-agent record's buckets are one measurement asked at two
-                  -- altitudes, and a supervisor comparing them is entitled to one
-                  -- answer.
-                  CASE
-                    WHEN ev.to_state = 'offline' THEN 'infinity'::timestamptz
-                    ELSE COALESCE(sess.left_at, 'infinity'::timestamptz)
-                  END
-                ) AS ended
-           FROM events ev
-           JOIN sess ON sess.id = ev.session_id
-       )
-       SELECT i.agent_user_id,
+      `${occupancyIntervalsCtes('roster', campaignFilter)}       SELECT i.agent_user_id,
               i.state,
               SUM(EXTRACT(EPOCH FROM (i.ended - i.started)))::text AS seconds
          FROM intervals i
         WHERE i.ended > i.started
         GROUP BY i.agent_user_id, i.state
         ORDER BY i.agent_user_id, i.state`,
-      values,
+      bind.values,
     );
 
     return rows.map((r) => ({

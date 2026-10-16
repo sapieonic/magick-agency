@@ -128,13 +128,25 @@ const TEXT_ASSIGNABLE = /^(text|varchar(\(\d+\))?|character varying(\(\d+\))?|ch
 
 // ── The INSERT under test, parsed out of the repository source ───────────────
 
+/** The text of `CAMPAIGN_INSERT_COLUMNS_SQL`, read off the repository source. */
+function insertColumnsConstant(): string {
+  const m = /const CAMPAIGN_INSERT_COLUMNS_SQL = `([^`]*)`;/.exec(repoSource);
+  expect(m, 'CAMPAIGN_INSERT_COLUMNS_SQL was not found — this parser is stale').toBeTruthy();
+  return m![1]!;
+}
+
 function createInsertPairs(): Array<{ column: string; expr: string }> {
   const at = repoSource.indexOf('INSERT INTO agency_campaigns');
   expect(at, 'the create() INSERT was not found — this parser is stale').toBeGreaterThan(-1);
 
   const colsOpen = repoSource.indexOf('(', at);
   const colsClose = matchParen(repoSource, colsOpen);
-  const columns = splitTopLevel(repoSource.slice(colsOpen + 1, colsClose));
+  // The column list is the shared `CAMPAIGN_INSERT_COLUMNS_SQL` constant (create()
+  // and retryFromCampaign bind the same twenty), interpolated: resolve it from the
+  // source so the pairing below is still against the real text.
+  const columns = splitTopLevel(
+    repoSource.slice(colsOpen + 1, colsClose).replace('${CAMPAIGN_INSERT_COLUMNS_SQL}', insertColumnsConstant()),
+  );
 
   const valuesAt = repoSource.indexOf('VALUES', colsClose);
   const vOpen = repoSource.indexOf('(', valuesAt);
