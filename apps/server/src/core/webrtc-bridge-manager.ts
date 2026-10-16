@@ -236,6 +236,26 @@ const PROVIDER_START_TIMEOUT_SECONDS = 30;
 const CARRIER_END_CONFIRM_TIMEOUT_SECONDS = 45;
 /** Max accepted decoded media frame bytes (~1s of PCM16 16k) — abusive frames are dropped. */
 const MAX_MEDIA_FRAME_BYTES = 64000;
+
+/**
+ * Is a base64 media payload too big to decode? Checked BEFORE decoding, so an
+ * abusive frame cannot drive an allocation on the event loop. (Base64 is ~4/3 of
+ * the bytes; twice the byte bound is a deliberately loose ceiling.)
+ */
+function isOversizedMediaPayload(payloadBase64: string): boolean {
+  return payloadBase64.length > MAX_MEDIA_FRAME_BYTES * 2;
+}
+
+/** Close a socket on a teardown or refusal path, where a throw has nowhere useful to go. */
+function closeQuietly(ws: WebSocket): void {
+  try { ws.close(); } catch { /* ignore */ }
+}
+
+/**
+ * Seconds a call's concurrency slots and carrier tokens outlive its max duration,
+ * so neither expires under a call that runs to the cap. See `placeOutboundLeg`.
+ */
+const SLOT_TTL_GRACE_SECONDS = 60;
 /**
  * Slack added to a clip's own duration before hanging up on it.
  *
@@ -422,7 +442,7 @@ export class WebRtcBridgeManager {
       ids.map((id) => {
         const session = this.sessions.get(id);
         return this.endCall(id, {
-          status: session?.answeredAt ? 'completed' : 'canceled',
+          status: session?.localEndStatus() ?? 'canceled',
           outcome: 'service_shutdown',
           hangupProvider: true,
         });
@@ -562,7 +582,7 @@ export class WebRtcBridgeManager {
     // and the release can't decrement the counter (permanent +1 leak), while
     // reconcile would wrongly zero a live call's counter.
     const maxDuration = await this.resolveMaxDuration(params.tenantId, params.accountId);
-    const slotTtlSeconds = maxDuration + 60;
+    const slotTtlSeconds = maxDuration + SLOT_TTL_GRACE_SECONDS;
 
     const admission = await acquireTelephonyConcurrency(this.guardHost,
       concurrencyKey, params.tenantId, params.accountId, provider, slotTtlSeconds,
@@ -655,10 +675,10 @@ export class WebRtcBridgeManager {
       // shutdown): a call that hit the ceiling mid-conversation is `completed`,
       // but one that was never answered never connected, so it settles `canceled`.
       // Hardcoding `completed` would record an unanswered call as a success.
-      this.localHangup(record.id, {
-        status: session.answeredAt ? 'completed' : 'canceled',
+      this.inBackground(this.localHangup(record.id, {
+        status: session.localEndStatus(),
         outcome: 'max_duration_reached',
-      }).catch((e) => log.error({ err: e, callId: record.id }, 'Error ending call on max duration'));
+      }), record.id, 'Error ending call on max duration');
     });
 
     // 4b. Borrowed socket (agency): attach BEFORE the dial so no early carrier
@@ -678,7 +698,7 @@ export class WebRtcBridgeManager {
     // 5. The carrier connects the provider WS + posts webhooks itself, so those two
     // legs get their own purpose-bound tokens (embedded only in the URLs we send
     // the carrier). No browser token: every leg is borrowed.
-    const tokenTtl = maxDuration + 60;
+    const tokenTtl = maxDuration + SLOT_TTL_GRACE_SECONDS;
     let providerToken: string | undefined;
     let webhookToken: string | undefined;
     if (session.carrier) {
@@ -850,7 +870,7 @@ export class WebRtcBridgeManager {
    */
   bindBorrowedBrowserLeg(correlationId: string, ws: WebSocket): boolean {
     const session = this.findByCorrelationId(correlationId);
-    if (!session || session.endHandled || session.ending) return false;
+    if (!session || session.isTearingDown) return false;
     if (session.browserWsOwned) {
       log.warn({ callId: session.callId, correlationId }, 'Bind refused: browser leg is bridge-owned');
       return false;
@@ -923,7 +943,7 @@ export class WebRtcBridgeManager {
    */
   reattachBorrowedBrowserLeg(correlationId: string, ws: WebSocket): boolean {
     const session = this.findByCorrelationId(correlationId);
-    if (!session || session.endHandled || session.ending) return false;
+    if (!session || session.isTearingDown) return false;
     if (session.browserWsOwned) {
       log.warn({ callId: session.callId }, 'Re-attach refused: browser leg is bridge-owned');
       return false;
@@ -960,10 +980,7 @@ export class WebRtcBridgeManager {
   async forceEndWithOutcome(correlationId: string, outcome: string): Promise<boolean> {
     const session = this.findByCorrelationId(correlationId);
     if (!session || session.endHandled) return false;
-    await this.localHangup(session.callId, {
-      status: session.answeredAt ? 'completed' : 'canceled',
-      outcome,
-    });
+    await this.localHangup(session.callId, { status: session.localEndStatus(), outcome });
     return true;
   }
 
@@ -1004,7 +1021,7 @@ export class WebRtcBridgeManager {
     opts: { clipHash: string; outcome: string; status?: WebRtcCallStatus },
   ): Promise<boolean> {
     const session = this.findByCorrelationId(correlationId);
-    if (!session || session.endHandled || session.ending) return false;
+    if (!session || session.isTearingDown) return false;
     if (session.pstnWs?.readyState !== 1 /* OPEN */) return false;
 
     const clip = this.convertClipForCarrier(session, opts.clipHash);
@@ -1041,7 +1058,7 @@ export class WebRtcBridgeManager {
     }
 
     await this.localHangup(session.callId, {
-      status: opts.status ?? (session.answeredAt ? 'completed' : 'canceled'),
+      status: opts.status ?? session.localEndStatus(),
       outcome: opts.outcome,
     });
     return true;
@@ -1075,7 +1092,7 @@ export class WebRtcBridgeManager {
    */
   private makeClipSink(session: WebRtcBridgeSession): PacedStreamSink {
     return {
-      isOpen: () => session.pstnWs?.readyState === 1 && !session.endHandled && !session.ending,
+      isOpen: () => session.pstnWs?.readyState === 1 && !session.isTearingDown,
       bufferedAmount: () => (session.pstnWs as unknown as { bufferedAmount?: number } | null)?.bufferedAmount ?? 0,
       send: (payloadBase64: string) => {
         if (!session.pstnWs || !session.carrier) return;
@@ -1120,10 +1137,10 @@ export class WebRtcBridgeManager {
       this.onBrowserMessage(session, typeof data === 'string' ? data : data.toString());
     };
     const hangUpForBrowserClose = (): void => {
-      this.localHangup(callId, {
-        status: session.answeredAt ? 'completed' : 'canceled',
-        outcome: hangupOutcome,
-      }).catch((e) => log.error({ err: e, callId }, 'Error ending call on browser close'));
+      this.inBackground(
+        this.localHangup(callId, { status: session.localEndStatus(), outcome: hangupOutcome }),
+        callId, 'Error ending call on browser close',
+      );
     };
     const onClose = (): void => {
       // Only the *current* browser socket ending should end the call (a superseded
@@ -1144,7 +1161,7 @@ export class WebRtcBridgeManager {
       // Nothing is written anywhere for this — it is a `setTimeout` and nothing
       // else, and it cannot become a Redis TTL even in principle, because what it
       // defers is resuming media onto this in-memory session.
-      if (graceMs > 0 && !session.browserWsOwned && !session.endHandled && !session.ending) {
+      if (graceMs > 0 && !session.browserWsOwned && !session.isTearingDown) {
         log.info({ callId, graceMs, outcome: hangupOutcome }, 'Borrowed browser leg closed — holding for re-attach');
         session.armBrowserLegGrace(graceMs, hangUpForBrowserClose);
         return;
@@ -1181,7 +1198,7 @@ export class WebRtcBridgeManager {
       const ok = await this.verifyWsToken(callId, token, 'provider');
       if (!ok) {
         log.warn({ callId }, 'PSTN leg connect with invalid provider token — rejecting');
-        try { ws.close(); } catch { /* ignore */ }
+        closeQuietly(ws);
         return false;
       }
     }
@@ -1193,7 +1210,7 @@ export class WebRtcBridgeManager {
     const session = this.sessions.get(callId);
     if (!session) {
       log.warn({ callId }, 'PSTN leg connect for unknown WebRTC call');
-      try { ws.close(); } catch { /* ignore */ }
+      closeQuietly(ws);
       return false;
     }
 
@@ -1217,18 +1234,18 @@ export class WebRtcBridgeManager {
     // awaiting `call.ended`. A fresh media connect there would reopen audio on a
     // call being torn down. It cannot starve the confirmation, which arrives on the
     // webhook path (`handleVoicelinkStatus`), never through here.
-    if (session.endHandled || session.ending) {
+    if (session.isTearingDown) {
       log.warn(
         { callId, endHandled: session.endHandled, ending: session.ending, answered: session.answeredAt != null },
         'PSTN leg connect for a call already tearing down — refusing so the relay cannot reopen',
       );
-      try { ws.close(); } catch { /* ignore */ }
+      closeQuietly(ws);
       return false;
     }
 
     const prior = session.pstnWs;
     if (prior && prior !== ws) {
-      try { if (prior.readyState === prior.OPEN) prior.close(); } catch { /* ignore */ }
+      if (prior.readyState === prior.OPEN) closeQuietly(prior);
     }
     session.pstnWs = ws;
     this.disableNagle(ws, callId);
@@ -1247,8 +1264,10 @@ export class WebRtcBridgeManager {
       session.setEndConfirmationTimer(this.startTimeoutSeconds, () => {
         if (!session.providerMediaReady && !session.endHandled) {
           log.warn({ callId }, 'VoiceLink WS never sent a valid start — ending');
-          this.endCall(callId, { status: 'failed', outcome: 'provider_start_timeout', hangupProvider: false })
-            .catch((e) => log.error({ err: e, callId }, 'Error ending call on start timeout'));
+          this.inBackground(
+            this.endCall(callId, { status: 'failed', outcome: 'provider_start_timeout', hangupProvider: false }),
+            callId, 'Error ending call on start timeout',
+          );
         }
       });
     }
@@ -1265,19 +1284,19 @@ export class WebRtcBridgeManager {
       // finalize here — we're deliberately waiting for the carrier's `call.ended`
       // confirmation (or the bounded timeout). A stray close otherwise finalizes.
       if (session.ending) return;
-      this.endCall(callId, {
-        status: session.answeredAt ? 'completed' : 'no_answer',
+      this.inBackground(this.endCall(callId, {
+        status: session.remoteEndStatus(),
         outcome: 'pstn_stream_closed',
         hangupProvider: false,
-      }).catch((e) => log.error({ err: e, callId }, 'Error ending call on PSTN close'));
+      }), callId, 'Error ending call on PSTN close');
     });
     ws.on('error', (err) => log.warn({ err, callId }, 'PSTN leg WebSocket error'));
     if (ws.readyState !== 1 /* OPEN */) {
-      this.endCall(callId, {
-        status: session.answeredAt ? 'completed' : 'no_answer',
+      this.inBackground(this.endCall(callId, {
+        status: session.remoteEndStatus(),
         outcome: 'pstn_stream_closed',
         hangupProvider: false,
-      }).catch((e) => log.error({ err: e, callId }, 'Error ending call (PSTN closed during attach)'));
+      }), callId, 'Error ending call (PSTN closed during attach)');
     }
     return true;
   }
@@ -1298,7 +1317,7 @@ export class WebRtcBridgeManager {
       if (session.pstnWs?.readyState !== 1 || !session.providerMediaReady) return;
       // Bound the frame: reject an oversized base64 payload before decoding so a
       // compromised browser token can't drive unbounded allocation on the loop.
-      if (data.media.payload.length > MAX_MEDIA_FRAME_BYTES * 2) {
+      if (isOversizedMediaPayload(data.media.payload)) {
         log.warn({ callId: session.callId, len: data.media.payload.length }, 'Dropped oversized browser media frame');
         return;
       }
@@ -1343,7 +1362,7 @@ export class WebRtcBridgeManager {
     }
     if (data?.event === 'media' && typeof data.media?.payload === 'string') {
       if (session.browserWs?.readyState !== 1 || !session.providerMediaReady) return;
-      if (data.media.payload.length > MAX_MEDIA_FRAME_BYTES * 2) {
+      if (isOversizedMediaPayload(data.media.payload)) {
         log.warn({ callId: session.callId, len: data.media.payload.length }, 'Dropped oversized PSTN media frame');
         return;
       }
@@ -1361,11 +1380,11 @@ export class WebRtcBridgeManager {
         log.warn({ err, callId: session.callId }, 'Dropped malformed PSTN media frame');
       }
     } else if (data?.event === 'stop') {
-      this.endCall(session.callId, {
-        status: session.answeredAt ? 'completed' : 'no_answer',
+      this.inBackground(this.endCall(session.callId, {
+        status: session.remoteEndStatus(),
         outcome: 'pstn_stream_stopped',
         hangupProvider: false,
-      }).catch((e) => log.error({ err: e, callId: session.callId }, 'Error ending call on PSTN stop'));
+      }), session.callId, 'Error ending call on PSTN stop');
     }
     // 'playedStream'/'clearedAudio' are acks — ignored.
   }
@@ -1387,7 +1406,7 @@ export class WebRtcBridgeManager {
     // the contact. `ending` is included because it implies the call was answered
     // and we have deliberately closed `pstnWs`; the carrier's confirmation arrives
     // on the webhook path, never here.
-    if (session.endHandled || session.ending) {
+    if (session.isTearingDown) {
       log.warn(
         { callId: session.callId, endHandled: session.endHandled, ending: session.ending },
         'Provider media start for a call already tearing down — ignoring',
@@ -1402,12 +1421,12 @@ export class WebRtcBridgeManager {
         { callId: session.callId, provider: session.provider, encoding: parsed.encoding, rate: parsed.rate },
         'Carrier start with unsupported media format — ending call',
       );
-      this.endCall(session.callId, {
+      this.inBackground(this.endCall(session.callId, {
         status: 'failed',
         outcome: 'unsupported_media_format',
         errorCode: 'UNSUPPORTED_MEDIA_FORMAT',
         hangupProvider: false,
-      }).catch((e) => log.error({ err: e, callId: session.callId }, 'Error ending call on bad start'));
+      }), session.callId, 'Error ending call on bad start');
       return;
     }
 
@@ -1415,9 +1434,7 @@ export class WebRtcBridgeManager {
     const { carrierCallId, streamId } = parsed;
     if (carrierCallId && !session.carrierCallId) {
       session.carrierCallId = carrierCallId;
-      webrtcCallRepository
-        .update(session.callId, { provider_call_id: carrierCallId })
-        .catch((e) => log.error({ err: e, callId: session.callId }, 'Error persisting carrier call id'));
+      void this.persistCarrierCallId(session.callId, carrierCallId);
     }
     if (streamId) session.providerStreamId = streamId;
 
@@ -1461,8 +1478,7 @@ export class WebRtcBridgeManager {
     // Learn the carrier's real id even if a dial-time placeholder is present.
     if (norm.providerCallId && norm.providerCallId !== session.carrierCallId) {
       session.carrierCallId = norm.providerCallId;
-      await webrtcCallRepository.update(callId, { provider_call_id: norm.providerCallId })
-        .catch((e) => log.error({ err: e, callId }, 'Error persisting carrier call id'));
+      await this.persistCarrierCallId(callId, norm.providerCallId);
     }
 
     // ── Progress events for a call already tearing down ─────────────────────
@@ -1489,7 +1505,7 @@ export class WebRtcBridgeManager {
     // why this sits inside the switch's progress arms rather than at the top of
     // the method.
     if ((event.eventType === 'answer' || event.eventType === 'ringing')
-      && (session.endHandled || session.ending)) {
+      && session.isTearingDown) {
       log.warn(
         { callId, eventType: event.eventType, endHandled: session.endHandled, ending: session.ending },
         'VoiceLink progress event for a call already tearing down — ignoring so it cannot resurrect the row or emit a phantom answer',
@@ -1649,8 +1665,7 @@ export class WebRtcBridgeManager {
     // Bounded fallback: finalize even if `call.ended` never arrives.
     session.setEndConfirmationTimer(CARRIER_END_CONFIRM_TIMEOUT_SECONDS, () => {
       log.warn({ callId }, 'VoiceLink call.ended not received — finalizing on timeout');
-      this.finalizeEnding(callId, null).catch((e) =>
-        log.error({ err: e, callId }, 'Error finalizing VoiceLink call on timeout'));
+      this.inBackground(this.finalizeEnding(callId, null), callId, 'Error finalizing VoiceLink call on timeout');
     });
   }
 
@@ -1945,6 +1960,22 @@ export class WebRtcBridgeManager {
     } catch (err) {
       log.warn({ err, callId }, 'Failed to set TCP_NODELAY on WebRTC leg');
     }
+  }
+
+  /**
+   * Run a teardown step without awaiting it (timers and socket handlers have no
+   * caller to hand a rejection to), logging rather than dropping a failure.
+   */
+  private inBackground(work: Promise<unknown>, callId: string, failure: string): void {
+    work.catch((err) => log.error({ err, callId }, failure));
+  }
+
+  /** Record the carrier's own call id on the row. Best effort: logged, never thrown. */
+  private persistCarrierCallId(callId: string, carrierCallId: string): Promise<void> {
+    return webrtcCallRepository.update(callId, { provider_call_id: carrierCallId }).then(
+      () => undefined,
+      (err) => log.error({ err, callId }, 'Error persisting carrier call id'),
+    );
   }
 
   private notifyBrowser(session: WebRtcBridgeSession, payload: unknown): void {
