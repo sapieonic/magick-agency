@@ -493,7 +493,6 @@ export interface AgencyNotesResponse {
   updated_at: string;
 }
 
-
 /**
  * The body of every 4xx from an agency action route.
  *

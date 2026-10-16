@@ -77,7 +77,6 @@ export type {
 /** The runtime list of {@link AgencyActionErrorCode}; the console keys its copy off it. */
 export { AGENCY_ACTION_ERROR_CODES } from '../../errors';
 
-
 /**
  * Liveness parameters, in milliseconds. **No client constant may duplicate one
  * of these**: the console's countdown and the server's lease would drift the
