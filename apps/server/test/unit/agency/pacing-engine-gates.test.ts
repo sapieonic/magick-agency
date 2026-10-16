@@ -53,6 +53,7 @@ const { repos, settings } = vi.hoisted(() => ({
     contact: {
       claimDialable: vi.fn().mockResolvedValue([]),
       unclaim: vi.fn().mockResolvedValue(undefined),
+      unclaimMany: vi.fn().mockResolvedValue(undefined),
       markState: vi.fn().mockResolvedValue(undefined),
     },
     attempt: { countLive: vi.fn().mockResolvedValue(0), create: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
@@ -77,6 +78,14 @@ vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn() } }));
 
 import { PacingEngine } from '../../../src/agency/pacing-engine.js';
+
+/** Every contact returned to the pool this test, one at a time or as a batch. */
+function returnedContactIds(): string[] {
+  return [
+    ...repos.contact.unclaim.mock.calls.map((c: unknown[]) => c[0] as string),
+    ...repos.contact.unclaimMany.mock.calls.flatMap((c: unknown[]) => c[0] as string[]),
+  ].sort();
+}
 import type { DncCheck, DncCheckScope } from '../../../src/agency/dnc-registry.js';
 import { rejectClearance } from '../../../src/agency/pre-dial-gates.js';
 
@@ -100,9 +109,11 @@ function contact(id: string, over: Record<string, unknown> = {}) {
 }
 
 function makeAgents(sessionIds: string[]) {
+  const get = vi.fn(async (id: string) => (sessionIds.includes(id)
+    ? { state: 'available', attemptId: null, since: 1 } : null));
   return {
-    get: vi.fn(async (id: string) => (sessionIds.includes(id)
-      ? { state: 'available', attemptId: null, since: 1 } : null)),
+    get,
+    getMany: vi.fn(async (ids: readonly string[]) => Promise.all(ids.map((id) => get(id)))),
     reserve: vi.fn(async (id: string) => (sessionIds.includes(id) ? 'reserved' : 'lost')),
     set: vi.fn().mockResolvedValue(undefined),
   };
@@ -284,7 +295,7 @@ describe('DNC', () => {
     // Not `unclaim`: a DNC hit never returns to `pending`.
     expect(repos.contact.unclaim).not.toHaveBeenCalled();
     // The agent is not punished for the roster's contents.
-    expect(agents.set).toHaveBeenCalledWith('s1', 'available', expect.anything());
+    expect(agents.set).toHaveBeenCalledWith('s1', 'available');
   });
 
   it('does not bump the contact attempt count for a call it declined to place', async () => {
@@ -316,13 +327,16 @@ describe('DNC', () => {
 
     expect(dispatch).not.toHaveBeenCalled();
     expect(repos.attempt.create).not.toHaveBeenCalled();
-    // Every claimed contact goes back, not just the one that tripped the gate.
-    expect(repos.contact.unclaim.mock.calls.map((c) => c[0]).sort())
+    // Every claimed contact goes back, not just the one that tripped the gate —
+    // in ONE statement, not a round trip per contact.
+    expect(returnedContactIds())
       .toEqual(['c-01', 'c-02', 'c-03']);
+    expect(repos.contact.unclaimMany).toHaveBeenCalledTimes(1);
+    expect(repos.contact.unclaim).not.toHaveBeenCalled();
     // And every reserved agent is released, or the pool shrinks by three every
     // tick until their leases lapse.
     for (const s of ['s1', 's2', 's3']) {
-      expect(agents.set).toHaveBeenCalledWith(s, 'available', expect.anything());
+      expect(agents.set).toHaveBeenCalledWith(s, 'available');
     }
     // Nothing is suppressed: the numbers are not on the list, we simply could not
     // ask. Writing them off would be a data loss caused by an outage.
@@ -354,7 +368,7 @@ describe('DNC', () => {
     // Only ONE read happened: the tick stopped asking, rather than asking and
     // then trusting the answers.
     expect(calls).toBe(1);
-    expect(repos.contact.unclaim.mock.calls.map((c) => c[0]).sort())
+    expect(returnedContactIds())
       .toEqual(['c-01', 'c-02', 'c-03']);
   });
 
@@ -371,7 +385,7 @@ describe('DNC', () => {
 
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect((dispatch.mock.calls[0]![0] as { contactId: string }).contactId).toBe('c-01');
-    expect(repos.contact.unclaim.mock.calls.map((c) => c[0]).sort()).toEqual(['c-02', 'c-03']);
+    expect(returnedContactIds()).toEqual(['c-02', 'c-03']);
   });
 
   it('only asks the DNC set once per contact', async () => {

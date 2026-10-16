@@ -1,3 +1,4 @@
+import { UUID_RE } from '../utils/uuid.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { agencyCampaignRepository, agencyContactRepository } from '../db/repositories/agency.repository.js';
 import type { AgencyCampaignRecord } from '../db/models/agency.model.js';
@@ -472,8 +473,6 @@ export function ingestCallerOwnsCampaign(
 function nonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Validate and apply one roster chunk. Returns a `{ status, body }` pair so

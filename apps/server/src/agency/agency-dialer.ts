@@ -9,7 +9,9 @@ import {
 } from '../db/repositories/agency.repository.js';
 import type { StationRegistry } from './station-registry.js';
 import { AgentStateMachine, AGENT_LEASE_MS } from './agent-state-machine.js';
-import type { DialCommand } from './dial-dispatcher.js';
+import type { DialCommand, DialOptions } from './dial-dispatcher.js';
+import { buildPanel, isUnannounced, type LiveAttempt } from './dialer/live-attempt.js';
+import { settleContact } from './dialer/contact-settlement.js';
 import {
   classifyAttemptOutcome,
   releaseMessageFor,
@@ -18,17 +20,15 @@ import {
 } from './outcome-classifier.js';
 import type {
   AgencyActiveAttempt,
-  AgencyAttemptState,
+  AgencyAttemptOutcome,
   AgencyMissedRelease,
   AgencyPriorAttempt,
   AgencyReleaseReason,
-  AgencyReservedAttempt,
   AgencyAbandonReason,
 } from '@magick-agency/contracts/agency';
 import type { WrapupManager } from './wrapup-manager.js';
 import type { BreakRegistry } from '@magick-agency/domain/break-manager';
-import { DEFERRED_HANGUP_MS } from '@magick-agency/domain/timers';
-import { resolveOurFaultRedial, resolveRetryDecision } from './retry-policy.js';
+import { DEFERRED_HANGUP_MS, elapsedSeconds } from '@magick-agency/domain/timers';
 import { resolveAbandonClip } from './abandon-clip.js';
 import { isAbandonedAttempt } from '@magick-agency/domain/abandonment-predicate';
 import { FLAGS, getFeatureFlagService } from '../feature-flags/index.js';
@@ -40,7 +40,6 @@ import {
   agencyBindLatencySeconds,
   agencyBindTotal,
   agencyAbandonedReasonTotal,
-  agencyOurFaultRetirementTotal,
 } from '@magick-agency/observability/metrics/agency';
 
 const log = createChildLogger({ component: 'agency-dialer' });
@@ -58,131 +57,13 @@ const log = createChildLogger({ component: 'agency-dialer' });
  */
 const MISSED_RELEASE_TTL_MS = 5 * 60_000;
 
-/** An attempt this replica is currently driving, and what a reconnect needs to know. */
-interface LiveAttempt {
-  cmd: DialCommand;
-  /**
-   * When the dial went out — the start of the interval that matters for pacing.
-   *
-   * Held here rather than read back from `agency_call_attempts.dialed_at` because
-   * every consumer is on a hot path that must not take a DB round trip: the answer
-   * arm has a 1000ms compliance budget, and the settle site is the one place that
-   * knows both this instant and the outcome the seat time should be attributed to.
-   * The column stays the durable record; this is the in-process twin, on the same
-   * pattern as `answeredAt` above it.
-   */
-  dialedAt: Date;
-  /**
-   * Why this attempt reached no agent, decided at the ANSWER and read at the
-   * settle site.
-   *
-   * Set here rather than re-derived below because the three causes are only
-   * distinguishable in the instant they happen: by the time the attempt settles,
-   * "the station was gone before we reached for it", "the send was refused" and
-   * "the bridge refused the bind" all look identical — no socket and no bridge.
-   * That collapse is exactly what made a bind failure indistinguishable from a
-   * genuine no-agent abandonment in the one series that counts them.
-   *
-   * Null means no cause has been observed, NOT "not abandoned" — the settle site
-   * still has to ask the predicate, and falls back to `bridge_late` (a bridge
-   * timestamp exists, so it did connect, merely late) or `unattributed` (no
-   * timestamp and no arm claimed a cause) there.
-   *
-   * ⚠️ These two names must stay in step with the settle site. An earlier version
-   * named `no_agent_available` as the second fallback, which is now documented as
-   * unproducible — and a reader matching this comment to the code would
-   * "restore" the pacing residual onto the default path, which is exactly how
-   * station losses came to be mislabelled in the first place.
-   */
-  abandonReason: AgencyAbandonReason | null;
-  /** Mirrors the attempt row, so a reconnect is answered without a DB read. */
-  state: AgencyAttemptState;
-  /** Non-null ⇒ media is live and the customer may already be speaking. */
-  bridgedAt: Date | null;
-  /**
-   * Mirrors the `answered_at` column — **the value we wrote**, not a second
-   * derivation of it, so the settle site's abandonment predicate reads the same
-   * instant the table does. Null until the carrier answers.
-   */
-  answeredAt: Date | null;
-  /** Fetched once at dial; replayed unchanged so a resumed panel is identical. */
-  priors: AgencyPriorAttempt[];
-  /**
-   * `FLAGS.agency_late_binding` as **this replica resolved it at the moment it
-   * dialed** (`executeDial`), not as it reads now.
-   *
-   * Carried on the record rather than re-read at the answer because every arm
-   * below has to agree with the arm that placed the call: a flag flipped mid-ring
-   * would otherwise have the `answered` arm binding a socket the dial never
-   * withheld, or the `ended` arm suppressing a `released` for a panel the agent is
-   * looking at. It is also not on {@link DialCommand} — see `executeDial`'s
-   * header for why the dialing replica is the one entitled to the decision.
-   */
-  lateBinding: boolean;
-  /**
-   * The agent's panel, built at dial time and sent at dial (early binding) or at
-   * the carrier answer (late binding).
-   *
-   * Held here rather than rebuilt at the answer because the bind has a 1000ms
-   * budget (`ABANDONMENT_BRIDGE_GRACE_MS`) measured from the answer, and the
-   * priors read behind this panel is two joins over a contact lineage. Building
-   * it at dial time is what makes late binding affordable at all.
-   */
-  panel: AgencyReservedAttempt;
-  /**
-   * Has the agent actually SEEN this call — i.e. did a `reserved` frame reach
-   * their socket?
-   *
-   * True from before the dial under early binding, and only from a successful
-   * bind under late binding. Every frame that refers to the call reads it: an
-   * agent who was never shown a call must not be told it ended (see the `ended`
-   * arm and {@link isUnannounced}).
-   */
-  panelDelivered: boolean;
-  /**
-   * Set when the answered call found no agent and took the abandoned path.
-   *
-   * Recorded so the `ended` handler can tell an abandoned teardown from an
-   * ordinary one without re-deriving it from the outcome string — and so a
-   * reconnecting socket is never offered an attempt that is already being
-   * apologised to.
-   */
-  abandoned?: boolean;
-}
-
 /**
- * Is this attempt one the agent has never been told about?
- *
- * Only reachable under late binding, where a dial that rings out, is busy, fails
- * or finds an unreachable handset must reach the console as **nothing at all**
- * — no `reserved`, no `released`, no state change. That silence is the product
- * ask behind `FF_AGENCY_LATE_BINDING`: a ringing popup is one agents dismiss
- * (and, on VoiceLink, dismiss without cancelling anything).
- *
- * ⚠️ **The question is "has the agent SEEN this call", not "did this call
- * bridge".** Those come apart in exactly one place — the `answered` arm, where
- * the `reserved` frame can reach the console and the bind can then be refused —
- * and conflating them there orphans the panel: the agent is shown a contact card
- * for a call they never hear and, because this predicate reported them
- * un-announced, are never told ended. The console is stuck. That is why
- * `panelDelivered` is set from the SEND rather than the bind; see the site.
- *
- * ONE function, because three sites have to give the same answer and all three
- * are asking the seen-it question, not the bridged one: the `ended` arm (send
- * `released`, or say nothing), `reattachStation` (resume the panel, or report no
- * live call) and `hasUnannouncedAttempt` (which message
- * `POST /sessions/:id/leave` refuses with). Two spellings of "has the agent seen
- * this" is how a console that shows no call and a route that talks about "your
- * current call" end up in one build.
- *
- * Inert under early binding by construction: `panelDelivered` is set before the
- * dial there, and `executeDial` abandons the attempt outright if that send fails,
- * so no live early-binding attempt can be unannounced. The `lateBinding` half is
- * kept anyway so the predicate reads as the fact it is rather than as an
- * invariant of another branch.
+ * Await a write to the durable agent-session mirror without letting it fail the
+ * caller: Redis is the authority on agent state, so a mirror that could not be
+ * written is a stale dashboard column, logged and never a reason to stop.
  */
-function isUnannounced(live: LiveAttempt): boolean {
-  return live.lateBinding && !live.panelDelivered;
+async function mirrored(write: Promise<unknown>, sessionId: string, failure: string): Promise<void> {
+  await write.catch((err) => log.warn({ err, sessionId }, failure));
 }
 
 /**
@@ -318,7 +199,7 @@ export class AgencyDialer {
    * to the pacing tick instead, and a flag flipped in between would leave the
    * dial and the answer disagreeing about whether a socket was ever attached.
    */
-  async executeDial(cmd: DialCommand): Promise<void> {
+  async executeDial(cmd: DialCommand, opts: DialOptions = {}): Promise<void> {
     const { attemptId, sessionId } = cmd;
 
     // Fails closed onto `false` (early binding, today's behaviour) whenever the
@@ -395,17 +276,7 @@ export class AgencyDialer {
       log.warn({ err, attemptId }, 'Could not load prior attempts — sending panel without history');
     }
 
-    const attempt: AgencyReservedAttempt = {
-      attempt_id: attemptId,
-      campaign_id: cmd.campaignId,
-      campaign_name: cmd.campaign.name,
-      contact_id: cmd.contactId,
-      phone_e164: cmd.contact.phone_e164,
-      caller_id: cmd.callerId,
-      attempt_number: cmd.attemptNumber,
-      context: cmd.contact.context,
-      prior_attempts: priors,
-    };
+    const attempt = buildPanel(cmd, priors);
 
     // ── 2. Push the panel. SYNCHRONOUS, and before the dial. ────────────────
     //
@@ -451,7 +322,10 @@ export class AgencyDialer {
     }
     this.startLeaseRenewal(attemptId, sessionId, 'reserved');
 
-    await agencyAttemptRepository.setState(attemptId, 'dialing', { dialed_at: new Date() });
+    // One instant for the column and its in-process twin below (`LiveAttempt.dialedAt`
+    // documents itself as the same value), not two `new Date()`s a few ms apart.
+    const dialedAt = new Date();
+    await agencyAttemptRepository.setState(attemptId, 'dialing', { dialed_at: dialedAt });
 
     // Registered BEFORE the dial: a carrier can answer inside createBridgedCall —
     // and under late binding that is no longer the rare case the map was built
@@ -460,7 +334,7 @@ export class AgencyDialer {
     // and no record of the attempt to abandon.
     this.liveByAttempt.set(attemptId, {
       cmd, state: 'dialing', bridgedAt: null, answeredAt: null, priors,
-      lateBinding, panel: attempt, panelDelivered, dialedAt: new Date(),
+      lateBinding, panel: attempt, panelDelivered, dialedAt,
       abandonReason: null,
     });
 
@@ -527,6 +401,21 @@ export class AgencyDialer {
       return;
     }
 
+    // ── The last moment the dial can still be called off ────────────────────
+    //
+    // Everything above yields (the flag read, the priors read, the lease CAS, the
+    // `dialing` write), and the pacing engine may have given up the campaign's
+    // lease or begun shutting down inside any of it. Past this line the carrier is
+    // contacted, so this is asked here, synchronously, with nothing in between.
+    if (opts.stillAuthorised && !opts.stillAuthorised()) {
+      log.warn(
+        { attemptId, sessionId, campaignId: cmd.campaignId },
+        'Pacing stopped or lost the campaign lease while the dial was being prepared — abandoning before the carrier is contacted',
+      );
+      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
+      return;
+    }
+
     let record: Awaited<ReturnType<typeof this.bridge.createBridgedCall>>;
     try {
       // The one line late binding changes about the dial: no socket goes to the
@@ -571,7 +460,7 @@ export class AgencyDialer {
    * panel that clears with no explanation reads as a broken app.
    *
    * `notifyAgent` is an explicit parameter and deliberately not inferred here.
-   * This method has four call sites in {@link executeDial}, on both sides of the
+   * This method has six call sites in {@link executeDial}, on both sides of the
    * `reserved` send, and under late binding the send has not happened at ANY of
    * them — so the caller is the only place that knows whether there is a panel to
    * explain. Inferring it from `lateBinding` alone would be wrong for the early
@@ -594,11 +483,12 @@ export class AgencyDialer {
      *
      * `agency_attempt_hold_seconds` is observed at the settle site, which these
      * paths never reach: they delete the live record and write the attempt
-     * `ended` themselves. Two of the five callers run AFTER `liveByAttempt.set`
-     * — the late-binding socket recheck and `createBridgedCall` throwing — and
-     * on both of those **the agent was genuinely held**: the lease had been
-     * extended to `reserved_dialing`, the attempt row says `dialing`, and
-     * `releaseAgent` runs at the bottom of this method. Those seconds are in the
+     * `ended` themselves. Three of the six callers run AFTER `liveByAttempt.set`
+     * — the late-binding socket recheck, the pacing re-authorisation and
+     * `createBridgedCall` throwing — and on all three **the agent was genuinely
+     * held**: the lease had been extended to `reserved_dialing`, the attempt row
+     * says `dialing`, and `releaseAgent` runs at the bottom of this method. Those
+     * seconds are in the
      * population the pivotal series claims to cover and were appearing nowhere,
      * so `failed` and `orphaned` were silently under-reported.
      *
@@ -610,16 +500,12 @@ export class AgencyDialer {
      */
     const live = this.liveByAttempt.get(cmd.attemptId);
     if (live) {
-      const holdSeconds = Math.max(0, (Date.now() - live.dialedAt.getTime()) / 1000);
+      const holdSeconds = elapsedSeconds(live.dialedAt);
       // No `campaign_id` on the histograms (series cost) — see metrics.ts.
       const labels = { tenant_id: cmd.tenantId, outcome };
       agencyAttemptHoldSeconds.observe(labels, holdSeconds);
     }
-    this.liveByAttempt.delete(cmd.attemptId);
-    this.stopLeaseRenewal(cmd.attemptId);
-    // Paired with the lease renewer: the attempt is gone, so a pre-bind grace armed
-    // against it has nothing left to end and must not outlive it into the next dial.
-    this.clearUnboundStationGrace(cmd.sessionId);
+    this.forgetAttempt(cmd);
     await agencyAttemptRepository.setState(cmd.attemptId, 'ended', {
       // Same `outcome` the hold observation above is labelled with, so the
       // histogram bucket and the attempt row cannot disagree about what happened.
@@ -632,15 +518,7 @@ export class AgencyDialer {
     await agencyContactRepository.unclaim(cmd.contactId, new Date())
       .catch((err) => log.error({ err, contactId: cmd.contactId }, 'Failed to unclaim contact'));
 
-    if (notifyAgent) {
-      this.stations.send(cmd.sessionId, {
-        event: 'released',
-        attempt_id: cmd.attemptId,
-        reason,
-        requires_disposition: false,
-        message: releaseMessageFor(reason),
-      });
-    }
+    if (notifyAgent) this.sendReleased(cmd, reason, false, releaseMessageFor(reason));
     // Runs either way — the agent goes back to the pool (or `offline`) whether or
     // not they were told a call had been reserved for them. Suppressing the frame
     // must never suppress the release, or a silent abandon would leave the agent
@@ -653,436 +531,484 @@ export class AgencyDialer {
     // Correlate on the caller-supplied id, which we registered before dialing.
     const live = ev.correlationId ? this.liveByAttempt.get(ev.correlationId) : undefined;
     if (!live) return; // not ours — an ordinary browser dialer call
-    const cmd = live.cmd;
 
     // Switch on the phase EXPLICITLY. This used to read "if bridged … else it must
     // be ended", and a phase added to the bridge's union would have fallen straight
     // into teardown — ending a live call the instant the carrier answered it.
     if (ev.phase === 'answered') {
-      // The carrier answered. Media is NOT necessarily bridged, and on a lost-agent
-      // call never will be — which is exactly why this is recorded separately
-      // rather than back-filled at bridge time. `answered_at` and `bridged_at`
-      // being the same instant by construction makes the abandonment predicate
-      // (answered, and no bridge within N ms) vacuous, and leaves the compliance
-      // denominator with no source at all.
-      live.state = 'answered';
-      // Bound to a local first, then written to both the row and our own record —
-      // NOT `ev.answeredAt ?? new Date()` evaluated twice. Two evaluations of the
-      // fallback are two different instants, and the settle site's predicate
-      // subtracts one from `bridged_at`: a millisecond of disagreement between the
-      // counter's view and the column's is exactly the kind of drift that makes the
-      // counter-versus-table cross-check fail for a reason that is not a bug.
-      const answeredAt = ev.answeredAt ?? new Date();
-      live.answeredAt = answeredAt;
-
-      // Dial → answer. Prices a ring timeout (where the curve flattens, and what
-      // the tail beyond it would forgo) and supplies the clustering half of the
-      // over-dial arithmetic, which a flat answer probability cannot. Observed HERE, before
-      // the bind, so a refused bind never costs us the reading.
-      const answerLatencySeconds = Math.max(0, (answeredAt.getTime() - live.dialedAt.getTime()) / 1000);
-      // Tenant-scoped only: `campaign_id` is kept off the histograms (series cost).
-      agencyAnswerLatencySeconds.observe({ tenant_id: cmd.tenantId }, answerLatencySeconds);
-
-      /**
-       * The abandon DECISION is taken here, synchronously, before any await.
-       *
-       * `bridged` follows `answered` within the same turn on a fast carrier, and
-       * lifecycle listeners are invoked fire-and-forget — so the `bridged` handler
-       * can run to completion inside the await below. Deciding after it meant
-       * reading a station that had already `detach`ed for a deferred hangup and
-       * calling `abandonAnsweredCall` on a call that was by then bridged: the
-       * apology clip plays over a live conversation and the customer is hung up on
-       * mid-sentence. Whether an agent was there is a fact about THIS instant.
-       */
-      const lostTheAgent = !this.stations.isLocallyOwned(cmd.sessionId);
-      /**
-       * ⚠️ **Set HERE, outside every `lateBinding` branch, and that is the whole
-       * point of this line** (second review pass).
-       *
-       * The first version set the reason only inside the two late-binding arms
-       * below. `agency_late_binding` defaults to **false**, so on the path that
-       * actually runs today a station loss reached the settle site with no reason
-       * at all and the fallback stamped it `no_agent_available` — a dropped
-       * workstation reported as a pacing problem. That is the exact conflation
-       * the previous review round flagged and this vocabulary exists to end; the
-       * fix had been applied to the flag-on branch only, which is the branch
-       * nobody is running.
-       *
-       * `lostTheAgent` is flag-independent (it is read one line up, whatever the
-       * binding mode), so the reason that follows from it must be too. The bind
-       * arms below only ever REFINE this — `bind_failed` when a panel reached the
-       * agent and the bridge then refused — and they are unreachable when this is
-       * already true, because they are gated on `!lostTheAgent`.
-       */
-      if (lostTheAgent) live.abandonReason = 'station_lost';
-
-      /**
-       * ── LATE BINDING: the panel and the socket, both inside this turn ───────
-       *
-       * The whole of the change, and its ORDERING is the change. Everything here
-       * is synchronous — no `await`, nothing read from Redis or the DB, the panel
-       * already built at dial time — because the abandonment predicate measures
-       * from the instant above and gives the entire path a 1000ms budget
-       * (`ABANDONMENT_BRIDGE_GRACE_MS`). A connected call that spends more than
-       * that between the answer and the bind is recorded as a call that reached
-       * nobody, against a 3% regulatory ceiling.
-       *
-       * The order is `reserved` → bind, and it is not interchangeable:
-       *
-       *  1. `reserved` first, because the bind emits `bridged` **synchronously**
-       *     (`WebRtcBridgeManager.emitBridgedIfLive`, reached from
-       *     `bindBorrowedBrowserLeg`). Lifecycle listeners are invoked inline, so
-       *     THIS HANDLER RE-ENTERS on the `bridged` phase inside the bind call
-       *     below: `live.state`, `live.bridgedAt` and the console's `bridged`
-       *     frame are all written before `bindBorrowedBrowserLeg` returns, and
-       *     `live.state` is already `'bridged'` by the time control comes back to
-       *     the next line. That re-entrancy is intended and is precisely what puts
-       *     `reserved` and then `bridged` on the wire in that order. Binding first
-       *     would deliver the connect cue for a call the console has never heard
-       *     of — the console has no panel to attach it to and drops it.
-       *  2. `stations.send(…, socket)` with the socket we are about to bind, not
-       *     the bare two-argument form. The two must be the SAME socket or we
-       *     announce the call to one console and relay its audio to another; the
-       *     third argument is the registry's "answer this socket, or answer
-       *     nobody" guard.
-       *
-       * A failure on either half means a real customer is on the line with no
-       * agent behind it, which is the abandoned path — not an error to log. It is
-       * reached through the shared fence below rather than returning early here,
-       * because the `answered` row write and the compliance DENOMINATOR must
-       * still land: an abandoned call that is missing from the denominator
-       * understates the very rate it is an instance of.
-       *
-       * The two failures are NOT the same event for the agent, though, and
-       * `panelDelivered` is what keeps them apart. Send failed ⇒ they saw nothing
-       * and are told nothing. Send succeeded and the bind was refused ⇒ the panel
-       * is on their screen, so the `ended` arm owes them the `released` that
-       * clears it — reason `abandoned`, "The call was answered but could not be
-       * connected to you", which is exactly true of that case.
-       */
-      let bindFailed = false;
-      if (live.lateBinding && !lostTheAgent) {
-        const socket = this.stations.socketFor(cmd.sessionId);
-        // `socket` is undefined only in the race `lostTheAgent` already names (the
-        // station detached between the two reads); `send` refuses a socket that is
-        // not OPEN or not the incumbent, and `bindBorrowedBrowserLeg` refuses a
-        // closed one, an already-bound one and an ending call. So every way this
-        // can fail lands on the same answer, and none of them is checked twice.
-        if (socket && this.stations.send(cmd.sessionId, { event: 'reserved', attempt: live.panel }, socket)) {
-          // ⚠️ Set from the SEND, never from the bind, and the two facts are kept
-          // independent because they are independent: whether the agent has SEEN
-          // this call, and whether their audio got attached to it.
-          //
-          // Conflating them orphans the panel. Sending succeeds, the bind is
-          // refused, `panelDelivered` stays false — and the `ended` arm then reads
-          // `isUnannounced` as true and SUPPRESSES the `released`. The agent is
-          // left staring at a contact card for a call they never heard and are
-          // never told about: a "connected but silent" console, manufactured by the
-          // fix for exactly that complaint. `hasUnannouncedAttempt` would
-          // mis-word `/leave`'s refusal for the same reason.
-          live.panelDelivered = true;
-          bindFailed = !this.bridge.bindBorrowedBrowserLeg(cmd.attemptId, socket);
-        } else {
-          // No panel on the wire ⇒ no bind attempted. Nothing was announced, so
-          // nothing is owed an explanation.
-          bindFailed = true;
-        }
-        if (bindFailed) {
-          log.warn(
-            { attemptId: cmd.attemptId, sessionId: cmd.sessionId, announced: live.panelDelivered },
-            'Late bind failed at the carrier answer — customer is on the line with no agent',
-          );
-        }
-
-        /**
-         * ── The rollout's abort criterion, finally measurable ──────────────────
-         *
-         * The late-binding rollout's abort criterion is "bind-latency p99 <150ms and
-         * zero bind failures"; without these series a refused bind is a WARN line and
-         * nothing else.
-         *
-         * `answeredAt` is the CARRIER's instant, not ours, so this interval
-         * includes webhook transit. That is deliberate and it is the honest
-         * measure: `ABANDONMENT_BRIDGE_GRACE_MS` counts that time too, so a
-         * latency measured from our own receipt would clear a budget the
-         * compliance predicate says we blew.
-         *
-         * **The counter is not derivable from the histogram.** A bind that never
-         * happened records no latency, so a rollout watching only the p99 would
-         * see it IMPROVE as binds began to fail. `bind_failed` vs `station_lost`
-         * splits on `panelDelivered` because that is already the discriminator
-         * the `ended` arm uses to decide whether the agent is owed a `released`:
-         * the panel reached them and the bind was refused, or nothing was ever
-         * announced.
-         */
-        // ⚠️ **ONE discrimination, one vocabulary.** The cause is decided here and
-        // then reused as the metric label, rather than computed twice — the first
-        // draft named the same event `refused` on the counter and `bind_failed` on
-        // the row, so an operator correlating the two panels had to know they meant
-        // the same thing, and either could drift without the other noticing.
-        //
-        // `panelDelivered` is the discriminator because it is already the one the
-        // `ended` arm uses to decide whether the agent is owed a `released`: the
-        // panel reached them and the bind was refused, or nothing was announced at
-        // all. So bind results are `bound` plus a subset of the abandon reasons,
-        // and `agency_bind_total` joins to `agency_abandoned_reason_total` on the
-        // label value.
-        if (bindFailed) {
-          live.abandonReason = live.panelDelivered ? 'bind_failed' : 'station_lost';
-        }
-        const bindResult = live.abandonReason ?? 'bound';
-        agencyBindTotal.inc({ tenant_id: cmd.tenantId, campaign_id: cmd.campaignId, result: bindResult });
-        if (!bindFailed) {
-          const bindSeconds = Math.max(0, (Date.now() - answeredAt.getTime()) / 1000);
-          // `agency_bind_total` above keeps `campaign_id`; the latency histogram
-          // does not (series cost) — see metrics.ts.
-          agencyBindLatencySeconds.observe({ tenant_id: cmd.tenantId }, bindSeconds);
-        }
-      } else if (live.lateBinding) {
-        /**
-         * Late binding was on and we never reached for a socket, because the agent
-         * was already gone at the instant above.
-         *
-         * ⚠️ **`station_lost`, NOT `no_agent_available`** (corrected by review).
-         * `lostTheAgent` is `!isLocallyOwned(sessionId)` — a station-map check. We
-         * HAD an agent, we reserved them, we dialed for them, and their socket went
-         * away before the carrier answered. That is a workstation fact.
-         *
-         * The first version wrote `no_agent_available` here and justified it as "a
-         * pacing fact (we dialed for somebody who left)". That is precisely the
-         * conflation this whole reason vocabulary exists to end: `no_agent_available`
-         * is what a pacing controller produces when it dials with nobody free, and
-         * an operator seeing it should slow the pacing down. Reporting a dropped
-         * laptop under that label sends them to tune a dialer over a wifi problem.
-         *
-         * It therefore shares `station_lost` with the send-refused case below-right,
-         * which is correct — both mean "the station was not there". The finer split
-         * (gone before we reached, versus the send being refused) stays in the WARN
-         * line, which already carries `announced`; it does not earn a label whose
-         * two values an operator cannot act on differently.
-         */
-        live.abandonReason = 'station_lost';
-        agencyBindTotal.inc({
-          tenant_id: cmd.tenantId, campaign_id: cmd.campaignId, result: live.abandonReason,
-        });
-      }
-
-      // `only_from: ['dialing']` because this write races the `bridged` one. Both
-      // are in flight at once and Postgres does not order them for us; without the
-      // guard the loser's `state` wins and a bridged call reads `answered`. The
-      // `answered_at` patch is deliberately outside the guard — the abandonment
-      // predicate has no other source for it.
-      await agencyAttemptRepository.setState(cmd.attemptId, 'answered', {
-        answered_at: answeredAt,
-        only_from: ['dialing'],
-      });
-
-      // The compliance DENOMINATOR, counted here and nowhere else.
-      // This is the only site that observes a carrier answer, and it is reached by
-      // both the bridged and the abandoned path — which is what makes the ratio
-      // below it meaningful. Counting on `bridged` instead would exclude every
-      // abandoned call from the denominator and understate the rate.
-      agencyAnsweredTotal.inc({ tenant_id: cmd.tenantId, campaign_id: cmd.campaignId });
-
-      // ── The abandoned path ────────────────────────────────────────────────
-      // A real customer is on the line RIGHT NOW and there is no agent to bridge
-      // them to. Recorded before anything is played, so an attempt is never left
-      // looking merely `answered` if the clip or the hangup goes wrong.
-      // Second half of the fence: `bridged` sets `live.state` synchronously before
-      // its own awaits, so a phase that moved on during the write above is visible
-      // here. Agent gone AND still un-bridged is the only state an apology belongs
-      // in — anything else is a conversation in progress.
-      //
-      // `bindFailed` is the late-binding arrival at the same fact: the agent was
-      // there a few microseconds ago and the socket could not be joined to the
-      // call, so nobody is behind it. It is ORed rather than folded into
-      // `lostTheAgent` because the two are different observations and the log line
-      // above distinguishes them.
-      //
-      // The `live.state === 'answered'` half also does the work of "did the bind
-      // succeed": a successful bind has already re-entered this handler on the
-      // `bridged` phase and left `live.state === 'bridged'`, so it cannot reach
-      // the apology. The one case it correctly lets through is a bind that
-      // attached but whose media is not negotiated yet (`emitBridgedIfLive` is a
-      // no-op until `providerMediaReady`) — there `bindFailed` is false and
-      // `lostTheAgent` is false, so nothing fires and the real `bridged` event
-      // arrives later.
-      if ((lostTheAgent || bindFailed) && live.state === 'answered') {
-        await this.abandonAnsweredCall(live);
-      }
+      await this.onAnswered(live, ev);
       return;
     }
-
     if (ev.phase === 'bridged') {
-      const bridgedAt = new Date();
-      // Recorded before the frame: a reconnect racing this handler must find the
-      // attempt already `bridged`, or the resumed panel would say "ringing" while
-      // the customer is mid-sentence.
-      live.state = 'bridged';
-      live.bridgedAt = bridgedAt;
-
-      // ── The frame goes FIRST, synchronously, before any await. ────────────
-      // Media is already live by the time the bridge emits this: the customer can
-      // speak from this instant, and the agent is looking at a panel that still
-      // says "connecting". The console schedules its audible connect cue inside
-      // this frame's handler against a 150ms audibility budget, so anything ahead
-      // of the send spends that budget on the agent's behalf.
-      //
-      // This used to sit after two DB round trips and a Redis write — 10–50ms on a
-      // healthy stack and unbounded on a loaded one, for no benefit: none of those
-      // writes make the audio any more live than it already is, and none of them
-      // can fail in a way the agent should learn about by being told late. Same
-      // ordering discipline as the `reserved` frame in executeDial, and for the
-      // same reason: the wire first, the bookkeeping after.
-      this.stations.send(cmd.sessionId, {
-        event: 'bridged',
-        attempt_id: cmd.attemptId,
-        bridged_at: bridgedAt.toISOString(),
-      });
-
-      // ── The COMPLIANCE write goes before the agent-state writes ────────────
-      //
-      // Same discipline as the frame above, for a stronger reason. `bridged_at` is
-      // not bookkeeping: with late binding it is the SOLE discriminator between a
-      // conversation and an abandoned call. `ABANDONED_ATTEMPT_PREDICATE_SQL`
-      // counts `bridged_at IS NULL` as abandoned, so an attempt that never gets
-      // this write is a fully-conversed call charged against the 3% regulatory
-      // ceiling — and it feeds the auto-pause, so it can stop a campaign.
-      //
-      // It used to sit third, behind `agents.set` (Redis) and the `on_call` mirror
-      // (a `SELECT … FOR UPDATE` + UPDATE + a `recordTransitions` INSERT, on a pool
-      // with `connectionTimeoutMillis` but NO `statement_timeout`). Neither can
-      // fail in a way that skips this write — the mirror is `.catch`-guarded and
-      // `AgentStateMachine.set` swallows internally — but both can BLOCK it for an
-      // unbounded time under row-lock contention, and anything that ends the
-      // process in that window (SIGTERM on a deploy, an OOM, a starved event loop)
-      // loses `bridged_at` permanently. Nothing retries it: the `bridged` phase
-      // fires once.
-      //
-      // Moving it first costs nothing. It depends only on `ev` and `bridgedAt`,
-      // both already in hand, and none of the writes below it depend on this one.
-      // The ordering is therefore: the agent's ears, then the regulator's record,
-      // then the bookkeeping.
-      // `answered_at` comes from the bridge's own anchor, never from `bridgedAt`.
-      //
-      // **The protection here is the ARGUMENT, not the column's write rule, and the
-      // comment that used to sit here credited the wrong one.** The column is
-      // `answered_at = COALESCE($6, answered_at)` where `$6` is the INCOMING value —
-      // so a non-null argument WINS over whatever is stored. That is
-      // last-non-null-wins, not first-write-wins. Passing `bridgedAt` from this site
-      // would therefore *overwrite* the carrier's answer instant rather than being
-      // ignored by the mechanism, collapsing the two timestamps and making the
-      // abandonment predicate vacuous — a defect that reads as a 0% rate. What
-      // actually keeps that from happening is that this caller passes
-      // `ev.answeredAt` (the bridge's own anchor, undefined when there is nothing to
-      // say) and nothing else. Any second caller of this write must do the same;
-      // the SQL will not stop it.
-      //
-      // `ev.answeredAt` is still passed rather than omitted so a MISSED `answered`
-      // event is back-filled with the correct instant.
-      //
-      // Mirror it into our own record for the same reason: if the
-      // `answered` phase never arrived, the settle site would otherwise see
-      // `answeredAt: null`, read "never answered", and skip a call the table counts.
-      // `??=` so a real `answered` phase's value is never displaced.
-      live.answeredAt ??= ev.answeredAt ?? null;
-      // ── This write must not RESURRECT a settled attempt ─────────────────────
-      //
-      // It carries `only_from` just as the `answered` write above it does, on the
-      // same row, against the same race — without it, this is the write that can put
-      // a live state over a TERMINAL one. The orderings are ordinary
-      // rather than exotic: lifecycle listeners are invoked fire-and-forget, so on
-      // a call the customer picks up and immediately drops, the `ended` arm can
-      // run to completion while this statement is still in flight. `state` then
-      // would go back to `bridged` on a row that already holds its real `outcome` and
-      // `ended_at`, and nothing anywhere would go red.
-      //
-      // What that costs, beyond a wrong row: `agency_live_attempts_current`
-      // counts on `state <> 'ended'`, so a resurrected attempt is counted live
-      // FOREVER — the gauge is SQL-derived and has no other way to forget it. The
-      // pacing engine and the reaper both key off the same live-state vocabulary.
-      // And the reaper cannot clean it up: `findNonTerminalOlderThan` would find
-      // it, but `liveByAttempt` no longer holds it and `reapByIds` would stamp
-      // `orphaned` over a call that in fact completed.
-      //
-      // ⚠️ The guard is on `state`, not on the statement, and that distinction is
-      // the reason `only_from` exists (see `setState`'s SQL: the CASE covers the
-      // `state` column while every timestamp is a plain `COALESCE`). The
-      // `bridged_at` patch must still land on a late-arriving `bridged` — it is
-      // one of the two columns the abandonment predicate is built on, and dropping
-      // it would relabel a bridged call abandoned. Guarding the whole UPDATE would
-      // do exactly that.
-      //
-      // `['dialing', 'answered']` are the only live states reachable here, and
-      // the list is deliberately not `AGENCY_ATTEMPT_LIVE_STATES`: `queued` is
-      // impossible because `executeDial` awaits its `dialing` write before the
-      // dial, and nothing in the codebase ever writes `ringing`. `ended` is
-      // absent, which is the whole guard.
-      //
-      // **`'answered'` is load-bearing, not defensive.** Under late binding the
-      // bind happens inside the `answered` arm, so that arm's own write is issued
-      // BEFORE this one and normally wins the row: the incumbent state at this
-      // statement is `answered` on essentially every late-bound call. A guard of
-      // `['dialing']` alone — mirroring the write above exactly — would therefore
-      // leave every connected late-binding attempt reading `answered` for the
-      // whole conversation, which is the vacuous-predicate shape with the sign flipped.
-      await this.agents.set(cmd.sessionId, 'on_call', {
-        attemptId: cmd.attemptId,
-        leaseMs: AGENT_LEASE_MS.on_call,
-      });
-      this.startLeaseRenewal(cmd.attemptId, cmd.sessionId, 'on_call');
-      await agencyAgentSessionRepository.setState(cmd.sessionId, 'on_call')
-        .catch((err) => log.warn({ err, sessionId: cmd.sessionId }, 'Could not mirror on_call state'));
-      await agencyAttemptRepository.setState(cmd.attemptId, 'bridged', {
-        answered_at: ev.answeredAt,
-        bridged_at: bridgedAt,
-        only_from: ['dialing', 'answered'],
-      });
-
-      // ── The SEAM, and the site that actually parks the contact ──────────────
-      //
-      // `connected` means "the conversation happened and the contact is waiting on
-      // the agent's write-up". It is a HOLD, and the things that release it are the
-      // disposition route and the reaper's lapsed-wrap-up sweep — so writing it for
-      // a campaign that will never be asked for a write-up parks the contact behind
-      // a demand nobody will ever satisfy.
-      //
-      // The gate below the `ended` handler already answers the same question for
-      // the contact's fate at settle time. That answer alone is INERT against this
-      // site, and the failure is an ordering one rather than a hypothetical:
-      // lifecycle listeners are invoked fire-and-forget (see the `answered` handler's
-      // note), so on a call that ends promptly — a customer who picks up and hangs
-      // up — the `ended` handler runs to completion inside the awaits above while
-      // this write is still in flight. This stale `connected` then lands LAST, on top
-      // of the `completed` the outcome policy just wrote, and the contact is parked
-      // permanently: the campaign never reaches `completed`, no error is raised, and
-      // the attempt row reads like a clean successful call. The reaper eventually
-      // rescues it, which is precisely the "backstop as the mechanism" this ticket
-      // exists to end.
-      //
-      // So the question is asked HERE too, off the one function that owns it. The
-      // outcome is `'connected'` by construction: this handler only runs because the
-      // legs bridged, and a bridged call cannot classify as anything else.
-      //
-      // When nothing is owed the contact simply stays `in_flight` for the duration of
-      // the call — its claimed state, already counted outstanding by
-      // `countOutstanding`, already the state `chargeAttempt` leaves it in between the
-      // charge and the release, and still un-claimable because `claimDialable` only
-      // ever claims `pending`. Nothing observes it as free, and the `ended` handler's
-      // outcome policy sends it straight to `completed`.
-      if (requiresDisposition('connected', cmd.campaign.disposition_catalog)) {
-        await agencyContactRepository.markState(cmd.contactId, 'connected');
-      }
+      await this.onBridged(live, ev);
       return;
     }
 
     // ── ended ──
-    this.liveByAttempt.delete(cmd.attemptId);
-    this.stopLeaseRenewal(cmd.attemptId);
-    // Paired with the lease renewer: the attempt is gone, so a pre-bind grace armed
-    // against it has nothing left to end and must not outlive it into the next dial.
-    this.clearUnboundStationGrace(cmd.sessionId);
+    await this.onEnded(live, ev);
+  }
 
+  /**
+   * The `answered` arm: the carrier picked up. Records the answer, binds the
+   * agent's socket under late binding, and takes the abandoned path when there is
+   * no agent behind the call.
+   */
+  private async onAnswered(live: LiveAttempt, ev: WebRtcLifecycleEvent): Promise<void> {
+    const cmd = live.cmd;
+    // The carrier answered. Media is NOT necessarily bridged, and on a lost-agent
+    // call never will be — which is exactly why this is recorded separately
+    // rather than back-filled at bridge time. `answered_at` and `bridged_at`
+    // being the same instant by construction makes the abandonment predicate
+    // (answered, and no bridge within N ms) vacuous, and leaves the compliance
+    // denominator with no source at all.
+    live.state = 'answered';
+    // Bound to a local first, then written to both the row and our own record —
+    // NOT `ev.answeredAt ?? new Date()` evaluated twice. Two evaluations of the
+    // fallback are two different instants, and the settle site's predicate
+    // subtracts one from `bridged_at`: a millisecond of disagreement between the
+    // counter's view and the column's is exactly the kind of drift that makes the
+    // counter-versus-table cross-check fail for a reason that is not a bug.
+    const answeredAt = ev.answeredAt ?? new Date();
+    live.answeredAt = answeredAt;
+
+    // Dial → answer. Prices a ring timeout (where the curve flattens, and what
+    // the tail beyond it would forgo) and supplies the clustering half of the
+    // over-dial arithmetic, which a flat answer probability cannot. Observed HERE, before
+    // the bind, so a refused bind never costs us the reading.
+    const answerLatencySeconds = elapsedSeconds(live.dialedAt, answeredAt);
+    // Tenant-scoped only: `campaign_id` is kept off the histograms (series cost).
+    agencyAnswerLatencySeconds.observe({ tenant_id: cmd.tenantId }, answerLatencySeconds);
+
+    /**
+     * The abandon DECISION is taken here, synchronously, before any await.
+     *
+     * `bridged` follows `answered` within the same turn on a fast carrier, and
+     * lifecycle listeners are invoked fire-and-forget — so the `bridged` handler
+     * can run to completion inside the await below. Deciding after it meant
+     * reading a station that had already `detach`ed for a deferred hangup and
+     * calling `abandonAnsweredCall` on a call that was by then bridged: the
+     * apology clip plays over a live conversation and the customer is hung up on
+     * mid-sentence. Whether an agent was there is a fact about THIS instant.
+     */
+    const lostTheAgent = !this.stations.isLocallyOwned(cmd.sessionId);
+    /**
+     * ⚠️ **Set HERE, outside every `lateBinding` branch, and that is the whole
+     * point of this line** (second review pass).
+     *
+     * The first version set the reason only inside the two late-binding arms
+     * below. `agency_late_binding` defaults to **false**, so on the path that
+     * actually runs today a station loss reached the settle site with no reason
+     * at all and the fallback stamped it `no_agent_available` — a dropped
+     * workstation reported as a pacing problem. That is the exact conflation
+     * the previous review round flagged and this vocabulary exists to end; the
+     * fix had been applied to the flag-on branch only, which is the branch
+     * nobody is running.
+     *
+     * `lostTheAgent` is flag-independent (it is read one line up, whatever the
+     * binding mode), so the reason that follows from it must be too. The bind
+     * arms below only ever REFINE this — `bind_failed` when a panel reached the
+     * agent and the bridge then refused — and they are unreachable when this is
+     * already true, because they are gated on `!lostTheAgent`.
+     */
+    if (lostTheAgent) live.abandonReason = 'station_lost';
+
+    /**
+     * ── LATE BINDING: the panel and the socket, both inside this turn ───────
+     *
+     * The whole of the change, and its ORDERING is the change. Everything here
+     * is synchronous — no `await`, nothing read from Redis or the DB, the panel
+     * already built at dial time — because the abandonment predicate measures
+     * from the instant above and gives the entire path a 1000ms budget
+     * (`ABANDONMENT_BRIDGE_GRACE_MS`). A connected call that spends more than
+     * that between the answer and the bind is recorded as a call that reached
+     * nobody, against a 3% regulatory ceiling.
+     *
+     * The order is `reserved` → bind, and it is not interchangeable:
+     *
+     *  1. `reserved` first, because the bind emits `bridged` **synchronously**
+     *     (`WebRtcBridgeManager.emitBridgedIfLive`, reached from
+     *     `bindBorrowedBrowserLeg`). Lifecycle listeners are invoked inline, so
+     *     THIS HANDLER RE-ENTERS on the `bridged` phase inside the bind call
+     *     below: `live.state`, `live.bridgedAt` and the console's `bridged`
+     *     frame are all written before `bindBorrowedBrowserLeg` returns, and
+     *     `live.state` is already `'bridged'` by the time control comes back to
+     *     the next line. That re-entrancy is intended and is precisely what puts
+     *     `reserved` and then `bridged` on the wire in that order. Binding first
+     *     would deliver the connect cue for a call the console has never heard
+     *     of — the console has no panel to attach it to and drops it.
+     *  2. `stations.send(…, socket)` with the socket we are about to bind, not
+     *     the bare two-argument form. The two must be the SAME socket or we
+     *     announce the call to one console and relay its audio to another; the
+     *     third argument is the registry's "answer this socket, or answer
+     *     nobody" guard.
+     *
+     * A failure on either half means a real customer is on the line with no
+     * agent behind it, which is the abandoned path — not an error to log. It is
+     * reached through the shared fence below rather than returning early here,
+     * because the `answered` row write and the compliance DENOMINATOR must
+     * still land: an abandoned call that is missing from the denominator
+     * understates the very rate it is an instance of.
+     *
+     * The two failures are NOT the same event for the agent, though, and
+     * `panelDelivered` is what keeps them apart. Send failed ⇒ they saw nothing
+     * and are told nothing. Send succeeded and the bind was refused ⇒ the panel
+     * is on their screen, so the `ended` arm owes them the `released` that
+     * clears it — reason `abandoned`, "The call was answered but could not be
+     * connected to you", which is exactly true of that case.
+     */
+    let bindFailed = false;
+    if (live.lateBinding && !lostTheAgent) {
+      const socket = this.stations.socketFor(cmd.sessionId);
+      // `socket` is undefined only in the race `lostTheAgent` already names (the
+      // station detached between the two reads); `send` refuses a socket that is
+      // not OPEN or not the incumbent, and `bindBorrowedBrowserLeg` refuses a
+      // closed one, an already-bound one and an ending call. So every way this
+      // can fail lands on the same answer, and none of them is checked twice.
+      if (socket && this.stations.send(cmd.sessionId, { event: 'reserved', attempt: live.panel }, socket)) {
+        // ⚠️ Set from the SEND, never from the bind, and the two facts are kept
+        // independent because they are independent: whether the agent has SEEN
+        // this call, and whether their audio got attached to it.
+        //
+        // Conflating them orphans the panel. Sending succeeds, the bind is
+        // refused, `panelDelivered` stays false — and the `ended` arm then reads
+        // `isUnannounced` as true and SUPPRESSES the `released`. The agent is
+        // left staring at a contact card for a call they never heard and are
+        // never told about: a "connected but silent" console, manufactured by the
+        // fix for exactly that complaint. `hasUnannouncedAttempt` would
+        // mis-word `/leave`'s refusal for the same reason.
+        live.panelDelivered = true;
+        bindFailed = !this.bridge.bindBorrowedBrowserLeg(cmd.attemptId, socket);
+      } else {
+        // No panel on the wire ⇒ no bind attempted. Nothing was announced, so
+        // nothing is owed an explanation.
+        bindFailed = true;
+      }
+      if (bindFailed) {
+        log.warn(
+          { attemptId: cmd.attemptId, sessionId: cmd.sessionId, announced: live.panelDelivered },
+          'Late bind failed at the carrier answer — customer is on the line with no agent',
+        );
+      }
+
+      /**
+       * ── The rollout's abort criterion, finally measurable ──────────────────
+       *
+       * The late-binding rollout's abort criterion is "bind-latency p99 <150ms and
+       * zero bind failures"; without these series a refused bind is a WARN line and
+       * nothing else.
+       *
+       * `answeredAt` is the CARRIER's instant, not ours, so this interval
+       * includes webhook transit. That is deliberate and it is the honest
+       * measure: `ABANDONMENT_BRIDGE_GRACE_MS` counts that time too, so a
+       * latency measured from our own receipt would clear a budget the
+       * compliance predicate says we blew.
+       *
+       * **The counter is not derivable from the histogram.** A bind that never
+       * happened records no latency, so a rollout watching only the p99 would
+       * see it IMPROVE as binds began to fail. `bind_failed` vs `station_lost`
+       * splits on `panelDelivered` because that is already the discriminator
+       * the `ended` arm uses to decide whether the agent is owed a `released`:
+       * the panel reached them and the bind was refused, or nothing was ever
+       * announced.
+       */
+      // ⚠️ **ONE discrimination, one vocabulary.** The cause is decided here and
+      // then reused as the metric label, rather than computed twice — the first
+      // draft named the same event `refused` on the counter and `bind_failed` on
+      // the row, so an operator correlating the two panels had to know they meant
+      // the same thing, and either could drift without the other noticing.
+      //
+      // `panelDelivered` is the discriminator because it is already the one the
+      // `ended` arm uses to decide whether the agent is owed a `released`: the
+      // panel reached them and the bind was refused, or nothing was announced at
+      // all. So bind results are `bound` plus a subset of the abandon reasons,
+      // and `agency_bind_total` joins to `agency_abandoned_reason_total` on the
+      // label value.
+      if (bindFailed) {
+        live.abandonReason = live.panelDelivered ? 'bind_failed' : 'station_lost';
+      }
+      const bindResult = live.abandonReason ?? 'bound';
+      agencyBindTotal.inc({ tenant_id: cmd.tenantId, campaign_id: cmd.campaignId, result: bindResult });
+      if (!bindFailed) {
+        const bindSeconds = elapsedSeconds(answeredAt);
+        // `agency_bind_total` above keeps `campaign_id`; the latency histogram
+        // does not (series cost) — see metrics.ts.
+        agencyBindLatencySeconds.observe({ tenant_id: cmd.tenantId }, bindSeconds);
+      }
+    } else if (live.lateBinding) {
+      /**
+       * Late binding was on and we never reached for a socket, because the agent
+       * was already gone at the instant above.
+       *
+       * ⚠️ **`station_lost`, NOT `no_agent_available`** (corrected by review).
+       * `lostTheAgent` is `!isLocallyOwned(sessionId)` — a station-map check. We
+       * HAD an agent, we reserved them, we dialed for them, and their socket went
+       * away before the carrier answered. That is a workstation fact.
+       *
+       * The first version wrote `no_agent_available` here and justified it as "a
+       * pacing fact (we dialed for somebody who left)". That is precisely the
+       * conflation this whole reason vocabulary exists to end: `no_agent_available`
+       * is what a pacing controller produces when it dials with nobody free, and
+       * an operator seeing it should slow the pacing down. Reporting a dropped
+       * laptop under that label sends them to tune a dialer over a wifi problem.
+       *
+       * It therefore shares `station_lost` with the send-refused case below-right,
+       * which is correct — both mean "the station was not there". The finer split
+       * (gone before we reached, versus the send being refused) stays in the WARN
+       * line, which already carries `announced`; it does not earn a label whose
+       * two values an operator cannot act on differently.
+       */
+      live.abandonReason = 'station_lost';
+      agencyBindTotal.inc({
+        tenant_id: cmd.tenantId, campaign_id: cmd.campaignId, result: live.abandonReason,
+      });
+    }
+
+    // `only_from: ['dialing']` because this write races the `bridged` one. Both
+    // are in flight at once and Postgres does not order them for us; without the
+    // guard the loser's `state` wins and a bridged call reads `answered`. The
+    // `answered_at` patch is deliberately outside the guard — the abandonment
+    // predicate has no other source for it.
+    //
+    // Caught, because the abandon decision below must not depend on it: a
+    // rejection here used to skip the apology and the hangup, leaving a customer
+    // with no agent behind them on silence until the PSTN leg closed or the
+    // max-duration timer fired. The row is the reaper's to repair; the customer
+    // on the line is not.
+    await agencyAttemptRepository.setState(cmd.attemptId, 'answered', {
+      answered_at: answeredAt,
+      only_from: ['dialing'],
+    }).catch((err) => log.error(
+      { err, attemptId: cmd.attemptId },
+      'Could not record the carrier answer on the attempt row — still evaluating the abandon branch',
+    ));
+
+    // The compliance DENOMINATOR, counted here and nowhere else.
+    // This is the only site that observes a carrier answer, and it is reached by
+    // both the bridged and the abandoned path — which is what makes the ratio
+    // below it meaningful. Counting on `bridged` instead would exclude every
+    // abandoned call from the denominator and understate the rate.
+    agencyAnsweredTotal.inc({ tenant_id: cmd.tenantId, campaign_id: cmd.campaignId });
+
+    // ── The abandoned path ────────────────────────────────────────────────
+    // A real customer is on the line RIGHT NOW and there is no agent to bridge
+    // them to. Recorded before anything is played, so an attempt is never left
+    // looking merely `answered` if the clip or the hangup goes wrong.
+    // Second half of the fence: `bridged` sets `live.state` synchronously before
+    // its own awaits, so a phase that moved on during the write above is visible
+    // here. Agent gone AND still un-bridged is the only state an apology belongs
+    // in — anything else is a conversation in progress.
+    //
+    // `bindFailed` is the late-binding arrival at the same fact: the agent was
+    // there a few microseconds ago and the socket could not be joined to the
+    // call, so nobody is behind it. It is ORed rather than folded into
+    // `lostTheAgent` because the two are different observations and the log line
+    // above distinguishes them.
+    //
+    // The `live.state === 'answered'` half also does the work of "did the bind
+    // succeed": a successful bind has already re-entered this handler on the
+    // `bridged` phase and left `live.state === 'bridged'`, so it cannot reach
+    // the apology. The one case it correctly lets through is a bind that
+    // attached but whose media is not negotiated yet (`emitBridgedIfLive` is a
+    // no-op until `providerMediaReady`) — there `bindFailed` is false and
+    // `lostTheAgent` is false, so nothing fires and the real `bridged` event
+    // arrives later.
+    if ((lostTheAgent || bindFailed) && live.state === 'answered') {
+      await this.abandonAnsweredCall(live);
+    }
+  }
+
+  /**
+   * The `bridged` arm: both legs are live. Tells the console first, then moves the
+   * agent to `on_call` and records the bridge.
+   */
+  private async onBridged(live: LiveAttempt, ev: WebRtcLifecycleEvent): Promise<void> {
+    const cmd = live.cmd;
+    const bridgedAt = new Date();
+    // Recorded before the frame: a reconnect racing this handler must find the
+    // attempt already `bridged`, or the resumed panel would say "ringing" while
+    // the customer is mid-sentence.
+    live.state = 'bridged';
+    live.bridgedAt = bridgedAt;
+
+    // ── The frame goes FIRST, synchronously, before any await. ────────────
+    // Media is already live by the time the bridge emits this: the customer can
+    // speak from this instant, and the agent is looking at a panel that still
+    // says "connecting". The console schedules its audible connect cue inside
+    // this frame's handler against a 150ms audibility budget, so anything ahead
+    // of the send spends that budget on the agent's behalf.
+    //
+    // This used to sit after two DB round trips and a Redis write — 10–50ms on a
+    // healthy stack and unbounded on a loaded one, for no benefit: none of those
+    // writes make the audio any more live than it already is, and none of them
+    // can fail in a way the agent should learn about by being told late. Same
+    // ordering discipline as the `reserved` frame in executeDial, and for the
+    // same reason: the wire first, the bookkeeping after.
+    this.stations.send(cmd.sessionId, {
+      event: 'bridged',
+      attempt_id: cmd.attemptId,
+      bridged_at: bridgedAt.toISOString(),
+    });
+
+    // ── The COMPLIANCE write goes LAST, after the agent-state writes ────────
+    //
+    // `bridged_at` is not bookkeeping: with late binding it is the SOLE
+    // discriminator between a conversation and an abandoned call.
+    // `ABANDONED_ATTEMPT_PREDICATE_SQL` counts `bridged_at IS NULL` as abandoned,
+    // so an attempt that never gets this write is a fully-conversed call charged
+    // against the 3% regulatory ceiling — and it feeds the auto-pause, so it can
+    // stop a campaign. Nothing retries it: the `bridged` phase fires once.
+    //
+    // It still sits behind `agents.set` (Redis) and the `on_call` mirror, and
+    // that is deliberate. Moving it first was tried and reverted: dispatching the
+    // attempt UPDATE ahead of the mirror delays the mirror enough that it can land
+    // after a teardown has already written the agent away, leaving an agent
+    // durably `on_call` on a call that ended (the `restart-mid-bridge` chaos
+    // suite fails on it). The trade is a rare lost `bridged_at` on an unclean
+    // shutdown against a reproducible stuck agent; closing the gap needs the
+    // mirror write made order-safe, not a reshuffle of these statements.
+    // `late-binding.test.ts` ('keeps the compliance write LAST…') pins the order.
+    //
+    // `answered_at` comes from the bridge's own anchor, never from `bridgedAt`.
+    //
+    // **The protection here is the ARGUMENT, not the column's write rule, and the
+    // comment that used to sit here credited the wrong one.** The column is
+    // `answered_at = COALESCE($6, answered_at)` where `$6` is the INCOMING value —
+    // so a non-null argument WINS over whatever is stored. That is
+    // last-non-null-wins, not first-write-wins. Passing `bridgedAt` from this site
+    // would therefore *overwrite* the carrier's answer instant rather than being
+    // ignored by the mechanism, collapsing the two timestamps and making the
+    // abandonment predicate vacuous — a defect that reads as a 0% rate. What
+    // actually keeps that from happening is that this caller passes
+    // `ev.answeredAt` (the bridge's own anchor, undefined when there is nothing to
+    // say) and nothing else. Any second caller of this write must do the same;
+    // the SQL will not stop it.
+    //
+    // `ev.answeredAt` is still passed rather than omitted so a MISSED `answered`
+    // event is back-filled with the correct instant.
+    //
+    // Mirror it into our own record for the same reason: if the
+    // `answered` phase never arrived, the settle site would otherwise see
+    // `answeredAt: null`, read "never answered", and skip a call the table counts.
+    // `??=` so a real `answered` phase's value is never displaced.
+    live.answeredAt ??= ev.answeredAt ?? null;
+    // ── This write must not RESURRECT a settled attempt ─────────────────────
+    //
+    // It carries `only_from` just as the `answered` write above it does, on the
+    // same row, against the same race — without it, this is the write that can put
+    // a live state over a TERMINAL one. The orderings are ordinary
+    // rather than exotic: lifecycle listeners are invoked fire-and-forget, so on
+    // a call the customer picks up and immediately drops, the `ended` arm can
+    // run to completion while this statement is still in flight. `state` then
+    // would go back to `bridged` on a row that already holds its real `outcome` and
+    // `ended_at`, and nothing anywhere would go red.
+    //
+    // What that costs, beyond a wrong row: `agency_live_attempts_current`
+    // counts on `state <> 'ended'`, so a resurrected attempt is counted live
+    // FOREVER — the gauge is SQL-derived and has no other way to forget it. The
+    // pacing engine and the reaper both key off the same live-state vocabulary.
+    // And the reaper cannot clean it up: `findNonTerminalOlderThan` would find
+    // it, but `liveByAttempt` no longer holds it and `reapByIds` would stamp
+    // `orphaned` over a call that in fact completed.
+    //
+    // ⚠️ The guard is on `state`, not on the statement, and that distinction is
+    // the reason `only_from` exists (see `setState`'s SQL: the CASE covers the
+    // `state` column while every timestamp is a plain `COALESCE`). The
+    // `bridged_at` patch must still land on a late-arriving `bridged` — it is
+    // one of the two columns the abandonment predicate is built on, and dropping
+    // it would relabel a bridged call abandoned. Guarding the whole UPDATE would
+    // do exactly that.
+    //
+    // `['dialing', 'answered']` are the only live states reachable here, and
+    // the list is deliberately not `AGENCY_ATTEMPT_LIVE_STATES`: `queued` is
+    // impossible because `executeDial` awaits its `dialing` write before the
+    // dial, and nothing in the codebase ever writes `ringing`. `ended` is
+    // absent, which is the whole guard.
+    //
+    // **`'answered'` is load-bearing, not defensive.** Under late binding the
+    // bind happens inside the `answered` arm, so that arm's own write is issued
+    // BEFORE this one and normally wins the row: the incumbent state at this
+    // statement is `answered` on essentially every late-bound call. A guard of
+    // `['dialing']` alone — mirroring the write above exactly — would therefore
+    // leave every connected late-binding attempt reading `answered` for the
+    // whole conversation, which is the vacuous-predicate shape with the sign flipped.
+    await this.agents.set(cmd.sessionId, 'on_call', {
+      attemptId: cmd.attemptId,
+      leaseMs: AGENT_LEASE_MS.on_call,
+    });
+    this.startLeaseRenewal(cmd.attemptId, cmd.sessionId, 'on_call');
+    await mirrored(agencyAgentSessionRepository.setState(cmd.sessionId, 'on_call'), cmd.sessionId, 'Could not mirror on_call state');
+    await agencyAttemptRepository.setState(cmd.attemptId, 'bridged', {
+      answered_at: ev.answeredAt,
+      bridged_at: bridgedAt,
+      only_from: ['dialing', 'answered'],
+    });
+
+    // ── The SEAM, and the site that actually parks the contact ──────────────
+    //
+    // `connected` means "the conversation happened and the contact is waiting on
+    // the agent's write-up". It is a HOLD, and the things that release it are the
+    // disposition route and the reaper's lapsed-wrap-up sweep — so writing it for
+    // a campaign that will never be asked for a write-up parks the contact behind
+    // a demand nobody will ever satisfy.
+    //
+    // The gate below the `ended` handler already answers the same question for
+    // the contact's fate at settle time. That answer alone is INERT against this
+    // site, and the failure is an ordering one rather than a hypothetical:
+    // lifecycle listeners are invoked fire-and-forget (see the `answered` handler's
+    // note), so on a call that ends promptly — a customer who picks up and hangs
+    // up — the `ended` handler runs to completion inside the awaits above while
+    // this write is still in flight. This stale `connected` then lands LAST, on top
+    // of the `completed` the outcome policy just wrote, and the contact is parked
+    // permanently: the campaign never reaches `completed`, no error is raised, and
+    // the attempt row reads like a clean successful call. The reaper eventually
+    // rescues it, which is precisely the "backstop as the mechanism" this ticket
+    // exists to end.
+    //
+    // So the question is asked HERE too, off the one function that owns it. The
+    // outcome is `'connected'` by construction: this handler only runs because the
+    // legs bridged, and a bridged call cannot classify as anything else.
+    //
+    // When nothing is owed the contact simply stays `in_flight` for the duration of
+    // the call — its claimed state, already counted outstanding by
+    // `countOutstanding`, already the state `chargeAttempt` leaves it in between the
+    // charge and the release, and still un-claimable because `claimDialable` only
+    // ever claims `pending`. Nothing observes it as free, and the `ended` handler's
+    // outcome policy sends it straight to `completed`.
+    if (requiresDisposition('connected', cmd.campaign.disposition_catalog)) {
+      await agencyContactRepository.markState(cmd.contactId, 'connected');
+    }
+  }
+
+  /**
+   * The `ended` arm: settle the attempt, tell the agent, and return them to the
+   * pool — or hand them to wrap-up.
+   *
+   * **The agent is released whatever fails in between.** The row and contact
+   * writes used to be awaited uncaught ahead of the `released` frame and
+   * `releaseAgent`, so one rejected statement left the agent `reserved`/`on_call`
+   * in Redis with the renewer already stopped (so the lease lapsed into nothing),
+   * the console still showing the panel, and only the generic lifecycle log line
+   * in `start()` to say why. The release is now in a `finally`, and the writes
+   * that can fail are caught where they are made (`settleEnded`).
+   */
+  private async onEnded(live: LiveAttempt, ev: WebRtcLifecycleEvent): Promise<void> {
+    const cmd = live.cmd;
+    this.forgetAttempt(cmd);
+
+    let handedToWrapup = false;
+    try {
+      handedToWrapup = await this.settleEnded(live, ev);
+    } finally {
+      if (!handedToWrapup) await this.releaseAgent(cmd.sessionId);
+    }
+  }
+
+  /**
+   * Classify the ended attempt, record it, and tell the agent. Returns true when
+   * wrap-up took the agent (so `onEnded` must not release them), false otherwise.
+   */
+  private async settleEnded(live: LiveAttempt, ev: WebRtcLifecycleEvent): Promise<boolean> {
+    const cmd = live.cmd;
     // ── `bridged` means BRIDGED, from the bridge's own stamp ─────────────────
     //
     // One local, read by the classifier and by the log line below, and its source
@@ -1155,82 +1081,6 @@ export class AgencyDialer {
       ? (live.abandonReason ?? (live.bridgedAt !== null ? 'bridge_late' : 'unattributed'))
       : null;
 
-    await agencyAttemptRepository.setState(cmd.attemptId, 'ended', {
-      outcome,
-      ended_at: new Date(),
-      talk_seconds: ev.talkTimeSeconds,
-      // Only on an abandoned attempt: NULL in this column means "not abandoned",
-      // and `COALESCE` in `setState` would keep a stale value rather than clear
-      // it, so writing it unconditionally would be writing a claim.
-      ...(abandonReason ? { abandon_reason: abandonReason } : {}),
-    });
-
-    /**
-     * Seat time for this attempt, attributed to the outcome that consumed it.
-     *
-     * The single number every pacing argument needed and none of them had. The
-     * `outcome` split is the whole value: if the largest block of dead time is
-     * busy signals, a busy phone never rings — so an aggregate "average
-     * wait" would have pointed at a ring timeout that could not have touched it.
-     *
-     * Measured dial → attempt settle. ⚠️ **So `connected` here is ring + talk,
-     * not talk** — `dialedAt` is stamped before the carrier is called, so a 25s
-     * ring and a 40s conversation land as one 65s observation. An earlier version
-     * of this comment said "talk time and NOT waste", which is wrong in the
-     * direction that matters: part of it IS waste, and the part that is sits in
-     * `agency_answer_latency_seconds`. Subtract that to get conversation.
-     * Wrap-up is deliberately a separate series, because folding it in would make
-     * the one bucket an operator must not try to shrink look like the biggest
-     * opportunity on the chart.
-     *
-     * Not measured to the agent's RELEASE, which is a later and — for a connected
-     * call — a wrap-up away. The contact-policy writes and `releaseAgent` below
-     * are therefore real seat time counted by neither series; see the note on the
-     * metric for why that residual is left explicit rather than folded in here.
-     */
-    const holdSeconds = Math.max(0, (Date.now() - live.dialedAt.getTime()) / 1000);
-    // No `campaign_id` on the histogram (series cost) — see metrics.ts.
-    agencyAttemptHoldSeconds.observe({ tenant_id: cmd.tenantId, outcome }, holdSeconds);
-
-    // The compliance NUMERATOR. Incremented AFTER the row write, so
-    // the counter means "attempts we believe are recorded abandoned" — which is
-    // what makes the counter-versus-table cross-check able to find a write that silently did not
-    // take. Incrementing before the write would make the two agree by
-    // construction, and a cross-check that cannot disagree is not a check.
-    //
-    // ── Keyed on the PREDICATE, not on `outcome` (decided) ──────────────────
-    // `outcome === 'abandoned'` is the classifier's LABEL, and it is stamped only
-    // by `abandonAnsweredCall` — i.e. only when no live station owned the agent at
-    // answer time. Every answered-but-never-bridged call that ended for some other
-    // reason was abandoned by the ratified definition and invisible here. The table
-    // is the definition, so the counter asks the table's question.
-    //
-    // **The `outcome` write above is deliberately untouched.** Only this condition
-    // moved. Widening the outcome instead would relabel a dropped-socket call
-    // `abandoned`, which changes the retry the contact gets AND tells the agent
-    // their own connection failure "could not be connected to you".
-    //
-    // `live.bridgedAt`/`live.answeredAt` are in-process, and that is sound rather
-    // than merely tolerable on one replica: this handler returns early unless
-    // `liveByAttempt` holds the attempt, so we are by construction the replica that
-    // observed both phases for it. What in-process state cannot cover is an attempt
-    // settled with no live record at all — the reaper's post-crash sweep — which no
-    // process-local counter can, and which is why the audited compliance number is
-    // the SQL window gauge.
-    if (abandoned) {
-      agencyAbandonedTotal.inc({ tenant_id: cmd.tenantId, campaign_id: cmd.campaignId });
-      // ⚠️ A SEPARATE series, not a `reason` label on the two counters above.
-      // Labelling a live series terminates it, and those two are the compliance
-      // numerator and denominator that the cross-check and the auto-pause
-      // guardrail both read. A diagnostic split does not earn that migration, so
-      // it rides alongside and `sum(rate(...))` of the two should track.
-      if (abandonReason) {
-        agencyAbandonedReasonTotal.inc({
-          tenant_id: cmd.tenantId, campaign_id: cmd.campaignId, reason: abandonReason,
-        });
-      }
-    }
-
     // ── Contact release ─────────────────────────────────────────────────────
     // `connected` still parks the contact awaiting the agent's write-up: the precedence rule gives
     // a disposition precedence over the outcome policy, so evaluating the outcome
@@ -1265,196 +1115,16 @@ export class AgencyDialer {
     // can land after this one — see the note at that site. Both ask the same
     // function; removing either one puts the contact back in `connected` forever.
     const needsDisposition = requiresDisposition(outcome, cmd.campaign.disposition_catalog);
-    // ── Our fault, before the bridge ─────────────────────────────────────────
-    //
-    // An agent's station socket dropping is OUR failure. If it happened before
-    // the call bridged, the customer was never spoken to — their phone may not
-    // even have been answered — so charging it to `attempt_count` retires
-    // someone we never reached, and with `max_attempts: 3` three dropped sockets
-    // do it silently, behind a plausible audit trail.
-    //
-    // The reaper has held the opposite principle from the start: it requeues a
-    // crash-orphaned contact with NO bump, because "our crash must not consume
-    // the customer's retry allowance". Same category of fault, so the same
-    // handling: this is that principle applied in the second place rather than a
-    // new rule invented here.
-    //
-    // ⚠️ The gate is `bridgedAt`, NOT `answeredAt`. A call the customer picked up
-    // and that never bridged to an agent is an ABANDONED call — already its own
-    // outcome, already counted against the compliance rate, and it must keep
-    // being charged. Widening this to "never answered" would quietly zero the
-    // abandonment ledger's retry consequences.
-    //
-    // `live.bridgedAt` is in-process and that is sound here for the same reason
-    // the abandonment counter above relies on it: this handler returned early
-    // unless `liveByAttempt` held the attempt, so we are by construction the
-    // replica that watched both phases. The path with no live record at all is
-    // the reaper's, which charges its own our-fault ledger.
-    //
-    // ── `canceled` joins the same ledger ────────────────────────────────────
-    //
-    // A dial we stopped before anyone picked up is not a *failure* on our side,
-    // and it is not the customer's doing either — it is entirely OUR decision,
-    // and it tells us nothing at all about the number. Charging it to
-    // `attempt_count` retires someone we never spoke to, and at
-    // `max_attempts: 3` three cancelled rings do it silently: exactly the
-    // dropped-socket shape above, arriving through a different door.
-    //
-    // The un-charged path is also the more CONSERVATIVE one on repeat-dialling,
-    // which is the half that is easy to get backwards: `OUR_FAULT_REDIAL_BOUND`
-    // is a hard ceiling `resolveOurFaultRedial` applies as `min(configured,
-    // BOUND)` and no campaign config can raise, whereas `max_attempts` is a
-    // number an operator can set to anything. So routing here is both fairer to
-    // the customer's allowance and stricter on how often we may re-dial them.
-    //
-    // A `canceled` outcome is never bridged BY CONSTRUCTION — the classifier
-    // returns `connected` for any bridged teardown, whatever the status — so the
-    // `bridgedAt === null` half of the gate is already satisfied for it. Kept in
-    // the shared condition rather than special-cased: a second, outcome-specific
-    // spelling of "did this reach the customer" is how the two halves of a rule
-    // like this drift apart, and the redundant check costs nothing.
-    /**
-     * ── Whose allowance pays for this attempt ───────────────────────────────
-     *
-     * ⚠️ **`abandoned` is deliberately NOT on this gate, and that is an OPEN
-     * QUESTION rather than a settled one**.
-     *
-     * The case for leaving it here is on the test that holds it
-     * (`canceled-outcome-ledger.test.ts`, the ring-cancel shape): the customer
-     * picked up and was inconvenienced, so it is a real attempt against them and
-     * `abandoned`'s own retry rule applies — the our-fault ledger is for calls
-     * that never reached anybody.
-     *
-     * The case against is that this file's retry table states the opposite rule
-     * one screen up: those caps "are the CUSTOMER's allowance and apply only to
-     * an attempt that actually reached them (a drop *after* bridging)", and an
-     * abandoned attempt has `bridged_at IS NULL` by definition. The consequence
-     * is live: `abandoned: { max_attempts: 2 }` with `bump_attempt: true` means
-     * **we hang up on a customer twice and then retire them `exhausted`.**
-     *
-     * Both readings are defensible and the tie-breaker is a repeat-dial
-     * judgement, not a code one — moving it here RAISES the maximum number of
-     * times one person can be called (our-fault bound 3, and their own allowance
-     * left unspent). So it is not a change to make from inside a pacing task.
-     *
-     * What ships instead is the evidence to decide it:
-     * `agency_abandoned_reason_total` now splits the causes, and
-     * `agency_our_fault_retirement_total` makes retirements visible for the first
-     * time. If `no_agent_available` turns out to dominate — i.e. we are retiring
-     * people because of OUR pacing rather than their unavailability — the answer
-     * is clear and the change is one clause.
-     */
-    const ourFaultBeforeBridge = (outcome === 'agent_disconnected' || outcome === 'canceled')
-      && live.bridgedAt === null;
-    if (outcome === 'connected' && needsDisposition) {
-      await agencyContactRepository.markState(cmd.contactId, 'connected', {
-        last_outcome: outcome, bump_attempt: true,
-      });
-    } else if (ourFaultBeforeBridge) {
-      // Charged to the SEPARATE ledger. `attempt_count` is untouched, and the
-      // bound below is what keeps that safe rather than free: without it, one
-      // flapping agent workstation redials the
-      // same number forever, which is regulated.
-      const ourFaultUsed = await agencyContactRepository
-        .chargeOurFaultAttempt(cmd.contactId, outcome);
-      const decision = resolveOurFaultRedial(
-        cmd.campaign.retry_policy, outcome, new Date(), ourFaultUsed,
-      );
-      const retirementLanded = await agencyContactRepository.markState(
-        cmd.contactId, decision.contactState, {
-          // No `bump_attempt`, and no `last_outcome` — `chargeOurFaultAttempt`
-          // already wrote it, exactly as `chargeAttempt` does on the path below.
-          ...(decision.nextAttemptAt ? { next_attempt_at: decision.nextAttemptAt } : {}),
-        },
-      );
-      /**
-       * ── The surface this ledger never had ─────────────────────────────────
-       *
-       * The our-fault ledger's bound is an unresearched placeholder
-       * (`OUR_FAULT_REDIAL_BOUND`), and without this counter **nothing anywhere shows
-       * a contact retired by it** — a real person permanently removed from the list
-       * because of our dropped sockets and cancelled dials, invisible in every view.
-       * This is that surface.
-       *
-       * ⚠️ **AFTER the `markState` above, never before.** Incremented on the
-       * decision, a rejected write would report a permanently retired contact that
-       * was still pending. This
-       * is the same rule the compliance counters follow one screen up and for the
-       * same reason: a counter that means "we believe this was recorded" can find
-       * a write that silently did not take, and one incremented on intent cannot.
-       *
-       * ⚠️⚠️ **And gated on `retirementLanded`, because "the await did not
-       * reject" is NOT proof the retirement happened** (second review round, and
-       * this was a live mis-attribution rather than a nit). `markState` resolves
-       * when its DNC guard refuses the transition — the `CASE` keeps a
-       * `dnc`-suppressed row `suppressed`, the statement succeeds, and a warn
-       * line is the only trace — and it resolves when no row matched at all. A
-       * contact marked DNC mid-call is the headline case in `markState`'s own
-       * header, and on that path `our_fault_bound_reached` still fires. So the
-       * unguarded version reported *"we permanently retired someone we failed to
-       * reach"* for a row that stayed `suppressed` by the customer's own request:
-       * the alert fires, an engineer goes looking for dropped sockets, and the
-       * contact was never retired by this ledger at all. `markState` now returns
-       * whether the requested state landed, and only that increments.
-       *
-       * `outcome` is what makes it actionable: `agent_disconnected` points at
-       * agent workstations, `canceled` at our teardown paths. Alert on any
-       * sustained non-zero — it is a revenue loss and a list-quality lie at once.
-       */
-      if (decision.reason === 'our_fault_bound_reached' && retirementLanded) {
-        agencyOurFaultRetirementTotal.inc({
-          tenant_id: cmd.tenantId, campaign_id: cmd.campaignId, outcome,
-        });
-        // WARN rather than INFO, and deliberately thin: the `log.info` below
-        // already carries the full decision. What this adds is a severity an alert
-        // can key on — and it names no `bound`, because the effective one is
-        // `min(campaign config, OUR_FAULT_REDIAL_BOUND)` and logging either half
-        // alone would put a number in Loki that is not the number that fired.
-        log.warn(
-          { contactId: cmd.contactId, attemptId: cmd.attemptId, outcome, ourFaultUsed },
-          'Contact retired by the our-fault redial bound — we never reached them',
-        );
-      }
-      log.info(
-        {
-          contactId: cmd.contactId, attemptId: cmd.attemptId, outcome,
-          ourFaultUsed, contactState: decision.contactState, retryReason: decision.reason,
-          nextAttemptAt: decision.nextAttemptAt,
-        },
-        // Deliberately does not name the cause — `outcome` is on the line and
-        // this branch now serves two of them (`canceled` joined
-        // `agent_disconnected` here). "an agent-side drop" would be false for
-        // half the lines an operator greps, and the grep is the point.
-        decision.reason === 'our_fault_bound_reached'
-          ? 'Our-fault redial bound reached — contact retired without spending its retry allowance'
-          : 'Contact requeued without charging an attempt — the customer was never reached',
-      );
-    } else {
-      // Charge the budget FIRST and decide on what Postgres returns. The policy is
-      // defined on attempts INCLUDING this one, and passing the pre-bump count would
-      // grant every contact one dial more than the operator configured.
-      const attemptsUsed = await agencyContactRepository.chargeAttempt(cmd.contactId, outcome);
-      const decision = resolveRetryDecision(
-        cmd.campaign.retry_policy, outcome, new Date(), attemptsUsed,
-      );
-      // ⚠️ `decision.contactState` is `'pending'` for every retryable outcome under
-      // its cap, and this contact may have been marked DNC mid-call. `markState`
-      // refuses that transition in SQL — see its header for why the guard is there
-      // and not here, and for the enumeration this site is the headline of. Do not
-      // add a second, local check: two guards that can disagree is worse than one.
-      await agencyContactRepository.markState(cmd.contactId, decision.contactState, {
-        // `last_outcome` was already written by `chargeAttempt`; no `bump_attempt`
-        // here, or the contact would be charged twice for one dial.
-        ...(decision.nextAttemptAt ? { next_attempt_at: decision.nextAttemptAt } : {}),
-        ...(decision.suppressedReason ? { suppressed_reason: decision.suppressedReason } : {}),
-      });
-      log.info(
-        {
-          contactId: cmd.contactId, attemptId: cmd.attemptId, outcome, attemptsUsed,
-          contactState: decision.contactState, retryReason: decision.reason,
-          nextAttemptAt: decision.nextAttemptAt,
-        },
-        'Contact released by the outcome retry policy',
+
+    // A failed write must not cost the agent their `released` frame or their
+    // release: the classification above is in hand, the frame needs nothing from
+    // the database, and the reaper is the backstop for a row left non-terminal.
+    try {
+      await this.recordEndedAttempt(live, ev, { outcome, abandoned, abandonReason, needsDisposition });
+    } catch (err) {
+      log.error(
+        { err, attemptId: cmd.attemptId, outcome },
+        'Could not record the ended attempt — telling the agent and releasing them anyway; the reaper backstops the rows',
       );
     }
 
@@ -1492,27 +1162,18 @@ export class AgencyDialer {
     // `releaseAgent` below still returns the agent to the pool. Only the two
     // agent-facing announcements are suppressed.
     if (!isUnannounced(live)) {
-      const delivered = this.stations.send(cmd.sessionId, {
-        event: 'released',
-        attempt_id: cmd.attemptId,
-        reason,
-        requires_disposition: needsDisposition,
-        message,
-      });
+      const delivered = this.sendReleased(cmd, reason, needsDisposition, message);
       // The agent whose socket dropped is exactly the agent this frame explains the
       // most to, and exactly the one who cannot receive it. Hold it for their
       // reconnect rather than letting the console come back to an empty panel with
       // no account of the call they were just on.
       if (!delivered) {
-        this.missedReleases.set(cmd.sessionId, {
-          release: {
-            attempt_id: cmd.attemptId,
-            reason,
-            requires_disposition: needsDisposition,
-            message,
-            ended_at: new Date().toISOString(),
-          },
-          expiresAt: Date.now() + MISSED_RELEASE_TTL_MS,
+        this.holdMissedRelease(cmd.sessionId, {
+          attempt_id: cmd.attemptId,
+          reason,
+          requires_disposition: needsDisposition,
+          message,
+          ended_at: new Date().toISOString(),
         });
       }
     }
@@ -1561,10 +1222,108 @@ export class AgencyDialer {
       });
       // `false` ⇒ `wrapup_seconds = 0`, so the agent goes straight to `available`
       // Falling through is that path.
-      if (entered) return;
+      if (entered) return true;
     }
 
-    await this.releaseAgent(cmd.sessionId);
+    return false;
+  }
+
+  /**
+   * The durable half of the `ended` arm: the attempt row, the seat-time and
+   * abandonment series that follow it, and the contact's fate.
+   */
+  private async recordEndedAttempt(
+    live: LiveAttempt,
+    ev: WebRtcLifecycleEvent,
+    settled: {
+      outcome: AgencyAttemptOutcome;
+      abandoned: boolean;
+      abandonReason: AgencyAbandonReason | null;
+      needsDisposition: boolean;
+    },
+  ): Promise<void> {
+    const cmd = live.cmd;
+    const { outcome, abandoned, abandonReason, needsDisposition } = settled;
+    await agencyAttemptRepository.setState(cmd.attemptId, 'ended', {
+      outcome,
+      ended_at: new Date(),
+      talk_seconds: ev.talkTimeSeconds,
+      // Only on an abandoned attempt: NULL in this column means "not abandoned",
+      // and `COALESCE` in `setState` would keep a stale value rather than clear
+      // it, so writing it unconditionally would be writing a claim.
+      ...(abandonReason ? { abandon_reason: abandonReason } : {}),
+    });
+
+    /**
+     * Seat time for this attempt, attributed to the outcome that consumed it.
+     *
+     * The single number every pacing argument needed and none of them had. The
+     * `outcome` split is the whole value: if the largest block of dead time is
+     * busy signals, a busy phone never rings — so an aggregate "average
+     * wait" would have pointed at a ring timeout that could not have touched it.
+     *
+     * Measured dial → attempt settle. ⚠️ **So `connected` here is ring + talk,
+     * not talk** — `dialedAt` is stamped before the carrier is called, so a 25s
+     * ring and a 40s conversation land as one 65s observation. An earlier version
+     * of this comment said "talk time and NOT waste", which is wrong in the
+     * direction that matters: part of it IS waste, and the part that is sits in
+     * `agency_answer_latency_seconds`. Subtract that to get conversation.
+     * Wrap-up is deliberately a separate series, because folding it in would make
+     * the one bucket an operator must not try to shrink look like the biggest
+     * opportunity on the chart.
+     *
+     * Not measured to the agent's RELEASE, which is a later and — for a connected
+     * call — a wrap-up away. The contact-policy writes and `releaseAgent` below
+     * are therefore real seat time counted by neither series; see the note on the
+     * metric for why that residual is left explicit rather than folded in here.
+     */
+    const holdSeconds = elapsedSeconds(live.dialedAt);
+    // No `campaign_id` on the histogram (series cost) — see metrics.ts.
+    agencyAttemptHoldSeconds.observe({ tenant_id: cmd.tenantId, outcome }, holdSeconds);
+
+    // The compliance NUMERATOR. Incremented AFTER the row write, so
+    // the counter means "attempts we believe are recorded abandoned" — which is
+    // what makes the counter-versus-table cross-check able to find a write that silently did not
+    // take. Incrementing before the write would make the two agree by
+    // construction, and a cross-check that cannot disagree is not a check.
+    //
+    // ── Keyed on the PREDICATE, not on `outcome` (decided) ──────────────────
+    // `outcome === 'abandoned'` is the classifier's LABEL, and it is stamped only
+    // by `abandonAnsweredCall` — i.e. only when no live station owned the agent at
+    // answer time. Every answered-but-never-bridged call that ended for some other
+    // reason was abandoned by the ratified definition and invisible here. The table
+    // is the definition, so the counter asks the table's question.
+    //
+    // **The `outcome` write above is deliberately untouched.** Only this condition
+    // moved. Widening the outcome instead would relabel a dropped-socket call
+    // `abandoned`, which changes the retry the contact gets AND tells the agent
+    // their own connection failure "could not be connected to you".
+    //
+    // `live.bridgedAt`/`live.answeredAt` are in-process, and that is sound rather
+    // than merely tolerable on one replica: this handler returns early unless
+    // `liveByAttempt` holds the attempt, so we are by construction the replica that
+    // observed both phases for it. What in-process state cannot cover is an attempt
+    // settled with no live record at all — the reaper's post-crash sweep — which no
+    // process-local counter can, and which is why the audited compliance number is
+    // the SQL window gauge.
+    if (abandoned) {
+      agencyAbandonedTotal.inc({ tenant_id: cmd.tenantId, campaign_id: cmd.campaignId });
+      // ⚠️ A SEPARATE series, not a `reason` label on the two counters above.
+      // Labelling a live series terminates it, and those two are the compliance
+      // numerator and denominator that the cross-check and the auto-pause
+      // guardrail both read. A diagnostic split does not earn that migration, so
+      // it rides alongside and `sum(rate(...))` of the two should track.
+      if (abandonReason) {
+        agencyAbandonedReasonTotal.inc({
+          tenant_id: cmd.tenantId, campaign_id: cmd.campaignId, reason: abandonReason,
+        });
+      }
+    }
+
+    // ── The contact ─────────────────────────────────────────────────────────
+    // Which ledger pays for this attempt and what the retry policy does with the
+    // contact — `dialer/contact-settlement.ts`.
+    await settleContact(cmd, outcome, needsDisposition, live.bridgedAt);
   }
 
   /**
@@ -1603,8 +1362,7 @@ export class AgencyDialer {
     if (!stillHere) {
       this.breaks.cancel(sessionId);
       await this.agents.set(sessionId, 'offline', { leaseMs: AGENT_LEASE_MS.available });
-      await agencyAgentSessionRepository.setState(sessionId, 'offline')
-        .catch((err) => log.warn({ err, sessionId }, 'Could not mirror released agent state'));
+      await mirrored(agencyAgentSessionRepository.setState(sessionId, 'offline'), sessionId, 'Could not mirror released agent state');
       return;
     }
 
@@ -1618,8 +1376,10 @@ export class AgencyDialer {
     await this.agents.set(sessionId, state, {
       leaseMs: queuedBreak ? AGENT_LEASE_MS.break : AGENT_LEASE_MS.available,
     });
-    await agencyAgentSessionRepository.setState(sessionId, state, queuedBreak?.code ?? null)
-      .catch((err) => log.warn({ err, sessionId }, 'Could not mirror released agent state'));
+    await mirrored(
+      agencyAgentSessionRepository.setState(sessionId, state, queuedBreak?.code ?? null),
+      sessionId, 'Could not mirror released agent state',
+    );
 
     this.stations.send(sessionId, {
       event: 'agent_state',
@@ -1737,28 +1497,6 @@ export class AgencyDialer {
   }
 
   /**
-   * The agent hangs up the call they are on.
-   *
-   * Returns `false` when this replica holds no live attempt by that id — which is
-   * the honest answer for **both** "the call already ended" and "another replica
-   * is bridging it", and the caller distinguishes them from the attempt row. It
-   * deliberately does not guess: the bridge session is in-process memory,
-   * so a `true` from somewhere that does not hold it would be a fabrication.
-   *
-   * `agent_hangup` rather than a generic outcome because the outcome vocabulary is
-   * what the retry policy keys on: an agent ending a conversation is a completed
-   * call, not a failure to reach anybody, and classifying it as the latter would
-   * feed the contact straight back into the roster for a redial.
-   *
-   * ── Why an HTTP route, given the contract describes a socket frame ─────────
-   * The station socket carries exactly two `message` listeners for the duration
-   * of an attempt — the borrowed-leg listener via `registerBrowserLegHandlers`
-   * (`webrtc-bridge-manager.ts`), which acts only on `event === 'media'`, and the
-   * station socket's own (`station-socket.ts`), which acts only on
-   * `event === 'ping'`. **A `hangup` frame is handled by neither**, so the
-   * hang-up is `POST /agency/attempts/:id/hangup`.
-   */
-  /**
    * The station socket for this session has closed. Arms the pre-bind grace when
    * the session is holding an attempt the agent was never told about.
    *
@@ -1802,6 +1540,17 @@ export class AgencyDialer {
     this.unboundStationGrace.set(sessionId, timer);
   }
 
+  /**
+   * Drop an attempt this replica no longer drives: its live record, its lease
+   * renewer and — paired with the renewer — any pre-bind grace armed against it,
+   * which has nothing left to end and must not outlive it into the next dial.
+   */
+  private forgetAttempt(cmd: DialCommand): void {
+    this.liveByAttempt.delete(cmd.attemptId);
+    this.stopLeaseRenewal(cmd.attemptId);
+    this.clearUnboundStationGrace(cmd.sessionId);
+  }
+
   /** Disarm the pre-bind grace — the station came back, or the attempt settled. */
   private clearUnboundStationGrace(sessionId: string): void {
     const timer = this.unboundStationGrace.get(sessionId);
@@ -1810,6 +1559,28 @@ export class AgencyDialer {
     this.unboundStationGrace.delete(sessionId);
   }
 
+  /**
+   * The agent hangs up the call they are on.
+   *
+   * Returns `false` when this replica holds no live attempt by that id — which is
+   * the honest answer for **both** "the call already ended" and "another replica
+   * is bridging it", and the caller distinguishes them from the attempt row. It
+   * deliberately does not guess: the bridge session is in-process memory,
+   * so a `true` from somewhere that does not hold it would be a fabrication.
+   *
+   * `agent_hangup` rather than a generic outcome because the outcome vocabulary is
+   * what the retry policy keys on: an agent ending a conversation is a completed
+   * call, not a failure to reach anybody, and classifying it as the latter would
+   * feed the contact straight back into the roster for a redial.
+   *
+   * ── Why an HTTP route, given the contract describes a socket frame ─────────
+   * The station socket carries exactly two `message` listeners for the duration
+   * of an attempt — the borrowed-leg listener via `registerBrowserLegHandlers`
+   * (`webrtc-bridge-manager.ts`), which acts only on `event === 'media'`, and the
+   * station socket's own (`station-socket.ts`), which acts only on
+   * `event === 'ping'`. **A `hangup` frame is handled by neither**, so the
+   * hang-up is `POST /agency/attempts/:id/hangup`.
+   */
   async hangupAttempt(attemptId: string): Promise<boolean> {
     if (!this.liveByAttempt.has(attemptId)) return false;
     // Correlation id IS the attempt id here — the same key `executeDial` registers
@@ -1869,19 +1640,41 @@ export class AgencyDialer {
     if (!this.bridge.reattachBorrowedBrowserLeg(attemptId, ws)) return null;
 
     log.info({ sessionId, attemptId, state: live.state }, 'Station reconnected onto a live attempt');
+    // The panel built at dial time, plus where the call has got to: a resumed
+    // panel is identical to the one the agent was shown.
     return {
-      attempt_id: attemptId,
-      campaign_id: live.cmd.campaignId,
-      campaign_name: live.cmd.campaign.name,
-      contact_id: live.cmd.contactId,
-      phone_e164: live.cmd.contact.phone_e164,
-      caller_id: live.cmd.callerId,
-      attempt_number: live.cmd.attemptNumber,
-      context: live.cmd.contact.context,
-      prior_attempts: live.priors,
+      ...live.panel,
       bridged_at: live.bridgedAt ? live.bridgedAt.toISOString() : null,
       state: live.state,
     };
+  }
+
+  /** The `released` frame that clears the agent's panel. False when it did not reach the socket. */
+  private sendReleased(
+    cmd: DialCommand,
+    reason: AgencyReleaseReason,
+    requiresDisposition: boolean,
+    message: string,
+  ): boolean {
+    return this.stations.send(cmd.sessionId, {
+      event: 'released',
+      attempt_id: cmd.attemptId,
+      reason,
+      requires_disposition: requiresDisposition,
+      message,
+    });
+  }
+
+  /**
+   * Hold a `released` for this session's reconnect. Expired holds are dropped
+   * here as well as on `takeMissedRelease`, because an agent who never comes back
+   * never takes theirs: without this the map grew by one entry per such agent for
+   * the life of the process.
+   */
+  private holdMissedRelease(sessionId: string, release: AgencyMissedRelease): void {
+    const now = Date.now();
+    for (const [id, held] of this.missedReleases) if (held.expiresAt <= now) this.missedReleases.delete(id);
+    this.missedReleases.set(sessionId, { release, expiresAt: now + MISSED_RELEASE_TTL_MS });
   }
 
   /** The `released` this session missed while away, consumed exactly once. */

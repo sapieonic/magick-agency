@@ -3169,6 +3169,21 @@ export class AgencyContactRepository {
   }
 
   /**
+   * {@link unclaim} for several contacts in one statement, all at the same
+   * `nextAttemptAt` (the same rule applies: move the clock forward for anything
+   * that has not cleared). The pacing tick returns a halted batch this way.
+   */
+  async unclaimMany(contactIds: readonly string[], nextAttemptAt: Date): Promise<void> {
+    if (contactIds.length === 0) return;
+    await getPool().query(
+      `UPDATE agency_contacts
+          SET state = 'pending', next_attempt_at = $2, updated_at = now()
+        WHERE id = ANY($1::uuid[]) AND state = 'in_flight'`,
+      [contactIds, nextAttemptAt],
+    );
+  }
+
+  /**
    * Charge one attempt against a contact's retry budget and report the new total.
    *
    * Exists because the outcome policy needs the **post-bump** count and `markState`

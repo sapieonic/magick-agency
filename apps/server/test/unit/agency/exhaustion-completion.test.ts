@@ -48,7 +48,11 @@ const { repos, settings } = vi.hoisted(() => ({
       countOutstanding: vi.fn().mockResolvedValue(0),
       transitionStatus: vi.fn(),
     },
-    contact: { claimDialable: vi.fn().mockResolvedValue([]), unclaim: vi.fn().mockResolvedValue(undefined) },
+    contact: {
+      claimDialable: vi.fn().mockResolvedValue([]),
+      unclaim: vi.fn().mockResolvedValue(undefined),
+      unclaimMany: vi.fn().mockResolvedValue(undefined),
+    },
     attempt: { countLive: vi.fn().mockResolvedValue(0), create: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
     session: { findLiveForCampaign: vi.fn().mockResolvedValue([]) },
   },
@@ -96,7 +100,12 @@ function makeStations(owned: string[]) {
 // The engine's "something may want to know a campaign finished" seam carries the
 // completion notice, registered through the real `registerCompletionNotifier`.
 function engine(stations: any, notifier: any = undefined) {
-  const agents = { get: vi.fn(async () => null), reserve: vi.fn(), set: vi.fn() };
+  const agents = {
+    get: vi.fn(async () => null),
+    getMany: vi.fn(async (ids: readonly string[]) => ids.map(() => null)),
+    reserve: vi.fn(),
+    set: vi.fn(),
+  };
   const e = new PacingEngine(
     null, '', 'r1', stations as any, agents as any,
     { dispatch: vi.fn() } as any, { check: vi.fn().mockResolvedValue('clear') } as any,

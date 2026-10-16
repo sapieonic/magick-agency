@@ -1,3 +1,4 @@
+import { UUID_RE } from '../utils/uuid.js';
 import type { FastifyReply, FastifyRequest, preHandlerHookHandler } from 'fastify';
 
 /**
@@ -13,7 +14,7 @@ import type { FastifyReply, FastifyRequest, preHandlerHookHandler } from 'fastif
  * need no id checks of their own. An unauthenticated caller with a malformed id therefore learns only
  * that the id is malformed, which says nothing about anybody's data.
  */
-export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export { UUID_RE };
 
 export interface MalformedIdAnswer {
   status: number;

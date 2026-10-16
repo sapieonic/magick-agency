@@ -63,7 +63,12 @@ function idleLeader(broadcasts: unknown[]) {
       return 0;
     },
   };
-  const agents = { get: async () => null, set: async () => {}, reserve: async () => 'lost' as const };
+  const agents = {
+    get: async () => null,
+    getMany: async (ids: readonly string[]) => ids.map(() => null),
+    set: async () => {},
+    reserve: async () => 'lost' as const,
+  };
   const dispatcher = { dispatch: async () => {} };
   // A registry with no Redis, which answers `unavailable` to everything — and that
   // is correct here rather than a shortcut. `agents.reserve` always returns 'lost',

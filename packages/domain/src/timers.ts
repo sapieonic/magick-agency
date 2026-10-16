@@ -169,3 +169,13 @@ export const STATION_SWEEP_IDLE_PASSES_BEFORE_DORMANT = 2;
  * so raising the cadence must not silently shorten the tolerance for a blip.
  */
 export const AGENCY_LIVE_CONCURRENCY_REFRESH_MS = 15_000;
+
+/**
+ * Seconds elapsed between two instants (`to` defaults to now), floored at 0: a
+ * clock step backwards must not produce a negative duration in a histogram. The
+ * dialer's seat-time and latency series are all measured with this.
+ */
+export function elapsedSeconds(from: Date, to: Date | number = Date.now()): number {
+  const end = typeof to === 'number' ? to : to.getTime();
+  return Math.max(0, (end - from.getTime()) / 1000);
+}

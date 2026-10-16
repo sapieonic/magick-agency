@@ -86,7 +86,7 @@ const { mockAnalytics } = vi.hoisted(() => ({
 }));
 vi.mock('../../../src/analytics/posthog.js', () => mockAnalytics);
 
-import { WebRtcBridgeManager, WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
+import { WebRtcBridgeManager, WebRtcCallError, UNSTORED_WS_TOKEN_CAP } from '../../../src/core/webrtc-bridge-manager.js';
 import { encodeAlaw, decodeAlaw } from '../../../src/utils/audio.js';
 // The platform's default for an unset allow_recording; the bridge must agree with it.
 import { DEFAULT_ALLOW_RECORDING } from '../../../src/settings/agency-account-settings.js';
@@ -979,7 +979,7 @@ describe('WebRtcBridgeManager oversized-frame gate (MAX_MEDIA_FRAME_BYTES)', () 
 });
 
 describe('WebRtcBridgeManager.verifyWsToken — fail-open under Redis degradation', () => {
-  const PURPOSES = ['browser', 'provider', 'webhook'] as const;
+  const PURPOSES = ['provider', 'webhook'] as const;
 
   it('returns true for every purpose when redis is null (degraded)', async () => {
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
@@ -1228,5 +1228,20 @@ describe('WebRtcBridgeManager.attachPstnLegVerified — provider-token gate (Voi
     expect(pstn.readyState).toBe(3); // closed
     expect(mgr.getSession('call-1')!.pstnWs).toBeNull(); // never attached
     await endByUser(mgr);
+  });
+});
+
+describe('WebRtcBridgeManager — the unstored-token memory is bounded', () => {
+  // Pruning only removed EXPIRED entries, so a sustained Redis outage with more
+  // calls than fit in one grace window grew the map without bound.
+  it('caps the remembered unstored tokens even when none has expired', () => {
+    const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
+    const note = (i: number) => (mgr as any).tokens.noteUnstoredWsToken(`call-${i}`, 'webhook', 3_600_000);
+    for (let i = 0; i < UNSTORED_WS_TOKEN_CAP + 500; i++) note(i);
+    const held: Map<string, number> = (mgr as any).tokens.unstoredWsTokens;
+    expect(held.size).toBeLessThanOrEqual(UNSTORED_WS_TOKEN_CAP);
+    // The newest are kept: the oldest windows are the ones nearest to ending.
+    expect(held.has(`webhook:call-${UNSTORED_WS_TOKEN_CAP + 499}`)).toBe(true);
+    expect(held.has('webhook:call-0')).toBe(false);
   });
 });
