@@ -146,6 +146,16 @@ describe('AgencyContactRepository.claimDialable', () => {
 });
 
 describe('AgencyContactRepository.applyIngestChunk', () => {
+  /**
+   * The chunk's rows are ONE statement now (`INSERT … SELECT FROM unnest(…)`), which
+   * answers with the accepted count and the refused rows' line numbers in input
+   * order — the per-row decision itself is SQL and is pinned on a real database by
+   * `agency-ingest-chunk-fate.test.ts`. These mocks stand in for that answer.
+   */
+  const chunkAnswer = (accepted: number, rejectedLines: Array<number | null> = []) =>
+    ({ rows: [{ accepted: String(accepted), rejected_lines: rejectedLines }], rowCount: 1 });
+  const totalAnswer = (n: number) => ({ rows: [{ contacts_total: n }], rowCount: 1 });
+
   function chunk(contacts: any[]) {
     return {
       campaignId: 'camp-1', tenantId: 't1', accountId: 'a1',
@@ -157,10 +167,11 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
   it('commits the chunk marker and its rows in ONE transaction', async () => {
     client.query.mockImplementation(async (sql: string) => {
       if (sql.includes('INSERT INTO agency_ingest_chunks')) return { rows: [{ id: 'm1' }], rowCount: 1 };
-      // `countForCampaign` now runs on the held client rather than checking out a
-      // SECOND pool connection — N concurrent chunks each holding one and asking
-      // for another is a pool deadlock.
-      if (sql.includes('COUNT(*)')) return { rows: [{ n: '2' }] };
+      if (sql.includes('INSERT INTO agency_contacts')) return chunkAnswer(2);
+      // The new total comes back from the recount's own `RETURNING`, on the held
+      // client — never from a SECOND pool connection, which N concurrent chunks
+      // each holding one and asking for another would deadlock on.
+      if (sql.includes('RETURNING contacts_total')) return totalAnswer(2);
       return { rows: [], rowCount: 1 };
     });
 
@@ -174,6 +185,10 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
     // All-or-nothing is what makes partial application impossible rather than
     // merely detectable — and is why a replay can be one cheap conflict.
     expect(res).toMatchObject({ accepted: 2, duplicate_chunk: false, total_contacts: 2 });
+    // ONE statement for the rows, whatever the chunk size — not one per row.
+    const rowInserts = client.query.mock.calls.filter((c: any) => String(c[0]).includes('INSERT INTO agency_contacts'));
+    expect(rowInserts).toHaveLength(1);
+    expect(pool.query).not.toHaveBeenCalled();
   });
 
   /**
@@ -285,8 +300,9 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
     const contacts = Array.from({ length: 30 }, (_, i) => ({ phone_e164: '+91', source_row_number: i + 1 }));
     client.query.mockImplementation(async (sql: string) => {
       if (sql.includes('INSERT INTO agency_ingest_chunks')) return { rows: [{ id: 'm1' }], rowCount: 1 };
-      if (sql.includes('INSERT INTO agency_contacts')) return { rows: [], rowCount: 0 }; // every row a duplicate
-      if (sql.includes('COUNT(*)')) return { rows: [{ n: '0' }] };
+      // every row a duplicate
+      if (sql.includes('INSERT INTO agency_contacts')) return chunkAnswer(0, contacts.map((c) => c.source_row_number));
+      if (sql.includes('RETURNING contacts_total')) return totalAnswer(0);
       return { rows: [], rowCount: 1 };
     });
 
@@ -317,10 +333,10 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
     // reportable claim.
     client.query.mockImplementation(async (sql: string) => {
       if (sql.includes('agency_ingest_chunks')) return { rows: [{ id: 'm1' }], rowCount: 1 };
-      if (sql.includes('INSERT INTO agency_contacts')) return { rows: [], rowCount: 0 }; // all collide
+      if (sql.includes('INSERT INTO agency_contacts')) return chunkAnswer(0, [7, 8]); // all collide
+      if (sql.includes('RETURNING contacts_total')) return totalAnswer(3);
       return { rows: [], rowCount: 1 };
     });
-    pool.query.mockResolvedValue({ rows: [{ n: '3' }] });
 
     const res = await new AgencyContactRepository().applyIngestChunk(chunk([
       { phone_e164: '+911', source_row_number: 7 },
@@ -401,28 +417,32 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
     // reading the stored column it would return nothing but NULLs.
     client.query.mockImplementation(async (sql: string) => {
       if (sql.includes('agency_ingest_chunks')) return { rows: [{ id: 'm1' }], rowCount: 1 };
-      if (sql.includes('INSERT INTO agency_contacts')) return { rows: [], rowCount: 0 }; // all collide
+      // All collide; the third carried no row number.
+      if (sql.includes('INSERT INTO agency_contacts')) return chunkAnswer(0, [41, 42, null]);
+      if (sql.includes('RETURNING contacts_total')) return totalAnswer(0);
       return { rows: [], rowCount: 1 };
     });
-    pool.query.mockResolvedValue({ rows: [{ n: '0' }] });
 
     const res = await new AgencyContactRepository().applyIngestChunk(chunk([
       { phone_e164: '+911', source_row_number: 41 },
       { phone_e164: '+912', source_row_number: 42 },
+      { phone_e164: '+913' },
     ]));
 
-    expect(res.rejected_duplicate_rows).toBe(2);
+    // Counted, all three; named, only the two that carry a number.
+    expect(res.rejected_duplicate_rows).toBe(3);
     expect(res.duplicate_source_rows).toEqual([41, 42]);
   });
 
   it('fingerprints the row from the SAME bound parameters it inserts', async () => {
     // Row identity has exactly one definition — `agency_contact_row_fingerprint`,
     // shared by this INSERT and the baseline backfill. It is computed in SQL
-    // from `$4/$5/$7` rather than handed in as an eighth parameter precisely so
-    // the hashed values cannot drift from the stored ones: a fingerprint built
-    // from anything other than the phone/context/timezone actually written would
-    // either wave duplicates through or refuse rows that are not duplicates, and
-    // both failures are invisible until a roster is already wrong.
+    // from the unnested `$4/$5/$7` arrays rather than handed in as another
+    // parameter precisely so the hashed values cannot drift from the stored ones:
+    // a fingerprint built from anything other than the phone/context/timezone
+    // actually written would either wave duplicates through or refuse rows that
+    // are not duplicates, and both failures are invisible until a roster is
+    // already wrong.
     client.query.mockImplementation(async (sql: string) => {
       if (sql.includes('agency_ingest_chunks')) return { rows: [{ id: 'm1' }], rowCount: 1 };
       return { rows: [], rowCount: 1 };
@@ -435,12 +455,15 @@ describe('AgencyContactRepository.applyIngestChunk', () => {
 
     const call = client.query.mock.calls.find((c: any) => String(c[0]).includes('INSERT INTO agency_contacts'))!;
     const insert = String(call[0]);
-    expect(insert).toContain('agency_contact_row_fingerprint($4, $5::jsonb, $7)');
-    // $4/$5/$7 are the phone, context and timezone this row is stored with.
+    expect(insert).toContain('unnest($4::varchar[], $5::jsonb[], $6::integer[], $7::varchar[])');
+    expect(insert).toContain('agency_contact_row_fingerprint(u.phone_e164, u.context, u.timezone) AS fingerprint');
+    // $4/$5/$6/$7 are the phones, contexts, line numbers and timezones the rows are
+    // stored with, one element per input row, in input order.
     const params = call[1] as unknown[];
-    expect(params[3]).toBe('+911');
-    expect(params[4]).toBe(JSON.stringify({ name: 'A' }));
-    expect(params[6]).toBe('Asia/Kolkata');
+    expect(params[3]).toEqual(['+911']);
+    expect(params[4]).toEqual([JSON.stringify({ name: 'A' })]);
+    expect(params[5]).toEqual([1]);
+    expect(params[6]).toEqual(['Asia/Kolkata']);
   });
 
   it('rolls back and releases the connection when a row insert throws', async () => {

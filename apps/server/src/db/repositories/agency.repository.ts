@@ -1424,19 +1424,24 @@ export class AgencyCampaignRepository {
           seedParams.values,
         );
 
-        // Recomputed by COUNT rather than set to `seeded.rowCount`, matching
-        // `applyIngestChunk`: the column's meaning is "how many rows are on this
-        // roster", and deriving it from the same statement that wrote them is how it
-        // stays true if a later path ever adds rows too.
+        // Incremented by what the seed wrote, NOT recounted — unlike
+        // `applyIngestChunk`, whose COUNT is what self-heals a roster other
+        // transactions also write. This roster cannot have another writer: the
+        // child campaign row was created by THIS transaction and is invisible to
+        // every other one until COMMIT, so no other statement can insert a contact
+        // referencing it, and its contacts are exactly the rows `seeded` inserted.
+        // A COUNT here would rescan up to `RETRY_MAX_SEED_ROWS` rows to learn
+        // `seeded.rowCount`. `contacts_total +` rather than `=` so the column still
+        // reads "every row on this roster" if a later step ever adds rows first.
         const seededRows = seeded.rowCount ?? 0;
 
         const totalled = await client.query<AgencyCampaignRecord>(
           `UPDATE agency_campaigns
-              SET contacts_total = (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1),
+              SET contacts_total = contacts_total + $2,
                   updated_at = now()
             WHERE id = $1
           RETURNING *`,
-          [campaign.id],
+          [campaign.id, seededRows],
         );
 
         return {
@@ -3462,7 +3467,7 @@ export class AgencyContactRepository {
    * twice. It keys on row CONTENT rather than on the file position, which is what
    * makes topping up a live campaign possible without giving that guard away.
    */
-  async applyIngestChunk(params: {
+  async applyIngestChunk(input: {
     campaignId: string;
     tenantId: string;
     accountId: string;
@@ -3472,11 +3477,7 @@ export class AgencyContactRepository {
     idempotencyKey: string;
     contacts: AgencyContactInput[];
   }): Promise<AgencyIngestResult> {
-    const pool = getPool();
-    const client: PoolClient = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
+    return withTransaction<AgencyIngestResult>(async (client, tx) => {
       const marker = await client.query<{ id: string }>(
         `INSERT INTO agency_ingest_chunks
            (campaign_id, ingest_job_id, chunk_index, idempotency_key, chunk_count, row_count)
@@ -3484,8 +3485,8 @@ export class AgencyContactRepository {
          ON CONFLICT (campaign_id, idempotency_key) DO NOTHING
          RETURNING id`,
         [
-          params.campaignId, params.ingestJobId, params.chunkIndex,
-          params.idempotencyKey, params.chunkCount, params.contacts.length,
+          input.campaignId, input.ingestJobId, input.chunkIndex,
+          input.idempotencyKey, input.chunkCount, input.contacts.length,
         ],
       );
 
@@ -3498,20 +3499,20 @@ export class AgencyContactRepository {
       // point. The replay also says something: it reads back the
       // counts the ORIGINAL application recorded, so a replay answers what
       // the original answered. It has no counts of its own — it rolls back before
-      // the per-row loop — so without the recorded ones it could only return a
+      // the rows are inserted — so without the recorded ones it could only return a
       // confident zero, and the ingest summary would undercount every row the
       // original refused.
       if (marker.rowCount === 0) {
-        await client.query('ROLLBACK');
-        // Read AFTER the rollback and on the pool, matching `countForCampaign`
-        // below: the marker was committed by the original transaction, so this is
-        // an ordinary read and keeping it outside the aborted one avoids any
-        // suggestion that the replay path still holds a transaction open.
-        const recorded = await this.recordedRejections(params.campaignId, params.idempotencyKey, client);
+        await tx.rollback();
+        // Read AFTER the rollback, on the same client in autocommit: the marker
+        // was committed by the original transaction, so this is an ordinary read,
+        // and keeping it outside the aborted one avoids any suggestion that the
+        // replay path still holds a transaction open.
+        const recorded = await this.recordedRejections(input.campaignId, input.idempotencyKey, client);
         return {
           accepted: 0,
           duplicate_chunk: true,
-          total_contacts: await this.countForCampaign(params.campaignId, client),
+          total_contacts: await this.countForCampaign(input.campaignId, client),
           rejected_duplicate_rows: recorded.rejected ?? 0,
           duplicate_source_rows: recorded.sourceRows ?? [],
           // NULL ⇒ the chunk recorded no counts, so the zeros above are "unknown", not
@@ -3521,68 +3522,107 @@ export class AgencyContactRepository {
         };
       }
 
-      let accepted = 0;
-      const duplicateRows: number[] = [];
-      let rejectedDuplicateRows = 0;
-      for (const c of params.contacts) {
-        // The conflict target is NAMED, not bare. A bare `ON CONFLICT DO NOTHING`
-        // absorbs *every* constraint violation — so a genuine data problem (a bad
-        // FK, a CHECK the ingest should have caught) was indistinguishable from a
-        // replayed row, and both surfaced as a silent decrement of `accepted`.
-        // Naming the index means only the row-idempotency collision is swallowed
-        // and anything else throws, which is what we want it to do.
-        //
-        // The target is `row_fingerprint`, not `source_row_number`:
-        // the row number is the position in ONE file, so a second file's rows
-        // 2..N would collide with the first's and a top-up could never land. The
-        // fingerprint is computed **in SQL from these same bound parameters**,
-        // by the same function the retry seeding path uses, so there is exactly one
-        // definition of "the same roster row".
-        //
-        // ── `source_row_number` IS DELIBERATELY NOT IN THIS COLUMN LIST ──
-        //
-        // Naming the fingerprint index is not enough on its own:
-        // `uq_agency_contacts_source_row` is STILL in the schema, so writing the
-        // column would make a top-up file's row 2 collide with the first file's
-        // row 2, and that 23505 is not swallowed because the conflict target names
-        // a different index. The top-up arms of `agency-ingest-idempotency.test.ts`
-        // fail on exactly that constraint if the column comes back.
-        //
-        // That index is PARTIAL on `source_row_number IS NOT NULL`, so a row that
-        // stores NULL sits outside it. Leaving the column out of this list is what
-        // makes top-up work. The CSV line
-        // number is not lost — it goes to `csv_line_number`, which is
-        // unindexed provenance and can never reinstate the collision.
-        //
-        // Do not "tidy" the column back in. It reads like restoring a dropped
-        // field and it re-breaks top-up the moment two files share a line number.
-        const res = await client.query(
-          `INSERT INTO agency_contacts
+      // ── The whole chunk in ONE statement ─────────────────────────────────────
+      //
+      // One `INSERT … SELECT FROM unnest(…) WITH ORDINALITY`, in input order, rather
+      // than one round trip per row. What each input row's fate is, and therefore
+      // what the operator is told, is exactly what the row-at-a-time loop decided:
+      //
+      //   * a fingerprint the roster already held ⇒ every input row carrying it is
+      //     refused;
+      //   * a fingerprint new to the roster ⇒ the FIRST input row carrying it lands
+      //     (the ORDER BY feeds the rows in file order, and a row inserted earlier
+      //     in the same statement is visible to the next one's conflict check), and
+      //     every later one is refused as a duplicate of it.
+      //
+      // `RETURNING row_fingerprint` names the fingerprints that landed, and the
+      // final SELECT maps them back to input rows by that rule. The rejected rows'
+      // line numbers come back in input order, so the sample is the first
+      // `MAX_REPORTED_DUPLICATE_ROWS` refused rows, as before.
+      //
+      // The conflict target is NAMED, not bare. A bare `ON CONFLICT DO NOTHING`
+      // absorbs *every* constraint violation — so a genuine data problem (a bad
+      // FK, a CHECK the ingest should have caught) was indistinguishable from a
+      // replayed row, and both surfaced as a silent decrement of `accepted`.
+      // Naming the index means only the row-idempotency collision is swallowed
+      // and anything else throws — the whole chunk, marker included, since it is
+      // one statement in one transaction.
+      //
+      // The target is `row_fingerprint`, not `source_row_number`:
+      // the row number is the position in ONE file, so a second file's rows
+      // 2..N would collide with the first's and a top-up could never land. The
+      // fingerprint is computed **in SQL from the same values that are stored**,
+      // by the same function the retry seeding path uses, so there is exactly one
+      // definition of "the same roster row". The arrays are typed `varchar[]` so
+      // the function sees the types it is declared on.
+      //
+      // ── `source_row_number` IS DELIBERATELY NOT IN THIS COLUMN LIST ──
+      //
+      // Naming the fingerprint index is not enough on its own:
+      // `uq_agency_contacts_source_row` is STILL in the schema, so writing the
+      // column would make a top-up file's row 2 collide with the first file's
+      // row 2, and that 23505 is not swallowed because the conflict target names
+      // a different index. The top-up arms of `agency-ingest-idempotency.test.ts`
+      // fail on exactly that constraint if the column comes back.
+      //
+      // That index is PARTIAL on `source_row_number IS NOT NULL`, so a row that
+      // stores NULL sits outside it. Leaving the column out of this list is what
+      // makes top-up work. The CSV line
+      // number is not lost — it goes to `csv_line_number`, which is
+      // unindexed provenance and can never reinstate the collision.
+      //
+      // Do not "tidy" the column back in. It reads like restoring a dropped
+      // field and it re-breaks top-up the moment two files share a line number.
+      const applied = await client.query<{ accepted: string; rejected_lines: Array<number | null> }>(
+        `WITH input AS (
+           SELECT u.ord, u.phone_e164, u.context, u.csv_line_number, u.timezone,
+                  agency_contact_row_fingerprint(u.phone_e164, u.context, u.timezone) AS fingerprint
+             FROM unnest($4::varchar[], $5::jsonb[], $6::integer[], $7::varchar[])
+                  WITH ORDINALITY AS u(phone_e164, context, csv_line_number, timezone, ord)
+         ), inserted AS (
+           INSERT INTO agency_contacts
              (campaign_id, tenant_id, account_id, phone_e164, context, csv_line_number, timezone,
               row_fingerprint)
-           VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7,
-                   agency_contact_row_fingerprint($4, $5::jsonb, $7))
+           SELECT $1::uuid, $2::uuid, $3::uuid,
+                  i.phone_e164, i.context, i.csv_line_number, i.timezone, i.fingerprint
+             FROM input i
+            ORDER BY i.ord
            ON CONFLICT (campaign_id, row_fingerprint) WHERE row_fingerprint IS NOT NULL
-             DO NOTHING`,
-          [
-            params.campaignId, params.tenantId, params.accountId, c.phone_e164,
-            // `$6` is the INPUT's `source_row_number` (the ingest's field name,
-            // unchanged) stored into `csv_line_number`. The input contract does not
-            // move just because the column did.
-            JSON.stringify(c.context ?? {}), c.source_row_number ?? null, c.timezone ?? null,
-          ],
-        );
-        if (res.rowCount === 0) {
-          rejectedDuplicateRows++;
-          // Reported from the INPUT row, never from a stored value — which is why
-          // the column the number is stored in changes nothing about what the operator is told.
-          if (c.source_row_number != null && duplicateRows.length < MAX_REPORTED_DUPLICATE_ROWS) {
-            duplicateRows.push(c.source_row_number);
-          }
-        } else {
-          accepted += res.rowCount ?? 0;
-        }
-      }
+             DO NOTHING
+           RETURNING row_fingerprint
+         ), fate AS (
+           -- inserted holds each fingerprint at most once (it is a unique key),
+           -- so the LEFT JOIN cannot fan out.
+           SELECT i.ord, i.csv_line_number,
+                  n.row_fingerprint IS NOT NULL
+                    AND i.ord = MIN(i.ord) OVER (PARTITION BY i.fingerprint) AS accepted
+             FROM input i
+             LEFT JOIN inserted n ON n.row_fingerprint = i.fingerprint
+         )
+         SELECT (SELECT COUNT(*) FROM inserted)::text AS accepted,
+                COALESCE(array_agg(f.csv_line_number ORDER BY f.ord) FILTER (WHERE NOT f.accepted),
+                         '{}') AS rejected_lines
+           FROM fate f`,
+        [
+          input.campaignId, input.tenantId, input.accountId,
+          input.contacts.map((c) => c.phone_e164),
+          input.contacts.map((c) => JSON.stringify(c.context ?? {})),
+          // The INPUT's `source_row_number` (the ingest's field name, unchanged),
+          // stored into `csv_line_number`. The input contract does not move just
+          // because the column did.
+          input.contacts.map((c) => c.source_row_number ?? null),
+          input.contacts.map((c) => c.timezone ?? null),
+        ],
+      );
+      const accepted = Number(applied.rows[0]?.accepted ?? 0);
+      const rejectedLines = applied.rows[0]?.rejected_lines ?? [];
+      const rejectedDuplicateRows = rejectedLines.length;
+      // Reported from the INPUT row, never from a stored value — which is why
+      // the column the number is stored in changes nothing about what the operator
+      // is told. A refused row with no row number is counted but cannot be named.
+      const duplicateRows = rejectedLines
+        .filter((line): line is number => line !== null)
+        .slice(0, MAX_REPORTED_DUPLICATE_ROWS);
 
       // Record what this chunk refused, in the SAME transaction that refused it.
       // It cannot be recomputed later: a row rejected by
@@ -3593,9 +3633,9 @@ export class AgencyContactRepository {
       //
       // An UPDATE rather than folding these into the marker INSERT above, because
       // the INSERT has to happen FIRST: it is the conflict on that insert which
-      // detects the replay, and it has to do so before we spend 500 round trips
-      // inserting rows. Same transaction either way, so the marker and its counts
-      // are still all-or-nothing.
+      // detects the replay, and it has to do so before the rows are inserted. Same
+      // transaction either way, so the marker and its counts are still
+      // all-or-nothing.
       await client.query(
         `UPDATE agency_ingest_chunks
             SET rejected_duplicate_rows = $2,
@@ -3604,28 +3644,26 @@ export class AgencyContactRepository {
         [marker.rows[0]!.id, rejectedDuplicateRows, duplicateRows],
       );
 
-      await client.query(
+      // Recomputed as a COUNT rather than incremented, which is what makes it
+      // self-healing under replay; `RETURNING` hands the new total back from the
+      // same statement instead of a second count of the roster.
+      const totalled = await client.query<{ contacts_total: number }>(
         `UPDATE agency_campaigns
             SET contacts_total = (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1),
                 updated_at = now()
-          WHERE id = $1`,
-        [params.campaignId],
+          WHERE id = $1
+        RETURNING contacts_total`,
+        [input.campaignId],
       );
 
-      await client.query('COMMIT');
       return {
         accepted,
         duplicate_chunk: false,
-        total_contacts: await this.countForCampaign(params.campaignId, client),
+        total_contacts: Number(totalled.rows[0]?.contacts_total ?? 0),
         rejected_duplicate_rows: rejectedDuplicateRows,
         duplicate_source_rows: duplicateRows,
       };
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => { /* connection already broken */ });
-      throw err;
-    } finally {
-      client.release();
-    }
+    }, { pool: getPool() });
   }
 
   /**
