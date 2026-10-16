@@ -316,3 +316,82 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, what: string): P
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
+
+// ── Traces: what is recorded at all ─────────────────────────────────────────
+//
+// Tempo is billed per byte ingested, and the free tier's 50 GB/month was
+// exceeded on 2026-10-15. Every choice below is a span-count or privacy choice
+// (decision "pg span parameters", changed 2026-10-16).
+
+type TraceEnv = Record<string, string | undefined>;
+
+/**
+ * `@opentelemetry/instrumentation-pg` options.
+ *
+ * - `enhancedDatabaseReporting: false` — when true, the bound parameter values
+ *   of EVERY query ship to Tempo as `db.postgresql.values`: phone numbers,
+ *   names, sealed credential blobs. The query text (with `$1` placeholders) is
+ *   recorded either way, so this loses no shape, only the customer data.
+ * - `ignoreConnectSpans: true` — no `pg-pool.connect` span per checkout; it was
+ *   one span per query and carried nothing a query span does not.
+ */
+export const PG_TRACE_CONFIG = Object.freeze({
+  enhancedDatabaseReporting: false,
+  ignoreConnectSpans: true,
+});
+
+/**
+ * Probe paths whose server span is never recorded. `instrumentation-http` runs
+ * an ignored request under `suppressTracing`, so `/readyz`'s `SELECT 1` and
+ * Redis `ping` record nothing either.
+ */
+export const UNTRACED_INCOMING_PATHS: readonly string[] = ['/healthz', '/readyz'];
+
+/** `ignoreIncomingRequestHook`: true for a probe in {@link UNTRACED_INCOMING_PATHS}. */
+export function isUntracedIncomingRequest(request: { url?: string }): boolean {
+  const url = request.url ?? '';
+  const queryAt = url.indexOf('?');
+  const path = queryAt === -1 ? url : url.slice(0, queryAt);
+  return UNTRACED_INCOMING_PATHS.includes(path);
+}
+
+/** Hostname of a URL-ish string, lower-cased; null when it does not parse. */
+function hostnameOf(raw: string | undefined): string | null {
+  if (!raw) return null;
+  try {
+    return new URL(raw).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether an outgoing request goes to PostHog: any `*.posthog.com` host (US/EU
+ * ingest, assets), plus the host of `POSTHOG_HOST` when it points elsewhere (a
+ * reverse proxy). posthog-node flushes on its own timer with its own retry;
+ * those spans answer no operational question.
+ */
+export function isPosthogHost(hostname: string | undefined | null, env: TraceEnv): boolean {
+  if (!hostname) return false;
+  const host = hostname.toLowerCase();
+  if (host === 'posthog.com' || host.endsWith('.posthog.com')) return true;
+  return host === hostnameOf(env['POSTHOG_HOST']);
+}
+
+/** `instrumentation-http`'s `ignoreOutgoingRequestHook` for {@link isPosthogHost}. */
+export function isUntracedOutgoingHttpRequest(
+  options: { hostname?: string | null; host?: string | null },
+  env: TraceEnv,
+): boolean {
+  // `host` may carry a port (`example.com:443`); `hostname` never does.
+  const host = options.hostname ?? options.host?.replace(/:\d+$/, '');
+  return isPosthogHost(host, env);
+}
+
+/**
+ * `instrumentation-undici`'s `ignoreRequestHook` (global `fetch`, which is what
+ * posthog-node uses) for {@link isPosthogHost}. `origin` is `https://host[:port]`.
+ */
+export function isUntracedOutgoingFetch(request: { origin: string }, env: TraceEnv): boolean {
+  return isPosthogHost(hostnameOf(request.origin), env);
+}
