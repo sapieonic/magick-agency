@@ -43,6 +43,8 @@
  * `WebRtcBridgeManager.createBridgedCall`.
  */
 
+import type { AllListed, SortOrder, StatsBucketUnit } from './primitives';
+
 // ─── Shared enumerations ────────────────────────────────────────────────────
 
 /**
@@ -187,7 +189,7 @@ export type AgencyAbandonReason =
  *
  * Two-sided exhaustiveness, the house pattern (`AGENCY_ACTION_ERROR_CODES`):
  * `satisfies` stops a member being listed that the union does not have, and
- * {@link MissingAbandonReason} stops a union member being added without landing
+ * the `AllListed` guard below stops a union member being added without landing
  * here. A Prometheus label vocabulary must be bounded by source code.
  */
 export const AGENCY_ABANDON_REASONS = [
@@ -198,11 +200,10 @@ export const AGENCY_ABANDON_REASONS = [
   'no_agent_available',
 ] as const satisfies readonly AgencyAbandonReason[];
 
-type MissingAbandonReason = Exclude<
-  AgencyAbandonReason, (typeof AGENCY_ABANDON_REASONS)[number]
->;
-const _allAbandonReasonsListed: MissingAbandonReason extends never
-  ? true : MissingAbandonReason = true;
+const _allAbandonReasonsListed: AllListed<
+  AgencyAbandonReason,
+  typeof AGENCY_ABANDON_REASONS
+> = true;
 void _allAbandonReasonsListed;
 
 /** Campaign lifecycle. */
@@ -2738,7 +2739,7 @@ export interface AgencyCampaignStatsSeries {
 // rather than a filter on an existing one.
 
 /** How the record's buckets are cut. There is deliberately no `hour` and no `year`. */
-export type AgencyStatsBucketUnit = 'day' | 'week' | 'month';
+export type AgencyStatsBucketUnit = StatsBucketUnit;
 
 /**
  * Where an agent's time went, in seconds, derived from
@@ -3294,7 +3295,7 @@ export interface AgencyRosterPage {
   to: string;
   campaign_id: string | null;
   sort: AgencyRosterSort;
-  order: 'asc' | 'desc';
+  order: SortOrder;
   limit: number;
   /** Agents matching scope+window before `limit`. */
   total_agents: number;
@@ -3622,7 +3623,7 @@ export interface AgencyGroupPage {
    */
   resolved_timezone: string | null;
   sort: AgencyGroupSort;
-  order: 'asc' | 'desc';
+  order: SortOrder;
   limit: number;
   /** Groups matching scope+window BEFORE `limit`. */
   total_groups: number;

@@ -45,6 +45,7 @@
   exists to prevent.
 */
 import type * as Core from '../../agency';
+import type { SortOrder } from '../../primitives';
 import type { AgencyAgentsByState } from './agency-campaign';
 // Identical in the dialer contract, so re-exported rather than copied (`CONTRACT-DIFF.md` §3).
 import type {
@@ -252,7 +253,7 @@ export interface AgencyStaffingHistory {
 // client can ever receive, because the console never reaches the dialer runtime.
 
 /** Sort direction. `desc` is the default, because the roster's default sort is a ranking. */
-export type AgencyRosterOrder = 'asc' | 'desc';
+export type AgencyRosterOrder = SortOrder;
 
 /**
  * One agent's line on the roster — the dialer runtime's row, unchanged.

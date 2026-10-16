@@ -4,6 +4,7 @@
 
 import type { Role } from '../../rbac';
 import type { AgencyAccountSettingsMap } from './settings';
+import type { AllListed } from '../../primitives';
 
 // `Role` is declared once, in `../../rbac`, and re-exported so this file's
 // consumers can import it from here.
@@ -153,13 +154,10 @@ export const SESSION_REFUSAL_CODES = [
   'no_membership',
 ] as const satisfies readonly SessionRefusalCode[];
 
-type MissingSessionRefusalCode = Exclude<
+const _allSessionRefusalCodesListed: AllListed<
   SessionRefusalCode,
-  (typeof SESSION_REFUSAL_CODES)[number]
->;
-const _allSessionRefusalCodesListed: MissingSessionRefusalCode extends never
-  ? true
-  : MissingSessionRefusalCode = true;
+  typeof SESSION_REFUSAL_CODES
+> = true;
 void _allSessionRefusalCodesListed;
 
 /** The 403 body. Shape follows the public API layer's. */

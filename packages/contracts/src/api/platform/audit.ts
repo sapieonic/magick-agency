@@ -5,6 +5,8 @@
 // `AuditLogFilters.product`, `available_products`) is single-valued in a
 // one-product app and is a candidate deletion.
 
+import type { OffsetPage } from '../../primitives';
+
 export interface AuditLogEntry {
   id: string;
   tenant_id: string;
@@ -215,11 +217,8 @@ export interface AuditProductOption {
   label: string;
 }
 
-export interface AuditLogResponse {
+export interface AuditLogResponse extends OffsetPage {
   entries: AuditLogEntry[];
-  total: number;
-  limit: number;
-  offset: number;
   /**
    * The vocabularies the three filters are built from, served by the public API layer.
    *

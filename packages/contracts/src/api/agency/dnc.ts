@@ -7,6 +7,8 @@
  * shape to reconcile against here, unlike everything else under `agency*`.
  */
 
+import type { OffsetPage } from '../../primitives';
+
 /** `dnc_entries.source`, as enumerated by `DNC_SOURCES` in the public API layer. */
 export type DncSource = 'agent' | 'import' | 'api' | 'regulator';
 
@@ -34,11 +36,8 @@ export interface DncEntry {
   created_at: string;
 }
 
-export interface DncListResponse {
+export interface DncListResponse extends OffsetPage {
   entries: DncEntry[];
-  total: number;
-  limit: number;
-  offset: number;
 }
 
 export type DncAddOutcome = 'added' | 'already_present' | 'invalid_phone';

@@ -14,8 +14,8 @@
  *
  *   1. `as const satisfies readonly Union[]` proves every LISTED value is a
  *      member of the union;
- *   2. `Missing = Exclude<Union, (typeof LIST)[number]>` assigned through a
- *      conditional proves every UNION MEMBER is listed.
+ *   2. `const _x: AllListed<Union, typeof LIST> = true` (`./primitives`) proves
+ *      every UNION MEMBER is listed.
  *
  * Either direction drifting is a `tsc --noEmit` failure, i.e. `pnpm lint`.
  *
@@ -25,6 +25,7 @@
  */
 
 import type { AgencyActionErrorCode, AgencyStationErrorCode } from './agency';
+import type { AllListed } from './primitives';
 
 export type { AgencyActionErrorCode, AgencyStationErrorCode } from './agency';
 
@@ -66,8 +67,7 @@ export const AGENCY_ACTION_ERROR_CODES = [
  * list. `satisfies` alone only proves the list holds *valid* codes, not *all* of
  * them, and a missing entry is the failure mode that matters here.
  */
-type MissingCode = Exclude<AgencyActionErrorCode, (typeof AGENCY_ACTION_ERROR_CODES)[number]>;
-const _allCodesListed: MissingCode extends never ? true : MissingCode = true;
+const _allCodesListed: AllListed<AgencyActionErrorCode, typeof AGENCY_ACTION_ERROR_CODES> = true;
 void _allCodesListed;
 
 // ─── 2. Roster refusal codes ────────────────────────────────────────────────
@@ -113,11 +113,10 @@ export const AGENCY_ROSTER_REFUSAL_CODES = [
  * the list. `satisfies` alone only proves the list holds *valid* codes, not
  * *all* of them, and a missing entry is the failure mode that matters here.
  */
-type MissingRosterCode = Exclude<
+const _allRosterCodesListed: AllListed<
   AgencyRosterRefusalCode,
-  (typeof AGENCY_ROSTER_REFUSAL_CODES)[number]
->;
-const _allRosterCodesListed: MissingRosterCode extends never ? true : MissingRosterCode = true;
+  typeof AGENCY_ROSTER_REFUSAL_CODES
+> = true;
 void _allRosterCodesListed;
 
 // ─── 3. Campaign-lifecycle codes ────────────────────────────────────────────
@@ -160,13 +159,10 @@ export const AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES = [
   'analysis_profile_not_found',
 ] as const satisfies readonly AgencyCampaignLifecycleErrorCode[];
 
-type MissingLifecycleCode = Exclude<
+const _allLifecycleCodesListed: AllListed<
   AgencyCampaignLifecycleErrorCode,
-  (typeof AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES)[number]
->;
-const _allLifecycleCodesListed: MissingLifecycleCode extends never
-  ? true
-  : MissingLifecycleCode = true;
+  typeof AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES
+> = true;
 void _allLifecycleCodesListed;
 
 // ─── 4. Station frame error codes ───────────────────────────────────────────
@@ -189,11 +185,8 @@ export const AGENCY_STATION_ERROR_CODES = [
   'campaign_not_running',
 ] as const satisfies readonly AgencyStationErrorCode[];
 
-type MissingStationCode = Exclude<
+const _allStationCodesListed: AllListed<
   AgencyStationErrorCode,
-  (typeof AGENCY_STATION_ERROR_CODES)[number]
->;
-const _allStationCodesListed: MissingStationCode extends never
-  ? true
-  : MissingStationCode = true;
+  typeof AGENCY_STATION_ERROR_CODES
+> = true;
 void _allStationCodesListed;

@@ -11,6 +11,7 @@ import {
 } from '../src/errors';
 import type * as Core from '../src/agency';
 import { AgencyApi } from '../src/index';
+import type { Equals } from './type-equals';
 
 /**
  * SNAPSHOT — written out by hand, deliberately not derived from the list under test.
@@ -41,7 +42,6 @@ const CORE_FIXTURE_ACTION_ERROR_CODES = [
 
 // ── Type-level: the lists are exactly their unions (the runtime twin of the
 //    two-sided guards in src/errors.ts; these fail `pnpm lint`, not `pnpm test`).
-type Equals<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 const _actionExact: Equals<(typeof AGENCY_ACTION_ERROR_CODES)[number], AgencyActionErrorCode> = true;
 const _rosterExact: Equals<(typeof AGENCY_ROSTER_REFUSAL_CODES)[number], AgencyRosterRefusalCode> = true;
 const _lifecycleExact: Equals<

@@ -10,6 +10,8 @@
  * (a function), and none of these three flags needs one.
  */
 
+import type { AllListed } from './primitives';
+
 export type FlagScope = 'global' | 'tenant' | 'account';
 export type FlagType = 'boolean' | 'number' | 'string' | 'json';
 
@@ -137,8 +139,7 @@ export const AGENCY_FLAG_KEYS = [
   'agency_call_analysis',
 ] as const satisfies readonly AgencyFlagKey[];
 
-type MissingFlagKey = Exclude<AgencyFlagKey, (typeof AGENCY_FLAG_KEYS)[number]>;
-const _allFlagKeysListed: MissingFlagKey extends never ? true : MissingFlagKey = true;
+const _allFlagKeysListed: AllListed<AgencyFlagKey, typeof AGENCY_FLAG_KEYS> = true;
 void _allFlagKeysListed;
 
 /** Flags whose resolved values may reach a browser (`clientExposed: true`). */
