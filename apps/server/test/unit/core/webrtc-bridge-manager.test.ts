@@ -1236,9 +1236,9 @@ describe('WebRtcBridgeManager — the unstored-token memory is bounded', () => {
   // calls than fit in one grace window grew the map without bound.
   it('caps the remembered unstored tokens even when none has expired', () => {
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
-    const note = (i: number) => (mgr as any).noteUnstoredWsToken(`call-${i}`, 'webhook', 3_600_000);
+    const note = (i: number) => (mgr as any).tokens.noteUnstoredWsToken(`call-${i}`, 'webhook', 3_600_000);
     for (let i = 0; i < UNSTORED_WS_TOKEN_CAP + 500; i++) note(i);
-    const held: Map<string, number> = (mgr as any).unstoredWsTokens;
+    const held: Map<string, number> = (mgr as any).tokens.unstoredWsTokens;
     expect(held.size).toBeLessThanOrEqual(UNSTORED_WS_TOKEN_CAP);
     // The newest are kept: the oldest windows are the ones nearest to ending.
     expect(held.has(`webhook:call-${UNSTORED_WS_TOKEN_CAP + 499}`)).toBe(true);
