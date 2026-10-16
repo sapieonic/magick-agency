@@ -45,10 +45,12 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-agent-cas.test.ts` | ~6 |
 | `apps/server/test/integration/agency/agency-agent-identity.test.ts` | ~4 |
 | `apps/server/test/integration/agency/agency-agent-state-cycle.test.ts` | ~1 |
+| `apps/server/test/integration/agency/agency-agent-state-get-many.test.ts` | ~1 |
 | `apps/server/test/integration/agency/agency-analysis-profile-reference-check.test.ts` | ~8 |
 | `apps/server/test/integration/agency/agency-campaign-create.test.ts` | ~3 |
 | `apps/server/test/integration/agency/agency-campaign-stats.routes.test.ts` | ~10 |
 | `apps/server/test/integration/agency/agency-campaign-stats.test.ts` | ~18 |
+| `apps/server/test/integration/agency/agency-contact-unclaim-many.test.ts` | ~1 |
 | `apps/server/test/integration/agency/agency-context-ordering.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-conversion-counting.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-crash-recovery.test.ts` | ~6 |
@@ -114,7 +116,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/agency-csv-ingest.streaming.test.ts` | 2 |
 | `apps/server/test/unit/agency/agency-csv-ingest.test.ts` | 54 |
 | `apps/server/test/unit/agency/agency-dialer-lineage.test.ts` | 5 |
-| `apps/server/test/unit/agency/agency-dialer.test.ts` | 28 |
+| `apps/server/test/unit/agency/agency-dialer.test.ts` | 35 |
 | `apps/server/test/unit/agency/agency-ingest-job.repository.test.ts` | 34 |
 | `apps/server/test/unit/agency/agency-ingest-keys.test.ts` | 10 |
 | `apps/server/test/unit/agency/agency-ingest-restart-contract.test.ts` | 9 |
@@ -130,7 +132,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/agent-record.test.ts` | 102 |
 | `apps/server/test/unit/agency/agent-roster-repository.test.ts` | 55 |
 | `apps/server/test/unit/agency/agent-session-events.test.ts` | 20 |
-| `apps/server/test/unit/agency/agent-state-machine.test.ts` | 15 |
+| `apps/server/test/unit/agency/agent-state-machine.test.ts` | 17 |
 | `apps/server/test/unit/agency/agent-stats-repository.test.ts` | 38 |
 | `apps/server/test/unit/agency/calling-hours.test.ts` | 31 |
 | `apps/server/test/unit/agency/campaign-abandon-config-route.test.ts` | 8 |
@@ -173,7 +175,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/our-fault-redial.test.ts` | 20 |
 | `apps/server/test/unit/agency/outcome-classifier.test.ts` | 45 |
 | `apps/server/test/unit/agency/pacing-engine-gates.test.ts` | 22 |
-| `apps/server/test/unit/agency/pacing-engine.test.ts` | 67 |
+| `apps/server/test/unit/agency/pacing-engine.test.ts` | 76 |
 | `apps/server/test/unit/agency/pre-dial-gates.test.ts` | 20 |
 | `apps/server/test/unit/agency/presence-resilience.test.ts` | 14 |
 | `apps/server/test/unit/agency/profile-in-use-reference-check.test.ts` | 23 |
@@ -211,6 +213,24 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/station-token.test.ts` | 5 |
 | `apps/server/test/unit/agency/supervisor-stats.test.ts` | 26 |
 | `apps/server/test/unit/agency/wrapup-manager.test.ts` | 34 |
+
+### `apps/server/src/agency/agent-record/`
+
+The three agent-record reads, re-exported from `agency/agent-record.ts` (import from that path): `stats.ts` (the agent's own record: bucket vocabulary, query parsing, bucket SQL, occupancy fold), `roster.ts` (the supervisor's roster: vocabulary, parsing, percentiles, sort), `grouped.ts` (the grouped read: dimensions, zone rule, parsing). Tested through `agent-record.test.ts` and the agent-record route and repository suites above.
+
+Files: `grouped.ts`, `roster.ts`, `stats.ts`
+
+### `apps/server/src/agency/dialer/`
+
+The dialer's internals, split out of `agency-dialer.ts`: `live-attempt.ts` (the `LiveAttempt` record, `isUnannounced`, the panel builder) and `contact-settlement.ts` (`settleContact`: the our-fault / retry-policy routing of an ended attempt's contact). Tested through the `AgencyDialer` suites above (`agency-dialer`, `late-binding`, `canceled-outcome-ledger`, `our-fault-redial`, the chaos suites).
+
+Files: `contact-settlement.ts`, `live-attempt.ts`
+
+### `apps/server/src/agency/pacing/`
+
+The pacing engine's parts, split out of `pacing-engine.ts`: `leader-lease.ts` (the per-campaign Redis leader lease), `campaign-announcer.ts` (the `campaign_state` broadcasts and their `flagGated` / `reportedStuck` latches), `caller-id-pool.ts` (usable caller IDs and the round-robin pick), `in-flight.ts` (tracking in-flight ticks and completion notices so `stop()` can wait for them). Tested through the `PacingEngine` suites above.
+
+Files: `caller-id-pool.ts`, `campaign-announcer.ts`, `in-flight.ts`, `leader-lease.ts`
 
 ### `apps/server/src/ai/`
 
@@ -515,11 +535,17 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/webrtc-bridge-late-binding.test.ts` | 17 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.bridged.test.ts` | 8 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.seams.test.ts` | 12 |
-| `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 58 |
+| `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 59 |
 | `apps/server/test/unit/core/webrtc-bridge-ring-cancel.test.ts` | 15 |
 | `apps/server/test/unit/core/webrtc-bridge-seam-contract.test.ts` | 3 |
 | `apps/server/test/unit/core/webrtc-bridge-session.test.ts` | 31 |
 | `apps/server/test/unit/core/webrtc-scenarios.test.ts` | 13 |
+
+### `apps/server/src/core/bridge/`
+
+Parts of the WebRTC bridge split out of `webrtc-bridge-manager.ts`, which stays the seam's module path (docs/seams.md §3.1) and re-exports the types: `bridge-types.ts` (`WebRtcCallError` and the exported seam types), `ws-tokens.ts` (`BridgeWsTokens`: the carrier's per-call tokens and the unstored-token memory; `verifyWsToken` stays on the manager as a delegate), `admission.ts` (`admitBridgeCall`: the slot acquire and its refusal mapping). None imports metrics. Tested through the bridge suites above.
+
+Files: `admission.ts`, `bridge-types.ts`, `ws-tokens.ts`
 
 ### `apps/server/src/db/`
 
@@ -731,9 +757,9 @@ Files: `tts-file-cache.ts`
 
 ### `apps/server/src/utils/`
 
-Shared helpers: audio and FIR filter, concurrency, decode gate, phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown), retry, safe emit, webhook base URL, WebSocket no-delay, abort errors.
+Shared helpers: audio and FIR filter, concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown), retry, safe emit, webhook base URL, WebSocket no-delay, abort errors.
 
-Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `retry.ts`, `safe-emit.ts`, `webhook-base.ts`, `ws-nodelay.ts`
+Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `retry.ts`, `safe-emit.ts`, `uuid.ts`, `webhook-base.ts`, `ws-nodelay.ts`
 
 | Test file | Cases |
 |---|---|
@@ -943,13 +969,14 @@ Scenario, flow, guard and setup tests that span several modules.
 
 ### `packages/domain/src/`
 
-Pure dialer rules: abandonment predicate, break manager, keyset cursor, rates, retry campaign bounds and summary, success disposition, timers.
+Pure dialer rules: abandonment predicate, break manager, keyset cursor, rates, retry campaign bounds and summary, success disposition, timers (and `elapsedSeconds`, the one spelling of a seat-time / latency measurement).
 
 Files: `abandonment-predicate.ts`, `break-manager.ts`, `index.ts`, `keyset-cursor.ts`, `rates.ts`, `retry-campaign-bounds.ts`, `retry-summary.ts`, `success-disposition.ts`, `timers.ts`
 
 | Test file | Cases |
 |---|---|
 | `packages/domain/test/unit/agency/break-manager.test.ts` | 18 |
+| `packages/domain/test/unit/agency/elapsed-seconds.test.ts` | 3 |
 | `packages/domain/test/unit/agency/keyset-cursor.test.ts` | 9 |
 | `packages/domain/test/unit/agency/retry-campaign-bounds.test.ts` | 4 |
 | `packages/domain/test/unit/agency/retry-summary.test.ts` | 19 |

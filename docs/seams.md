@@ -79,7 +79,9 @@ export interface WebRtcLifecycleEvent {}
 export type WebRtcLifecycleListener = (event: WebRtcLifecycleEvent) => void;
 ```
 
-`WebRtcCallRecord` and `WebRtcCallStatus` come from `packages/db/src/models/agency-call.model.ts`.
+The exported types and `WebRtcCallError` are defined in `apps/server/src/core/bridge/bridge-types.ts`
+and re-exported unchanged from `webrtc-bridge-manager.ts`, which stays the seam's module path (import
+them from there). `WebRtcCallRecord` and `WebRtcCallStatus` come from `packages/db/src/models/agency-call.model.ts`.
 The constructor takes the `TelephonyGuardHost` (`apps/server/src/core/telephony-guard-host.ts`),
 which provides the concurrency guard (`acquireTelephonyConcurrency`, `releaseTelephonyLease`,
 `wakeSelfHeal`). A type-level test, `apps/server/test/unit/core/webrtc-bridge-seam-contract.test.ts`,
