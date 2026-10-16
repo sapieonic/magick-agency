@@ -25,7 +25,6 @@ Found by walking both type trees (member name plus declared type text), then rea
 | `AgencyWrapupState` | `seconds_total: number`; `held_reason: AgencyWrapupHoldReason \| null` (required; 2 members) | no `seconds_total`; `held_reason?: AgencyWrapupHold \| null` (2 members) | `supervisor_hold` is declared on both sides but nothing produces it (`docs/decisions.md`, still open) |
 | `AgencySupervisorAgent` | no name | `agent_name: string \| null` | Public API layer enrichment: it joins the name from `users` |
 | `AgencyCampaignStats` | every counter required | every counter optional; adds `agents_peak?: number \| null` | `agents_peak` has no producer; the console degrades on absence. `stall` / `other_stalls` are identical |
-| `AgencyCampaignActor` | `name: string \| null` | `name: string` | `null` is a real state (an id-only actor); the console must accept it |
 | `AgencyRetryCreateResponse` | generic discriminated union `AgencyRetryCreated<T> \| AgencyRetryReplayed<T>` on `idempotent_replay` | one interface: `campaign: AgencyCampaign`, `idempotent_replay?: boolean`, `contacts_seeded: number \| null`, `duplicates_collapsed?: number \| null`, `excluded: … \| null` | Same wire; the console flattens the union |
 | `AgencyCampaignLineage` | `campaigns: AgencyLineageCampaign[]` | `campaigns: AgencyCampaignLineageEntry[]` | Entries differ only in `status: string` (§2) |
 | `AgencyAgentStatsBucket` / `AgencyAgentStatsTotals` | `occupancy: AgencyAgentOccupancy` (required) | `occupancy?: AgencyOccupancy \| null` | The console treats occupancy as possibly unmeasured |
@@ -55,7 +54,7 @@ Found by walking both type trees (member name plus declared type text), then rea
 ## 3. Identical in both
 
 `AgencyAgentState`, `AgencyAttemptState`, `AgencyContactState`, `AgencyAttemptOutcome`,
-`AgencyCampaignStatus`, `AgencyReleaseReason`, `AgencyCampaignChangeReason`,
+`AgencyCampaignStatus`, `AgencyCampaignActor` (`name: string | null`; the console renders the id when it is null), `AgencyReleaseReason`, `AgencyCampaignChangeReason`,
 `AgencyStationErrorCode`, `AgencyActionErrorCode` (18 members both sides),
 `AgencyStationServerFrame`, `AgencyAgentLiveState`, `AgencyAgentsByState`,
 `AgencyStallCode` / `AgencyStall`, `RETRY_NO_OUTCOME`, `AGENCY_ROSTER_MIN_RATE_DENOMINATOR`,

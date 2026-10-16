@@ -1037,15 +1037,15 @@ export interface AgencyCampaignLineage {
 /**
  * The person behind a campaign's current status.
  *
- * The public API layer resolves the name; the dialer runtime stores only the id (it has no user table), so
- * a name that could not be resolved comes back as an id-shaped string rather
- * than as an absent field. The console renders whatever it is given and invents
- * nothing — a "Unknown user" fallback would be this client asserting a fact the
+ * The dialer runtime stores the id and the name the caller sent at the moment of
+ * the transition (it has no user table), so `name` is `null` for a caller that
+ * sent an id and no display name. The console then renders the id and invents
+ * nothing — an "Unknown user" fallback would be this client asserting a fact the
  * server declined to.
  */
 export interface AgencyCampaignActor {
   user_id: string;
-  name: string;
+  name: string | null;
 }
 
 // ── Agent ↔ campaign assignment (the public API layer-native) ──────────────────
