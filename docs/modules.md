@@ -899,14 +899,16 @@ Files: `audit.repository.ts`
 
 ### `packages/db/src/utils/`
 
-Single-flight, SQL update builder, TTL cache.
+Single-flight, SQL update builder, TTL cache, and `withTransaction` (`transaction.ts`): BEGIN with an isolation level and READ ONLY, COMMIT, ROLLBACK on a throw, release on every path, destroy a client whose ROLLBACK failed, `tx.rollback()` to end early without throwing, and `client` to join a caller's open transaction (decision B8). Import-free: the caller passes its pool. Imported as `@magick-agency/db/utils/transaction`.
 
-Files: `single-flight.ts`, `sql-update.ts`, `ttl-cache.ts`
+Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 
 | Test file | Cases |
 |---|---|
+| `packages/db/test/integration/db/transaction.test.ts` | 8 |
 | `packages/db/test/unit/utils/single-flight.test.ts` | 16 |
 | `packages/db/test/unit/utils/sql-update.test.ts` | 8 |
+| `packages/db/test/unit/utils/transaction.test.ts` | 14 |
 | `packages/db/test/unit/utils/ttl-cache.test.ts` | 51 |
 
 ### Cross-cutting tests (`packages/db`)
@@ -916,6 +918,7 @@ Scenario, flow, guard and setup tests that span several modules.
 | Test file | Cases |
 |---|---|
 | `packages/db/test/integration/agency/webrtc-call-scope-isolation.test.ts` | ~11 |
+| `packages/db/test/integration/db/attempt-indexes-migration.test.ts` | 4 |
 | `packages/db/test/integration/baseline-down-up.test.ts` | ~2 |
 | `packages/db/test/integration/baseline.test.ts` | ~55 |
 | `packages/db/test/integration/db/audio-file-pcm-migration.test.ts` | ~4 |

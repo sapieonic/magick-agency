@@ -4080,14 +4080,14 @@ export class AgencyAttemptRepository {
    * that index has already produced in order, so the `LIMIT` stops the scan
    * early instead of sorting the campaign.
    *
-   * ⚠️ **NOT** `idx_agency_attempts_reporting`, and the difference is not
-   * academic. That index is `(campaign_id, created_at DESC)` with no `id`, so it
-   * cannot serve the row-wise `(created_at, id) < ($1, $2)` comparison: Postgres
-   * degrades to reading the whole `created_at` tie group and sorting it, on
-   * every page. It looks like exactly the index a keyset on
-   * `(created_at DESC, id)` wants, and it is not — ties here are the
-   * normal case, because the attempt batcher and roster ingest both insert
-   * inside one transaction where `now()` is fixed.
+   * ⚠️ The `id` column is what makes it a keyset index. An index on
+   * `(campaign_id, created_at DESC)` alone (the baseline's
+   * `idx_agency_attempts_reporting`, dropped in migration 0003 as a strict prefix
+   * of this one) cannot serve the row-wise `(created_at, id) < ($1, $2)`
+   * comparison: Postgres degrades to reading the whole `created_at` tie group and
+   * sorting it, on every page. Ties here are the normal case, because the attempt
+   * batcher and roster ingest both insert inside one transaction where `now()` is
+   * fixed.
    */
   async listForCampaign(input: {
     campaignId: string;

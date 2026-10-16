@@ -224,7 +224,7 @@ choose to go available.
 ## Migrations
 
 The baseline, `packages/db/migrations/0001_baseline.sql`, and the numbered migrations after it
-(`0002_telephony_credentials.sql`), run in order with node-pg-migrate from `packages/db`:
+(`0002_telephony_credentials.sql`, `0003_agency_attempt_indexes.sql`), run in order with node-pg-migrate from `packages/db`:
 
 ```bash
 DATABASE_URL=postgresql://... pnpm migrate:up
