@@ -14,6 +14,7 @@ import { membershipRepository } from '@magick-agency/db/repositories/membership.
 import { tenantRepository } from '@magick-agency/db/repositories/tenant.repository';
 import { userRepository } from '@magick-agency/db/repositories/user.repository';
 import { redisCache } from '../../cache/redis-cache.js';
+import { membershipCacheKey } from '../middleware/membership-cache-key.js';
 import { hashInviteToken, isInviteExpired } from '../../notifications/invite-token.js';
 import { agencyProductName } from '../../notifications/templates/agent-invite.template.js';
 import { issueInvite } from '../../invites/invite-issuer.js';
@@ -742,7 +743,7 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
      * underneath it.
      */
     await invalidateUserCache(user.id, beforeBind?.firebase_uid ?? null);
-    await redisCache.del(`cache:membership:${user.id}:${invite.tenant_id}`);
+    await redisCache.del(membershipCacheKey(user.id, invite.tenant_id));
 
     const emailMatched = normaliseEmail(decoded.email) === normaliseEmail(invite.email);
 

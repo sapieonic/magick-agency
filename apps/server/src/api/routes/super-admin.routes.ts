@@ -9,6 +9,7 @@ import { PENDING_UID_PREFIX, UNVERIFIED_ADDRESS_HOLDER } from '../../auth/fireba
 import { superAdminRepository } from '@magick-agency/db/repositories/super-admin.repository';
 import { tenantRepository } from '@magick-agency/db/repositories/tenant.repository';
 import { redisCache } from '../../cache/redis-cache.js';
+import { membershipCacheKey } from '../middleware/membership-cache-key.js';
 import { sendRevocationCacheUnavailable } from '../../cache/revocation-unavailable.js';
 import { userRepository } from '@magick-agency/db/repositories/user.repository';
 import { membershipRepository } from '@magick-agency/db/repositories/membership.repository';
@@ -604,7 +605,7 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
 
     // Same key `tenantContextMiddleware` reads — a re-added user must not keep
     // serving the empty/revoked snapshot from before the write.
-    await redisCache.del(`cache:membership:${userId}:${tenantId}`);
+    await redisCache.del(membershipCacheKey(userId, tenantId));
 
     /**
      * Super-admin add creates a `pending_` stub plus membership and sends an
@@ -711,7 +712,7 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
     // after every other effect (staffing, audit) if it still failed. Idempotent on retry:
     // the membership is re-read with its new role, the same role is re-applied, the key is
     // deleted again, and the demotion's staffing close has nothing left to do.
-    const membershipCacheCleared = await redisCache.delForRevocation(`cache:membership:${target.user_id}:${tenantId}`);
+    const membershipCacheCleared = await redisCache.delForRevocation(membershipCacheKey(target.user_id, tenantId));
 
     let staffingClosed: Array<{ id: string; campaign_id: string; account_id: string | null }> = [];
     if (isDemotionFromAgent(target.role, role as MembershipRole)) {
@@ -784,7 +785,7 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
     // Q5 (Manas, 2026-10-09): retried delete with an ERROR log on final failure; the 2xx is
     // KEPT because a re-sent revoke is not idempotent — `findByIdInTenant` reads active rows
     // only, so the retry 404s before reaching this line. The TTL (30 min) bounds it.
-    await redisCache.delForRevocation(`cache:membership:${target.user_id}:${tenantId}`);
+    await redisCache.delForRevocation(membershipCacheKey(target.user_id, tenantId));
 
     const staffingClosed = await closeStaffingTenantWide(tenantId, target.user_id, 'membership_removed');
 

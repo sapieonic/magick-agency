@@ -1,6 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { membershipRepository } from '@magick-agency/db/repositories/membership.repository';
 import { redisCache } from '../../cache/redis-cache.js';
+import { membershipCacheKey } from './membership-cache-key.js';
 import {
   resolveTenantAccountNames,
   getCachedAccountRecord,
@@ -148,12 +149,12 @@ export async function tenantContextMiddleware(request: FastifyRequest, reply: Fa
   }
 
   // Look for a membership in this tenant — try Redis cache first
-  const membershipCacheKey = `cache:membership:${request.user.id}:${tenantId}`;
-  let memberships = await redisCache.get<MembershipRecord[]>(membershipCacheKey);
+  const cacheKey = membershipCacheKey(request.user.id, tenantId);
+  let memberships = await redisCache.get<MembershipRecord[]>(cacheKey);
   if (!memberships) {
     memberships = await membershipRepository.findByUserAndTenant(request.user.id, tenantId);
     if (memberships.length > 0) {
-      await redisCache.set(membershipCacheKey, memberships, MEMBERSHIP_CACHE_TTL);
+      await redisCache.set(cacheKey, memberships, MEMBERSHIP_CACHE_TTL);
     }
   }
   if (memberships.length === 0) {

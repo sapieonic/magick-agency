@@ -13,7 +13,8 @@ import {
   parseRosterQuery,
 } from '../../agency/agent-record.js';
 import { clampLimit } from '../../agency/spine-filters.js';
-import { decodeKeysetCursor, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
+// `?cursor=`, shared with the campaign spine (`agency-campaigns.routes.ts`).
+import { readKeysetCursor } from './helpers/read-cursor.js';
 import type {
   AgencyAgentStats,
   AgencyAttemptsPage,
@@ -143,33 +144,6 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
       return null;
     }
     return agentUserId;
-  }
-
-  /**
-   * Parse `?cursor=` into a keyset position.
-   *
-   * A malformed cursor is **400, not a silent reset to page one** — a list that
-   * quietly restarts from the top reads as duplicate rows to whoever is scrolling
-   * it, and there is no way to tell that from real duplicates. Same rule, same
-   * words, as the campaign spine's own `readCursor`; the decoder is imported so
-   * there is one definition of what a cursor is.
-   */
-  function readCursor(
-    request: FastifyRequest,
-    reply: FastifyReply,
-  ): AgencyKeysetPosition | null | undefined {
-    const raw = (request.query as { cursor?: unknown } | undefined)?.cursor;
-    if (raw === undefined || raw === null || String(raw).length === 0) return undefined;
-    const decoded = decodeKeysetCursor(String(raw));
-    if (!decoded) {
-      reply.code(400).send({
-        error: 'Validation failed',
-        code: 'malformed_cursor',
-        details: { cursor: 'not a cursor this API issued' },
-      });
-      return null;
-    }
-    return decoded;
   }
 
   /**
@@ -504,7 +478,7 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed.ok) {
       return replyValidationFailed(reply, parsed.issues);
     }
-    const cursor = readCursor(request, reply);
+    const cursor = readKeysetCursor(request, reply);
     if (cursor === null) return reply;
 
     const page: AgencyAttemptsPage = await agencyAttemptRepository.listForAgent({

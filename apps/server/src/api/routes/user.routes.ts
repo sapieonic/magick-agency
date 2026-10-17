@@ -6,6 +6,7 @@ import { membershipRepository } from '@magick-agency/db/repositories/membership.
 import { userRepository } from '@magick-agency/db/repositories/user.repository';
 import { accountRepository } from '@magick-agency/db/repositories/account.repository';
 import { redisCache } from '../../cache/redis-cache.js';
+import { membershipCacheKey } from '../middleware/membership-cache-key.js';
 import { sendRevocationCacheUnavailable } from '../../cache/revocation-unavailable.js';
 import { inviteUserSchema, updateRoleSchema } from '../validators/user.validator.js';
 import { canManageRole, ROLE_HIERARCHY } from '@magick-agency/contracts/rbac';
@@ -531,7 +532,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(409).send({ error: 'Conflict', message: 'User already has a membership in this context' });
     }
 
-    await redisCache.del(`cache:membership:${user.id}:${request.tenantId!}`);
+    await redisCache.del(membershipCacheKey(user.id, request.tenantId!));
 
     /**
      * The invite email — attempted AFTER the membership is written, and unable to
@@ -762,7 +763,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     // the retry must be able to finish the job: re-sent, this route re-applies the same role
     // (the guard reads the now-current role), deletes the key again, and has nothing left to
     // close (the staffing step keys on the demotion, which has already happened).
-    const membershipCacheCleared = await redisCache.delForRevocation(`cache:membership:${targetUserId}:${request.tenantId!}`);
+    const membershipCacheCleared = await redisCache.delForRevocation(membershipCacheKey(targetUserId, request.tenantId!));
 
     /**
      * A demotion out of `agent` closes their agency staffing — last, and unable to
@@ -868,7 +869,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     // retry — the membership is already gone, so a re-sent DELETE answers 404 before it
     // reaches this line and could never clear the key. A 503 would only send the admin into
     // a retry that cannot help; the TTL (30 min) bounds the exposure.
-    await redisCache.delForRevocation(`cache:membership:${targetUserId}:${request.tenantId!}`);
+    await redisCache.delForRevocation(membershipCacheKey(targetUserId, request.tenantId!));
 
     /**
      * Close their agency staffing — last, and unable to fail this request.

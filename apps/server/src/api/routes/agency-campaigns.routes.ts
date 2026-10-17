@@ -26,7 +26,6 @@ import {
   RETRY_MAX_GENERATION,
   RETRY_MAX_SEED_ROWS,
 } from '@magick-agency/domain/retry-campaign-bounds';
-import { decodeKeysetCursor, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
 import { announcementRepository } from '@magick-agency/db/repositories/announcement.repository';
 import { preflightAnalysisProfile } from '../../analysis/profile-preflight.js';
 import type { AgencyCampaignConfigColumns, AgencyCampaignRecord } from '../../db/models/agency.model.js';
@@ -62,18 +61,19 @@ import {
   validateAgencyCampaignConfig,
 } from '../../agency/campaign-config.js';
 import { replyValidationFailed } from './helpers/parse-or-400.js';
+// `?cursor=`, shared with the per-agent attempt record (`agency-agents.routes.ts`).
+import { readKeysetCursor } from './helpers/read-cursor.js';
+import { UUID_RE } from '../../utils/uuid.js';
 
 const log = createChildLogger({ component: 'agency-campaign-routes' });
 
-/**
- * Route params reaching a `::uuid` cast are shape-checked first.
- *
- * Postgres answers `22P02 invalid input syntax for type uuid` on a malformed
- * one, which the error handler turns into a 500 — so a bad request would look
- * like a broken service on a read route. A 404 is both the honest status and the
- * one that keeps a nonexistent id indistinguishable from a forbidden one.
+/*
+ * Route params reaching a `::uuid` cast are shape-checked first, against the shared
+ * `UUID_RE`: Postgres answers `22P02 invalid input syntax for type uuid` on a malformed
+ * one, which the error handler turns into a 500 — so a bad request would look like a
+ * broken service on a read route. A 404 is both the honest status and the one that keeps
+ * a nonexistent id indistinguishable from a forbidden one.
  */
-const UUID_PARAM_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Column widths for the lifecycle actor, so the route can handle
@@ -872,32 +872,6 @@ export async function agencyCampaignRoutes(
   // the middleware runs on both routes rather than trusting this comment.
 
   /**
-   * Parse `?cursor=` into a keyset position.
-   *
-   * A malformed cursor is **400, not a silent reset to page one**. A list that
-   * quietly restarts from the top reads as duplicate rows to a supervisor
-   * scrolling through it, and there is no way to tell that from real duplicates.
-   * Returns `undefined` for "no cursor supplied", `null` once it has replied.
-   */
-  function readCursor(
-    request: FastifyRequest,
-    reply: FastifyReply,
-  ): AgencyKeysetPosition | null | undefined {
-    const raw = (request.query as { cursor?: unknown } | undefined)?.cursor;
-    if (raw === undefined || raw === null || String(raw).length === 0) return undefined;
-    const decoded = decodeKeysetCursor(String(raw));
-    if (!decoded) {
-      reply.code(400).send({
-        error: 'Validation failed',
-        code: 'malformed_cursor',
-        details: { cursor: 'not a cursor this API issued' },
-      });
-      return null;
-    }
-    return decoded;
-  }
-
-  /**
    * The two spine page reads' gate and ownership step, with the CSV export's fast path.
    *
    * The public export proves ownership ONCE — a full `GET /:id` (this plugin's gate and
@@ -936,10 +910,10 @@ export async function agencyCampaignRoutes(
      * layer's `forwardAllowedQuery`). Refused with the parser's own 400 shape, the
      * answer `parseAttemptFilters` already gives a malformed `contact_id`.
      */
-    if (parsed.filters.agentUserId !== undefined && !UUID_PARAM_RE.test(parsed.filters.agentUserId)) {
+    if (parsed.filters.agentUserId !== undefined && !UUID_RE.test(parsed.filters.agentUserId)) {
       return replyValidationFailed(reply, [{ param: 'agent_user_id', message: 'must be an agent id' }]);
     }
-    const cursor = readCursor(request, reply);
+    const cursor = readKeysetCursor(request, reply);
     if (cursor === null) return reply;
 
     const page = await agencyAttemptRepository.listForCampaign({
@@ -1012,7 +986,7 @@ export async function agencyCampaignRoutes(
      * is both the honest status and the one that keeps a nonexistent id
      * indistinguishable from one on someone else's campaign.
      */
-    if (!UUID_PARAM_RE.test(request.params.attemptId)) {
+    if (!UUID_RE.test(request.params.attemptId)) {
       reply.code(404).send({
         error: 'Not Found', code: 'attempt_not_found', message: 'Attempt not found on this campaign',
       });
@@ -1165,7 +1139,7 @@ export async function agencyCampaignRoutes(
     if (!parsed.ok) {
       return replyValidationFailed(reply, parsed.issues);
     }
-    const cursor = readCursor(request, reply);
+    const cursor = readKeysetCursor(request, reply);
     if (cursor === null) return reply;
 
     const page = await agencyContactRepository.listForCampaign({
@@ -1197,7 +1171,7 @@ export async function agencyCampaignRoutes(
     // Checked before the query: `findDetailScoped` casts to `uuid`, and a
     // non-UUID id would reach Postgres as `22P02` and surface as a 500 — a bad
     // request that looks like a broken service.
-    if (!UUID_PARAM_RE.test(request.params.contactId)) {
+    if (!UUID_RE.test(request.params.contactId)) {
       return reply.code(404).send({
         error: 'Not Found', code: 'contact_not_found', message: 'Contact not found',
       });
