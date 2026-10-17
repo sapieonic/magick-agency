@@ -112,12 +112,12 @@ Latest run, 2026-10-17, after the tidy-up, from inside each package:
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 6693 passed + 42 skipped | 1206 |
-| `packages/db` | 426 | 468 |
+| `apps/server` | 6703 passed + 42 skipped | 1211 |
+| `packages/db` | 426 | 469 |
 | `packages/domain` | 53 | — |
 | `packages/contracts` | 77 | — |
 | `packages/observability` | 14 | — |
-| `packages/web-ui` | 230 | — |
+| `packages/web-ui` | 231 | — |
 | `apps/console` | 4410 | — |
 | `apps/super-admin` | 421 | — |
 | `grafana` (`pnpm test:grafana`) | 31 | — |

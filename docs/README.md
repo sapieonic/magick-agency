@@ -22,8 +22,8 @@ super-admin console. Manas's 2026-10-09 rulings on the open questions and brandi
 Last full run (2026-10-09): lint clean in 7 packages; server 6412 unit / 1172 integration;
 console 4367; super-admin 366; builds OK. Unit re-run 2026-10-10: server 6507, console 4374;
 2026-10-11 (brand logo): console 4389, super-admin 374. After the 2026-10-16/17 tidy-up (shared
-`packages/web-ui`, migration 0003, split modules, a batch-claim over-claim bug fixed): server 6693
-unit + 42 skipped / 1206 integration; db 426 / 468; console 4410; super-admin 421; web-ui 230
+`packages/web-ui`, migrations 0003 and 0004, split modules, a batch-claim over-claim bug fixed): server 6703
+unit + 42 skipped / 1211 integration; db 426 / 469; console 4410; super-admin 421; web-ui 231
 (`status.md`).
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
