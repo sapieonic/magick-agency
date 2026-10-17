@@ -12,10 +12,12 @@
  *
  * ── It behaves like `allSettled`, deliberately ─────────────────────────────
  * Every result is returned as `{ status }` rather than the first rejection
- * winning. Both call sites are decorating a list where one item's failure must
+ * winning. The analytics call sites are decorating a list where one item's failure must
  * annotate that item and leave its siblings intact — on a page somebody opens
  * *because* something looks wrong, one failed campaign must not blank the other
  * four. A rejecting variant would just be `Promise.all` with extra steps.
+ * (The super-admin's bulk retire/reactivate is the same shape: one failed
+ * number must not stop the rest, and the tally reports each.)
  *
  * Order is preserved: results are written back by index, so `results[i]`
  * corresponds to `items[i]` regardless of completion order. Callers zip the two

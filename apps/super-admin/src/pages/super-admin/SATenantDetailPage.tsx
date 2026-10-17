@@ -243,7 +243,9 @@ export default function SATenantDetailPage() {
   // Phone number management
   const [tenantPhones, setTenantPhones] = useState<TenantPhoneAssignment[]>([]);
   const [phonesLoading, setPhonesLoading] = useState(false);
+  const [phonesError, setPhonesError] = useState<string | null>(null);
   const [allPhoneNumbers, setAllPhoneNumbers] = useState<PhoneNumber[]>([]);
+  const [assignableError, setAssignableError] = useState<string | null>(null);
   const [showAssignPhone, setShowAssignPhone] = useState(false);
   const [assignPhoneId, setAssignPhoneId] = useState('');
   const [assignPhoneDefault, setAssignPhoneDefault] = useState(false);
@@ -254,6 +256,7 @@ export default function SATenantDetailPage() {
   // Account concurrency
   const [accounts, setAccounts] = useState<TenantAccountWithConcurrency[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
+  const [accountsError, setAccountsError] = useState<string | null>(null);
   const [concurrencyEdits, setConcurrencyEdits] = useState<Record<string, number>>({});
   const [savingConcurrency, setSavingConcurrency] = useState<Record<string, boolean>>({});
   const [concurrencyMsg, setConcurrencyMsg] = useState<Record<string, string>>({});
@@ -267,18 +270,29 @@ export default function SATenantDetailPage() {
   const [concurrencyImpactConfirmed, setConcurrencyImpactConfirmed] = useState(false);
   const [forceMigrationAvailable, setForceMigrationAvailable] = useState(false);
   const concurrencyRequestSequence = useRef(0);
+  // One clear-timer per account's "Saved" note: a second save replaces the
+  // first's timer, and unmounting clears them all.
+  const savedNoteTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  useEffect(() => {
+    const timers = savedNoteTimers.current;
+    return () => { Object.values(timers).forEach(clearTimeout); };
+  }, []);
 
   const loadAccounts = useCallback(async () => {
     if (!id) return;
     setAccountsLoading(true);
+    setAccountsError(null);
     try {
       const accs = await getTenantAccounts(id);
       setAccounts(accs);
       const edits: Record<string, number> = {};
       accs.forEach(a => { if (a.max_concurrent_calls !== null) edits[a.id] = a.max_concurrent_calls; });
       setConcurrencyEdits(edits);
-    } catch {
+    } catch (err) {
+      // A failure is not "no accounts": say so, with a retry.
       setAccounts([]);
+      setAccountsError(err instanceof Error ? err.message : 'Failed to load accounts');
     } finally {
       setAccountsLoading(false);
     }
@@ -294,7 +308,11 @@ export default function SATenantDetailPage() {
     try {
       await updateAccountConcurrency(id!, accountId, value);
       setConcurrencyMsg(prev => ({ ...prev, [accountId]: 'Saved' }));
-      setTimeout(() => setConcurrencyMsg(prev => ({ ...prev, [accountId]: '' })), 2000);
+      clearTimeout(savedNoteTimers.current[accountId]);
+      savedNoteTimers.current[accountId] = setTimeout(() => {
+        delete savedNoteTimers.current[accountId];
+        setConcurrencyMsg(prev => ({ ...prev, [accountId]: '' }));
+      }, 2000);
     } catch (err) {
       setConcurrencyMsg(prev => ({ ...prev, [accountId]: err instanceof Error ? err.message : 'Failed' }));
     } finally {
@@ -429,11 +447,14 @@ export default function SATenantDetailPage() {
   const loadPhones = useCallback(async () => {
     if (!id) return;
     setPhonesLoading(true);
+    setPhonesError(null);
     try {
       const phones = await getTenantPhoneNumbers(id);
       setTenantPhones(phones);
-    } catch {
+    } catch (err) {
+      // A failure is not "no numbers assigned": say so, with a retry.
       setTenantPhones([]);
+      setPhonesError(err instanceof Error ? err.message : 'Failed to load phone numbers');
     } finally {
       setPhonesLoading(false);
     }
@@ -446,11 +467,14 @@ export default function SATenantDetailPage() {
     setAssignPhoneId('');
     setAssignPhoneDefault(false);
     setPhoneError(null);
+    setAssignableError(null);
     try {
       const all = await listPhoneNumbers({ status: 'active' });
       setAllPhoneNumbers(all);
-    } catch {
+    } catch (err) {
+      // An empty picker would read as "nothing left to assign".
       setAllPhoneNumbers([]);
+      setAssignableError(err instanceof Error ? err.message : 'Failed to load phone numbers');
     }
   };
 
@@ -684,7 +708,9 @@ export default function SATenantDetailPage() {
             </button>
           </div>
           {phoneError && <div className={styles.error}><ErrorText message={phoneError} /></div>}
-          {!phonesLoading && tenantPhones.length === 0 ? (
+          {phonesError ? (
+            <ErrorAlert message={phonesError} onRetry={loadPhones} />
+          ) : !phonesLoading && tenantPhones.length === 0 ? (
             <EmptyState
               icon={<Phone size={28} />}
               title="No phone numbers assigned"
@@ -707,7 +733,10 @@ export default function SATenantDetailPage() {
       )}
 
       {/* ── Service: per-account settings + per-account concurrency ── */}
-      {tab === 'service' && (<>
+      {tab === 'service' && accountsError && (
+        <ErrorAlert message={accountsError} onRetry={loadAccounts} />
+      )}
+      {tab === 'service' && !accountsError && (<>
         <AccountSettingsPanel tenantId={id!} accounts={accountOptions} />
 
         <div className={styles.section}>
@@ -1126,6 +1155,7 @@ export default function SATenantDetailPage() {
               Set as default for this tenant
             </label>
           </div>
+          {assignableError && <div className={styles.error}><ErrorText message={assignableError} /></div>}
           {phoneError && <div className={styles.error}><ErrorText message={phoneError} /></div>}
         </form>
       </Modal>
