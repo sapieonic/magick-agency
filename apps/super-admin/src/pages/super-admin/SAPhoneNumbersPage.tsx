@@ -58,6 +58,9 @@ const ROW_CONFIRM_COPY: Record<RowConfirm['kind'], { title: string; message: str
 
 export default function SAPhoneNumbersPage() {
   const [phoneNumbers, setPhoneNumbers] = useState<PhoneNumber[]>([]);
+  // The inventory read leaves deleted numbers out, so the Deleted filter
+  // reads them by status on its own (refetched each time it is picked).
+  const [deletedNumbers, setDeletedNumbers] = useState<PhoneNumber[]>([]);
   const [providers, setProviders] = useState<TelephonyProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -86,7 +89,8 @@ export default function SAPhoneNumbersPage() {
   // Provider / status filters, then the phone/label search.
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return phoneNumbers.filter(
+    const rows = filterStatus === 'deleted' ? deletedNumbers : phoneNumbers;
+    return rows.filter(
       pn =>
         (!filterProvider || pn.provider_id === filterProvider)
         && (!filterStatus || pn.status === filterStatus)
@@ -94,7 +98,7 @@ export default function SAPhoneNumbersPage() {
           || pn.phone_number.toLowerCase().includes(q)
           || (pn.label ?? '').toLowerCase().includes(q)),
     );
-  }, [phoneNumbers, filterProvider, filterStatus, search]);
+  }, [phoneNumbers, deletedNumbers, filterProvider, filterStatus, search]);
 
   // Over the whole inventory, never the filtered rows.
   const stats = useMemo(() => {
@@ -118,6 +122,7 @@ export default function SAPhoneNumbersPage() {
   // The whole inventory, unfiltered: the provider and status filters narrow it
   // client-side, so a filter change costs no request and the stat cards can
   // count the whole inventory (there is no pagination; the route returns it all).
+  // The route leaves deleted numbers out; the Deleted filter reads those itself.
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -144,6 +149,18 @@ export default function SAPhoneNumbersPage() {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadCatalog(); }, [loadCatalog]);
+
+  useEffect(() => {
+    if (filterStatus !== 'deleted') return;
+    let cancelled = false;
+    setDeletedNumbers([]);
+    listPhoneNumbers({ status: 'deleted' })
+      .then(rows => { if (!cancelled) setDeletedNumbers(rows); })
+      .catch(err => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load deleted phone numbers');
+      });
+    return () => { cancelled = true; };
+  }, [filterStatus]);
 
   // A filter change starts a fresh selection, as the refetch it replaced did.
   useEffect(() => { clearSelection(); }, [filterProvider, filterStatus, clearSelection]);
