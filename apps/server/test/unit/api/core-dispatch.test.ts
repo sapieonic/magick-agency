@@ -152,6 +152,7 @@ describe('callCore — static resolution against the private internal handler in
   it('finds the public-API handler modules and their internal paths (the extraction is not vacuous)', () => {
     expect(callers.sort()).toEqual([
       'api/agency.plugin.ts', // installs the instance (`setCoreHandlers`); calls nothing
+      'api/routes/helpers/core-campaign.ts', // the campaign ownership probe the route files share
       'api/routes/proxy-agency-agent.routes.ts',
       'api/routes/proxy-agency-calls.routes.ts',
       'api/routes/proxy-agency-campaigns.routes.ts',

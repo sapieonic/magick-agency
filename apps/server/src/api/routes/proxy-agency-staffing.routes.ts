@@ -4,6 +4,7 @@ import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
 import { requirePermission } from '../../rbac/rbac.middleware.js';
 import { callCore } from '../core-dispatch.js';
+import { fetchOwnedCoreCampaign, stringField } from './helpers/core-campaign.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../audit/platform/audit-actor.js';
@@ -118,19 +119,6 @@ const myCampaignsQuerySchema = z.object({
  */
 
 /**
- * Best-effort extraction of a string field from the internal handler's response
- * body. The campaign response is passed through untyped, so this narrows
- * defensively rather than trusting the body.
- */
-function extractStringField(body: unknown, field: string): string | undefined {
-  if (body && typeof body === 'object' && field in body) {
-    const value = (body as Record<string, unknown>)[field];
-    return typeof value === 'string' ? value : undefined;
-  }
-  return undefined;
-}
-
-/**
  * Which person to staff. `campaign_id` is deliberately NOT a body field — it is
  * the URL's `:id`, so a body cannot name a campaign the caller did not address
  * and quietly assign into it.
@@ -235,11 +223,11 @@ async function resolveCampaignSummaries(
     const rows = (result.body as { campaigns?: unknown } | null)?.campaigns;
     if (!Array.isArray(rows)) return summaries;
     for (const row of rows) {
-      const id = extractStringField(row, 'id');
+      const id = stringField(row, 'id');
       if (!id) continue;
       summaries.set(id, {
-        name: extractStringField(row, 'name') ?? null,
-        status: extractStringField(row, 'status') ?? null,
+        name: stringField(row, 'name'),
+        status: stringField(row, 'status'),
       });
     }
     return summaries;
@@ -331,12 +319,8 @@ async function assertCampaignInScope(
   // `requireOwned`'s tenant/account mismatch) → this route's 404; 403 `feature_disabled`
   // (`agency_dialer_enabled` off) and 400 (no `x-mgkvc-account`: a tenant-level caller
   // with no `X-Account-Id`) → passed through as-is; a handler fault → its 500, passed through.
-  const campaign = await callCore({
-    method: 'GET',
-    path: `/agency-campaigns/${campaignId}`,
-    tenantId: request.tenantId!,
-    accountId: request.accountId,
-  });
+  const campaign = await fetchOwnedCoreCampaign(request, campaignId);
+  if (campaign.ok) return true;
 
   if (campaign.status === 404) {
     // `code` is carried explicitly and it is not decoration: a bare
@@ -354,15 +338,12 @@ async function assertCampaignInScope(
     });
     return false;
   }
-  if (campaign.status >= 400) {
-    // Anything else — the handler refusing or faulting — is passed through as-is
-    // rather than collapsed into a 404. This route could not PROVE the campaign
-    // is missing, and answering "not found" for "we could not ask" is the
-    // confident-wrong answer this codebase keeps having to un-learn.
-    reply.code(campaign.status).send(campaign.body);
-    return false;
-  }
-  return true;
+  // Anything else — the handler refusing or faulting — is passed through as-is
+  // rather than collapsed into a 404. This route could not PROVE the campaign
+  // is missing, and answering "not found" for "we could not ask" is the
+  // confident-wrong answer this codebase keeps having to un-learn.
+  reply.code(campaign.status).send(campaign.body);
+  return false;
 }
 
 export async function proxyAgencyStaffingRoutes(app: FastifyInstance): Promise<void> {

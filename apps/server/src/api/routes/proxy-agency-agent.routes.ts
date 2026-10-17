@@ -17,27 +17,14 @@ import { callCore, forwardCore } from '../core-dispatch.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { rewriteStationWsUrl } from './proxy-agency-station.routes.js';
 import { rejectPathEscapingParams } from './helpers/path-params.js';
+// Audit fields read off the handler's untyped body, defensively (`stringField`'s rule).
+import { stringField } from './helpers/core-campaign.js';
 import { resolveAgencyActor, type AgencyActorFields } from '../../agency/agency-actor.js';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor, resolvedUserAuditActor } from '../../audit/platform/audit-actor.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'proxy-agency-agent' });
-
-/**
- * Best-effort extraction of a string field from the internal handler's response
- * body for the audit trail. The response is passed through untyped, so this
- * narrows defensively rather than trusting the body, and a malformed/unexpected
- * response must never throw out of an audit call and take the request down
- * with it.
- */
-function extractStringField(body: unknown, field: string): string | undefined {
-  if (body && typeof body === 'object' && field in body) {
-    const value = (body as Record<string, unknown>)[field];
-    return typeof value === 'string' ? value : undefined;
-  }
-  return undefined;
-}
 
 function accountAudit(request: FastifyRequest): { tenant_id: string; account_id?: string } {
   return {
@@ -258,7 +245,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       );
     }
     if (result.status < 400) {
-      const sessionId = extractStringField(result.body, 'session_id');
+      const sessionId = stringField(result.body, 'session_id');
       platformAuditLogger.log({
         ...accountAudit(request),
         ...resolvedUserAuditActor(request, actor.actor.agent_user_id),
@@ -302,7 +289,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       accountId: request.accountId,
     });
     if (result.status < 400) {
-      const campaignId = extractStringField(result.body, 'campaign_id');
+      const campaignId = stringField(result.body, 'campaign_id');
       platformAuditLogger.log({
         ...accountAudit(request),
         ...requestAuditActor(request),
@@ -363,7 +350,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       accountId: request.accountId,
     });
     if (result.status < 400) {
-      const campaignId = extractStringField(result.body, 'campaign_id');
+      const campaignId = stringField(result.body, 'campaign_id');
       platformAuditLogger.log({
         ...accountAudit(request),
         ...requestAuditActor(request),
@@ -406,7 +393,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       accountId: request.accountId,
     });
     if (result.status < 400) {
-      const campaignId = extractStringField(result.body, 'campaign_id');
+      const campaignId = stringField(result.body, 'campaign_id');
       platformAuditLogger.log({
         ...accountAudit(request),
         ...requestAuditActor(request),
@@ -459,7 +446,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
         { tenantId: request.tenantId, sessionId: request.params.id, actingUserId: request.user?.id },
         'Supervisor forced an agent back to available',
       );
-      const campaignId = extractStringField(result.body, 'campaign_id');
+      const campaignId = stringField(result.body, 'campaign_id');
       platformAuditLogger.log({
         ...accountAudit(request),
         ...requestAuditActor(request),
@@ -508,7 +495,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       accountId: request.accountId,
     });
     if (result.status < 400) {
-      const campaignId = extractStringField(result.body, 'campaign_id');
+      const campaignId = stringField(result.body, 'campaign_id');
       platformAuditLogger.log({
         ...accountAudit(request),
         ...resolvedUserAuditActor(request, actor.actor.agent_user_id),
@@ -570,7 +557,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       // `disposition_code` and `on_behalf` are operational values (a fixed
       // catalog code / a boolean), not customer content — `notes` is free text
       // an agent typed and is deliberately excluded from the audit trail.
-      const campaignId = extractStringField(result.body, 'campaign_id');
+      const campaignId = stringField(result.body, 'campaign_id');
       platformAuditLogger.log({
         ...accountAudit(request),
         ...resolvedUserAuditActor(request, actor.actor.agent_user_id),
@@ -724,8 +711,8 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       // the row records only that a suppression happened and its scope.
       // `entry_id` is included when the (untyped, passed-through) response
       // happens to carry one.
-      const entryId = extractStringField(result.body, 'entry_id');
-      const campaignId = extractStringField(result.body, 'campaign_id');
+      const entryId = stringField(result.body, 'entry_id');
+      const campaignId = stringField(result.body, 'campaign_id');
       platformAuditLogger.log({
         ...accountAudit(request),
         ...resolvedUserAuditActor(request, actor.actor.agent_user_id),

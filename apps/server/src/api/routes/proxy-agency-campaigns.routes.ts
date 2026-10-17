@@ -90,6 +90,7 @@ import {
 } from '../../agency/agency-campaign-wire.js';
 import { rejectPathEscapingParams } from './helpers/path-params.js';
 import { drainPages } from './helpers/drain-pages.js';
+import { fetchOwnedCoreCampaign, stringField } from './helpers/core-campaign.js';
 
 /**
  * The ownership probe's outcome. The internal handler REFUSING is forwarded as-is and
@@ -214,27 +215,6 @@ class SpineExportRefused extends Error {
  * campaign payload, it is a bug — the dialer runtime owns the campaign schema
  * and has no such column.
  */
-
-/**
- * Best-effort extraction of the resulting campaign status for the audit trail.
- * The internal handler's response body on a lifecycle action IS the updated
- * campaign, but this layer keeps no campaign schema (see the ownership-split
- * comment above), so the body is untyped here and this narrows defensively
- * rather than trusting its shape — a malformed/unexpected handler response must
- * never throw out of an audit call and take the request down with it.
- */
-function extractCampaignStatus(body: unknown): string | undefined {
-  return extractCampaignField(body, 'status') ?? undefined;
-}
-
-/** The same defensive narrowing, for any string field of the handler's campaign body. */
-function extractCampaignField(body: unknown, field: string): string | null {
-  if (body && typeof body === 'object' && field in body) {
-    const value = (body as Record<string, unknown>)[field];
-    return typeof value === 'string' ? value : null;
-  }
-  return null;
-}
 
 /**
  * `action` accepts repeats (`?action=a&action=b`) and comma-separated values in
@@ -1007,25 +987,20 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply,
   ): Promise<OwnedCampaign | null> => {
-    const result = await callCore({
-      method: 'GET',
-      path: `/agency-campaigns/${request.params.id}`,
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
-    });
-    if (result.status >= 400) {
+    const probe = await fetchOwnedCoreCampaign(request, request.params.id);
+    if (!probe.ok) {
       // A REFUSAL is the handler's answer and is forwarded unchanged — a cross-tenant id
       // and a nonexistent one must stay indistinguishable.
-      await reply.code(result.status).send(result.body);
+      await reply.code(probe.status).send(probe.body);
       return null;
     }
-    const accountId = extractCampaignField(result.body, 'account_id');
+    const accountId = stringField(probe.body, 'account_id');
     if (!accountId) {
       throw new Error('agency campaign ownership probe: the internal handler answered without the campaign\'s account_id');
     }
     return {
       accountId,
-      name: extractCampaignField(result.body, 'name'),
+      name: stringField(probe.body, 'name'),
     };
   };
 
@@ -1799,7 +1774,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       accountId: request.accountId,
     });
     if (result.status < 400) {
-      const status = extractCampaignStatus(result.body);
+      const status = stringField(result.body, 'status');
       platformAuditLogger.log({
         tenant_id: request.tenantId!,
         ...(request.accountId ? { account_id: request.accountId } : {}),
@@ -1831,7 +1806,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       accountId: request.accountId,
     });
     if (result.status < 400) {
-      const status = extractCampaignStatus(result.body);
+      const status = stringField(result.body, 'status');
       platformAuditLogger.log({
         tenant_id: request.tenantId!,
         ...(request.accountId ? { account_id: request.accountId } : {}),
@@ -1863,7 +1838,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       accountId: request.accountId,
     });
     if (result.status < 400) {
-      const status = extractCampaignStatus(result.body);
+      const status = stringField(result.body, 'status');
       platformAuditLogger.log({
         tenant_id: request.tenantId!,
         ...(request.accountId ? { account_id: request.accountId } : {}),
@@ -1912,7 +1887,7 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       // not "stopped" — `status` in `details` is therefore whatever the handler
       // returned at this instant (typically still `running`/`stopping`), not a
       // fabricated terminal state.
-      const status = extractCampaignStatus(result.body);
+      const status = stringField(result.body, 'status');
       platformAuditLogger.log({
         tenant_id: request.tenantId!,
         ...(request.accountId ? { account_id: request.accountId } : {}),
@@ -2120,13 +2095,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
      * shorten the wait for it. A request the gates below refuse discards the name.
      */
     const actorNameLookup = resolveActorDisplayName(request, actorUserId);
-    const parent = await callCore({
-      method: 'GET',
-      path: `/agency-campaigns/${request.params.id}`,
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
-    });
-    if (parent.status >= 400) return reply.code(parent.status).send(parent.body);
+    const parent = await fetchOwnedCoreCampaign(request, request.params.id);
+    if (!parent.ok) return reply.code(parent.status).send(parent.body);
 
     // The behavioral capabilities, on a route that sends no config of its own.
     // See `resolveInheritedBehavioralConfig` for why the merged parent config is
@@ -2146,8 +2116,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     // with exactly `parsed.data.config_overrides`, the object forwarded below, on
     // top).
     if (!(await assertBehavioralCapabilitiesForConfig(request, reply, effectiveConfig, {
-      tenantId: extractCampaignField(parent.body, 'tenant_id'),
-      accountId: extractCampaignField(parent.body, 'account_id'),
+      tenantId: stringField(parent.body, 'tenant_id'),
+      accountId: stringField(parent.body, 'account_id'),
     }))) return;
 
     // Config validation, second half — the one cross-field rule that needs the
@@ -2262,12 +2232,12 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
        * Every field the handler supplies is narrowed defensively before it is
        * read — this layer keeps no campaign schema, and a malformed response must
        * never throw out of an audit call and take a successful create down with
-       * it (`extractCampaignField`'s rule).
+       * it (`stringField`'s rule).
        */
       const body = (result.body && typeof result.body === 'object' && !Array.isArray(result.body))
         ? (result.body as Record<string, unknown>)
         : {};
-      const childCampaignId = extractCampaignField(body['campaign'], 'id');
+      const childCampaignId = stringField(body['campaign'], 'id');
       const seeded = body['contacts_seeded'];
       // Normally 0 and then omitted. A retry seeds fewer rows than the preview
       // matched when the parent held byte-identical roster rows, which the child
@@ -2396,7 +2366,13 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   }, async (request, reply) => {
     const parsed = parseOr400(analyzeSchema, request.body, reply, 'agency');
     if (!parsed) return reply;
-    if (!isTenantOwnedKey(parsed.data.s3_key, request.tenantId!)) {
+    // An S3 key is client-supplied here, so it must be proved to be one of this
+    // tenant's UPLOADS before it is read. The tenant prefix alone is not enough:
+    // without it a tenant could name another tenant's key and have the analyzer
+    // read it back as sample values, and with only it an account-scoped caller
+    // could name a sibling account's rejected-rows export (keyed by nothing but the
+    // job id) and read that back the same way. See `agency-ingest-keys.ts`.
+    if (!isTenantUploadKey(parsed.data.s3_key, request.tenantId!)) {
       return reply.code(403).send({ error: 'Forbidden', message: 'That upload does not belong to this tenant.' });
     }
 
@@ -2432,7 +2408,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     if (!parsed) return reply;
     const input = parsed.data;
 
-    if (!isTenantOwnedKey(input.s3_key, request.tenantId!)) {
+    // The same upload-key proof as the analyzer's, above.
+    if (!isTenantUploadKey(input.s3_key, request.tenantId!)) {
       return reply.code(403).send({ error: 'Forbidden', message: 'That upload does not belong to this tenant.' });
     }
     if (!input.dry_run && !input.campaign_id) {
@@ -2920,40 +2897,23 @@ async function proveCampaignOwnedForWrite(
     });
     return null;
   }
-  const result = await callCore({
-    method: 'GET',
-    path: `/agency-campaigns/${campaignId}`,
-    tenantId: request.tenantId!,
-    accountId,
-  });
-  if (result.status >= 400) {
+  const probe = await fetchOwnedCoreCampaign(request, campaignId, accountId);
+  if (!probe.ok) {
     // Forwarded unchanged: a sibling account's campaign, another tenant's and a
     // nonexistent one are all the handler's 404, and must stay indistinguishable.
-    await reply.code(result.status).send(result.body);
+    await reply.code(probe.status).send(probe.body);
     return null;
   }
-  const ownerAccountId = extractCampaignField(result.body, 'account_id');
+  const ownerAccountId = stringField(probe.body, 'account_id');
   if (!ownerAccountId) {
     throw new Error('agency campaign ownership probe: the internal handler answered without the campaign\'s account_id');
   }
   return ownerAccountId;
 }
 
-/**
- * An S3 key is client-supplied here, so it must be proved to be one of this
- * tenant's UPLOADS before it is read. The tenant prefix alone is not enough:
- * without it a tenant could name another tenant's key and have the analyzer
- * read it back as sample values, and with only it an account-scoped caller
- * could name a sibling account's rejected-rows export (keyed by nothing but the
- * job id) and read that back the same way. See `agency-ingest-keys.ts`.
- */
 /** The internal handler's `authMiddleware` 400 for a request with no account. */
 function missingAccountBody(): { error: string; message: string } {
   return { error: 'Bad Request', message: `Missing required header: ${ACCOUNT_HEADER}` };
-}
-
-function isTenantOwnedKey(key: string, tenantId: string): boolean {
-  return isTenantUploadKey(key, tenantId);
 }
 
 /**
