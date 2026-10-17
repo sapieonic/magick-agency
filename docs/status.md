@@ -117,7 +117,7 @@ Latest run, 2026-10-17, after the tidy-up, from inside each package:
 | `packages/domain` | 53 | — |
 | `packages/contracts` | 77 | — |
 | `packages/observability` | 14 | — |
-| `packages/web-ui` | 228 | — |
+| `packages/web-ui` | 230 | — |
 | `apps/console` | 4410 | — |
 | `apps/super-admin` | 421 | — |
 | `grafana` (`pnpm test:grafana`) | 31 | — |
