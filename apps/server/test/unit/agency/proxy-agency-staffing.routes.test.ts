@@ -487,6 +487,33 @@ describe('GET /my-assignments — the plural replacement', () => {
     await app.close();
   });
 
+  // Each read only adds labels and degrades on its own, so waiting for one before
+  // starting the next only made the agent's console wait longer.
+  it('runs the summaries reads of one page concurrently', async () => {
+    const many = Array.from({ length: 2 * SUMMARIES_MAX_IDS + 1 }, (_, i) =>
+      assignmentRow(`aaaaaaaa-0000-4000-8000-${String(i).padStart(12, '0')}`),
+    );
+    mocks.listActiveForUser.mockResolvedValue(many);
+    const naming = namingEvery({ name: 'X', status: 'running' });
+    let inFlight = 0;
+    let maxInFlight = 0;
+    mocks.proxyToCore.mockImplementation(async (req: { path: string; query?: { ids?: string } }) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight--;
+      return naming(req);
+    });
+    const app = await buildApp({ role: 'agent', userId: AGENT_USER });
+
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/my-assignments` });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().assignments.every((a: { campaign_name: string }) => a.campaign_name === 'X')).toBe(true);
+    expect(maxInFlight).toBe(3);
+    await app.close();
+  });
+
   it('lets one refused summaries read null only its own campaigns', async () => {
     const many = Array.from({ length: SUMMARIES_MAX_IDS + 1 }, (_, i) =>
       assignmentRow(`aaaaaaaa-0000-4000-8000-${String(i).padStart(12, '0')}`),

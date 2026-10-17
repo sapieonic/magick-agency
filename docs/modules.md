@@ -204,7 +204,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-roster.routes.test.ts` | 69 |
 | `apps/server/test/unit/agency/proxy-agency-route-table.test.ts` | 29 |
 | `apps/server/test/unit/agency/proxy-agency-spine.routes.test.ts` | 40 |
-| `apps/server/test/unit/agency/proxy-agency-staffing.routes.test.ts` | 78 |
+| `apps/server/test/unit/agency/proxy-agency-staffing.routes.test.ts` | 81 |
 | `apps/server/test/unit/agency/proxy-agency-station.routes.test.ts` | 10 |
 | `apps/server/test/unit/agency/reaper.test.ts` | 41 |
 | `apps/server/test/unit/agency/retry-policy.test.ts` | 23 |

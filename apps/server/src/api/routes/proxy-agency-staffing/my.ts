@@ -12,6 +12,7 @@ import { CAMPAIGN_SUMMARIES_MAX_IDS, stringField } from '../helpers/core-campaig
 import { createChildLogger } from '@magick-agency/observability';
 import { agencyCampaignAgentRepository, HISTORY_LIMIT_MAX } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import { parseOr400 } from '../helpers/parse-or-400.js';
+import { mapWithConcurrency } from '../../../utils/concurrency.js';
 
 const log = createChildLogger({ component: 'proxy-agency-staffing' });
 
@@ -108,6 +109,9 @@ interface CampaignSummary {
 /** The answer for a campaign the lookup could not name. */
 const UNRESOLVED_SUMMARY: CampaignSummary = { name: null, status: null };
 
+/** How many summaries reads one page may have in flight at once. */
+const SUMMARIES_READ_CONCURRENCY = 4;
+
 /**
  * Resolve the names and statuses of a page's campaigns in ONE internal read
  * (`GET /agency-campaigns/summaries`) per `CAMPAIGN_SUMMARIES_MAX_IDS` campaigns, the
@@ -141,15 +145,16 @@ async function resolveCampaignSummaries(
 ): Promise<Map<string, CampaignSummary>> {
   const summaries = new Map<string, CampaignSummary>();
   // No ids, no read: an agent nobody has staffed costs nothing. More ids than one
-  // read may name are split into reads of at most `CAMPAIGN_SUMMARIES_MAX_IDS`, one
-  // after another, each degrading on its own.
+  // read may name are split into reads of at most `CAMPAIGN_SUMMARIES_MAX_IDS`, run
+  // concurrently (bounded), each degrading on its own. Each read never rejects, so
+  // one failing cannot stop the others.
+  const chunks: string[][] = [];
   for (let start = 0; start < campaignIds.length; start += CAMPAIGN_SUMMARIES_MAX_IDS) {
-    await readCampaignSummaries(
-      request,
-      campaignIds.slice(start, start + CAMPAIGN_SUMMARIES_MAX_IDS),
-      summaries,
-    );
+    chunks.push(campaignIds.slice(start, start + CAMPAIGN_SUMMARIES_MAX_IDS));
   }
+  await mapWithConcurrency(chunks, SUMMARIES_READ_CONCURRENCY, (ids) =>
+    readCampaignSummaries(request, ids, summaries),
+  );
   return summaries;
 }
 
