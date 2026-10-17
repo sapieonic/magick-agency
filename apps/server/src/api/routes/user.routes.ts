@@ -14,15 +14,17 @@ import type { MembershipRecord, MembershipRole } from '@magick-agency/db/models/
 import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../audit/platform/audit-actor.js';
-import type { InviteEmailResult } from '../../notifications/invite-mailer.js';
-import { issueInvite } from '../../invites/invite-issuer.js';
+// The invite's write, the guarded invitation and the shared refusals
+// (`src/invites/membership-provisioning.ts`, shared with the super-admin tree).
+import {
+  inviteMember,
+  isDemotionFromAgent,
+  issueInviteReportingFailure,
+  unverifiedAddressHolderBody,
+} from '../../invites/membership-provisioning.js';
 import { settledValue } from './helpers/settled.js';
 import { createChildLogger } from '@magick-agency/observability';
-import {
-  ADDRESS_REBOUND_DURING_INVITE,
-  PENDING_UID_PREFIX,
-  UNVERIFIED_ADDRESS_HOLDER,
-} from '../../auth/firebase-identity.js';
+import { ADDRESS_REBOUND_DURING_INVITE } from '../../auth/firebase-identity.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'user-routes' });
@@ -213,31 +215,6 @@ async function closeAgencyStaffing(
 }
 
 /**
- * Is this role change one that should close the user's agency staffing?
- *
- * **Only a change AWAY from `agent`, and the predicate says exactly that** rather
- * than "the roles differ", because the three other directions must not touch
- * staffing and each for its own reason:
- *
- *  - **to `agent`** (`viewer` → `agent`, say) is somebody being made an agent.
- *    They hold no staffing yet and a supervisor is about to give them some; closing
- *    on this direction would be a no-op today and would silently undo an
- *    assignment made in the same minute tomorrow.
- *  - **between two non-agent roles** (`operator` → `account_admin`) is a promotion
- *    that has nothing to do with the dialer. Supervisors and admins CAN be staffed
- *    — `POST /campaigns/:id/agents` requires only a membership, so covering a
- *    shift is expressible — and unstaffing them for an unrelated promotion would
- *    destroy a real staffing decision.
- *  - **`agent` → `agent`** is not a change at all.
- *
- * `to` is typed as `MembershipRole` rather than compared against the literal
- * string, so a future role named `agent_lead` cannot satisfy this by accident.
- */
-function isDemotionFromAgent(from: MembershipRole, to: MembershipRole): boolean {
-  return from === 'agent' && to !== 'agent';
-}
-
-/**
  * Refuse when the caller's membership is account-scoped and disagrees with a
  * target account id.
  *
@@ -401,136 +378,42 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
         { tenantId: request.tenantId },
         'Invite refused: every user row for this address is email_unverified',
       );
+      return reply.code(409).send(unverifiedAddressHolderBody('send the invitation again'));
+    }
+
+    // The write itself — find-or-stub, then create or reactivate, each write guarded
+    // against a concurrent claim (`requireProvenEmail`) — is `inviteMember`'s; it
+    // carries the reasoning. Every refusal below means nothing was written.
+    const invited = await inviteMember({
+      tenantId: request.tenantId!,
+      email,
+      role: role as MembershipRole,
+      accountId: account_id ?? null,
+      invitedBy: request.user?.id,
+      resolved,
+    });
+    if (invited.status === 'unproven_conflict') {
+      return reply.code(409).send(unverifiedAddressHolderBody('send the invitation again'));
+    }
+    /**
+     * The row this invite resolved no longer answers to this address. Retrying is the
+     * remedy and it genuinely works. Deliberately NOT the `unverified_address_holder`
+     * wording above — nothing here is waiting on somebody to verify an address, and
+     * sending an admin to chase that would be advice about the wrong person.
+     */
+    if (invited.status === 'address_rebound') {
       return reply.code(409).send({
         error: 'Conflict',
-        code: UNVERIFIED_ADDRESS_HOLDER,
+        code: ADDRESS_REBOUND_DURING_INVITE,
         message:
-          'That email belongs to an account that has not verified this address. '
-          + 'Ask them to sign in and verify it, then send the invitation again.',
+          'That email address was claimed by someone signing in while this invitation '
+          + 'was being created. Nothing was changed — please send the invitation again.',
       });
     }
-
-    let user = resolved.status === 'found' ? resolved.user : null;
-    if (!user) {
-      // Create a stub user that will be activated on first Firebase sign-in
-      user = await userRepository.create({
-        /**
-         * The stub uid, built from the SHARED prefix rather than a literal.
-         *
-         * Every writer of the `pending_` convention and every reader of it now
-         * resolves the one exported constant in `auth/firebase-identity.ts`.
-         * The writers are this line and super-admin's two stub-user inserts
-         * (tenant create and member add); the readers are
-         * `adoptFirebaseIdentity`'s `onlyUnclaimedStub` predicate,
-         * `deriveMembershipInviteState`, super-admin's `is_pending`, and
-         * `/auth/session`'s `wasPending` log field.
-         *
-         * Literals meant the places that MINT the value could drift from the
-         * places that INTERPRET it, and nothing would have reported it: a
-         * renamed prefix would simply have made every future invitee read as an
-         * already-activated account, and `onlyUnclaimedStub` would have refused
-         * every legitimate claim.
-         */
-        firebase_uid: `${PENDING_UID_PREFIX}${crypto.randomUUID()}`,
-        email,
-      });
-    }
-
-    /**
-     * Include leftover `revoked`/`inactive` rows. `findByUserAndTenant` filters
-     * `status = 'active'`, so a departed member looked like a new invitee and
-     * the INSERT then hit `idx_memberships_user_tenant_level` (or
-     * `UNIQUE(user_id, tenant_id, account_id)`), which `errorMaskHook` rewrites
-     * into a generic duplicate-key 500. Super-admin add has the same hole;
-     * both reactivate the leftover and apply the requested role.
-     */
-    const existing = await membershipRepository.findAnyByUserAndTenant(user.id, request.tenantId!);
-    const matching = existing.find((m) =>
-      account_id ? m.account_id === account_id : m.account_id === null,
-    );
-    if (matching?.status === 'active') {
+    if (invited.status === 'already_member') {
       return reply.code(409).send({ error: 'Conflict', message: 'User already has a membership in this context' });
     }
-
-    /**
-     * `requireProvenEmail` closes the window between the address resolving
-     * above and the membership landing here: a concurrent claim can rebind that
-     * row in between, and attaching authority to it afterwards is the takeover
-     * this route's lookup exists to stop, reached through an interleaving
-     * instead of a missing check. The guard locks the user row in the same
-     * statement as the write, so a row that changed hands in the meantime gets
-     * no membership at all.
-     *
-     * The ADDRESS is what it is given, not a boolean. A claim carrying a
-     * VERIFIED address that differs from the invited one rewrites `users.email`
-     * to the claimant's and leaves `email_unverified` false, so a flag-only
-     * recheck passed and this INSERT landed on the claimant's row — the same
-     * takeover, through the one arm the flag cannot see.
-     */
-    const membership = matching
-      ? await membershipRepository.reactivateWithRole(
-        matching.id,
-        role as MembershipRole,
-        request.tenantId!,
-        { requireProvenEmail: email },
-      )
-      : await membershipRepository.create({
-        user_id: user.id,
-        tenant_id: request.tenantId!,
-        account_id: account_id || null,
-        role: role as MembershipRole,
-        invited_by: request.user?.id,
-      }, { requireProvenEmail: email });
-
-    if (!membership) {
-      /**
-       * Nothing was written, and there are THREE reasons for that: a concurrent
-       * reactivate won the leftover (#280's case), a concurrent claim bound the
-       * row with an UNVERIFIED address (it is flagged now), or a concurrent
-       * claim bound it with a VERIFIED one (the row is keyed under the
-       * claimant's address now, and is no longer this address's row at all).
-       * Re-read to say which — this decides only the WORDING, never whether to
-       * write, so it cannot be a check that disagrees with the write it follows.
-       */
-      const after = await userRepository.resolveByProvenEmail(email);
-      if (after.status === 'unproven_conflict') {
-        log.warn(
-          { tenantId: request.tenantId },
-          'Invite refused: the address was bound by a claim while this invite was being written',
-        );
-        return reply.code(409).send({
-          error: 'Conflict',
-          code: UNVERIFIED_ADDRESS_HOLDER,
-          message:
-            'That email belongs to an account that has not verified this address. '
-            + 'Ask them to sign in and verify it, then send the invitation again.',
-        });
-      }
-      /**
-       * The row this invite resolved no longer answers to this address, so the
-       * guard refused rather than writing onto whoever holds it now. Retrying
-       * is the remedy and it genuinely works: the next lookup resolves the
-       * address afresh, finding either its new rightful row or nothing, in
-       * which case a fresh stub is written. Deliberately NOT the
-       * `unverified_address_holder` wording above — nothing here is waiting on
-       * somebody to verify an address, and sending an admin to chase that would
-       * be advice about the wrong person.
-       */
-      if (after.status === 'none' || after.user.id !== user.id) {
-        log.warn(
-          { tenantId: request.tenantId },
-          'Invite refused: the address changed hands while this invite was being written',
-        );
-        return reply.code(409).send({
-          error: 'Conflict',
-          code: ADDRESS_REBOUND_DURING_INVITE,
-          message:
-            'That email address was claimed by someone signing in while this invitation '
-            + 'was being created. Nothing was changed — please send the invitation again.',
-        });
-      }
-      return reply.code(409).send({ error: 'Conflict', message: 'User already has a membership in this context' });
-    }
+    const { membership, user } = invited;
 
     await redisCache.del(membershipCacheKey(user.id, request.tenantId!));
 
@@ -554,6 +437,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
      * depending on the callee keeping its word.
      *
      * ── EVERYTHING to do with the invitation IS INSIDE THE GUARD ──────────
+     * (`issueInviteReportingFailure`, shared with the super-admin add.)
      * `issueInvite` mints a token, writes a `membership_invites` row, reads the
      * tenant and inviter names, resolves the join URL and sends the mail — five
      * things that can fail, and every one of them after the membership has
@@ -579,31 +463,13 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
      * membership is written, the response says `sent: false` with a reason, and a
      * supervisor can re-issue without deleting and re-inviting.
      */
-    let signInUrl: string | null = null;
-    let inviteEmail: InviteEmailResult;
-    let inviteId: string | null = null;
-    try {
-      const issued = await issueInvite({
-        membershipId: membership.id,
-        tenantId: request.tenantId!,
-        email,
-        role: role as MembershipRole,
-        invitedBy: request.user?.id ?? null,
-      });
-      signInUrl = issued.signInUrl;
-      inviteEmail = issued.inviteEmail;
-      inviteId = issued.invite?.id ?? null;
-    } catch (err) {
-      log.error(
-        {
-          tenantId: request.tenantId,
-          invitedUserId: user.id,
-          err: err instanceof Error ? err.message : String(err),
-        },
-        'Invite issuance threw; the membership stands and the invite is reported unsent',
-      );
-      inviteEmail = { sent: false, reason: 'failed' };
-    }
+    const { signInUrl, inviteEmail, inviteId } = await issueInviteReportingFailure({
+      membershipId: membership.id,
+      tenantId: request.tenantId!,
+      email,
+      role: role as MembershipRole,
+      invitedBy: request.user?.id ?? null,
+    }, user.id);
 
     /**
      * The audit row is written AFTER the guard and outside it, so it records

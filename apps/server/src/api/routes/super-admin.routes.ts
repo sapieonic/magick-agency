@@ -2,16 +2,14 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { v4 as uuidv4 } from 'uuid';
 import { config } from '../../config/index.js';
 import { superAdminMiddleware } from '../../auth/super-admin.middleware.js';
-import { PENDING_UID_PREFIX, UNVERIFIED_ADDRESS_HOLDER } from '../../auth/firebase-identity.js';
+import { PENDING_UID_PREFIX } from '../../auth/firebase-identity.js';
 import { superAdminRepository } from '@magick-agency/db/repositories/super-admin.repository';
 import { tenantRepository } from '@magick-agency/db/repositories/tenant.repository';
 import { redisCache } from '../../cache/redis-cache.js';
 import { membershipCacheKey } from '../middleware/membership-cache-key.js';
 import { sendRevocationCacheUnavailable } from '../../cache/revocation-unavailable.js';
-import { userRepository } from '@magick-agency/db/repositories/user.repository';
 import { membershipRepository } from '@magick-agency/db/repositories/membership.repository';
 import { getPool } from '@magick-agency/db';
 import { accountRepository } from '@magick-agency/db/repositories/account.repository';
@@ -29,8 +27,15 @@ import type { MembershipRole } from '@magick-agency/db/models/membership.model';
 import { getConcurrencyControl } from '../../seams/concurrency-control.js';
 import { settledValue } from './helpers/settled.js';
 import { auditLogger } from '../../audit/audit-logger.js';
-import { issueInvite } from '../../invites/invite-issuer.js';
-import type { InviteEmailResult } from '../../notifications/invite-mailer.js';
+// The create-or-reactivate transactions and the guarded invitation, shared with
+// `POST /users/invite` (`src/invites/membership-provisioning.ts`).
+import {
+  addTenantMember,
+  isDemotionFromAgent,
+  issueInviteReportingFailure,
+  provisionTenantWithOwner,
+  unverifiedAddressHolderBody,
+} from '../../invites/membership-provisioning.js';
 import { createChildLogger } from '@magick-agency/observability';
 import {
   superAdminLoginSchema,
@@ -112,17 +117,6 @@ async function readAccountConcurrencyUtilization(
     },
     providers,
   };
-}
-
-/**
- * Is this role change one that should close the user's agency staffing?
- *
- * The same predicate as `isDemotionFromAgent` in `user.routes.ts`, for the same
- * reason (only a change AWAY from `agent`; see that function's comment for the
- * three directions that must not touch staffing).
- */
-function isDemotionFromAgent(from: MembershipRole, to: MembershipRole): boolean {
-  return from === 'agent' && to !== 'agent';
 }
 
 /**
@@ -294,107 +288,40 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
     if (!parsed) return reply;
 
     const { name, owner_email, owner_name } = parsed.data;
-    const pool = getPool();
-    const client = await pool.connect();
 
-    try {
-      await client.query('BEGIN');
-
-      // Create tenant
-      const slug = generateSlug(name);
-      const tenantResult = await client.query(
-        `INSERT INTO tenants (name, slug) VALUES ($1, $2) RETURNING *`,
-        [name, slug],
-      );
-      const tenant = tenantResult.rows[0]!;
-
-      // Create default account
-      await client.query(
-        `INSERT INTO accounts (tenant_id, name, slug) VALUES ($1, 'Default', 'default')`,
-        [tenant.id],
-      );
-
-      /**
-       * Find or create the owner's user row.
-       *
-       * `email_unverified = false` is not optional here, and it is the same
-       * rule `POST /users/invite` applies through
-       * `userRepository.findByProvenEmail`: a `users` row can be bound to an
-       * identity that never proved its address (an invite claim accepts an
-       * unverified Firebase token by design), so reusing one by address hands
-       * this tenant's OWNERSHIP to whoever claimed it. An attacker who
-       * self-invites `owner@customer.com` into their own tenant and claims it
-       * is waiting for exactly this statement.
-       *
-       * A miss writes a fresh stub beside the flagged row — correct, because
-       * they are two principals sharing a string, and `users.email` has never
-       * been unique.
-       *
-       * Through the REPOSITORY, on this transaction's own client — which is
-       * what the optional client parameter exists for. A hand-copied statement
-       * would be a second definition of the rule: a mutation dropping
-       * `AND email_unverified = false` from one copy passes every test that runs
-       * its own copy of the SQL. One definition, one place to mutate, one place
-       * to pin.
-       */
-      const owner = await userRepository.resolveByProvenEmail(owner_email, {
-        client,
-        lock: true,
-      });
-
-      /**
-       * Every row for this address is flagged, so the identity already bound to
-       * it holds the only `users` row there is. Writing a fresh stub here and
-       * making it `tenant_owner` produces a membership nobody can ever claim —
-       * `firebase_uid` is UNIQUE, so that person's claim raises `23505`. Refuse
-       * with the remedy instead. See `resolveByProvenEmail`.
-       */
-      if (owner.status === 'unproven_conflict') {
-        await client.query('ROLLBACK');
-        return reply.code(409).send({
-          error: 'Conflict',
-          code: UNVERIFIED_ADDRESS_HOLDER,
-          message:
-            'That email belongs to an account that has not verified this address. '
-            + 'Ask them to sign in and verify it, then create the workspace again.',
-        });
-      }
-
-      let userId: string;
-      if (owner.status === 'found') {
-        userId = owner.user.id;
-      } else {
-        // Create stub user with pending firebase_uid
-        const pendingUid = `${PENDING_UID_PREFIX}${uuidv4()}`;
-        const userResult = await client.query(
-          `INSERT INTO users (firebase_uid, email, display_name) VALUES ($1, $2, $3) RETURNING *`,
-          [pendingUid, owner_email, owner_name || null],
-        );
-        userId = userResult.rows[0]!.id;
-      }
-
-      // Create tenant_owner membership
-      await client.query(
-        `INSERT INTO memberships (user_id, tenant_id, role) VALUES ($1, $2, 'tenant_owner')`,
-        [userId, tenant.id],
-      );
-
-      await client.query('COMMIT');
-
-      log.info({ tenantId: tenant.id, ownerEmail: owner_email }, 'Super admin created tenant');
-      void recordSuperAdminAudit({
-        admin_id: request.superAdmin!.id, admin_email: request.superAdmin!.email,
-        action: 'create_tenant', resource_type: 'tenant', resource_id: tenant.id,
-        details: { tenant_name: name, owner_email },
-      });
-
-      return reply.code(201).send({ tenant, owner_email });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
+    /**
+     * The tenant, its `Default` account, the owner's user row and the
+     * `tenant_owner` membership, in one transaction (`provisionTenantWithOwner`).
+     * The owner is found by PROVEN address only (`email_unverified = false`): a row
+     * bound by an unverified invite claim keys under an address its owner does not
+     * control, and reusing it would hand this tenant's OWNERSHIP to whoever claimed
+     * it — an attacker who self-invites `owner@customer.com` into their own tenant and
+     * claims it is waiting for exactly that.
+     *
+     * Every row for this address flagged: the identity already bound to it holds the
+     * only `users` row there is, and a fresh stub made `tenant_owner` would be a
+     * membership nobody can ever claim (`firebase_uid` is UNIQUE, so that person's
+     * claim raises `23505`). Refused with the remedy instead, and nothing is written.
+     */
+    const provisioned = await provisionTenantWithOwner({
+      name,
+      slug: generateSlug(name),
+      ownerEmail: owner_email,
+      ownerName: owner_name,
+    });
+    if (provisioned.status === 'unproven_conflict') {
+      return reply.code(409).send(unverifiedAddressHolderBody('create the workspace again'));
     }
+    const { tenant } = provisioned;
+
+    log.info({ tenantId: tenant.id, ownerEmail: owner_email }, 'Super admin created tenant');
+    void recordSuperAdminAudit({
+      admin_id: request.superAdmin!.id, admin_email: request.superAdmin!.email,
+      action: 'create_tenant', resource_type: 'tenant', resource_id: tenant.id,
+      details: { tenant_name: name, owner_email },
+    });
+
+    return reply.code(201).send({ tenant, owner_email });
   });
 
   /**
@@ -468,140 +395,31 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
     }
     const contextAccountId = account_id ?? null;
 
-    const pool = getPool();
-    const client = await pool.connect();
-
-    let membership: Record<string, unknown> & { id: string; account_id: string | null };
-    let userId: string;
-    try {
-      await client.query('BEGIN');
-
-      /**
-       * Find or create the user being added.
-       *
-       * Same `email_unverified = false` rule, same reason, as the tenant-create
-       * lookup above: an address is a string a super admin typed, and a row
-       * bound by an unverified invite claim keys under an address its owner
-       * does not control. Through the repository on this
-       * transaction's client, for the reason given at the tenant-create call.
-       */
-      const existingUser = await userRepository.resolveByProvenEmail(email, {
-        client,
-        lock: true,
-      });
-
-      // Same refusal, same reason, as the tenant-create lookup above.
-      if (existingUser.status === 'unproven_conflict') {
-        await client.query('ROLLBACK');
-        return reply.code(409).send({
-          error: 'Conflict',
-          code: UNVERIFIED_ADDRESS_HOLDER,
-          message:
-            'That email belongs to an account that has not verified this address. '
-            + 'Ask them to sign in and verify it, then add them again.',
-        });
-      }
-
-      if (existingUser.status === 'found') {
-        userId = existingUser.user.id;
-      } else {
-        const pendingUid = `${PENDING_UID_PREFIX}${uuidv4()}`;
-        const userResult = await client.query(
-          `INSERT INTO users (firebase_uid, email, display_name) VALUES ($1, $2, $3) RETURNING *`,
-          [pendingUid, email, name || null],
-        );
-        userId = userResult.rows[0]!.id;
-      }
-
-      /**
-       * Memberships are soft-deleted (offboarding sets `status = 'revoked'`);
-       * unique indexes still apply, so an INSERT of the same user+tenant is
-       * 23505 rather than a 409.
-       *
-       * Lock every leftover row for this user in this tenant, then, without
-       * `account_id`:
-       *  - any `active` row → they are already a member (409)
-       *  - a tenant-level leftover (`account_id IS NULL`) → reactivate it with
-       *    the requested role
-       *  - otherwise INSERT a new tenant-level membership
-       *
-       * With `account_id`, the same three rules are keyed on the ACCOUNT context
-       * instead: an `active` row for this account → 409; a leftover for this
-       * account (`UNIQUE(user_id, tenant_id, account_id)`) → reactivate with the
-       * requested role; otherwise INSERT an account-scoped membership. Rows for
-       * other contexts — including an active tenant-wide one — are left alone, as
-       * `POST /users/invite` leaves them (one membership per account is the
-       * model).
-       */
-      const existingMemberships = await client.query<{
-        id: string;
-        account_id: string | null;
-        status: string;
-      }>(
-        `SELECT * FROM memberships WHERE user_id = $1 AND tenant_id = $2 FOR UPDATE`,
-        [userId, tenantId],
-      );
-      const alreadyMember = contextAccountId === null
-        ? existingMemberships.rows.some((m) => m.status === 'active')
-        : existingMemberships.rows.some((m) => m.account_id === contextAccountId && m.status === 'active');
-      if (alreadyMember) {
-        await client.query('ROLLBACK');
-        return reply.code(409).send({
-          error: 'Conflict',
-          message: contextAccountId === null
-            ? 'User is already a member of this tenant'
-            : 'User is already a member of this account',
-        });
-      }
-
-      const leftover = existingMemberships.rows.find((m) => m.account_id === contextAccountId);
-      const membershipResult = leftover
-        ? await client.query(
-          `UPDATE memberships SET status = 'active', role = $1 WHERE id = $2 RETURNING *`,
-          [role, leftover.id],
-        )
-        : contextAccountId === null
-          ? await client.query(
-            `INSERT INTO memberships (user_id, tenant_id, role) VALUES ($1, $2, $3) RETURNING *`,
-            [userId, tenantId, role],
-          )
-          : await client.query(
-            `INSERT INTO memberships (user_id, tenant_id, account_id, role) VALUES ($1, $2, $3, $4) RETURNING *`,
-            [userId, tenantId, contextAccountId, role],
-          );
-
-      /**
-       * Offboard leaves `membership_invites` alone on purpose: claim and the
-       * public GET treat a non-active membership as `revoked`. Reactivating
-       * that same id would make an unclaimed, unexpired token claimable again,
-       * and the claim binds whatever role was just written here — not the role
-       * the old mail described. Same predicate `createSupersedingOutstanding`
-       * uses. It runs inside the membership write's transaction, so no window
-       * exists in which the old token is live against the new role, and the
-       * invitation issued below (after COMMIT) through `createSupersedingOutstanding`
-       * then finds nothing outstanding to supersede.
-       */
-      const membershipId = membershipResult.rows[0]?.id;
-      if (membershipId) {
-        await client.query(
-          `UPDATE membership_invites
-              SET revoked_at = NOW()
-            WHERE membership_id = $1
-              AND tenant_id = $2
-              AND claimed_at IS NULL
-              AND revoked_at IS NULL`,
-          [membershipId, tenantId],
-        );
-      }
-
-      await client.query('COMMIT');
-      membership = membershipResult.rows[0]!;
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
+    /**
+     * Find or stub the user (by PROVEN address, for the tenant-create reason above),
+     * then create or reactivate their membership in this context — one transaction
+     * with the rows locked (`addTenantMember`, which states the three rules).
+     */
+    const added = await addTenantMember({
+      tenantId,
+      email,
+      role: role as MembershipRole,
+      name,
+      accountId: contextAccountId,
+    });
+    // Same refusal, same reason, as the tenant-create lookup above.
+    if (added.status === 'unproven_conflict') {
+      return reply.code(409).send(unverifiedAddressHolderBody('add them again'));
     }
+    if (added.status === 'already_member') {
+      return reply.code(409).send({
+        error: 'Conflict',
+        message: contextAccountId === null
+          ? 'User is already a member of this tenant'
+          : 'User is already a member of this account',
+      });
+    }
+    const { membership, userId } = added;
 
     // Same key `tenantContextMiddleware` reads — a re-added user must not keep
     // serving the empty/revoked snapshot from before the write.
@@ -615,31 +433,20 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
      * token and is matched by session path 2 (a verified email on the `pending_`
      * stub).
      *
-     * Guarded exactly as `POST /users/invite` guards it, for its reason: the
-     * membership has committed, so a failure here must not turn into a 500 that
-     * tells the super admin the add failed. `invitedBy` is `null` — a super admin
+     * Guarded exactly as `POST /users/invite` guards it
+     * (`issueInviteReportingFailure`), for its reason: the membership has committed,
+     * so a failure here must not turn into a 500 that tells the super admin the add
+     * failed. `invitedBy` is `null` — a super admin
      * is not a `users` row (`membership_invites.invited_by` names a user, and the
      * mail names the inviter from `users.display_name`).
      */
-    let inviteEmail: InviteEmailResult;
-    let inviteId: string | null = null;
-    try {
-      const issued = await issueInvite({
-        membershipId: membership.id,
-        tenantId,
-        email,
-        role: role as MembershipRole,
-        invitedBy: null,
-      });
-      inviteEmail = issued.inviteEmail;
-      inviteId = issued.invite?.id ?? null;
-    } catch (err) {
-      log.error(
-        { tenantId, invitedUserId: userId, err: err instanceof Error ? err.message : String(err) },
-        'Invite issuance threw; the membership stands and the invite is reported unsent',
-      );
-      inviteEmail = { sent: false, reason: 'failed' };
-    }
+    const { inviteEmail, inviteId } = await issueInviteReportingFailure({
+      membershipId: membership.id,
+      tenantId,
+      email,
+      role: role as MembershipRole,
+      invitedBy: null,
+    }, userId);
 
     log.info({ tenantId, email, role, accountId: contextAccountId }, 'Super admin added user to tenant');
     void recordSuperAdminAudit({
