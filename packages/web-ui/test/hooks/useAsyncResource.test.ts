@@ -93,4 +93,36 @@ describe('useAsyncResource', () => {
     rerender({ fetcher: b });
     await waitFor(() => expect(result.current.data).toBe('b'));
   });
+
+  it('while disabled, makes no request, stays loading and settles `reload`; enabling loads', async () => {
+    const fetcher = vi.fn().mockResolvedValue('v');
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useAsyncResource(fetcher, { initialData: '', enabled }),
+      { initialProps: { enabled: false } },
+    );
+    await act(async () => { await result.current.reload(); });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(result.current.loading).toBe(true);
+    expect(result.current.data).toBe('');
+
+    rerender({ enabled: true });
+    await waitFor(() => expect(result.current.data).toBe('v'));
+    expect(result.current.loading).toBe(false);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('disabling drops a load still in flight', async () => {
+    const pending = deferred<string>();
+    const fetcher = vi.fn().mockReturnValue(pending.promise);
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useAsyncResource(fetcher, { initialData: '', enabled }),
+      { initialProps: { enabled: true } },
+    );
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    rerender({ enabled: false });
+    await act(async () => { pending.resolve('stale'); await pending.promise; });
+    expect(result.current.data).toBe('');
+    expect(result.current.loading).toBe(true);
+  });
 });

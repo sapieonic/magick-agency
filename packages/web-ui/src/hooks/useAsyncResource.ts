@@ -17,6 +17,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  * On a reload the previous `data` stays in place while `loading` is true; a
  * failure sets `error` (the thrown `Error`'s message, else `errorMessage`) and
  * also keeps the previous `data`.
+ *
+ * `enabled: false` is "not yet": no request, `loading` stays true, any load
+ * still in flight can no longer write, and `reload` settles at once. Turning it
+ * on loads.
  */
 export interface AsyncResource<T> {
   data: T;
@@ -31,11 +35,13 @@ export interface AsyncResourceOptions<T> {
   initialData: T;
   /** The error text when the thrown value carries no message. */
   errorMessage?: string;
+  /** False while the fetcher's inputs are missing: nothing loads. Default true. */
+  enabled?: boolean;
 }
 
 export function useAsyncResource<T>(
   fetcher: () => Promise<T>,
-  { initialData, errorMessage = 'Failed to load' }: AsyncResourceOptions<T>,
+  { initialData, errorMessage = 'Failed to load', enabled = true }: AsyncResourceOptions<T>,
 ): AsyncResource<T> {
   const [data, setData] = useState<T>(() => initialData);
   const [loading, setLoading] = useState(true);
@@ -48,6 +54,7 @@ export function useAsyncResource<T>(
     const seq = ++sequence.current;
     setLoading(true);
     setError(null);
+    if (!enabled) return;
     try {
       const value = await fetcher();
       if (seq === sequence.current) setData(value);
@@ -58,7 +65,7 @@ export function useAsyncResource<T>(
     } finally {
       if (seq === sequence.current) setLoading(false);
     }
-  }, [fetcher]);
+  }, [fetcher, enabled]);
 
   useEffect(() => { void reload(); }, [reload]);
 

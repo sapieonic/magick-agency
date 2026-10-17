@@ -3,7 +3,6 @@ import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
 import { useTenant } from '../contexts/TenantContext';
 import { listTenantMembers } from '../api/tenants';
 import type { TenantMember } from '../types/team';
-import { awaitingScope } from './awaitingScope';
 
 /**
  * The tenant's members. A reload keeps the previous list in place while it runs,
@@ -16,12 +15,13 @@ import { awaitingScope } from './awaitingScope';
 export function useTeam() {
   const { tenantId } = useTenant();
   const fetchMembers = useCallback(
-    (): Promise<TenantMember[] | null> => (tenantId ? listTenantMembers(tenantId) : awaitingScope()),
+    (): Promise<TenantMember[] | null> => listTenantMembers(tenantId!),
     [tenantId],
   );
   const { data, loading, error, reload } = useAsyncResource(fetchMembers, {
     initialData: null,
     errorMessage: 'Failed to load team',
+    enabled: tenantId !== null,
   });
 
   return { members: data ?? [], loaded: data !== null, loading, error, reload };

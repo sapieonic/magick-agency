@@ -42,6 +42,10 @@ describe('useTeam', () => {
     expect(result.current.loading).toBe(true);
     expect(result.current.loaded).toBe(false);
     expect(mocks.listTenantMembers).not.toHaveBeenCalled();
+    // A reload while waiting settles at once (no request) and leaves it loading.
+    await act(async () => { await result.current.reload(); });
+    expect(mocks.listTenantMembers).not.toHaveBeenCalled();
+    expect(result.current.loading).toBe(true);
 
     mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1' });
     rerender();
