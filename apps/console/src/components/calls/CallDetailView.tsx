@@ -15,7 +15,7 @@ import {
   AnalysisStatusCard,
   type TranscriptSectionEntry,
 } from './CallDetailSections';
-import { formatPhone, formatDuration, formatDate } from '../../utils/format';
+import { formatPhone, formatDuration, formatDate } from '@magick-agency/web-ui/format';
 import { needsAnalysisStatusCard, TRANSCRIPT_PURGED_MESSAGE } from '../../utils/vocabulary';
 import type {
   WebRtcCallRecord,

@@ -7,7 +7,7 @@ import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { downloadSpineCsv, getCampaignContacts } from '../../api/agencySpine';
 import { outcomeReportFilename } from '../../api/exportCsv';
 import { hasPermission } from '../../utils/permissions';
-import { getErrorMessage } from '../../utils/errors';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import {
   ROSTER_DESCRIPTION,
   SPINE_PRIVACY_NOTE,

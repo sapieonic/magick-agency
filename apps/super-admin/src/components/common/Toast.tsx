@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { splitRequestId } from '../../utils/errors';
+import { splitRequestId } from '@magick-agency/web-ui/errors';
 import { RequestId } from './RequestId';
 import styles from './Toast.module.css';
 

@@ -9,7 +9,7 @@ import {
   formatNumber,
   formatPercentage,
   truncateId,
-} from '../../utils/format';
+} from '../src/format';
 
 // ─── formatDuration ───────────────────────────────────────────────────────────
 

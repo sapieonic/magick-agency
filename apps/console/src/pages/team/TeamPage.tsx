@@ -22,7 +22,7 @@ import { resendInvite } from '../../api/invites';
 import { AGENCY_LOGIN_PATH, LOGIN_PATH } from '../../utils/returnPath';
 import { CopyableField } from '../../components/common/CopyableField';
 import { ROLES } from '../../config';
-import { formatRelativeTime } from '../../utils/format';
+import { formatRelativeTime } from '@magick-agency/web-ui/format';
 import {
   PageHeader,
   PageDescription,

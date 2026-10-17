@@ -16,7 +16,7 @@ import {
   EmptyState,
   ConfirmDialog,
 } from '../../components/common';
-import { formatDate } from '../../utils/format';
+import { formatDate } from '@magick-agency/web-ui/format';
 import { toDimensionKey } from '../../utils/snake-case';
 import type { CallAnalysisProfile, AnalyticsDimension } from '../../types/call-analysis-profile';
 import { MAX_ANALYSIS_DIMENSIONS } from '../../types/call-analysis-profile';

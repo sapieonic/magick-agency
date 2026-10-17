@@ -8,7 +8,7 @@ import { downloadCampaignActivityCsv, getCampaignActivity } from '../../api/agen
 import { ApiError } from '../../api/client';
 import { outcomeReportFilename } from '../../api/exportCsv';
 import { hasPermission } from '../../utils/permissions';
-import { getErrorMessage } from '../../utils/errors';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import {
   trackAgencyActivityFiltered,
   trackAgencyActivityLoadMore,

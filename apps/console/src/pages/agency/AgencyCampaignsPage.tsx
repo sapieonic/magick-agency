@@ -24,11 +24,11 @@ import {
   getAgencyCampaignStats,
 } from '../../api/agencyCampaigns';
 import { hasPermission, type Permission } from '../../utils/permissions';
-import { mapWithConcurrency } from '../../utils/concurrency';
+import { mapWithConcurrency } from '@magick-agency/web-ui/concurrency';
 import { listWorkedRing } from '../../utils/agencyCampaignOverview';
 import { stallCopy } from '../../utils/agencyHealthStrip';
 import { lineagePositionLabel } from '../../utils/agencyCampaignLineage';
-import { formatDate, formatRelativeTime } from '../../utils/format';
+import { formatDate, formatRelativeTime } from '@magick-agency/web-ui/format';
 import {
   campaignGroup,
   countCampaigns,

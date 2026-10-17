@@ -4,7 +4,7 @@ import { useTenant } from '../contexts/TenantContext';
 import { getAgentAttempts, getMyAttempts } from '../api/agencyStats';
 import { decideListResponse } from '../utils/agencyStaleResponse';
 import { attemptFilterGroupCount } from '../utils/agencyAttemptFilters';
-import { getErrorMessage } from '../utils/errors';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import {
   trackAgencyStaleResponseDiscarded,
   trackAgentAttemptsFiltered,

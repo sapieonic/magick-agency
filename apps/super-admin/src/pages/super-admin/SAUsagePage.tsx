@@ -21,7 +21,7 @@ import type { Column } from '../../components/common/DataTable';
 import { ErrorAlert } from '../../components/common/ErrorAlert';
 import { EmptyState } from '../../components/common/EmptyState';
 import { TenantPicker } from '../../components/super-admin/TenantPicker';
-import { formatNumber } from '../../utils/format';
+import { formatNumber } from '@magick-agency/web-ui/format';
 import styles from './SAUsagePage.module.css';
 
 /**

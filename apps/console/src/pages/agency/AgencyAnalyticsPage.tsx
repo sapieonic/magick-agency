@@ -9,7 +9,7 @@ import { EmptyState } from '../../components/common/EmptyState';
 import { ErrorAlert } from '../../components/common/ErrorAlert';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { PageDescription } from '../../components/common/PageDescription';
-import { mapWithConcurrency } from '../../utils/concurrency';
+import { mapWithConcurrency } from '@magick-agency/web-ui/concurrency';
 import { CampaignHealthStrip } from '../../components/agency/CampaignHealthStrip';
 import { CampaignPerformance } from '../../components/agency/CampaignPerformance';
 import { AgentAnalyticsSection } from '../../components/agency/AgentAnalyticsSection';

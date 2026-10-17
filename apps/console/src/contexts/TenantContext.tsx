@@ -43,7 +43,7 @@ export type AccountResolution = 'loading' | 'ready' | 'degraded' | 'error';
  * The trade-off the reviewer is owed explicitly: the server masks internal error
  * detail, so a status code is a weaker signal than it looks. This design is built
  * to survive that being wrong in the direction that matters. Masking replaces the
- * *body*, not the status (`utils/errors.ts`), and an RBAC 403 is one of the "our
+ * *body*, not the status (`@magick-agency/web-ui/errors`), and an RBAC 403 is one of the "our
  * own business 4xx" the mask passes through intact — but even if a status arrives
  * unrecognisable, `unknown` falls to **degraded**, i.e. the visible, retryable
  * state. The failure mode of a misread is therefore an extra warning banner for an

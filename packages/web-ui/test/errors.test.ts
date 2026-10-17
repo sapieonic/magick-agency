@@ -8,7 +8,7 @@ import {
   getErrorMessage,
   getRequestId,
   toFetchError,
-} from '../../utils/errors';
+} from '../src/errors';
 
 const RID = 'req_abc123';
 

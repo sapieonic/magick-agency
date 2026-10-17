@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
-import { telephonyProviderAlias } from '../../config/telephonyProviders';
+import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
 
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),

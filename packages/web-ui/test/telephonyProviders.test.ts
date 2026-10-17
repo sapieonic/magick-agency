@@ -4,7 +4,7 @@ import {
   normalizeTelephonyProviderKey,
   hasTelephonyProviderAlias,
   telephonyProviderAlias,
-} from '../../config/telephonyProviders';
+} from '../src/telephonyProviders';
 
 describe('TELEPHONY_PROVIDER_ALIASES', () => {
   it('maps every known slug to a non-empty alias that is not the vendor slug', () => {

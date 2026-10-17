@@ -1,4 +1,4 @@
-import { formatDate } from './format';
+import { formatDate } from '@magick-agency/web-ui/format';
 import type { ActivityRetention, ActivityRow } from '../types/agency-activity';
 
 /**

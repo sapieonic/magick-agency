@@ -5,8 +5,8 @@ import { useAuth, type InviteCredential } from '../../contexts/AuthContext';
 import { getInvite, InviteIdentityInUseError, InviteUnavailableError } from '../../api/invites';
 import type { AgencyInvite, InviteUnavailableStatus } from '../../types/invite';
 import { AGENCY_LOGIN_PATH } from '../../utils/returnPath';
-import { getErrorMessage } from '../../utils/errors';
-import { formatDate } from '../../utils/format';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
+import { formatDate } from '@magick-agency/web-ui/format';
 import {
   analyticsRole,
   assessPassword,

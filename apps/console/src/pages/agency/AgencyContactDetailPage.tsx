@@ -4,7 +4,7 @@ import { PhoneOutgoing, Play } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { getCampaignAttempts, getCampaignContact } from '../../api/agencySpine';
-import { getErrorMessage } from '../../utils/errors';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { resolveContextFields } from '../../utils/agencyContext';
 import {
   agentCellCopy,

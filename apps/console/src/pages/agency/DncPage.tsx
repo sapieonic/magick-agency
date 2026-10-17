@@ -5,7 +5,7 @@ import { useTeam } from '../../hooks/useTeam';
 import { useToast } from '../../contexts/ToastContext';
 import { addDncEntries, listDncEntries, removeDncEntry } from '../../api/dnc';
 import { hasPermission } from '../../utils/permissions';
-import { formatDate } from '../../utils/format';
+import { formatDate } from '@magick-agency/web-ui/format';
 import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 import { EmptyState } from '../../components/common/EmptyState';
 import { ErrorAlert } from '../../components/common/ErrorAlert';

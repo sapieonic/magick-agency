@@ -1,4 +1,4 @@
-import { splitRequestId } from '../../utils/errors';
+import { splitRequestId } from '@magick-agency/web-ui/errors';
 import { RequestId } from './RequestId';
 import styles from './ErrorText.module.css';
 

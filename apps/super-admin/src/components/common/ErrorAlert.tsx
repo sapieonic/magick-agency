@@ -1,5 +1,5 @@
 import { AlertCircle, RotateCcw } from 'lucide-react';
-import { splitRequestId } from '../../utils/errors';
+import { splitRequestId } from '@magick-agency/web-ui/errors';
 import { RequestId } from './RequestId';
 import styles from './ErrorAlert.module.css';
 

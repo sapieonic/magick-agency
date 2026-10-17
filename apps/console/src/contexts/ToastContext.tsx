@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Toast } from '../components/common/Toast';
 import type { ToastType, ToastData } from '../components/common/Toast';
-import { getErrorMessage } from '../utils/errors';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
 
 const MAX_TOASTS = 5;
 const DEFAULT_DURATION = 4000;

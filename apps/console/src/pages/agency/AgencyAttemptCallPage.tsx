@@ -9,7 +9,7 @@ import {
   getAgencyAttemptCall,
   type AgencyAttemptCallDetail,
 } from '../../api/agencySpine';
-import { getErrorMessage } from '../../utils/errors';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { errorCode, errorStatus } from '../../utils/agencyErrors';
 import {
   AGENCY_ANALYTICS_CAPABILITY,

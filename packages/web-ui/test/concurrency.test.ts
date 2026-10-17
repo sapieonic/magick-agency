@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { DEFAULT_CONCURRENCY, mapWithConcurrency } from '../../utils/concurrency';
+import { DEFAULT_CONCURRENCY, mapWithConcurrency } from '../src/concurrency';
 
 /**
  * The bounded fan-out helper.

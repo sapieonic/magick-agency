@@ -26,7 +26,7 @@ import {
 } from '../../components/common';
 import { ErrorText } from '../../components/common/ErrorText';
 import { saStatusColor, saStatusLabel } from '../../utils/saStatus';
-import { telephonyProviderAlias } from '../../config/telephonyProviders';
+import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
 import styles from './SAPhoneNumbersPage.module.css';
 
 interface PhoneNumberAssignment {

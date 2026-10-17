@@ -27,7 +27,7 @@ import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 import { TenantFeatureFlags } from '../../components/super-admin/TenantFeatureFlags';
 import { saStatusColor, saStatusLabel, roleLabel } from '../../utils/saStatus';
 import { parseStrictInteger } from '../../utils/strictInteger';
-import { telephonyProviderAlias } from '../../config/telephonyProviders';
+import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
 import styles from './SATenantDetailPage.module.css';
 
 /**
