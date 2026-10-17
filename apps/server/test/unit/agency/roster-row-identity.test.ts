@@ -18,10 +18,10 @@ import { dirname, resolve } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BASELINE = resolve(__dirname, '../../../../../packages/db/migrations/0001_baseline.sql');
 // The repository is a folder behind the `agency.repository.ts` barrel. The ingest
-// INSERT is still in the barrel; "every INSERT" reads the barrel and every
+// INSERT lives in the contact class's file; "every INSERT" reads the barrel and every
 // file of the folder, so a writer added to any of them is seen.
 const REPOSITORY_DIR = resolve(__dirname, '../../../src/db/repositories/agency');
-const INGEST = resolve(__dirname, '../../../src/db/repositories/agency.repository.ts');
+const INGEST = resolve(REPOSITORY_DIR, 'contact.repository.ts');
 const BARREL = resolve(__dirname, '../../../src/db/repositories/agency.repository.ts');
 
 const baseline = readFileSync(BASELINE, 'utf8');
@@ -29,8 +29,8 @@ const baseline = readFileSync(BASELINE, 'utf8');
 /** The barrel plus every `.ts` file of the repository folder, concatenated. */
 function wholeRepository(): string {
   const files = readdirSync(REPOSITORY_DIR).filter((f) => f.endsWith('.ts')).sort();
-  // Non-vacuous: the folder holds the campaign retry (seeding) file.
-  expect(files).toEqual(expect.arrayContaining(['campaign-retry.ts']));
+  // Non-vacuous: the folder holds the campaign (retry seeding) and contact (ingest) files.
+  expect(files).toEqual(expect.arrayContaining(['campaign-retry.ts', 'contact.repository.ts']));
   return [BARREL, ...files.map((f) => resolve(REPOSITORY_DIR, f))]
     .map((f) => readFileSync(f, 'utf8'))
     .join('\n');
