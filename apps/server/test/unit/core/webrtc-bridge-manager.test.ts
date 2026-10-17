@@ -1277,10 +1277,14 @@ describe('WebRtcBridgeManager — the unstored-token memory is bounded', () => {
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
     const note = (i: number) => (mgr as any).tokens.noteUnstoredWsToken(`call-${i}`, 'webhook', 3_600_000);
     for (let i = 0; i < UNSTORED_WS_TOKEN_CAP; i++) note(i);
-    await (mgr as any).tokens.clearWsToken('call-0');
-    note(UNSTORED_WS_TOKEN_CAP);
     const held: Map<string, number> = (mgr as any).tokens.unstoredWsTokens;
+    await (mgr as any).tokens.clearWsToken('call-5');
+    // Re-noting a held key evicts nobody, and moves it to the newest end.
+    expect(held.size).toBe(UNSTORED_WS_TOKEN_CAP);
     expect(held.has('webhook:call-0')).toBe(true);
-    expect(held.has('webhook:call-1')).toBe(false);
+    expect([...held.keys()].at(-1)).toBe('webhook:call-5');
+    note(UNSTORED_WS_TOKEN_CAP);
+    expect(held.has('webhook:call-0')).toBe(false);
+    expect(held.has('webhook:call-5')).toBe(true);
   });
 });
