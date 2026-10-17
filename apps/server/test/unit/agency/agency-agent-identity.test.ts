@@ -133,17 +133,19 @@ describe('resolveAgentNames is declared ONCE', () => {
       .toEqual(['agency/agency-agent-identity.ts']);
   });
 
-  it('is imported by both files that enrich an agent id', () => {
+  it('is imported by every file that enriches an agent id', () => {
     // Named rather than counted: an importer that quietly stopped importing it
     // has almost certainly re-declared one, which the case above would also catch
     // — but this is the assertion that says WHERE the shared binding is supposed
     // to be reaching.
-    // Both consumers exist at these paths, so every one is asserted.
+    // Every consumer exists at these paths, so every one is asserted.
     for (const consumer of [
       // The spine's agent-name enrichment and the lifecycle/retry actor lookup.
       'api/routes/proxy-agency-campaigns/spine.ts',
       'api/routes/proxy-agency-campaigns/lifecycle.ts',
-      'api/routes/proxy-agency-performance.routes.ts',
+      // The performance plugin's per-agent pairs and its whole-floor reads.
+      'api/routes/proxy-agency-performance/per-agent.ts',
+      'api/routes/proxy-agency-performance/floor.ts',
     ]) {
       const source = readFileSync(join(SRC, consumer), 'utf8');
       // `[^}]*` rather than a lazy `[\s\S]*?`, which would start at an earlier
