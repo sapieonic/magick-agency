@@ -104,6 +104,8 @@ function extractCallSites(): { sites: CallSite[]; dynamic: string[]; callers: st
 const DYNAMIC_CALL_SITES: ReadonlyMap<string, string> = new Map([
   ['api/routes/proxy-agency-campaigns.routes.ts params.path',
     "the spine CSV export's page loop; its two callers pass literal `/agency-campaigns/${id}/attempts` and `/contacts` objects"],
+  ['api/routes/proxy-agency-campaigns.routes.ts <no path>',
+    "`runTransition`, the four lifecycle controls' shared body (`{ ...call }`); each route passes its own literal `/agency-campaigns/${id}/<verb>` object"],
 ]);
 
 /** The one file that passes `provenCampaignId` (the spine CSV export's page loop). */

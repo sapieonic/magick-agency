@@ -1753,38 +1753,69 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     return name;
   }
 
-  // Four near-identical handlers rather than a loop or a shared helper that
-  // builds the path. The metric-template guard scans `path:` LITERALS, so any
-  // indirection — a lookup table, a `.replace()`, a loop variable — hides the
-  // route from it and the template registry silently rots. Writing them out is
-  // the price of a metric label that means something per operation.
-  app.post<{ Params: { id: string } }>('/campaigns/:id/start', {
-    preHandler: requirePermission('agency.supervise'),
-  }, async (request, reply) => {
-    // Resolved BEFORE `callCore`, and its failure never reaches the caller:
-    // `undefined` means the transition goes out unattributed.
+  /**
+   * The body the four lifecycle controls share: resolve the actor, then run the
+   * internal handler's transition with it.
+   *
+   * The actor is resolved BEFORE `callCore`, and its failure never reaches the
+   * caller: `undefined` means the transition goes out unattributed. The body is
+   * spread, so a request with no resolvable actor carries NO body at all rather
+   * than an empty object — the shape the handler's `actorPatch` answers with `{}`.
+   */
+  async function runTransition(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    call: { method: 'POST'; path: string },
+  ) {
     const actor = await resolveTransitionActor(request);
-    const result = await callCore({
-      method: 'POST',
-      path: `/agency-campaigns/${request.params.id}/start`,
-      // Spread, so a request with no resolvable actor carries NO body at all
-      // rather than an empty object — the shape the handler's `actorPatch`
-      // answers with `{}`.
+    return callCore({
+      ...call,
       ...(actor ? { body: actor } : {}),
       tenantId: request.tenantId!,
       accountId: request.accountId,
     });
+  }
+
+  /**
+   * A lifecycle control's platform audit row, everything but its actor and action —
+   * each route states those inline, so every audited write names its own actor
+   * derivation (`audit-actor-call-sites.test.ts`).
+   *
+   * `status` is the handler's body read defensively: on a lifecycle action the body
+   * IS the updated campaign, but this layer keeps no campaign schema, so a malformed
+   * response must never throw out of an audit call and take the request down.
+   */
+  function transitionAuditRow(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    result: { body: unknown },
+  ) {
+    const status = stringField(result.body, 'status');
+    return {
+      tenant_id: request.tenantId!,
+      ...(request.accountId ? { account_id: request.accountId } : {}),
+      resource_type: 'agency_campaign' as const,
+      resource_id: request.params.id,
+      campaign_id: request.params.id,
+      details: { campaign_id: request.params.id, ...(status ? { status } : {}) },
+    };
+  }
+
+  // Four routes rather than a loop or a table: each internal path is a `path:`
+  // LITERAL at its own call site, which `test/unit/api/core-dispatch.test.ts`
+  // resolves against the internal route table — any indirection (a lookup table,
+  // a `.replace()`, a loop variable) would hide the route from it. The shared body
+  // is `runTransition`; the audit row's action stays at each route.
+  app.post<{ Params: { id: string } }>('/campaigns/:id/start', {
+    preHandler: requirePermission('agency.supervise'),
+  }, async (request, reply) => {
+    const result = await runTransition(request, {
+      method: 'POST',
+      path: `/agency-campaigns/${request.params.id}/start`,
+    });
     if (result.status < 400) {
-      const status = stringField(result.body, 'status');
       platformAuditLogger.log({
-        tenant_id: request.tenantId!,
-        ...(request.accountId ? { account_id: request.accountId } : {}),
+        ...transitionAuditRow(request, result),
         ...requestAuditActor(request),
         action: 'agency_campaign.started',
-        resource_type: 'agency_campaign',
-        resource_id: request.params.id,
-        campaign_id: request.params.id,
-        details: { campaign_id: request.params.id, ...(status ? { status } : {}) },
       });
     }
     return reply.code(result.status).send(result.body);
@@ -1793,30 +1824,15 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   app.post<{ Params: { id: string } }>('/campaigns/:id/pause', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    // Resolved BEFORE `callCore`, and its failure never reaches the caller:
-    // `undefined` means the transition goes out unattributed.
-    const actor = await resolveTransitionActor(request);
-    const result = await callCore({
+    const result = await runTransition(request, {
       method: 'POST',
       path: `/agency-campaigns/${request.params.id}/pause`,
-      // Spread, so a request with no resolvable actor carries NO body at all
-      // rather than an empty object — the shape the handler's `actorPatch`
-      // answers with `{}`.
-      ...(actor ? { body: actor } : {}),
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
     });
     if (result.status < 400) {
-      const status = stringField(result.body, 'status');
       platformAuditLogger.log({
-        tenant_id: request.tenantId!,
-        ...(request.accountId ? { account_id: request.accountId } : {}),
+        ...transitionAuditRow(request, result),
         ...requestAuditActor(request),
         action: 'agency_campaign.paused',
-        resource_type: 'agency_campaign',
-        resource_id: request.params.id,
-        campaign_id: request.params.id,
-        details: { campaign_id: request.params.id, ...(status ? { status } : {}) },
       });
     }
     return reply.code(result.status).send(result.body);
@@ -1825,30 +1841,15 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   app.post<{ Params: { id: string } }>('/campaigns/:id/resume', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    // Resolved BEFORE `callCore`, and its failure never reaches the caller:
-    // `undefined` means the transition goes out unattributed.
-    const actor = await resolveTransitionActor(request);
-    const result = await callCore({
+    const result = await runTransition(request, {
       method: 'POST',
       path: `/agency-campaigns/${request.params.id}/resume`,
-      // Spread, so a request with no resolvable actor carries NO body at all
-      // rather than an empty object — the shape the handler's `actorPatch`
-      // answers with `{}`.
-      ...(actor ? { body: actor } : {}),
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
     });
     if (result.status < 400) {
-      const status = stringField(result.body, 'status');
       platformAuditLogger.log({
-        tenant_id: request.tenantId!,
-        ...(request.accountId ? { account_id: request.accountId } : {}),
+        ...transitionAuditRow(request, result),
         ...requestAuditActor(request),
         action: 'agency_campaign.resumed',
-        resource_type: 'agency_campaign',
-        resource_id: request.params.id,
-        campaign_id: request.params.id,
-        details: { campaign_id: request.params.id, ...(status ? { status } : {}) },
       });
     }
     return reply.code(result.status).send(result.body);
@@ -1870,34 +1871,19 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   app.post<{ Params: { id: string } }>('/campaigns/:id/stop', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    // Resolved BEFORE `callCore`, and its failure never reaches the caller:
-    // `undefined` means the transition goes out unattributed.
-    const actor = await resolveTransitionActor(request);
-    const result = await callCore({
+    const result = await runTransition(request, {
       method: 'POST',
       path: `/agency-campaigns/${request.params.id}/stop`,
-      // Spread, so a request with no resolvable actor carries NO body at all
-      // rather than an empty object — the shape the handler's `actorPatch`
-      // answers with `{}`.
-      ...(actor ? { body: actor } : {}),
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
     });
     if (result.status < 400) {
       // A 200 here means "accepted and draining" (see the doc comment above),
       // not "stopped" — `status` in `details` is therefore whatever the handler
       // returned at this instant (typically still `running`/`stopping`), not a
       // fabricated terminal state.
-      const status = stringField(result.body, 'status');
       platformAuditLogger.log({
-        tenant_id: request.tenantId!,
-        ...(request.accountId ? { account_id: request.accountId } : {}),
+        ...transitionAuditRow(request, result),
         ...requestAuditActor(request),
         action: 'agency_campaign.stopped',
-        resource_type: 'agency_campaign',
-        resource_id: request.params.id,
-        campaign_id: request.params.id,
-        details: { campaign_id: request.params.id, ...(status ? { status } : {}) },
       });
     }
     return reply.code(result.status).send(result.body);
