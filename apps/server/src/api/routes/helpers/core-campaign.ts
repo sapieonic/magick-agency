@@ -2,6 +2,13 @@ import type { FastifyRequest } from 'fastify';
 import { callCore } from '../../core-dispatch.js';
 
 /**
+ * How many campaign ids one internal `GET /agency-campaigns/summaries` may name: the
+ * handler refuses more with a 400, so a caller with more splits them into reads of
+ * at most this many.
+ */
+export const CAMPAIGN_SUMMARIES_MAX_IDS = 100;
+
+/**
  * A string field of an internal handler's response body, or `null`.
  *
  * The public API layer keeps no campaign (or session, or attempt) schema — those bodies

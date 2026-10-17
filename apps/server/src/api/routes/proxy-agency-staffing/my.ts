@@ -8,7 +8,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { callCore } from '../../core-dispatch.js';
-import { stringField } from '../helpers/core-campaign.js';
+import { CAMPAIGN_SUMMARIES_MAX_IDS, stringField } from '../helpers/core-campaign.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { agencyCampaignAgentRepository, HISTORY_LIMIT_MAX } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import { parseOr400 } from '../helpers/parse-or-400.js';
@@ -110,7 +110,8 @@ const UNRESOLVED_SUMMARY: CampaignSummary = { name: null, status: null };
 
 /**
  * Resolve the names and statuses of a page's campaigns in ONE internal read
- * (`GET /agency-campaigns/summaries`). **Never rejects.**
+ * (`GET /agency-campaigns/summaries`) per `CAMPAIGN_SUMMARIES_MAX_IDS` campaigns, the
+ * handler's per-read ceiling. **Never rejects.**
  *
  * Every caller is enriching an answer it already has (assignments from
  * `agency_campaign_agents`), so a failure here must degrade the courtesy fields and
@@ -120,7 +121,7 @@ const UNRESOLVED_SUMMARY: CampaignSummary = { name: null, status: null };
  * which is indistinguishable to the client and correctly so: in all three cases
  * the id is the fact and the labels are unavailable. Concretely, any status ≥ 400
  * (403 `feature_disabled`, 400 for a missing account header) and a throw land
- * every id on nulls; a campaign in another account, another tenant or since
+ * every id of that read on nulls; a campaign in another account, another tenant or since
  * deleted is simply absent from the handler's answer and lands on nulls alone —
  * the handler applies `requireOwned`'s tenant-AND-account rule to the whole set.
  *
@@ -139,8 +140,28 @@ async function resolveCampaignSummaries(
   campaignIds: readonly string[],
 ): Promise<Map<string, CampaignSummary>> {
   const summaries = new Map<string, CampaignSummary>();
-  // No ids, no read: an agent nobody has staffed costs nothing.
-  if (campaignIds.length === 0) return summaries;
+  // No ids, no read: an agent nobody has staffed costs nothing. More ids than one
+  // read may name are split into reads of at most `CAMPAIGN_SUMMARIES_MAX_IDS`, one
+  // after another, each degrading on its own.
+  for (let start = 0; start < campaignIds.length; start += CAMPAIGN_SUMMARIES_MAX_IDS) {
+    await readCampaignSummaries(
+      request,
+      campaignIds.slice(start, start + CAMPAIGN_SUMMARIES_MAX_IDS),
+      summaries,
+    );
+  }
+  return summaries;
+}
+
+/**
+ * One internal summaries read for at most `CAMPAIGN_SUMMARIES_MAX_IDS` ids, adding what
+ * it names to `summaries`. **Never rejects**: a refusal or a throw leaves its ids unnamed.
+ */
+async function readCampaignSummaries(
+  request: FastifyRequest,
+  campaignIds: readonly string[],
+  summaries: Map<string, CampaignSummary>,
+): Promise<void> {
   try {
     const result = await callCore({
       method: 'GET',
@@ -149,9 +170,9 @@ async function resolveCampaignSummaries(
       tenantId: request.tenantId!,
       accountId: request.accountId,
     });
-    if (result.status >= 400) return summaries;
+    if (result.status >= 400) return;
     const rows = (result.body as { campaigns?: unknown } | null)?.campaigns;
-    if (!Array.isArray(rows)) return summaries;
+    if (!Array.isArray(rows)) return;
     for (const row of rows) {
       const id = stringField(row, 'id');
       if (!id) continue;
@@ -160,7 +181,6 @@ async function resolveCampaignSummaries(
         status: stringField(row, 'status'),
       });
     }
-    return summaries;
   } catch (err) {
     log.warn(
       {
@@ -170,7 +190,6 @@ async function resolveCampaignSummaries(
       },
       'agency campaign lookup failed; answering with null name and status',
     );
-    return summaries;
   }
 }
 
@@ -219,12 +238,12 @@ export async function registerMyStaffingRoutes(app: FastifyInstance): Promise<vo
    * rule `src/agency/agency-stats-enrichment.ts` states: enrichment must never
    * turn a 200 into a 500.
    *
-   * Every campaign is named by ONE internal read ({@link resolveCampaignSummaries}),
-   * however many assignments the agent holds — nothing limits how many active
-   * assignments an agent may have, and this route is called on every sign-in and
-   * every return from a station, so the cost must not grow with the rows. A
-   * campaign the read cannot name nulls its own labels and nobody else's, and a
-   * failed read nulls them all while the assignments stand. Still not paginated:
+   * Every campaign is named by ONE internal read ({@link resolveCampaignSummaries})
+   * per hundred campaigns (the summaries handler's ceiling) — nothing limits how many
+   * active assignments an agent may have, and this route is called on every sign-in
+   * and every return from a station, so the cost must not grow with the rows. A
+   * campaign a read cannot name nulls its own labels and nobody else's, and a
+   * failed read nulls those it carried while the assignments stand. Still not paginated:
    * an agent must see every assignment to choose from them, and a page cursor on a
    * list of that size would be complexity with no case behind it.
    */

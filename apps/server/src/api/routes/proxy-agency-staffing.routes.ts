@@ -11,8 +11,8 @@ export { replyMissingActor, resolveMyAgentId } from './proxy-agency-staffing/my.
  * B16). The rows are `agency_campaign_agents`, read and written here directly. The internal
  * handler instance is reached in-process through `callCore` for two things, both behind its
  * feature gate and `requireOwned`'s rule (tenant AND account): the best-effort labels in
- * `resolveCampaignSummaries` (`GET /agency-campaigns/summaries`, one read for every
- * campaign on the page) and the ownership probe in `assertCampaignInScope`
+ * `resolveCampaignSummaries` (`GET /agency-campaigns/summaries`, one read per hundred
+ * campaigns on the page) and the ownership probe in `assertCampaignInScope`
  * (`GET /agency-campaigns/:id`). Audit rows go to `platformAuditLogger` (decision B7). There is no
  * capability gate; the RBAC floors are the gate.
  */

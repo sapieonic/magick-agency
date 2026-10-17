@@ -628,6 +628,30 @@ describe('agency staffing routes (integration)', () => {
       ]);
     });
 
+    it('names an agent’s campaigns past the summaries read’s 100-id ceiling', async () => {
+      // The real internal handler refuses more than 100 ids in one read; one read
+      // for all of them nulled every label.
+      const ids: string[] = [];
+      for (let i = 0; i < 101; i++) {
+        const id = randomUUID();
+        ids.push(id);
+        await insertAgencyCampaign({ id, tenant_id: tenant.id, account_id: account.id, name: `Bulk ${i}` });
+        await seedAssignment({ campaignId: id });
+      }
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `${PREFIX}/my-assignments`,
+        headers: headers({ 'x-user-id': agent.id }),
+      });
+
+      expect(res.statusCode).toBe(200);
+      const { assignments } = res.json() as { assignments: Array<{ campaign_id: string; campaign_name: string | null }> };
+      expect(assignments).toHaveLength(101);
+      const named = new Map(assignments.map((a) => [a.campaign_id, a.campaign_name]));
+      expect(ids.map((id) => named.get(id))).toEqual(ids.map((_, i) => `Bulk ${i}`));
+    });
+
     it('carries the four keys, always present — a live contract with the console', async () => {
       await seedAssignment({ campaignId: CAMPAIGN });
       mocks.proxyToCore.mockResolvedValue({
