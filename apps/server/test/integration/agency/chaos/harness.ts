@@ -68,29 +68,58 @@ import { requiresDisposition } from '../../../../src/agency/outcome-classifier.j
  * particular, and it silently stops meaning anything the day someone reworks a
  * message. Every helper this module exports returns state.
  *
- * ── The private Redis database ─────────────────────────────────────────────
- * Database 7, for the reason `agency-lease-ring-duration.test.ts` documents at
- * length: `flushTestRedis()` calls `FLUSHDB` on database 0, this worktree is
- * shared, and an overlapping run flushing db0 mid-scenario reads exactly like a
- * lease bug. It is doubly important here, because one of these scenarios
- * flushes a database ON PURPOSE — sharing db0 would mean the chaos suite is
- * itself the hazard the other suites are protecting against.
+ * ── The private keyspace ───────────────────────────────────────────────────
+ * The Redis DATABASE is not private: it is the worktree's whole agency test db
+ * (`CHAOS_DB` below), which every other integration file in the worktree flushes
+ * and writes, and which any other run resolving to the same `.test-env.local.json`
+ * (or to the default db 1) shares. What each world owns is a KEY PREFIX of its own,
+ * `chaos:<uuid>:`, applied by the client to every keyed command its runtime sends,
+ * so the world's runtime can only ever write under it.
+ *
+ * That is what the keyspace audits (`agencyKeys`, `agencyKeyTtls`) rely on. With
+ * one `chaos:` prefix shared by every world and isolation being "FLUSHDB when a
+ * world is created", any second world alive on the same db at the same time —
+ * another run on this db, or a test worker that has not exited yet (Vitest starts
+ * the next file before the previous worker is gone) — writes its agents' leases
+ * into the very pool a scenario is counting, which is exactly the shape of
+ * `lease-renewer-killed` reading four agent leases on a three-agent pool, and its
+ * FLUSHDB deletes the leases that scenario is holding. So nothing here flushes the
+ * database: a world starts on an empty prefix by construction and `wipeWorldKeys`
+ * deletes exactly its own keys.
  */
 
 // `TEST_REDIS_URL` is the agency harness's (imported above).
 
 /**
- * This suite's own database. Touched by nothing else.
- *
- * The worktree's whole test Redis db is already private to this checkout (its
- * `.test-env.local.json`), and the harness may not touch any other db index (the
- * agency guard refuses db 0 and other worktrees own the rest), so the chaos database
- * IS the worktree's — read off its URL.
+ * The worktree's agency test Redis db, read off its URL (6383, a non-zero db from
+ * `.test-env.local.json`; the agency guard refuses db 0). Shared — see above.
  */
 export const CHAOS_DB = Number(new URL(TEST_REDIS_URL).pathname.replace(/^\//, '') || '0');
 
-/** Matches the `keyPrefix` given to the client, so key scans line up. */
+/** The root under which every world's own prefix (`chaos:<uuid>:`) sits. */
 export const KEY_PREFIX = 'chaos:';
+
+/** The prefix this client writes under — the world's own. */
+function worldPrefix(redis: Redis): string {
+  return redis.options.keyPrefix ?? '';
+}
+
+/**
+ * Delete every key under the world's prefix, and nothing else.
+ *
+ * SCAN's MATCH and the keys it returns are raw (ioredis applies `keyPrefix` to
+ * key ARGUMENTS only), so the prefix is written into the pattern by hand and
+ * stripped before `UNLINK`, which would otherwise apply it a second time.
+ */
+async function wipeWorldKeys(redis: Redis): Promise<void> {
+  const prefix = worldPrefix(redis);
+  let cursor = '0';
+  do {
+    const [next, raw] = await redis.scan(cursor, 'MATCH', `${prefix}*`, 'COUNT', 500);
+    cursor = next;
+    if (raw.length > 0) await redis.unlink(...raw.map((k) => k.slice(prefix.length)));
+  } while (cursor !== '0');
+}
 
 /**
  * How long an emitted lifecycle event may take to appear in Postgres.
@@ -965,6 +994,12 @@ export interface ChaosWorldOptions {
   /** Written to `account_settings`; the tick's per-account ceiling. */
   maxConcurrentCalls?: number;
   campaign?: Record<string, unknown>;
+  /**
+   * Label for the deterministic agent user ids (`uuidFor('<label>-<i>')`). Only a
+   * scenario holding two worlds open at once needs another one: a tenant has one
+   * live session per agent user.
+   */
+  agentLabel?: string;
 }
 
 export interface ChaosWorld {
@@ -1193,8 +1228,11 @@ export async function createChaosWorld(opts: ChaosWorldOptions = {}): Promise<Ch
   const { PacingEngine } = await import('../../../../src/agency/pacing-engine.js');
   const { LocalDialDispatcher } = await import('../../../../src/agency/dial-dispatcher.js');
 
-  const redis = new Redis(TEST_REDIS_URL, { keyPrefix: KEY_PREFIX, db: CHAOS_DB, maxRetriesPerRequest: 3 });
-  await redis.flushdb();
+  // A prefix of its own, so the world starts on an empty keyspace without
+  // flushing anyone else's (see "The private keyspace" above).
+  const redis = new Redis(TEST_REDIS_URL, {
+    keyPrefix: `${KEY_PREFIX}${randomUUID()}:`, db: CHAOS_DB, maxRetriesPerRequest: 3,
+  });
 
   const campaignRow = await insertAgencyCampaign({
     status: 'running',
@@ -1221,7 +1259,7 @@ export async function createChaosWorld(opts: ChaosWorldOptions = {}): Promise<Ch
   const agents: ChaosAgent[] = [];
   for (let i = 0; i < agentCount; i++) {
     // a UUID column now; the same deterministic label.
-    const agentUserId = uuidFor(`chaos-agent-${i}`);
+    const agentUserId = uuidFor(`${opts.agentLabel ?? 'chaos-agent'}-${i}`);
     const session = await insertAgentSession(campaignId, { agent_user_id: agentUserId, state: 'available' });
     agents.push({ sessionId: session.id as string, agentUserId, socket: new FakeStationSocket() });
   }
@@ -1266,7 +1304,7 @@ export async function createChaosWorld(opts: ChaosWorldOptions = {}): Promise<Ch
   // ── The tenant's DNC set must be AUTHORITATIVE before anything dials
   //   .
   //
-  // The `flushdb()` above drops the version key, so without this every scenario in
+  // A fresh world prefix holds no version key, so without this every scenario in
   // the chaos suite would dial nothing, and "nothing dialed" is exactly the shape of
   // a pacing bug. It survives `restartReplica()` because the version lives in Redis,
   // not in the replica — but it does NOT survive
@@ -1429,7 +1467,7 @@ export async function createChaosWorld(opts: ChaosWorldOptions = {}): Promise<Ch
         // wrap-up and the return to `available` — are reached through the same
         // fire-and-forget lifecycle subscription as everything else here, so
         // `flush()`'s Postgres absorption says nothing about whether they have
-        // landed. One still in flight during `flushdb()` re-creates exactly one
+        // landed. One still in flight during the wipe re-creates exactly one
         // `agency:agent:*:state` key a microsecond after the database was emptied,
         // and the scenario reports a survivor that no mechanism resurrected.
         //
@@ -1464,8 +1502,11 @@ export async function createChaosWorld(opts: ChaosWorldOptions = {}): Promise<Ch
 
         // Not a targeted DEL of the keys we happen to know about — a scenario that
         // deletes only `agency:*` would leave the concurrency and ownership
-        // keyspaces intact and quietly prove less than it claims.
-        await redis.flushdb();
+        // keyspaces intact and quietly prove less than it claims. Everything under
+        // the world's prefix IS every keyspace its runtime can write (the client
+        // applies the prefix to every key), so this is the world's whole Redis —
+        // without a FLUSHDB that would also empty whatever else shares the db.
+        await wipeWorldKeys(redis);
       },
       killRenewers() {
         // `stop()` clears every lease renewer AND drops the lifecycle
@@ -1534,7 +1575,7 @@ export async function createChaosWorld(opts: ChaosWorldOptions = {}): Promise<Ch
       rt.wrapup.stop();
       rt.reaper.stop();
       await rt.pacing.stop().catch(() => { /* nothing was started */ });
-      await redis.flushdb().catch(() => { /* connection already gone */ });
+      await wipeWorldKeys(redis).catch(() => { /* connection already gone */ });
       redis.disconnect();
     },
   };
@@ -1843,13 +1884,17 @@ export async function metricValue(
   return match?.value;
 }
 
-/** Every agency key currently in the chaos database, unprefixed. */
+/**
+ * Every agency key this WORLD holds, unprefixed — its own keyspace only, never
+ * another world's on the same db (see "The private keyspace").
+ */
 export async function agencyKeys(redis: Redis): Promise<string[]> {
   // `keys` is applied to the prefixed keyspace by ioredis for KEYS patterns
   // only when the pattern goes through a key argument — it does not, so the
   // prefix is written by hand and stripped off the results.
-  const raw = await redis.keys(`${KEY_PREFIX}agency:*`);
-  return raw.map((k) => k.slice(KEY_PREFIX.length)).sort();
+  const prefix = worldPrefix(redis);
+  const raw = await redis.keys(`${prefix}agency:*`);
+  return raw.map((k) => k.slice(prefix.length)).sort();
 }
 
 /**

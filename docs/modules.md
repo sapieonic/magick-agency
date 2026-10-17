@@ -93,7 +93,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/chaos/abandonment-predicate-agreement.test.ts` | ~3 |
 | `apps/server/test/integration/agency/chaos/attempt-number-collision.test.ts` | ~6 |
 | `apps/server/test/integration/agency/chaos/dnc-self-heal-loop.test.ts` | ~2 |
-| `apps/server/test/integration/agency/chaos/lease-renewer-killed.test.ts` | ~5 |
+| `apps/server/test/integration/agency/chaos/lease-renewer-killed.test.ts` | ~6 |
 | `apps/server/test/integration/agency/chaos/network-drop-during-ring.test.ts` | ~7 |
 | `apps/server/test/integration/agency/chaos/redis-expired-wholesale.test.ts` | ~8 |
 | `apps/server/test/integration/agency/chaos/restart-mid-bridge.test.ts` | ~2 |

@@ -141,6 +141,37 @@ describe('lease renewer killed (chaos, slow)', () => {
     }
   }, 40_000);
 
+  it('the pool counted here is this world\'s alone — a second world on the same Redis db neither adds a lease to it nor removes one', async () => {
+    // Every count in this file ("3 agent leases") reads the world's keyspace, and
+    // the Redis db under it is shared: with every other integration file in the
+    // worktree, and with any other world alive at the same time (another run on
+    // this db, a test worker not yet exited). When all worlds shared one prefix, a
+    // second world's agent lease landed in this pool (the shape of an intermittent
+    // "expected 3 agent leases, got 4" here) and its creation FLUSHDB took this
+    // pool's leases away. Both halves are pinned here.
+    const w = await withPoolOnLiveCalls(3, 9);
+    const agentKeys = async (r: typeof w.redis) =>
+      Object.keys(await agencyKeyTtls(r)).filter((k) => k.startsWith('agency:agent:'));
+    const own = w.agents.map((a) => `agency:agent:${a.sessionId}:state`).sort();
+    expect(await agentKeys(w.redis)).toEqual(own);
+
+    // Its own agent users (one live session per agent user per tenant) and a paused
+    // campaign (one running campaign per account): it only has to hold a lease.
+    const other = await createChaosWorld({
+      agents: 1, contacts: 1, maxConcurrentCalls: 1,
+      agentLabel: 'other-world-agent', campaign: { status: 'paused' },
+    });
+    try {
+      await other.bringOnline(other.agents[0]!);
+      expect(await agentKeys(other.redis)).toEqual([`agency:agent:${other.agents[0]!.sessionId}:state`]);
+      expect(await agentKeys(w.redis)).toEqual(own);
+    } finally {
+      await other.teardown();
+    }
+    // Its teardown deleted its own keys and nothing of this world's.
+    expect(await agentKeys(w.redis)).toEqual(own);
+  });
+
   it('kill the renewer and the WHOLE pool lapses, while Postgres does not move at all', async () => {
     const w = await withPoolOnLiveCalls(3, 12);
 
