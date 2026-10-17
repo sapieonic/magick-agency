@@ -3,9 +3,7 @@ import { Phone, Plus, Trash2, Pencil, Search, RotateCcw } from 'lucide-react';
 import {
   listPhoneNumbers,
   listTelephonyProviders,
-  createPhoneNumber,
   getPhoneNumberDetail,
-  updatePhoneNumber,
   retirePhoneNumber,
   reactivatePhoneNumber,
   deletePhoneNumber,
@@ -15,16 +13,16 @@ import type { PhoneNumber } from '@magick-agency/contracts/api/platform/super-ad
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
-import { HelpTooltip } from '@magick-agency/web-ui/components/HelpTooltip';
 import { StatusBadge } from '@magick-agency/web-ui/components/StatusBadge';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
-import { StatCard, AdvancedSection } from '../../components/common';
-import { ErrorText } from '@magick-agency/web-ui/components/ErrorText';
+import { StatCard } from '../../components/common';
 import { saStatusColor, saStatusLabel } from '../../utils/saStatus';
 import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
-import { mapWithConcurrency } from '@magick-agency/web-ui/concurrency';
+import { PhoneNumberCreateModal } from './phone-numbers/PhoneNumberCreateModal';
+import { PhoneNumberEditModal } from './phone-numbers/PhoneNumberEditModal';
+import { usePhoneNumberBulk } from './phone-numbers/usePhoneNumberBulk';
 import styles from './SAPhoneNumbersPage.module.css';
 
 interface PhoneNumberAssignment {
@@ -33,10 +31,6 @@ interface PhoneNumberAssignment {
   is_default: boolean;
   assigned_at: string;
 }
-
-const CAPABILITY_OPTIONS = ['voice', 'sms'] as const;
-
-type BulkAction = 'retire' | 'reactivate';
 
 /** The one single-row destructive confirmation that can be open at a time. */
 type RowConfirm = { kind: 'retire' | 'reactivate' | 'delete'; phone: PhoneNumber };
@@ -74,18 +68,9 @@ export default function SAPhoneNumbersPage() {
   const [filterStatus, setFilterStatus] = useState('');
   const [search, setSearch] = useState('');
 
-  // Create modal
+  // Create / edit modals
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({
-    phone_number: '',
-    provider_id: '',
-    label: '',
-    region: '',
-    max_concurrent_calls: 1,
-    capabilities: ['voice'] as string[],
-  });
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
+  const [editPhone, setEditPhone] = useState<PhoneNumber | null>(null);
 
   // Detail expansion
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -95,52 +80,8 @@ export default function SAPhoneNumbersPage() {
   // Retire blocked modal
   const [retireBlockedPhone, setRetireBlockedPhone] = useState<PhoneNumber | null>(null);
 
-  // Edit modal
-  const [editPhone, setEditPhone] = useState<PhoneNumber | null>(null);
-  const [editForm, setEditForm] = useState({ label: '', notes: '', max_concurrent_calls: 1 });
-  const [editing, setEditing] = useState(false);
-  const [editError, setEditError] = useState<string | null>(null);
-
   // Single-row destructive confirm (retire / reactivate / delete)
   const [rowConfirm, setRowConfirm] = useState<RowConfirm | null>(null);
-
-  // Bulk selection
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [bulkAction, setBulkAction] = useState<BulkAction | null>(null);
-  const [bulkRunning, setBulkRunning] = useState(false);
-
-  // The whole inventory, unfiltered: the provider and status filters narrow it
-  // client-side, so a filter change costs no request and the stat cards can
-  // count the whole inventory (there is no pagination; the route returns it all).
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const nums = await listPhoneNumbers();
-      setPhoneNumbers(nums);
-      setSelected(new Set());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load phone numbers');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // The provider catalog is static for the page's life: fetched once.
-  const loadCatalog = useCallback(async () => {
-    setCatalogError(null);
-    try {
-      setProviders(await listTelephonyProviders());
-    } catch (err) {
-      setCatalogError(err instanceof Error ? err.message : 'Failed to load telephony providers');
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => { loadCatalog(); }, [loadCatalog]);
-
-  // A filter change starts a fresh selection, as the refetch it replaced did.
-  useEffect(() => { setSelected(new Set()); }, [filterProvider, filterStatus]);
 
   // Provider / status filters, then the phone/label search.
   const filtered = useMemo(() => {
@@ -165,60 +106,47 @@ export default function SAPhoneNumbersPage() {
     return { active, retired };
   }, [phoneNumbers]);
 
-  // Eligible selections for each bulk action, derived from row data.
-  const selectedRows = useMemo(
-    () => filtered.filter(pn => selected.has(pn.id)),
-    [filtered, selected],
-  );
-  const retireEligible = useMemo(
-    () => selectedRows.filter(pn => pn.status === 'active' && (pn.assignment_count ?? 0) === 0),
-    [selectedRows],
-  );
-  const reactivateEligible = useMemo(
-    () => selectedRows.filter(pn => pn.status === 'retired'),
-    [selectedRows],
-  );
+  const bulk = usePhoneNumberBulk(filtered, {
+    afterRun: async () => {
+      setExpandedId(null);
+      await load();
+    },
+    onError: setError,
+  });
+  const { clearSelection } = bulk;
 
-  const allVisibleSelected = filtered.length > 0 && filtered.every(pn => selected.has(pn.id));
-
-  const toggleSelect = (id: string) => {
-    setSelected(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleSelectAll = () => {
-    setSelected(prev => {
-      if (filtered.length > 0 && filtered.every(pn => prev.has(pn.id))) return new Set();
-      return new Set(filtered.map(pn => pn.id));
-    });
-  };
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setCreating(true);
-    setCreateError(null);
+  // The whole inventory, unfiltered: the provider and status filters narrow it
+  // client-side, so a filter change costs no request and the stat cards can
+  // count the whole inventory (there is no pagination; the route returns it all).
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      await createPhoneNumber({
-        phone_number: form.phone_number,
-        provider_id: form.provider_id,
-        label: form.label || undefined,
-        region: form.region || undefined,
-        max_concurrent_calls: form.max_concurrent_calls,
-        capabilities: form.capabilities.length > 0 ? form.capabilities : undefined,
-      });
-      setShowCreate(false);
-      setForm({ phone_number: '', provider_id: '', label: '', region: '', max_concurrent_calls: 1, capabilities: ['voice'] });
-      load();
+      const nums = await listPhoneNumbers();
+      setPhoneNumbers(nums);
+      clearSelection();
     } catch (err) {
-      setCreateError(err instanceof Error ? err.message : 'Failed to add phone number');
+      setError(err instanceof Error ? err.message : 'Failed to load phone numbers');
     } finally {
-      setCreating(false);
+      setLoading(false);
     }
-  };
+  }, [clearSelection]);
+
+  // The provider catalog is static for the page's life: fetched once.
+  const loadCatalog = useCallback(async () => {
+    setCatalogError(null);
+    try {
+      setProviders(await listTelephonyProviders());
+    } catch (err) {
+      setCatalogError(err instanceof Error ? err.message : 'Failed to load telephony providers');
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadCatalog(); }, [loadCatalog]);
+
+  // A filter change starts a fresh selection, as the refetch it replaced did.
+  useEffect(() => { clearSelection(); }, [filterProvider, filterStatus, clearSelection]);
 
   const handleExpand = async (id: string) => {
     if (expandedId === id) {
@@ -267,36 +195,6 @@ export default function SAPhoneNumbersPage() {
     }
   };
 
-  const openEdit = (pn: PhoneNumber) => {
-    setEditPhone(pn);
-    setEditError(null);
-    setEditForm({
-      label: pn.label ?? '',
-      notes: pn.notes ?? '',
-      max_concurrent_calls: pn.max_concurrent_calls,
-    });
-  };
-
-  const handleEdit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editPhone) return;
-    setEditing(true);
-    setEditError(null);
-    try {
-      await updatePhoneNumber(editPhone.id, {
-        label: editForm.label || undefined,
-        notes: editForm.notes || undefined,
-        max_concurrent_calls: editForm.max_concurrent_calls,
-      });
-      setEditPhone(null);
-      load();
-    } catch (err) {
-      setEditError(err instanceof Error ? err.message : 'Failed to update phone number');
-    } finally {
-      setEditing(false);
-    }
-  };
-
   const handleDelete = async (id: string) => {
     try {
       await deletePhoneNumber(id);
@@ -304,37 +202,6 @@ export default function SAPhoneNumbersPage() {
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete phone number');
-    }
-  };
-
-  // Run a bulk lifecycle action over the eligible selected rows using the
-  // per-item endpoints, at most `DEFAULT_CONCURRENCY` in flight, then refetch.
-  const runBulk = async () => {
-    const action = bulkAction;
-    if (!action) return;
-    const targets = action === 'retire' ? retireEligible : reactivateEligible;
-    setBulkRunning(true);
-    setError(null);
-    // Run all eligible items, tolerating partial failure: settled results let
-    // us report exactly how many succeeded/failed instead of aborting on the
-    // first error and leaving the table out of sync with the server.
-    const results = await mapWithConcurrency(targets, pn =>
-      action === 'retire' ? retirePhoneNumber(pn.id) : reactivatePhoneNumber(pn.id),
-    );
-    const failed = results.filter(r => r.status === 'rejected').length;
-    const succeeded = results.length - failed;
-    try {
-      setExpandedId(null);
-      await load(); // always refetch so the table reflects server state
-    } finally {
-      setBulkRunning(false);
-      setBulkAction(null);
-    }
-    if (failed > 0) {
-      const verb = action === 'retire' ? 'retired' : 'reactivated';
-      setError(
-        `${succeeded} number${succeeded !== 1 ? 's' : ''} ${verb}, ${failed} failed. Please retry the failed number${failed !== 1 ? 's' : ''}.`,
-      );
     }
   };
 
@@ -394,26 +261,26 @@ export default function SAPhoneNumbersPage() {
           <option value="deleted">Deleted</option>
         </select>
 
-        {selectedRows.length > 0 && (
+        {bulk.selectedRows.length > 0 && (
           <div className={styles.bulkBar}>
-            <span className={styles.bulkCount}>{selectedRows.length} selected</span>
+            <span className={styles.bulkCount}>{bulk.selectedRows.length} selected</span>
             <button
               type="button"
               className="btn-secondary"
-              disabled={retireEligible.length === 0 || bulkRunning}
-              onClick={() => setBulkAction('retire')}
-              title={retireEligible.length === 0 ? 'No selected rows are eligible to retire (active, no assignments)' : undefined}
+              disabled={bulk.retireEligible.length === 0 || bulk.bulkRunning}
+              onClick={() => bulk.setBulkAction('retire')}
+              title={bulk.retireEligible.length === 0 ? 'No selected rows are eligible to retire (active, no assignments)' : undefined}
             >
-              <Trash2 size={14} /> Retire ({retireEligible.length})
+              <Trash2 size={14} /> Retire ({bulk.retireEligible.length})
             </button>
             <button
               type="button"
               className="btn-secondary"
-              disabled={reactivateEligible.length === 0 || bulkRunning}
-              onClick={() => setBulkAction('reactivate')}
-              title={reactivateEligible.length === 0 ? 'No selected rows are retired' : undefined}
+              disabled={bulk.reactivateEligible.length === 0 || bulk.bulkRunning}
+              onClick={() => bulk.setBulkAction('reactivate')}
+              title={bulk.reactivateEligible.length === 0 ? 'No selected rows are retired' : undefined}
             >
-              <RotateCcw size={14} /> Reactivate ({reactivateEligible.length})
+              <RotateCcw size={14} /> Reactivate ({bulk.reactivateEligible.length})
             </button>
           </div>
         )}
@@ -426,8 +293,8 @@ export default function SAPhoneNumbersPage() {
               <th className={styles.checkCol}>
                 <input
                   type="checkbox"
-                  checked={allVisibleSelected}
-                  onChange={toggleSelectAll}
+                  checked={bulk.allVisibleSelected}
+                  onChange={bulk.toggleSelectAll}
                   aria-label="Select all"
                 />
               </th>
@@ -451,8 +318,8 @@ export default function SAPhoneNumbersPage() {
                   <td className={styles.checkCol} onClick={e => e.stopPropagation()}>
                     <input
                       type="checkbox"
-                      checked={selected.has(pn.id)}
-                      onChange={() => toggleSelect(pn.id)}
+                      checked={bulk.selected.has(pn.id)}
+                      onChange={() => bulk.toggleSelect(pn.id)}
                       aria-label={`Select ${pn.phone_number}`}
                     />
                   </td>
@@ -529,7 +396,7 @@ export default function SAPhoneNumbersPage() {
                         {pn.status !== 'deleted' && (
                           <button
                             className="btn-secondary"
-                            onClick={e => { e.stopPropagation(); openEdit(pn); }}
+                            onClick={e => { e.stopPropagation(); setEditPhone(pn); }}
                           >
                             <Pencil size={14} /> Edit
                           </button>
@@ -582,156 +449,19 @@ export default function SAPhoneNumbersPage() {
         </table>
       </div>
 
-      {/* Create modal */}
-      <Modal
+      <PhoneNumberCreateModal
         open={showCreate}
+        providers={providers}
         onClose={() => setShowCreate(false)}
-        title="Add phone number"
-        subtitle="Register a number to the inventory"
-        footer={
-          <>
-            <button type="button" className="btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
-            <button type="submit" form="create-phone-form" className="btn-primary" disabled={creating}>
-              {creating ? 'Adding…' : 'Add number'}
-            </button>
-          </>
-        }
-      >
-        <form id="create-phone-form" onSubmit={handleCreate} className={styles.form}>
-          <div className={styles.field}>
-            <label>Phone number</label>
-            <input
-              value={form.phone_number}
-              onChange={e => setForm(f => ({ ...f, phone_number: e.target.value }))}
-              placeholder="+919876543210"
-              required
-            />
-          </div>
-          <div className={styles.field}>
-            <label>Provider</label>
-            <select
-              value={form.provider_id}
-              onChange={e => setForm(f => ({ ...f, provider_id: e.target.value }))}
-              required
-            >
-              <option value="">Select provider…</option>
-              {providers.filter(p => p.status === 'active').map(p => (
-                <option key={p.id} value={p.id}>{telephonyProviderAlias(p.name, p.display_name)}</option>
-              ))}
-            </select>
-          </div>
-          <div className={styles.field}>
-            <label>Label (optional)</label>
-            <input
-              value={form.label}
-              onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
-              placeholder="e.g. Primary, Collections"
-            />
-          </div>
+        onCreated={() => { setShowCreate(false); load(); }}
+      />
 
-          <AdvancedSection label="Advanced settings" summary="Region, capabilities and concurrency">
-            <div className={styles.field}>
-              <label>Region (optional)</label>
-              <input
-                value={form.region}
-                onChange={e => setForm(f => ({ ...f, region: e.target.value }))}
-                placeholder="e.g. IN, US"
-              />
-            </div>
-            <div className={styles.field}>
-              <label>
-                Per-number routing cap
-                <HelpTooltip text="Optional capacity associated with this telephone number. It is not purchased provider concurrency and is not added to the account provider allocation." />
-              </label>
-              <input
-                type="number"
-                min={1}
-                value={form.max_concurrent_calls}
-                onChange={e => setForm(f => ({ ...f, max_concurrent_calls: parseInt(e.target.value) || 1 }))}
-                required
-              />
-            </div>
-            <div className={styles.field}>
-              <label>Capabilities</label>
-              <div className={styles.capCheckboxes}>
-                {CAPABILITY_OPTIONS.map(cap => (
-                  <label key={cap} className={styles.capCheckbox}>
-                    <input
-                      type="checkbox"
-                      checked={form.capabilities.includes(cap)}
-                      onChange={e => {
-                        setForm(f => ({
-                          ...f,
-                          capabilities: e.target.checked
-                            ? [...f.capabilities, cap]
-                            : f.capabilities.filter(c => c !== cap),
-                        }));
-                      }}
-                    />
-                    {cap.toUpperCase()}
-                  </label>
-                ))}
-              </div>
-            </div>
-          </AdvancedSection>
-
-          {createError && <div className={styles.error}><ErrorText message={createError} /></div>}
-        </form>
-      </Modal>
-
-      {/* Edit modal */}
-      <Modal
-        open={!!editPhone}
+      <PhoneNumberEditModal
+        key={editPhone?.id ?? 'closed'}
+        phone={editPhone}
         onClose={() => setEditPhone(null)}
-        title={editPhone ? `Edit ${editPhone.phone_number}` : 'Edit'}
-        footer={
-          <>
-            <button type="button" className="btn-secondary" onClick={() => setEditPhone(null)}>Cancel</button>
-            <button type="submit" form="edit-phone-form" className="btn-primary" disabled={editing}>
-              {editing ? 'Saving…' : 'Save changes'}
-            </button>
-          </>
-        }
-      >
-        <form id="edit-phone-form" onSubmit={handleEdit} className={styles.form}>
-          <div className={styles.field}>
-            <label>Label</label>
-            <input
-              value={editForm.label}
-              onChange={e => setEditForm(f => ({ ...f, label: e.target.value }))}
-              placeholder="e.g. Primary, Collections"
-              maxLength={255}
-            />
-          </div>
-
-          <AdvancedSection label="Advanced settings" summary="Notes and concurrency">
-            <div className={styles.field}>
-              <label>Notes</label>
-              <textarea
-                value={editForm.notes}
-                onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))}
-                placeholder="Internal notes about this number"
-                rows={3}
-              />
-            </div>
-            <div className={styles.field}>
-              <label>
-                Per-number routing cap
-                <HelpTooltip text="This number-level value is separate from provider procurement and is not summed into the account concurrency allocation." />
-              </label>
-              <input
-                type="number"
-                min={1}
-                value={editForm.max_concurrent_calls}
-                onChange={e => setEditForm(f => ({ ...f, max_concurrent_calls: parseInt(e.target.value) || 1 }))}
-                required
-              />
-            </div>
-          </AdvancedSection>
-
-          {editError && <div className={styles.error}><ErrorText message={editError} /></div>}
-        </form>
-      </Modal>
+        onSaved={() => { setEditPhone(null); load(); }}
+      />
 
       {/* Retire blocked modal */}
       <Modal
@@ -786,25 +516,25 @@ export default function SAPhoneNumbersPage() {
 
       {/* Bulk lifecycle confirm */}
       <ConfirmDialog
-        open={!!bulkAction}
-        title={bulkAction === 'reactivate' ? 'Reactivate selected numbers' : 'Retire selected numbers'}
+        open={!!bulk.bulkAction}
+        title={bulk.bulkAction === 'reactivate' ? 'Reactivate selected numbers' : 'Retire selected numbers'}
         message={
-          bulkAction === 'reactivate'
-            ? `Reactivate ${reactivateEligible.length} retired number${reactivateEligible.length !== 1 ? 's' : ''}?`
-              + (selectedRows.length - reactivateEligible.length > 0
-                ? ` ${selectedRows.length - reactivateEligible.length} selected number(s) are not retired and will be skipped.`
+          bulk.bulkAction === 'reactivate'
+            ? `Reactivate ${bulk.reactivateEligible.length} retired number${bulk.reactivateEligible.length !== 1 ? 's' : ''}?`
+              + (bulk.selectedRows.length - bulk.reactivateEligible.length > 0
+                ? ` ${bulk.selectedRows.length - bulk.reactivateEligible.length} selected number(s) are not retired and will be skipped.`
                 : '')
               + ' They will become available for assignment again.'
-            : `Retire ${retireEligible.length} active, unassigned number${retireEligible.length !== 1 ? 's' : ''}?`
-              + (selectedRows.length - retireEligible.length > 0
-                ? ` ${selectedRows.length - retireEligible.length} selected number(s) are not eligible (assigned or not active) and will be skipped.`
+            : `Retire ${bulk.retireEligible.length} active, unassigned number${bulk.retireEligible.length !== 1 ? 's' : ''}?`
+              + (bulk.selectedRows.length - bulk.retireEligible.length > 0
+                ? ` ${bulk.selectedRows.length - bulk.retireEligible.length} selected number(s) are not eligible (assigned or not active) and will be skipped.`
                 : '')
               + ' They can be reactivated later if needed.'
         }
-        confirmLabel={bulkRunning ? 'Working…' : bulkAction === 'reactivate' ? 'Reactivate' : 'Retire'}
-        danger={bulkAction === 'retire'}
-        onCancel={() => { if (!bulkRunning) setBulkAction(null); }}
-        onConfirm={runBulk}
+        confirmLabel={bulk.bulkRunning ? 'Working…' : bulk.bulkAction === 'reactivate' ? 'Reactivate' : 'Retire'}
+        danger={bulk.bulkAction === 'retire'}
+        onCancel={() => { if (!bulk.bulkRunning) bulk.setBulkAction(null); }}
+        onConfirm={bulk.runBulk}
       />
     </div>
   );
