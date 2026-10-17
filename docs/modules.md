@@ -1098,7 +1098,7 @@ Files: `ToastContext.tsx`
 ### `packages/web-ui/src/hooks/`
 
 `useAsyncResource(fetcher, { initialData, errorMessage, enabled })`: `{ data, loading, error, reload }` where
-only the latest load may write state; `enabled: false` makes no request and keeps `loading` true. The super-admin list hooks and the console's team, account and
+only the latest load may write state; `enabled: false` makes no request, resets `data` to `initialData` and keeps `loading` true. The super-admin list hooks and the console's team, account and
 phone-number hooks use it. `useDialogFocus({ open, dialogRef, onEscape?, initialFocusRef? })` is the one
 focus-in / Tab-trap / Escape / restore-focus implementation (`Modal`, `ConfirmDialog` and the console's
 dialog hooks call it; `trapTab` is its edge-wrap, used by the console's mobile drawer).
@@ -1107,7 +1107,7 @@ Files: `useAsyncResource.ts`, `useDialogFocus.ts`
 
 | Test file | Cases |
 |---|---|
-| `packages/web-ui/test/hooks/useAsyncResource.test.ts` | 7 |
+| `packages/web-ui/test/hooks/useAsyncResource.test.ts` | 8 |
 | `packages/web-ui/test/hooks/useDialogFocus.test.tsx` | 4 |
 
 `packages/web-ui/test/setup.ts` registers the RTL cleanup (no `globals: true`).

@@ -111,6 +111,19 @@ describe('useAsyncResource', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it('disabling drops the previous scope\'s data back to the initial data', async () => {
+    const fetcher = vi.fn().mockResolvedValue(['row of scope A']);
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useAsyncResource(fetcher, { initialData: [] as string[], enabled }),
+      { initialProps: { enabled: true } },
+    );
+    await waitFor(() => expect(result.current.data).toEqual(['row of scope A']));
+
+    rerender({ enabled: false });
+    expect(result.current.data).toEqual([]);
+    expect(result.current.loading).toBe(true);
+  });
+
   it('disabling drops a load still in flight', async () => {
     const pending = deferred<string>();
     const fetcher = vi.fn().mockReturnValue(pending.promise);

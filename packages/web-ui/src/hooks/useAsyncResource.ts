@@ -18,9 +18,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  * failure sets `error` (the thrown `Error`'s message, else `errorMessage`) and
  * also keeps the previous `data`.
  *
- * `enabled: false` is "not yet": no request, `loading` stays true, any load
- * still in flight can no longer write, and `reload` settles at once. Turning it
- * on loads.
+ * `enabled: false` is "not yet": no request, `data` goes back to `initialData`
+ * (so a scope that cleared never shows the previous scope's rows), `loading`
+ * stays true, any load still in flight can no longer write, and `reload`
+ * settles at once. Turning it on loads.
  */
 export interface AsyncResource<T> {
   data: T;
@@ -47,6 +48,7 @@ export function useAsyncResource<T>(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const sequence = useRef(0);
+  const initial = useRef(initialData);
   const fallback = useRef(errorMessage);
   fallback.current = errorMessage;
 
@@ -54,7 +56,10 @@ export function useAsyncResource<T>(
     const seq = ++sequence.current;
     setLoading(true);
     setError(null);
-    if (!enabled) return;
+    if (!enabled) {
+      setData(initial.current);
+      return;
+    }
     try {
       const value = await fetcher();
       if (seq === sequence.current) setData(value);
