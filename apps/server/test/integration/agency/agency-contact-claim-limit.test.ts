@@ -1,10 +1,14 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type pg from 'pg';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
-import { insertAgencyCampaign, insertAgencyContacts } from './agency-factories.js';
+import { insertAgencyCampaign, insertAgencyContact, insertAgencyContacts } from './agency-factories.js';
+import {
+  assertReRunningPlan, freshTables, withReRunningPlan,
+} from '../../../../../packages/db/test/helpers/rerun-plan.js';
 
 // The repository's queries go to `pinned.client` while a case holds one, so they
 // run with that connection's planner settings.
-const pinned = vi.hoisted(() => ({ client: null as null | { query: (...args: never[]) => unknown } }));
+const pinned = vi.hoisted(() => ({ client: null as null | pg.PoolClient }));
 vi.mock('@magick-agency/db', async (orig) => ({
   ...(await orig<typeof import('@magick-agency/db')>()),
   getPool: () => pinned.client ?? getTestPool(),
@@ -26,49 +30,42 @@ const repo = await import('../../../src/db/repositories/agency.repository.js');
  * statement has already updated, so LIMIT 1 claimed the whole roster. Postgres
  * picks that plan from the table's statistics, which is why it came and went with
  * the order integration files ran in and with autovacuum. The case below gets
- * that plan on purpose: statistics taken while the table had pages but no live
- * rows, and a connection with hash and merge joins, hash aggregation and
- * materialisation switched off. Contacts inserted one after another sit in the
- * heap in `next_attempt_at` order, which is the order that lets every re-run
- * match its outer row.
+ * that plan every time, by the recipe in `packages/db/test/helpers/rerun-plan.ts`
+ * (fresh table, statistics from one row, a connection without the alternatives).
  */
+/** The claim as it was. */
+const OLD_CLAIM = `UPDATE agency_contacts SET state = 'in_flight', updated_at = now()
+  WHERE id IN (SELECT id FROM agency_contacts
+                WHERE campaign_id = $1 AND state = 'pending' AND next_attempt_at <= now()
+                  AND suppressed_reason IS DISTINCT FROM 'dnc'
+                ORDER BY next_attempt_at FOR UPDATE SKIP LOCKED LIMIT $2)
+  RETURNING *`;
+
 describe('agencyContactRepository.claimDialable', () => {
   beforeEach(truncateAll);
   afterAll(closeTestPool);
 
   it('claims at most `limit` contacts even when the plan re-runs the locking subquery', async () => {
     const campaign = await insertAgencyCampaign({ status: 'running' });
-    const pool = getTestPool();
-    await insertAgencyContacts(campaign.id, 6);
-    await pool.query('DELETE FROM agency_contacts');
-    await pool.query('ANALYZE agency_contacts');
-    await insertAgencyContacts(campaign.id, 6);
-
-    const client = await pool.connect();
-    let first: Awaited<ReturnType<typeof repo.agencyContactRepository.claimDialable>>;
-    let next: typeof first;
-    try {
-      await client.query(`SET enable_hashjoin = off; SET enable_mergejoin = off;
-                          SET enable_hashagg = off; SET enable_material = off`);
-      const { rows: plan } = await client.query<{ 'QUERY PLAN': string }>(
-        `EXPLAIN UPDATE agency_contacts SET state = 'in_flight'
-          WHERE id IN (SELECT id FROM agency_contacts WHERE campaign_id = $1
-                        ORDER BY next_attempt_at FOR UPDATE SKIP LOCKED LIMIT 1)`,
-        [campaign.id],
-      );
-      // The precondition, asserted: on this connection the old statement's shape
-      // plans as the semi join that re-runs its subquery. Without it the case
-      // proves nothing.
-      expect(plan.map((r) => r['QUERY PLAN']).join('\n')).toContain('Nested Loop Semi Join');
-
-      pinned.client = client as never;
-      first = await repo.agencyContactRepository.claimDialable(campaign.id, 1);
-      next = await repo.agencyContactRepository.claimDialable(campaign.id, 2);
-    } finally {
-      pinned.client = null;
-      await client.query('RESET ALL').catch(() => {});
-      client.release();
+    // One contact, statistics, then the rest, in `next_attempt_at` order.
+    await freshTables(getTestPool(), ['agency_contacts']);
+    for (let i = 1; i <= 6; i++) {
+      await insertAgencyContact(campaign.id, { source_row_number: i });
+      if (i === 1) await getTestPool().query('ANALYZE agency_contacts');
     }
+
+    const [first, next] = await withReRunningPlan(getTestPool(), async (client) => {
+      await assertReRunningPlan(client, 'agency_contacts', OLD_CLAIM, [campaign.id, 1]);
+      pinned.client = client;
+      try {
+        return [
+          await repo.agencyContactRepository.claimDialable(campaign.id, 1),
+          await repo.agencyContactRepository.claimDialable(campaign.id, 2),
+        ];
+      } finally {
+        pinned.client = null;
+      }
+    });
     expect(first).toHaveLength(1);
     expect(next).toHaveLength(2);
 
