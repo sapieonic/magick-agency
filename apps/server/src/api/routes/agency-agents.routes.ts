@@ -20,6 +20,7 @@ import type {
   AgencyGroupPage,
   AgencyRosterPage,
 } from '@magick-agency/contracts/agency';
+import { replyValidationFailed } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'agency-agent-routes' });
 
@@ -271,7 +272,7 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
 
     const parsed = parseRosterQuery((request.query ?? {}) as Record<string, unknown>);
     if (!parsed.ok) {
-      return reply.code(400).send({ error: 'Validation failed', details: parsed.issues });
+      return replyValidationFailed(reply, parsed.issues);
     }
 
     const payload: AgencyRosterPage = await agencyAgentStatsRepository.roster(
@@ -460,7 +461,7 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
 
     const parsed = parseAgentStatsQuery((request.query ?? {}) as Record<string, unknown>);
     if (!parsed.ok) {
-      return reply.code(400).send({ error: 'Validation failed', details: parsed.issues });
+      return replyValidationFailed(reply, parsed.issues);
     }
 
     const payload: AgencyAgentStats = await agencyAgentStatsRepository.stats(
@@ -501,7 +502,7 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
 
     const parsed = parseAgentAttemptFilters((request.query ?? {}) as Record<string, unknown>);
     if (!parsed.ok) {
-      return reply.code(400).send({ error: 'Validation failed', details: parsed.issues });
+      return replyValidationFailed(reply, parsed.issues);
     }
     const cursor = readCursor(request, reply);
     if (cursor === null) return reply;

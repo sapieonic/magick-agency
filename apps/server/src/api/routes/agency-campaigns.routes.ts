@@ -61,6 +61,7 @@ import {
   issuesToDetails,
   validateAgencyCampaignConfig,
 } from '../../agency/campaign-config.js';
+import { replyValidationFailed } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'agency-campaign-routes' });
 
@@ -358,7 +359,7 @@ export async function agencyCampaignRoutes(
   ): boolean {
     const issues = validateAgencyCampaignConfig(body, base);
     if (issues.length === 0) return false;
-    reply.code(400).send({ error: 'Validation failed', details: issuesToDetails(issues) });
+    replyValidationFailed(reply, issuesToDetails(issues));
     return true;
   }
 
@@ -384,10 +385,7 @@ export async function agencyCampaignRoutes(
   ): Promise<boolean> {
     if (value === undefined || value === null) return false;
     if (typeof value !== 'string' || value.trim() === '') {
-      reply.code(400).send({
-        error: 'Validation failed',
-        details: { abandon_announcement_id: 'must be an announcement id, or null to clear it' },
-      });
+      replyValidationFailed(reply, { abandon_announcement_id: 'must be an announcement id, or null to clear it' });
       return true;
     }
     const announcement = await announcementRepository.findActiveByIdScoped(
@@ -433,10 +431,7 @@ export async function agencyCampaignRoutes(
   ): Promise<boolean> {
     if (value === undefined || value === null) return false;
     if (typeof value !== 'string' || value.trim() === '') {
-      reply.code(400).send({
-        error: 'Validation failed',
-        details: { analysis_profile_id: 'must be a call-analysis profile id, or null to clear it' },
-      });
+      replyValidationFailed(reply, { analysis_profile_id: 'must be a call-analysis profile id, or null to clear it' });
       return true;
     }
     const err = await preflightAnalysisProfile(value, getTenantId(request), getAccountId(request), 'agency');
@@ -455,12 +450,9 @@ export async function agencyCampaignRoutes(
     const callerIdsError = callerIdsIssue(body?.caller_ids);
 
     if (!name || callerIdsError) {
-      return reply.code(400).send({
-        error: 'Validation failed',
-        details: {
-          ...(name ? {} : { name: 'name is required' }),
-          ...(callerIdsError ? { caller_ids: callerIdsError } : {}),
-        },
+      return replyValidationFailed(reply, {
+        ...(name ? {} : { name: 'name is required' }),
+        ...(callerIdsError ? { caller_ids: callerIdsError } : {}),
       });
     }
     const callerIds = (body!.caller_ids as string[]).map((id) => id.trim());
@@ -524,10 +516,7 @@ export async function agencyCampaignRoutes(
     const offset = Math.max(Number(q?.offset ?? 0) || 0, 0);
     const statuses = parseStatusFilter(q?.status);
     if (statuses === 'invalid') {
-      return reply.code(400).send({
-        error: 'Validation failed',
-        details: { status: `must be a comma-separated list of: ${Object.keys(CAMPAIGN_STATUSES).join(', ')}` },
-      });
+      return replyValidationFailed(reply, { status: `must be a comma-separated list of: ${Object.keys(CAMPAIGN_STATUSES).join(', ')}` });
     }
     const { rows, total } = await agencyCampaignRepository.list(
       getTenantId(request), getAccountId(request), limit, offset, statuses,
@@ -554,10 +543,7 @@ export async function agencyCampaignRoutes(
       ? raw.split(',').map((id) => id.trim()).filter((id) => id.length > 0)
       : [];
     if (ids.length > CAMPAIGN_SUMMARIES_MAX_IDS) {
-      return reply.code(400).send({
-        error: 'Validation failed',
-        details: { ids: `at most ${CAMPAIGN_SUMMARIES_MAX_IDS} campaign ids per request` },
-      });
+      return replyValidationFailed(reply, { ids: `at most ${CAMPAIGN_SUMMARIES_MAX_IDS} campaign ids per request` });
     }
     const campaigns = await agencyCampaignRepository.findOwnedSummaries(
       ids, getTenantId(request), getAccountId(request),
@@ -592,10 +578,7 @@ export async function agencyCampaignRoutes(
 
     const body = { ...(request.body as Record<string, unknown> | undefined) };
     if ('status' in body) {
-      return reply.code(400).send({
-        error: 'Validation failed',
-        details: { status: 'status is not editable — use /start, /pause, /resume or /stop' },
-      });
+      return replyValidationFailed(reply, { status: 'status is not editable — use /start, /pause, /resume or /stop' });
     }
     // Checked on the PATCH too, not just create — for the same reason as the
     // apology below: config is the thing an operator edits *after* the campaign
@@ -615,7 +598,7 @@ export async function agencyCampaignRoutes(
     if ('caller_ids' in body) {
       const issue = callerIdsIssue(body.caller_ids);
       if (issue) {
-        return reply.code(400).send({ error: 'Validation failed', details: { caller_ids: issue } });
+        return replyValidationFailed(reply, { caller_ids: issue });
       }
       body.caller_ids = (body.caller_ids as string[]).map((id) => id.trim());
     }
@@ -811,7 +794,7 @@ export async function agencyCampaignRoutes(
 
     const parsed = parseCampaignSeriesQuery((request.query ?? {}) as Record<string, unknown>);
     if (!parsed.ok) {
-      return reply.code(400).send({ error: 'Validation failed', details: parsed.issues });
+      return replyValidationFailed(reply, parsed.issues);
     }
 
     const series: AgencyCampaignStatsSeries | null = await agencyCampaignRepository.statsSeries(
@@ -916,7 +899,7 @@ export async function agencyCampaignRoutes(
 
     const parsed = parseAttemptFilters((request.query ?? {}) as Record<string, unknown>);
     if (!parsed.ok) {
-      return reply.code(400).send({ error: 'Validation failed', details: parsed.issues });
+      return replyValidationFailed(reply, parsed.issues);
     }
     /*
      * `?agent_user_id=` is shape-checked here. `agency_agent_sessions.agent_user_id`
@@ -927,10 +910,7 @@ export async function agencyCampaignRoutes(
      * answer `parseAttemptFilters` already gives a malformed `contact_id`.
      */
     if (parsed.filters.agentUserId !== undefined && !UUID_PARAM_RE.test(parsed.filters.agentUserId)) {
-      return reply.code(400).send({
-        error: 'Validation failed',
-        details: [{ param: 'agent_user_id', message: 'must be an agent id' }],
-      });
+      return replyValidationFailed(reply, [{ param: 'agent_user_id', message: 'must be an agent id' }]);
     }
     const cursor = readCursor(request, reply);
     if (cursor === null) return reply;
@@ -1157,7 +1137,7 @@ export async function agencyCampaignRoutes(
 
     const parsed = parseContactFilters((request.query ?? {}) as Record<string, unknown>);
     if (!parsed.ok) {
-      return reply.code(400).send({ error: 'Validation failed', details: parsed.issues });
+      return replyValidationFailed(reply, parsed.issues);
     }
     const cursor = readCursor(request, reply);
     if (cursor === null) return reply;
@@ -1358,7 +1338,7 @@ export async function agencyCampaignRoutes(
       { catalog: campaign.disposition_catalog ?? [] },
     );
     if (!parsed.ok) {
-      return reply.code(400).send({ error: 'Validation failed', details: parsed.issues });
+      return replyValidationFailed(reply, parsed.issues);
     }
 
     const preview = await agencyCampaignRepository.retryPreview(campaign.id, parsed.filters);
@@ -1401,19 +1381,13 @@ export async function agencyCampaignRoutes(
     // the parent's roster at all.
     const idempotency = readIdempotencyKey(body);
     if (!idempotency.ok) {
-      return reply.code(400).send({
-        error: 'Validation failed',
-        details: { idempotency_key: idempotency.message },
-      });
+      return replyValidationFailed(reply, { idempotency_key: idempotency.message });
     }
 
     const rawSelector = body['selector'];
     if (rawSelector !== undefined
       && (rawSelector === null || typeof rawSelector !== 'object' || Array.isArray(rawSelector))) {
-      return reply.code(400).send({
-        error: 'Validation failed',
-        details: { selector: 'must be an object of retry selector dimensions' },
-      });
+      return replyValidationFailed(reply, { selector: 'must be an object of retry selector dimensions' });
     }
     // `?? {}` rather than a required-field check: an absent selector and an empty
     // one mean the same thing to the operator, and `parseRetrySelector` already has
@@ -1424,17 +1398,14 @@ export async function agencyCampaignRoutes(
       { catalog: parent.disposition_catalog ?? [] },
     );
     if (!parsed.ok) {
-      return reply.code(400).send({ error: 'Validation failed', details: parsed.issues });
+      return replyValidationFailed(reply, parsed.issues);
     }
 
     // ── Config: inherit from the parent, then patch ─────────────────────────
     const rawOverrides = body['config_overrides'];
     if (rawOverrides !== undefined
       && (rawOverrides === null || typeof rawOverrides !== 'object' || Array.isArray(rawOverrides))) {
-      return reply.code(400).send({
-        error: 'Validation failed',
-        details: { config_overrides: 'must be an object of campaign config fields' },
-      });
+      return replyValidationFailed(reply, { config_overrides: 'must be an object of campaign config fields' });
     }
     const overrides = (rawOverrides ?? {}) as Record<string, unknown>;
 
@@ -1448,19 +1419,16 @@ export async function agencyCampaignRoutes(
       (key) => !(RETRY_CONFIG_KEYS as readonly string[]).includes(key),
     );
     if (unknownKeys.length > 0) {
-      return reply.code(400).send({
-        error: 'Validation failed',
-        details: Object.fromEntries(unknownKeys.map((key) => [
-          key,
-          `${key} is not a campaign config field — a retry inherits everything else from its parent, and its name is set with \`name\``,
-        ])),
-      });
+      return replyValidationFailed(reply, Object.fromEntries(unknownKeys.map((key) => [
+        key,
+        `${key} is not a campaign config field — a retry inherits everything else from its parent, and its name is set with \`name\``,
+      ])));
     }
 
     if ('caller_ids' in overrides) {
       const issue = callerIdsIssue(overrides['caller_ids']);
       if (issue) {
-        return reply.code(400).send({ error: 'Validation failed', details: { caller_ids: issue } });
+        return replyValidationFailed(reply, { caller_ids: issue });
       }
       overrides['caller_ids'] = (overrides['caller_ids'] as string[]).map((id) => id.trim());
     }

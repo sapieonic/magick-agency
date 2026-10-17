@@ -14,6 +14,7 @@ import {
   StaffingUpgradePendingError,
 } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import { enrichAssignedAgents } from '../../agency/agency-agent-identity.js';
+import { parseOr400 } from './helpers/parse-or-400.js';
 
 /*
  * Agent → campaign staffing, served at the console's paths under `/proxy/agency` (decision
@@ -531,10 +532,8 @@ export async function proxyAgencyStaffingRoutes(app: FastifyInstance): Promise<v
     const userId = resolveMyAgentId(request, reply);
     if (userId === null) return reply;
 
-    const query = myCampaignsQuerySchema.safeParse(request.query ?? {});
-    if (!query.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: query.error.flatten() });
-    }
+    const query = parseOr400(myCampaignsQuerySchema, request.query ?? {}, reply, 'agency');
+    if (!query) return reply;
 
     const assignments = await agencyCampaignAgentRepository.listAllForUser(
       request.tenantId!,
@@ -639,10 +638,8 @@ export async function proxyAgencyStaffingRoutes(app: FastifyInstance): Promise<v
   app.get<{ Params: { id: string } }>('/campaigns/:id/agents', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    const params = campaignParamsSchema.safeParse(request.params);
-    if (!params.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: params.error.flatten() });
-    }
+    const params = parseOr400(campaignParamsSchema, request.params, reply, 'agency');
+    if (!params) return reply;
     if (!(await assertCampaignInScope(request, reply, params.data.id))) return reply;
 
     const assignments = await agencyCampaignAgentRepository.listActiveForCampaign(
@@ -686,14 +683,10 @@ export async function proxyAgencyStaffingRoutes(app: FastifyInstance): Promise<v
   app.post<{ Params: { id: string } }>('/campaigns/:id/agents', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    const params = campaignParamsSchema.safeParse(request.params);
-    if (!params.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: params.error.flatten() });
-    }
-    const parsed = assignAgentSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const params = parseOr400(campaignParamsSchema, request.params, reply, 'agency');
+    if (!params) return reply;
+    const parsed = parseOr400(assignAgentSchema, request.body, reply, 'agency');
+    if (!parsed) return reply;
 
     // Membership first: it is a local read, and `requirePermission` proves the
     // CALLER's role and never looks at the target row — so the tenant predicate
@@ -844,10 +837,8 @@ export async function proxyAgencyStaffingRoutes(app: FastifyInstance): Promise<v
   app.delete<{ Params: { id: string; userId: string } }>('/campaigns/:id/agents/:userId', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    const params = campaignAgentParamsSchema.safeParse(request.params);
-    if (!params.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: params.error.flatten() });
-    }
+    const params = parseOr400(campaignAgentParamsSchema, request.params, reply, 'agency');
+    if (!params) return reply;
     if (!(await assertCampaignInScope(request, reply, params.data.id))) return reply;
 
     const removedId = await agencyCampaignAgentRepository.unassign(

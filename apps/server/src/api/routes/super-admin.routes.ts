@@ -41,6 +41,7 @@ import {
   superAdminAuditQuerySchema,
   changeMembershipRoleSchema,
 } from '../validators/super-admin.validator.js';
+import { parseOr400 } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'super-admin-routes' });
 
@@ -178,10 +179,8 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(503).send({ error: 'Service Unavailable', message: 'Super admin not configured' });
     }
 
-    const parsed = superAdminLoginSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(superAdminLoginSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
 
     const { email, password } = parsed.data;
     const admin = await superAdminRepository.findByEmail(email);
@@ -230,10 +229,8 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
    * Change own password (requires current password).
    */
   authApp.put('/change-password', async (request: FastifyRequest, reply: FastifyReply) => {
-    const parsed = changePasswordSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(changePasswordSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
 
     const { current_password, new_password } = parsed.data;
     const adminId = request.superAdmin!.id;
@@ -292,10 +289,8 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
    * none of the three exists here, so `CreateTenantResponse` carries none of them.
    */
   authApp.post('/tenants', async (request: FastifyRequest, reply: FastifyReply) => {
-    const parsed = createTenantSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(createTenantSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
 
     const { name, owner_email, owner_name } = parsed.data;
     const pool = getPool();
@@ -438,10 +433,8 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
    */
   authApp.post('/tenants/:id/users', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const { id: tenantId } = request.params;
-    const parsed = addUserToTenantSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(addUserToTenantSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
 
     const { email, role, name, account_id } = parsed.data;
 
@@ -682,10 +675,8 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
     reply: FastifyReply,
   ) => {
     const { id: tenantId, membershipId } = request.params;
-    const parsed = changeMembershipRoleSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(changeMembershipRoleSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
     const { role, reason } = parsed.data;
 
     const tenant = await tenantRepository.findById(tenantId);
@@ -884,10 +875,8 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
    * Create another super admin.
    */
   authApp.post('/admins', async (request: FastifyRequest, reply: FastifyReply) => {
-    const parsed = createSuperAdminSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(createSuperAdminSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
 
     const { email, password, name } = parsed.data;
 
@@ -998,10 +987,8 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
    * (re-auth). Cannot target self (use change-password) or the system admin.
    */
   authApp.put('/admins/:id/password', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-    const parsed = resetAdminPasswordSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(resetAdminPasswordSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
 
     const { id } = request.params;
     const { admin_password, new_password } = parsed.data;
@@ -1050,10 +1037,8 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
    * page-local search would scan only the current 50 rows.
    */
   authApp.get('/audit', async (request: FastifyRequest, reply: FastifyReply) => {
-    const parsed = superAdminAuditQuerySchema.safeParse(request.query);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(superAdminAuditQuerySchema, request.query, reply, 'platform');
+    if (!parsed) return reply;
     const { limit, offset, ...filters } = parsed.data;
     const result = await superAdminAuditRepository.list(limit, offset, filters);
     return reply.send(result);

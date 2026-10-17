@@ -101,6 +101,7 @@ import { drainPages } from './helpers/drain-pages.js';
  */
 type OwnedCampaign = { accountId: string; name: string | null };
 import { config } from '../../config/index.js';
+import { parseOr400 } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'proxy-agency-campaigns' });
 
@@ -937,10 +938,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
 
     // Validated against the RESOLVED query rather than `request.query`, so the
     // string the schema measures is the string the handler will re-read.
-    const parsed = campaignSeriesQuerySchema.safeParse(query);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(campaignSeriesQuerySchema, query, reply, 'agency');
+    if (!parsed) return reply;
 
     const result = await callCore({
       method: 'GET',
@@ -1048,10 +1047,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   app.get<{ Params: { id: string } }>('/campaigns/:id/activity', {
     preHandler: requirePermission('audit.read'),
   }, async (request, reply) => {
-    const parsed = activityQuerySchema.safeParse(request.query);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(activityQuerySchema, request.query, reply, 'agency');
+    if (!parsed) return reply;
     const query = parsed.data;
 
     let cursor: ActivityCursor = { master: null, core: null };
@@ -1141,10 +1138,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   app.get<{ Params: { id: string } }>('/campaigns/:id/activity.csv', {
     preHandler: requirePermission('audit.read'),
   }, async (request, reply) => {
-    const parsed = activityExportQuerySchema.safeParse(request.query);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(activityExportQuerySchema, request.query, reply, 'agency');
+    if (!parsed) return reply;
     const query = parsed.data;
 
     const owned = await requireOwnedCampaign(request, reply);
@@ -2051,12 +2046,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       requirePermission('agency.campaigns.write'),
     ],
   }, async (request, reply) => {
-    const parsed = retryCreateSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply
-        .code(400)
-        .send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(retryCreateSchema, request.body, reply, 'agency');
+    if (!parsed) return reply;
 
     // Config validation. The overrides are the create route's config fields by
     // another name, so they go through the create route's validator — an
@@ -2403,10 +2394,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   app.post('/ingest/analyze', {
     preHandler: requirePermission('agency.campaigns.write'),
   }, async (request, reply) => {
-    const parsed = analyzeSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(analyzeSchema, request.body, reply, 'agency');
+    if (!parsed) return reply;
     if (!isTenantOwnedKey(parsed.data.s3_key, request.tenantId!)) {
       return reply.code(403).send({ error: 'Forbidden', message: 'That upload does not belong to this tenant.' });
     }
@@ -2439,10 +2428,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   app.post('/ingest/jobs', {
     preHandler: requirePermission('agency.campaigns.write'),
   }, async (request, reply) => {
-    const parsed = startIngestSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(startIngestSchema, request.body, reply, 'agency');
+    if (!parsed) return reply;
     const input = parsed.data;
 
     if (!isTenantOwnedKey(input.s3_key, request.tenantId!)) {
@@ -2665,10 +2652,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     app.post<{ Params: { id: string } }>('/campaigns/:id/roster/clear', {
       preHandler: requirePermission('agency.campaigns.write'),
     }, async (request, reply) => {
-      const parsed = clearRosterSchema.safeParse(request.body);
-      if (!parsed.success) {
-        return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-      }
+      const parsed = parseOr400(clearRosterSchema, request.body, reply, 'agency');
+      if (!parsed) return reply;
 
       // Same ownership proof as the ingest: the supersede is a roster write the
       // handler's `requireOwned` never sees. Membership account first, never the

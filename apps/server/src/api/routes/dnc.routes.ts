@@ -9,6 +9,7 @@ import { DNC_SOURCES, dncScopeLabel, dncScopeUuid } from '../../dnc/dnc.reposito
 import { createChildLogger } from '@magick-agency/observability';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../audit/platform/audit-actor.js';
+import { parseOr400 } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'dnc-routes' });
 
@@ -136,10 +137,8 @@ export async function dncRoutes(app: FastifyInstance): Promise<void> {
   app.get('/', {
     preHandler: requirePermission('agency.dnc.read'),
   }, async (request, reply) => {
-    const parsed = listSchema.safeParse(request.query ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(listSchema, request.query ?? {}, reply, 'agency');
+    if (!parsed) return reply;
     const q = parsed.data;
 
     // An account-scoped caller may only ever list their OWN account's rows —
@@ -185,10 +184,8 @@ export async function dncRoutes(app: FastifyInstance): Promise<void> {
   app.post('/', {
     preHandler: requirePermission('agency.dnc.manage'),
   }, async (request, reply) => {
-    const parsed = addSchema.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(addSchema, request.body ?? {}, reply, 'agency');
+    if (!parsed) return reply;
     const body = parsed.data;
 
     // An account-scoped caller may only write to THEIR OWN account. Omitting

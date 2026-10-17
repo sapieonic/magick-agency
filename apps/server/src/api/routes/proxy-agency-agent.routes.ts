@@ -20,6 +20,7 @@ import { rejectPathEscapingParams } from './helpers/path-params.js';
 import { resolveAgencyActor, type AgencyActorFields } from '../../agency/agency-actor.js';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor, resolvedUserAuditActor } from '../../audit/platform/audit-actor.js';
+import { parseOr400 } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'proxy-agency-agent' });
 
@@ -222,10 +223,8 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   app.post('/sessions', {
     preHandler: requirePermission('agency.station.connect'),
   }, async (request, reply) => {
-    const parsed = createSessionSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(createSessionSchema, request.body, reply, 'agency');
+    if (!parsed) return reply;
 
     // The internal handler's `POST /agency/sessions` requires `agent_user_id`, and
     // `parsed.data` never carries one — without it every join 400s and no agent can
@@ -352,10 +351,8 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   app.post<{ Params: { id: string } }>('/sessions/:id/break', {
     preHandler: requirePermission('agency.station.connect'),
   }, async (request, reply) => {
-    const parsed = breakSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(breakSchema, request.body, reply, 'agency');
+    if (!parsed) return reply;
     const actor = sessionActorOrRefuse(request, reply);
     if (!actor) return reply;
     const result = await callCore({
@@ -444,10 +441,8 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   app.post<{ Params: { id: string } }>('/sessions/:id/force-available', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    const parsed = forceAvailableSchema.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(forceAvailableSchema, request.body ?? {}, reply, 'agency');
+    if (!parsed) return reply;
 
     const actor = sessionActorOrRefuse(request, reply);
     if (!actor) return reply;
@@ -545,10 +540,8 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   app.post<{ Params: { id: string } }>('/attempts/:id/disposition', {
     preHandler: requirePermission('agency.attempts.dispose'),
   }, async (request, reply) => {
-    const parsed = dispositionSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(dispositionSchema, request.body, reply, 'agency');
+    if (!parsed) return reply;
 
     const actor = resolveAgencyActor(request);
     if (!actor.ok) {
@@ -613,10 +606,8 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   app.post<{ Params: { id: string } }>('/attempts/:id/notes', {
     preHandler: requirePermission('agency.attempts.dispose'),
   }, async (request, reply) => {
-    const parsed = notesSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(notesSchema, request.body, reply, 'agency');
+    if (!parsed) return reply;
 
     const actor = resolveAgencyActor(request);
     if (!actor.ok) {
@@ -661,10 +652,8 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   app.post<{ Params: { id: string } }>('/attempts/:id/dnc', {
     preHandler: requirePermission('agency.dnc.write'),
   }, async (request, reply) => {
-    const parsed = dncSchema.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(dncSchema, request.body ?? {}, reply, 'agency');
+    if (!parsed) return reply;
 
     /**
      * ── The escalation gate ────────────────────────────────────────────────

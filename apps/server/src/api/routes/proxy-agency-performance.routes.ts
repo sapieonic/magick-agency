@@ -24,6 +24,7 @@ import {
   type AgencyGroupRowRef,
 } from '../../agency/agency-agent-identity.js';
 import { resolveMyAgentId } from './proxy-agency-staffing.routes.js';
+import { parseOr400 } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'proxy-agency-performance' });
 
@@ -957,10 +958,8 @@ export async function proxyAgencyPerformanceRoutes(app: FastifyInstance): Promis
   app.get<{ Params: { userId: string } }>('/agents/:userId/stats', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    const params = agentParamsSchema.safeParse(request.params);
-    if (!params.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: params.error.flatten() });
-    }
+    const params = parseOr400(agentParamsSchema, request.params, reply, 'agency');
+    if (!params) return reply;
     if (!(await assertAgentInTenant(request, reply, params.data.userId))) return reply;
 
     const forwarded = forwardAllowedQuery(request.query, AGENT_STATS_QUERY_PARAMS);
@@ -1003,10 +1002,8 @@ export async function proxyAgencyPerformanceRoutes(app: FastifyInstance): Promis
   app.get<{ Params: { userId: string } }>('/agents/:userId/attempts', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    const params = agentParamsSchema.safeParse(request.params);
-    if (!params.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: params.error.flatten() });
-    }
+    const params = parseOr400(agentParamsSchema, request.params, reply, 'agency');
+    if (!params) return reply;
     if (!(await assertAgentInTenant(request, reply, params.data.userId))) return reply;
 
     const forwarded = forwardAllowedQuery(request.query, AGENT_ATTEMPT_QUERY_PARAMS);

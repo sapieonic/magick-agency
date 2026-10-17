@@ -22,6 +22,7 @@ import {
   PENDING_UID_PREFIX,
   UNVERIFIED_ADDRESS_HOLDER,
 } from '../../auth/firebase-identity.js';
+import { parseOr400 } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'user-routes' });
 
@@ -264,10 +265,8 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
   app.post('/invite', {
     preHandler: [requirePermission('user.invite')],
   }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const parsed = inviteUserSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(inviteUserSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
 
     const { email, role, account_id } = parsed.data;
 
@@ -673,10 +672,8 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
   app.put<{ Params: { id: string } }>('/:id/role', {
     preHandler: [requirePermission('user.update_role')],
   }, async (request, reply) => {
-    const parsed = updateRoleSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(updateRoleSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
 
     const { role } = parsed.data;
     const targetUserId = request.params.id;
