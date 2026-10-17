@@ -88,6 +88,7 @@ const ALLOWED = new Set([
   join('apps', 'server', 'test', 'unit', 'branding', 'no-parent-brand.test.ts'),
   join('apps', 'console', 'src', '__tests__', 'branding', 'noParentBrand.test.ts'),
   join('apps', 'super-admin', 'src', '__tests__', 'branding', 'noParentBrand.test.ts'),
+  join('packages', 'web-ui', 'test', 'noParentBrand.test.ts'),
 ]);
 
 function walk(dir: string, out: string[]): void {
