@@ -15,7 +15,6 @@ import {
 import {
   enrichAgentStatsIdentity,
   resolveAgentNames,
-  filterRosterRowsByMembership,
   filterRowsByMembership,
   groupedRowAgentId,
   groupedRowHasAgentKey,
@@ -373,6 +372,66 @@ async function assertAgentInTenant(
   return true;
 }
 
+/**
+ * The three facts the two whole-floor reads (the roster and the grouped read) add over the
+ * internal handler's page, in one place so the two cannot drift.
+ *
+ *  1. **ONE membership read for the whole page, never one per row** — and not wrapped in a
+ *     try/catch, unlike the name lookup: a name is an improvement on an id, while this
+ *     decides WHICH ROWS EXIST. Degrading it would mean either serving departed agents with
+ *     `inactive_omitted: 0` — a payload that states, falsely, that nothing was hidden — or
+ *     dropping everybody. Both are confident wrong answers. A database fault propagates.
+ *  2. **The filter** (`filterRowsByMembership`), judged against THIS account, and its two
+ *     counters. An id with no membership row of ANY status is the third state: dropped
+ *     under either flag and never folded into `inactive_omitted` (reporting a stranger as
+ *     a departed colleague is a different lie from hiding one). It is served as
+ *     `unattributed_omitted` AND logged — the field lets a console account for the rows
+ *     that vanished; the log line says an operator should find out why the handler's
+ *     scope and `memberships` disagree. Reachable, not hypothetical: the handler scoping
+ *     every statement on `tenant_id` AND `account_id` rules out a FOREIGN agent and says
+ *     nothing about a FORMER one — attempt history is kept forever while a `memberships`
+ *     row goes away with the user.
+ *  3. **The body is SPREAD** with `rows` and the two counters on top — TWO numbers, never
+ *     one, since a departure and an id with no membership at all are different facts —
+ *     and only then named (`enrich`), so no name is looked up for a row that is not
+ *     served. The enrichers degrade to `agent_name: null` with a warn, never a 500.
+ */
+async function scopeRowsToMembers<TRow>(
+  request: FastifyRequest,
+  params: {
+    body: Record<string, unknown>;
+    rows: readonly TRow[];
+    agentIdOf: (row: TRow) => string | null;
+    accountId: string;
+    includeInactive: boolean;
+    /** The read's name in its log line: `roster`, `grouped stats`. */
+    surface: string;
+    enrich: (scoped: unknown) => Promise<unknown>;
+  },
+): Promise<unknown> {
+  const memberships = await membershipRepository.findAnyByUsersAndTenant(
+    params.rows.map(params.agentIdOf).filter((id): id is string => id !== null),
+    request.tenantId!,
+  );
+  const filtered = filterRowsByMembership(
+    params.rows, memberships, params.accountId, params.includeInactive, params.agentIdOf,
+  );
+
+  if (filtered.unknownOmitted > 0) {
+    log.warn(
+      { tenantId: request.tenantId, accountId: params.accountId, unknownOmitted: filtered.unknownOmitted },
+      `agency ${params.surface}: the internal handler returned agent ids with no membership in this tenant; rows dropped`,
+    );
+  }
+
+  return params.enrich({
+    ...params.body,
+    rows: filtered.rows,
+    inactive_omitted: filtered.inactiveOmitted,
+    unattributed_omitted: filtered.unknownOmitted,
+  });
+}
+
 /** Log-and-continue for a failed name lookup; see the module header. */
 function warnNameLookup(request: FastifyRequest, surface: string) {
   return (err: unknown) => {
@@ -623,75 +682,36 @@ export async function proxyAgencyPerformanceRoutes(app: FastifyInstance): Promis
       return reply.code(result.status).send(withOmissionCounters(result.body, 0, 0));
     }
 
-    /**
-     * ONE membership read for the whole page, never one per row.
-     *
-     * Not wrapped in a try/catch, unlike the name lookup below, and the
-     * difference is deliberate: a name is an improvement on an id, while this
-     * decides WHICH ROWS EXIST. Degrading it would mean either serving departed
-     * agents with `inactive_omitted: 0` — a payload that states, falsely, that
-     * nothing was hidden — or dropping everybody. Both are confident wrong
-     * answers, which is the outcome this feature's whole comment budget goes on
-     * avoiding. A genuine database fault therefore propagates, exactly as it does
-     * through {@link assertAgentInTenant} on the sibling route.
-     */
-    const memberships = await membershipRepository.findAnyByUsersAndTenant(
-      rows.map((row) => row.agent_user_id),
-      request.tenantId!,
-    );
-    // `accountId` is handed to the filter, not just to the handler: "still on the
-    // roster" is a question about THIS account, and a membership active on
-    // another one is not an answer to it. See `filterRowsByMembership`.
-    const filtered = filterRosterRowsByMembership(rows, memberships, accountId, includeInactive);
-
-    if (filtered.unknownOmitted > 0) {
-      // Logged AND served, as `unattributed_omitted` below — two different jobs.
-      // The field lets a console account for the rows that vanished; the log line
-      // says an operator should find out why the handler's scope and
-      // `memberships` disagree about who works in this account. It is never
-      // folded into `inactive_omitted`: reporting a stranger as a departed
-      // colleague is a different lie from hiding one.
-      //
-      // Reachable, not hypothetical. The handler scoping every roster statement
-      // on `tenant_id` AND `account_id` rules out a FOREIGN agent and says
-      // nothing about a FORMER one — attempt history is kept forever while a
-      // `memberships` row goes away with the user.
-      log.warn(
-        { tenantId: request.tenantId, accountId, unknownOmitted: filtered.unknownOmitted },
-        'agency roster: the internal handler returned agent ids with no membership in this tenant; rows dropped',
-      );
-    }
-
-    const scoped = {
-      // SPREAD, so `benchmark`, `total_agents`, `from`/`to`, `sort`/`order` and
-      // anything the handler adds next arrive untouched. `total_agents` stays the
-      // handler's pre-`limit`, post-scope count on purpose: it answers "how many
-      // agents dialled in this window", which is what the benchmark is computed
-      // over, and the two counters are the separate facts about what this route hid.
-      ...(result.body as Record<string, unknown>),
-      rows: filtered.rows,
-      // TWO numbers, never one. A departure and an id with no membership at all
-      // are different facts about different rows, and a console that has to
-      // explain a short list needs to know which it is looking at.
-      inactive_omitted: filtered.inactiveOmitted,
-      unattributed_omitted: filtered.unknownOmitted,
-    };
-
-    /**
-     * The SAME helper the campaign spine and `/agents/:userId/attempts` use, on
-     * the same wire shape (`{ rows: [{ agent_user_id, … }] }`), rather than a
-     * second implementation of one transform. It resolves the page's ids in one
-     * query and degrades to `agent_name: null` with a warn — never a 500 — which
-     * is the rule this whole plugin keeps.
-     *
-     * Run AFTER the filter, so no name is looked up for a row that is not served.
-     */
-    const body = await enrichAttemptAgentNames(
-      scoped,
-      request.tenantId!,
-      resolveAgentNames,
-      warnNameLookup(request, 'agents/stats'),
-    );
+    // ONE membership read for the page, the departed-agent filter, both counters and
+    // the names — `scopeRowsToMembers`, shared with the grouped read below. Not
+    // wrapped in a try/catch, unlike the name lookup inside it: a genuine database
+    // fault propagates, exactly as it does through {@link assertAgentInTenant} on the
+    // sibling route. `accountId` is handed to the filter, not just to the handler:
+    // "still on the roster" is a question about THIS account, and a membership active
+    // on another one is not an answer to it. See `filterRowsByMembership`.
+    //
+    // The spread keeps `benchmark`, `total_agents`, `from`/`to`, `sort`/`order` and
+    // anything the handler adds next untouched. `total_agents` stays the handler's
+    // pre-`limit`, post-scope count on purpose: it answers "how many agents dialled in
+    // this window", which is what the benchmark is computed over, and the two counters
+    // are the separate facts about what this route hid.
+    const body = await scopeRowsToMembers(request, {
+      body: result.body as Record<string, unknown>,
+      rows,
+      agentIdOf: (row) => row.agent_user_id,
+      accountId,
+      includeInactive,
+      surface: 'roster',
+      // The SAME helper the campaign spine and `/agents/:userId/attempts` use, on the
+      // same wire shape (`{ rows: [{ agent_user_id, … }] }`), rather than a second
+      // implementation of one transform.
+      enrich: (scoped) => enrichAttemptAgentNames(
+        scoped,
+        request.tenantId!,
+        resolveAgentNames,
+        warnNameLookup(request, 'agents/stats'),
+      ),
+    });
     return reply.code(result.status).send(body);
   });
 
@@ -858,83 +878,35 @@ export async function proxyAgencyPerformanceRoutes(app: FastifyInstance): Promis
       return reply.code(result.status).send(withOmissionCounters(result.body, 0, 0));
     }
 
-    /**
-     * ONE membership read for the whole page, never one per row, and NOT wrapped
-     * in a try/catch — the same division as the roster, for the same reason. A
-     * name is an improvement on an id; this decides WHICH ROWS EXIST, and
-     * degrading it would mean serving departed agents under
-     * `inactive_omitted: 0`, a payload that states falsely that nothing was
-     * hidden. A genuine database fault therefore propagates.
-     *
-     * The ids are collected one per row and NOT de-duplicated here, because
-     * `findAnyByUsersAndTenant` already does it (`[...new Set(userIds)]`) and one
-     * of those is better than two. That is worth saying on this route where it is
-     * not on the roster: one row per agent makes duplicates impossible there,
-     * while an `agent,campaign` page repeats each agent once per campaign, so
-     * here they are the norm.
-     */
-    const memberships = await membershipRepository.findAnyByUsersAndTenant(
-      rows
-        .map((row) => groupedRowAgentId(row))
-        .filter((id): id is string => id !== null),
-      request.tenantId!,
-    );
-    // `accountId` for the roster's reason: active on ANOTHER account is not
-    // "still on this floor". See `filterRowsByMembership`.
-    const filtered = filterRowsByMembership(
+    // The roster's `scopeRowsToMembers`, for the same three facts. The ids are
+    // collected one per row and NOT de-duplicated here, because
+    // `findAnyByUsersAndTenant` already does it (`[...new Set(userIds)]`) and one of
+    // those is better than two — on this read an `agent,campaign` page repeats each
+    // agent once per campaign, so duplicates are the norm. `accountId` for the
+    // roster's reason: active on ANOTHER account is not "still on this floor".
+    //
+    // An unattributable id costs more here than on the roster: an `agent,campaign`
+    // page emits one row per campaign for the same agent, so ONE unaccountable id
+    // drops N rows — and `unattributed_omitted` is what makes the reconciliation gap
+    // above quantifiable rather than just narrated. The spread keeps `from`/`to`,
+    // `campaign_id`, the echoed `group_by`, `sort`/`order`/`limit`, `total_groups`
+    // and anything the handler adds next; `total_groups` stays the handler's
+    // pre-`limit`, post-scope count of groups, so it, `rows.length` and the two
+    // counters are independent facts and no "showing X of Y" fraction is derivable.
+    const body = await scopeRowsToMembers(request, {
+      body: result.body as Record<string, unknown>,
       rows,
-      memberships,
+      agentIdOf: groupedRowAgentId,
       accountId,
       includeInactive,
-      groupedRowAgentId,
-    );
-
-    if (filtered.unknownOmitted > 0) {
-      // The third state: an id with no membership row of ANY status is neither
-      // active nor a departure, so it is dropped under either flag and never
-      // folded into `inactive_omitted` — reporting a stranger as a departed
-      // colleague is a different lie from hiding one. It IS served though, as its
-      // own `unattributed_omitted` below, and logged as well: the field lets a
-      // console account for the missing rows, the log line says an operator
-      // should find out why they were missing.
-      //
-      // And it is reachable. The handler scoping every statement on `tenant_id`
-      // AND `account_id` rules out a FOREIGN agent, not a FORMER one — attempt
-      // history is kept forever while a `memberships` row goes away with the
-      // user. That costs more here
-      // than on the roster: an `agent,campaign` page emits one row per campaign
-      // for the same agent, so ONE unaccountable id drops N rows.
-      log.warn(
-        { tenantId: request.tenantId, accountId, unknownOmitted: filtered.unknownOmitted },
-        'agency grouped stats: the internal handler returned agent ids with no membership in this tenant; rows dropped',
-      );
-    }
-
-    const scoped = {
-      // SPREAD, so `from`/`to`, `campaign_id`, the echoed `group_by`,
-      // `sort`/`order`/`limit`, `total_groups` and anything the handler adds next
-      // arrive untouched. `total_groups` stays the handler's pre-`limit`,
-      // post-scope count of groups, so it, `rows.length` and the two omission
-      // counters are independent facts and no "showing X of Y" fraction is
-      // derivable from them.
-      ...(result.body as Record<string, unknown>),
-      rows: filtered.rows,
-      // TWO numbers, never one. A departure and an id with no membership at all
-      // are different facts about different rows — and on THIS read the
-      // second one is what makes the reconciliation gap above quantifiable
-      // rather than just narrated.
-      inactive_omitted: filtered.inactiveOmitted,
-      unattributed_omitted: filtered.unknownOmitted,
-    };
-
-    // Run AFTER the filter, so no name is looked up for a row that is not
-    // served. Degrades to `agent_name: null` with a warn — never a 500.
-    const body = await enrichGroupedRowAgentNames(
-      scoped,
-      request.tenantId!,
-      resolveAgentNames,
-      warnNameLookup(request, 'agents/grouped-stats'),
-    );
+      surface: 'grouped stats',
+      enrich: (scoped) => enrichGroupedRowAgentNames(
+        scoped,
+        request.tenantId!,
+        resolveAgentNames,
+        warnNameLookup(request, 'agents/grouped-stats'),
+      ),
+    });
     return reply.code(result.status).send(body);
   });
 
