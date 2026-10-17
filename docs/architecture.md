@@ -187,7 +187,7 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
 - **Pacing** (`pacing-engine.ts`). One leader per campaign via a Redis lease (15 s, renewed every
   5 s; a supervise pass every 2 s takes leadership); the leader ticks each campaign it leads every
   250 ms. The lease is only for efficiency. Correctness is the `FOR UPDATE SKIP LOCKED` claim in
-  `AgencyContactRepository.claimDialable` (`apps/server/src/db/repositories/agency.repository.ts`)
+  `AgencyContactRepository.claimDialable` (`apps/server/src/db/repositories/agency/contact.repository.ts`)
   plus the `uq_agency_attempt_live` unique index, so two leaders cannot dial one contact.
   `pre-dial-gates.ts` checks phone validity, then calling hours, then DNC (fail closed).
 - **Dialer** (`agency-dialer.ts`, `dial-dispatcher.ts`). Reserves the agent before the dial,

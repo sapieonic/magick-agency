@@ -221,7 +221,7 @@ export interface IngestProgress {
    *
    * **Skewed toward the earliest chunks, not a random cross-section.** Each
    * chunk's own `duplicate_source_rows` is capped at 20
-   * (`MAX_REPORTED_DUPLICATE_ROWS` in `src/db/repositories/agency.repository.ts`), and this
+   * (`MAX_REPORTED_DUPLICATE_ROWS` in `src/db/repositories/agency/contact.repository.ts`), and this
    * sample stops accepting new rows once it reaches the same cap — so on a
    * heavily-colliding re-upload (the common case this field exists for),
    * chunk 0 alone typically fills the cap and every later chunk's collisions

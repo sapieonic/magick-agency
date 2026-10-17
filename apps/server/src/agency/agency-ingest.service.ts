@@ -31,7 +31,7 @@ const log = createChildLogger({ component: 'agency-ingest-service' });
 /**
  * How many colliding `source_row_number`s reported by the roster hand-off to
  * retain across the whole ingest for the job row. Mirrors the repository's own
- * per-chunk cap (`MAX_REPORTED_DUPLICATE_ROWS` in `agency.repository.ts`) — enough for an
+ * per-chunk cap (`MAX_REPORTED_DUPLICATE_ROWS` in `agency/contact.repository.ts`) — enough for an
  * operator to recognise the pattern without an unbounded array on a
  * million-row re-upload where every chunk collides.
  */

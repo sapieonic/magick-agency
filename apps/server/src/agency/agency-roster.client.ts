@@ -89,7 +89,7 @@ export interface RosterChunkResponse {
   rejected_duplicate_rows: number;
   /**
    * A capped sample of the colliding `source_row_number`s (20 per chunk — see
-   * `MAX_REPORTED_DUPLICATE_ROWS` in `src/db/repositories/agency.repository.ts`).
+   * `MAX_REPORTED_DUPLICATE_ROWS` in `src/db/repositories/agency/contact.repository.ts`).
    * A sample, not the full set, on a large campaign. `[]` when the field is
    * absent or nothing collided.
    */

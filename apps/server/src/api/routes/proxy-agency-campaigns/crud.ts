@@ -124,7 +124,7 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     //  - an attempt ALREADY dispatched carries the campaign snapshot taken when it
     //    was dialed (`cmd.campaign`), so its own retry decision uses the OLD policy;
     //  - EXCEPT down the reaper's path, which joins `c.retry_policy` live
-    //    (`findLapsedWrapups` in `agency.repository.ts`) and therefore resolves
+    //    (`findLapsedWrapups` in `agency/attempt.repository.ts`) and therefore resolves
     //    against the NEW policy for an attempt dialed before the edit.
     // So "future attempts only" holds for the dial path and not for the reaper.
     // Nothing in flight is retro-actively re-planned either way, which is the
