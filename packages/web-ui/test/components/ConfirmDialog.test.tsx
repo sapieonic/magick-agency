@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import { ConfirmDialog } from '../../components/common/ConfirmDialog';
+import { ConfirmDialog } from '../../src/components/ConfirmDialog';
 
 /**
- * The SHARED confirm dialog (`src/components/common/ConfirmDialog.tsx`), which
+ * The SHARED confirm dialog (`packages/web-ui/src/components/ConfirmDialog.tsx`), which
  * had no tests of its own while 51 call sites depended on it.
  *
  * `C3`. Adding a third button to a focus trap that wraps first ⇄ last silently

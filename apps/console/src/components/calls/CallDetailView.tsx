@@ -1,13 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Info, Clock, AlertTriangle, Mic, Download, MessageSquare } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import {
-  Breadcrumbs,
-  PageHeader,
-  StatusBadge,
-  LoadingSpinner,
-} from '../common';
-import { ErrorText } from '../common/ErrorText';
+import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
+import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
+import { StatusBadge } from '@magick-agency/web-ui/components/StatusBadge';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
+import { ErrorText } from '@magick-agency/web-ui/components/ErrorText';
 import { AudioWaveform } from '../audio/AudioWaveform';
 import {
   AnalysisSection,

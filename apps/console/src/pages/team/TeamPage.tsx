@@ -23,14 +23,12 @@ import { AGENCY_LOGIN_PATH, LOGIN_PATH } from '../../utils/returnPath';
 import { CopyableField } from '../../components/common/CopyableField';
 import { ROLES } from '../../config';
 import { formatRelativeTime } from '@magick-agency/web-ui/format';
-import {
-  PageHeader,
-  PageDescription,
-  LoadingSpinner,
-  ErrorAlert,
-  EmptyState,
-  ConfirmDialog,
-} from '../../components/common';
+import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
+import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
+import { PageDescription } from '../../components/common';
 import type {
   InviteUserInput,
   InviteUserResult,

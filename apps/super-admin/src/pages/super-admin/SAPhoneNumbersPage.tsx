@@ -12,19 +12,16 @@ import {
 } from '../../api/super-admin';
 import type { TelephonyProvider } from '../../api/super-admin';
 import type { PhoneNumber } from '@magick-agency/contracts/api/platform/super-admin';
-import {
-  LoadingSpinner,
-  ErrorAlert,
-  PageHeader,
-  HelpTooltip,
-  StatCard,
-  StatusBadge,
-  Modal,
-  ConfirmDialog,
-  AdvancedSection,
-  EmptyState,
-} from '../../components/common';
-import { ErrorText } from '../../components/common/ErrorText';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
+import { HelpTooltip } from '@magick-agency/web-ui/components/HelpTooltip';
+import { StatusBadge } from '@magick-agency/web-ui/components/StatusBadge';
+import { Modal } from '@magick-agency/web-ui/components/Modal';
+import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
+import { StatCard, AdvancedSection } from '../../components/common';
+import { ErrorText } from '@magick-agency/web-ui/components/ErrorText';
 import { saStatusColor, saStatusLabel } from '../../utils/saStatus';
 import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
 import styles from './SAPhoneNumbersPage.module.css';

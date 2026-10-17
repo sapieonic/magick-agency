@@ -6,11 +6,11 @@ import {
   deleteFeatureFlagOverride,
 } from '../../api/super-admin';
 import type { FeatureFlagCatalogEntry } from '@magick-agency/contracts/api/platform/super-admin';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
-import { PageHeader } from '../../components/common/PageHeader';
-import { EmptyState } from '../../components/common/EmptyState';
-import { ErrorAlert } from '../../components/common/ErrorAlert';
-import { ConfirmDialog } from '../../components/common';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
+import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { BooleanFlagCell } from '../../components/super-admin/feature-flags/BooleanFlagCell';
 import { OverrideReasonDialog } from '../../components/super-admin/feature-flags/OverrideReasonDialog';
 import { NumberFlagDialog } from '../../components/super-admin/feature-flags/NumberFlagDialog';

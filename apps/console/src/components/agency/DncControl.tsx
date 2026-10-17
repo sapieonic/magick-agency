@@ -1,5 +1,5 @@
 import { useImperativeHandle, useState, type RefObject } from 'react';
-import { ConfirmDialog } from '../common/ConfirmDialog';
+import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import {
   DNC_BLOCK_COPY,
   DNC_CAMPAIGN_ACTION_LABEL,

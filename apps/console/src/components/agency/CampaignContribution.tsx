@@ -20,8 +20,8 @@ import {
 } from '../../utils/agencyCampaignContribution';
 import { allRowsHiddenReason } from '../../utils/agencyAgentRoster';
 import { ContributionTable } from './ContributionTable';
-import { ErrorAlert } from '../common/ErrorAlert';
-import { LoadingSpinner } from '../common/LoadingSpinner';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import styles from './AgentAnalyticsSection.module.css';
 
 /**

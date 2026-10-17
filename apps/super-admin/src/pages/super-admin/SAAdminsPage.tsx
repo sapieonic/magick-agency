@@ -4,17 +4,15 @@ import { useSuperAdmin } from '../../contexts/SuperAdminContext';
 import { useSuperAdminAdmins } from '../../hooks/useSuperAdminAdmins';
 import { createAdmin, removeAdmin, reactivateAdmin, resetAdminPassword } from '../../api/super-admin';
 import type { SuperAdmin } from '@magick-agency/contracts/api/platform/super-admin';
-import { useToast } from '../../contexts/ToastContext';
-import {
-  PageHeader,
-  DataTable,
-  StatusBadge,
-  ErrorAlert,
-  Modal,
-  ConfirmDialog,
-} from '../../components/common';
-import type { Column } from '../../components/common/DataTable';
-import { ErrorText } from '../../components/common/ErrorText';
+import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
+import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
+import { DataTable } from '@magick-agency/web-ui/components/DataTable';
+import { StatusBadge } from '@magick-agency/web-ui/components/StatusBadge';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { Modal } from '@magick-agency/web-ui/components/Modal';
+import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
+import type { Column } from '@magick-agency/web-ui/components/DataTable';
+import { ErrorText } from '@magick-agency/web-ui/components/ErrorText';
 import { saStatusColor, saStatusLabel } from '../../utils/saStatus';
 import styles from './SAAdminsPage.module.css';
 

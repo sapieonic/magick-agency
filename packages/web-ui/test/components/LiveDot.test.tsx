@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { LiveDot } from '../../components/common/LiveDot';
+import { LiveDot } from '../../src/components/LiveDot';
 
 /**
  * The pulse class is the whole contract. Under happy-dom no stylesheet is
@@ -65,7 +65,7 @@ describe('LiveDot', () => {
  */
 describe('LiveDot under reduced motion', () => {
   const css = readFileSync(
-    resolve(__dirname, '../../components/common/LiveDot.module.css'),
+    resolve(__dirname, '../../src/components/LiveDot.module.css'),
     'utf8',
   );
 

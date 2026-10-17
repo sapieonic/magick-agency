@@ -13,7 +13,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import { useToast } from '../../contexts/ToastContext';
+import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import {
   getAgencyCampaign,
   getAgencyCampaignStats,
@@ -21,10 +21,10 @@ import {
 } from '../../api/agencyCampaigns';
 import { ApiError } from '../../api/client';
 import { hasPermission } from '../../utils/permissions';
-import { Breadcrumbs } from '../../components/common/Breadcrumbs';
-import { ConfirmDialog } from '../../components/common/ConfirmDialog';
-import { ErrorAlert } from '../../components/common/ErrorAlert';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
+import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import { CampaignHealthStrip } from '../../components/agency/CampaignHealthStrip';
 import { CampaignPerformance } from '../../components/agency/CampaignPerformance';

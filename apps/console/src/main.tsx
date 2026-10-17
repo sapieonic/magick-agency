@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import { initAnalytics } from './analytics/posthog';
 import { applyBrandColors, applyBrandLayout } from './brand';
-import './global.css';
+import '@magick-agency/web-ui/global.css';
 
 // Apply the active whitelabel brand's accent colors + layout before first paint.
 applyBrandColors();

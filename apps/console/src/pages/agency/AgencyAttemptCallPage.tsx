@@ -15,10 +15,10 @@ import {
   AGENCY_ANALYTICS_CAPABILITY,
   AGENCY_RECORDING_CAPABILITY,
 } from '../../utils/agencyCampaignRecording';
-import { Breadcrumbs } from '../../components/common/Breadcrumbs';
-import { EmptyState } from '../../components/common/EmptyState';
-import { ErrorAlert } from '../../components/common/ErrorAlert';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import {
   CallDetailView,

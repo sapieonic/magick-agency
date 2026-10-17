@@ -1,9 +1,9 @@
 import { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
-import { Toast } from '../components/common/Toast';
-import type { ToastType, ToastData } from '../components/common/Toast';
-import { getErrorMessage } from '@magick-agency/web-ui/errors';
+import { Toast } from '../components/Toast';
+import type { ToastType, ToastData } from '../components/Toast';
+import { getErrorMessage } from '../errors';
 
 const MAX_TOASTS = 5;
 const DEFAULT_DURATION = 4000;

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ConfirmDialog } from '../common/ConfirmDialog';
+import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { StationEscape } from './StationFatal';
 import {
   SWITCH_CONFIRM_ACTION,

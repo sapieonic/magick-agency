@@ -1,5 +1,5 @@
 import { AlertTriangle } from 'lucide-react';
-import { EmptyState } from './EmptyState';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 
 /**
  * What a screen shows when the active account could **not be resolved at all**.

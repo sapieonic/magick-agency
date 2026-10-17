@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import { DataTable } from '../../components/common/DataTable';
-import styles from '../../components/common/DataTable.module.css';
+import { DataTable } from '../../src/components/DataTable';
+import styles from '../../src/components/DataTable.module.css';
 
 afterEach(() => cleanup());
 

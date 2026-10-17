@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
-import { Toast } from '../../components/common/Toast';
-import type { ToastData } from '../../components/common/Toast';
-import { appendRequestId } from '@magick-agency/web-ui/errors';
+import { Toast } from '../../src/components/Toast';
+import type { ToastData } from '../../src/components/Toast';
+import { appendRequestId } from '../../src/errors';
 
 const writeText = vi.fn();
 

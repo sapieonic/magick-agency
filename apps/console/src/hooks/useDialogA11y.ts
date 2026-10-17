@@ -21,7 +21,7 @@ interface UseDialogA11yResult {
  * Accessible dialog behavior for ad-hoc modal overlays that can't use the shared
  * Modal component: a stable title id for aria-labelledby, Escape-to-close, Tab
  * focus trapping, initial autofocus, and focus restore on close. Mirrors
- * components/common/Modal.tsx so every custom overlay behaves the same way.
+ * packages/web-ui/src/components/Modal.tsx so every custom overlay behaves the same way.
  *
  * Initial focus goes to the first focusable control by default (usually the
  * close button, since it precedes the body in markup). Mark a more useful

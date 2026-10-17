@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { AlertCircle, AlertTriangle, Calendar, Download, History, ListChecks, RefreshCw } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import { useToast } from '../../contexts/ToastContext';
+import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { downloadCampaignActivityCsv, getCampaignActivity } from '../../api/agencyActivity';
 import { ApiError } from '../../api/client';
@@ -26,11 +26,11 @@ import {
   retentionNotice,
   truncationNotice,
 } from '../../utils/agencyActivityCopy';
-import { Breadcrumbs } from '../../components/common/Breadcrumbs';
+import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
-import { EmptyState } from '../../components/common/EmptyState';
-import { ErrorAlert } from '../../components/common/ErrorAlert';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { TruncatedId } from '../../components/common/TruncatedId';
 import { PageDescription } from '../../components/common/PageDescription';
 import { MultiSelectFilter } from '../../components/agency/MultiSelectFilter';

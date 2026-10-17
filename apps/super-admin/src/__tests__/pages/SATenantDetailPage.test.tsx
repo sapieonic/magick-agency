@@ -33,7 +33,7 @@ vi.mock('../../api/super-admin', () => ({
   putFeatureFlagOverride: vi.fn(), deleteFeatureFlagOverride: vi.fn(),
 }));
 
-vi.mock('../../contexts/ToastContext', () => ({
+vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: vi.fn(), showErrorToast: vi.fn() }),
 }));
 

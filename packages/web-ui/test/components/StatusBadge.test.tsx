@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { StatusBadge } from '../../components/common/StatusBadge';
+import { StatusBadge } from '../../src/components/StatusBadge';
 
 describe('StatusBadge', () => {
   it('renders the label text', () => {

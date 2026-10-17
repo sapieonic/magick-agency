@@ -17,7 +17,7 @@ import {
 import type { DncControlHandle } from '../../components/agency/DncControl';
 import { NotesField } from '../../components/agency/NotesField';
 import type { BreakMenuHandle } from '../../components/agency/BreakMenu';
-import { ConfirmDialog } from '../../components/common/ConfirmDialog';
+import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { JoinConflictScreen } from '../../components/agency/JoinConflictScreen';
 import { StationFatal } from '../../components/agency/StationFatal';
 import { StationHeader } from '../../components/agency/StationHeader';

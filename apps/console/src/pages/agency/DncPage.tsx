@@ -2,14 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PhoneOff, Search, Trash2 } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useTeam } from '../../hooks/useTeam';
-import { useToast } from '../../contexts/ToastContext';
+import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { addDncEntries, listDncEntries, removeDncEntry } from '../../api/dnc';
 import { hasPermission } from '../../utils/permissions';
 import { formatDate } from '@magick-agency/web-ui/format';
-import { ConfirmDialog } from '../../components/common/ConfirmDialog';
-import { EmptyState } from '../../components/common/EmptyState';
-import { ErrorAlert } from '../../components/common/ErrorAlert';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { PageDescription } from '../../components/common/PageDescription';
 import {
   DNC_SOURCE_LABELS,

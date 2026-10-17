@@ -30,7 +30,7 @@ import { describe, expect, it } from 'vitest';
  * its own prose.
  */
 
-const CSS_PATH = resolve(__dirname, '../../components/common/DataTable.module.css');
+const CSS_PATH = resolve(__dirname, '../../src/components/DataTable.module.css');
 
 /** The sheet with comments removed, so no assertion can be met by prose. */
 function rules(): string {

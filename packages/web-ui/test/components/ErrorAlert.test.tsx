@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
-import { ErrorAlert } from '../../components/common/ErrorAlert';
-import { appendRequestId } from '@magick-agency/web-ui/errors';
+import { ErrorAlert } from '../../src/components/ErrorAlert';
+import { appendRequestId } from '../../src/errors';
 
 const writeText = vi.fn();
 

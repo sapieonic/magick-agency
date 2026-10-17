@@ -22,7 +22,7 @@ import {
   trackAgencyInviteClaimSucceeded,
   trackAgencyInviteViewed,
 } from '../../analytics/events';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { GoogleMark } from '../../components/agency/GoogleMark';
 import { JoinCardHeader } from '../../components/agency/join/JoinCardHeader';
 import { Unavailable } from '../../components/agency/join/Unavailable';

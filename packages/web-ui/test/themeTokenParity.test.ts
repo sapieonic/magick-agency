@@ -30,7 +30,7 @@ import { resolve } from 'node:path';
  * be allowed to disagree.
  */
 
-const GLOBAL_CSS = resolve(__dirname, '..', 'global.css');
+const GLOBAL_CSS = resolve(__dirname, '..', 'src', 'global.css');
 
 /**
  * The two tokens that are legitimately dark-only.

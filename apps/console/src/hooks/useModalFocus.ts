@@ -16,7 +16,7 @@ const FOCUSABLE =
  *  3. **Restore focus** to the trigger on close, so the next keystroke goes
  *     where the user left off instead of to `<body>`.
  *
- * `Modal` (`components/common/Modal.tsx`) has implemented this inline since long
+ * `Modal` (`packages/web-ui/src/components/Modal.tsx`) has implemented this inline since long
  * before this hook existed; it is deliberately left alone rather than migrated
  * in a feature branch, since every dialog in the product depends on its exact
  * timing. New dialogs that cannot use `Modal` — because they own their own

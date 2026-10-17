@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/react';
-import { Pagination } from '../../components/common/Pagination';
-import styles from '../../components/common/Pagination.module.css';
+import { Pagination } from '../../src/components/Pagination';
+import styles from '../../src/components/Pagination.module.css';
 
 afterEach(() => {
   cleanup();

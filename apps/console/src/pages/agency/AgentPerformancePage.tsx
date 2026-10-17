@@ -4,7 +4,7 @@ import { ChartNoAxesCombined } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { getMyCampaigns } from '../../api/agencyStats';
 import { useAgentPerformance } from '../../hooks/useAgentPerformance';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { AgentSurfaceShell } from '../../components/agency/AgentSurfaceShell';
 import { AgentPerformancePanel } from '../../components/agency/AgentPerformancePanel';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';

@@ -1,6 +1,6 @@
 import { Navigate } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { agencyPersona } from '../../utils/agencyPersona';
 
 /**

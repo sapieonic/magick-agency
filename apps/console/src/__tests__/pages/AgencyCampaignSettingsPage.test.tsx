@@ -52,7 +52,7 @@ vi.mock('../../hooks/usePhoneNumbers', () => ({
     defaultNumber: '+912200000001',
   }),
 }));
-vi.mock('../../contexts/ToastContext', () => ({
+vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: vi.fn() }),
 }));
 vi.mock('../../api/agencyCampaigns', () => ({

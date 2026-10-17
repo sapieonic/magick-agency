@@ -1,5 +1,5 @@
 import { Lock } from 'lucide-react';
-import { EmptyState } from './EmptyState';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 
 /**
  * Calm, neutral in-place screen shown when a governed capability is turned off
