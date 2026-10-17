@@ -1,7 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 import { isUnsafeCorePath } from '../proxy/safe-core-path.js';
-import { TENANT_HEADER, ACCOUNT_HEADER, ORIGINATOR_HEADER, PROVEN_CAMPAIGN_HEADER } from './middleware/headers.js';
+import {
+  TENANT_HEADER, ACCOUNT_HEADER, ORIGINATOR_HEADER, PROVEN_CAMPAIGN_HEADER, provenCampaignProof,
+} from './middleware/headers.js';
 
 /*
  * `callCore`: how the public API layer's handlers reach the internal handler instance
@@ -52,8 +54,10 @@ export interface CoreCallRequest {
    * The campaign this request has ALREADY proved the caller owns — through a full
    * `GET /agency-campaigns/:id` (the feature gate and `requireOwned`, tenant AND
    * account) with these same `tenantId`/`accountId`. Sent as
-   * `x-mgkvc-proven-campaign`, which the spine's two page reads honour for the
-   * campaign in their path and no other, skipping their own gate and ownership read.
+   * `x-mgkvc-proven-campaign`, carrying this call's tenant and account with it
+   * (`provenCampaignProof`), which the spine's two page reads honour for the campaign
+   * in their path under their own tenant and account and no other, skipping their own
+   * gate and ownership read.
    *
    * Only for a caller that has just made that probe on the same request: the CSV
    * export's page loop, which would otherwise repeat the flag read and the campaign
@@ -112,7 +116,10 @@ export async function callCore(req: CoreCallRequest): Promise<CoreCallResult> {
   headers[TENANT_HEADER] = req.tenantId;
   if (req.accountId) headers[ACCOUNT_HEADER] = req.accountId;
   if (req.originator) headers[ORIGINATOR_HEADER] = req.originator;
-  if (req.provenCampaignId) headers[PROVEN_CAMPAIGN_HEADER] = req.provenCampaignId;
+  // Bound to this call's tenant and account, which the page read checks against its own.
+  if (req.provenCampaignId) {
+    headers[PROVEN_CAMPAIGN_HEADER] = provenCampaignProof(req.tenantId, req.accountId, req.provenCampaignId);
+  }
 
   const sendsBody = Boolean(req.body) && (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH');
   if (sendsBody) headers['content-type'] = 'application/json';

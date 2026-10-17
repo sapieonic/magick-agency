@@ -141,15 +141,25 @@ function idsAsked(call: unknown[]): string[] {
   return ((call[0] as { query?: { ids?: string } }).query?.ids ?? '').split(',');
 }
 
+/** The internal summaries handler's per-request id ceiling (`agency-campaigns/crud.ts`). */
+const SUMMARIES_MAX_IDS = 100;
+
 /**
  * A `callCore` double that names EVERY campaign a summaries read asks for with
  * `fields`, and answers any other path (the ownership probe) with an owned campaign.
+ * A read naming more than the handler's ceiling gets the handler's 400.
  */
 function namingEvery(fields: { name?: unknown; status?: unknown }) {
-  return async (req: { path: string; query?: { ids?: string } }) =>
-    req.path === '/agency-campaigns/summaries'
-      ? summaries(...(req.query?.ids ?? '').split(',').map((id) => ({ id, ...fields })))
-      : { status: 200, body: { id: CAMPAIGN, name: 'Q3 Renewals' } };
+  return async (req: { path: string; query?: { ids?: string } }) => {
+    if (req.path !== '/agency-campaigns/summaries') {
+      return { status: 200, body: { id: CAMPAIGN, name: 'Q3 Renewals' } };
+    }
+    const ids = (req.query?.ids ?? '').split(',');
+    if (ids.length > SUMMARIES_MAX_IDS) {
+      return { status: 400, body: { code: 'validation_failed' } };
+    }
+    return summaries(...ids.map((id) => ({ id, ...fields })));
+  };
 }
 
 beforeEach(() => {
@@ -450,6 +460,50 @@ describe('GET /my-assignments — the plural replacement', () => {
     // …by one internal call.
     expect(mocks.proxyToCore).toHaveBeenCalledTimes(1);
     expect(idsAsked(mocks.proxyToCore.mock.calls[0]!)).toHaveLength(20);
+    await app.close();
+  });
+
+  // The summaries handler refuses more than 100 ids, and that refusal nulled
+  // every label for an agent staffed on more campaigns than that.
+  it('names more campaigns than one summaries read may carry, in reads of at most 100', async () => {
+    const many = Array.from({ length: 2 * SUMMARIES_MAX_IDS + 1 }, (_, i) =>
+      assignmentRow(`aaaaaaaa-0000-4000-8000-${String(i).padStart(12, '0')}`),
+    );
+    mocks.listActiveForUser.mockResolvedValue(many);
+    mocks.proxyToCore.mockImplementation(namingEvery({ name: 'X', status: 'running' }));
+    const app = await buildApp({ role: 'agent', userId: AGENT_USER });
+
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/my-assignments` });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().assignments).toHaveLength(many.length);
+    expect(res.json().assignments.every(
+      (a: { campaign_name: string; campaign_status: string }) => a.campaign_name === 'X' && a.campaign_status === 'running',
+    )).toBe(true);
+    const asked = mocks.proxyToCore.mock.calls.map((call) => idsAsked(call));
+    expect(asked.map((ids) => ids.length)).toEqual([SUMMARIES_MAX_IDS, SUMMARIES_MAX_IDS, 1]);
+    // Every id asked exactly once, in order.
+    expect(asked.flat()).toEqual(many.map((row) => row.campaign_id));
+    await app.close();
+  });
+
+  it('lets one refused summaries read null only its own campaigns', async () => {
+    const many = Array.from({ length: SUMMARIES_MAX_IDS + 1 }, (_, i) =>
+      assignmentRow(`aaaaaaaa-0000-4000-8000-${String(i).padStart(12, '0')}`),
+    );
+    mocks.listActiveForUser.mockResolvedValue(many);
+    const naming = namingEvery({ name: 'X', status: 'running' });
+    mocks.proxyToCore
+      .mockResolvedValueOnce({ status: 503, body: {} })
+      .mockImplementation(naming);
+    const app = await buildApp({ role: 'agent', userId: AGENT_USER });
+
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/my-assignments` });
+
+    expect(res.statusCode).toBe(200);
+    const names = res.json().assignments.map((a: { campaign_name: string | null }) => a.campaign_name);
+    expect(names.slice(0, SUMMARIES_MAX_IDS).every((n: string | null) => n === null)).toBe(true);
+    expect(names[SUMMARIES_MAX_IDS]).toBe('X');
     await app.close();
   });
 

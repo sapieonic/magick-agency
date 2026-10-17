@@ -265,7 +265,22 @@ describe('callCore — tenancy and transport', () => {
       method: 'GET', path: '/agency-campaigns/c1/attempts', tenantId: 't1', accountId: 'a1',
       provenCampaignId: 'c1', headers: { 'x-mgkvc-proven-campaign': 'c9' },
     });
-    expect(seen!.headers['x-mgkvc-proven-campaign']).toBe('c1');
+    expect(seen!.headers['x-mgkvc-proven-campaign']).toBe('t1:a1:c1');
+  });
+
+  // The proof carries the tenant and account it was made under, from the same typed
+  // arguments the tenancy headers come from, so the page read can check all three.
+  it('binds x-mgkvc-proven-campaign to the call\'s tenant and account', async () => {
+    setCoreHandlers(stub);
+    await callCore({
+      method: 'GET', path: '/agency-campaigns/c1/attempts', tenantId: 't7', accountId: 'a7',
+      provenCampaignId: 'c1',
+    });
+    expect(seen!.headers['x-mgkvc-proven-campaign']).toBe('t7:a7:c1');
+    await callCore({
+      method: 'GET', path: '/agency-campaigns/c1/attempts', tenantId: 't7', provenCampaignId: 'c1',
+    });
+    expect(seen!.headers['x-mgkvc-proven-campaign']).toBe('t7::c1');
   });
 
   it("encodes the query with URLSearchParams and keeps JSON round-tripping (a Date arrives as its ISO string)", async () => {

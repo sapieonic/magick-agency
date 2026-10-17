@@ -164,12 +164,15 @@ describe('SAPhoneNumbersPage — bulk lifecycle', () => {
 
 // ── Inventory, filters and stats ─────────────────────────────────────────────
 
-/** A server that honours `provider_id` / `status` the way the real route does. */
+/**
+ * A server that honours `provider_id` / `status` the way the real route does:
+ * deleted numbers come back only when `status: 'deleted'` is asked for.
+ */
 function serveInventory(rows: PhoneNumber[]) {
   mocks.listPhoneNumbers.mockImplementation(async (filters?: { provider_id?: string; status?: string }) =>
     rows.filter(pn =>
       (!filters?.provider_id || pn.provider_id === filters.provider_id)
-      && (!filters?.status || pn.status === filters.status)),
+      && (filters?.status ? pn.status === filters.status : pn.status !== 'deleted')),
   );
 }
 
@@ -232,6 +235,27 @@ describe('SAPhoneNumbersPage — inventory and filters', () => {
     await waitFor(() => expect(screen.queryByText('+9101')).toBeNull());
     expect(screen.getByLabelText('Active: 2')).toBeTruthy();
     expect(screen.getByLabelText('Retired: 1')).toBeTruthy();
+  });
+
+  // The inventory read leaves deleted numbers out, so the Deleted filter
+  // fetches them by status; the stat cards still count the inventory.
+  it('shows deleted numbers under the Deleted filter, fetched by status', async () => {
+    serveInventory([...INVENTORY, makePhone({ id: 'd1', phone_number: '+9199', status: 'deleted' })]);
+    render(<SAPhoneNumbersPage />);
+    await waitFor(() => screen.getByText('+9101'));
+    expect(screen.queryByText('+9199')).toBeNull();
+
+    fireEvent.change(screen.getByLabelText('Filter by status'), { target: { value: 'deleted' } });
+    await waitFor(() => screen.getByText('+9199'));
+    expect(screen.queryByText('+9101')).toBeNull();
+    expect(screen.queryByText('No numbers match the current filters.')).toBeNull();
+    expect(mocks.listPhoneNumbers).toHaveBeenCalledWith({ status: 'deleted' });
+    expect(screen.getByLabelText('Active: 2')).toBeTruthy();
+    expect(screen.getByLabelText('Retired: 1')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Filter by status'), { target: { value: '' } });
+    await waitFor(() => screen.getByText('+9101'));
+    expect(screen.queryByText('+9199')).toBeNull();
   });
 
   // The catalog is static for the page's life: a filter change must not

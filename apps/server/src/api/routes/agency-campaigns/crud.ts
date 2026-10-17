@@ -14,10 +14,11 @@ import type { AgencyCampaignStatus } from '@magick-agency/contracts/agency';
 import { formatAgencyCampaignResponse } from '../../responses/agency-campaign.response.js';
 import { CAMPAIGN_CONFIG_COLUMN_DEFAULTS } from '../../../agency/campaign-config.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
+// How many ids one `GET /summaries` may name; the staffing `my-*` routes split
+// longer lists into reads of at most this many.
+import { CAMPAIGN_SUMMARIES_MAX_IDS } from '../helpers/core-campaign.js';
 import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, campaignOf, configRejected, gate, ownedCampaign } from './guards.js';
 
-/** How many ids one `GET /summaries` may name; its one caller sends at most 25. */
-const CAMPAIGN_SUMMARIES_MAX_IDS = 100;
 
 /** Every campaign status, as a record so a status added to the type must be added here. */
 const CAMPAIGN_STATUSES: Record<AgencyCampaignStatus, true> = {
