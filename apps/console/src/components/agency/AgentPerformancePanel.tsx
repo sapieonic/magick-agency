@@ -570,7 +570,8 @@ function CampaignBreakdown({
                   <td>{agentCount(row.attempts)}</td>
                   {/* Derived here only because `by_campaign[]` carries no rates —
                       and guarded, so a campaign with no dials reads as an em dash
-                      rather than as a 0% connect rate it has not earned. */}
+                      rather than as a 0% connect rate it has not earned, and one
+                      under the roster's dial floor reads "Not enough calls". */}
                   <td>{rowConnectRate(row)}</td>
                   <td>{agentCount(row.connected)}</td>
                   <td>{agentCount(row.successes)}</td>

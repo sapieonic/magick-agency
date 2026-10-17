@@ -3,6 +3,7 @@ import { formatDuration } from './agencyClock';
 import { assignmentEntry } from './agencyAssignmentEntry';
 import { AGENCY_FLOOR_STATE_LABELS } from './agencyAgentFloor';
 import type { AgencyAgentLiveState } from '../types/agency-campaign';
+import { AGENCY_ROSTER_MIN_RATE_DENOMINATOR } from '../types/agency-stats';
 import type {
   AgencyAgentStats,
   AgencyAgentStatsBucket,
@@ -1046,8 +1047,14 @@ export function rowConnectRate(row: { attempts: number; connected: number }): st
     yet", exactly as `connect_rate_pct: null` is on the totals, and printing
     `0.0%` for a campaign nobody has dialled yet would be the same lie by
     arithmetic instead of by wire.
+
+    And the roster's floor: below AGENCY_ROSTER_MIN_RATE_DENOMINATOR dials the
+    roster withholds this same agent's connect rate (`rates_reportable`), so this
+    table does too, in the roster's words — it printed `100%` for one dial and one
+    connect beside a withheld roster cell.
   */
   if (row.attempts <= 0) return '—';
+  if (row.attempts < AGENCY_ROSTER_MIN_RATE_DENOMINATOR) return 'Not enough calls';
   return pct((row.connected / row.attempts) * 100);
 }
 
