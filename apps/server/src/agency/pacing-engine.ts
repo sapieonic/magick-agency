@@ -920,8 +920,8 @@ export class PacingEngine {
           contact,
           clearance: gate.clearance,
         }, {
-          // The dial itself is several awaits away (flag read, priors, the lease
-          // CAS); the dialer asks this once more just before contacting the carrier.
+          // The dial itself is several awaits away (flag read, priors); the dialer
+          // asks this once more before it stamps the attempt dialled.
           stillAuthorised: () => this.mayDial(campaign.id),
         });
         dialed++;

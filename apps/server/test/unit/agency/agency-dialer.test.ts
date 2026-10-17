@@ -1003,19 +1003,21 @@ describe('`on_call` reaches the durable mirror', () => {
 describe('AgencyDialer · the pacing engine can call the dial off until the carrier is contacted', () => {
   /**
    * `stillAuthorised` is the pacing engine's `mayDial`: false once it stopped or
-   * gave up the campaign's lease. The dial path yields several times before the
-   * carrier is contacted, so the question is asked again immediately before it.
+   * gave up the campaign's lease. The dial path yields before the carrier is
+   * contacted (the flag read, the priors read), so the question is asked again
+   * after those, and before the attempt is stamped `dialing`.
    */
   it('abandons instead of dialing when the engine stopped while the dial was prepared', async () => {
     const stations = new StationRegistry(null, '', 'r1');
     const bridge = fakeBridge();
-    const dialer = new AgencyDialer(bridge as any, stations, reservedAgents(), fakeWrapup() as any, fakeBreaks() as any);
+    const agents = reservedAgents();
+    const dialer = new AgencyDialer(bridge as any, stations, agents, fakeWrapup() as any, fakeBreaks() as any);
     dialer.start();
     const ws = fakeWs();
     await attachStation(stations, 's1', ws);
 
     let authorised = true;
-    repos.attempt.setState.mockImplementationOnce(async () => { authorised = false; return null; });
+    repos.attempt.findPriorForContactLineage.mockImplementationOnce(async () => { authorised = false; return []; });
     await dialer.executeDial(makeCmd('s1'), { stillAuthorised: () => authorised });
 
     expect(bridge.createBridgedCall, 'dialed after the engine stopped').not.toHaveBeenCalled();
@@ -1024,6 +1026,25 @@ describe('AgencyDialer · the pacing engine can call the dial off until the carr
     expect(dialer.activeAttemptIds()).toEqual([]);
     // The early-bound panel was on the console, so it is cleared with a reason.
     expect(ws.sent.map((f) => f.event)).toContain('released');
+  });
+
+  it('refuses before the lease is extended and before the attempt is stamped dialled', async () => {
+    // `dialed_at IS NOT NULL` reads as "the call was placed" (campaign stats,
+    // the agent stats aggregate, the series), so a dial called off here must
+    // leave it NULL: no `dialing` write at all, and no lease transition.
+    const stations = new StationRegistry(null, '', 'r1');
+    const bridge = fakeBridge();
+    const agents = reservedAgents();
+    const dialer = new AgencyDialer(bridge as any, stations, agents, fakeWrapup() as any, fakeBreaks() as any);
+    dialer.start();
+    await attachStation(stations, 's1', fakeWs());
+
+    await dialer.executeDial(makeCmd('s1'), { stillAuthorised: () => false });
+
+    expect(repos.attempt.setState.mock.calls.map((c: any[]) => c[1]), 'stamped dialling for a dial never placed')
+      .toEqual(['ended']);
+    expect(repos.attempt.setState.mock.calls.some((c: any[]) => 'dialed_at' in (c[2] ?? {}))).toBe(false);
+    expect(agents.transition, 'extended the lease for a dial never placed').not.toHaveBeenCalled();
   });
 
   it('dials as before when the check still passes', async () => {

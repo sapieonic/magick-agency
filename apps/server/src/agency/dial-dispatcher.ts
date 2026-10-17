@@ -71,9 +71,10 @@ export interface DialDispatcher {
  */
 export interface DialOptions {
   /**
-   * Asked immediately before the carrier is contacted. False ⇒ the pacing engine
-   * gave up the campaign's lease or is stopping while the dial was being prepared,
-   * and the dial is abandoned instead of placed. Absent ⇒ always authorised.
+   * Asked once the dial is prepared, before the agent's lease is extended and the
+   * attempt is stamped `dialing` (two short writes ahead of the carrier). False ⇒
+   * the pacing engine gave up the campaign's lease or is stopping, and the dial is
+   * abandoned instead of placed. Absent ⇒ always authorised.
    */
   stillAuthorised?: () => boolean;
 }

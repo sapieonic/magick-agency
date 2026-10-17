@@ -295,6 +295,39 @@ export class AgencyDialer {
       panelDelivered = true;
     }
 
+    // ── The dial can still be called off, and nothing is stamped yet ────────
+    //
+    // Everything above yields (the flag read, the priors read), and inside any of
+    // it the station may have closed, or the pacing engine may have given up the
+    // campaign's lease or begun shutting down. Both are asked HERE, before the
+    // lease is extended, the attempt is stamped `dialing` and the live record is
+    // registered: `dialed_at IS NOT NULL` reads as "the call was placed" (campaign
+    // stats, the agent stats aggregate, the series), and the abandon path observes
+    // seat time for a registered attempt, so a refusal after those would record a
+    // dial the carrier never saw.
+    //
+    // The socket half is late binding's: early binding's dial carries the socket,
+    // and the bridge refuses a dead one (the `catch` below).
+    if (lateBinding && this.stations.socketFor(sessionId) !== socket) {
+      log.warn(
+        { attemptId, sessionId },
+        'Station socket went away while the dial was being prepared — abandoning before placing an unbound call nobody is watching',
+      );
+      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
+      return;
+    }
+    // Two short writes (the lease CAS, the `dialing` stamp) still sit between this
+    // and the carrier. A stop landing inside them does not call the dial off; it
+    // goes out like any dial placed before the stop.
+    if (opts.stillAuthorised && !opts.stillAuthorised()) {
+      log.warn(
+        { attemptId, sessionId, campaignId: cmd.campaignId },
+        'Pacing stopped or lost the campaign lease while the dial was being prepared — abandoning before the carrier is contacted',
+      );
+      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
+      return;
+    }
+
     // ── 3. Dial. Under early binding, no await between the send above and this
     //    point — under late binding there is no send to be ahead of, and the
     //    guarantee is the `answered` arm's. ─────────────────────────────────
@@ -380,37 +413,21 @@ export class AgencyDialer {
     //
     // Late binding loses the bridge's own preflight: `createBridgedCall` throws
     // `station_socket_unavailable` for a dead socket, and `createUnboundBridgedCall`
-    // has no socket to check. The replacement check happened above — but it ran
-    // BEFORE `await setState(…, 'dialing')` and before the `liveByAttempt.set`
-    // just above, and a station closing inside that window arms nothing:
-    // `noteStationClosed` asks `hasUnannouncedAttempt`, which reads
-    // `liveByAttempt`, which had no entry yet. The dial then went out unbound with
-    // no socket and no timer, and ran to the carrier's answer.
+    // has no socket to check. The replacement check ran above, before the lease CAS
+    // and the `dialing` write, and a station closing inside those two arms
+    // nothing: `noteStationClosed` asks `hasUnannouncedAttempt`, which reads
+    // `liveByAttempt`, which had no entry yet. The dial would go out unbound with
+    // no socket and no timer, and run to the carrier's answer.
     //
     // So the question is asked once more, on the near side of the registration:
     // from here on a close is covered, because the entry the grace looks for
-    // exists. Scoped to late binding because early binding's dial carries the
-    // socket and the bridge's throw already covers it — the `catch` below turns
-    // that into the same `reservation_expired`.
+    // exists. A refusal here is the one abandon of an unplaced dial that leaves
+    // `dialed_at` set, exactly like early binding's bridge preflight refusing in
+    // the `catch` below; both are confined to those two writes.
     if (lateBinding && this.stations.socketFor(sessionId) !== socket) {
       log.warn(
         { attemptId, sessionId },
         'Station socket went away while the dial was being prepared — abandoning before placing an unbound call nobody is watching',
-      );
-      await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
-      return;
-    }
-
-    // ── The last moment the dial can still be called off ────────────────────
-    //
-    // Everything above yields (the flag read, the priors read, the lease CAS, the
-    // `dialing` write), and the pacing engine may have given up the campaign's
-    // lease or begun shutting down inside any of it. Past this line the carrier is
-    // contacted, so this is asked here, synchronously, with nothing in between.
-    if (opts.stillAuthorised && !opts.stillAuthorised()) {
-      log.warn(
-        { attemptId, sessionId, campaignId: cmd.campaignId },
-        'Pacing stopped or lost the campaign lease while the dial was being prepared — abandoning before the carrier is contacted',
       );
       await this.abandonBeforeDial(cmd, 'reservation_expired', panelDelivered);
       return;
@@ -460,7 +477,7 @@ export class AgencyDialer {
    * panel that clears with no explanation reads as a broken app.
    *
    * `notifyAgent` is an explicit parameter and deliberately not inferred here.
-   * This method has six call sites in {@link executeDial}, on both sides of the
+   * This method has seven call sites in {@link executeDial}, on both sides of the
    * `reserved` send, and under late binding the send has not happened at ANY of
    * them — so the caller is the only place that knows whether there is a panel to
    * explain. Inferring it from `lateBinding` alone would be wrong for the early
@@ -483,20 +500,20 @@ export class AgencyDialer {
      *
      * `agency_attempt_hold_seconds` is observed at the settle site, which these
      * paths never reach: they delete the live record and write the attempt
-     * `ended` themselves. Three of the six callers run AFTER `liveByAttempt.set`
-     * — the late-binding socket recheck, the pacing re-authorisation and
-     * `createBridgedCall` throwing — and on all three **the agent was genuinely
-     * held**: the lease had been extended to `reserved_dialing`, the attempt row
-     * says `dialing`, and `releaseAgent` runs at the bottom of this method. Those
-     * seconds are in the
+     * `ended` themselves. Two of the seven callers run AFTER `liveByAttempt.set`
+     * — the late-binding socket recheck and `createBridgedCall` throwing — and on
+     * both **the agent was genuinely held**: the lease had been extended to
+     * `reserved_dialing`, the attempt row says `dialing`, and `releaseAgent` runs
+     * at the bottom of this method. Those seconds are in the
      * population the pivotal series claims to cover and were appearing nowhere,
      * so `failed` and `orphaned` were silently under-reported.
      *
      * `dialedAt` is the discriminator rather than the call site, and it is the
-     * honest one: the three callers that run BEFORE the registration have no
-     * live record, so there is no dial instant to measure from and nothing to
-     * observe — which is correct, because on those paths no dial went out. Read
-     * before the `delete` below, for the obvious reason.
+     * honest one: the five callers that run BEFORE the registration (the pacing
+     * re-authorisation among them) have no live record, so there is no dial
+     * instant to measure from and nothing to observe — which is correct, because
+     * on those paths no dial went out. Read before the `delete` below, for the
+     * obvious reason.
      */
     const live = this.liveByAttempt.get(cmd.attemptId);
     if (live) {

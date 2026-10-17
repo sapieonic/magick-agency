@@ -106,7 +106,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/runtime-e2e.test.ts` | ~1 |
 | `apps/server/test/unit/agency/abandon-clip-cache-roundtrip.test.ts` | 5 |
 | `apps/server/test/unit/agency/abandon-clip.test.ts` | 11 |
-| `apps/server/test/unit/agency/abandon-reason-telemetry.test.ts` | 26 |
+| `apps/server/test/unit/agency/abandon-reason-telemetry.test.ts` | 27 |
 | `apps/server/test/unit/agency/abandoned-call-path.test.ts` | 16 |
 | `apps/server/test/unit/agency/abandonment-guardrail.test.ts` | 27 |
 | `apps/server/test/unit/agency/abandonment-metrics.test.ts` | 9 |
@@ -123,7 +123,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/agency-csv-ingest.streaming.test.ts` | 2 |
 | `apps/server/test/unit/agency/agency-csv-ingest.test.ts` | 54 |
 | `apps/server/test/unit/agency/agency-dialer-lineage.test.ts` | 5 |
-| `apps/server/test/unit/agency/agency-dialer.test.ts` | 35 |
+| `apps/server/test/unit/agency/agency-dialer.test.ts` | 36 |
 | `apps/server/test/unit/agency/agency-ingest-job.repository.test.ts` | 34 |
 | `apps/server/test/unit/agency/agency-ingest-keys.test.ts` | 10 |
 | `apps/server/test/unit/agency/agency-ingest-restart-contract.test.ts` | 9 |
@@ -175,7 +175,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/exhaustion-completion.test.ts` | 21 |
 | `apps/server/test/unit/agency/forward-query-strictness.test.ts` | 16 |
 | `apps/server/test/unit/agency/hangup-route.test.ts` | 10 |
-| `apps/server/test/unit/agency/late-binding.test.ts` | 30 |
+| `apps/server/test/unit/agency/late-binding.test.ts` | 31 |
 | `apps/server/test/unit/agency/left-session-guards.test.ts` | 37 |
 | `apps/server/test/unit/agency/live-concurrency-metrics.test.ts` | 18 |
 | `apps/server/test/unit/agency/live-concurrency-repository.test.ts` | 8 |
