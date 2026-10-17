@@ -1,5 +1,5 @@
 import { addDays, differenceInCalendarDays, startOfDay } from 'date-fns';
-import { bucketLabels } from './agencyAgentPerformance';
+import { bucketLabels } from './agency/buckets';
 import { formatCount } from './format/number';
 import { readerZone } from './format/date';
 import { ratePct } from './agency/metrics';
