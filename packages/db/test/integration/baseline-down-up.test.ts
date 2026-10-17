@@ -42,7 +42,9 @@ async function inventory(): Promise<string[]> {
   return rows.map((r) => r.o).sort();
 }
 
-const ALL_MIGRATIONS = ['0001_baseline', '0002_telephony_credentials', '0003_agency_attempt_indexes'];
+const ALL_MIGRATIONS = [
+  '0001_baseline', '0002_telephony_credentials', '0003_agency_attempt_indexes', '0004_agency_contacts_in_flight_index',
+];
 
 describe('migrations down → up', () => {
   afterAll(closeTestPool);

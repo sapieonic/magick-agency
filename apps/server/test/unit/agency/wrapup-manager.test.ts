@@ -118,6 +118,9 @@ describe('WrapupManager — the lease invariant', () => {
       // settles the attempt, through a patch this call does not send. Inferring it
       // costs accuracy when the two writers drift apart.
       wrapup_started_at: expect.any(Date),
+      // Annotates an ended row and never ends one: a row the settle could not end
+      // stays non-terminal for the reaper instead of reading `ended` with no outcome.
+      only_from: ['ended'],
     });
   });
 });

@@ -230,9 +230,15 @@ export class WrapupManager {
       // once went vacuous exactly that way, when `answered_at` written from `bridgedAt`
       // made it read 0 while its test passed. The average wrap-up the supervisor tunes
       // against measures this anchor, so it owns one.
+      //
+      // `only_from: ['ended']`: wrap-up annotates an ended row and never ends one. A
+      // row the settle could not end must stay non-terminal for the reaper; ended
+      // here it would read `ended` with no outcome and no `ended_at`, which every
+      // sweep skips.
       const attempt = await agencyAttemptRepository.setState(params.attemptId, 'ended', {
         wrapup_seconds: params.wrapupSeconds,
         wrapup_started_at: new Date(),
+        only_from: ['ended'],
       }).catch((err) => {
         log.warn({ err, attemptId: params.attemptId }, 'Could not persist wrapup window');
         return null;

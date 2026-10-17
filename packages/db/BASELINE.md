@@ -332,6 +332,18 @@ restores the baseline's live predicate and `idx_agency_attempts_reporting` and d
 indexes. **Tests**: `test/integration/db/attempt-indexes-migration.test.ts` (each definition, and
 that the planner can use each index for its query) and the down → up inventory suite.
 
+### 0004 — `migrations/0004_agency_contacts_in_flight_index.sql`
+
+One index, for the reaper's stranded-contact sweep (`AgencyContactRepository.findStrandedInFlight`,
+every 60 s): `idx_agency_contacts_in_flight (id) WHERE state = 'in_flight'`, the same shape as
+0003's `idx_agency_contacts_connected`. The sweep drives from the few contacts in `in_flight` (one
+per live call) and reads their attempts through `uq_agency_attempt_number`; without the index it
+would scan every contact. Keyed on `id` rather than `updated_at`, so contact writes that only move
+`updated_at` stay HOT-eligible. Plain `CREATE INDEX`, as in 0003. **Down** drops it. **Tests**:
+`test/integration/db/contacts-in-flight-index-migration.test.ts` (the definition, and that the
+planner can use it and `uq_agency_attempt_number` for the sweep's query) and the down → up
+inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

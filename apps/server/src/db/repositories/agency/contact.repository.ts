@@ -213,6 +213,42 @@ export class AgencyContactRepository {
   }
 
   /**
+   * Contacts stranded `in_flight`: claimed, with no live attempt, and nothing
+   * written to the contact or to any of its attempts since `olderThan`.
+   *
+   * `in_flight` is set by `claimDialable` and cleared by whoever settles the
+   * attempt, so a contact still in it with every attempt terminal (or none at
+   * all) was left by a write that failed or a process that died between the two
+   * — the dialer's contact settlement throwing after the attempt row was ended,
+   * or a crash between `claimDialable` and the attempt INSERT. No attempt sweep
+   * can see those: they start from a non-terminal attempt.
+   *
+   * The attempt clause also has `updated_at >= $1`, so a contact whose attempt
+   * has just ended is left alone while its settlement is still running. Served by
+   * `idx_agency_contacts_in_flight` (the few contacts mid-call), with the attempts
+   * read through `uq_agency_attempt_number`'s `contact_id` prefix.
+   */
+  async findStrandedInFlight(
+    olderThan: Date,
+    limit = 500,
+  ): Promise<Array<{ id: string; tenant_id: string; campaign_id: string }>> {
+    const { rows } = await getPool().query<{ id: string; tenant_id: string; campaign_id: string }>(
+      `SELECT ct.id, ct.tenant_id, ct.campaign_id
+         FROM agency_contacts ct
+        WHERE ct.state = 'in_flight'
+          AND ct.updated_at < $1::timestamptz
+          AND NOT EXISTS (
+                SELECT 1 FROM agency_call_attempts a
+                 WHERE a.contact_id = ct.id
+                   AND (a.state <> 'ended' OR a.updated_at >= $1::timestamptz))
+        ORDER BY ct.updated_at
+        LIMIT $2`,
+      [olderThan, limit],
+    );
+    return rows;
+  }
+
+  /**
    * Charge one attempt against a contact's retry budget and report the new total.
    *
    * Exists because the outcome policy needs the **post-bump** count and `markState`
@@ -225,8 +261,9 @@ export class AgencyContactRepository {
    * **Deliberately does not set `state`.** The caller writes the state afterwards,
    * from the decision this count produces. The contact is `in_flight` in between,
    * which is safe by construction: `claimDialable` only ever claims `pending`, so
-   * nothing can pick it up, and a crash in the gap leaves exactly the stuck
-   * `in_flight` row the reaper's periodic sweep already exists to requeue.
+   * nothing can pick it up, and a crash in the gap leaves a stuck `in_flight`
+   * row behind a terminal attempt, which the reaper's stranded-contact sweep
+   * ({@link findStrandedInFlight}) requeues.
    */
   async chargeAttempt(contactId: string, outcome: string | null): Promise<number> {
     const { rows } = await getPool().query<{ attempt_count: number }>(

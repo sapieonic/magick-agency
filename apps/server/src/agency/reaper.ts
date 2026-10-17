@@ -54,6 +54,18 @@ const LEAK_THRESHOLD_MS = 5 * 60 * 1000;
  */
 const WRAPUP_LAPSE_GRACE_MS = 120_000;
 
+/**
+ * How long a contact must have sat `in_flight`, with no live attempt and no write
+ * to it or its attempts, before the stranded-contact sweep requeues it.
+ *
+ * Guards the two legitimate windows in which a contact is `in_flight` with no live
+ * attempt: claim → attempt INSERT in the pacing tick, and the attempt row's
+ * `ended` write → the contact settlement in the dialer. Both are milliseconds in
+ * process; the margin is the same as {@link LEAK_THRESHOLD_MS}'s, for the same
+ * reason.
+ */
+const STRANDED_CONTACT_THRESHOLD_MS = 5 * 60 * 1000;
+
 /** How the reaper learns what is still alive. Injected, never imported. */
 export interface AgencyReaperDeps {
   /**
@@ -69,6 +81,19 @@ export interface AgencyReaperDeps {
    * the station socket's own ping.
    */
   ownerOf: (sessionId: string) => Promise<string | null>;
+  /**
+   * Attempts this replica stopped driving without managing to write them `ended`
+   * (`AgencyDialer.unrecordedEndedAttemptIds` / `forgetUnrecordedEnds`).
+   *
+   * Neither ownership question can clear these: the dialer has dropped them from
+   * `liveByAttempt`, and their agent is back in the pool with the station still
+   * connected, so the `ownerOf` arm reads them as live for as long as the agent
+   * stays. Absent ⇒ none (the reaper-only tests).
+   */
+  unrecordedEnds?: {
+    ids: () => string[];
+    forget: (attemptIds: readonly string[]) => void;
+  };
 }
 
 /**
@@ -123,7 +148,7 @@ export class AgencyReaper {
     return { attempts: attempts.length, agents };
   }
 
-  /** Periodic sweeps: leaked attempts, then lapsed wrap-ups. */
+  /** Periodic sweeps: leaked attempts, lapsed wrap-ups and stranded contacts. */
   start(): void {
     if (this.timer) return;
     this.timer = setInterval(() => {
@@ -133,6 +158,8 @@ export class AgencyReaper {
       void this.sweepOnce().catch((err) => log.error({ err }, 'Agency reaper sweep failed'));
       void this.sweepLapsedWrapups().catch((err) =>
         log.error({ err }, 'Agency auto-disposition sweep failed'));
+      void this.sweepStrandedContacts().catch((err) =>
+        log.error({ err }, 'Agency stranded-contact sweep failed'));
     }, SWEEP_INTERVAL_MS);
     this.timer.unref?.();
   }
@@ -175,12 +202,16 @@ export class AgencyReaper {
    * stops being owned between the snapshot and the write survives one more cycle,
    * which is the harmless direction; the reverse ordering would let an attempt
    * registered in that instant be reaped.
+   *
+   * First, and outside both arms, the attempts the dialer reported it could not
+   * end ({@link AgencyReaperDeps.unrecordedEnds}).
    */
   async sweepOnce(): Promise<number> {
+    const unrecorded = await this.reapUnrecordedEnds();
     const owned = new Set(this.deps.activeAttemptIds());
     const cutoff = new Date(Date.now() - LEAK_THRESHOLD_MS);
     const candidates = await agencyAttemptRepository.findNonTerminalOlderThan(cutoff);
-    if (candidates.length === 0) return 0;
+    if (candidates.length === 0) return unrecorded;
 
     const leaked: string[] = [];
     for (const attempt of candidates) {
@@ -190,7 +221,7 @@ export class AgencyReaper {
       }
       leaked.push(attempt.id);
     }
-    if (leaked.length === 0) return 0;
+    if (leaked.length === 0) return unrecorded;
 
     // Re-guarded on `state` inside the UPDATE, so an attempt that settled between
     // the SELECT above and this write is left alone (the bridge lifecycle's
@@ -207,6 +238,29 @@ export class AgencyReaper {
         { count: reaped.length, candidates: candidates.length, skippedAsLive: candidates.length - leaked.length },
         'Agency reaper swept leaked attempts',
       );
+    }
+    return unrecorded + reaped.length;
+  }
+
+  /**
+   * End the attempts the dialer could not write `ended`, whatever their age and
+   * whoever holds their agent's station: the dialer saw them end, so nothing is
+   * driving them. `reapByIds`' live-state guard leaves alone any that was written
+   * terminal meanwhile. The ids are forgotten only once the write succeeded, so a
+   * database still failing keeps them for the next sweep.
+   */
+  private async reapUnrecordedEnds(): Promise<number> {
+    const ids = this.deps.unrecordedEnds?.ids() ?? [];
+    if (ids.length === 0) return 0;
+    const reaped = await agencyAttemptRepository.reapByIds(ids);
+    this.deps.unrecordedEnds?.forget(ids);
+    for (const attempt of reaped) {
+      await this.requeueOrphanedContact(attempt.contact_id, 'leak', {
+        tenantId: attempt.tenant_id, campaignId: attempt.campaign_id,
+      });
+    }
+    if (reaped.length > 0) {
+      log.warn({ count: reaped.length }, 'Agency reaper ended attempts the dialer could not record');
     }
     return reaped.length;
   }
@@ -325,17 +379,49 @@ export class AgencyReaper {
   }
 
   /**
+   * Requeue contacts stranded `in_flight` behind terminal attempts.
+   *
+   * The attempt sweeps start from an attempt: a non-terminal one (`sweepOnce`) or
+   * an ended `connected` one whose wrap-up lapsed. A contact whose attempt WAS
+   * ended but whose own settlement never landed — the dialer's contact write
+   * throwing after the attempt row was written, or a process dying in between —
+   * is visible to neither, and stays `in_flight` forever: `claimDialable` never
+   * re-claims it and the campaign can never reach zero outstanding. So this sweep
+   * starts from the contact (`findStrandedInFlight`).
+   *
+   * Requeued exactly as a reaped attempt's contact is ({@link requeueOrphanedContact}):
+   * on the our-fault ledger, never the customer's allowance, because whether the
+   * failed settlement had already charged it is not knowable from here, and the
+   * our-fault bound is what keeps a repeatedly failing write from redialling
+   * someone without limit.
+   */
+  async sweepStrandedContacts(): Promise<number> {
+    const cutoff = new Date(Date.now() - STRANDED_CONTACT_THRESHOLD_MS);
+    const stranded = await agencyContactRepository.findStrandedInFlight(cutoff);
+    for (const contact of stranded) {
+      await this.requeueOrphanedContact(contact.id, 'stranded', {
+        tenantId: contact.tenant_id, campaignId: contact.campaign_id,
+      });
+    }
+    if (stranded.length > 0) {
+      log.warn({ count: stranded.length }, 'Agency reaper requeued contacts stranded in_flight');
+    }
+    return stranded.length;
+  }
+
+  /**
    * Return a reaped attempt's contact to the roster.
    *
-   * Shared by both reap paths so the retry-allowance rule below cannot be true in
-   * one and quietly absent in the other.
+   * Shared by every reap path (and the stranded-contact sweep) so the
+   * retry-allowance rule below cannot be true in one and quietly absent in another.
    */
   private async requeueOrphanedContact(
     contactId: string,
-    source: 'startup' | 'leak',
+    source: 'startup' | 'leak' | 'stranded',
     /**
      * Label set for {@link agencyOurFaultRetirementTotal}, taken from the attempt
-     * row the caller is already holding.
+     * (or, for the stranded-contact sweep, contact) row the caller is already
+     * holding.
      *
      * Threaded rather than looked up: this runs in a loop over reaped attempts,
      * and a per-contact query to label a counter would put a read on the crash
@@ -344,9 +430,9 @@ export class AgencyReaper {
      * **Required, and it was briefly optional for a reason that did not survive
      * review.** The first version declared it `scope?` and fell back to
      * `'unknown'` labels, on the argument that an unlabelled increment beats a
-     * missing one. That fallback was unreachable: this method is private, both
-     * call sites iterate `AgencyCallAttemptRecord[]` and always pass both fields,
-     * and there is no third caller. So the option only bought a dead branch and a
+     * missing one. That fallback was unreachable: this method is private, and
+     * every call site iterates rows that carry both fields. So the option only
+     * bought a dead branch and a
      * commit message describing behaviour that cannot occur. If a future caller
      * genuinely cannot supply the scope, make that a deliberate decision here
      * rather than inheriting a silent `'unknown'` series.

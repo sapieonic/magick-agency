@@ -20,7 +20,9 @@ const {
   noLiveAttempts,
 } = await import('./agency-factories.js');
 const { AgencyReaper } = await import('../../../src/agency/reaper.js');
-const { agencyAttemptRepository } = await import('../../../src/db/repositories/agency.repository.js');
+const {
+  agencyAttemptRepository, agencyContactRepository,
+} = await import('../../../src/db/repositories/agency.repository.js');
 const { requiresDisposition } = await import('../../../src/agency/outcome-classifier.js');
 const { AUTO_DISPOSITION_CODE } = await import('../../../src/agency/disposition.js');
 
@@ -651,5 +653,76 @@ describe('the sweep against real SQL', () => {
     // `ORDER BY a.ended_at` — the longest-stranded contacts are freed first, which
     // is the only ordering that keeps a backlog from starving the oldest rows.
     expect(limited.map((r) => r.id)).toEqual([created[0], created[1]]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// (4) Contacts stranded `in_flight` behind terminal attempts.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('findStrandedInFlight and the stranded-contact sweep', () => {
+  /** Written at INSERT, which the `updated_at` triggers (BEFORE UPDATE) leave alone. */
+  const LONG_AGO = () => new Date(Date.now() - 60 * 60_000);
+  const CUTOFF = () => new Date(Date.now() - LEAK_THRESHOLD_SECONDS * 1000);
+
+  async function campaign() {
+    return (await insertAgencyCampaign({ status: 'paused' })).id as string;
+  }
+
+  it('finds a contact behind an ended attempt, or behind none, and nothing that may still be settling', async () => {
+    const campaignId = await campaign();
+    const contact = (overrides: Record<string, unknown> = {}) =>
+      insertAgencyContact(campaignId, { state: 'in_flight', updated_at: LONG_AGO(), ...overrides });
+
+    const behindEnded = await contact();
+    await insertAgencyAttempt(campaignId, behindEnded.id as string, {
+      state: 'ended', outcome: 'no_answer', updated_at: LONG_AGO(),
+    });
+    const behindNothing = await contact();
+
+    // Each of these differs from `behindEnded` in one clause.
+    const behindLive = await contact();
+    await insertAgencyAttempt(campaignId, behindLive.id as string, { state: 'bridged', updated_at: LONG_AGO() });
+    const freshlyClaimed = await contact({ updated_at: new Date() });
+    const justEnded = await contact();
+    await insertAgencyAttempt(campaignId, justEnded.id as string, { state: 'ended', outcome: 'no_answer' });
+    const pending = await contact({ state: 'pending' });
+
+    const found = await agencyContactRepository.findStrandedInFlight(CUTOFF());
+    expect(found.map((r) => r.id).sort()).toEqual([behindEnded.id, behindNothing.id].sort());
+    expect(found[0]).toMatchObject({ tenant_id: expect.any(String), campaign_id: campaignId });
+    for (const excluded of [behindLive, freshlyClaimed, justEnded, pending]) {
+      expect(found.map((r) => r.id)).not.toContain(excluded.id);
+    }
+  });
+
+  it('requeues on the our-fault ledger and keeps a DNC-suppressed contact suppressed', async () => {
+    const campaignId = await campaign();
+    const stranded = await insertAgencyContact(campaignId, {
+      state: 'in_flight', updated_at: LONG_AGO(), attempt_count: 1,
+    });
+    await insertAgencyAttempt(campaignId, stranded.id as string, {
+      state: 'ended', outcome: 'busy', updated_at: LONG_AGO(),
+    });
+    // Marked DNC mid-call: `markState` keeps it suppressed, whatever the requeue asks.
+    const dnc = await insertAgencyContact(campaignId, {
+      state: 'in_flight', updated_at: LONG_AGO(), suppressed_reason: 'dnc',
+    });
+
+    expect(await reaper().sweepStrandedContacts()).toBe(2);
+
+    const { rows } = await getTestPool().query(
+      `SELECT id, state, last_outcome, attempt_count, our_fault_attempts FROM agency_contacts
+        WHERE id = ANY($1::uuid[])`,
+      [[stranded.id, dnc.id]],
+    );
+    const byId = new Map(rows.map((r: any) => [r.id, r]));
+    expect(byId.get(stranded.id)).toMatchObject({
+      state: 'pending', last_outcome: 'orphaned', attempt_count: 1, our_fault_attempts: 1,
+    });
+    expect(byId.get(dnc.id)!.state).toBe('suppressed');
+
+    // Requeued once: `pending` is not `in_flight`, so a second sweep finds nothing.
+    expect(await reaper().sweepStrandedContacts()).toBe(0);
   });
 });

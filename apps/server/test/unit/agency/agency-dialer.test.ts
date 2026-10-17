@@ -1153,6 +1153,38 @@ describe('AgencyDialer · a failed `ended` settle still releases the agent', () 
     expect(dialer.activeAttemptIds()).not.toContain('att-1');
   });
 
+  it('does not enter wrap-up when the attempt row write rejects, and hands the attempt to the reaper', async () => {
+    // Wrap-up would write the row `ended` with no outcome, which no sweep recovers;
+    // the reaper ends it `orphaned` instead, so no disposition is owed for it.
+    const stations = new StationRegistry(null, '', 'r1');
+    const agents = reservedAgents();
+    const setSpy = vi.spyOn(agents, 'set');
+    const bridge = fakeBridge();
+    const wrapup = fakeWrapup({ entered: true });
+    const dialer = new AgencyDialer(bridge as any, stations, agents, wrapup as any, fakeBreaks() as any);
+    dialer.start();
+    const ws = fakeWs();
+    await attachStation(stations, 's1', ws);
+    await dialer.executeDial(makeCmd('s1'));
+    bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'bridged', answered: true });
+    await vi.waitFor(() => expect(repos.attempt.setState).toHaveBeenCalledWith('att-1', 'bridged', expect.anything()));
+    repos.attempt.setState.mockImplementationOnce(async () => { throw new Error('pg down'); });
+    bridge.emit({
+      callId: 'call-1', correlationId: 'att-1', phase: 'ended', status: 'completed',
+      outcome: 'remote_hangup', answered: true, talkTimeSeconds: 42,
+    });
+
+    await vi.waitFor(() => expect(setSpy).toHaveBeenCalledWith('s1', 'available', expect.anything()));
+    expect(wrapup.enter, 'entered wrap-up for an attempt with no ended row').not.toHaveBeenCalled();
+    expect(repos.contact.markState, 'settled the contact the reaper will requeue').not.toHaveBeenCalledWith(
+      'contact-1', expect.anything(), expect.anything(),
+    );
+    expect(ws.sent.find((f) => f.event === 'released')?.requires_disposition).toBe(false);
+    expect(dialer.unrecordedEndedAttemptIds()).toEqual(['att-1']);
+    dialer.forgetUnrecordedEnds(['att-1']);
+    expect(dialer.unrecordedEndedAttemptIds()).toEqual([]);
+  });
+
   it('releases the agent when the contact settlement rejects', async () => {
     const { ws, setSpy } = await dialedAndEnded(() => {
       repos.contact.chargeAttempt.mockRejectedValueOnce(new Error('deadlock detected'));

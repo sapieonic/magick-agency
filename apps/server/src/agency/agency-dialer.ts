@@ -98,6 +98,17 @@ export class AgencyDialer {
    */
   private readonly missedReleases = new Map<string, { release: AgencyMissedRelease; expiresAt: number }>();
   /**
+   * Attempts this replica saw end (or abandoned) whose `ended` row write failed.
+   *
+   * The row is left non-terminal and nothing on this replica drives it any more,
+   * but the agent is back in the pool with their station connected — which is
+   * exactly what the reaper's periodic sweep reads as "still owned somewhere" and
+   * skips. So the reaper is handed these ids directly
+   * ({@link unrecordedEndedAttemptIds}) and ends them `orphaned`. Process-local
+   * on purpose: after a restart the startup reaper ends every non-terminal row.
+   */
+  private readonly unrecordedEnds = new Set<string>();
+  /**
    * Grace timers for a station that dropped while an UNANNOUNCED dial was ringing,
    * keyed by session id.
    *
@@ -528,7 +539,10 @@ export class AgencyDialer {
       // histogram bucket and the attempt row cannot disagree about what happened.
       outcome,
       ended_at: new Date(),
-    }).catch((err) => log.error({ err, attemptId: cmd.attemptId }, 'Failed to end abandoned attempt'));
+    }).catch((err) => {
+      this.unrecordedEnds.add(cmd.attemptId);
+      log.error({ err, attemptId: cmd.attemptId }, 'Failed to end abandoned attempt — the reaper ends it');
+    });
 
     // The condition genuinely cleared, so `now()` is correct here — unlike an
     // out-of-hours unclaim, which must move the clock forward.
@@ -1138,16 +1152,44 @@ export class AgencyDialer {
     const needsDisposition = requiresDisposition(outcome, cmd.campaign.disposition_catalog);
 
     // A failed write must not cost the agent their `released` frame or their
-    // release: the classification above is in hand, the frame needs nothing from
-    // the database, and the reaper is the backstop for a row left non-terminal.
+    // release: the classification above is in hand and the frame needs nothing
+    // from the database. What each failure leaves behind is different, so the two
+    // writes are caught separately.
+    //
+    // The row write failing leaves the attempt non-terminal. Nothing after it may
+    // write the attempt or the contact: wrap-up would move the row to `ended` with
+    // no outcome (which every sweep then skips), and a disposition or a contact
+    // settlement would route a contact the reaper is about to requeue. The id goes
+    // to the reaper, which ends the row `orphaned` and requeues the contact on the
+    // our-fault ledger, as it does for any attempt it finds leaked.
+    let rowEnded = true;
     try {
-      await this.recordEndedAttempt(live, ev, { outcome, abandoned, abandonReason, needsDisposition });
+      await this.recordEndedAttempt(live, ev, { outcome, abandoned, abandonReason });
     } catch (err) {
+      rowEnded = false;
+      this.unrecordedEnds.add(cmd.attemptId);
       log.error(
         { err, attemptId: cmd.attemptId, outcome },
-        'Could not record the ended attempt — telling the agent and releasing them anyway; the reaper backstops the rows',
+        'Could not record the ended attempt — releasing the agent without wrap-up; the reaper ends the row and requeues the contact',
       );
     }
+    // The contact write failing leaves the contact `in_flight` (or `connected`)
+    // behind a terminal attempt, which no attempt sweep can see; the reaper's
+    // stranded-contact sweep requeues it.
+    if (rowEnded) {
+      try {
+        // Which ledger pays for this attempt and what the retry policy does with
+        // the contact — `dialer/contact-settlement.ts`.
+        await settleContact(cmd, outcome, needsDisposition, live.bridgedAt);
+      } catch (err) {
+        log.error(
+          { err, attemptId: cmd.attemptId, contactId: cmd.contactId, outcome },
+          'Could not settle the contact of an ended attempt — the reaper requeues a stranded contact',
+        );
+      }
+    }
+    // No row, no wrap-up, so no disposition can be taken for this attempt.
+    const dispositionOwed = rowEnded && needsDisposition;
 
     /**
      * **Both** vocabularies, because there are two agent-initiated hang-ups and
@@ -1183,7 +1225,7 @@ export class AgencyDialer {
     // `releaseAgent` below still returns the agent to the pool. Only the two
     // agent-facing announcements are suppressed.
     if (!isUnannounced(live)) {
-      const delivered = this.sendReleased(cmd, reason, needsDisposition, message);
+      const delivered = this.sendReleased(cmd, reason, dispositionOwed, message);
       // The agent whose socket dropped is exactly the agent this frame explains the
       // most to, and exactly the one who cannot receive it. Hold it for their
       // reconnect rather than letting the console come back to an empty panel with
@@ -1192,7 +1234,7 @@ export class AgencyDialer {
         this.holdMissedRelease(cmd.sessionId, {
           attempt_id: cmd.attemptId,
           reason,
-          requires_disposition: needsDisposition,
+          requires_disposition: dispositionOwed,
           message,
           ended_at: new Date().toISOString(),
         });
@@ -1217,7 +1259,7 @@ export class AgencyDialer {
     // up. Handing those agents a countdown would take the pool offline for
     // `wrapup_seconds` after every no-answer, which at power-dialing rates is most
     // of the shift.
-    if (this.stations.isLocallyOwned(cmd.sessionId) && outcome === 'connected') {
+    if (rowEnded && this.stations.isLocallyOwned(cmd.sessionId) && outcome === 'connected') {
       const entered = await this.wrapup.enter({
         sessionId: cmd.sessionId,
         attemptId: cmd.attemptId,
@@ -1250,8 +1292,9 @@ export class AgencyDialer {
   }
 
   /**
-   * The durable half of the `ended` arm: the attempt row, the seat-time and
-   * abandonment series that follow it, and the contact's fate.
+   * The attempt half of the `ended` arm: the attempt row, and the seat-time and
+   * abandonment series that follow it. The contact's fate is written after it, by
+   * {@link settleEnded}.
    */
   private async recordEndedAttempt(
     live: LiveAttempt,
@@ -1260,11 +1303,10 @@ export class AgencyDialer {
       outcome: AgencyAttemptOutcome;
       abandoned: boolean;
       abandonReason: AgencyAbandonReason | null;
-      needsDisposition: boolean;
     },
   ): Promise<void> {
     const cmd = live.cmd;
-    const { outcome, abandoned, abandonReason, needsDisposition } = settled;
+    const { outcome, abandoned, abandonReason } = settled;
     await agencyAttemptRepository.setState(cmd.attemptId, 'ended', {
       outcome,
       ended_at: new Date(),
@@ -1340,11 +1382,6 @@ export class AgencyDialer {
         });
       }
     }
-
-    // ── The contact ─────────────────────────────────────────────────────────
-    // Which ledger pays for this attempt and what the retry policy does with the
-    // contact — `dialer/contact-settlement.ts`.
-    await settleContact(cmd, outcome, needsDisposition, live.bridgedAt);
   }
 
   /**
@@ -1515,6 +1552,21 @@ export class AgencyDialer {
    */
   activeAttemptIds(): string[] {
     return [...this.liveByAttempt.keys()];
+  }
+
+  /**
+   * Attempts this replica stopped driving without writing them `ended` — the
+   * reaper's input for rows no ownership question can clear (see
+   * {@link unrecordedEnds}). A copy, for the same reason as
+   * {@link activeAttemptIds}.
+   */
+  unrecordedEndedAttemptIds(): string[] {
+    return [...this.unrecordedEnds];
+  }
+
+  /** The reaper ended these (or found them already terminal): stop reporting them. */
+  forgetUnrecordedEnds(attemptIds: readonly string[]): void {
+    for (const id of attemptIds) this.unrecordedEnds.delete(id);
   }
 
   /**

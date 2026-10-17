@@ -78,8 +78,8 @@ export class AgencyRuntime {
     this.wrapup = new WrapupManager(this.stations, this.agents, (sessionId) =>
       this.dialer.releaseAgent(sessionId));
     this.dialer = new AgencyDialer(bridge, this.stations, this.agents, this.wrapup, this.breaks);
-    // Both liveness questions the periodic sweep needs, as lazy closures rather
-    // than references: `this.dialer` is assigned above but the arrow keeps the
+    // Both liveness questions the periodic sweep needs, and the attempts the
+    // dialer could not write `ended`, as lazy closures rather than references: `this.dialer` is assigned above but the arrow keeps the
     // reaper independent of construction order, and re-reading on every sweep is
     // the point — a snapshot taken here would be empty forever.
     //
@@ -89,6 +89,10 @@ export class AgencyRuntime {
     this.reaper = new AgencyReaper({
       activeAttemptIds: () => this.dialer.activeAttemptIds(),
       ownerOf: (sessionId) => this.stations.ownerOf(sessionId),
+      unrecordedEnds: {
+        ids: () => this.dialer.unrecordedEndedAttemptIds(),
+        forget: (attemptIds) => this.dialer.forgetUnrecordedEnds(attemptIds),
+      },
     });
     this.tokens = new StationTokenStore(redis, keyPrefix);
 

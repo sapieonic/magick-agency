@@ -73,7 +73,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-join-rehydrate-db.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-lease-ring-duration.test.ts` | ~4 |
 | `apps/server/test/integration/agency/agency-migration.test.ts` | ~13 |
-| `apps/server/test/integration/agency/agency-reaper-sql.test.ts` | ~12 |
+| `apps/server/test/integration/agency/agency-reaper-sql.test.ts` | ~14 |
 | `apps/server/test/integration/agency/agency-retry-idempotency.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-retry-seeding.test.ts` | ~21 |
 | `apps/server/test/integration/agency/agency-roster-handoff.test.ts` | ~19 |
@@ -100,6 +100,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/chaos/redis-expired-wholesale.test.ts` | ~8 |
 | `apps/server/test/integration/agency/chaos/restart-mid-bridge.test.ts` | ~2 |
 | `apps/server/test/integration/agency/chaos/roster-exactly-once.test.ts` | ~8 |
+| `apps/server/test/integration/agency/chaos/settle-write-failure.test.ts` | ~3 |
 | `apps/server/test/integration/agency/dnc-registry.test.ts` | ~12 |
 | `apps/server/test/integration/agency/repository-sql-coverage.test.ts` | 12 |
 | `apps/server/test/integration/agency/runtime-boot-order.test.ts` | ~3 |
@@ -123,7 +124,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/agency-csv-ingest.streaming.test.ts` | 2 |
 | `apps/server/test/unit/agency/agency-csv-ingest.test.ts` | 54 |
 | `apps/server/test/unit/agency/agency-dialer-lineage.test.ts` | 5 |
-| `apps/server/test/unit/agency/agency-dialer.test.ts` | 36 |
+| `apps/server/test/unit/agency/agency-dialer.test.ts` | 37 |
 | `apps/server/test/unit/agency/agency-ingest-job.repository.test.ts` | 34 |
 | `apps/server/test/unit/agency/agency-ingest-keys.test.ts` | 10 |
 | `apps/server/test/unit/agency/agency-ingest-restart-contract.test.ts` | 9 |
@@ -206,7 +207,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-spine.routes.test.ts` | 40 |
 | `apps/server/test/unit/agency/proxy-agency-staffing.routes.test.ts` | 81 |
 | `apps/server/test/unit/agency/proxy-agency-station.routes.test.ts` | 10 |
-| `apps/server/test/unit/agency/reaper.test.ts` | 41 |
+| `apps/server/test/unit/agency/reaper.test.ts` | 43 |
 | `apps/server/test/unit/agency/retry-policy.test.ts` | 23 |
 | `apps/server/test/unit/agency/retry-selector-parse.test.ts` | 34 |
 | `apps/server/test/unit/agency/roster-row-identity.test.ts` | 3 |
@@ -978,6 +979,7 @@ Scenario, flow, guard and setup tests that span several modules.
 | `packages/db/test/integration/db/attempt-indexes-migration.test.ts` | 4 |
 | `packages/db/test/integration/baseline-down-up.test.ts` | ~2 |
 | `packages/db/test/integration/baseline.test.ts` | ~55 |
+| `packages/db/test/integration/db/contacts-in-flight-index-migration.test.ts` | 1 |
 | `packages/db/test/integration/db/audio-file-pcm-migration.test.ts` | ~4 |
 | `packages/db/test/integration/db/dialer-analysis-migration.test.ts` | ~6 |
 | `packages/db/test/integration/db/webrtc-call-analysis-projection.test.ts` | ~2 |
