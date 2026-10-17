@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { routeFamilySource } from '../../helpers/route-source.js';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { readFileSync } from 'node:fs';
 
@@ -295,10 +296,8 @@ describe('the campaign proxy registers the supervisor surface', () => {
      * that matter, because a flat `/campaigns` is not what anybody draws a wrong
      * conclusion about.
      */
-    const grepVisible = readFileSync(
-      new URL('../../../src/api/routes/proxy-agency-campaigns.routes.ts', import.meta.url),
-      'utf8',
-    ).match(/\.(?:get|post|patch|put|delete)\(/g) ?? [];
+    const grepVisible = routeFamilySource('proxy-agency-campaigns')
+      .match(/\.(?:get|post|patch|put|delete)\(/g) ?? [];
 
     expect(grepVisible.length).toBeLessThan(routes.length);
   });

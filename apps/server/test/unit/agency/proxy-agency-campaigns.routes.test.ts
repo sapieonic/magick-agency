@@ -75,6 +75,7 @@ vi.mock('../../../src/agency/agency-roster.client.js', async () => {
 });
 
 import { proxyAgencyCampaignsRoutes } from '../../../src/api/routes/proxy-agency-campaigns.routes.js';
+import { routeFamilySource } from '../../helpers/route-source.js';
 import { RosterSupersedeError } from '../../../src/agency/agency-roster.client.js';
 import type { AgencyCampaignWire } from '../../../src/agency/agency-campaign-wire.js';
 
@@ -2099,10 +2100,9 @@ describe('every campaign route carries its RBAC permission', () => {
    * stubbed, and it is a real one: it fails loudly the moment a guard is dropped or
    * a new campaign route is added without one.
    */
-  const source = readFileSync(
-    new URL('../../../src/api/routes/proxy-agency-campaigns.routes.ts', import.meta.url),
-    'utf8',
-  );
+  // The whole family — the plugin file and every registration file under
+  // `proxy-agency-campaigns/` — so a route moved into a new file stays in sight.
+  const source = routeFamilySource('proxy-agency-campaigns');
 
   // Route → the permission it must carry. Reads are `.read`; writes are `.write`;
   // the four lifecycle transitions are `agency.supervise` (floor `account_admin`)

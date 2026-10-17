@@ -102,14 +102,14 @@ function extractCallSites(): { sites: CallSite[]; dynamic: string[]; callers: st
  * still sees them).
  */
 const DYNAMIC_CALL_SITES: ReadonlyMap<string, string> = new Map([
-  ['api/routes/proxy-agency-campaigns.routes.ts params.path',
+  ['api/routes/proxy-agency-campaigns/spine.ts params.path',
     "the spine CSV export's page loop; its two callers pass literal `/agency-campaigns/${id}/attempts` and `/contacts` objects"],
-  ['api/routes/proxy-agency-campaigns.routes.ts <no path>',
+  ['api/routes/proxy-agency-campaigns/lifecycle.ts <no path>',
     "`runTransition`, the four lifecycle controls' shared body (`{ ...call }`); each route passes its own literal `/agency-campaigns/${id}/<verb>` object"],
 ]);
 
 /** The one file that passes `provenCampaignId` (the spine CSV export's page loop). */
-const PROVEN_CAMPAIGN_CALLER = 'api/routes/proxy-agency-campaigns.routes.ts';
+const PROVEN_CAMPAIGN_CALLER = 'api/routes/proxy-agency-campaigns/spine.ts';
 
 /** Internal handlers no public-API call site reaches, each with why. */
 const UNREACHED_CORE_ROUTES: ReadonlyMap<string, string> = new Map([
@@ -157,7 +157,11 @@ describe('callCore — static resolution against the private internal handler in
       'api/routes/helpers/core-campaign.ts', // the campaign ownership probe the route files share
       'api/routes/proxy-agency-agent.routes.ts',
       'api/routes/proxy-agency-calls.routes.ts',
-      'api/routes/proxy-agency-campaigns.routes.ts',
+      'api/routes/proxy-agency-campaigns/crud.ts',
+      'api/routes/proxy-agency-campaigns/lifecycle.ts',
+      'api/routes/proxy-agency-campaigns/retry.ts',
+      'api/routes/proxy-agency-campaigns/spine.ts',
+      'api/routes/proxy-agency-campaigns/stats.ts',
       'api/routes/proxy-agency-performance.routes.ts',
       'api/routes/proxy-agency-staffing.routes.ts',
     ]);

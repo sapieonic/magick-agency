@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { routeFamilySource } from '../../../helpers/route-source.js';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
@@ -83,8 +84,11 @@ describe('PLATFORM_AUDIT_ACTIONS', () => {
 
 describe('concurrency is super-admin only', () => {
   it('the agency campaign proxy has no concurrency write path', () => {
-    const source = readFileSync(resolve(ROOT, 'src/api/routes/proxy-agency-campaigns.routes.ts'), 'utf8');
-    expect(source).toMatch(/There is no concurrency setter here, and that is deliberate/);
+    // The statement lives in the plugin file; the absence is checked over the whole
+    // family (`proxy-agency-campaigns/` too), where the routes are registered.
+    expect(readFileSync(resolve(ROOT, 'src/api/routes/proxy-agency-campaigns.routes.ts'), 'utf8'))
+      .toMatch(/There is no concurrency setter here, and that is deliberate/);
+    const source = routeFamilySource('proxy-agency-campaigns');
     expect(source).not.toMatch(/app\.(put|post|patch)(?:<[^>]*>)?\([^)]*concurrency/);
     // Payload field, not just the URL: a concurrency setter must not land as an unaudited
     // campaign body key. That comment names `max_concurrent_calls`; a setter

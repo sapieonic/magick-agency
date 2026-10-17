@@ -49,7 +49,9 @@ function code(path: string): string {
 const SRC = walk(resolve(ROOT, 'src'));
 const AGENCY_SURFACE = SRC.filter((path) => {
   const r = rel(path);
-  return r.startsWith('src/agency/') || /^src\/api\/routes\/[^/]*agency[^/]*\.ts$/.test(r);
+  // An agency route file, or any file of an agency route family's folder
+  // (`src/api/routes/proxy-agency-campaigns/…`).
+  return r.startsWith('src/agency/') || /^src\/api\/routes\/[^/]*agency[^/]*(?:\/[^/]+)?\.ts$/.test(r);
 });
 
 describe('concurrency is super-admin only', () => {

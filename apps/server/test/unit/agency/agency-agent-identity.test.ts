@@ -140,7 +140,9 @@ describe('resolveAgentNames is declared ONCE', () => {
     // to be reaching.
     // Both consumers exist at these paths, so every one is asserted.
     for (const consumer of [
-      'api/routes/proxy-agency-campaigns.routes.ts',
+      // The spine's agent-name enrichment and the lifecycle/retry actor lookup.
+      'api/routes/proxy-agency-campaigns/spine.ts',
+      'api/routes/proxy-agency-campaigns/lifecycle.ts',
       'api/routes/proxy-agency-performance.routes.ts',
     ]) {
       const source = readFileSync(join(SRC, consumer), 'utf8');
