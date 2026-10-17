@@ -1,6 +1,7 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useId, useRef } from 'react';
 import { ArrowDown, ArrowUp, Lock, Plus, Trash2 } from 'lucide-react';
 import { ComposerSection } from '../components/ComposerSection';
+import { FieldError } from '../../../components/common/FieldError';
 import {
   BUILT_IN_LOCK_COPY,
   DEFAULT_DISPOSITION_RETRY,
@@ -126,6 +127,21 @@ export function CampaignBehaviourSection({
   include = ['hours', 'behaviour'],
 }: CampaignBehaviourSectionProps) {
   const error = (field: string) => fieldErrors[field] ?? null;
+  /*
+    Every error gets an id its field names in `aria-describedby`, so a screen
+    reader announces the reason with the field rather than as a stray alert. The
+    id is only referenced while there is an error to point at — `FieldError`
+    renders nothing otherwise, and a dangling reference names nothing.
+  */
+  const idBase = useId();
+  const errorId = (field: string) => `${idBase}-${field.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+  const describedBy = (...fields: string[]) => {
+    const ids = fields.filter((field) => error(field) !== null).map(errorId);
+    return ids.length > 0 ? ids.join(' ') : undefined;
+  };
+  const fieldError = (field: string) => (
+    <FieldError id={errorId(field)} message={error(field)} className="error-text" />
+  );
 
   const setWindow = (patch: Partial<CampaignConfigState['window']>) =>
     onChange({ ...state, window: { ...state.window, ...patch } });
@@ -280,8 +296,9 @@ export function CampaignBehaviourSection({
               type="time"
               value={state.window.start}
               onChange={(event) => setWindow({ start: event.target.value })}
+              aria-describedby={describedBy('calling_window_start')}
             />
-            <FieldError message={error('calling_window_start')} />
+            {fieldError('calling_window_start')}
           </div>
           <div className="form-group">
             <label htmlFor="window-end">End</label>
@@ -290,8 +307,9 @@ export function CampaignBehaviourSection({
               type="time"
               value={state.window.end}
               onChange={(event) => setWindow({ end: event.target.value })}
+              aria-describedby={describedBy('calling_window_end')}
             />
-            <FieldError message={error('calling_window_end')} />
+            {fieldError('calling_window_end')}
           </div>
           <div className="form-group">
             <label htmlFor="window-timezone">Default timezone</label>
@@ -301,17 +319,18 @@ export function CampaignBehaviourSection({
               placeholder="Asia/Kolkata"
               list="campaign-timezone-options"
               onChange={(event) => setWindow({ timezone: event.target.value })}
+              aria-describedby={describedBy('default_timezone')}
             />
             <datalist id="campaign-timezone-options">
               {COMMON_TIMEZONES.map((zone) => (
                 <option key={zone} value={zone} />
               ))}
             </datalist>
-            <FieldError message={error('default_timezone')} />
+            {fieldError('default_timezone')}
           </div>
         </div>
 
-        <fieldset className={styles.days}>
+        <fieldset className={styles.days} aria-describedby={describedBy('calling_days')}>
           <legend className={styles.legend}>Calling days</legend>
           {DAYS.map((day) => (
             <label key={day.iso} className={styles.day}>
@@ -323,7 +342,7 @@ export function CampaignBehaviourSection({
               {day.label}
             </label>
           ))}
-          <FieldError message={error('calling_days')} />
+          {fieldError('calling_days')}
         </fieldset>
 
         {/* The echo — an inverted range is invisible in a pair of time inputs. */}
@@ -404,6 +423,11 @@ export function CampaignBehaviourSection({
                       value={entry.label}
                       placeholder="What the agent sees on the button"
                       onChange={(event) => renameDisposition(index, event.target.value)}
+                      aria-describedby={describedBy(
+                        `disposition_catalog[${index}].label`,
+                        // A built-in's code has no input of its own; its error is the label's.
+                        ...(locked ? [`disposition_catalog[${index}].code`] : []),
+                      )}
                     />
                     {/*
                       A built-in's code is a fixed wire value, so it is shown as
@@ -423,6 +447,7 @@ export function CampaignBehaviourSection({
                         placeholder="code"
                         title="The value stored against the call. Filled in from the label until you change it."
                         onChange={(event) => setDispositionCode(index, event.target.value)}
+                        aria-describedby={describedBy(`disposition_catalog[${index}].code`)}
                       />
                     )}
                   </div>
@@ -542,6 +567,7 @@ export function CampaignBehaviourSection({
                             type="number"
                             min={0}
                             aria-label={`${name} retry delay in minutes`}
+                            aria-describedby={describedBy(`disposition_catalog[${index}].retry.delay_minutes`)}
                             value={entry.retry.delay_minutes ?? 0}
                             onChange={(event) =>
                               updateDisposition(index, {
@@ -561,6 +587,7 @@ export function CampaignBehaviourSection({
                             min={0}
                             max={20}
                             aria-label={`${name} retry attempts`}
+                            aria-describedby={describedBy(`disposition_catalog[${index}].retry.max_attempts`)}
                             value={entry.retry.max_attempts}
                             onChange={(event) =>
                               updateDisposition(index, {
@@ -587,10 +614,10 @@ export function CampaignBehaviourSection({
                   {dispositionSummary(entry)}
                 </p>
 
-                <FieldError message={error(`disposition_catalog[${index}].code`)} />
-                <FieldError message={error(`disposition_catalog[${index}].label`)} />
-                <FieldError message={error(`disposition_catalog[${index}].retry.max_attempts`)} />
-                <FieldError message={error(`disposition_catalog[${index}].retry.delay_minutes`)} />
+                {fieldError(`disposition_catalog[${index}].code`)}
+                {fieldError(`disposition_catalog[${index}].label`)}
+                {fieldError(`disposition_catalog[${index}].retry.max_attempts`)}
+                {fieldError(`disposition_catalog[${index}].retry.delay_minutes`)}
               </li>
             );
           })}
@@ -627,6 +654,7 @@ export function CampaignBehaviourSection({
                           type="number"
                           min={0}
                           aria-label={`${OUTCOME_LABELS[outcome]} delay in minutes`}
+                          aria-describedby={describedBy(`retry_policy.${outcome}.delay_minutes`)}
                           value={rule?.delay_minutes ?? ''}
                           onChange={(event) =>
                             setRetry(outcome, { delay: Number(event.target.value) })
@@ -639,11 +667,12 @@ export function CampaignBehaviourSection({
                           min={0}
                           max={20}
                           aria-label={`${OUTCOME_LABELS[outcome]} max attempts`}
+                          aria-describedby={describedBy(`retry_policy.${outcome}.max_attempts`)}
                           value={rule?.max_attempts ?? ''}
                           onChange={(event) => setRetry(outcome, { max: Number(event.target.value) })}
                         />
-                        <FieldError message={error(`retry_policy.${outcome}.max_attempts`)} />
-                        <FieldError message={error(`retry_policy.${outcome}.delay_minutes`)} />
+                        {fieldError(`retry_policy.${outcome}.max_attempts`)}
+                        {fieldError(`retry_policy.${outcome}.delay_minutes`)}
                         {/*
                           Not a validation error — 0 is a legitimate choice. It
                           is a consequence the word "0" does not convey beside a
@@ -705,8 +734,9 @@ export function CampaignBehaviourSection({
             max={600}
             value={state.wrapupSeconds}
             onChange={(event) => onChange({ ...state, wrapupSeconds: Number(event.target.value) })}
+            aria-describedby={describedBy('wrapup_seconds')}
           />
-          <FieldError message={error('wrapup_seconds')} />
+          {fieldError('wrapup_seconds')}
           <p className={styles.hint}>
             {state.wrapupSeconds === 0
               ? 'Agents go straight back to available after a call.'
@@ -776,14 +806,5 @@ export function CampaignBehaviourSection({
         </ComposerSection>
       ) : null}
     </>
-  );
-}
-
-function FieldError({ message }: { message: string | null }) {
-  if (!message) return null;
-  return (
-    <p className="error-text" role="alert">
-      {message}
-    </p>
   );
 }
