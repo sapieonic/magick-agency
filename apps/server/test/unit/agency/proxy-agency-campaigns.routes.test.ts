@@ -1700,6 +1700,17 @@ describe('agency ingest routes', () => {
       await app.close();
     });
 
+    it('collapses a dot run in the MIDDLE of the name too, not just a leading one', async () => {
+      mocks.repo.findById.mockResolvedValue(job({ rejected_s3_key: 'k', file_name: 'report..final/../x.csv' }));
+      mocks.getFileBuffer.mockResolvedValue(Buffer.from('x'));
+      const app = await buildApp();
+      const res = await app.inject({ method: 'GET', url: `${PREFIX}/ingest/jobs/00000000-0000-4000-8000-000000000001/rejected.csv` });
+      expect(res.headers['content-disposition']).toBe(
+        'attachment; filename="report.final_._x-rejected-rows.csv"; filename*=UTF-8\'\'report.final_._x-rejected-rows.csv',
+      );
+      await app.close();
+    });
+
     it('keeps a non-ASCII upload name in filename*, with an ASCII-only fallback', async () => {
       // The ad-hoc sanitiser this route used to have replaced every non-ASCII
       // character with `_`, so a roster named in Hindi downloaded as `____`.
