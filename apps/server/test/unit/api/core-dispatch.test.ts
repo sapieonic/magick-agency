@@ -164,7 +164,7 @@ describe('callCore — static resolution against the private internal handler in
       'api/routes/proxy-agency-campaigns/stats.ts',
       'api/routes/proxy-agency-performance/floor.ts',
       'api/routes/proxy-agency-performance/per-agent.ts',
-      'api/routes/proxy-agency-staffing.routes.ts',
+      'api/routes/proxy-agency-staffing/my.ts', // the batched campaign-label read
     ]);
     expect(sites.length).toBeGreaterThanOrEqual(30);
     expect(coreRoutes.length).toBeGreaterThanOrEqual(20);

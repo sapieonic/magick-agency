@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { readFileSync } from 'node:fs';
+import { routeFamilySource } from '../../helpers/route-source.js';
 import { PERMISSION_MATRIX, hasPermission, type MembershipRole } from '@magick-agency/contracts/rbac';
 
 /**
@@ -1377,10 +1377,7 @@ describe('every staffing route carries its RBAC permission', () => {
    * without a guard would pass every case and be invisible. The registration count
    * is what catches that one.
    */
-  const source = readFileSync(
-    new URL('../../../src/api/routes/proxy-agency-staffing.routes.ts', import.meta.url),
-    'utf8',
-  );
+  const source = routeFamilySource('proxy-agency-staffing');
 
   const EXPECTED: ReadonlyArray<readonly [string, string, string]> = [
     ['get', '/my-assignments', 'agency.station.connect'],
@@ -1401,7 +1398,7 @@ describe('every staffing route carries its RBAC permission', () => {
       .toBe(true);
   });
 
-  it('knows about every route in the file, so a NEW unguarded one reds', () => {
+  it('knows about every route in the plugin, so a NEW unguarded one reds', () => {
     const registrations =
       source.match(/\b(?:app|sub)\.(?:get|post|patch|put|delete)(?:<[^>]*>)?\(/g) ?? [];
 
