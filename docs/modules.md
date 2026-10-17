@@ -115,7 +115,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/agency-actor.test.ts` | 6 |
 | `apps/server/test/unit/agency/agency-agent-identity.test.ts` | 9 |
 | `apps/server/test/unit/agency/agency-call-read-routes.test.ts` | 25 |
-| `apps/server/test/unit/agency/agency-campaign-config.test.ts` | 79 |
+| `apps/server/test/unit/agency/agency-campaign-config.test.ts` | 80 |
 | `apps/server/test/unit/agency/agency-column-analysis.test.ts` | 14 |
 | `apps/server/test/unit/agency/agency-csv-ingest.isolation.test.ts` | 4 |
 | `apps/server/test/unit/agency/agency-csv-ingest.streaming.test.ts` | 2 |
@@ -205,7 +205,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-staffing.routes.test.ts` | 78 |
 | `apps/server/test/unit/agency/proxy-agency-station.routes.test.ts` | 10 |
 | `apps/server/test/unit/agency/reaper.test.ts` | 41 |
-| `apps/server/test/unit/agency/retry-policy.test.ts` | 22 |
+| `apps/server/test/unit/agency/retry-policy.test.ts` | 23 |
 | `apps/server/test/unit/agency/retry-selector-parse.test.ts` | 34 |
 | `apps/server/test/unit/agency/roster-row-identity.test.ts` | 3 |
 | `apps/server/test/unit/agency/runtime-collapses.test.ts` | 6 |
@@ -828,7 +828,7 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 | `packages/contracts/test/console-wire-derived.test.ts` | 1 (plus 24 type-level pins) |
 | `packages/contracts/test/console-wire-diff.test.ts` | 2 |
 | `packages/contracts/test/errors.test.ts` | 7 |
-| `packages/contracts/test/exports.test.ts` | 7 |
+| `packages/contracts/test/exports.test.ts` | 9 |
 | `packages/contracts/test/flags.test.ts` | 6 |
 | `packages/contracts/test/rbac.test.ts` | 48 |
 | `packages/contracts/test/stall.test.ts` | 4 |
@@ -1048,7 +1048,7 @@ Files: `apiErrorBody.ts`, `concurrency.ts`, `errors.ts`, `format.ts`, `global.cs
 | `packages/web-ui/test/apiErrorBody.test.ts` | 14 |
 | `packages/web-ui/test/concurrency.test.ts` | 9 |
 | `packages/web-ui/test/errors.test.ts` | 21 |
-| `packages/web-ui/test/format.test.ts` | 70 |
+| `packages/web-ui/test/format.test.ts` | 50 |
 | `packages/web-ui/test/noParentBrand.test.ts` | 4 |
 | `packages/web-ui/test/telephonyProviders.test.ts` | 10 |
 | `packages/web-ui/test/themeTokenParity.test.ts` | 4 |
@@ -1084,13 +1084,17 @@ Files: `ToastContext.tsx`
 ### `packages/web-ui/src/hooks/`
 
 `useAsyncResource(fetcher, { initialData, errorMessage })`: `{ data, loading, error, reload }` where
-only the latest load may write state. The super-admin list hooks use it.
+only the latest load may write state. The super-admin list hooks and the console's team, account and
+phone-number hooks use it. `useDialogFocus({ open, dialogRef, onEscape?, initialFocusRef? })` is the one
+focus-in / Tab-trap / Escape / restore-focus implementation (`Modal`, `ConfirmDialog` and the console's
+dialog hooks call it; `trapTab` is its edge-wrap, used by the console's mobile drawer).
 
-Files: `useAsyncResource.ts`
+Files: `useAsyncResource.ts`, `useDialogFocus.ts`
 
 | Test file | Cases |
 |---|---|
 | `packages/web-ui/test/hooks/useAsyncResource.test.ts` | 5 |
+| `packages/web-ui/test/hooks/useDialogFocus.test.tsx` | 4 |
 
 `packages/web-ui/test/setup.ts` registers the RTL cleanup (no `globals: true`).
 
@@ -1113,7 +1117,7 @@ Files: `ProductSurface.tsx`, `events.ts`, `posthog.ts`, `redact.ts`, `useProduct
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/analytics/autocaptureOptOut.test.ts` | 4 |
-| `apps/console/src/__tests__/analytics/events.test.ts` | 5 |
+| `apps/console/src/__tests__/analytics/events.test.ts` | 6 |
 | `apps/console/src/__tests__/analytics/posthog.test.ts` | 22 |
 | `apps/console/src/__tests__/analytics/productSurface.test.tsx` | 12 |
 | `apps/console/src/__tests__/analytics/redact.test.ts` | 8 |
@@ -1157,7 +1161,7 @@ Files: `index.ts`, `load-brand.ts`, `types.ts`
 
 UI components: `agency/` (station, state rail, wrap-up timer, campaign tabs, health strip and the rest of the agent and supervisor UI), `audio/`, `auth/` (route guards), `calls/` (call detail), `common/` (the console's own shared widgets: logo, page description, filters, copyable fields; the widgets both apps use are in `packages/web-ui`), `layout/` (app and agency shells, sidebar).
 
-Files: `agency/AgencyRetryDialog.module.css`, `agency/AgencyRetryDialog.tsx`, `agency/AgentAnalyticsSection.module.css`, `agency/AgentAnalyticsSection.tsx`, `agency/AgentAttemptsPanel.module.css`, `agency/AgentAttemptsPanel.tsx`, `agency/AgentBucketChart.module.css`, `agency/AgentBucketChart.tsx`, `agency/AgentFloor.module.css`, `agency/AgentFloor.tsx`, `agency/AgentFloorDrawer.module.css`, `agency/AgentFloorDrawer.tsx`, `agency/AgentLanding.module.css`, `agency/AgentLanding.tsx`, `agency/AgentNav.module.css`, `agency/AgentNav.tsx`, `agency/AgentPerformancePanel.module.css`, `agency/AgentPerformancePanel.tsx`, `agency/AgentStation.module.css`, `agency/AgentSurfaceShell.module.css`, `agency/AgentSurfaceShell.tsx`, `agency/BestHours.tsx`, `agency/BestHoursMatrix.module.css`, `agency/BestHoursMatrix.tsx`, `agency/BreakMenu.module.css`, `agency/BreakMenu.tsx`, `agency/CampaignActivityChart.module.css`, `agency/CampaignActivityChart.tsx`, `agency/CampaignAgentAssignments.module.css`, `agency/CampaignAgentAssignments.tsx`, `agency/CampaignContribution.tsx`, `agency/CampaignHealthStrip.module.css`, `agency/CampaignHealthStrip.tsx`, `agency/CampaignLineageStrip.module.css`, `agency/CampaignLineageStrip.tsx`, `agency/CampaignPerformance.module.css`, `agency/CampaignPerformance.tsx`, `agency/CampaignRateChart.module.css`, `agency/CampaignRateChart.tsx`, `agency/CampaignRecordingField.module.css`, `agency/CampaignRecordingField.tsx`, `agency/CampaignSeriesSection.module.css`, `agency/CampaignSeriesSection.tsx`, `agency/CampaignTabs.module.css`, `agency/CampaignTabs.tsx`, `agency/CompareTray.tsx`, `agency/ConnectionHealthPill.tsx`, `agency/ContactDetail.tsx`, `agency/ContactPanel.tsx`, `agency/ContributionTable.tsx`, `agency/CueSettings.module.css`, `agency/CueSettings.tsx`, `agency/DialerUnavailable.module.css`, `agency/DialerUnavailable.tsx`, `agency/DispositionPad.module.css`, `agency/DispositionPad.tsx`, `agency/DncControl.module.css`, `agency/DncControl.tsx`, `agency/FilterChip.tsx`, `agency/FiltersCard.tsx`, `agency/GoogleMark.tsx`, `agency/HoldToConfirmButton.module.css`, `agency/HoldToConfirmButton.tsx`, `agency/IdleGuide.tsx`, `agency/JoinConflictScreen.tsx`, `agency/MultiSelectFilter.tsx`, `agency/NotesField.module.css`, `agency/NotesField.tsx`, `agency/PriorAttemptsList.tsx`, `agency/QueuedBreakPill.module.css`, `agency/QueuedBreakPill.tsx`, `agency/RailPresenceRegion.module.css`, `agency/RailPresenceRegion.tsx`, `agency/RosterTable.module.css`, `agency/RosterTable.tsx`, `agency/SpineListLayout.module.css`, `agency/StateRail.module.css`, `agency/StateRail.tsx`, `agency/StationActionBar.tsx`, `agency/StationFatal.tsx`, `agency/StationHeader.tsx`, `agency/StationIdentity.module.css`, `agency/StationIdentity.tsx`, `agency/StationMenu.module.css`, `agency/StationMenu.tsx`, `agency/WorkspaceExit.tsx`, `agency/WrapupTimer.module.css`, `agency/WrapupTimer.tsx`, `agency/join/AddressMismatch.tsx`, `agency/join/AgencyJoin.module.css`, `agency/join/CredentialForm.tsx`, `agency/join/GuardedLink.tsx`, `agency/join/JoinCardHeader.tsx`, `agency/join/Unavailable.tsx`, `agency/join/Unreachable.tsx`, `agency/join/joinPending.ts`, `agency/useChartWidth.ts`, `audio/AudioWaveform.module.css`, `audio/AudioWaveform.tsx`, `auth/HomeRedirect.tsx`, `auth/RequireAuth.tsx`, `auth/RequireCapability.tsx`, `auth/RequireFlag.tsx`, `calls/CallDetailSections.tsx`, `calls/CallDetailView.tsx`, `common/AccountUnavailable.tsx`, `common/CapabilityUnavailable.tsx`, `common/CopyableField.module.css`, `common/CopyableField.tsx`, `common/DateRangeFilter.module.css`, `common/DateRangeFilter.tsx`, `common/FieldError.tsx`, `common/GlobalSearch.module.css`, `common/GlobalSearch.tsx`, `common/Logo.tsx`, `common/PageDescription.module.css`, `common/PageDescription.tsx`, `common/PhoneFilterInput.module.css`, `common/PhoneFilterInput.tsx`, `common/TruncatedId.module.css`, `common/TruncatedId.tsx`, `common/index.ts`, `layout/AccountSwitcher.module.css`, `layout/AccountSwitcher.tsx`, `layout/AgencyLayout.module.css`, `layout/AgencyLayout.tsx`, `layout/AgencySidebar.module.css`, `layout/AgencySidebar.tsx`, `layout/AppLayout.module.css`, `layout/AppLayout.tsx`, `layout/Sidebar.module.css`, `layout/Sidebar.tsx`, `layout/SwitcherDropdown.module.css`, `layout/SwitcherDropdown.tsx`, `layout/TenantSwitcher.module.css`, `layout/TenantSwitcher.tsx`, `layout/TopBar.module.css`, `layout/TopBar.tsx`
+Files: `agency/AgencyRetryDialog.module.css`, `agency/AgencyRetryDialog.tsx`, `agency/AgentAnalyticsSection.module.css`, `agency/AgentAnalyticsSection.tsx`, `agency/AgentAttemptsPanel.module.css`, `agency/AgentAttemptsPanel.tsx`, `agency/AgentBucketChart.module.css`, `agency/AgentBucketChart.tsx`, `agency/AgentFloor.module.css`, `agency/AgentFloor.tsx`, `agency/AgentFloorDrawer.module.css`, `agency/AgentFloorDrawer.tsx`, `agency/AgentLanding.module.css`, `agency/AgentLanding.tsx`, `agency/AgentNav.module.css`, `agency/AgentNav.tsx`, `agency/AgentPerformancePanel.module.css`, `agency/AgentPerformancePanel.tsx`, `agency/AgentStation.module.css`, `agency/AgentSurfaceShell.module.css`, `agency/AgentSurfaceShell.tsx`, `agency/BestHours.tsx`, `agency/BestHoursMatrix.module.css`, `agency/BestHoursMatrix.tsx`, `agency/BreakMenu.module.css`, `agency/BreakMenu.tsx`, `agency/CampaignActivityChart.module.css`, `agency/CampaignActivityChart.tsx`, `agency/CampaignAgentAssignments.module.css`, `agency/CampaignAgentAssignments.tsx`, `agency/CampaignContribution.tsx`, `agency/CampaignHealthStrip.module.css`, `agency/CampaignHealthStrip.tsx`, `agency/CampaignLineageStrip.module.css`, `agency/CampaignLineageStrip.tsx`, `agency/CampaignPerformance.module.css`, `agency/CampaignPerformance.tsx`, `agency/CampaignRateChart.module.css`, `agency/CampaignRateChart.tsx`, `agency/CampaignRecordingField.module.css`, `agency/CampaignRecordingField.tsx`, `agency/CampaignSeriesSection.module.css`, `agency/CampaignSeriesSection.tsx`, `agency/CampaignTabs.module.css`, `agency/CampaignTabs.tsx`, `agency/CompareTray.tsx`, `agency/ConnectionHealthPill.tsx`, `agency/ContactDetail.tsx`, `agency/ContactPanel.tsx`, `agency/ContributionTable.tsx`, `agency/CueSettings.module.css`, `agency/CueSettings.tsx`, `agency/DialerUnavailable.module.css`, `agency/DialerUnavailable.tsx`, `agency/DispositionPad.module.css`, `agency/DispositionPad.tsx`, `agency/DncControl.module.css`, `agency/DncControl.tsx`, `agency/FilterChip.tsx`, `agency/FiltersCard.tsx`, `agency/GoogleMark.tsx`, `agency/HoldToConfirmButton.module.css`, `agency/HoldToConfirmButton.tsx`, `agency/IdleGuide.tsx`, `agency/JoinConflictScreen.tsx`, `agency/MultiSelectFilter.tsx`, `agency/NotesField.module.css`, `agency/NotesField.tsx`, `agency/PriorAttemptsList.tsx`, `agency/QueuedBreakPill.module.css`, `agency/QueuedBreakPill.tsx`, `agency/RailPresenceRegion.module.css`, `agency/RailPresenceRegion.tsx`, `agency/RosterTable.module.css`, `agency/RosterTable.tsx`, `agency/RosterToolbar.tsx`, `agency/SpineListLayout.module.css`, `agency/StateRail.module.css`, `agency/StateRail.tsx`, `agency/StationActionBar.tsx`, `agency/StationFatal.tsx`, `agency/StationHeader.tsx`, `agency/StationIdentity.module.css`, `agency/StationIdentity.tsx`, `agency/StationMenu.module.css`, `agency/StationMenu.tsx`, `agency/WorkspaceExit.tsx`, `agency/WrapupTimer.module.css`, `agency/WrapupTimer.tsx`, `agency/join/AddressMismatch.tsx`, `agency/join/AgencyJoin.module.css`, `agency/join/CredentialForm.tsx`, `agency/join/GuardedLink.tsx`, `agency/join/JoinCardHeader.tsx`, `agency/join/Unavailable.tsx`, `agency/join/Unreachable.tsx`, `agency/join/joinPending.ts`, `agency/useAgentAnalyticsNav.ts`, `agency/useChartWidth.ts`, `audio/AudioWaveform.module.css`, `audio/AudioWaveform.tsx`, `auth/HomeRedirect.tsx`, `auth/RequireAuth.tsx`, `auth/RequireCapability.tsx`, `auth/RequireFlag.tsx`, `calls/CallDetailSections.tsx`, `calls/CallDetailView.tsx`, `common/AccountUnavailable.tsx`, `common/CapabilityUnavailable.tsx`, `common/CopyableField.module.css`, `common/CopyableField.tsx`, `common/DateRangeFilter.module.css`, `common/DateRangeFilter.tsx`, `common/FieldError.tsx`, `common/GlobalSearch.module.css`, `common/GlobalSearch.tsx`, `common/Logo.tsx`, `common/PageDescription.module.css`, `common/PageDescription.tsx`, `common/PhoneFilterInput.module.css`, `common/PhoneFilterInput.tsx`, `common/TruncatedId.module.css`, `common/TruncatedId.tsx`, `common/index.ts`, `layout/AccountSwitcher.module.css`, `layout/AccountSwitcher.tsx`, `layout/AgencyLayout.module.css`, `layout/AgencyLayout.tsx`, `layout/AgencySidebar.module.css`, `layout/AgencySidebar.tsx`, `layout/AppLayout.module.css`, `layout/AppLayout.tsx`, `layout/Sidebar.module.css`, `layout/Sidebar.tsx`, `layout/SwitcherDropdown.module.css`, `layout/SwitcherDropdown.tsx`, `layout/TenantSwitcher.module.css`, `layout/TenantSwitcher.tsx`, `layout/TopBar.module.css`, `layout/TopBar.tsx`
 
 | Test file | Cases |
 |---|---|
@@ -1178,7 +1182,7 @@ Files: `agency/AgencyRetryDialog.module.css`, `agency/AgencyRetryDialog.tsx`, `a
 | `apps/console/src/__tests__/components/CallDetailSections.analysis.test.tsx` | 13 |
 | `apps/console/src/__tests__/components/CallDetailView.test.tsx` | 21 |
 | `apps/console/src/__tests__/components/CallerIdPicker.test.tsx` | 2 |
-| `apps/console/src/__tests__/components/CampaignBehaviourSection.test.tsx` | 4 |
+| `apps/console/src/__tests__/components/CampaignBehaviourSection.test.tsx` | 13 |
 | `apps/console/src/__tests__/components/CampaignContribution.test.tsx` | 42 |
 | `apps/console/src/__tests__/components/CampaignHealthStrip.test.tsx` | 14 |
 | `apps/console/src/__tests__/components/CampaignPerformance.test.tsx` | 19 |
@@ -1233,14 +1237,15 @@ Files: `AuthContext.tsx`, `FeatureFlagsContext.tsx`, `GovernanceContext.tsx`, `T
 
 ### `apps/console/src/hooks/`
 
-React hooks for data loading and the station.
+React hooks for data loading and the station. `useTeam`, `useAccounts` and `usePhoneNumbers` sit on web-ui's `useAsyncResource` (waiting for their scope with `awaitingScope`); `useVisibleInterval` (visible-only, single-flight polling) and `useRefetchOnReturn` drive the campaign detail page and the campaigns home; `useDialogA11y` and `useModalFocus` are thin callers of web-ui's `useDialogFocus`.
 
-Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgencyCues.ts`, `useAgencyNotes.ts`, `useAgencyStation.ts`, `useAgentAttempts.ts`, `useAgentPerformance.ts`, `useAgentRoster.ts`, `useAudioCapture.ts`, `useAudioPlayback.ts`, `useBestHours.ts`, `useBreakQueue.ts`, `useCallAnalysisProfiles.ts`, `useCampaignContribution.ts`, `useCampaignSeries.ts`, `useDialogA11y.ts`, `useDispositionSubmit.ts`, `useLatestRef.ts`, `useMediaQuery.ts`, `useModalFocus.ts`, `useMountedRef.ts`, `usePermission.ts`, `usePhoneNumbers.ts`, `usePostHogIdentify.ts`, `useRepaintTick.ts`, `useRosterIngest.ts`, `useServerClock.ts`, `useStationUnloadGuard.ts`, `useTeam.ts`
+Files: `agencyStation/types.ts`, `awaitingScope.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgencyCues.ts`, `useAgencyNotes.ts`, `useAgencyStation.ts`, `useAgentAttempts.ts`, `useAgentPerformance.ts`, `useAgentRoster.ts`, `useAudioCapture.ts`, `useAudioPlayback.ts`, `useBestHours.ts`, `useBreakQueue.ts`, `useCallAnalysisProfiles.ts`, `useCampaignContribution.ts`, `useCampaignSeries.ts`, `useDialogA11y.ts`, `useDispositionSubmit.ts`, `useLatestRef.ts`, `useMediaQuery.ts`, `useModalFocus.ts`, `useMountedRef.ts`, `usePermission.ts`, `usePhoneNumbers.ts`, `usePostHogIdentify.ts`, `useRefetchOnReturn.ts`, `useRepaintTick.ts`, `useRosterIngest.ts`, `useServerClock.ts`, `useStationUnloadGuard.ts`, `useTeam.ts`, `useVisibleInterval.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/hooks/agencyStationWsUrl.test.ts` | 7 |
 | `apps/console/src/__tests__/hooks/agentSurfacesStrictMode.test.tsx` | 9 |
+| `apps/console/src/__tests__/hooks/tenantListHooks.test.tsx` | 5 |
 | `apps/console/src/__tests__/hooks/useAgencyStation.media.test.ts` | 10 |
 | `apps/console/src/__tests__/hooks/useAgencyStation.test.ts` | 77 |
 | `apps/console/src/__tests__/hooks/useAudioCapture.test.ts` | 18 |
@@ -1250,12 +1255,13 @@ Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgen
 | `apps/console/src/__tests__/hooks/useMountedRef.test.tsx` | 3 |
 | `apps/console/src/__tests__/hooks/useRepaintTick.test.ts` | 4 |
 | `apps/console/src/__tests__/hooks/useServerClock.test.ts` | 16 |
+| `apps/console/src/__tests__/hooks/useVisibleInterval.test.ts` | 7 |
 
 ### `apps/console/src/pages/`
 
 Pages: `agency/` (agent home and station, campaigns and their tabs, contacts, attempts, activity, analytics, performance, DNC, login and join), `auth/`, `calls/`, `campaigns/` (campaign composer), `settings/` (analysis profiles, notifications), `team/`.
 
-Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/AgencyAnalyticsPage.tsx`, `agency/AgencyAttemptCallPage.module.css`, `agency/AgencyAttemptCallPage.tsx`, `agency/AgencyCampaignActivityPage.module.css`, `agency/AgencyCampaignActivityPage.tsx`, `agency/AgencyCampaignAttemptsPage.module.css`, `agency/AgencyCampaignAttemptsPage.tsx`, `agency/AgencyCampaignContactsPage.module.css`, `agency/AgencyCampaignContactsPage.tsx`, `agency/AgencyCampaignDetailPage.module.css`, `agency/AgencyCampaignDetailPage.tsx`, `agency/AgencyCampaignRosterPage.module.css`, `agency/AgencyCampaignRosterPage.tsx`, `agency/AgencyCampaignSettingsPage.module.css`, `agency/AgencyCampaignSettingsPage.tsx`, `agency/AgencyCampaignStatusBadge.tsx`, `agency/AgencyCampaignsPage.module.css`, `agency/AgencyCampaignsPage.tsx`, `agency/AgencyContactDetailPage.module.css`, `agency/AgencyContactDetailPage.tsx`, `agency/AgencyHomeRedirect.tsx`, `agency/AgencyJoinPage.tsx`, `agency/AgencyLoginPage.module.css`, `agency/AgencyLoginPage.tsx`, `agency/AgentAttemptsPage.tsx`, `agency/AgentConsolePage.tsx`, `agency/AgentHomePage.module.css`, `agency/AgentHomePage.tsx`, `agency/AgentPerformancePage.module.css`, `agency/AgentPerformancePage.tsx`, `agency/CallerIdPicker.module.css`, `agency/CallerIdPicker.tsx`, `agency/DncPage.module.css`, `agency/DncPage.tsx`, `agency/station/useDncAction.ts`, `agency/station/useHangup.ts`, `agency/station/useStationExit.ts`, `agency/station/useStationJoin.ts`, `agency/station/useStationShortcuts.ts`, `agency/useAgencyConsole.ts`, `auth/LoginPage.module.css`, `auth/VerifyEmailPage.tsx`, `calls/CallDetailPage.module.css`, `campaigns/agency/BuilderStepper.module.css`, `campaigns/agency/BuilderStepper.tsx`, `campaigns/agency/BuilderSummary.module.css`, `campaigns/agency/BuilderSummary.tsx`, `campaigns/agency/CampaignBehaviourSection.module.css`, `campaigns/agency/CampaignBehaviourSection.tsx`, `campaigns/agency/CampaignBuilderPage.module.css`, `campaigns/agency/CampaignBuilderPage.tsx`, `campaigns/agency/ColumnMapper.module.css`, `campaigns/agency/ColumnMapper.tsx`, `campaigns/agency/IngestSummary.module.css`, `campaigns/agency/IngestSummary.tsx`, `campaigns/agency/builderFlow.ts`, `campaigns/components/ComposerSection.module.css`, `campaigns/components/ComposerSection.tsx`, `settings/AnalysisProfilesPage.module.css`, `settings/AnalysisProfilesPage.tsx`, `settings/NotificationSettingsPage.module.css`, `settings/NotificationSettingsPage.tsx`, `settings/analysisProfileForm.ts`, `team/TeamPage.module.css`, `team/TeamPage.tsx`
+Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/AgencyAnalyticsPage.tsx`, `agency/AgencyAttemptCallPage.module.css`, `agency/AgencyAttemptCallPage.tsx`, `agency/AgencyCampaignActivityPage.module.css`, `agency/AgencyCampaignActivityPage.tsx`, `agency/AgencyCampaignAttemptsPage.module.css`, `agency/AgencyCampaignAttemptsPage.tsx`, `agency/AgencyCampaignContactsPage.module.css`, `agency/AgencyCampaignContactsPage.tsx`, `agency/AgencyCampaignDetailPage.module.css`, `agency/AgencyCampaignDetailPage.tsx`, `agency/AgencyCampaignRosterPage.module.css`, `agency/AgencyCampaignRosterPage.tsx`, `agency/AgencyCampaignSettingsPage.module.css`, `agency/AgencyCampaignSettingsPage.tsx`, `agency/AgencyCampaignStatusBadge.tsx`, `agency/AgencyCampaignsPage.module.css`, `agency/AgencyCampaignsPage.tsx`, `agency/AgencyContactDetailPage.module.css`, `agency/AgencyContactDetailPage.tsx`, `agency/AgencyHomeRedirect.tsx`, `agency/AgencyJoinPage.tsx`, `agency/AgencyLoginPage.module.css`, `agency/AgencyLoginPage.tsx`, `agency/AgentAttemptsPage.tsx`, `agency/AgentConsolePage.tsx`, `agency/AgentHomePage.module.css`, `agency/AgentHomePage.tsx`, `agency/AgentPerformancePage.module.css`, `agency/AgentPerformancePage.tsx`, `agency/CallerIdPicker.module.css`, `agency/CallerIdPicker.tsx`, `agency/DncPage.module.css`, `agency/DncPage.tsx`, `agency/campaign-detail/CampaignDetailHeader.tsx`, `agency/campaign-detail/CampaignOverviewPanel.tsx`, `agency/campaign-detail/useAgencyCampaignDetail.ts`, `agency/campaigns-home/ActiveCampaignCard.tsx`, `agency/campaigns-home/CampaignRow.tsx`, `agency/campaigns-home/GetStarted.tsx`, `agency/campaigns-home/Shortcuts.tsx`, `agency/campaigns-home/useCampaignsHome.ts`, `agency/station/useDncAction.ts`, `agency/station/useHangup.ts`, `agency/station/useStationExit.ts`, `agency/station/useStationJoin.ts`, `agency/station/useStationShortcuts.ts`, `agency/useAgencyConsole.ts`, `auth/LoginPage.module.css`, `auth/VerifyEmailPage.tsx`, `calls/CallDetailPage.module.css`, `campaigns/agency/BuilderStepper.module.css`, `campaigns/agency/BuilderStepper.tsx`, `campaigns/agency/BuilderSummary.module.css`, `campaigns/agency/BuilderSummary.tsx`, `campaigns/agency/CallingHoursFields.tsx`, `campaigns/agency/CampaignBehaviourSection.module.css`, `campaigns/agency/CampaignBehaviourSection.tsx`, `campaigns/agency/CampaignBuilderPage.module.css`, `campaigns/agency/CampaignBuilderPage.tsx`, `campaigns/agency/ColumnMapper.module.css`, `campaigns/agency/ColumnMapper.tsx`, `campaigns/agency/DispositionCatalogEditor.tsx`, `campaigns/agency/IngestSummary.module.css`, `campaigns/agency/IngestSummary.tsx`, `campaigns/agency/RetryPolicyTable.tsx`, `campaigns/agency/WrapupFields.tsx`, `campaigns/agency/builderFlow.ts`, `campaigns/agency/configFieldErrors.tsx`, `campaigns/components/ComposerSection.module.css`, `campaigns/components/ComposerSection.tsx`, `settings/AnalysisProfilesPage.module.css`, `settings/AnalysisProfilesPage.tsx`, `settings/NotificationSettingsPage.module.css`, `settings/NotificationSettingsPage.tsx`, `settings/analysisProfileForm.ts`, `team/InviteModal.tsx`, `team/MemberActionsMenu.tsx`, `team/ResendInviteModal.tsx`, `team/TeamPage.module.css`, `team/TeamPage.tsx`, `team/teamInvites.ts`, `team/teamRoles.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1264,7 +1270,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/AgencyCampaignActivityPage.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/AgencyCampaignAttemptsPage.test.tsx` | 23 |
 | `apps/console/src/__tests__/pages/AgencyCampaignContactsPage.test.tsx` | 6 |
-| `apps/console/src/__tests__/pages/AgencyCampaignDetailPage.test.tsx` | 95 |
+| `apps/console/src/__tests__/pages/AgencyCampaignDetailPage.test.tsx` | 97 |
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 36 |
 | `apps/console/src/__tests__/pages/AgencyCampaignsPage.test.tsx` | 23 |
@@ -1291,6 +1297,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/NotificationSettingsPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/RecordingSection.test.tsx` | 9 |
 | `apps/console/src/__tests__/pages/TeamPage.a11y.test.tsx` | 1 |
+| `apps/console/src/__tests__/pages/TeamPage.actionErrors.test.tsx` | 5 |
 | `apps/console/src/__tests__/pages/TeamPage.actionsMenu.test.tsx` | 8 |
 | `apps/console/src/__tests__/pages/TeamPage.analytics.test.tsx` | 2 |
 | `apps/console/src/__tests__/pages/TeamPage.inviteHandoff.test.tsx` | 28 |
@@ -1313,27 +1320,27 @@ _No dedicated test files._
 
 ### `apps/console/src/utils/`
 
-Pure UI helpers: permissions, vocabulary, wrap-up, disposition submit, cue preferences, transcript preferences, series ranges and more.
+Pure UI helpers: permissions, vocabulary, wrap-up, disposition submit, cue preferences, transcript preferences, series ranges and more. `format/` is the one rendering of counts, percentages and plurals (`number.ts`, display locale `en-IN`), durations (`duration.ts`: live timers floor, aggregates round), dates with cached formatters (`date.ts`), a named zone's wall clock (`zone.ts`) and calling days (`weekdays.ts`). `agency/` holds `metrics.ts` (`ratio`, `ratePct`, `stateShares`, `ON_SHIFT_STATES`) and the pieces the large agency modules were split into — `agentWindows`, `buckets`, `agentReadouts`, `roster/`, `overview/`, `config/` — each re-exported by its original module so import paths are unchanged.
 
-Files: `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.ts`, `agencyAgentRoster.ts`, `agencyAgentSurfaces.ts`, `agencyAssignmentEntry.ts`, `agencyAttemptFilters.ts`, `agencyAudioCopy.ts`, `agencyBestHours.ts`, `agencyCampaignConfigForm.ts`, `agencyCampaignContribution.ts`, `agencyCampaignControls.ts`, `agencyCampaignLineage.ts`, `agencyCampaignOverview.ts`, `agencyCampaignPerformance.ts`, `agencyCampaignRecording.ts`, `agencyCampaignSeries.ts`, `agencyCampaignTabs.ts`, `agencyCampaignsHome.ts`, `agencyCatalogSync.ts`, `agencyClock.ts`, `agencyColumnMapping.ts`, `agencyCompareTray.ts`, `agencyContext.ts`, `agencyCuePrefs.ts`, `agencyCues.ts`, `agencyDiagnostics.ts`, `agencyDispositionForm.ts`, `agencyDispositionSubmit.ts`, `agencyDncCopy.ts`, `agencyErrors.ts`, `agencyFieldFilter.ts`, `agencyHealthStrip.ts`, `agencyIngestSummary.ts`, `agencyInviteJoinCopy.ts`, `agencyJoinConflict.ts`, `agencyLiveSession.ts`, `agencyMedia.ts`, `agencyNotes.ts`, `agencyPadGate.ts`, `agencyPersona.ts`, `agencyPriorAttempts.ts`, `agencyReleaseCopy.ts`, `agencyRetrySelector.ts`, `agencyRosterFilters.ts`, `agencySpineCopy.ts`, `agencyStaleResponse.ts`, `agencyStationExit.ts`, `agencyStationIdle.ts`, `agencyStationLiveness.ts`, `agencyStationReducer.ts`, `agencyStationWsUrl.ts`, `agencyStatsConsumers.ts`, `agencyWebAudioCueSink.ts`, `agencyWrapup.ts`, `audio-worklet-processor.ts`, `inviteJoin.ts`, `keyboardTarget.ts`, `permissions.ts`, `phone.ts`, `poll-backoff.ts`, `returnPath.ts`, `session.ts`, `sessionRefusal.ts`, `snake-case.ts`, `switcherFocus.ts`, `switcherSearch.ts`, `transcript-prefs.ts`, `vocabulary.ts`
+Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`, `agency/config/callingWindow.ts`, `agency/config/configConstants.ts`, `agency/config/configValidate.ts`, `agency/metrics.ts`, `agency/overview/figure.ts`, `agency/overview/funnel.ts`, `agency/overview/lifecycle.ts`, `agency/overview/pulse.ts`, `agency/roster/benchmark.ts`, `agency/roster/cells.ts`, `agency/roster/columns.ts`, `agency/roster/notes.ts`, `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.ts`, `agencyAgentRoster.ts`, `agencyAgentSurfaces.ts`, `agencyAssignmentEntry.ts`, `agencyAttemptFilters.ts`, `agencyAudioCopy.ts`, `agencyBestHours.ts`, `agencyCampaignConfigForm.ts`, `agencyCampaignContribution.ts`, `agencyCampaignControls.ts`, `agencyCampaignLineage.ts`, `agencyCampaignOverview.ts`, `agencyCampaignPerformance.ts`, `agencyCampaignRecording.ts`, `agencyCampaignSeries.ts`, `agencyCampaignTabs.ts`, `agencyCampaignsHome.ts`, `agencyCatalogSync.ts`, `agencyClock.ts`, `agencyColumnMapping.ts`, `agencyCompareTray.ts`, `agencyContext.ts`, `agencyCuePrefs.ts`, `agencyCues.ts`, `agencyDiagnostics.ts`, `agencyDispositionForm.ts`, `agencyDispositionSubmit.ts`, `agencyDncCopy.ts`, `agencyErrors.ts`, `agencyFieldFilter.ts`, `agencyHealthStrip.ts`, `agencyIngestSummary.ts`, `agencyInviteJoinCopy.ts`, `agencyJoinConflict.ts`, `agencyLiveSession.ts`, `agencyMedia.ts`, `agencyNotes.ts`, `agencyPadGate.ts`, `agencyPersona.ts`, `agencyPriorAttempts.ts`, `agencyReleaseCopy.ts`, `agencyRetrySelector.ts`, `agencyRosterFilters.ts`, `agencySpineCopy.ts`, `agencyStaleResponse.ts`, `agencyStationExit.ts`, `agencyStationIdle.ts`, `agencyStationLiveness.ts`, `agencyStationReducer.ts`, `agencyStationWsUrl.ts`, `agencyStatsConsumers.ts`, `agencyWebAudioCueSink.ts`, `agencyWrapup.ts`, `audio-worklet-processor.ts`, `format/date.ts`, `format/duration.ts`, `format/number.ts`, `format/weekdays.ts`, `format/zone.ts`, `inviteJoin.ts`, `keyboardTarget.ts`, `permissions.ts`, `phone.ts`, `poll-backoff.ts`, `returnPath.ts`, `session.ts`, `sessionRefusal.ts`, `snake-case.ts`, `switcherFocus.ts`, `switcherSearch.ts`, `transcript-prefs.ts`, `vocabulary.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/utils/agencyActionErrorCodes.test.ts` | 5 |
 | `apps/console/src/__tests__/utils/agencyActivityCopy.test.ts` | 24 |
 | `apps/console/src/__tests__/utils/agencyAgentFloor.test.ts` | 64 |
-| `apps/console/src/__tests__/utils/agencyAgentPerformance.test.ts` | 70 |
-| `apps/console/src/__tests__/utils/agencyAgentRoster.test.ts` | 81 |
+| `apps/console/src/__tests__/utils/agencyAgentPerformance.test.ts` | 73 |
+| `apps/console/src/__tests__/utils/agencyAgentRoster.test.ts` | 82 |
 | `apps/console/src/__tests__/utils/agencyAgentSurfaces.test.ts` | 7 |
 | `apps/console/src/__tests__/utils/agencyAssignmentEntry.test.ts` | 19 |
 | `apps/console/src/__tests__/utils/agencyAttemptFilters.test.ts` | 30 |
 | `apps/console/src/__tests__/utils/agencyAttemptRange.timezone.test.ts` | 6 |
 | `apps/console/src/__tests__/utils/agencyBestHours.test.ts` | 45 |
-| `apps/console/src/__tests__/utils/agencyCampaignConfigForm.test.ts` | 69 |
+| `apps/console/src/__tests__/utils/agencyCampaignConfigForm.test.ts` | 75 |
 | `apps/console/src/__tests__/utils/agencyCampaignContribution.test.ts` | 54 |
 | `apps/console/src/__tests__/utils/agencyCampaignControls.test.ts` | 10 |
 | `apps/console/src/__tests__/utils/agencyCampaignLineage.test.ts` | 11 |
-| `apps/console/src/__tests__/utils/agencyCampaignOverview.test.ts` | 94 |
+| `apps/console/src/__tests__/utils/agencyCampaignOverview.test.ts` | 97 |
 | `apps/console/src/__tests__/utils/agencyCampaignPerformance.test.ts` | 65 |
 | `apps/console/src/__tests__/utils/agencyCampaignRecording.test.ts` | 35 |
 | `apps/console/src/__tests__/utils/agencyCampaignSeries.test.ts` | 91 |
@@ -1377,9 +1384,11 @@ Files: `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.t
 | `apps/console/src/__tests__/utils/agencyStatsConsumers.test.ts` | 37 |
 | `apps/console/src/__tests__/utils/agencyWrapup.test.ts` | 33 |
 | `apps/console/src/__tests__/utils/agentPermissions.test.ts` | 22 |
+| `apps/console/src/__tests__/utils/agentWindows.timezone.test.ts` | 8 |
 | `apps/console/src/__tests__/utils/audio-worklet-processor.test.ts` | 10 |
 | `apps/console/src/__tests__/utils/build-splitting.test.ts` | 2 |
 | `apps/console/src/__tests__/utils/builderFlow.test.ts` | 5 |
+| `apps/console/src/__tests__/utils/format.test.ts` | 16 |
 | `apps/console/src/__tests__/utils/inviteJoin.test.ts` | 8 |
 | `apps/console/src/__tests__/utils/keyboardTarget.test.ts` | 13 |
 | `apps/console/src/__tests__/utils/permissions.test.ts` | 41 |
