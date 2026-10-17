@@ -28,6 +28,7 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
+import { ErrorText } from '@magick-agency/web-ui/components/ErrorText';
 import { PageDescription } from '../../components/common';
 import type {
   InviteUserInput,
@@ -779,15 +780,34 @@ function ResendInviteModal({
 
 /* ── Actions Dropdown ─────────────────────────── */
 
+/** How a member is named in a sentence about them: their name, else their address. */
+function memberName(member: TenantMember): string {
+  return member.user.display_name || member.user.email;
+}
+
+/** The thrown error's own message, or a fallback when it carries none. */
+function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
+
 interface ActionsDropdownProps {
   member: TenantMember;
   currentRole: Role | undefined;
   onRoleChanged: () => void;
+  /** The role change was refused; `message` is the sentence to show. */
+  onRoleChangeFailed: (message: string) => void;
   onRemoveClick: (member: TenantMember) => void;
   onResendClick: (member: TenantMember) => void;
 }
 
-function ActionsDropdown({ member, currentRole, onRoleChanged, onRemoveClick, onResendClick }: ActionsDropdownProps) {
+function ActionsDropdown({
+  member,
+  currentRole,
+  onRoleChanged,
+  onRoleChangeFailed,
+  onRemoveClick,
+  onResendClick,
+}: ActionsDropdownProps) {
   const { tenantId } = useTenant();
   const canUpdateRole = usePermission('user.update_role');
   const canRemove = usePermission('user.remove');
@@ -867,8 +887,12 @@ function ActionsDropdown({ member, currentRole, onRoleChanged, onRemoveClick, on
         role: newRole as UpdateRoleInput['role'],
       });
       onRoleChanged();
-    } catch {
-      // Silently fail — reload will show current state
+    } catch (err) {
+      /* Said, not swallowed: nothing reloads on this path, so a silent failure
+         left the old badge on screen reading as a change still on its way. */
+      onRoleChangeFailed(
+        `Could not change ${memberName(member)}’s role: ${errorMessage(err, 'the request failed')}`,
+      );
     } finally {
       setUpdating(false);
       closeMenu();
@@ -977,13 +1001,20 @@ function ActionsDropdown({ member, currentRole, onRoleChanged, onRemoveClick, on
 
 export default function TeamPage() {
   const { tenantId, role } = useTenant();
-  const { members, loading, error, reload } = useTeam();
+  const { members, loading, loaded, error, reload } = useTeam();
   const canInvite = usePermission('user.invite');
   const [showInvite, setShowInvite] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<TenantMember | null>(null);
   const [removing, setRemoving] = useState(false);
   /** The member whose invitation is being re-issued. See {@link ResendInviteModal}. */
   const [resendFor, setResendFor] = useState<TenantMember | null>(null);
+  /** Why the last role change or removal failed; cleared by the next one that succeeds. */
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const handleRoleChanged = useCallback(() => {
+    setActionError(null);
+    reload();
+  }, [reload]);
 
   const handleInvited = useCallback(() => {
     setShowInvite(false);
@@ -996,9 +1027,15 @@ export default function TeamPage() {
     try {
       await removeUserMembership(tenantId, confirmRemove.user.id);
       setConfirmRemove(null);
+      setActionError(null);
       reload();
-    } catch {
-      // Error silenced — reload shows current state
+    } catch (err) {
+      /* Close the confirmation and say why on the page — the dialog's question
+         has been answered, and the member is still on the list beside the error. */
+      setConfirmRemove(null);
+      setActionError(
+        `Could not remove ${memberName(confirmRemove)}: ${errorMessage(err, 'the request failed')}`,
+      );
     } finally {
       setRemoving(false);
     }
@@ -1027,7 +1064,9 @@ export default function TeamPage() {
     );
   }
 
-  if (loading) {
+  /* Only before the first answer. A reload (after an invite, a role change, a
+     removal) keeps the table on screen rather than blanking the page. */
+  if (loading && !loaded) {
     return (
       <div className={styles.page}>
         <PageHeader title="Team" />
@@ -1064,6 +1103,12 @@ export default function TeamPage() {
           'Invited users will receive an email with instructions to join your workspace.',
         ]}
       />
+
+      {actionError && (
+        <p className="error-text" role="alert" data-testid="team-action-error">
+          <ErrorText message={actionError} />
+        </p>
+      )}
 
       {members.length === 0 ? (
         <EmptyState
@@ -1158,7 +1203,8 @@ export default function TeamPage() {
                       <ActionsDropdown
                         member={m}
                         currentRole={role}
-                        onRoleChanged={reload}
+                        onRoleChanged={handleRoleChanged}
+                        onRoleChangeFailed={setActionError}
                         onRemoveClick={setConfirmRemove}
                         onResendClick={setResendFor}
                       />
