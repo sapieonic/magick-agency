@@ -5,7 +5,7 @@
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getTenantId, getAccountId } from '../../middleware/auth.middleware.js';
-import { PROVEN_CAMPAIGN_HEADER } from '../../middleware/headers.js';
+import { PROVEN_CAMPAIGN_HEADER, provenCampaignProof } from '../../middleware/headers.js';
 import { agencyAttemptRepository, agencyContactRepository } from '../../../db/repositories/agency.repository.js';
 import { clampLimit, parseAttemptFilters, parseContactFilters } from '../../../agency/spine-filters.js';
 import type { AgencyAttemptRow } from '@magick-agency/contracts/agency';
@@ -59,18 +59,23 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
    *
    * The public export proves ownership ONCE — a full `GET /:id` (this plugin's gate and
    * `requireOwned`) with the same tenant and account — and then drains up to 100 pages.
-   * It names that campaign in `x-mgkvc-proven-campaign` (`callCore`'s typed
-   * `provenCampaignId`, never a forwarded header), and a page read for exactly that
-   * campaign skips the flag read and the campaign read it would otherwise repeat on every
-   * page. Any other request — no header, or a header naming a different campaign — takes
-   * the ordinary path. Returns the campaign id to read, or `null` once it has replied.
+   * It names that campaign, with the tenant and account it was proved under, in
+   * `x-mgkvc-proven-campaign` (`callCore`'s typed `provenCampaignId`, never a forwarded
+   * header), and a page read for exactly that campaign under this request's own tenant
+   * and account skips the flag read and the campaign read it would otherwise repeat on
+   * every page. Any other request — no header, or a header naming a different campaign,
+   * tenant or account — takes the ordinary path. Returns the campaign id to read, or
+   * `null` once it has replied.
    */
   async function spinePageCampaignId(
     request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply,
   ): Promise<string | null> {
     const proven = request.headers[PROVEN_CAMPAIGN_HEADER];
-    if (typeof proven === 'string' && proven === request.params.id) return request.params.id;
+    if (
+      typeof proven === 'string'
+      && proven === provenCampaignProof(getTenantId(request), getAccountId(request), request.params.id)
+    ) return request.params.id;
     if (!(await gate(request, reply))) return null;
     const campaign = await requireOwned(request, reply);
     return campaign ? campaign.id : null;
