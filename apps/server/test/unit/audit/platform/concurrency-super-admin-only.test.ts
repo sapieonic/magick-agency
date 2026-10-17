@@ -7,7 +7,8 @@ import { dirname, join, relative, resolve } from 'node:path';
  * The "concurrency is super-admin only" source guards:
  *
  *  - "super-admin account concurrency already writes super_admin_audit" runs
- *    against `src/api/routes/super-admin.routes.ts`.
+ *    against `src/api/routes/super-admin/concurrency.ts` (the super-admin
+ *    concurrency routes, registered by `super-admin.routes.ts`).
  *  - "the agency campaign proxy has no concurrency write path": the three
  *    regexes run over EVERY agency route and module (`src/api/routes/*agency*.ts`,
  *    `src/agency/**`), so they bind whatever the files are called. The positive
@@ -17,7 +18,7 @@ import { dirname, join, relative, resolve } from 'node:path';
  *    regex over every file under `src/agency/` whose name contains `campaign-config`.
  *  - The repository calls that WRITE the limit
  *    (`providerConcurrencyRepository.replaceProviderBreakdown` / `switchToLegacy`,
- *    the two writers) appear in `super-admin.routes.ts` and nowhere else under
+ *    the two writers) appear in `super-admin/concurrency.ts` and nowhere else under
  *    `src/`, and `accountSettingsRepository.upsert` (which also writes
  *    `max_concurrent_calls`) nowhere: the super-admin settings route writes its
  *    toggles through the toggles-only `setRecordingAnalysisToggles`.
@@ -72,7 +73,7 @@ describe('concurrency is super-admin only', () => {
   });
 
   it('super-admin account concurrency already writes super_admin_audit', () => {
-    const source = readFileSync(resolve(ROOT, 'src/api/routes/super-admin.routes.ts'), 'utf8');
+    const source = readFileSync(resolve(ROOT, 'src/api/routes/super-admin/concurrency.ts'), 'utf8');
     expect(source).toMatch(/action: 'update_account_concurrency'/);
     expect(source).toMatch(/superAdminAuditRepository\.log/);
   });
@@ -81,7 +82,7 @@ describe('concurrency is super-admin only', () => {
     const callers = (pattern: RegExp) => SRC.filter((path) => pattern.test(code(path))).map(rel).sort();
 
     expect(callers(/providerConcurrencyRepository\s*\.\s*(replaceProviderBreakdown|switchToLegacy)\s*\(/))
-      .toEqual(['src/api/routes/super-admin.routes.ts']);
+      .toEqual(['src/api/routes/super-admin/concurrency.ts']);
     // `upsert` also writes `max_concurrent_calls` (and bumps the allocation
     // version in legacy mode): nothing in the server may call it. The settings
     // route writes its toggles through the toggles-only writer instead.

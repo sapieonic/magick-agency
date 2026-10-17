@@ -20,7 +20,7 @@ import { PERMISSION_MATRIX } from '@magick-agency/contracts/rbac';
  *
  * The "concurrency is super-admin only" source guards read
  * `proxy-agency-campaigns.routes.ts`, `agency/agency-campaign-config.ts` and
- * `super-admin.routes.ts` (ROOT is `apps/server`). `concurrency-super-admin-only.test.ts`
+ * `super-admin/concurrency.ts` (ROOT is `apps/server`). `concurrency-super-admin-only.test.ts`
  * also carries broadened copies of the first two (every agency route/module) and a
  * copy of the third; this is the original single-file form, including the positive
  * "There is no concurrency setter here" comment check on the route file.
@@ -102,7 +102,7 @@ describe('concurrency is super-admin only', () => {
   });
 
   it('super-admin account concurrency already writes super_admin_audit', () => {
-    const source = readFileSync(resolve(ROOT, 'src/api/routes/super-admin.routes.ts'), 'utf8');
+    const source = readFileSync(resolve(ROOT, 'src/api/routes/super-admin/concurrency.ts'), 'utf8');
     expect(source).toMatch(/action: 'update_account_concurrency'/);
     expect(source).toMatch(/superAdminAuditRepository\.log/);
   });
