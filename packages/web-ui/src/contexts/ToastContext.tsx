@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useRef } from 'react';
+import { createContext, useContext, useState, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Toast } from '../components/Toast';
@@ -55,8 +55,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [showToast],
   );
 
+  // A stable value: every `useToast()` caller would otherwise re-render each
+  // time a toast is shown or dismissed (the provider's own state changes).
+  const value = useMemo(() => ({ showToast, showErrorToast }), [showToast, showErrorToast]);
+
   return (
-    <ToastContext.Provider value={{ showToast, showErrorToast }}>
+    <ToastContext.Provider value={value}>
       {children}
       {createPortal(
         <div className="toast-container">

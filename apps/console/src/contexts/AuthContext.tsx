@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import { initializeApp } from 'firebase/app';
 import {
   getAuth,
@@ -773,8 +773,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // One value per state change, not per render: a re-render of whatever sits
+  // above the provider must not re-render every `useAuth()` consumer.
+  const value = useMemo<AuthContextValue>(
+    () => ({
+      ...state,
+      signInEmail,
+      signInGoogle,
+      logout,
+      refreshSession,
+      resendVerificationEmail,
+      resetPassword,
+      completeEmailVerification,
+      establishInviteCredential,
+      claimInvite,
+    }),
+    [
+      state,
+      signInEmail,
+      signInGoogle,
+      logout,
+      refreshSession,
+      resendVerificationEmail,
+      resetPassword,
+      completeEmailVerification,
+      establishInviteCredential,
+      claimInvite,
+    ],
+  );
+
   return (
-    <AuthContext.Provider value={{ ...state, signInEmail, signInGoogle, logout, refreshSession, resendVerificationEmail, resetPassword, completeEmailVerification, establishInviteCredential, claimInvite }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );
