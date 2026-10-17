@@ -74,8 +74,13 @@ function extractCallSites(): { sites: CallSite[]; dynamic: string[]; callers: st
           }
         }
       }
-      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'callCore') {
-        const arg = node.arguments[0];
+      // `callCore(req)` and `forwardCore(request, reply, req)`: the request object must
+      // carry a literal `path:` (or be a known dynamic site below).
+      const dispatchArg = ts.isCallExpression(node) && ts.isIdentifier(node.expression)
+        ? { callCore: 0, forwardCore: 2 }[node.expression.text]
+        : undefined;
+      if (ts.isCallExpression(node) && dispatchArg !== undefined) {
+        const arg = node.arguments[dispatchArg];
         const pathProp = arg && ts.isObjectLiteralExpression(arg)
           ? arg.properties.find((p) => ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === 'path')
           : undefined;

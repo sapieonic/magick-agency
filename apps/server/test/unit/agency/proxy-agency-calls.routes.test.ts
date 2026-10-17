@@ -68,7 +68,8 @@ const mocks = vi.hoisted(() => ({
   >(),
 }));
 
-vi.mock('../../../src/api/core-dispatch.js', () => ({ callCore: mocks.proxyToCore }));
+vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) =>
+  (await import('../../helpers/core-dispatch-double.js')).coreDispatchDouble(await importOriginal(), mocks.proxyToCore));
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/observability')>()),
   createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),

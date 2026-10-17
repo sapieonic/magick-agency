@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 import { isUnsafeCorePath } from '../proxy/safe-core-path.js';
 import { TENANT_HEADER, ACCOUNT_HEADER, ORIGINATOR_HEADER, PROVEN_CAMPAIGN_HEADER } from './middleware/headers.js';
@@ -141,3 +141,30 @@ export async function callCore(req: CoreCallRequest): Promise<CoreCallResult> {
   }
   return { status: res.statusCode, body, headers: outHeaders };
 }
+
+/** A {@link callCore} request whose tenancy is the request's tenant context. */
+export type ForwardedCoreCall = Omit<CoreCallRequest, 'tenantId' | 'accountId'>;
+
+/**
+ * The plain pass-through: run the internal handler with the request's tenant context
+ * (`request.tenantId` / `request.accountId`, never a client header) and answer with its
+ * status and body unchanged.
+ *
+ * Built over a dispatcher so a suite that replaces {@link callCore} builds the same
+ * pass-through over its double (`forwardCoreVia(double)`); the exported
+ * {@link forwardCore} is over `callCore` itself. Every call site passes a `path:` object
+ * literal, which `test/unit/api/core-dispatch.test.ts` resolves against the internal route
+ * table exactly as it does `callCore`'s.
+ */
+export function forwardCoreVia(dispatch: (req: CoreCallRequest) => Promise<CoreCallResult>) {
+  return async function forwardCore(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    call: ForwardedCoreCall,
+  ): Promise<FastifyReply> {
+    const result = await dispatch({ ...call, tenantId: request.tenantId!, accountId: request.accountId });
+    return reply.code(result.status).send(result.body);
+  };
+}
+
+export const forwardCore = forwardCoreVia(callCore);

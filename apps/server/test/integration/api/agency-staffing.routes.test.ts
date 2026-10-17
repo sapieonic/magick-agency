@@ -71,7 +71,7 @@ initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
 vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/api/core-dispatch.js')>();
   mocks.realCallCore = actual.callCore as (...args: unknown[]) => Promise<unknown>;
-  return { ...actual, callCore: mocks.proxyToCore };
+  return (await import('../../helpers/core-dispatch-double.js')).coreDispatchDouble(actual, mocks.proxyToCore);
 });
 
 vi.mock('@magick-agency/observability', async (importOriginal) => {

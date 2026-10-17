@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
 import { requirePermission } from '../../rbac/rbac.middleware.js';
-import { callCore } from '../core-dispatch.js';
+import { callCore, forwardCore } from '../core-dispatch.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { rewriteStationWsUrl } from './proxy-agency-station.routes.js';
 import { rejectPathEscapingParams } from './helpers/path-params.js';
@@ -283,14 +283,11 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   }, async (request, reply) => {
     const actor = sessionActorOrRefuse(request, reply);
     if (!actor) return reply;
-    const result = await callCore({
+    return forwardCore(request, reply, {
       method: 'POST',
       path: `/agency/sessions/${request.params.id}/available`,
       body: { ...actor },
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
     });
-    return reply.code(result.status).send(result.body);
   });
 
   app.post<{ Params: { id: string } }>('/sessions/:id/leave', {
@@ -626,14 +623,11 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       return reply.code(400).send({ error: 'Bad Request', code: actor.code, message: actor.message });
     }
 
-    const result = await callCore({
+    return forwardCore(request, reply, {
       method: 'POST',
       path: `/agency/attempts/${request.params.id}/notes`,
       body: { ...parsed.data, ...actor.actor },
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
     });
-    return reply.code(result.status).send(result.body);
   });
 
   /**

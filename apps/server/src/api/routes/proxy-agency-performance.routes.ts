@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
 import { requirePermission } from '../../rbac/rbac.middleware.js';
-import { callCore } from '../core-dispatch.js';
+import { callCore, forwardCore } from '../core-dispatch.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { membershipRepository } from '@magick-agency/db/repositories/membership.repository';
 import {
@@ -425,16 +425,13 @@ export async function proxyAgencyPerformanceRoutes(app: FastifyInstance): Promis
     const forwarded = forwardAllowedQuery(request.query, AGENT_STATS_QUERY_PARAMS);
     if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
 
-    const result = await callCore({
+    return forwardCore(request, reply, {
       method: 'GET',
       // The subject comes from the SESSION and is interpolated here. Nothing a
       // client sends can reach this segment.
       path: `/agency-agents/${userId}/stats`,
       query: forwarded.query,
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
     });
-    return reply.code(result.status).send(result.body);
   });
 
   /**
@@ -458,14 +455,11 @@ export async function proxyAgencyPerformanceRoutes(app: FastifyInstance): Promis
     const forwarded = forwardAllowedQuery(request.query, AGENT_ATTEMPT_QUERY_PARAMS);
     if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
 
-    const result = await callCore({
+    return forwardCore(request, reply, {
       method: 'GET',
       path: `/agency-agents/${userId}/attempts`,
       query: forwarded.query,
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
     });
-    return reply.code(result.status).send(result.body);
   });
 
   /**

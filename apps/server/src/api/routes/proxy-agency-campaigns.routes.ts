@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
 import { requirePermission } from '../../rbac/rbac.middleware.js';
-import { callCore } from '../core-dispatch.js';
+import { callCore, forwardCore } from '../core-dispatch.js';
 import { ACCOUNT_HEADER } from '../middleware/headers.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
@@ -715,39 +715,30 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       accountId: request.accountId,
     }))) return;
 
-    const result = await callCore({
+    return forwardCore(request, reply, {
       method: 'POST',
       path: '/agency-campaigns',
       body,
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
     });
-    return reply.code(result.status).send(result.body);
   });
 
   app.get('/campaigns', {
     preHandler: requirePermission('agency.campaigns.read'),
   }, async (request, reply) => {
-    const result = await callCore({
+    return forwardCore(request, reply, {
       method: 'GET',
       path: '/agency-campaigns',
       query: request.query as Record<string, string>,
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
     });
-    return reply.code(result.status).send(result.body);
   });
 
   app.get<{ Params: { id: string } }>('/campaigns/:id', {
     preHandler: requirePermission('agency.campaigns.read'),
   }, async (request, reply) => {
-    const result = await callCore({
+    return forwardCore(request, reply, {
       method: 'GET',
       path: `/agency-campaigns/${request.params.id}`,
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
     });
-    return reply.code(result.status).send(result.body);
   });
 
   app.patch<{ Params: { id: string } }>('/campaigns/:id', {
@@ -827,16 +818,13 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       accountId: request.accountId,
     }))) return;
 
-    const result = await callCore({
+    return forwardCore(request, reply, {
       // PATCH, and the body must travel with it: a PATCH sent with NO body is a
       // write that does nothing and still reads as a success.
       method: 'PATCH',
       path: `/agency-campaigns/${request.params.id}`,
       body: patchBody,
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
     });
-    return reply.code(result.status).send(result.body);
   });
 
   /**
@@ -1334,14 +1322,11 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     const forwarded = forwardAllowedQuery(request.query, [...CONTACT_QUERY_PARAMS, ...PAGING_QUERY_PARAMS]);
     if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
 
-    const result = await callCore({
+    return forwardCore(request, reply, {
       method: 'GET',
       path: `/agency-campaigns/${request.params.id}/contacts`,
       query: forwarded.query,
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
     });
-    return reply.code(result.status).send(result.body);
   });
 
   /**
@@ -1356,13 +1341,10 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   app.get<{ Params: { id: string; contactId: string } }>('/campaigns/:id/contacts/:contactId', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    const result = await callCore({
+    return forwardCore(request, reply, {
       method: 'GET',
       path: `/agency-campaigns/${request.params.id}/contacts/${request.params.contactId}`,
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
     });
-    return reply.code(result.status).send(result.body);
   });
 
   /**
@@ -2022,14 +2004,11 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   app.get<{ Params: { id: string } }>('/campaigns/:id/retry/preview', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    const result = await callCore({
+    return forwardCore(request, reply, {
       method: 'GET',
       path: `/agency-campaigns/${request.params.id}/retry/preview`,
       query: forwardRetrySelectorQuery(request.query),
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
     });
-    return reply.code(result.status).send(result.body);
   });
 
   /**
@@ -2347,13 +2326,10 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   app.get<{ Params: { id: string } }>('/campaigns/:id/lineage', {
     preHandler: requirePermission('agency.campaigns.read'),
   }, async (request, reply) => {
-    const result = await callCore({
+    return forwardCore(request, reply, {
       method: 'GET',
       path: `/agency-campaigns/${request.params.id}/lineage`,
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
     });
-    return reply.code(result.status).send(result.body);
   });
 
   // ─── Ingest: limits, upload, analyze, run, poll, cancel, rejects ──────────

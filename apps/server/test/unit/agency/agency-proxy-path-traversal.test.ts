@@ -64,7 +64,8 @@ const mocks = vi.hoisted(() => ({
   config: { agency: { rosterReplaceEnabled: false } },
 }));
 
-vi.mock('../../../src/api/core-dispatch.js', () => ({ callCore: mocks.proxyToCore }));
+vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) =>
+  (await import('../../helpers/core-dispatch-double.js')).coreDispatchDouble(await importOriginal(), mocks.proxyToCore));
 vi.mock('../../../src/audit/platform/audit-logger.js', () => ({ platformAuditLogger: { log: mocks.auditLog } }));
 vi.mock('../../../src/storage/s3.js', () => ({
   getFileStream: vi.fn(), getFile: vi.fn(), uploadFile: vi.fn(),

@@ -65,9 +65,8 @@ const mocks = vi.hoisted(() => ({
   config: { agency: { rosterReplaceEnabled: false } },
 }));
 
-vi.mock('../../../src/api/core-dispatch.js', () => ({
-  callCore: mocks.proxyToCore,
-}));
+vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) =>
+  (await import('../../helpers/core-dispatch-double.js')).coreDispatchDouble(await importOriginal(), mocks.proxyToCore));
 vi.mock('@magick-agency/db/repositories/platform/audit.repository', () => ({
   auditRepository: { find: mocks.auditFind },
 }));
