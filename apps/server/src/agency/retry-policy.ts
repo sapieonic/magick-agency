@@ -102,7 +102,7 @@ export const DEFAULT_RETRY_POLICY: AgencyRetryPolicy = {
   //     {@link DEFAULT_OUR_FAULT_REDIAL_DELAY_MINUTES}. It never reads this table,
   //     so neither number below is its fallback.
   //   * the only other reader, the reaper's lapsed-wrap-up sweep, selects
-  //     `outcome = 'connected'` in SQL (`agency.repository.ts`
+  //     `outcome = 'connected'` in SQL (`agency/attempt.repository.ts`
   //     `findLapsedWrapups`), so it cannot see this outcome either.
   //
   // **THE LIVE LEVER IS THE CAMPAIGN KEY**, `retry_policy.canceled`, which
