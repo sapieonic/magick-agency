@@ -1,18 +1,17 @@
 /**
  * Building the `Content-Disposition` header for a CSV export.
  *
- * The export routes interpolated a campaign name straight into the header:
- *
- *     reply.header('Content-Disposition', `attachment; filename="${jobName}.csv"`)
- *
- * `bulk_dispatch_jobs.name` is caller-supplied and validated as a passthrough
- * string with no character restriction, so that had two failure modes and no
- * good one. A campaign named `Q3 "priority" list` closed the quoted string
- * early and browsers took the filename as `Q3 `. A name carrying CR or LF was
- * worse: Node rejects a header value containing them with `ERR_INVALID_CHAR`,
- * which escapes as a 500 and is then masked into "contact support" — so an
- * export was unavailable for the life of the campaign, with nothing in the
- * response naming the cause.
+ * Used by the campaign activity and spine exports (named after the campaign) and the
+ * rejected-rows download (named after the operator's upload) in
+ * `proxy-agency-campaigns.routes.ts`. Both names are caller-supplied with no character
+ * restriction, and interpolating one straight into the header has two failure modes
+ * and no good one. A campaign named `Q3 "priority" list` closes the quoted string
+ * early and browsers take the filename as `Q3 `. A name carrying CR or LF is worse:
+ * Node rejects a header value containing them with `ERR_INVALID_CHAR`, which escapes
+ * as a 500 and is then masked into "contact support" — so an export would be
+ * unavailable for the life of the campaign, with nothing in the response naming the
+ * cause. The ad-hoc sanitisers the exports used before this replaced every character
+ * outside `[A-Za-z0-9._-]`, which also turned a name in Hindi into `____`.
  *
  * Two headers' worth of answer, per RFC 6266:
  *   - `filename=` carries an ASCII-only, quote-free fallback for old clients.

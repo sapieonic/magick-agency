@@ -50,6 +50,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-campaign-create.test.ts` | ~3 |
 | `apps/server/test/integration/agency/agency-campaign-stats.routes.test.ts` | ~10 |
 | `apps/server/test/integration/agency/agency-campaign-stats.test.ts` | ~18 |
+| `apps/server/test/integration/agency/agency-campaign-summaries.routes.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-campaign-update.test.ts` | 4 |
 | `apps/server/test/integration/agency/agency-contact-unclaim-many.test.ts` | ~1 |
 | `apps/server/test/integration/agency/agency-context-ordering.test.ts` | ~9 |
@@ -149,7 +150,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/campaign-conversion-stats.test.ts` | 9 |
 | `apps/server/test/unit/agency/campaign-health.test.ts` | 19 |
 | `apps/server/test/unit/agency/campaign-insert-param-types.test.ts` | 3 |
-| `apps/server/test/unit/agency/campaign-lifecycle-route.test.ts` | 7 |
+| `apps/server/test/unit/agency/campaign-lifecycle-route.test.ts` | 10 |
 | `apps/server/test/unit/agency/campaign-lifecycle-timestamps.test.ts` | 19 |
 | `apps/server/test/unit/agency/campaign-retry-repository.test.ts` | 19 |
 | `apps/server/test/unit/agency/campaign-retry-route.test.ts` | 57 |
@@ -196,10 +197,10 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-campaign-series.routes.test.ts` | 41 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-stats-enrichment.routes.test.ts` | 26 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-transition-actor.routes.test.ts` | 30 |
-| `apps/server/test/unit/agency/proxy-agency-campaigns.routes.test.ts` | 137 |
-| `apps/server/test/unit/agency/proxy-agency-grouped-stats.routes.test.ts` | 113 |
+| `apps/server/test/unit/agency/proxy-agency-campaigns.routes.test.ts` | 139 |
+| `apps/server/test/unit/agency/proxy-agency-grouped-stats.routes.test.ts` | 111 |
 | `apps/server/test/unit/agency/proxy-agency-my-surfaces.routes.test.ts` | 78 |
-| `apps/server/test/unit/agency/proxy-agency-roster.routes.test.ts` | 71 |
+| `apps/server/test/unit/agency/proxy-agency-roster.routes.test.ts` | 69 |
 | `apps/server/test/unit/agency/proxy-agency-route-table.test.ts` | 29 |
 | `apps/server/test/unit/agency/proxy-agency-spine.routes.test.ts` | 40 |
 | `apps/server/test/unit/agency/proxy-agency-staffing.routes.test.ts` | 78 |
@@ -211,7 +212,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/runtime-collapses.test.ts` | 6 |
 | `apps/server/test/unit/agency/session-join-conflict-route.test.ts` | 13 |
 | `apps/server/test/unit/agency/spine-filters.test.ts` | 34 |
-| `apps/server/test/unit/agency/spine-read-routes.test.ts` | 20 |
+| `apps/server/test/unit/agency/spine-read-routes.test.ts` | 23 |
 | `apps/server/test/unit/agency/station-heartbeat-grace.test.ts` | 19 |
 | `apps/server/test/unit/agency/station-reconnect-frame.test.ts` | 4 |
 | `apps/server/test/unit/agency/station-registry.test.ts` | 29 |
@@ -281,7 +282,7 @@ Files: `client.ts`, `llm-observability.ts`, `posthog.ts`
 
 ### `apps/server/src/api/`
 
-The HTTP surface: the four area plugins (`platform`, `agency`, `voice`, `analysis`), `callCore` (`core-dispatch.ts`) and the internal handler instance (`core-handlers.ts`), the id guard for agency routes, and profile-route auth.
+The HTTP surface: the four area plugins (`platform`, `agency`, `voice`, `analysis`), `callCore` and `forwardCore` (`core-dispatch.ts`; `forwardCore` answers the public request with the internal handler's status and body) and the internal handler instance (`core-handlers.ts`), the id guard for agency routes, and profile-route auth.
 
 Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dispatch.ts`, `core-handlers.ts`, `platform.plugin.ts`, `profile-route-auth.ts`, `voice.plugin.ts`
 
@@ -295,6 +296,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/integration/api/agency-performance-forwarding.test.ts` | ~23 |
 | `apps/server/test/integration/api/agency-runtime-routes.test.ts` | ~19 |
 | `apps/server/test/integration/api/agency-session-conflict-forward.test.ts` | ~13 |
+| `apps/server/test/integration/api/agency-spine-export.e2e.test.ts` | ~4 |
 | `apps/server/test/integration/api/agency-staffing.routes.test.ts` | ~51 |
 | `apps/server/test/integration/api/agency-tenant-isolation.test.ts` | ~12 |
 | `apps/server/test/integration/api/auth.routes.test.ts` | ~19 |
@@ -310,7 +312,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/unit/api/agency-agent-reach.test.ts` | 3 |
 | `apps/server/test/unit/api/agency-route-table.test.ts` | 9 |
 | `apps/server/test/unit/api/agency-station-route.test.ts` | 2 |
-| `apps/server/test/unit/api/core-dispatch.test.ts` | 11 |
+| `apps/server/test/unit/api/core-dispatch.test.ts` | 13 |
 | `apps/server/test/unit/api/platform-agent-reach.test.ts` | 4 |
 | `apps/server/test/unit/api/profile-route-auth.test.ts` | 13 |
 | `apps/server/test/unit/api/route-table.test.ts` | 3 |
@@ -318,9 +320,9 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 
 ### `apps/server/src/api/middleware/`
 
-App-wide middleware: rate limiter and its buckets, error handler with the `22P02` backstop, 5xx error mask, session and tenant-context middleware, internal tenancy headers.
+App-wide middleware: rate limiter and its buckets, error handler with the `22P02` backstop, 5xx error mask, session and tenant-context middleware, the membership cache key the tenant context reads and the routes that change a membership delete (`membership-cache-key.ts`), internal tenancy headers.
 
-Files: `agency-error-handler.ts`, `auth.middleware.ts`, `error-handler.middleware.ts`, `error-mask.middleware.ts`, `headers.ts`, `rate-limit.middleware.ts`, `tenant-context.middleware.ts`
+Files: `agency-error-handler.ts`, `auth.middleware.ts`, `error-handler.middleware.ts`, `error-mask.middleware.ts`, `headers.ts`, `membership-cache-key.ts`, `rate-limit.middleware.ts`, `tenant-context.middleware.ts`
 
 | Test file | Cases |
 |---|---|
@@ -345,7 +347,11 @@ _No dedicated test files._
 
 Route handlers. Public API layer: `auth`, `tenant`, `account`, `user`, `invites`, `notification`, `feature-flags`, `super-admin*`, `proxy-agency-*`, `dnc`, `phone-number`, `call-analysis-profiles`. Internal handler instance: `agency.routes.ts`, `agency-campaigns.routes.ts`, `agency-agents.routes.ts`. Voice engine: `webhooks.routes.ts`, `webrtc-call.routes.ts`. Analysis: `webrtc-recordings.routes.ts`.
 
-Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.ts`, `agency.routes.ts`, `auth.routes.ts`, `call-analysis-profiles.routes.ts`, `dnc.routes.ts`, `feature-flags.routes.ts`, `helpers/csv-attachment.ts`, `helpers/path-params.ts`, `invites.routes.ts`, `notification.routes.ts`, `phone-number.routes.ts`, `proxy-agency-agent.routes.ts`, `proxy-agency-calls.routes.ts`, `proxy-agency-campaigns.routes.ts`, `proxy-agency-performance.routes.ts`, `proxy-agency-staffing.routes.ts`, `proxy-agency-station.routes.ts`, `super-admin-account-settings.routes.ts`, `super-admin-feature-flags.routes.ts`, `super-admin-phone.routes.ts`, `super-admin-telephony-credentials.routes.ts`, `super-admin-usage-counts.routes.ts`, `super-admin.routes.ts`, `tenant.routes.ts`, `user.routes.ts`, `webhooks.routes.ts`, `webrtc-call.routes.ts`, `webrtc-recordings.routes.ts`
+Route families: a large plugin keeps its exported function, hooks and module note in `<family>.routes.ts` and registers its routes from `<family>/` on the same instance, so the hooks apply to every one of them and the area plugins are unchanged: `agency/` (sessions, attempts, shared helpers), `agency-campaigns/` (guards with the `ownedCampaign` preHandler, crud with the batched `GET /summaries`, stats, spine, retry, lifecycle), `proxy-agency-campaigns/` (ownership, crud, stats, activity, spine with the CSV export drain, lifecycle, retry, ingest), `proxy-agency-performance/` (the per-agent pairs, the whole-floor reads, shared), `proxy-agency-staffing/` (the `my-*` reads, campaign agents), `super-admin/` (login, own account, tenants, admins, concurrency). Source-text guards read a whole family (`test/helpers/route-source.ts`).
+
+Shared helpers (`helpers/`): `core-campaign.ts` (`fetchOwnedCoreCampaign`, the one campaign ownership probe, and `stringField`), `csv-attachment.ts` (the CSV `Content-Disposition` pair), `drain-pages.ts` (the CSV exports' page loop), `parse-or-400.ts` (one 400 per validation dialect), `path-params.ts`, `read-cursor.ts` (`readKeysetCursor`), `settled.ts` (`settledValue`: independent reads started together, answered in order).
+
+Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.ts`, `agency-campaigns/crud.ts`, `agency-campaigns/guards.ts`, `agency-campaigns/lifecycle.ts`, `agency-campaigns/retry.ts`, `agency-campaigns/spine.ts`, `agency-campaigns/stats.ts`, `agency.routes.ts`, `agency/attempts.ts`, `agency/helpers.ts`, `agency/sessions.ts`, `auth.routes.ts`, `call-analysis-profiles.routes.ts`, `dnc.routes.ts`, `feature-flags.routes.ts`, `helpers/core-campaign.ts`, `helpers/csv-attachment.ts`, `helpers/drain-pages.ts`, `helpers/parse-or-400.ts`, `helpers/path-params.ts`, `helpers/read-cursor.ts`, `helpers/settled.ts`, `invites.routes.ts`, `notification.routes.ts`, `phone-number.routes.ts`, `proxy-agency-agent.routes.ts`, `proxy-agency-calls.routes.ts`, `proxy-agency-campaigns.routes.ts`, `proxy-agency-campaigns/activity.ts`, `proxy-agency-campaigns/crud.ts`, `proxy-agency-campaigns/ingest.ts`, `proxy-agency-campaigns/lifecycle.ts`, `proxy-agency-campaigns/ownership.ts`, `proxy-agency-campaigns/retry.ts`, `proxy-agency-campaigns/spine.ts`, `proxy-agency-campaigns/stats.ts`, `proxy-agency-performance.routes.ts`, `proxy-agency-performance/floor.ts`, `proxy-agency-performance/per-agent.ts`, `proxy-agency-performance/shared.ts`, `proxy-agency-staffing.routes.ts`, `proxy-agency-staffing/campaign-agents.ts`, `proxy-agency-staffing/my.ts`, `proxy-agency-station.routes.ts`, `super-admin-account-settings.routes.ts`, `super-admin-feature-flags.routes.ts`, `super-admin-phone.routes.ts`, `super-admin-telephony-credentials.routes.ts`, `super-admin-usage-counts.routes.ts`, `super-admin.routes.ts`, `super-admin/account.ts`, `super-admin/admins.ts`, `super-admin/concurrency.ts`, `super-admin/login.ts`, `super-admin/tenants.ts`, `tenant.routes.ts`, `user.routes.ts`, `webhooks.routes.ts`, `webrtc-call.routes.ts`, `webrtc-recordings.routes.ts`
 
 | Test file | Cases |
 |---|---|
@@ -353,7 +359,9 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/call-analysis-profiles.test.ts` | 21 |
 | `apps/server/test/unit/api/routes/feature-flags-client.test.ts` | 3 |
 | `apps/server/test/unit/api/routes/feature-flags-internal.test.ts` | 22 |
+| `apps/server/test/unit/api/routes/helpers/core-campaign.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/helpers/csv-attachment.test.ts` | 11 |
+| `apps/server/test/unit/api/routes/helpers/parse-or-400.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/invites.routes.test.ts` | 48 |
 | `apps/server/test/unit/api/routes/membership-fail-closed.test.ts` | 7 |
 | `apps/server/test/unit/api/routes/notification.routes.test.ts` | 14 |
@@ -362,7 +370,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/super-admin-account-settings.test.ts` | 24 |
 | `apps/server/test/unit/api/routes/super-admin-accounts.test.ts` | 38 |
 | `apps/server/test/unit/api/routes/super-admin-feature-flags.test.ts` | 22 |
-| `apps/server/test/unit/api/routes/super-admin-memberships.test.ts` | 57 |
+| `apps/server/test/unit/api/routes/super-admin-memberships.test.ts` | 58 |
 | `apps/server/test/unit/api/routes/super-admin-phone.test.ts` | 10 |
 | `apps/server/test/unit/api/routes/super-admin-telephony-credentials.test.ts` | 38 |
 | `apps/server/test/unit/api/routes/super-admin-usage-counts.test.ts` | 22 |
@@ -370,7 +378,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/user-cache-invalidation.wiring.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/user-invite-mailer-isolation.test.ts` | 6 |
 | `apps/server/test/unit/api/routes/user-offboarding-staffing.test.ts` | 30 |
-| `apps/server/test/unit/api/routes/user.routes.test.ts` | 46 |
+| `apps/server/test/unit/api/routes/user.routes.test.ts` | 47 |
 | `apps/server/test/unit/api/routes/voicelink-webhooks.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/webrtc-recordings.test.ts` | 6 |
 
@@ -602,13 +610,14 @@ Files: `feature-flag.service.ts`, `index.ts`, `registry.ts`
 
 ### `apps/server/src/invites/`
 
-Invite issuing and invite state.
+Invite issuing and invite state, and the membership provisioning `POST /users/invite` and the super-admin tenant create and add-user share (`membership-provisioning.ts`: the create-or-reactivate transactions, the proven-or-stub user, the guarded invitation).
 
-Files: `invite-issuer.ts`, `membership-invite-state.ts`
+Files: `invite-issuer.ts`, `membership-invite-state.ts`, `membership-provisioning.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/invites/invite-issuer.test.ts` | 16 |
+| `apps/server/test/unit/invites/membership-provisioning.test.ts` | 6 |
 | `apps/server/test/unit/invites/membership-invite-state.test.ts` | 6 |
 
 ### `apps/server/src/maintenance/`
@@ -909,7 +918,7 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/integration/repositories/dialer-analysis-job.repository.test.ts` | ~9 |
 | `packages/db/test/integration/repositories/membership.repository.test.ts` | ~33 |
 | `packages/db/test/integration/repositories/phone-number.repository.test.ts` | ~8 |
-| `packages/db/test/integration/repositories/provider-concurrency.repository.test.ts` | ~3 |
+| `packages/db/test/integration/repositories/provider-concurrency.repository.test.ts` | ~6 |
 | `packages/db/test/integration/repositories/shared-infra-coverage.test.ts` | ~8 |
 | `packages/db/test/integration/repositories/telephony-credential.repository.test.ts` | 31 |
 | `packages/db/test/integration/repositories/tenant.repository.test.ts` | ~13 |

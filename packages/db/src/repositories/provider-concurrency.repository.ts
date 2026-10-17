@@ -24,14 +24,13 @@ export class ConcurrencyAllocationVersionConflictError extends Error {
   }
 }
 
-export class ProviderConcurrencyRepository {
-  async getAllocation(tenantId: string, accountId: string): Promise<AccountConcurrencyAllocation> {
-    const pool = getPool();
-    // One statement gives the settings row and all children from one PostgreSQL
-    // snapshot. Two pool.query calls can run on different connections and return
-    // a version from one allocation with provider rows from another.
-    const result = await pool.query<AllocationSettingsRow & { providers: ProviderConcurrencyAllocation[] }>(
-      `SELECT s.tenant_id, s.account_id, s.max_concurrent_calls,
+/**
+ * The settings row with its provider children folded in, grouped per account. The
+ * `WHERE` is the caller's; one statement, so the row and its children come from one
+ * PostgreSQL snapshot. Two pool.query calls can run on different connections and
+ * return a version from one allocation with provider rows from another.
+ */
+const ALLOCATION_SELECT_SQL = `SELECT s.tenant_id, s.account_id, s.max_concurrent_calls,
               s.concurrency_allocation_mode, s.concurrency_allocation_version,
               COALESCE(
                 jsonb_agg(
@@ -44,22 +43,65 @@ export class ProviderConcurrencyRepository {
               ) AS providers
          FROM account_settings s
          LEFT JOIN account_provider_concurrency_allocations p
-           ON p.tenant_id = s.tenant_id AND p.account_id = s.account_id
+           ON p.tenant_id = s.tenant_id AND p.account_id = s.account_id`;
+
+const ALLOCATION_GROUP_BY_SQL = `GROUP BY s.tenant_id, s.account_id, s.max_concurrent_calls,
+                 s.concurrency_allocation_mode, s.concurrency_allocation_version`;
+
+type AllocationRow = AllocationSettingsRow & { providers: ProviderConcurrencyAllocation[] };
+
+/** One account's allocation from its row, or the defaults when it has no settings row. */
+function toAllocation(
+  tenantId: string,
+  accountId: string,
+  settings: AllocationRow | undefined,
+): AccountConcurrencyAllocation {
+  return {
+    tenant_id: tenantId,
+    account_id: accountId,
+    mode: settings?.concurrency_allocation_mode ?? 'legacy_total',
+    version: settings?.concurrency_allocation_version ?? 1,
+    total_concurrency: settings?.max_concurrent_calls ?? DEFAULT_MAX_CONCURRENT_CALLS,
+    providers: settings?.providers ?? [],
+  };
+}
+
+export class ProviderConcurrencyRepository {
+  async getAllocation(tenantId: string, accountId: string): Promise<AccountConcurrencyAllocation> {
+    const pool = getPool();
+    const result = await pool.query<AllocationRow>(
+      `${ALLOCATION_SELECT_SQL}
         WHERE s.tenant_id = $1 AND s.account_id = $2
-        GROUP BY s.tenant_id, s.account_id, s.max_concurrent_calls,
-                 s.concurrency_allocation_mode, s.concurrency_allocation_version`,
+        ${ALLOCATION_GROUP_BY_SQL}`,
       [tenantId, accountId],
     );
+    return toAllocation(tenantId, accountId, result.rows[0]);
+  }
 
-    const settings = result.rows[0];
-    return {
-      tenant_id: tenantId,
-      account_id: accountId,
-      mode: settings?.concurrency_allocation_mode ?? 'legacy_total',
-      version: settings?.concurrency_allocation_version ?? 1,
-      total_concurrency: settings?.max_concurrent_calls ?? DEFAULT_MAX_CONCURRENT_CALLS,
-      providers: settings?.providers ?? [],
-    };
+  /**
+   * {@link getAllocation} for several accounts of one tenant, in ONE statement: an
+   * entry for every id asked for, each exactly what `getAllocation` answers for it
+   * (the defaults for an account with no settings row). The super-admin account list
+   * reads a whole tenant's accounts this way rather than one statement per account.
+   */
+  async getAllocationsForAccounts(
+    tenantId: string,
+    accountIds: readonly string[],
+  ): Promise<Map<string, AccountConcurrencyAllocation>> {
+    const allocations = new Map<string, AccountConcurrencyAllocation>();
+    if (accountIds.length === 0) return allocations;
+    const pool = getPool();
+    const result = await pool.query<AllocationRow>(
+      `${ALLOCATION_SELECT_SQL}
+        WHERE s.tenant_id = $1 AND s.account_id = ANY($2::uuid[])
+        ${ALLOCATION_GROUP_BY_SQL}`,
+      [tenantId, [...accountIds]],
+    );
+    const byAccount = new Map(result.rows.map((row) => [row.account_id, row]));
+    for (const accountId of accountIds) {
+      allocations.set(accountId, toAllocation(tenantId, accountId, byAccount.get(accountId)));
+    }
+    return allocations;
   }
 
   /**

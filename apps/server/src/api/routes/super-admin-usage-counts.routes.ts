@@ -7,6 +7,7 @@ import type {
   UsageCountsTenantRow,
 } from '@magick-agency/contracts/api/platform/super-admin-usage';
 import { usageCountsQuerySchema } from '../validators/super-admin.validator.js';
+import { parseOr400 } from './helpers/parse-or-400.js';
 
 /**
  * `GET /super-admin/usage` — read-only usage counts.
@@ -33,10 +34,8 @@ export async function superAdminUsageCountsRoutes(app: FastifyInstance): Promise
   app.addHook('preHandler', superAdminMiddleware);
 
   app.get('/usage', async (request: FastifyRequest, reply: FastifyReply) => {
-    const parsed = usageCountsQuerySchema.safeParse(request.query);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(usageCountsQuerySchema, request.query, reply, 'platform');
+    if (!parsed) return reply;
     const from = new Date(parsed.data.from);
     const to = new Date(parsed.data.to);
 

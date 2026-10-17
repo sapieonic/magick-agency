@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { routeFamilySource } from '../../../helpers/route-source.js';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
@@ -19,7 +20,7 @@ import { PERMISSION_MATRIX } from '@magick-agency/contracts/rbac';
  *
  * The "concurrency is super-admin only" source guards read
  * `proxy-agency-campaigns.routes.ts`, `agency/agency-campaign-config.ts` and
- * `super-admin.routes.ts` (ROOT is `apps/server`). `concurrency-super-admin-only.test.ts`
+ * `super-admin/concurrency.ts` (ROOT is `apps/server`). `concurrency-super-admin-only.test.ts`
  * also carries broadened copies of the first two (every agency route/module) and a
  * copy of the third; this is the original single-file form, including the positive
  * "There is no concurrency setter here" comment check on the route file.
@@ -83,8 +84,11 @@ describe('PLATFORM_AUDIT_ACTIONS', () => {
 
 describe('concurrency is super-admin only', () => {
   it('the agency campaign proxy has no concurrency write path', () => {
-    const source = readFileSync(resolve(ROOT, 'src/api/routes/proxy-agency-campaigns.routes.ts'), 'utf8');
-    expect(source).toMatch(/There is no concurrency setter here, and that is deliberate/);
+    // The statement lives in the plugin file; the absence is checked over the whole
+    // family (`proxy-agency-campaigns/` too), where the routes are registered.
+    expect(readFileSync(resolve(ROOT, 'src/api/routes/proxy-agency-campaigns.routes.ts'), 'utf8'))
+      .toMatch(/There is no concurrency setter here, and that is deliberate/);
+    const source = routeFamilySource('proxy-agency-campaigns');
     expect(source).not.toMatch(/app\.(put|post|patch)(?:<[^>]*>)?\([^)]*concurrency/);
     // Payload field, not just the URL: a concurrency setter must not land as an unaudited
     // campaign body key. That comment names `max_concurrent_calls`; a setter
@@ -98,7 +102,7 @@ describe('concurrency is super-admin only', () => {
   });
 
   it('super-admin account concurrency already writes super_admin_audit', () => {
-    const source = readFileSync(resolve(ROOT, 'src/api/routes/super-admin.routes.ts'), 'utf8');
+    const source = readFileSync(resolve(ROOT, 'src/api/routes/super-admin/concurrency.ts'), 'utf8');
     expect(source).toMatch(/action: 'update_account_concurrency'/);
     expect(source).toMatch(/superAdminAuditRepository\.log/);
   });

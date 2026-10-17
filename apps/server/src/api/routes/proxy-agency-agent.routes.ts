@@ -13,30 +13,18 @@ import { z } from 'zod';
 import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
 import { requirePermission } from '../../rbac/rbac.middleware.js';
-import { callCore } from '../core-dispatch.js';
+import { callCore, forwardCore } from '../core-dispatch.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { rewriteStationWsUrl } from './proxy-agency-station.routes.js';
 import { rejectPathEscapingParams } from './helpers/path-params.js';
+// Audit fields read off the handler's untyped body, defensively (`stringField`'s rule).
+import { stringField } from './helpers/core-campaign.js';
 import { resolveAgencyActor, type AgencyActorFields } from '../../agency/agency-actor.js';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor, resolvedUserAuditActor } from '../../audit/platform/audit-actor.js';
+import { parseOr400 } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'proxy-agency-agent' });
-
-/**
- * Best-effort extraction of a string field from the internal handler's response
- * body for the audit trail. The response is passed through untyped, so this
- * narrows defensively rather than trusting the body, and a malformed/unexpected
- * response must never throw out of an audit call and take the request down
- * with it.
- */
-function extractStringField(body: unknown, field: string): string | undefined {
-  if (body && typeof body === 'object' && field in body) {
-    const value = (body as Record<string, unknown>)[field];
-    return typeof value === 'string' ? value : undefined;
-  }
-  return undefined;
-}
 
 function accountAudit(request: FastifyRequest): { tenant_id: string; account_id?: string } {
   return {
@@ -222,10 +210,8 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   app.post('/sessions', {
     preHandler: requirePermission('agency.station.connect'),
   }, async (request, reply) => {
-    const parsed = createSessionSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(createSessionSchema, request.body, reply, 'agency');
+    if (!parsed) return reply;
 
     // The internal handler's `POST /agency/sessions` requires `agent_user_id`, and
     // `parsed.data` never carries one — without it every join 400s and no agent can
@@ -259,7 +245,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       );
     }
     if (result.status < 400) {
-      const sessionId = extractStringField(result.body, 'session_id');
+      const sessionId = stringField(result.body, 'session_id');
       platformAuditLogger.log({
         ...accountAudit(request),
         ...resolvedUserAuditActor(request, actor.actor.agent_user_id),
@@ -283,14 +269,11 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   }, async (request, reply) => {
     const actor = sessionActorOrRefuse(request, reply);
     if (!actor) return reply;
-    const result = await callCore({
+    return forwardCore(request, reply, {
       method: 'POST',
       path: `/agency/sessions/${request.params.id}/available`,
       body: { ...actor },
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
     });
-    return reply.code(result.status).send(result.body);
   });
 
   app.post<{ Params: { id: string } }>('/sessions/:id/leave', {
@@ -306,7 +289,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       accountId: request.accountId,
     });
     if (result.status < 400) {
-      const campaignId = extractStringField(result.body, 'campaign_id');
+      const campaignId = stringField(result.body, 'campaign_id');
       platformAuditLogger.log({
         ...accountAudit(request),
         ...requestAuditActor(request),
@@ -341,7 +324,6 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       body: { ...actor },
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency/sessions/:id/station-token',
     });
 
     if (result.status < 400 && result.body && typeof result.body === 'object') {
@@ -356,10 +338,8 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   app.post<{ Params: { id: string } }>('/sessions/:id/break', {
     preHandler: requirePermission('agency.station.connect'),
   }, async (request, reply) => {
-    const parsed = breakSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(breakSchema, request.body, reply, 'agency');
+    if (!parsed) return reply;
     const actor = sessionActorOrRefuse(request, reply);
     if (!actor) return reply;
     const result = await callCore({
@@ -368,10 +348,9 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       body: { ...parsed.data, ...actor },
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency/sessions/:id/break',
     });
     if (result.status < 400) {
-      const campaignId = extractStringField(result.body, 'campaign_id');
+      const campaignId = stringField(result.body, 'campaign_id');
       platformAuditLogger.log({
         ...accountAudit(request),
         ...requestAuditActor(request),
@@ -412,10 +391,9 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       body: { ...actor },
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency/sessions/:id/break/cancel',
     });
     if (result.status < 400) {
-      const campaignId = extractStringField(result.body, 'campaign_id');
+      const campaignId = stringField(result.body, 'campaign_id');
       platformAuditLogger.log({
         ...accountAudit(request),
         ...requestAuditActor(request),
@@ -450,10 +428,8 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   app.post<{ Params: { id: string } }>('/sessions/:id/force-available', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    const parsed = forceAvailableSchema.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(forceAvailableSchema, request.body ?? {}, reply, 'agency');
+    if (!parsed) return reply;
 
     const actor = sessionActorOrRefuse(request, reply);
     if (!actor) return reply;
@@ -463,7 +439,6 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       body: { ...parsed.data, ...actor },
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency/sessions/:id/force-available',
     });
 
     if (result.status < 400) {
@@ -471,7 +446,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
         { tenantId: request.tenantId, sessionId: request.params.id, actingUserId: request.user?.id },
         'Supervisor forced an agent back to available',
       );
-      const campaignId = extractStringField(result.body, 'campaign_id');
+      const campaignId = stringField(result.body, 'campaign_id');
       platformAuditLogger.log({
         ...accountAudit(request),
         ...requestAuditActor(request),
@@ -518,10 +493,9 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       body: { ...actor.actor },
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency/attempts/:id/hangup',
     });
     if (result.status < 400) {
-      const campaignId = extractStringField(result.body, 'campaign_id');
+      const campaignId = stringField(result.body, 'campaign_id');
       platformAuditLogger.log({
         ...accountAudit(request),
         ...resolvedUserAuditActor(request, actor.actor.agent_user_id),
@@ -553,10 +527,8 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   app.post<{ Params: { id: string } }>('/attempts/:id/disposition', {
     preHandler: requirePermission('agency.attempts.dispose'),
   }, async (request, reply) => {
-    const parsed = dispositionSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(dispositionSchema, request.body, reply, 'agency');
+    if (!parsed) return reply;
 
     const actor = resolveAgencyActor(request);
     if (!actor.ok) {
@@ -569,7 +541,6 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       body: { ...parsed.data, ...actor.actor },
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency/attempts/:id/disposition',
     });
 
     if (result.status < 400 && actor.actor.on_behalf) {
@@ -586,7 +557,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       // `disposition_code` and `on_behalf` are operational values (a fixed
       // catalog code / a boolean), not customer content — `notes` is free text
       // an agent typed and is deliberately excluded from the audit trail.
-      const campaignId = extractStringField(result.body, 'campaign_id');
+      const campaignId = stringField(result.body, 'campaign_id');
       platformAuditLogger.log({
         ...accountAudit(request),
         ...resolvedUserAuditActor(request, actor.actor.agent_user_id),
@@ -622,25 +593,19 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   app.post<{ Params: { id: string } }>('/attempts/:id/notes', {
     preHandler: requirePermission('agency.attempts.dispose'),
   }, async (request, reply) => {
-    const parsed = notesSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(notesSchema, request.body, reply, 'agency');
+    if (!parsed) return reply;
 
     const actor = resolveAgencyActor(request);
     if (!actor.ok) {
       return reply.code(400).send({ error: 'Bad Request', code: actor.code, message: actor.message });
     }
 
-    const result = await callCore({
+    return forwardCore(request, reply, {
       method: 'POST',
       path: `/agency/attempts/${request.params.id}/notes`,
       body: { ...parsed.data, ...actor.actor },
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
-      metricPath: '/agency/attempts/:id/notes',
     });
-    return reply.code(result.status).send(result.body);
   });
 
   /**
@@ -674,10 +639,8 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   app.post<{ Params: { id: string } }>('/attempts/:id/dnc', {
     preHandler: requirePermission('agency.dnc.write'),
   }, async (request, reply) => {
-    const parsed = dncSchema.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Validation Error', details: parsed.error.flatten() });
-    }
+    const parsed = parseOr400(dncSchema, request.body ?? {}, reply, 'agency');
+    if (!parsed) return reply;
 
     /**
      * ── The escalation gate ────────────────────────────────────────────────
@@ -727,7 +690,6 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       body: { ...parsed.data, ...actor.actor },
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency/attempts/:id/dnc',
     });
 
     if (result.status < 400) {
@@ -749,8 +711,8 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       // the row records only that a suppression happened and its scope.
       // `entry_id` is included when the (untyped, passed-through) response
       // happens to carry one.
-      const entryId = extractStringField(result.body, 'entry_id');
-      const campaignId = extractStringField(result.body, 'campaign_id');
+      const entryId = stringField(result.body, 'entry_id');
+      const campaignId = stringField(result.body, 'campaign_id');
       platformAuditLogger.log({
         ...accountAudit(request),
         ...resolvedUserAuditActor(request, actor.actor.agent_user_id),

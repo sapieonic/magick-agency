@@ -166,6 +166,23 @@ describe('user.routes — POST /invite account_id tenant boundary', () => {
     expect(mocks.accountRepository.findByIdInTenant).toHaveBeenCalledWith(ACCOUNT_OTHER_TENANT, TENANT);
   });
 
+  it('still answers the account 400 when the address lookup, started alongside it, throws', async () => {
+    // The two reads run together; the account's answer is read first, so the
+    // address lookup failing cannot turn the 400 into a 500.
+    mocks.accountRepository.findByIdInTenant.mockResolvedValue(null);
+    mocks.userRepository.resolveByProvenEmail.mockRejectedValueOnce(new Error('pool exhausted'));
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/users/invite',
+      payload: { email: 'new@test.com', role: 'viewer', account_id: ACCOUNT_OTHER_TENANT },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toMatch(/does not belong to this tenant/);
+  });
+
   it('refuses an account_id that does not exist at all, with the SAME message as a tenant mismatch', async () => {
     // Deliberately indistinguishable from the mismatch case — a different
     // message would let a caller probe whether an id exists in another tenant.

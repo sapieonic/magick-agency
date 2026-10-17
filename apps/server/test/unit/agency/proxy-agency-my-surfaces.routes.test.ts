@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { readFileSync } from 'node:fs';
 import type { MembershipRole } from '@magick-agency/contracts/rbac';
 import { PERMISSION_MATRIX, hasPermission } from '@magick-agency/contracts/rbac';
+import { routeFamilySource } from '../../helpers/route-source.js';
 
 /**
  * PER-AGENT performance (`proxy-agency-performance.routes.ts`): the agent's own
@@ -80,7 +80,8 @@ const mocks = vi.hoisted(() => ({
 
 // The hop is `callCore` (`src/api/core-dispatch.ts`), mocked as `mocks.proxyToCore`; there is
 // no key to resolve.
-vi.mock('../../../src/api/core-dispatch.js', () => ({ callCore: mocks.proxyToCore }));
+vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) =>
+  (await import('../../helpers/core-dispatch-double.js')).coreDispatchDouble(await importOriginal(), mocks.proxyToCore));
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/observability')>()),
   createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
@@ -841,12 +842,12 @@ describe('the cohort band is SUPERVISOR-ONLY, and today it holds for free', () =
    * like it touches this route at all.
    *
    * ── The one-line edit this block exists to make RED ────────────────────────
-   * `src/api/routes/proxy-agency-performance.routes.ts:122`:
+   * `src/api/routes/proxy-agency-performance/per-agent.ts`:
    *
    *     const AGENT_STATS_QUERY_PARAMS = ['from', 'to', 'bucket', 'campaign_id'] as const;
    *
-   * ONE constant, read by TWO handlers — `/my-stats` (~:472) and its supervisory
-   * twin `/agents/:userId/stats` (~:1089). So a "vs team" line on the
+   * ONE constant, read by TWO handlers — `/my-stats` and its supervisory
+   * twin `/agents/:userId/stats`. So a "vs team" line on the
    * SUPERVISORY route is bought by appending one word to that array, and the same
    * word is thereby accepted on the agent's own scorecard, in a diff whose every
    * line reads as supervisory. Nobody reviewing "add compare_to for the compare
@@ -983,10 +984,7 @@ describe('the cohort band is SUPERVISOR-ONLY, and today it holds for free', () =
      * collateral. The param is ruled out on both routes, so a split is a contract
      * change and has to be argued here rather than landed as a refactor.
      */
-    const source = readFileSync(
-      new URL('../../../src/api/routes/proxy-agency-performance.routes.ts', import.meta.url),
-      'utf8',
-    );
+    const source = routeFamilySource('proxy-agency-performance');
 
     const declaration = source.match(/const AGENT_STATS_QUERY_PARAMS = \[([^\]]*)\] as const;/);
     expect(declaration, 'AGENT_STATS_QUERY_PARAMS must still be a literal array').not.toBeNull();
@@ -1195,10 +1193,7 @@ describe('the plugin-level preHandler hooks actually run', () => {
      * adding a seventh route without adding it here reds, and no comment has to
      * say a number.
      */
-    const source = readFileSync(
-      new URL('../../../src/api/routes/proxy-agency-performance.routes.ts', import.meta.url),
-      'utf8',
-    );
+    const source = routeFamilySource('proxy-agency-performance');
     const registrations =
       source.match(/\b(?:app|sub)\.(?:get|post|patch|put|delete)(?:<[^>]*>)?\(/g) ?? [];
 
@@ -1233,10 +1228,7 @@ describe('the plugin-level preHandler hooks actually run', () => {
      * second capability — would pass every case here while changing what the
      * plugin does. Counting is what sees that.
      */
-    const source = readFileSync(
-      new URL('../../../src/api/routes/proxy-agency-performance.routes.ts', import.meta.url),
-      'utf8',
-    );
+    const source = routeFamilySource('proxy-agency-performance');
     const hooks = source.match(/app\.addHook\('preHandler',\s*([^)]+)\)/g) ?? [];
 
     // Two hooks exist; a third (a new gate) reds here.
@@ -1255,10 +1247,7 @@ describe('every performance route carries its RBAC permission', () => {
    * ADDED without a guard would pass every case and be invisible. The registration
    * count is what catches that one.
    */
-  const source = readFileSync(
-    new URL('../../../src/api/routes/proxy-agency-performance.routes.ts', import.meta.url),
-    'utf8',
-  );
+  const source = routeFamilySource('proxy-agency-performance');
 
   const EXPECTED: ReadonlyArray<readonly [string, string, string]> = [
     ['get', '/my-stats', 'agency.station.connect'],
@@ -1289,7 +1278,7 @@ describe('every performance route carries its RBAC permission', () => {
       .toBe(true);
   });
 
-  it('knows about every route in the file, so a NEW unguarded one reds', () => {
+  it('knows about every route in the plugin, so a NEW unguarded one reds', () => {
     const registrations =
       source.match(/\b(?:app|sub)\.(?:get|post|patch|put|delete)(?:<[^>]*>)?\(/g) ?? [];
 

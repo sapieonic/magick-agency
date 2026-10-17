@@ -8,6 +8,7 @@ import { isUniqueViolation } from '@magick-agency/db/pg-errors';
 // B8). A leaf too: the pool is passed in, so the `getPool` mock stays in charge.
 import { withTransaction } from '@magick-agency/db/utils/transaction';
 import { createChildLogger } from '@magick-agency/observability';
+import { UUID_RE } from '../../utils/uuid.js';
 import type {
   AgencyAgentSessionRecord,
   AgencyCallAttemptRecord,
@@ -3086,6 +3087,33 @@ export class AgencyCampaignRepository {
       [tenantId, accountId, [...AGENCY_CAMPAIGN_TERMINAL_STATUSES]],
     );
     return Number(rows[0]?.count ?? 0);
+  }
+
+  /**
+   * The name and status of every campaign in `ids` that this tenant AND account own:
+   * `requireOwned`'s rule (`agency-campaigns.routes.ts`) applied to a set, in one
+   * statement. An id that is unknown, owned by another account or tenant, or not
+   * uuid-shaped is simply absent from the answer (never a `22P02`).
+   *
+   * Read through the internal `GET /agency-campaigns/summaries`, which the staffing
+   * plugin's `my-*` routes use to label an agent's assignments in one round trip.
+   */
+  async findOwnedSummaries(
+    ids: readonly string[],
+    tenantId: string,
+    accountId: string,
+  ): Promise<Array<Pick<AgencyCampaignRecord, 'id' | 'name' | 'status'>>> {
+    const candidates = [...new Set(ids)].filter((id) => UUID_RE.test(id));
+    if (candidates.length === 0 || !UUID_RE.test(tenantId) || !UUID_RE.test(accountId)) return [];
+    const { rows } = await getPool().query<Pick<AgencyCampaignRecord, 'id' | 'name' | 'status'>>(
+      `SELECT id, name, status
+         FROM agency_campaigns
+        WHERE id = ANY($1::uuid[])
+          AND tenant_id = $2::uuid
+          AND account_id = $3::uuid`,
+      [candidates, tenantId, accountId],
+    );
+    return rows;
   }
 }
 

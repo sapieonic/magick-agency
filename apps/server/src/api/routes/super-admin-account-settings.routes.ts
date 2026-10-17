@@ -8,6 +8,7 @@ import { loadAgencyAccountSettings } from '../../settings/agency-account-setting
 import { createChildLogger } from '@magick-agency/observability';
 import { updateAgencyAccountSettingsSchema } from '../validators/super-admin.validator.js';
 import { recordSuperAdminAudit } from '../../audit/super-admin-audit.js';
+import { parseOr400 } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'super-admin-account-settings-routes' });
 
@@ -55,10 +56,8 @@ export async function superAdminAccountSettingsRoutes(app: FastifyInstance): Pro
     reply: FastifyReply,
   ) => {
     const { tenantId, accountId } = request.params;
-    const parsed = updateAgencyAccountSettingsSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(updateAgencyAccountSettingsSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
     const account = await resolveAccount(tenantId, accountId);
     if (!account) {
       return reply.code(404).send({ error: 'Not Found', message: 'Tenant or account not found' });

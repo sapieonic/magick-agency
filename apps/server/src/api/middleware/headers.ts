@@ -15,3 +15,9 @@ export const ORIGINATOR_HEADER = 'x-mgkvc-originator';
 /** Optional headers carrying human-readable tenant/account names. */
 export const TENANT_NAME_HEADER = 'x-mgkvc-tenant-name';
 export const ACCOUNT_NAME_HEADER = 'x-mgkvc-account-name';
+/**
+ * Internal only: the campaign whose ownership the public-API caller already proved on
+ * this request (`CoreCallRequest.provenCampaignId`). Set by `callCore` from its typed
+ * argument alone, never forwarded from a caller's headers.
+ */
+export const PROVEN_CAMPAIGN_HEADER = 'x-mgkvc-proven-campaign';

@@ -74,8 +74,13 @@ function extractCallSites(): { sites: CallSite[]; dynamic: string[]; callers: st
           }
         }
       }
-      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'callCore') {
-        const arg = node.arguments[0];
+      // `callCore(req)` and `forwardCore(request, reply, req)`: the request object must
+      // carry a literal `path:` (or be a known dynamic site below).
+      const dispatchArg = ts.isCallExpression(node) && ts.isIdentifier(node.expression)
+        ? { callCore: 0, forwardCore: 2 }[node.expression.text]
+        : undefined;
+      if (ts.isCallExpression(node) && dispatchArg !== undefined) {
+        const arg = node.arguments[dispatchArg];
         const pathProp = arg && ts.isObjectLiteralExpression(arg)
           ? arg.properties.find((p) => ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === 'path')
           : undefined;
@@ -97,9 +102,14 @@ function extractCallSites(): { sites: CallSite[]; dynamic: string[]; callers: st
  * still sees them).
  */
 const DYNAMIC_CALL_SITES: ReadonlyMap<string, string> = new Map([
-  ['api/routes/proxy-agency-campaigns.routes.ts params.path',
+  ['api/routes/proxy-agency-campaigns/spine.ts params.path',
     "the spine CSV export's page loop; its two callers pass literal `/agency-campaigns/${id}/attempts` and `/contacts` objects"],
+  ['api/routes/proxy-agency-campaigns/lifecycle.ts <no path>',
+    "`runTransition`, the four lifecycle controls' shared body (`{ ...call }`); each route passes its own literal `/agency-campaigns/${id}/<verb>` object"],
 ]);
+
+/** The one file that passes `provenCampaignId` (the spine CSV export's page loop). */
+const PROVEN_CAMPAIGN_CALLER = 'api/routes/proxy-agency-campaigns/spine.ts';
 
 /** Internal handlers no public-API call site reaches, each with why. */
 const UNREACHED_CORE_ROUTES: ReadonlyMap<string, string> = new Map([
@@ -144,11 +154,17 @@ describe('callCore — static resolution against the private internal handler in
   it('finds the public-API handler modules and their internal paths (the extraction is not vacuous)', () => {
     expect(callers.sort()).toEqual([
       'api/agency.plugin.ts', // installs the instance (`setCoreHandlers`); calls nothing
+      'api/routes/helpers/core-campaign.ts', // the campaign ownership probe the route files share
       'api/routes/proxy-agency-agent.routes.ts',
       'api/routes/proxy-agency-calls.routes.ts',
-      'api/routes/proxy-agency-campaigns.routes.ts',
-      'api/routes/proxy-agency-performance.routes.ts',
-      'api/routes/proxy-agency-staffing.routes.ts',
+      'api/routes/proxy-agency-campaigns/crud.ts',
+      'api/routes/proxy-agency-campaigns/lifecycle.ts',
+      'api/routes/proxy-agency-campaigns/retry.ts',
+      'api/routes/proxy-agency-campaigns/spine.ts',
+      'api/routes/proxy-agency-campaigns/stats.ts',
+      'api/routes/proxy-agency-performance/floor.ts',
+      'api/routes/proxy-agency-performance/per-agent.ts',
+      'api/routes/proxy-agency-staffing/my.ts', // the batched campaign-label read
     ]);
     expect(sites.length).toBeGreaterThanOrEqual(30);
     expect(coreRoutes.length).toBeGreaterThanOrEqual(20);
@@ -164,6 +180,17 @@ describe('callCore — static resolution against the private internal handler in
   it('every non-literal call site is a known one, with where its literals come from', () => {
     const keys = dynamic.map((d) => d.replace(/:\d+ /, ' '));
     expect(keys.sort()).toEqual([...DYNAMIC_CALL_SITES.keys()].sort());
+  });
+
+  it('provenCampaignId (it skips the page reads\' ownership check) is passed only by the spine export drain', () => {
+    // A caller that set it without first proving ownership would read another account's
+    // attempts unchecked, so each new call site is a decision made here, not elsewhere.
+    const passing = walk(SRC)
+      .filter((file) => !file.endsWith('core-dispatch.ts'))
+      .filter((file) => /provenCampaignId\s*:/.test(readFileSync(file, 'utf8')))
+      .map((file) => relative(SRC, file));
+    expect(passing).toEqual([PROVEN_CAMPAIGN_CALLER]);
+    expect(readFileSync(join(SRC, PROVEN_CAMPAIGN_CALLER), 'utf8').match(/provenCampaignId\s*:/g)).toHaveLength(1);
   });
 
   it('every internal route is reached by a call site, or listed as unreached with its reason', () => {
@@ -225,6 +252,20 @@ describe('callCore — tenancy and transport', () => {
     expect(seen!.headers['x-mgkvc-tenant']).toBe('t1');
     expect(seen!.headers['x-mgkvc-account']).toBeUndefined();
     expect(seen!.headers['x-mgkvc-originator']).toBeUndefined();
+  });
+
+  it('sets x-mgkvc-proven-campaign only from provenCampaignId, never from a forwarded header', async () => {
+    setCoreHandlers(stub);
+    await callCore({
+      method: 'GET', path: '/agency-campaigns/c1/attempts', tenantId: 't1', accountId: 'a1',
+      headers: { 'X-Mgkvc-Proven-Campaign': 'c1' },
+    });
+    expect(seen!.headers['x-mgkvc-proven-campaign']).toBeUndefined();
+    await callCore({
+      method: 'GET', path: '/agency-campaigns/c1/attempts', tenantId: 't1', accountId: 'a1',
+      provenCampaignId: 'c1', headers: { 'x-mgkvc-proven-campaign': 'c9' },
+    });
+    expect(seen!.headers['x-mgkvc-proven-campaign']).toBe('c1');
   });
 
   it("encodes the query with URLSearchParams and keeps JSON round-tripping (a Date arrives as its ISO string)", async () => {

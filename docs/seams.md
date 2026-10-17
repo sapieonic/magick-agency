@@ -20,6 +20,8 @@ and its pinning test, never by adapting one side to the other.
 | Metric declarations | `packages/observability/src/metrics/<area>.ts` |
 | The dialer's wire contract | `packages/contracts/src/agency.ts` |
 | Leaf dialer rules (no imports, or only contracts and other leaves: abandonment predicate, timers, rates, keyset cursor, success disposition, ...) | `packages/domain/src/` |
+| A route plugin's routes, once it is large | the exported plugin function, its hooks and module note stay in `apps/server/src/api/routes/<family>.routes.ts`; the routes go in `apps/server/src/api/routes/<family>/` as `register…(app)` functions it calls on the same instance, so its hooks apply to them and the area plugin does not change |
+| Helpers shared by several route files (ownership probe, parse-or-400, CSV attachment, page drain, ...) | `apps/server/src/api/routes/helpers/` |
 | Unit and integration tests | the package's `test/unit/<path>` and `test/integration/<path>`, mirroring `src/<path>` |
 
 ## 2. Module-area files in the shared server
@@ -101,7 +103,8 @@ implementation enqueues correctly.
 
 ### 3.3 Super-admin concurrency writes → guard
 
-`apps/server/src/seams/concurrency-control.ts`. The super-admin concurrency routes write the
+`apps/server/src/seams/concurrency-control.ts`. The super-admin concurrency routes
+(`api/routes/super-admin/concurrency.ts`) write the
 allocation through the shared repository, then invalidate in order: settings cache, account guard,
 provider guard (the two guard calls go through `getConcurrencyControl()`). The utilization read
 (`getAccountCount`) and the provider-mode migration's drain check (`getDistributedAccountCount`, on
