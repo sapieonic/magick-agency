@@ -295,20 +295,18 @@ export class WebRtcCallRepository {
    * settlement exactly once. `excludeIds` are the calls this replica is actively
    * bridging in memory; the age threshold guards live long calls on other replicas.
    * Uses `FOR UPDATE SKIP LOCKED` so concurrent sweeps do not double-claim a row.
+   *
+   * The pick is a MATERIALIZED CTE, run once, so the sweep fails at most `limit`
+   * rows. As `WHERE id IN (SELECT … LIMIT $3 FOR UPDATE SKIP LOCKED)` it could be
+   * planned as a nested-loop semi join that re-runs the locking subquery for every
+   * outer row, each re-run skipping the rows already updated, and fail every stuck
+   * row at once (`test/integration/repositories/claim-limit.test.ts`).
    */
   async failStaleActive(olderThan: Date, excludeIds: string[] = [], limit = 1000): Promise<WebRtcCallRecord[]> {
     const pool = getPool();
     const exclude = excludeIds.length > 0 ? excludeIds : null;
     const result = await pool.query<WebRtcCallRecord>(
-      `UPDATE agency_calls SET
-         status = 'failed',
-         outcome = 'stuck_active_call',
-         error_code = 'STUCK_ACTIVE_CALL',
-         error_message = 'stuck active call: WebRTC call exceeded the self-heal sweep window without reaching a terminal state',
-         ended_at = now(),
-         duration_seconds = COALESCE(duration_seconds, EXTRACT(EPOCH FROM (now() - created_at))::int),
-         talk_time_seconds = COALESCE(talk_time_seconds, 0)
-       WHERE id IN (
+      `WITH picked AS MATERIALIZED (
          SELECT id FROM agency_calls
          WHERE status IN ('initiating','ringing','in_progress')
            AND created_at < $1
@@ -317,7 +315,17 @@ export class WebRtcCallRepository {
          LIMIT $3
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING *`,
+       UPDATE agency_calls c SET
+         status = 'failed',
+         outcome = 'stuck_active_call',
+         error_code = 'STUCK_ACTIVE_CALL',
+         error_message = 'stuck active call: WebRTC call exceeded the self-heal sweep window without reaching a terminal state',
+         ended_at = now(),
+         duration_seconds = COALESCE(duration_seconds, EXTRACT(EPOCH FROM (now() - created_at))::int),
+         talk_time_seconds = COALESCE(talk_time_seconds, 0)
+       FROM picked
+       WHERE c.id = picked.id
+       RETURNING c.*`,
       [olderThan, exclude, limit],
     );
     return result.rows;

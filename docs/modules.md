@@ -916,6 +916,7 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/integration/repositories/audio-file.repository.test.ts` | ~11 |
 | `packages/db/test/integration/repositories/audit.repository.test.ts` | ~12 |
 | `packages/db/test/integration/repositories/call-analysis-profile.repository.test.ts` | ~6 |
+| `packages/db/test/integration/repositories/claim-limit.test.ts` | 5 |
 | `packages/db/test/integration/repositories/dialer-analysis-job.repository.test.ts` | ~9 |
 | `packages/db/test/integration/repositories/membership.repository.test.ts` | ~33 |
 | `packages/db/test/integration/repositories/phone-number.repository.test.ts` | ~8 |

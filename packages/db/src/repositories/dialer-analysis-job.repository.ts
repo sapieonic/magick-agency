@@ -27,7 +27,12 @@ import type {
  *
  * Multi-replica safety rests on two techniques used elsewhere in the repo:
  *   - `FOR UPDATE SKIP LOCKED` for claiming (the failStaleActive technique), so
- *     concurrent workers never double-claim a row.
+ *     concurrent workers never double-claim a row. Every batch pick is a
+ *     MATERIALIZED CTE (or, in `expireAwaitingRecording`, a CTE Postgres already
+ *     materialises because it locks rows), run once, so a batch takes at most its
+ *     `limit`: as `WHERE id IN (SELECT … LIMIT n FOR UPDATE SKIP LOCKED)` the pick
+ *     could be re-run per outer row of a nested-loop semi join and take every
+ *     eligible row (`test/integration/repositories/claim-limit.test.ts`).
  *   - claim-generation fencing (`WHERE ... AND claim_generation = $N`) on every
  *     persisting write, so a resurrected original runner can't stomp a recovered
  *     run's output.
@@ -185,21 +190,22 @@ export class DialerAnalysisJobRepository {
   async promoteRecordingReady(settleSeconds = 0, limit = 500): Promise<number> {
     const pool = getPool();
     const result = await pool.query(
-      `WITH promoted AS (
+      `WITH picked AS MATERIALIZED (
+         SELECT id FROM dialer_analysis_jobs
+         WHERE status = 'awaiting_recording'
+         ORDER BY created_at
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED
+       ),
+       promoted AS (
          UPDATE dialer_analysis_jobs j
          SET status = 'queued',
              next_attempt_at = now() + ($1::int * INTERVAL '1 second')
-         FROM agency_calls c
-         WHERE j.call_id = c.id
+         FROM agency_calls c, picked
+         WHERE j.id = picked.id
+           AND j.call_id = c.id
            AND j.status = 'awaiting_recording'
            AND c.recording_url IS NOT NULL
-           AND j.id IN (
-             SELECT id FROM dialer_analysis_jobs
-             WHERE status = 'awaiting_recording'
-             ORDER BY created_at
-             LIMIT $2
-             FOR UPDATE SKIP LOCKED
-           )
          RETURNING j.call_id
        ),
        mirror AS (
@@ -272,14 +278,7 @@ export class DialerAnalysisJobRepository {
   async claimRunnable(limit: number): Promise<DialerAnalysisJobRecord[]> {
     const pool = getPool();
     const result = await pool.query<DialerAnalysisJobRecord>(
-      `UPDATE dialer_analysis_jobs
-       SET status = 'transcribing',
-           claimed_at = now(),
-           heartbeat_at = now(),
-           claim_generation = claim_generation + 1,
-           attempts = attempts + 1,
-           attempts_total = attempts_total + 1
-       WHERE id IN (
+      `WITH picked AS MATERIALIZED (
          SELECT id FROM dialer_analysis_jobs
          WHERE status = 'queued'
            AND (next_attempt_at IS NULL OR next_attempt_at <= now())
@@ -287,7 +286,16 @@ export class DialerAnalysisJobRepository {
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING *`,
+       UPDATE dialer_analysis_jobs j
+       SET status = 'transcribing',
+           claimed_at = now(),
+           heartbeat_at = now(),
+           claim_generation = claim_generation + 1,
+           attempts = attempts + 1,
+           attempts_total = attempts_total + 1
+       FROM picked
+       WHERE j.id = picked.id
+       RETURNING j.*`,
       [limit],
     );
     return result.rows;
@@ -596,8 +604,16 @@ export class DialerAnalysisJobRepository {
   ): Promise<DialerAnalysisJobRecord[]> {
     const pool = getPool();
     const result = await pool.query<DialerAnalysisJobRecord>(
-      `WITH recovered AS (
-         UPDATE dialer_analysis_jobs
+      `WITH picked AS MATERIALIZED (
+         SELECT id FROM dialer_analysis_jobs
+         WHERE status IN ('transcribing','analyzing')
+           AND (heartbeat_at IS NULL OR heartbeat_at < $1)
+         ORDER BY heartbeat_at NULLS FIRST
+         LIMIT $3
+         FOR UPDATE SKIP LOCKED
+       ),
+       recovered AS (
+         UPDATE dialer_analysis_jobs j
          SET status = CASE WHEN attempts_total >= $2 THEN 'failed' ELSE 'queued' END,
              attempts = CASE WHEN attempts_total >= $2 THEN attempts ELSE GREATEST(attempts - 1, 0) END,
              claim_generation = claim_generation + 1,
@@ -605,15 +621,9 @@ export class DialerAnalysisJobRepository {
              error_code = CASE WHEN attempts_total >= $2 THEN 'SYSTEM_REBOOTED' ELSE error_code END,
              error_message = CASE WHEN attempts_total >= $2
                THEN 'recovered too many times; owning process kept dying' ELSE error_message END
-         WHERE id IN (
-           SELECT id FROM dialer_analysis_jobs
-           WHERE status IN ('transcribing','analyzing')
-             AND (heartbeat_at IS NULL OR heartbeat_at < $1)
-           ORDER BY heartbeat_at NULLS FIRST
-           LIMIT $3
-           FOR UPDATE SKIP LOCKED
-         )
-         RETURNING *
+         FROM picked
+         WHERE j.id = picked.id
+         RETURNING j.*
        ), mirrored AS (
          UPDATE agency_calls AS c
          SET analysis_status = CASE WHEN recovered.status = 'failed' THEN 'failed' ELSE 'pending' END
