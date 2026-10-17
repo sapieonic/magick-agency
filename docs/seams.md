@@ -15,10 +15,11 @@ and its pinning test, never by adapting one side to the other.
 |---|---|
 | Server modules | `apps/server/src/<area>/...` |
 | Repositories and models used by more than one area | `packages/db/src/repositories/`, `packages/db/src/models/` |
-| The agency repository, its model and the DNC outbox repository (they import about fifteen `apps/server/src/agency/` modules) | `apps/server/src/db/repositories/`, `apps/server/src/db/models/` (decision B12) |
+| The agency repository and its model (they import about fifteen `apps/server/src/agency/` modules) | `apps/server/src/db/repositories/agency.repository.ts`, a barrel over one file per repository class in `apps/server/src/db/repositories/agency/` (callers and `vi.mock` use the barrel path); `apps/server/src/db/models/` (decision B12) |
 | Logger, log context, crypto, metric instruments, tracing (`Traced`, `withSpan`) | `packages/observability/src/` |
 | Metric declarations | `packages/observability/src/metrics/<area>.ts` |
-| The dialer's wire contract | `packages/contracts/src/agency.ts` |
+| The dialer's wire contract | `packages/contracts/src/agency.ts`, a barrel over `packages/contracts/src/agency/` |
+| UI components, hooks and helpers used by both SPAs | `packages/web-ui/src/` (decision B23) |
 | Leaf dialer rules (no imports, or only contracts and other leaves: abandonment predicate, timers, rates, keyset cursor, success disposition, ...) | `packages/domain/src/` |
 | A route plugin's routes, once it is large | the exported plugin function, its hooks and module note stay in `apps/server/src/api/routes/<family>.routes.ts`; the routes go in `apps/server/src/api/routes/<family>/` as `register…(app)` functions it calls on the same instance, so its hooks apply to them and the area plugin does not change |
 | Helpers shared by several route files (ownership probe, parse-or-400, CSV attachment, page drain, ...) | `apps/server/src/api/routes/helpers/` |

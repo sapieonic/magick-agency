@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-10-09.
+"is it done". As of 2026-10-17.
 
 ## Summary
 
@@ -43,7 +43,88 @@ super-admins add (not env). Built in steps:
 | 4 Dialler integration | Not started | Campaigns pin a credential; caller IDs limited to the credential's synced numbers; pause on carrier 401; `plivo` concurrency allocations; activate the `plivo` provider row (seeded inactive by 0002). Obligations the step-2 code leaves to this step: dial through `getForCredentialId(provider, id, 'dial', tenantId)`; insert the call row in a statement that re-checks the credential is `active` (revoke and shred lock the credential row, which waits out an insert in flight but cannot stop one that starts after them); pin a campaign only to an `active` credential; a metric and alert for missing keyring ids and failed sweeps (today they are ERROR/WARN logs); persist the dial's `providerRequestId` (Plivo `request_uuid`) to `provider_request_id` and the session, and give the hangup a way to cancel by it: `TelephonyProvider.endCall` takes only `providerCallId`, and `hangupProviderLeg` returns without a carrier call when that is empty, so a pre-answer teardown of a Plivo call does not reach the carrier today |
 | 5 Live check | Not started | One real Plivo call and one recording analysed (needs a Plivo account) |
 
+### Tidy-up 2026-10-16/17
+
+Manas asked on 2026-10-16 for the whole tidy-up plan to be implemented. Decisions and the
+defaults still to ratify are in [`decisions.md`](decisions.md), "Rulings of 2026-10-16/17
+(tidy-up)", and B23.
+
+| Area | What changed |
+|---|---|
+| Shared UI | New package `packages/web-ui` (B23): the 15 shared components, `ToastContext`, `global.css`, error and format helpers, `parseApiErrorBody`, `useAsyncResource`, `useDialogFocus` (one focus trap), `mapWithConcurrency`; both SPAs import it, `docker/web.Dockerfile` copies it, and it has its own branding guard |
+| Contracts | Dialer contract split into `packages/contracts/src/agency/` behind `agency.ts`; console wire types re-export or derive from it; one `AGENCY_STATION_CLOSE`; campaign config defaults and both rate floors moved in; `AGENCY_STATION_ERROR_CODES`, `api/platform/audit.ts` and the `zod` dependency removed |
+| Database | Migration `0003_agency_attempt_indexes.sql` (live-attempt predicate, answered and connected partial indexes, the redundant reporting index dropped; plans in `packages/db/BASELINE.md`); `withTransaction` in `packages/db/src/utils/transaction.ts`; batch claims and sweeps through a `MATERIALIZED` CTE (below) |
+| Server, agency | The agency repository split into `apps/server/src/db/repositories/agency/` behind the `agency.repository.ts` barrel; `pacing-engine.ts`, `agency-dialer.ts` and `agent-record.ts` split into `pacing/`, `dialer/` and `agent-record/`; pacing `stop()` awaits ticks in flight (5 s bound) and the dialer re-checks just before the carrier; settle paths survive a failed row write; ingest totals exact under concurrent chunks; one `dialedAt` instant |
+| Server, API | Route families (`<family>.routes.ts` plus `<family>/`), shared helpers in `api/routes/helpers/`; `forwardCore` / `forwardCoreVia` in `core-dispatch.ts`; the proven-campaign fast path for the spine export; internal `GET /agency-campaigns/summaries` for the staffing `my-*` routes |
+| Server, voice | `webrtc-bridge-manager.ts` split into `core/bridge/` (admission, types, WS tokens); the unstored-token memo capped at 10 000 |
+| Console | Large pages, hooks and utils split into folders (campaign detail, campaigns home, station, analytics, roster, overview, config form); one display locale `en-IN` and one rounding rule on the analytics surfaces; a typed `EventCatalog` for analytics; `useTeam` / `useAccounts` / `usePhoneNumbers` on `useAsyncResource` |
+| Super-admin | Error messages in the console's order; phone numbers filtered client-side; accounts list reports `unavailable` on a failed allocation read; role enum in `ROLES` order |
+
+**A pre-existing bug, found and fixed.** The batch claims and sweeps (`claimDialable`,
+`failStaleActive`, `claimRunnable`, `recoverStale`, `promoteRecordingReady`) could claim far more
+than `limit`: under a nested-loop semi-join plan Postgres re-ran the locking subquery and claimed
+the whole eligible set, which in the dialer meant dials with no agent and
+`agency:agent:undefined:state` leases. Each now picks its rows in a `MATERIALIZED` CTE
+(`fix(db): batch claims and sweeps take at most limit rows`), with tests that force the
+re-running plan (`apps/server/test/integration/agency/agency-contact-claim-limit.test.ts`,
+`packages/db/test/integration/repositories/claim-limit.test.ts`).
+
+**Skipped, with the reason:**
+
+- Pacing reading agent states only after headroom: the `no_agents` vs `no_slots` telemetry needs
+  the reads.
+- Caching `getMaxConcurrentCalls`: it would defeat cross-replica invalidation.
+- Throttling `countOutstanding`: it changes which tick finalizes.
+- One per-campaign `LeadState` map in pacing: the collections have different lifetimes.
+- Splitting the bridge's media relay, carrier events and teardown, and pacing's `maybeFinalize`:
+  bound to private state.
+- A raw passthrough in `callCore`: it would bypass the content-type and error-mask handling.
+- A streaming CSV export: the headers and preamble need the final row count.
+- The campaigns home's per-campaign `/stats` N+1: needs a batch stats contract.
+- Migrating the 114 `trackX` call sites to `track<K>()`.
+- The super-admin `FlagDialog`'s own focus trap, and the 4-state analytics hooks' own generation
+  guards.
+- Console list hooks other than `useTeam`, `useAccounts` and `usePhoneNumbers` (now on
+  `useAsyncResource`).
+
+**Follow-ups:**
+
+- The T-L4c lease guard's literal-TTL regex (`\b'PX'`, in
+  `apps/server/test/integration/agency/chaos/lease-renewer-killed.test.ts`) never matches: `\b`
+  before a quote needs a word character in front of it.
+- Raw `BEGIN` sites could adopt `withTransaction`: in `packages/db`, the call-analysis-profile
+  and membership repositories (and others: provider concurrency, tenant phone assignment,
+  dialer analysis jobs, telephony credentials), and in the server the mark-DNC route and audit
+  partition maintenance. Only the helper's sites and the membership repository destroy a client
+  whose ROLLBACK failed.
+- The agency repository still imports runtime values from `apps/server/src/agency/agent-record.ts`.
+- Stale comments citing `useBrowserCall` / `useWebRtcCall` in `useAudioCapture`,
+  `useAgencyAudio` and `agencyMedia`.
+- The reader's default locale remains on the station, activity, spine, retry, notes, ingest,
+  builder, contacts and attempts pages and in `AgencyRetryDialog`.
+- `AgentBucketChart`'s title reads "1 dials".
+- A `released` that lands before React renders its `reserved` does not retain the panel (latent,
+  unchanged).
+
 ## Test counts
+
+Latest run, 2026-10-17, after the tidy-up, from inside each package:
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 6693 passed + 42 skipped | 1206 |
+| `packages/db` | 426 | 468 |
+| `packages/domain` | 53 | — |
+| `packages/contracts` | 77 | — |
+| `packages/observability` | 14 | — |
+| `packages/web-ui` | 228 | — |
+| `apps/console` | 4410 | — |
+| `apps/super-admin` | 421 | — |
+| `grafana` (`pnpm test:grafana`) | 31 | — |
+
+`pnpm lint`: clean in 8 packages.
+
+Earlier runs follow, oldest first.
 
 Final full run on 2026-10-09, after `pnpm install --frozen-lockfile`, from inside each package.
 
@@ -123,7 +204,9 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Item | What is needed |
 |---|---|
 | `supervisor_hold` | Declared, never produced. Keep, remove or build |
-| Shutdown grace | Ratify `stop_grace_period: 45s`, now in `docker/docker-compose.prod.yml` (the completion-email drain is 30 s; Docker's default grace is 10 s). And: should shutdown await an in-flight pacing tick? |
+| Shutdown grace | Ratify `stop_grace_period: 45s`, now in `docker/docker-compose.prod.yml` (the completion-email drain is 30 s; Docker's default grace is 10 s), and the new wait for in-flight pacing ticks (5 s bound) |
+| Tidy-up defaults | Ratify the **default, pending Manas** rows of the 2026-10-16/17 rulings, including the `en-IN` display locale and the rounding rule |
+| Rate floors | Campaign rates withheld under 25 dials, agent rates under 20: one number or two? |
 | Launch defaults | Ratify: re-issue invites; inbound calls play a message and hang up; abandon clip upload-only; no API keys; super-admins created fresh |
 | Launch open items | Existing numbers; launch style; domain, feature freeze, rollback window |
 | Q3 contract choices | Ratify the five |
@@ -194,7 +277,7 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
 ## Recommended next steps, in order
 
 1. **Ratify the decisions** that need no vendors: launch defaults, Q3, `supervisor_hold`, the
-   shutdown grace and in-flight tick question, B15.
+   shutdown grace and in-flight tick wait, B15, the tidy-up defaults; settle the rate floors.
 2. **Vendor setup**, because it has lead time: agency's VoiceLink account (ask about moving
    existing numbers and recording retention), Firebase authorised domain,
    Mailjet sender and domain, S3 bucket, Gemini / OpenAI keys, domain and TLS, PostHog.
