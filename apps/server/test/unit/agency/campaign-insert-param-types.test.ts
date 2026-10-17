@@ -44,9 +44,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // The column types are read off the squashed BASELINE (one CREATE TABLE, no later
 // ALTERs); the INSERT has 20 columns.
 const BASELINE = resolve(__dirname, '../../../../../packages/db/migrations/0001_baseline.sql');
+// `create()` lives in the repository; the column list it interpolates in the shared
+// SQL fragments (`retryFromCampaign` binds the same twenty).
 const REPOSITORY = resolve(__dirname, '../../../src/db/repositories/agency.repository.ts');
+const FRAGMENTS = resolve(__dirname, '../../../src/db/repositories/agency/sql-fragments.ts');
 
 const repoSource = readFileSync(REPOSITORY, 'utf8');
+const fragmentsSource = readFileSync(FRAGMENTS, 'utf8');
 
 /** Strip `--` line comments; the headers in this repo are enormous. */
 function withoutComments(sql: string): string {
@@ -128,9 +132,9 @@ const TEXT_ASSIGNABLE = /^(text|varchar(\(\d+\))?|character varying(\(\d+\))?|ch
 
 // ── The INSERT under test, parsed out of the repository source ───────────────
 
-/** The text of `CAMPAIGN_INSERT_COLUMNS_SQL`, read off the repository source. */
+/** The text of `CAMPAIGN_INSERT_COLUMNS_SQL`, read off the SQL fragments source. */
 function insertColumnsConstant(): string {
-  const m = /const CAMPAIGN_INSERT_COLUMNS_SQL = `([^`]*)`;/.exec(repoSource);
+  const m = /const CAMPAIGN_INSERT_COLUMNS_SQL = `([^`]*)`;/.exec(fragmentsSource);
   expect(m, 'CAMPAIGN_INSERT_COLUMNS_SQL was not found — this parser is stale').toBeTruthy();
   return m![1]!;
 }

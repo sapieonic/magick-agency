@@ -9,6 +9,7 @@ import { isUniqueViolation } from '@magick-agency/db/pg-errors';
 import { withTransaction } from '@magick-agency/db/utils/transaction';
 import { createChildLogger } from '@magick-agency/observability';
 import { UUID_RE } from '../../utils/uuid.js';
+import { AGENCY_ATTEMPT_LIVE_STATES, AGENCY_CAMPAIGN_TERMINAL_STATUSES } from '../models/agency.model.js';
 import type {
   AgencyAgentSessionRecord,
   AgencyCallAttemptRecord,
@@ -19,14 +20,12 @@ import type {
   AgencyContactRecord,
   AgencyLapsedWrapupRow,
 } from '../models/agency.model.js';
-import { AGENCY_ATTEMPT_LIVE_STATES, AGENCY_CAMPAIGN_TERMINAL_STATUSES } from '../models/agency.model.js';
 // The supervisor read surface's cursor. `KEYSET_AT_SQL` is projected
 // alongside every paged row so the cursor carries `created_at` at its true
 // MICROSECOND precision — see that module for why a millisecond round-trip
 // silently drops rows.
-import { keysetAtSql, encodeKeysetCursor, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
-import type { AgencyAttemptFilters, AgencyContactFilters, PhoneFilter } from '../../agency/spine-filters.js';
-import { RETRY_NO_OUTCOME } from '../../agency/spine-filters.js';
+import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
+import type { AgencyAttemptFilters, AgencyContactFilters } from '../../agency/spine-filters.js';
 // A LEAF module by design — see its header. Importing the predicate from the
 // metrics module instead would give this repository a dependency on the thing it
 // exists to independently audit.
@@ -39,55 +38,18 @@ import {
 // The route/repository split of the stats payload, imported rather than restated
 // as a second `Omit<..., 'campaign_id' | 'status' | ...>` literal: two copies of
 // "who produces what" is how one producer quietly stops owning a field.
-import { AGENCY_STATS_ROUTE_FIELDS } from '@magick-agency/contracts/agency';
-import type {
-  AgencyCampaignLineage,
-  AgencyRetryPreview,
-  AgencyRetrySelector,
-} from '@magick-agency/contracts/agency';
-// The shared retry bounds. A leaf module, imported rather
-// than restated, so the number the API publishes as `max_seed_rows` and the number
-// the transaction refuses on are the same token.
-import { PRIOR_ATTEMPT_LIMIT, RETRY_MAX_SEED_ROWS } from '@magick-agency/domain/retry-campaign-bounds';
 // The roster's rate-reportability floor. Imported rather than restated because it
 // is a SHARED number: the console renders "not enough calls" from the same
 // threshold, and a second copy here is how these percentiles come to exclude a
 // row the console still labels reportable.
-import { AGENCY_ROSTER_MIN_RATE_DENOMINATOR } from '@magick-agency/contracts/agency';
-// The window the strip's copy names, imported so the SQL and the sentence agree.
-// From the LEAF both this repository and `campaign-health.ts` import (B9), never
-// from the campaign-management module that consumes this repository's rows.
-import { DEFAULT_ABANDONMENT_CEILING_PCT, RECENT_FAILURE_WINDOW_MINUTES } from '../../agency/campaign-thresholds.js';
-// THE null-not-zero rate rule, in one place. Imported rather than re-expressed at
-// each of the five call sites below — see the module for why a `0` on an empty
-// denominator is the failure this exists to prevent.
-import { ratePct, ratio } from '@magick-agency/domain/rates';
-// What counts as a conversion, as SQL. A leaf module for the same reason
-// `ABANDONED_ATTEMPT_PREDICATE_SQL` is one: the campaign roll-up and the agent
-// record must count the SAME thing, and two spellings of a JSONB predicate is how
-// two screens come to disagree about how many sales there were.
-import { successDispositionSql } from '@magick-agency/domain/success-disposition';
-// The agent record's parsed window, its bucket vocabulary and the ONE spelling of
-// a bucket boundary. `bucketStartSql` is shared by both aggregates below so the
-// attempt buckets and the occupancy buckets cannot be cut differently.
-// The roster read adds its own three: the ranking rule (nulls last both ways,
-// `agent_user_id` as the tiebreaker), the percentile rule, and the parsed params.
-// All three are pure and live there so they can be exercised without a pool — see
-// `roster()` for why the ranking cannot happen in SQL at all.
 import {
-  bucketStartSql,
-  bucketTruncSql,
-  foldOccupancy,
-  groupedPageHasSingleZone,
-  rosterPercentiles,
-  sortRosterRows,
-  zeroOccupancy,
-  type AgentAttemptFilters,
-  type AgentGroupedParams,
-  type AgentRosterParams,
-  type AgentStatsParams,
-} from '../../agency/agent-record.js';
+  AGENCY_STATS_ROUTE_FIELDS,
+  AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
+} from '@magick-agency/contracts/agency';
 import type {
+  AgencyCampaignLineage,
+  AgencyRetryPreview,
+  AgencyRetrySelector,
   AgencyAgentLiveState,
   AgencyAgentOccupancy,
   AgencyAgentsByState,
@@ -116,10 +78,52 @@ import type {
   AgencyRosterBenchmark,
   AgencyRosterPage,
 } from '@magick-agency/contracts/agency';
+// The shared retry bounds. A leaf module, imported rather
+// than restated, so the number the API publishes as `max_seed_rows` and the number
+// the transaction refuses on are the same token.
+import { PRIOR_ATTEMPT_LIMIT, RETRY_MAX_SEED_ROWS } from '@magick-agency/domain/retry-campaign-bounds';
+// The window the strip's copy names, imported so the SQL and the sentence agree.
+// From the LEAF both this repository and `campaign-health.ts` import (B9), never
+// from the campaign-management module that consumes this repository's rows.
 // The compliance ceiling the supervisor gauge is drawn against (imported above,
 // from the same leaf), rather than re-declared: the abandonment auto-pause fires on
 // the same number, and two copies of a regulatory threshold is how a dashboard
 // comes to draw one line while the guardrail enforces another.
+import {
+  DEFAULT_ABANDONMENT_CEILING_PCT,
+  RECENT_FAILURE_WINDOW_MINUTES,
+} from '../../agency/campaign-thresholds.js';
+// THE null-not-zero rate rule, in one place. Imported rather than re-expressed at
+// each of the five call sites below — see the module for why a `0` on an empty
+// denominator is the failure this exists to prevent.
+import { ratePct, ratio } from '@magick-agency/domain/rates';
+// What counts as a conversion, as SQL. A leaf module for the same reason
+// `ABANDONED_ATTEMPT_PREDICATE_SQL` is one: the campaign roll-up and the agent
+// record must count the SAME thing, and two spellings of a JSONB predicate is how
+// two screens come to disagree about how many sales there were.
+import { successDispositionSql } from '@magick-agency/domain/success-disposition';
+// The agent record's parsed window, its bucket vocabulary and the ONE spelling of
+// a bucket boundary. `bucketStartSql` is shared by both aggregates below so the
+// attempt buckets and the occupancy buckets cannot be cut differently.
+// The roster read adds its own three: the ranking rule (nulls last both ways,
+// `agent_user_id` as the tiebreaker), the percentile rule, and the parsed params.
+// All three are pure and live there so they can be exercised without a pool — see
+// `roster()` for why the ranking cannot happen in SQL at all.
+import {
+  bucketStartSql,
+  bucketTruncSql,
+  foldOccupancy,
+  groupedPageHasSingleZone,
+  rosterPercentiles,
+  sortRosterRows,
+  zeroOccupancy,
+} from '../../agency/agent-record.js';
+import type {
+  AgentAttemptFilters,
+  AgentGroupedParams,
+  AgentRosterParams,
+  AgentStatsParams,
+} from '../../agency/agent-record.js';
 // THE single definition of "the same number", imported rather than re-expressed.
 // `DncRegistry.check` runs this on both sides of its comparison and
 // `markDnc` runs it before storing; `suppressByPhone` below must agree
@@ -138,6 +142,29 @@ import type { CampaignSeriesParams } from '../../agency/campaign-series.js';
 // abandoned write-up back into the human column, which is the defect the bucket
 // exists to remove. Safe to import: `disposition.ts` has type-only imports.
 import { AUTO_DISPOSITION_CODE } from '../../agency/disposition.js';
+import {
+  AGENCY_ATTEMPT_METRICS_SQL,
+  AGENCY_RESOLVED_ZONE_JOIN_SQL,
+  AGENCY_RESOLVED_ZONE_SQL,
+  CAMPAIGN_INSERT_COLUMNS_SQL,
+  CONTACT_PHONE_DIGITS_SQL,
+  WRAPUP_MEASURED_RESOLUTIONS_SQL,
+  occupancyIntervalsCtes,
+  readAttemptMetrics,
+} from './agency/sql-fragments.js';
+import {
+  attemptFilterConditions,
+  contactFilterConditions,
+  keysetCondition,
+  neverSeededSuppressionSql,
+  params,
+  phoneCondition,
+  retrySelectionConditions,
+  toKeysetPage,
+} from './agency/query-builders.js';
+import { hasRateDenominator, iso, projectAttemptRow, projectContactRow } from './agency/projections.js';
+
+export { occupancyIntervalsCtes } from './agency/sql-fragments.js';
 
 const log = createChildLogger({ component: 'agency-repository' });
 
@@ -209,391 +236,6 @@ interface AgencyIngestResult {
 const MAX_REPORTED_DUPLICATE_ROWS = 20;
 
 /**
- * "This roster row's number, digits only" — the PREFILTER for
- * {@link AgencyContactRepository.suppressByPhone}, and nothing more.
- *
- * ⚠️ It is **not** a normalizer and must never be used as one. Every string
- * `normalizeE164` accepts is made of digits plus characters this drops, so a row
- * that normalizes to a given number always survives this filter — the converse
- * does not hold (`1a4155550100` passes here and is `null` there), which is why the
- * exact decision stays in TypeScript. Being deliberately looser is what makes it
- * safe: a prefilter that could reject a real match would be a fail-open.
- *
- * A literal fragment with no interpolated input, and it must stay byte-identical
- * to the expression indexed by `idx_agency_contacts_campaign_phone_digits`
- * — Postgres matches expression indexes structurally, so a stray
- * space or a `'[^\d]'` spelling costs the index and turns an agent's button press
- * into a scan of every contact in the campaign, silently.
- */
-const CONTACT_PHONE_DIGITS_SQL = "regexp_replace(phone_e164, '[^0-9]', '', 'g')";
-
-
-/**
- * The wrap-up resolutions that are evidence of how long wrap-up TAKES.
- *
- * `disposition_submitted` (the agent finished and said so), `auto_return` (the
- * agent used the whole window — the one that says the allotment is too short) and
- * `agent_returned` (the agent finished early and went available without a
- * disposition, the fastest wrap-ups there are). `forced`, `agent_left` and
- * `campaign_stopped` are excluded: each measures a supervisor's patience, an
- * agent vanishing or a campaign ending, and all three move the average toward
- * "shorten the allotment" — the opposite of what those events mean.
- */
-const WRAPUP_MEASURED_RESOLUTIONS_SQL =
-  "wrapup_resolution IN ('disposition_submitted','auto_return','agent_returned')";
-
-/**
- * The RESOLVED campaign timezone, spelled once for the three statements that cut
- * something in it.
- *
- * Never `c.default_timezone` raw. That column is `VARCHAR(64)` with no constraint,
- * populated from customer-facing config, so it can hold anything — and
- * `some_ts AT TIME ZONE 'Mars/Olympus'` raises `22023 invalid_parameter_value`,
- * which nothing maps to a status. One campaign with a typo would therefore take out
- * every OTHER campaign's numbers in the same statement. The
- * {@link AGENCY_RESOLVED_ZONE_JOIN_SQL} that every caller carries turns that into a
- * per-row fallback: a zone Postgres will not resolve yields NULL, and this COALESCE
- * buckets those rows in UTC.
- *
- * `pg_timezone_names` carries zone NAMES, not the abbreviations in
- * `pg_timezone_abbrevs`, so a bare `IST` falls back to UTC — deliberately as strict
- * as `calling-hours.ts`'s `isUsableTimezone`, which refuses the same input.
- *
- * Shared rather than re-spelled at each site for the same reason
- * {@link AGENCY_ATTEMPT_METRICS_SQL} is: the per-agent record's buckets, its
- * occupancy intervals and the grouped read's time dimensions must fall on the SAME
- * boundaries, and three copies of one fallback is how one of them comes to bucket
- * an unresolvable zone somewhere else.
- */
-const AGENCY_RESOLVED_ZONE_SQL = "COALESCE(z.name, 'UTC')";
-
-/**
- * The join that RESOLVES that zone, in one spelling for the three statements that
- * carry it — and it is a LATERAL with `LIMIT 1` rather than a plain equi-join.
- *
- * ── Why LATERAL, when a plain LEFT JOIN read more simply ────────────────────
- *
- * The three call sites put this join inside an AGGREGATE's FROM clause, so its
- * cardinality is not a presentation detail: if `lower(z.name) = lower(...)` ever
- * matched TWO rows of `pg_timezone_names` for one campaign, that campaign's
- * attempts would be duplicated and every counter selected beside it —
- * {@link AGENCY_ATTEMPT_METRICS_SQL}'s five, and the roster's `campaigns` — would
- * double. Nothing in `pg_timezone_names` declares `lower(name)` unique; it is a
- * view over tzdata, whose contents change with the platform's zone files, so the
- * property is an assumption about data we do not own rather than a constraint we
- * enforce. No case-colliding pair is known in shipped tzdata and no failure could
- * be constructed — but `rosterAttemptTotals` has a byte-identical FROM and WHERE
- * clause EXCEPT this join, and the whole reason the metric expressions are shared
- * is that a supervisor subtracting the roster from the grouped read must get zero.
- * That property should not rest on an unasserted uniqueness claim.
- *
- * `LEFT JOIN LATERAL (… LIMIT 1) z ON true` removes the assumption outright: at
- * most one row, by construction, whatever tzdata holds. It preserves both
- * properties the plain join was carrying — a zone Postgres cannot resolve still
- * yields NULL for {@link AGENCY_RESOLVED_ZONE_SQL} to COALESCE to UTC, so one
- * campaign's typo still cannot raise `22023` and take out every other campaign's
- * numbers in the same statement.
- *
- * ⚠️ Which row `LIMIT 1` keeps is unordered, and that is deliberate rather than
- * overlooked: the only way two rows can match is a pair of names differing in case
- * alone, which are the same zone, so either row resolves to the same offsets. An
- * `ORDER BY` would be picking between two spellings of one answer.
- *
- * ✅ **EXECUTED.** No longer a claim about text: this join runs against Postgres 16
- * in `agent-stats-timezone-buckets.test.ts` (per-campaign bucketing, DST days, and
- * the unresolvable-zone fallback) and in `agent-grouped-read.test.ts` (the grouped
- * read's time dimensions, and `resolved_timezone` reading the join back out). The
- * uniqueness assumption the lateral removes was also checked directly —
- * `SELECT lower(name), count(*) FROM pg_timezone_names GROUP BY 1 HAVING count(*) > 1`
- * returns no rows on this platform's tzdata — which is evidence that no collision
- * exists today, not that none can, so the lateral stays.
- */
-const AGENCY_RESOLVED_ZONE_JOIN_SQL =
-  'LEFT JOIN LATERAL (SELECT z.name FROM pg_timezone_names z'
-  + ' WHERE lower(z.name) = lower(c.default_timezone) LIMIT 1) z ON true';
-
-/**
- * ── THE OCCUPANCY INTERVALS, IN ONE SPELLING ────────────────────────────────
- *
- * The `sess` / `in_window` / `carried` / `events` / `intervals` CTEs both occupancy
- * reads open with: `occupancyBuckets` (one agent, bucketed in the campaign's zone)
- * and `rosterOccupancyTotals` (a known set of agents, no buckets). The two must
- * agree — the roster's `shift_seconds` and the per-agent record's buckets are one
- * measurement asked at two altitudes, and a supervisor comparing them is entitled
- * to one answer — so the clips, the tiebreaks and the carried-in bound are written
- * ONCE, here. `occupancy-ctes.test.ts` asserts the two variants differ only in the
- * places listed in {@link OCCUPANCY_VARIANTS}.
- *
- * Both bind the same five values at the same positions: `$1` the agent selector,
- * `$2`/`$3` the window, `$4`/`$5` tenant and account. A swapped from/to would
- * survive review because `WHERE i.ended > i.started` absorbs an inverted window as
- * an empty result rather than as an error. `campaignFilter` is the optional
- * `AND s.campaign_id = $n::uuid` line, appended to `sess`.
- *
- * Callers append their own outer SELECT over `intervals i` (columns `state`,
- * `started`, `ended`, plus the variant's key).
- */
-const OCCUPANCY_VARIANTS = {
-  // The per-agent record: one agent, and the campaign's resolved zone carried down
-  // to the buckets.
-  agent: {
-    agentMatch: '= $1',
-    intervalKey: 'sess.zone',
-    sess: `         -- The agent's sessions that OVERLAP the window, never all of them. A
-         -- session's life is [joined_at, left_at), the window is [$2, $3), and two
-         -- half-open intervals overlap iff each starts before the other ends.
-         --
-         -- Unbounded, this CTE is what makes the whole read scale with the agent's
-         -- TENURE rather than with the window: every closed session the agent has
-         -- ever had still has a terminal event before $2, so carried hands each one
-         -- a carried-in interval that, having no successor inside the window, runs
-         -- the full width of it. Sixty past shifts become sixty full-window offline
-         -- intervals -- about 42 days of "offline" inside a 24-hour bucket -- and a
-         -- session abandoned in a non-offline state inflates shift_seconds by the
-         -- same construction.
-         SELECT s.id, s.left_at, s.joined_at, ${AGENCY_RESOLVED_ZONE_SQL} AS zone
-           FROM agency_agent_sessions s
-           JOIN agency_campaigns c ON c.id = s.campaign_id
-           ${AGENCY_RESOLVED_ZONE_JOIN_SQL}
-          WHERE s.agent_user_id = $1
-            AND s.tenant_id = $4
-            AND s.account_id = $5
-            AND s.joined_at < $3
-            AND (s.left_at IS NULL OR s.left_at > $2)\${campaignFilter}
-`,
-  },
-  // The roster: a known SET of agents, and no zone (a duration is
-  // zone-independent, and nothing here buckets).
-  roster: {
-    agentMatch: '= ANY($1::uuid[])',
-    intervalKey: 'sess.agent_user_id',
-    sess: `         -- The sessions that OVERLAP the window, never all of them. A session's
-         -- life is [joined_at, left_at), the window is [$2, $3), and two half-open
-         -- intervals overlap iff each starts before the other ends.
-         --
-         -- Unbounded, this CTE is what would make the read scale with TENURE
-         -- rather than with the window: every closed session still has a terminal
-         -- event before $2, so carried hands each one an interval that, having no
-         -- successor inside the window, runs the window's full width. Sixty past
-         -- shifts become sixty full-window offline intervals per agent.
-         SELECT s.id, s.agent_user_id, s.left_at, s.joined_at
-           FROM agency_agent_sessions s
-          WHERE s.tenant_id = $4
-            AND s.account_id = $5
-            AND s.agent_user_id = ANY($1::uuid[])
-            AND s.joined_at < $3
-            AND (s.left_at IS NULL OR s.left_at > $2)\${campaignFilter}
-`,
-  },
-} as const;
-
-type OccupancyVariant = keyof typeof OCCUPANCY_VARIANTS;
-
-/** The shared occupancy CTEs for `variant`; see {@link OCCUPANCY_VARIANTS}. */
-export function occupancyIntervalsCtes(variant: OccupancyVariant, campaignFilter: string): string {
-  const v = OCCUPANCY_VARIANTS[variant];
-  return `WITH sess AS (
-${v.sess.replace('${campaignFilter}', campaignFilter)}       ), in_window AS (
-         -- The predicate on e.agent_user_id is the denormalised copy the event
-         -- log carries, and it is what makes idx_agency_session_events_agent
-         -- (agent_user_id, at) usable: without it the planner has no predicate on
-         -- the index's leading column, so the range on at cannot be driven from it,
-         -- and session_id is indexed by nothing at all. The join to sess stays --
-         -- it applies the tenant/account scope and the optional campaign narrowing.
-         -- e.id rides along for the lead() tiebreak in intervals, for the same
-         -- reason carried's ORDER BY carries it: at alone is not unique.
-         SELECT e.session_id, e.to_state, e.at, e.id
-           FROM agency_agent_session_events e
-           JOIN sess ON sess.id = e.session_id
-          WHERE e.agent_user_id ${v.agentMatch}
-            AND e.at >= $2 AND e.at < $3
-       ), carried AS (
-         -- e.id DESC breaks a tie on at. DISTINCT ON returns whichever row the
-         -- executor reached first among rows equal on the ORDER BY, so two events
-         -- on one session sharing a timestamp make the state carried into the
-         -- window non-reproducible between two runs of the same query -- one run
-         -- reports the agent went on break at 08:55, the next reports available.
-         -- Ties are real in rows already in the table: before at was carried from
-         -- the mutation, the batch INSERT took the column's DEFAULT now(), which
-         -- is the transaction timestamp and therefore identical for every row of a
-         -- markAllOffline sweep of the whole floor.
-         SELECT DISTINCT ON (e.session_id) e.session_id, e.to_state, e.at, e.id
-           FROM agency_agent_session_events e
-           JOIN sess ON sess.id = e.session_id
-          WHERE e.agent_user_id ${v.agentMatch}
-            AND e.at < $2
-            -- The lower bound is what stops this range scan reading the agent's
-            -- whole tenure, and it is EXACT: a session's events never predate its
-            -- joined_at. recordTransitions is the only writer of this table and
-            -- stamps clock_timestamp() from the statement that moved the session,
-            -- which (on a server clock that does not step backwards) reads no
-            -- earlier than the INSERT that set joined_at (DEFAULT now(), never
-            -- updated). So every row DISTINCT ON could pick for a
-            -- session in sess is at or after the earliest joined_at in sess.
-            -- agent-occupancy-carried-bound.test.ts carries a month-old state.
-            AND e.at >= (SELECT MIN(joined_at) FROM sess)
-          ORDER BY e.session_id, e.at DESC, e.id DESC
-       ), events AS (
-         SELECT * FROM in_window
-         UNION ALL
-         SELECT * FROM carried
-       ), intervals AS (
-         -- Three clips on the close, and the third is not decoration.
-         --
-         -- lead() gives the next event on the same SESSION; its absence means the
-         -- newest event, i.e. the state the agent is in now, which has no end.
-         -- now() closes that, $3 closes it again for a historical window -- and
-         -- sess.left_at closes it for a session that ENDED. leave() sets left_at
-         -- and writes the closing offline event in the same call, but that write is
-         -- the best-effort one recordTransitions swallows with a warn: drop it and
-         -- a session closed at 11:30 in state available credits every remaining
-         -- second of the window to available, inflating shift_seconds and
-         -- deflating the occupancy read that divides by it. left_at is the one
-         -- clip whose source is the sessions table rather than the log, so it
-         -- survives exactly the failure the other two cannot see.
-         --
-         -- LEAST already ignores NULLs, so the COALESCE is for the reader: a live
-         -- session has no left_at and must not be clipped at all, and 'infinity'
-         -- says that rather than leaving it to a function's null semantics.
-         --
-         -- ev.id breaks a tie on ev.at, the same tie carried breaks above and for
-         -- the same reason -- markAllOffline's batch INSERT shares one transaction
-         -- timestamp across the whole floor. Where two tied events are followed by
-         -- a third, lead() without the tiebreak leaves it undefined WHICH of the
-         -- tied states keeps the surviving interval, so two reads of one window can
-         -- attribute the same seconds to different states. id is a random uuid, so
-         -- the order it imposes on a tie is arbitrary -- but it is TOTAL and it is
-         -- STABLE, which is the whole ask: tied events have no chronology to
-         -- recover, and the failure being fixed is a number that moves between
-         -- reads, not a number that is wrong.
-         SELECT ${v.intervalKey},
-                ev.to_state AS state,
-                GREATEST(ev.at, $2::timestamptz) AS started,
-                LEAST(
-                  COALESCE(lead(ev.at) OVER (PARTITION BY ev.session_id ORDER BY ev.at, ev.id), now()),
-                  $3::timestamptz,
-                  -- The left_at clip applies to every state EXCEPT offline, and
-                  -- that exception is the point of the clip rather than a
-                  -- softening of it.
-                  --
-                  -- What the clip defends is shift_seconds, which foldOccupancy
-                  -- sums over the NON-offline states only. A session closed in
-                  -- 'available' -- because leave()'s closing write is the
-                  -- best-effort one recordTransitions swallows with a warn --
-                  -- would credit every remaining second of the window to
-                  -- 'available' and inflate the shift. That failure is a failure
-                  -- of a SHIFT state, by construction.
-                  --
-                  -- offline cannot commit it. It is excluded from the shift, so
-                  -- extending it past left_at adds nothing to the denominator
-                  -- occupancy divides by. And extending it is the DOCUMENTED
-                  -- contract on this method: "a session that ended hours ago
-                  -- cannot dilute occupancy merely by having its final offline
-                  -- interval run to the end of the window" -- a sentence that is
-                  -- only true of a read where that interval DOES run to the
-                  -- window's end.
-                  --
-                  -- Clipping offline too made by_state.offline 0 for every
-                  -- properly closed session, because leave() writes the offline
-                  -- event AT left_at: the interval then starts and ends on one
-                  -- instant. agent-occupancy-window.test.ts pins the 12:00 to
-                  -- 24:00 tail and is what caught it. A unit test over a mocked
-                  -- pool never could -- the bug was in what the SQL MEANS, not in
-                  -- what it says.
-                  CASE
-                    WHEN ev.to_state = 'offline' THEN 'infinity'::timestamptz
-                    ELSE COALESCE(sess.left_at, 'infinity'::timestamptz)
-                  END
-                ) AS ended
-           FROM events ev
-           JOIN sess ON sess.id = ev.session_id
-       )
-`;
-}
-
-/**
- * The FIVE metric expressions every agency attempts aggregate selects, in ONE
- * spelling.
- *
- * ── Why this is a frozen string and not a function taking aliases ────────────
- *
- * The property being protected is that a supervisor's roster line, an agent's own
- * scorecard and a grouped cell all report the SAME five numbers for the same
- * attempts — so a supervisor who subtracts one from the other gets zero. That
- * property is byte-equality of the emitted SQL, and a builder taking `attempt` /
- * `catalog` aliases could be called with different ones and emit two different
- * texts, i.e. it would hand back exactly the freedom this exists to remove. All
- * three call sites alias `agency_call_attempts` as `a` and `agency_campaigns` as
- * `c` — the joins are identical because the metrics are only defined over that
- * join — so there is nothing left to parameterise.
- *
- * Interpolated at column 14 in all three statements, which is why the
- * continuation lines carry their own indentation and the last line has no
- * trailing comma: a caller with further columns appends one.
- *
- * ── What each expression is, and the trap it avoids ─────────────────────────
- *
- * `attempts` / `connected` are plain counts; `successes` goes through
- * {@link successDispositionSql} so the campaign roll-up and every agent read
- * count the same conversion. The two durations are the ones with history, and both
- * comments below are load-bearing rather than decorative — see
- * the reaper.
- *
- * ⚠️ Every column is cast `::text`. That is not cosmetic: node-pg returns `bigint`
- * and `numeric` as strings anyway, and the cast makes the `::text` → `Number()`
- * hop explicit at both ends. A caller that wants to ORDER BY one of these has to
- * cast it back to `numeric` — text ordering would rank `'9'` above `'400'`.
- */
-const AGENCY_ATTEMPT_METRICS_SQL = `COUNT(*)::text AS attempts,
-              COUNT(*) FILTER (WHERE a.bridged_at IS NOT NULL)::text AS connected,
-              COUNT(*) FILTER (WHERE a.bridged_at IS NOT NULL
-                AND ${successDispositionSql({ attempt: 'a', catalog: 'c.disposition_catalog' })})::text
-                AS successes,
-              -- The AGENT's leg: ended_at - bridged_at, never the persisted
-              -- talk_seconds column (anchored on the carrier's answer, and nonzero
-              -- even when no agent bridged -- an abandoned attempt settles carrying
-              -- the apology clip's talk time). Orphans are excluded: the reaper
-              -- stamps ended_at at SWEEP time, so one crashed conversation would
-              -- contribute its whole time-until-sweep to whichever group it lands
-              -- in -- an agent's day, their roster line, or a grouped cell.
-              COALESCE(SUM(EXTRACT(EPOCH FROM (a.ended_at - a.bridged_at))) FILTER (
-                WHERE a.bridged_at IS NOT NULL
-                  AND a.ended_at IS NOT NULL
-                  AND a.outcome IS DISTINCT FROM 'orphaned'), 0)::text AS talk_seconds,
-              -- MEASURED wrap-up, never the wrapup_seconds allotment copied from
-              -- the campaign at wrap-up entry (averaging that hands
-              -- the operator their own setting back as if it were evidence), and
-              -- only the three resolutions that are evidence of how long wrap-up
-              -- takes.
-              COALESCE(SUM(EXTRACT(EPOCH FROM (a.wrapup_ended_at - a.wrapup_started_at))) FILTER (
-                WHERE a.wrapup_started_at IS NOT NULL
-                  AND a.wrapup_ended_at IS NOT NULL
-                  AND ${WRAPUP_MEASURED_RESOLUTIONS_SQL.replace('wrapup_resolution', 'a.wrapup_resolution')}), 0)::text
-                AS wrapup_seconds`;
-
-/** The five {@link AGENCY_ATTEMPT_METRICS_SQL} columns, as numbers. */
-interface AgencyAttemptMetrics {
-  attempts: number; connected: number; successes: number;
-  talk_seconds: number; wrapup_seconds: number;
-}
-
-/**
- * Read {@link AGENCY_ATTEMPT_METRICS_SQL}'s five `::text` columns off a row — the
- * other half of that frozen string, shared by every statement that selects it.
- */
-function readAttemptMetrics(row: {
-  attempts: string; connected: string; successes: string; talk_seconds: string; wrapup_seconds: string;
-}): AgencyAttemptMetrics {
-  return {
-    attempts: Number(row.attempts),
-    connected: Number(row.connected),
-    successes: Number(row.successes),
-    talk_seconds: Number(row.talk_seconds),
-    wrapup_seconds: Number(row.wrapup_seconds),
-  };
-}
-
-/**
  * A machine connect is an agent who sat through an answering machine, and the
  * only signal for it is the agent's own write-up: AMD is out of scope, so
  * nothing else in the system knows. Kept as one constant because the count, its
@@ -602,38 +244,6 @@ function readAttemptMetrics(row: {
  * AHT it is excluded from at the same time.
  */
 const VOICEMAIL_DISPOSITION_CODE = 'voicemail';
-
-/**
- * Does this row have enough CONNECTS behind it to quote a rate whose denominator is
- * `connected`?
- *
- * ── One spelling, because three places need exactly this comparison ─────────
- *
- * `success_rate_pct` divides by `connected` and so does `aht_seconds`, where
- * `rates_reportable` floors `attempts`. Those are different denominators, and the
- * gap between them is the whole reason this exists: a row with 400 dials and one
- * connect clears the `attempts` floor and still carries a 100% conversion built
- * from a single conversation. The three call sites are
- * {@link AgencyRosterAgentRow.success_rate_reportable},
- * {@link AgencyGroupRow.success_rate_reportable}, and `rosterBenchmark`'s
- * `success_rate` and `aht` percentile pools — which must agree, because the flag on
- * the wire is what a console uses to decide whether to print the same number the
- * pools decided was too thin to rank.
- *
- * Named rather than restated inline at each site: four textually identical copies of
- * `row.connected >= CONSTANT` are four things to change when the threshold is
- * argued about, and the one that gets missed makes the payload disagree with the
- * benchmark beside it while both claim to honour "the" minimum.
- *
- * ⚠️ This IMPLIES `rates_reportable`. `connected <= attempts` always — a connect is
- * an attempt that bridged — and `rates_reportable` IS `attempts >= ` the same
- * constant, so this predicate is strictly stronger and never true where that flag
- * is false. That is what lets a consumer gate on the stronger flag ALONE, and it is
- * why the percentile pools' `rated` prefilter is (harmlessly) redundant for these
- * two metrics.
- */
-const hasRateDenominator = (row: { connected: number }): boolean =>
-  row.connected >= AGENCY_ROSTER_MIN_RATE_DENOMINATOR;
 
 /**
  * A `TIMESTAMPTZ` as an ISO instant, degrading to the epoch rather than throwing.
@@ -697,325 +307,6 @@ const zeroAgentsByState = (): AgencyAgentsByState => ({
   break: 0,
 });
 
-// ─── Supervisor read surface — shared paging machinery ────────────
-
-/**
- * Positional-parameter accumulator.
- *
- * The two list reads below build their WHERE clause from an optional filter set,
- * so parameter numbering cannot be written by hand without the numbers and the
- * values drifting apart the first time a filter is inserted in the middle. This
- * makes `$n` and the value one operation.
- */
-function params(): { values: unknown[]; add: (value: unknown) => string } {
-  const values: unknown[] = [];
-  return {
-    values,
-    add(value: unknown): string {
-      values.push(value);
-      return `$${values.length}`;
-    },
-  };
-}
-
-/**
- * The phone predicate, in whichever of its two forms the caller meant.
- *
- * ── Both forms compare DIGITS, not the stored string ────────────────────────
- * `phone_e164` is `VARCHAR(20)` with no format constraint, and the roster is
- * built from customer CSVs — `+91 98765 43210` and `+919876543210` are the same
- * number and both occur. Comparing the raw column would answer "no such
- * contact" for a number that is plainly there, on a route someone reaches from a
- * complaint holding the number in whatever shape they were given it.
- *
- * The expression is `CONTACT_PHONE_DIGITS_SQL`, reused rather than respelled so
- * it stays byte-identical to `idx_agency_contacts_campaign_phone_digits`
- * — Postgres matches expression indexes structurally, so a
- * different spelling of the same regex silently costs the index. With the
- * campaign predicate that makes the EXACT form an index scan.
- *
- * The SUFFIX form — "the last four digits", the useful partial shape, since
- * every stored value begins with a country code — is served by
- * `idx_agency_contacts_phone_suffix`, which indexes the REVERSED digits: a
- * suffix search on a string is a prefix search on its reverse. Written naively
- * as `LIKE '%1234'` it was a 289ms parallel sequential scan of a 1M-row
- * campaign; through that index it is 1.0ms.
- *
- * `alias` is the table holding `phone_e164` — `agency_contacts` in both reads,
- * reached through a join on the attempts side. Aliasing does not affect index
- * matching: the planner compares parsed expressions, not text.
- */
-function phoneCondition(
-  filter: PhoneFilter,
-  alias: string,
-  bind: ReturnType<typeof params>,
-): string {
-  const digits = CONTACT_PHONE_DIGITS_SQL.replace('phone_e164', `${alias}.phone_e164`);
-  // Re-stripped here, not trusted from the caller. `parsePhoneFilter` already
-  // does it, but this is the only place a `%` or `_` could become a LIKE
-  // wildcard, and the consequence is not an error — it is a filter that matches
-  // MORE than it says. `LIKE '%%'` returns the whole campaign under a chip
-  // reading "phone: %", which is a wider answer presented as a narrower one.
-  //
-  // ⚠️ A digit-less term is refused HERE as a backstop only. The route path can
-  // no longer reach this branch — `parsePhoneFilter` reports `'unusable'` and
-  // the route answers 400 — and that ordering matters: this function is only
-  // called once a filter object EXISTS, so a parser that folded "unusable" into
-  // "absent" would drop the predicate entirely and never arrive here at all.
-  // The guard reads like the protection and the parser is where it lives.
-  const term = filter.value.replace(/\D/g, '');
-  if (term.length === 0) return 'FALSE';
-  if (filter.mode === 'exact') {
-    // The `+` was stripped by the parser; the indexed expression holds digits only.
-    return `${digits} = ${bind.add(term)}`;
-  }
-  // A suffix search on the number is a PREFIX search on its reverse, which is
-  // what `idx_agency_contacts_phone_suffix` indexes. Written as
-  // `LIKE 'x%'` rather than a hand-rolled range so the planner does the
-  // `~>=~ / ~<~` rewrite itself — getting the upper bound wrong by hand is a
-  // silently short result set. The literal `%` is appended in SQL, so the
-  // parameter carries no wildcard and a `%` typed into the search box is data.
-  return `reverse(${digits}) LIKE ${bind.add(reverseString(term))} || '%'`;
-}
-
-/** Reverse a string of digits — the search term, to match the reversed column. */
-function reverseString(value: string): string {
-  return value.split('').reverse().join('');
-}
-
-/**
- * ─── THE ONE PLACE A CONTACT FILTER BECOMES SQL ─────────────────────────────
- *
- * Two callers, and they must never disagree:
- *
- *  - {@link AgencyContactRepository.listForCampaign} — the supervisor's Contacts
- *    tab, which is where a retry selection is authored.
- *  - {@link retrySelectionConditions} — the predicate that seeds a retry
- *    campaign's roster, and the predicate that counts it for the preview.
- *
- * **This is the same single-definition rule `ABANDONED_ATTEMPT_PREDICATE_SQL`
- * exists for, applied to a filter instead of a fact.** The supervisor narrows the
- * contacts list until it shows the rows they mean, presses "Retry these
- * contacts", and the filter they were looking at becomes the selector. If the
- * list's SQL and the seeding SQL were written twice, "the rows I was looking at"
- * and "the rows that got seeded" would eventually be different sets — and the
- * failure is silent, because both counts look plausible and neither is obviously
- * the wrong one.
- *
- * Note what is NOT here: `phone`, `from` and `to`. They are contact filters and
- * `listForCampaign` appends them itself, because they are also the three the
- * retry selector deliberately refuses (a phone is a lookup, not a cohort;
- * `created_at` is when the row was ingested). Folding them in would let a future
- * caller of this function acquire them by accident, which is precisely the
- * "wider set than the one the operator chose" this whole surface guards against.
- *
- * `alias` is the table holding the columns, so the same conditions can be used
- * inside a `SELECT … FROM agency_contacts c` and inside an `INSERT … SELECT`.
- */
-function contactFilterConditions(
-  filters: AgencyContactFilters,
-  alias: string,
-  bind: ReturnType<typeof params>,
-): string[] {
-  const conditions: string[] = [];
-  if (filters.states?.length) {
-    conditions.push(`${alias}.state = ANY(${bind.add(filters.states)}::varchar[])`);
-  }
-  if (filters.suppressedReasons?.length) {
-    conditions.push(`${alias}.suppressed_reason = ANY(${bind.add(filters.suppressedReasons)}::varchar[])`);
-  }
-  if (filters.lastOutcomes?.length) {
-    conditions.push(`${alias}.last_outcome = ANY(${bind.add(filters.lastOutcomes)}::varchar[])`);
-  }
-  if (filters.lastDispositions?.length) {
-    conditions.push(`${alias}.last_disposition = ANY(${bind.add(filters.lastDispositions)}::varchar[])`);
-  }
-  return conditions;
-}
-
-/**
- * The never-retried suppression exclusion, as SQL. **Unconditional, and not driven by the selector.**
- *
- * `suppressed_reason` has four values. Two of them are never retried, whatever a
- * selector says:
- *
- *  - `dnc` — a customer's recorded request not to be contacted. Not an operator
- *    choice, so it is excluded by the query rather than by an unchecked checkbox.
- *  - `invalid` — "a bad number does not become good" is the settled rule
- *    (`DEFAULT_RETRY_POLICY.invalid`), and `resolveRetryDecision` routes
- *    `invalid` to `suppressed` BEFORE it reads any policy. Seeding those numbers
- *    into a fresh campaign is exactly the config circumvention that rule exists
- *    to prevent.
- *
- * `parseRetrySelector` already refuses a selector that NAMES either value — but
- * that refusal is the explanation, not the enforcement, and the two are different
- * things. A selector of `state: ['suppressed']` names neither and matches both,
- * which is why this arm cannot be conditional on what the selector said.
- *
- * ⚠️ **Scope, stated plainly:** the DNC list is checked at DIAL time, from
- * `dnc_entries` (decision B8), per attempt (`pre-dial-gates.ts`), so a number suppressed AFTER this roster was
- * seeded is still refused. This exclusion is about INTENT, not enforcement — it
- * stops the platform writing a roster row that says "we intend to call this
- * person", which is a different and worse artefact than a call that gets stopped.
- *
- * A literal array rather than a bound parameter: the values are this rule, not
- * input, and inlining them keeps the predicate readable in a log'd query plan.
- */
-function neverSeededSuppressionSql(alias: string): string {
-  // ── The `COALESCE` is NULL-safety, not defensive padding ──────────────────
-  //
-  // ⚠️ The obvious spelling — `${alias}.suppressed_reason = ANY('{dnc,invalid}')`
-  // — is WRONG here, and it shipped. Callers use this predicate NEGATED
-  // (`NOT (...)`), and `suppressed_reason` is nullable with no default,
-  // so it is NULL for every contact that was never suppressed —
-  // which is nearly the whole retryable roster.
-  //
-  // Three-valued logic then does this: `NULL = ANY(...)` is NULL, `NOT NULL` is
-  // NULL, and `WHERE NULL` REJECTS the row. Measured on Postgres 16 against six
-  // rows (two NULL, two suppressed for retryable reasons, one `dnc`, one
-  // `invalid`): the bare form returned 2 rows, this form returns 4.
-  //
-  // What that cost: every ordinary retry previewed `matched: 0` and the create
-  // answered `409 retry_selection_empty`, telling the supervisor to widen a
-  // selection that was already as wide as it goes. The feature did not work at
-  // all, and the whole suite stayed green — because the tests assert this
-  // function's OUTPUT STRING rather than its meaning.
-  //
-  // `IS NOT DISTINCT FROM ANY(...)` reads better and is NOT valid Postgres
-  // (`42601 syntax error at or near "ANY"`, confirmed against a real server).
-  // `COALESCE` to a sentinel the column can never legally hold works in BOTH
-  // senses this helper is used in: negated for the seed's `WHERE`, and positive
-  // for the preview's `excluded` FILTERs. `claimDialable` reaches for the same
-  // NULL-safety one table over (`IS DISTINCT FROM 'dnc'`) — that is the house
-  // rule for this column, and this function departed from it.
-  //
-  // Pinned against a real database by `test/integration/agency/
-  // agency-retry-seeding.test.ts`. A text assertion cannot see this class
-  // of defect; do not "simplify" it back under one.
-  return `COALESCE(${alias}.suppressed_reason, '') = ANY('{dnc,invalid}')`;
-}
-
-/**
- * The retry selector as a WHERE clause, over the PARENT's roster.
- *
- * ONE builder, used by the preview's count and by the commit's `INSERT … SELECT`.
- * The preview promising a count the commit does not deliver is the class of
- * defect this shares its rule with — see {@link contactFilterConditions} and
- * `ABANDONED_ATTEMPT_PREDICATE_SQL`'s header.
- *
- * Does NOT include the parent's `campaign_id`; each caller adds it, because the
- * preview and the seeding statement bind it in different positions and one of
- * them also has to bind the CHILD's id.
- */
-function retrySelectionConditions(
-  selector: AgencyRetrySelector,
-  alias: string,
-  bind: ReturnType<typeof params>,
-): string[] {
-  // `__none__` is a MEMBER of the outcome dimension, not a dimension of its own
-  // — `RETRY_OUTCOME_SELECTABLES`' docstring carries the argument. Split it out
-  // before delegating, so the shared contact-filter builder (which serves the
-  // shipped contacts list and must not change meaning) keeps seeing a plain
-  // enum list.
-  const named = (selector.last_outcome ?? []).filter((o) => o !== RETRY_NO_OUTCOME);
-  const wantsNoOutcome = (selector.last_outcome ?? []).includes(RETRY_NO_OUTCOME);
-
-  const conditions = contactFilterConditions({
-    ...(selector.state ? { states: selector.state } : {}),
-    ...(named.length ? { lastOutcomes: named } : {}),
-    ...(selector.last_disposition ? { lastDispositions: selector.last_disposition } : {}),
-    ...(selector.suppressed_reason ? { suppressedReasons: selector.suppressed_reason } : {}),
-  }, alias, bind);
-
-  // OR *within* the dimension, which is what the algebra already promises for
-  // every other key. The delegate has just pushed the named-outcome term, so it
-  // is popped and rebuilt as one parenthesised disjunct rather than ANDed beside
-  // it: `(no_answer OR no outcome)`, never `no_answer AND no outcome` — the
-  // latter is the empty set, and was the shipped default.
-  if (wantsNoOutcome) {
-    const namedTerm = named.length ? conditions.pop() : null;
-    conditions.push(
-      namedTerm
-        ? `(${namedTerm} OR ${alias}.last_outcome IS NULL)`
-        : `${alias}.last_outcome IS NULL`,
-    );
-  }
-
-  // The two dimensions that are NOT contact filters. `pending`
-  // contacts on a campaign that was stopped mid-run are the single most obvious
-  // retry there is, and no combination of the closed vocabularies expresses
-  // "nobody ever dialled these".
-  //
-  // `false` is the symmetric opposite rather than a no-op — see
-  // `AgencyRetrySelector.never_attempted` for why a present-but-unconstraining
-  // key is the dangerous reading.
-  if (selector.never_attempted === true) conditions.push(`${alias}.attempt_count = 0`);
-  if (selector.never_attempted === false) conditions.push(`${alias}.attempt_count > 0`);
-  if (selector.attempt_count_gte !== undefined) {
-    conditions.push(`${alias}.attempt_count >= ${bind.add(selector.attempt_count_gte)}`);
-  }
-  if (selector.attempt_count_lte !== undefined) {
-    conditions.push(`${alias}.attempt_count <= ${bind.add(selector.attempt_count_lte)}`);
-  }
-
-  // ── Never the contact we are calling RIGHT NOW ────────────────────────────
-  //
-  // Unconditional, like the suppression exclude above and for the same reason: it
-  // is a property of the row, not a dimension the operator chose.
-  //
-  // `claimDialable` flips `state → in_flight` when an attempt starts;
-  // `chargeAttempt` writes `last_outcome` and bumps `attempt_count` only when
-  // the call settles. A contact whose FIRST attempt is ringing at this instant
-  // is therefore `in_flight` / `last_outcome IS NULL` / `attempt_count = 0` —
-  // which satisfies `__none__` (a member of the default selector) and
-  // `never_attempted: true` alike. Both of those name no state, so refusing
-  // `state: ['in_flight']` at parse time does not reach them; only this does.
-  //
-  // The same snapshot, one state later: when the campaign owes a wrap-up
-  // (`requiresDisposition('connected', catalog)`), the `bridged` handler parks
-  // the contact in `connected` WHILE THE CALL IS STILL LIVE and does not write
-  // `last_outcome` — that lands in the `ended` handler. Mid-conversation the
-  // first-attempt row is therefore `connected` / `last_outcome IS NULL` /
-  // `attempt_count = 0`, which is the same `__none__` / `never_attempted`
-  // match as ringing.
-  //
-  // A later attempt is the same live call with a DIFFERENT contact snapshot.
-  // `chargeAttempt` retains the prior outcome and returns the row to `pending`;
-  // `claimDialable` flips only `state`. After a retryable `no_answer`, a
-  // bridged second attempt is `connected` / `last_outcome = 'no_answer'` /
-  // `attempt_count = 1` — which satisfies the default selector's `no_answer`
-  // member, and which a `last_outcome IS NULL` conjunct cannot see.
-  // `RETRY_SELECTABLE_STATES` *allows* `connected` because post-settle wrap-up
-  // (`connected` + ended attempt) is a real cohort. The discriminator is
-  // therefore the live attempt row, the same predicate as
-  // `uq_agency_attempt_live` (`state <> 'ended'`). Without it: pause a
-  // disposition-catalog campaign, retry "everyone we did not reach", start the
-  // child, and the numbers the parent's agents are talking to — first attempt
-  // or later — are dialled a second time. Pause still does not hang up a
-  // bridged call.
-  //
-  // Without the `in_flight` term: pause a campaign that is going badly, retry
-  // "everyone we did not reach", start the child, and the numbers still
-  // ringing on the parent are dialled a second time. `uq_agency_campaign_running`
-  // does not bite — it refuses a second RUNNING campaign, and a paused parent
-  // is not running, while pause does not cancel attempts already in flight.
-  // The contact-state term stays: `claimDialable` flips `in_flight` before the
-  // attempt row exists, and a NULL-outcome first ring matches `__none__` in
-  // that window. The EXISTS covers every later state that still has a live
-  // attempt, including `connected` after a prior outcome.
-  //
-  // Pinned against a real database, not against this string: the unit suite
-  // asserts SQL TEXT and cannot see that `IS NULL` and `= 0` are both true of a
-  // live first dial. That is exactly how the NULL-unsafe suppression predicate
-  // survived a green suite.
-  conditions.push(`${alias}.state <> 'in_flight'`);
-  conditions.push(
-    `NOT EXISTS (SELECT 1 FROM agency_call_attempts rla`
-    + ` WHERE rla.contact_id = ${alias}.id AND rla.state <> 'ended')`,
-  );
-  return conditions;
-}
-
 /**
  * The attempt-row projection the three attempt reads serve (`listForCampaign`,
  * `findForCampaign`, `listForAgent`), in the order {@link projectAttemptRow} reads
@@ -1037,158 +328,6 @@ const ATTEMPT_ROW_SELECT_SQL = `a.id, a.campaign_id, a.contact_id, a.attempt_num
  */
 const ATTEMPT_CONTACT_JOIN_SQL = `JOIN agency_contacts c
           ON c.id = a.contact_id AND c.campaign_id = a.campaign_id`;
-
-/**
- * The attempt filters both attempt lists share, as SQL — the attempt-side
- * counterpart of {@link contactFilterConditions}.
- *
- * `scoped` is the caller's own term, placed after the three vocabulary filters
- * (the campaign spine's agent subquery); `listForAgent` has none, its agent IS the
- * scope. `from`/`to` bound `created_at`, the column the keyset orders by — NOT
- * `dialed_at`, which is NULL on an attempt that never left the building and would
- * drop those rows from a date-filtered view.
- */
-function attemptFilterConditions(
-  f: AgencyAttemptFilters | AgentAttemptFilters,
-  bind: ReturnType<typeof params>,
-  scoped?: () => string | null,
-): string[] {
-  const conditions: string[] = [];
-  if (f.states?.length) conditions.push(`a.state = ANY(${bind.add(f.states)}::varchar[])`);
-  if (f.outcomes?.length) conditions.push(`a.outcome = ANY(${bind.add(f.outcomes)}::varchar[])`);
-  if (f.dispositionCodes?.length) {
-    conditions.push(`a.disposition_code = ANY(${bind.add(f.dispositionCodes)}::varchar[])`);
-  }
-  const term = scoped?.();
-  if (term) conditions.push(term);
-  if (f.contactId) conditions.push(`a.contact_id = ${bind.add(f.contactId)}::uuid`);
-  if (f.phone) conditions.push(phoneCondition(f.phone, 'c', bind));
-  if (f.from) conditions.push(`a.created_at >= ${bind.add(f.from)}`);
-  if (f.to) conditions.push(`a.created_at <= ${bind.add(f.to)}`);
-  return conditions;
-}
-
-/**
- * The keyset predicate, as a row-wise comparison.
- *
- * `(created_at, id) < ($a, $b)` rather than the expanded
- * `created_at < $a OR (created_at = $a AND id < $b)`: the row-wise form is what
- * Postgres can drive straight off a `(campaign_id, created_at DESC, id DESC)`
- * index as a single range scan. The expanded form makes the planner choose
- * between two branches and typically degenerates into a scan-and-filter over
- * every tie — and ties are ordinary here, because ingest and the attempt
- * batcher both insert in batches inside one transaction where `now()` is fixed.
- *
- * The cursor's timestamp is passed as text and cast, not as a `Date`: a `Date`
- * holds milliseconds and this column holds microseconds. See `keyset-cursor.ts`.
- */
-function keysetCondition(
-  position: AgencyKeysetPosition,
-  alias: string,
-  bind: ReturnType<typeof params>,
-): string {
-  return `(${alias}.created_at, ${alias}.id) < (${bind.add(position.at)}::timestamptz, ${bind.add(position.id)}::uuid)`;
-}
-
-/**
- * Turn `limit + 1` fetched rows into a page.
- *
- * Fetching one extra row is how `next_cursor` is decided without a second query
- * and without a `COUNT`: if the extra row exists there is more to read, and the
- * cursor is minted from the LAST row that is actually returned — never from the
- * extra one, which is not on this page and whose position would skip it.
- */
-function toKeysetPage<TRaw extends { cursor_at: string; id: string }, TRow>(
-  raw: TRaw[],
-  limit: number,
-  project: (row: TRaw) => TRow,
-): AgencyKeysetPage<TRow> {
-  const hasMore = raw.length > limit;
-  const page = hasMore ? raw.slice(0, limit) : raw;
-  const last = page[page.length - 1];
-  return {
-    rows: page.map(project),
-    next_cursor: hasMore && last ? encodeKeysetCursor({ at: last.cursor_at, id: last.id }) : null,
-    limit,
-  };
-}
-
-/** `Date | null` → ISO string | null, for the wire shapes. */
-function iso(value: Date | string | null | undefined): string | null {
-  if (value === null || value === undefined) return null;
-  return value instanceof Date ? value.toISOString() : String(value);
-}
-
-/**
- * `agency_call_attempts` row (joined to its contact and session) → the wire shape.
- *
- * Shared by the campaign-scoped and agent-scoped spines. Extracted when the second
- * one arrived rather than copied: the projection is twenty-three fields, and two
- * copies means the next field is added to one of them.
- */
-function projectAttemptRow(row: AgencyCallAttemptRecord & {
-  phone_e164: string; agent_user_id: string | null;
-}): AgencyAttemptRow {
-  return {
-    id: row.id,
-    campaign_id: row.campaign_id,
-    contact_id: row.contact_id,
-    attempt_number: row.attempt_number,
-    phone_e164: row.phone_e164,
-    caller_id: row.caller_id,
-    agent_user_id: row.agent_user_id,
-    reserved_agent_id: row.reserved_agent_id,
-    state: row.state,
-    outcome: row.outcome,
-    disposition_code: row.disposition_code,
-    // Included deliberately — see the privacy note on `AgencyAttemptRow`.
-    notes: row.notes,
-    callback_at: iso(row.callback_at),
-    dispositioned_by_user_id: row.dispositioned_by_user_id,
-    dispositioned_at: iso(row.dispositioned_at),
-    dispositioned_on_behalf: row.dispositioned_on_behalf,
-    webrtc_call_id: row.webrtc_call_id,
-    dialed_at: iso(row.dialed_at),
-    answered_at: iso(row.answered_at),
-    bridged_at: iso(row.bridged_at),
-    ended_at: iso(row.ended_at),
-    talk_seconds: row.talk_seconds,
-    wrapup_seconds: row.wrapup_seconds,
-    created_at: iso(row.created_at) ?? '',
-  };
-}
-
-/** `agency_contacts` row → the wire shape, minus `context`. */
-function projectContactRow(row: AgencyContactRecord): AgencyContactRow {
-  return {
-    id: row.id,
-    phone_e164: row.phone_e164,
-    state: row.state,
-    attempt_count: row.attempt_count,
-    our_fault_attempts: row.our_fault_attempts,
-    last_outcome: row.last_outcome,
-    last_disposition: row.last_disposition,
-    next_attempt_at: iso(row.next_attempt_at) ?? '',
-    suppressed_reason: row.suppressed_reason,
-    timezone: row.timezone,
-    csv_line_number: row.csv_line_number,
-    created_at: iso(row.created_at) ?? '',
-    updated_at: iso(row.updated_at) ?? '',
-  };
-}
-
-/**
- * The twenty columns a campaign is created with, in the order `create()` and
- * `retryFromCampaign` bind `$1..$20`. A retry appends its five lineage columns
- * after them. One list, so a column added to the config is added to both writers or
- * to neither — an optional input field beside an explicit column list typechecks
- * and silently drops the value.
- */
-const CAMPAIGN_INSERT_COLUMNS_SQL = `tenant_id, account_id, name, caller_ids, telephony_provider,
-          calling_window_start, calling_window_end, calling_days, default_timezone,
-          wrapup_seconds, wrapup_auto_return, retry_policy, disposition_catalog,
-          context_display, break_reasons, record_calls, analysis_profile_id, created_by,
-          abandon_announcement_id, abandonment_ceiling_pct`;
 
 /** What {@link AgencyCampaignRepository.retryFromCampaign} answers. */
 type AgencyRetryCreateResult =
@@ -7029,3 +6168,4 @@ export const agencyContactRepository = new AgencyContactRepository();
 export const agencyAttemptRepository = new AgencyAttemptRepository();
 export const agencyAgentSessionRepository = new AgencyAgentSessionRepository();
 export const agencyAgentStatsRepository = new AgencyAgentStatsRepository();
+
