@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, useMemo } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import {
   AGENT_STATS_WINDOW_LABELS,
@@ -153,6 +153,11 @@ export function AgentPerformancePanel({
    */
   const detailId = useId();
   const scopeId = useId();
+
+  // Derived once per payload rather than on every render of the tiles above it:
+  // each bucket is parsed and formatted into a label and a title.
+  const activeStats = active.status === 'ready' ? active.stats : null;
+  const series = useMemo(() => (activeStats ? bucketSeries(activeStats.buckets) : null), [activeStats]);
 
   /**
    * Only the campaigns this caller can name, sorted by that name.
@@ -311,7 +316,7 @@ export function AgentPerformancePanel({
               <Readout label="Wrap-up" testId="wrapup-readout" readout={agentWrapupReadout(active.stats.totals)} />
             </div>
 
-            <AgentBucketChart series={bucketSeries(active.stats.buckets)} />
+            {series && <AgentBucketChart series={series} />}
 
             <Occupancy stats={active.stats} />
 
@@ -469,7 +474,7 @@ function Readout({
  * that excludes it, and the sentence could never render.
  */
 function Occupancy({ stats }: { stats: AgencyAgentStats }) {
-  const breakdown = occupancyBreakdown(stats.totals.occupancy);
+  const breakdown = useMemo(() => occupancyBreakdown(stats.totals.occupancy), [stats]);
 
   return (
     <section className={styles.occupancy} aria-label="Where your time went">

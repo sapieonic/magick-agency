@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useCampaignSeries } from '../../hooks/useCampaignSeries';
 import { bucketSeries } from '../../utils/agencyAgentPerformance';
@@ -240,7 +240,9 @@ export function CampaignSeriesSection({
 function ActivityBody(
   { series, reach }: { series: AgencyCampaignSeries | null; reach: CampaignSeriesReach },
 ) {
-  const points = bucketSeries(series?.buckets);
+  // Memoised: each bucket is parsed and formatted, and the section re-renders on
+  // every tab and range interaction around it.
+  const points = useMemo(() => bucketSeries(series?.buckets), [series]);
   const dialed = points.points.reduce((sum, point) => sum + point.attempts, 0);
 
   if (points.points.length === 0) {
@@ -270,7 +272,7 @@ function ActivityBody(
 function RatesBody(
   { series, reach }: { series: AgencyCampaignSeries | null; reach: CampaignSeriesReach },
 ) {
-  const trend = rateTrend(series, reach);
+  const trend = useMemo(() => rateTrend(series, reach), [series, reach]);
   if (!trend.drawable) {
     return (
       <p className={styles.empty} data-testid="campaign-series-no-trend">

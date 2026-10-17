@@ -10,9 +10,7 @@ import {
   ahtBandReadout,
   ariaSort,
   bandReadout,
-  benchmarkUsable,
   cellMeasured,
-  cohortComparable,
   connectBullet,
   connectRateCell,
   connectsText,
@@ -22,9 +20,7 @@ import {
   handleTimeCell,
   pooledRate,
   ratedBasisNote,
-  rosterAttentionRows,
   rosterConnectAxis,
-  rosterFlag,
   rosterSubline,
   teamUtilisation,
   utilisationBasis,
@@ -33,6 +29,8 @@ import {
   type RosterBullet,
   type RosterCell,
   type RosterFlag,
+  rosterPageFlags,
+  type RosterPageFlags,
 } from '../../utils/agencyAgentRoster';
 import { agentSeconds } from '../../utils/agencyAgentPerformance';
 import type {
@@ -118,6 +116,11 @@ export interface RosterTableProps {
    * facts about the cohort rather than about the filter.
    */
   onlyFlagged?: boolean;
+  /**
+   * The page's flags, when the caller has already derived them for its own
+   * count (`rosterPageFlags`). Optional: the table derives them itself otherwise.
+   */
+  flags?: RosterPageFlags;
 }
 
 export function RosterTable({
@@ -128,6 +131,7 @@ export function RosterTable({
   onSelect,
   caption,
   onlyFlagged = false,
+  flags,
 }: RosterTableProps) {
   const bandId = useId();
 
@@ -157,7 +161,8 @@ export function RosterTable({
    * cleared the dial threshold, because one rated agent IS the median. When either
    * holds, the bullets and the two band chips go away and every figure stays.
    */
-  const comparable = cohortComparable(page) && benchmarkUsable(page.benchmark);
+  const pageFlags = useMemo(() => flags ?? rosterPageFlags(page), [flags, page]);
+  const { comparable } = pageFlags;
 
   /**
    * The team row's two derived readouts, computed once for the footer.
@@ -173,7 +178,7 @@ export function RosterTable({
 
   /* Filtered for LISTING only — see `onlyFlagged`. */
   const rows = onlyFlagged
-    ? rosterAttentionRows(page.rows, page.benchmark, comparable)
+    ? page.rows.filter((row) => pageFlags.byAgent.get(row.agent_user_id) != null)
     : page.rows;
 
   return (
@@ -250,6 +255,7 @@ export function RosterTable({
               page={page}
               axis={axis}
               comparable={comparable}
+              flag={pageFlags.byAgent.get(row.agent_user_id) ?? null}
               onSelect={onSelect}
             />
           ))}
@@ -387,18 +393,19 @@ function RosterRow({
   page,
   axis,
   comparable,
+  flag,
   onSelect,
 }: {
   row: AgencyRosterAgentRowWithName;
   page: AgencyRosterPage;
   axis: number;
   comparable: boolean;
+  flag: RosterFlag | null;
   onSelect: (row: AgencyRosterAgentRowWithName) => void;
 }) {
   const name = agentDisplayName(row);
   const connect = connectRateCell(row);
   const bullet = comparable ? connectBullet(row, page.benchmark, axis) : null;
-  const flag = rosterFlag(row, page.benchmark, comparable);
   const basis = utilisationBasis(row);
 
   return (

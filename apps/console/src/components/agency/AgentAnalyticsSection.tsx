@@ -16,15 +16,13 @@ import {
   ROSTER_COLUMNS,
   SORT_LABELS,
   allRowsHiddenReason,
-  cohortComparable,
-  benchmarkUsable,
   defaultRosterCampaign,
   inactiveNote,
   initialOrder,
   mixedCohortNote,
-  rosterAttentionRows,
   rosterCountReadout,
   truncationNote,
+  rosterPageFlags,
 } from '../../utils/agencyAgentRoster';
 import { compareAvailable, compareMissing } from '../../utils/agencyCompareTray';
 import { trackAgentSurfaceViewed } from '../../analytics/events';
@@ -469,13 +467,12 @@ function AgentAnalyticsPanel({ campaigns }: { campaigns: readonly AgencyCampaign
   const showInactiveToggle = filters.includeInactive || (page?.inactive_omitted ?? 0) > 0;
 
   /*
-    Rows on the page that carry a chip. Computed for the filter's own label and for
-    the "nothing to show" case below — the same pure derivation the table applies,
-    called twice rather than threaded through a prop, exactly as `truncationNote` is.
+    Every row's flag, derived once per page and handed to the table: the filter's
+    own label and the "nothing to show" case below count them, the table filters
+    and draws them, and none of the three re-derives it.
   */
-  const comparable = page !== null && cohortComparable(page) && benchmarkUsable(page.benchmark);
-  const attention =
-    page === null ? 0 : rosterAttentionRows(page.rows, page.benchmark, comparable).length;
+  const pageFlags = useMemo(() => (page ? rosterPageFlags(page) : null), [page]);
+  const attention = pageFlags?.flagged ?? 0;
 
   /**
    * Prune a compare selection the NEW page no longer carries.
@@ -882,6 +879,7 @@ function AgentAnalyticsPanel({ campaigns }: { campaigns: readonly AgencyCampaign
       {state.status === 'ready' && !allHidden && !(onlyFlagged && attention === 0) && (
         <RosterTable
           page={state.page}
+          flags={pageFlags ?? undefined}
           /*
             The header arrow comes from the CLIENT's state, not the server's echo,
             and the two are one thing rather than two: `onSort` toggles against this

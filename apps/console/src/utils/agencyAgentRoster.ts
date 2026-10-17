@@ -635,6 +635,37 @@ export function rosterAttentionRows(
   return rows.filter((row) => rosterFlag(row, benchmark, comparable) !== null);
 }
 
+/** Every row's flag on one page, derived once — see {@link rosterPageFlags}. */
+export interface RosterPageFlags {
+  /** {@link cohortComparable} and {@link benchmarkUsable}: may a row be compared against the band at all. */
+  comparable: boolean;
+  /** Each row's flag (or `null`), by `agent_user_id`. */
+  byAgent: ReadonlyMap<string, RosterFlag | null>;
+  /** How many rows carry one — the "needs attention" filter's count. */
+  flagged: number;
+}
+
+/**
+ * {@link rosterFlag} for every row of a page, once.
+ *
+ * The section's filter label counted the flagged rows, the table filtered them
+ * again for "needs attention", and then each row derived its own chip — up to
+ * three evaluations per row per render, and `comparable` worked out twice. The
+ * page's owner memoises this on the page and hands it to the table, so the count,
+ * the filter and the chips are read off one answer.
+ */
+export function rosterPageFlags(page: AgencyRosterPage): RosterPageFlags {
+  const comparable = cohortComparable(page) && benchmarkUsable(page.benchmark);
+  const byAgent = new Map<string, RosterFlag | null>();
+  let flagged = 0;
+  for (const row of page.rows) {
+    const flag = rosterFlag(row, page.benchmark, comparable);
+    if (flag !== null) flagged += 1;
+    byAgent.set(row.agent_user_id, flag);
+  }
+  return { comparable, byAgent, flagged };
+}
+
 // ─── The agent cell ──────────────────────────────────────────────────────────
 
 /**
