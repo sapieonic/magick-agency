@@ -1127,7 +1127,6 @@ describe('the preview and the lineage read', () => {
       expect.objectContaining({
         method: 'GET',
         path: `/agency-campaigns/${PARENT}/lineage`,
-        metricPath: '/agency-campaigns/:id/lineage',
       }),
     );
     await app.close();

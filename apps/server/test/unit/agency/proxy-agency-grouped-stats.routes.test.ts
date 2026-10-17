@@ -140,10 +140,7 @@ vi.mock('@magick-agency/db/repositories/user.repository', () => ({
   userRepository: { findDisplayNamesInTenant: mocks.findDisplayNamesInTenant },
 }));
 
-import {
-  proxyAgencyPerformanceRoutes,
-  ROSTER_CORE_TIME_BUDGET_MS,
-} from '../../../src/api/routes/proxy-agency-performance.routes.js';
+import { proxyAgencyPerformanceRoutes } from '../../../src/api/routes/proxy-agency-performance.routes.js';
 
 const PREFIX = '/proxy/agency';
 const GROUPED = `${PREFIX}/agents/grouped-stats`;
@@ -2153,40 +2150,6 @@ describe('an agent-grouped page whose ids are unusable is still FILTERED', () =>
     expect(mocks.findAnyByUsersAndTenant).not.toHaveBeenCalled();
     await app.close();
   });
-});
-
-describe('the internal handler call carries a wall clock', () => {
-  it('passes ROSTER_CORE_TIME_BUDGET_MS to proxyToCore', async () => {
-    /**
-     * The internal handler has **no `statement_timeout`** anywhere, and `proxyToCore` with no
-     * `timeoutMs` runs under undici's default 300s header timeout — so an internal handler
-     * answering SLOWLY rather than failing holds the public API layer's worker, its Fastify
-     * connection and a socket for as long as it likes. This read is if anything
-     * the more expensive of the two whole-floor reads: its row count is the
-     * PRODUCT of the grouped dimensions' cardinalities, where the roster's is
-     * bounded by headcount.
-     */
-    const app = await buildApp();
-
-    await app.inject({ method: 'GET', url: `${GROUPED}?group_by=agent,day` });
-
-    expect(mocks.proxyToCore.mock.calls[0]![0].timeoutMs).toBe(ROSTER_CORE_TIME_BUDGET_MS);
-    await app.close();
-  });
-
-  it('is the SAME budget as the roster, not a second number with one value', async () => {
-    // Asserted as a relation to the export's reader-facing figure, exactly as the
-    // roster's own case does: both reads are one whole interactive request
-    // measured against a reader's patience, so a second constant with the same
-    // value would be two things to change.
-    const { ACTIVITY_EXPORT_TIME_BUDGET_MS, ACTIVITY_OWNERSHIP_PROBE_TIMEOUT_MS } = await import(
-      '../../../src/agency/agency-activity.js'
-    );
-
-    expect(ROSTER_CORE_TIME_BUDGET_MS).toBe(ACTIVITY_EXPORT_TIME_BUDGET_MS);
-    expect(ROSTER_CORE_TIME_BUDGET_MS).toBeGreaterThan(ACTIVITY_OWNERSHIP_PROBE_TIMEOUT_MS);
-  });
-
 });
 
 describe('route precedence, asserted on the internal handler path each handler builds', () => {

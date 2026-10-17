@@ -452,7 +452,6 @@ describe('force-available — the override an agent must not hold', () => {
     // decision Q8: the supervisor's actor rides with the reason, so the internal handler can let
     // `agency.supervise` act on another agent's session on this route (and only this one).
     expect(call.body).toEqual({ reason: 'agent left their desk', agent_user_id: 'user-supervisor', on_behalf: true });
-    expect(call.metricPath).toBe('/agency/sessions/:id/force-available');
     await app.close();
   });
 
@@ -481,7 +480,6 @@ describe('break/cancel — the queued-break take-back', () => {
     expect(res.statusCode).toBe(200);
     const call = mocks.proxyToCore.mock.calls[0]![0];
     expect(call.path).toBe('/agency/sessions/session-1/break/cancel');
-    expect(call.metricPath).toBe('/agency/sessions/:id/break/cancel');
     await app.close();
   });
 
@@ -549,7 +547,6 @@ describe('notes', () => {
       url: `${PREFIX}/attempts/attempt-1/notes`,
       payload: { notes: 'x' },
     });
-    expect(mocks.proxyToCore.mock.calls[0]![0].metricPath).toBe('/agency/attempts/:id/notes');
     await app.close();
   });
 

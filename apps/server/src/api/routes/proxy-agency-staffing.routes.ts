@@ -335,7 +335,6 @@ async function assertCampaignInScope(
     path: `/agency-campaigns/${campaignId}`,
     tenantId: request.tenantId!,
     accountId: request.accountId,
-    metricPath: '/agency-campaigns/:id',
   });
 
   if (campaign.status === 404) {

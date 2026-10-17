@@ -251,7 +251,7 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
    * anywhere in this server — there is no precedent to follow and no place to put
    * a per-route budget without introducing the concept, which is a server-wide
    * change and outside this route's scope. Nothing else bounds it either:
-   * `callCore` runs in-process and ignores `timeoutMs`, and a cancelled request
+   * `callCore` runs in-process with no transport timeout, and a cancelled request
    * leaves the scan running. Anyone tightening this should add the timeout on both
    * statements.
    *

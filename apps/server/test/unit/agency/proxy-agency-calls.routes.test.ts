@@ -458,7 +458,6 @@ describe('forwarding to the internal handler', () => {
     expect(mocks.proxyToCore).toHaveBeenCalledWith(expect.objectContaining({
       method: 'GET',
       path: `/agency-campaigns/${CAMPAIGN}/attempts/${ATTEMPT}`,
-      metricPath: '/agency-campaigns/:id/attempts/:id',
       tenantId: TENANT,
     }));
     await app.close();

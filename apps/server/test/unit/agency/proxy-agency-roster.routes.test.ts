@@ -135,10 +135,7 @@ vi.mock('@magick-agency/db/repositories/user.repository', () => ({
   userRepository: { findDisplayNamesInTenant: mocks.findDisplayNamesInTenant },
 }));
 
-import {
-  proxyAgencyPerformanceRoutes,
-  ROSTER_CORE_TIME_BUDGET_MS,
-} from '../../../src/api/routes/proxy-agency-performance.routes.js';
+import { proxyAgencyPerformanceRoutes } from '../../../src/api/routes/proxy-agency-performance.routes.js';
 
 const PREFIX = '/proxy/agency';
 const ROSTER = `${PREFIX}/agents/stats`;
@@ -1282,41 +1279,6 @@ describe('the membership filter is gated on the ROWS, not on the paging fields',
     expect(res.json().unattributed_omitted).toBe(1);
     await app.close();
   });
-});
-
-describe('the internal handler call carries a wall clock', () => {
-  /**
-   * Nothing else in this path has one. `proxyToCore` with no `timeoutMs` runs
-   * under undici's default 300s header timeout, and the internal handler has **no
-   * `statement_timeout`** — so an internal handler answering SLOWLY rather than failing holds
-   * the public API layer's worker, its Fastify connection and a socket for as long as it likes.
-   * The roster is the most expensive read on this surface (an attempt aggregate
-   * plus an occupancy read that walks every agent state transition in the window,
-   * two long statements in series), and the neighbouring activity export already
-   * carries a budget for exactly this case.
-   */
-  it('passes ROSTER_CORE_TIME_BUDGET_MS to proxyToCore', async () => {
-    const app = await buildApp();
-
-    await app.inject({ method: 'GET', url: ROSTER });
-
-    expect(mocks.proxyToCore.mock.calls[0]![0].timeoutMs).toBe(ROSTER_CORE_TIME_BUDGET_MS);
-    await app.close();
-  });
-
-  it('is the reader-facing budget the export uses, not the probe\'s', async () => {
-    // Asserted as a RELATION, not a literal: this is one whole interactive
-    // request, so it gets the export's reader-facing figure rather than the
-    // probe's deliberately short one (a probe has the whole export still ahead of
-    // it). A future edit to either is then visible here.
-    const { ACTIVITY_EXPORT_TIME_BUDGET_MS, ACTIVITY_OWNERSHIP_PROBE_TIMEOUT_MS } = await import(
-      '../../../src/agency/agency-activity.js'
-    );
-
-    expect(ROSTER_CORE_TIME_BUDGET_MS).toBe(ACTIVITY_EXPORT_TIME_BUDGET_MS);
-    expect(ROSTER_CORE_TIME_BUDGET_MS).toBeGreaterThan(ACTIVITY_OWNERSHIP_PROBE_TIMEOUT_MS);
-  });
-
 });
 
 describe('route precedence: /agents/stats and /agents/:userId/stats', () => {

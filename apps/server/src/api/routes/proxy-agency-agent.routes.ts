@@ -341,7 +341,6 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       body: { ...actor },
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency/sessions/:id/station-token',
     });
 
     if (result.status < 400 && result.body && typeof result.body === 'object') {
@@ -368,7 +367,6 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       body: { ...parsed.data, ...actor },
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency/sessions/:id/break',
     });
     if (result.status < 400) {
       const campaignId = extractStringField(result.body, 'campaign_id');
@@ -412,7 +410,6 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       body: { ...actor },
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency/sessions/:id/break/cancel',
     });
     if (result.status < 400) {
       const campaignId = extractStringField(result.body, 'campaign_id');
@@ -463,7 +460,6 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       body: { ...parsed.data, ...actor },
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency/sessions/:id/force-available',
     });
 
     if (result.status < 400) {
@@ -518,7 +514,6 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       body: { ...actor.actor },
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency/attempts/:id/hangup',
     });
     if (result.status < 400) {
       const campaignId = extractStringField(result.body, 'campaign_id');
@@ -569,7 +564,6 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       body: { ...parsed.data, ...actor.actor },
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency/attempts/:id/disposition',
     });
 
     if (result.status < 400 && actor.actor.on_behalf) {
@@ -638,7 +632,6 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       body: { ...parsed.data, ...actor.actor },
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency/attempts/:id/notes',
     });
     return reply.code(result.status).send(result.body);
   });
@@ -727,7 +720,6 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       body: { ...parsed.data, ...actor.actor },
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency/attempts/:id/dnc',
     });
 
     if (result.status < 400) {

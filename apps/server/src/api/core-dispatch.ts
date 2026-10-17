@@ -46,15 +46,6 @@ export interface CoreCallRequest {
   originator?: string;
   /** When true, return the raw response body as a Buffer. */
   rawResponse?: boolean;
-  /**
-   * Accepted and ignored: in-process there is no transport to time out. Routes that bound
-   * a slow read keep their own wall-clock logic where it exists.
-   */
-  timeoutMs?: number;
-  /** Accepted and ignored (metric label of a removed series). */
-  metricPath?: string;
-  /** Accepted and ignored (error-mask bookkeeping with no in-process meaning). */
-  recordCoreErrors?: boolean;
   /** Extra request headers a handler reads (e.g. `range` on the recording stream). */
   headers?: Record<string, string>;
   /**

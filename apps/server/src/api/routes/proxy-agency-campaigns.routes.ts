@@ -620,7 +620,6 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   app.addHook('preHandler', tenantContextMiddleware);
   // Every `callCore({...})` below (`../core-dispatch.ts`, decision B16) runs the internal
   // handler in-process with the given method, path, query, body and tenant/account headers.
-  // `metricPath` is accepted and ignored.
   /*
    * ─── A PARAM MUST NOT ADD PATH SEGMENTS ──────────────────────────────────
    *
@@ -747,7 +746,6 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       path: `/agency-campaigns/${request.params.id}`,
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency-campaigns/:id',
     });
     return reply.code(result.status).send(result.body);
   });
@@ -837,7 +835,6 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       body: patchBody,
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency-campaigns/:id',
     });
     return reply.code(result.status).send(result.body);
   });
@@ -862,7 +859,6 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       path: `/agency-campaigns/${request.params.id}/stats`,
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency-campaigns/:id/stats',
     });
     const body = await enrichAgencyCampaignStats(result.body, {
       tenantId: request.tenantId!,
@@ -969,7 +965,6 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       query,
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency-campaigns/:id/stats/series',
     });
     // Unchanged, and deliberately NOT through `enrichAgencyCampaignStats`: this
     // layer adds nothing to this payload. There is no agent row to name and no
@@ -1030,7 +1025,6 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       path: `/agency-campaigns/${request.params.id}`,
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency-campaigns/:id',
     });
     if (result.status >= 400) {
       // A REFUSAL is the handler's answer and is forwarded unchanged — a cross-tenant id
@@ -1314,7 +1308,6 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       query: forwarded.query,
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency-campaigns/:id/attempts',
     });
     // The internal handler serves only the agent's USER id; names come from the
     // user directory, resolved here, and a column of UUIDs is not a column a
@@ -1347,7 +1340,6 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       query: forwarded.query,
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency-campaigns/:id/contacts',
     });
     return reply.code(result.status).send(result.body);
   });
@@ -1369,7 +1361,6 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       path: `/agency-campaigns/${request.params.id}/contacts/${request.params.contactId}`,
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency-campaigns/:id/contacts/:id',
     });
     return reply.code(result.status).send(result.body);
   });
@@ -2037,7 +2028,6 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       query: forwardRetrySelectorQuery(request.query),
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency-campaigns/:id/retry/preview',
     });
     return reply.code(result.status).send(result.body);
   });
@@ -2165,7 +2155,6 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       path: `/agency-campaigns/${request.params.id}`,
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency-campaigns/:id',
     });
     if (parent.status >= 400) return reply.code(parent.status).send(parent.body);
 
@@ -2262,7 +2251,6 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       },
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency-campaigns/:id/retry',
     });
 
     /*
@@ -2364,7 +2352,6 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       path: `/agency-campaigns/${request.params.id}/lineage`,
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency-campaigns/:id/lineage',
     });
     return reply.code(result.status).send(result.body);
   });
@@ -2977,7 +2964,6 @@ async function proveCampaignOwnedForWrite(
     path: `/agency-campaigns/${campaignId}`,
     tenantId: request.tenantId!,
     accountId,
-    metricPath: '/agency-campaigns/:id',
   });
   if (result.status >= 400) {
     // Forwarded unchanged: a sibling account's campaign, another tenant's and a

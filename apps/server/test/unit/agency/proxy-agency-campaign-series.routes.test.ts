@@ -437,7 +437,6 @@ describe('the internal handler\'s series payload is forwarded untouched', () => 
     expect(call.path).toBe(`/agency-campaigns/${CAMPAIGN}/stats/series`);
     // A route template, never the interpolated path: the metrics SDK would otherwise
     // retain one permanent series per campaign id.
-    expect(call.metricPath).toBe('/agency-campaigns/:id/stats/series');
     // Tenancy goes through the proxy helper's own arguments — the public API layer never
     // hand-rolls the `x-mgkvc-*` headers.
     expect(call.tenantId).toBe(TENANT);

@@ -458,7 +458,6 @@ export async function proxyAgencyCallsRoutes(app: FastifyInstance): Promise<void
         path: `/agency-campaigns/${request.params.id}/attempts/${request.params.attemptId}`,
         tenantId,
         accountId: request.accountId,
-        metricPath: '/agency-campaigns/:id/attempts/:id',
       });
 
       if (result.status >= 400) return reply.code(result.status).send(result.body);
@@ -535,7 +534,6 @@ export async function proxyAgencyCallsRoutes(app: FastifyInstance): Promise<void
         tenantId,
         accountId: request.accountId,
         rawResponse: true,
-        metricPath: '/agency-campaigns/:id/attempts/:id/recording',
       });
 
       // Decoded, not forwarded as bytes — see `decodeRawErrorBody`. This is the

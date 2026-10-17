@@ -31,8 +31,9 @@ const log = createChildLogger({ component: 'proxy-agency-performance' });
  * Agent performance reads, served at the console's paths under `/proxy/agency` (decision
  * B16). Each route runs the internal handler instance's body (`agency-agents.routes.ts`)
  * in-process through `callCore` (`../core-dispatch.ts`) with the request's tenant and
- * account. `metricPath` and `timeoutMs` are passed and ignored by `callCore` (no transport
- * to time out). There are no platform API keys in v1 (`docs/decisions.md`, open question 5),
+ * account. `callCore` has no transport to time out, and nothing bounds the roster and
+ * grouped reads' wall clock (no `statement_timeout` is set; the handler's 92-day window
+ * cap bounds how much work a caller can ask for). There are no platform API keys in v1 (`docs/decisions.md`, open question 5),
  * so `request.user` is always the Firebase-verified person; `resolveMyAgentId` is the
  * staffing plugin's. This file adds the query whitelists, `include_inactive`, the account
  * predicate, the membership filter, both omission counters, `assertAgentInTenant`'s 404 and
@@ -218,22 +219,6 @@ const GROUPED_QUERY_PARAMS = [
  * prefix for that reason.
  */
 const MASTER_ONLY_QUERY_PARAMS = ['include_inactive'] as const;
-
-/**
- * The `timeoutMs` the roster and grouped reads pass to `callCore`.
- *
- * Inert in-process: `callCore` accepts `timeoutMs` and ignores it (there is no
- * transport to time out; `core-dispatch.ts`). Nothing else bounds the read
- * either — no `statement_timeout` is set. The roster is the most expensive read
- * on this surface: an aggregate over every attempt in the window plus an
- * occupancy read that walks every agent state transition in it, two long
- * statements in series. The handler's window cap (`ROSTER_MAX_WINDOW_DAYS`, 92
- * days) bounds how much work a caller can ask for, not how long it takes; the
- * activity export enforces its own wall-clock budget
- * (`ACTIVITY_EXPORT_TIME_BUDGET_MS`, `src/agency/agency-activity.ts`) and these
- * reads have no equivalent check.
- */
-export const ROSTER_CORE_TIME_BUDGET_MS = 30_000;
 
 /**
  * `?include_inactive=` as a boolean, or `null` if it is not one.
@@ -448,7 +433,6 @@ export async function proxyAgencyPerformanceRoutes(app: FastifyInstance): Promis
       query: forwarded.query,
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency-agents/:id/stats',
     });
     return reply.code(result.status).send(result.body);
   });
@@ -480,7 +464,6 @@ export async function proxyAgencyPerformanceRoutes(app: FastifyInstance): Promis
       query: forwarded.query,
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency-agents/:id/attempts',
     });
     return reply.code(result.status).send(result.body);
   });
@@ -602,9 +585,6 @@ export async function proxyAgencyPerformanceRoutes(app: FastifyInstance): Promis
       query: forwarded.query,
       tenantId: request.tenantId!,
       accountId,
-      metricPath: '/agency-agents/stats',
-      // Ignored in-process; see ROSTER_CORE_TIME_BUDGET_MS.
-      timeoutMs: ROSTER_CORE_TIME_BUDGET_MS,
     });
 
     // Non-2xx bodies pass through untouched, exactly as the handler wrote them —
@@ -817,11 +797,6 @@ export async function proxyAgencyPerformanceRoutes(app: FastifyInstance): Promis
       query: forwarded.query,
       tenantId: request.tenantId!,
       accountId,
-      metricPath: '/agency-agents/grouped-stats',
-      // The roster's constant, ignored in-process; see ROSTER_CORE_TIME_BUDGET_MS.
-      // This read is if anything the more expensive of the two — its row count is
-      // the product of the grouped dimensions' cardinalities.
-      timeoutMs: ROSTER_CORE_TIME_BUDGET_MS,
     });
 
     // Non-2xx bodies pass through untouched, exactly as the handler wrote them.
@@ -1003,7 +978,6 @@ export async function proxyAgencyPerformanceRoutes(app: FastifyInstance): Promis
       query: forwarded.query,
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency-agents/:id/stats',
     });
     // Non-2xx bodies pass through untouched, exactly as the handler wrote them.
     const body = result.status >= 200 && result.status < 300
@@ -1050,7 +1024,6 @@ export async function proxyAgencyPerformanceRoutes(app: FastifyInstance): Promis
       query: forwarded.query,
       tenantId: request.tenantId!,
       accountId: request.accountId,
-      metricPath: '/agency-agents/:id/attempts',
     });
     const body = result.status >= 200 && result.status < 300
       ? await enrichAttemptAgentNames(
