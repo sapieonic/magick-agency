@@ -49,6 +49,7 @@ import {
   decodeActivityCursor,
   encodeActivityCursor,
   type ActivityCursor,
+  type ActivityRow,
   type ActivityCsvPreambleRetention,
   type ActivityExportTruncation,
 } from '../../agency/agency-activity.js';
@@ -88,6 +89,7 @@ import {
   type AgencyCampaignTransitionRequest,
 } from '../../agency/agency-campaign-wire.js';
 import { rejectPathEscapingParams } from './helpers/path-params.js';
+import { drainPages } from './helpers/drain-pages.js';
 
 /**
  * The ownership probe's outcome. The internal handler REFUSING is forwarded as-is and
@@ -1184,44 +1186,32 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       skipTotal: true,
     };
 
-    let cursor: ActivityCursor | null = { master: null, core: null };
-    const lines: string[] = [activityCsvHeader()];
-    let rowCount = 0;
-    let truncatedBy: ActivityExportTruncation | null = null;
     // Whichever page's retention this export last saw. Retention does not
     // move mid-export, so the last successful page's value is as good as the
     // first's.
     let retention: ActivityCsvPreambleRetention | null = null;
-    const deadline = Date.now() + ACTIVITY_EXPORT_TIME_BUDGET_MS;
 
-    while (cursor) {
-      // No per-page budget: the deadline is checked between pages, at the bottom
-      // of the loop.
-      const page = await fetchActivityPage({ ...filters, cursor });
-
-      retention = page.retention;
-      for (const row of page.rows) {
-        if (rowCount >= ACTIVITY_EXPORT_MAX_ROWS) {
-          truncatedBy = 'row_limit';
-          break;
-        }
-        lines.push(activityCsvRow(row));
-        rowCount += 1;
-      }
-      if (truncatedBy) break;
-      cursor = page.nextCursor;
-      // Checked after the page is written, never before the first fetch: a
-      // budget that could expire on entry would answer a truncated empty file to
-      // a request that had done no work at all.
-      if (cursor && Date.now() >= deadline) {
-        log.warn(
-          { campaignId: request.params.id, rows: rowCount, budgetMs: ACTIVITY_EXPORT_TIME_BUDGET_MS },
-          'agency activity: export exceeded its time budget; serving what was assembled, marked truncated',
-        );
-        truncatedBy = 'time_limit';
-        break;
-      }
-    }
+    // The row ceiling and the between-pages budget are `drainPages`'s, shared with
+    // the spine exports below.
+    const drained = await drainPages<ActivityCursor, ActivityRow, 'time_limit'>({
+      first: { master: null, core: null },
+      fetchPage: async (cursor) => {
+        const page = await fetchActivityPage({ ...filters, cursor: cursor! });
+        retention = page.retention;
+        return { rows: page.rows, next: page.nextCursor };
+      },
+      header: activityCsvHeader(),
+      renderRow: activityCsvRow,
+      maxRows: ACTIVITY_EXPORT_MAX_ROWS,
+      budgetMs: ACTIVITY_EXPORT_TIME_BUDGET_MS,
+      deadlineReason: 'time_limit',
+      onDeadline: (rows) => log.warn(
+        { campaignId: request.params.id, rows, budgetMs: ACTIVITY_EXPORT_TIME_BUDGET_MS },
+        'agency activity: export exceeded its time budget; serving what was assembled, marked truncated',
+      ),
+    });
+    const { lines, rowCount } = drained;
+    const truncatedBy: ActivityExportTruncation | null = drained.truncated;
 
     // The preamble is built LAST and unshifted onto the front, deliberately.
     // Truncation and the final row count are only known once the loop above
@@ -1419,10 +1409,15 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   /**
    * Drain one of the internal handler's keyset-paginated lists into a CSV.
    *
-   * Shared by both exports because everything that is hard here — the deadline
-   * consulted between pages, the row ceiling, discarding rather than appending a
-   * refused page — is identical for the two, and a second copy is a second place
-   * for the budget arithmetic to be subtly wrong.
+   * Shared by both exports, and its loop is `drainPages`, the activity export's too:
+   * everything that is hard here — the deadline consulted between pages, the row
+   * ceiling, discarding rather than appending a refused page — is identical for all
+   * three, and a second copy is a second place for the budget arithmetic to be
+   * subtly wrong.
+   *
+   * Every page carries `provenCampaignId`: the caller has already proved ownership
+   * on this request (`requireOwnedCampaign`), so the handler does not repeat its
+   * flag read and campaign read on each of up to 100 pages.
    *
    * There is no merge here: the internal handler is the only source, so a page
    * it refuses produces no file at all — an error, which is already unambiguous
@@ -1431,7 +1426,6 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
   async function drainSpineExport<TRow>(params: {
     request: FastifyRequest<{ Params: { id: string } }>;
     path: string;
-    metricPath: string;
     filters: Record<string, string>;
     header: string;
     renderRow: (row: TRow) => string;
@@ -1442,78 +1436,61 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
      */
     enrich?: (body: unknown) => Promise<unknown>;
   }): Promise<{ lines: string[]; rowCount: number; truncated: SpineExportTruncation | null }> {
-    const lines: string[] = [params.header];
-    let rowCount = 0;
-    let truncated: SpineExportTruncation | null = null;
-    let cursor: string | null = null;
-    const deadline = Date.now() + SPINE_EXPORT_TIME_BUDGET_MS;
-
-    for (;;) {
-      // No per-page budget: `callCore` runs in-process with no socket and no abort
-      // signal, and a throw from it is a wiring defect that propagates. The
-      // between-pages deadline check below bounds a slow drain, and the row ceiling
-      // bounds a large one.
-      const query: Record<string, string> = {
-        ...params.filters,
-        limit: String(SPINE_EXPORT_PAGE_SIZE),
-        ...(cursor ? { cursor } : {}),
-      };
-      const result = await callCore({
-        method: 'GET',
-        path: params.path,
-        query,
-        tenantId: params.request.tenantId!,
-        accountId: params.request.accountId,
-        metricPath: params.metricPath,
-      });
-      if (result.status >= 400) {
-        // The handler's refusal is the answer — a 404 for a campaign the caller
-        // does not own, a 400 for a filter it rejected. Thrown rather than returned
-        // so the caller forwards the status unchanged; a half-written file must
-        // never be sent under a 200.
-        throw new SpineExportRefused(result.status, result.body);
-      }
-
-      const enriched = params.enrich ? await params.enrich(result.body) : result.body;
-      const page = asSpinePage<TRow>(enriched);
-      if (!page) {
-        throw new SpineExportRefused(502, {
-          error: 'Bad Gateway',
-          code: 'spine_export_unreadable',
-          message: 'The voice service returned a page this export could not read. Nothing was exported.',
+    return drainPages<string, TRow, 'deadline'>({
+      first: null,
+      fetchPage: async (cursor) => {
+        // No per-page budget: `callCore` runs in-process with no socket and no abort
+        // signal, and a throw from it is a wiring defect that propagates. The
+        // between-pages deadline bounds a slow drain, and the row ceiling bounds a
+        // large one.
+        const query: Record<string, string> = {
+          ...params.filters,
+          limit: String(SPINE_EXPORT_PAGE_SIZE),
+          ...(cursor ? { cursor } : {}),
+        };
+        const result = await callCore({
+          method: 'GET',
+          path: params.path,
+          query,
+          tenantId: params.request.tenantId!,
+          accountId: params.request.accountId,
+          // Proved by the caller's `requireOwnedCampaign` probe on this request, with
+          // these same tenant and account, before the drain started: each page skips
+          // the handler's flag read and campaign read (`spinePageCampaignId`).
+          provenCampaignId: params.request.params.id,
         });
-      }
-
-      for (const row of page.rows) {
-        if (rowCount >= SPINE_EXPORT_MAX_ROWS) {
-          truncated = 'row_limit';
-          break;
+        if (result.status >= 400) {
+          // The handler's refusal is the answer — a 400 for a filter it rejected.
+          // Thrown rather than returned so the caller forwards the status unchanged;
+          // a half-written file must never be sent under a 200.
+          throw new SpineExportRefused(result.status, result.body);
         }
-        lines.push(params.renderRow(row));
-        rowCount += 1;
-      }
-      if (truncated) break;
 
-      cursor = page.next_cursor;
-      if (!cursor) break;
-      // Checked after the page is written, never before the first fetch: a
-      // budget that could expire on entry would answer a truncated empty file
-      // to a request that had done no work at all.
-      if (Date.now() >= deadline) {
-        log.warn(
-          {
-            campaignId: params.request.params.id,
-            rows: rowCount,
-            budgetMs: SPINE_EXPORT_TIME_BUDGET_MS,
-          },
-          'agency spine: export exceeded its time budget; serving what was assembled, marked truncated',
-        );
-        truncated = 'deadline';
-        break;
-      }
-    }
-
-    return { lines, rowCount, truncated };
+        const enriched = params.enrich ? await params.enrich(result.body) : result.body;
+        const page = asSpinePage<TRow>(enriched);
+        if (!page) {
+          throw new SpineExportRefused(502, {
+            error: 'Bad Gateway',
+            code: 'spine_export_unreadable',
+            message: 'The voice service returned a page this export could not read. Nothing was exported.',
+          });
+        }
+        return { rows: page.rows, next: page.next_cursor };
+      },
+      header: params.header,
+      renderRow: params.renderRow,
+      maxRows: SPINE_EXPORT_MAX_ROWS,
+      budgetMs: SPINE_EXPORT_TIME_BUDGET_MS,
+      deadlineReason: 'deadline',
+      onDeadline: (rows) => log.warn(
+        {
+          campaignId: params.request.params.id,
+          rows,
+          budgetMs: SPINE_EXPORT_TIME_BUDGET_MS,
+        },
+        'agency spine: export exceeded its time budget; serving what was assembled, marked truncated',
+      ),
+    });
   }
 
   /**
@@ -1610,9 +1587,9 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
     const filters = forwarded.query;
 
-    // Resolved for the preamble's chain-of-custody block and the filename.
-    // Not an authorisation step — the internal handler refuses an unowned
-    // campaign on the very first page of the drain below too.
+    // Resolved for the preamble's chain-of-custody block and the filename, and
+    // the ownership proof the drain's pages carry (`provenCampaignId`): an unowned
+    // campaign is refused here, before any page is read.
     const owned = await requireOwnedCampaign(request, reply);
     if (!owned) return reply;
 
@@ -1620,7 +1597,6 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       const drained = await drainSpineExport<SpineAttemptRow>({
         request,
         path: `/agency-campaigns/${request.params.id}/attempts`,
-        metricPath: '/agency-campaigns/:id/attempts',
         filters,
         header: attemptCsvHeader(),
         renderRow: attemptCsvRow,
@@ -1661,7 +1637,6 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       const drained = await drainSpineExport<SpineContactRow>({
         request,
         path: `/agency-campaigns/${request.params.id}/contacts`,
-        metricPath: '/agency-campaigns/:id/contacts',
         filters,
         header: contactCsvHeader(),
         renderRow: contactCsvRow,

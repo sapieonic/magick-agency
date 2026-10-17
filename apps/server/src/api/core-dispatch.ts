@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 import { isUnsafeCorePath } from '../proxy/safe-core-path.js';
-import { TENANT_HEADER, ACCOUNT_HEADER, ORIGINATOR_HEADER } from './middleware/headers.js';
+import { TENANT_HEADER, ACCOUNT_HEADER, ORIGINATOR_HEADER, PROVEN_CAMPAIGN_HEADER } from './middleware/headers.js';
 
 /*
  * `callCore`: how the public API layer's handlers reach the internal handler instance
@@ -57,6 +57,20 @@ export interface CoreCallRequest {
   recordCoreErrors?: boolean;
   /** Extra request headers a handler reads (e.g. `range` on the recording stream). */
   headers?: Record<string, string>;
+  /**
+   * The campaign this request has ALREADY proved the caller owns — through a full
+   * `GET /agency-campaigns/:id` (the feature gate and `requireOwned`, tenant AND
+   * account) with these same `tenantId`/`accountId`. Sent as
+   * `x-mgkvc-proven-campaign`, which the spine's two page reads honour for the
+   * campaign in their path and no other, skipping their own gate and ownership read.
+   *
+   * Only for a caller that has just made that probe on the same request: the CSV
+   * export's page loop, which would otherwise repeat the flag read and the campaign
+   * read on every one of up to 100 pages. A caller that sets it without the probe
+   * reads a campaign's attempts with no ownership check at all, so
+   * `test/unit/api/core-dispatch.test.ts` pins its call sites.
+   */
+  provenCampaignId?: string;
 }
 
 export interface CoreCallResult {
@@ -91,18 +105,23 @@ export async function callCore(req: CoreCallRequest): Promise<CoreCallResult> {
 
   const queryString = req.query ? '?' + new URLSearchParams(req.query).toString() : '';
   // Tenancy comes from the typed arguments only (the tenant context at every call site),
-  // never from the extra headers: the three identity headers are dropped from them before
-  // the context's values are written, so a forwarded header can neither name
-  // another tenant nor supply an account the context lacks.
+  // never from the extra headers: the three identity headers (and the ownership-proof
+  // header) are dropped from them before the context's values are written, so a
+  // forwarded header can neither name another tenant, supply an account the context
+  // lacks, nor claim an ownership proof nobody made.
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(req.headers ?? {})) {
     const lower = name.toLowerCase();
-    if (lower === TENANT_HEADER || lower === ACCOUNT_HEADER || lower === ORIGINATOR_HEADER) continue;
+    if (
+      lower === TENANT_HEADER || lower === ACCOUNT_HEADER || lower === ORIGINATOR_HEADER
+      || lower === PROVEN_CAMPAIGN_HEADER
+    ) continue;
     headers[name] = value;
   }
   headers[TENANT_HEADER] = req.tenantId;
   if (req.accountId) headers[ACCOUNT_HEADER] = req.accountId;
   if (req.originator) headers[ORIGINATOR_HEADER] = req.originator;
+  if (req.provenCampaignId) headers[PROVEN_CAMPAIGN_HEADER] = req.provenCampaignId;
 
   const sendsBody = Boolean(req.body) && (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH');
   if (sendsBody) headers['content-type'] = 'application/json';

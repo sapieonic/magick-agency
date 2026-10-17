@@ -101,6 +101,9 @@ const DYNAMIC_CALL_SITES: ReadonlyMap<string, string> = new Map([
     "the spine CSV export's page loop; its two callers pass literal `/agency-campaigns/${id}/attempts` and `/contacts` objects"],
 ]);
 
+/** The one file that passes `provenCampaignId` (the spine CSV export's page loop). */
+const PROVEN_CAMPAIGN_CALLER = 'api/routes/proxy-agency-campaigns.routes.ts';
+
 /** Internal handlers no public-API call site reaches, each with why. */
 const UNREACHED_CORE_ROUTES: ReadonlyMap<string, string> = new Map([
   ['GET /api/v1/agency-campaigns/:_/attempts/:_/recording-url',
@@ -166,6 +169,17 @@ describe('callCore — static resolution against the private internal handler in
     expect(keys.sort()).toEqual([...DYNAMIC_CALL_SITES.keys()].sort());
   });
 
+  it('provenCampaignId (it skips the page reads\' ownership check) is passed only by the spine export drain', () => {
+    // A caller that set it without first proving ownership would read another account's
+    // attempts unchecked, so each new call site is a decision made here, not elsewhere.
+    const passing = walk(SRC)
+      .filter((file) => !file.endsWith('core-dispatch.ts'))
+      .filter((file) => /provenCampaignId\s*:/.test(readFileSync(file, 'utf8')))
+      .map((file) => relative(SRC, file));
+    expect(passing).toEqual([PROVEN_CAMPAIGN_CALLER]);
+    expect(readFileSync(join(SRC, PROVEN_CAMPAIGN_CALLER), 'utf8').match(/provenCampaignId\s*:/g)).toHaveLength(1);
+  });
+
   it('every internal route is reached by a call site, or listed as unreached with its reason', () => {
     const reached = (r: { method: string; url: string }) =>
       sites.some((s) => s.method === r.method && toRegex(r.url).test(`/api/v1${s.path.split('?')[0]}`));
@@ -225,6 +239,20 @@ describe('callCore — tenancy and transport', () => {
     expect(seen!.headers['x-mgkvc-tenant']).toBe('t1');
     expect(seen!.headers['x-mgkvc-account']).toBeUndefined();
     expect(seen!.headers['x-mgkvc-originator']).toBeUndefined();
+  });
+
+  it('sets x-mgkvc-proven-campaign only from provenCampaignId, never from a forwarded header', async () => {
+    setCoreHandlers(stub);
+    await callCore({
+      method: 'GET', path: '/agency-campaigns/c1/attempts', tenantId: 't1', accountId: 'a1',
+      headers: { 'X-Mgkvc-Proven-Campaign': 'c1' },
+    });
+    expect(seen!.headers['x-mgkvc-proven-campaign']).toBeUndefined();
+    await callCore({
+      method: 'GET', path: '/agency-campaigns/c1/attempts', tenantId: 't1', accountId: 'a1',
+      provenCampaignId: 'c1', headers: { 'x-mgkvc-proven-campaign': 'c9' },
+    });
+    expect(seen!.headers['x-mgkvc-proven-campaign']).toBe('c1');
   });
 
   it("encodes the query with URLSearchParams and keeps JSON round-tripping (a Date arrives as its ISO string)", async () => {

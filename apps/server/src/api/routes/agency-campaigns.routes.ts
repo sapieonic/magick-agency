@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { authMiddleware, getTenantId, getAccountId, getOriginator } from '../middleware/auth.middleware.js';
+import { PROVEN_CAMPAIGN_HEADER } from '../middleware/headers.js';
 import { getFeatureFlagService, FLAGS } from '../../feature-flags/index.js';
 import { auditLogger } from '../../audit/audit-logger.js';
 import { createChildLogger } from '@magick-agency/observability';
@@ -886,11 +887,32 @@ export async function agencyCampaignRoutes(
     return decoded;
   }
 
+  /**
+   * The two spine page reads' gate and ownership step, with the CSV export's fast path.
+   *
+   * The public export proves ownership ONCE — a full `GET /:id` (this plugin's gate and
+   * `requireOwned`) with the same tenant and account — and then drains up to 100 pages.
+   * It names that campaign in `x-mgkvc-proven-campaign` (`callCore`'s typed
+   * `provenCampaignId`, never a forwarded header), and a page read for exactly that
+   * campaign skips the flag read and the campaign read it would otherwise repeat on every
+   * page. Any other request — no header, or a header naming a different campaign — takes
+   * the ordinary path. Returns the campaign id to read, or `null` once it has replied.
+   */
+  async function spinePageCampaignId(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+  ): Promise<string | null> {
+    const proven = request.headers[PROVEN_CAMPAIGN_HEADER];
+    if (typeof proven === 'string' && proven === request.params.id) return request.params.id;
+    if (!(await gate(request, reply))) return null;
+    const campaign = await requireOwned(request, reply);
+    return campaign ? campaign.id : null;
+  }
+
   // ── GET /api/v1/agency-campaigns/:id/attempts ────────────────────────────
   app.get<{ Params: { id: string } }>('/:id/attempts', async (request, reply) => {
-    if (!(await gate(request, reply))) return reply;
-    const campaign = await requireOwned(request, reply);
-    if (!campaign) return reply;
+    const campaignId = await spinePageCampaignId(request, reply);
+    if (!campaignId) return reply;
 
     const parsed = parseAttemptFilters((request.query ?? {}) as Record<string, unknown>);
     if (!parsed.ok) {
@@ -914,7 +936,7 @@ export async function agencyCampaignRoutes(
     if (cursor === null) return reply;
 
     const page = await agencyAttemptRepository.listForCampaign({
-      campaignId: campaign.id,
+      campaignId,
       filters: parsed.filters,
       ...(cursor ? { after: cursor } : {}),
       limit: clampLimit((request.query as { limit?: unknown } | undefined)?.limit),
@@ -1130,9 +1152,8 @@ export async function agencyCampaignRoutes(
   //
   // The read of what the roster ingest writes.
   app.get<{ Params: { id: string } }>('/:id/contacts', async (request, reply) => {
-    if (!(await gate(request, reply))) return reply;
-    const campaign = await requireOwned(request, reply);
-    if (!campaign) return reply;
+    const campaignId = await spinePageCampaignId(request, reply);
+    if (!campaignId) return reply;
 
     const parsed = parseContactFilters((request.query ?? {}) as Record<string, unknown>);
     if (!parsed.ok) {
@@ -1142,7 +1163,7 @@ export async function agencyCampaignRoutes(
     if (cursor === null) return reply;
 
     const page = await agencyContactRepository.listForCampaign({
-      campaignId: campaign.id,
+      campaignId,
       filters: parsed.filters,
       ...(cursor ? { after: cursor } : {}),
       limit: clampLimit((request.query as { limit?: unknown } | undefined)?.limit),
