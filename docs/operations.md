@@ -226,7 +226,8 @@ choose to go available.
 ## Migrations
 
 The baseline, `packages/db/migrations/0001_baseline.sql`, and the numbered migrations after it
-(`0002_telephony_credentials.sql`, `0003_agency_attempt_indexes.sql`), run in order with node-pg-migrate from `packages/db`:
+(`0002_telephony_credentials.sql`, `0003_agency_attempt_indexes.sql`,
+`0004_agency_contacts_in_flight_index.sql`), run in order with node-pg-migrate from `packages/db`:
 
 ```bash
 DATABASE_URL=postgresql://... pnpm migrate:up
@@ -237,7 +238,7 @@ every start, before the server, through `dist/migrate.js` (`apps/server/src/migr
 node-pg-migrate's runner with the server's own config and Postgres TLS settings (the CLI cannot
 verify TLS, because Q1 keeps TLS parameters out of `DATABASE_URL`). An invalid environment or a
 failed migration stops the container before the server starts. Same table (`pgmigrations`) as
-`pnpm migrate:up`. `0003_agency_attempt_indexes.sql` builds its indexes with plain `CREATE INDEX`
+`pnpm migrate:up`. `0003_agency_attempt_indexes.sql` and `0004_agency_contacts_in_flight_index.sql` build their indexes with plain `CREATE INDEX`
 (a migration file runs in one transaction, where `CONCURRENTLY` is not allowed), so writes to
 `agency_call_attempts` and `agency_contacts` wait while it builds; that is safe only because the
 migrations run before the server starts. Run it the same way outside the image. Future
