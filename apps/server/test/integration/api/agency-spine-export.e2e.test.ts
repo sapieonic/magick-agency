@@ -112,7 +112,9 @@ describe('spine CSV export across several pages (e2e)', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toBe('text/csv; charset=utf-8');
-    expect(res.headers['content-disposition']).toBe('attachment; filename="contacts-Q3-Renewals.csv"');
+    expect(res.headers['content-disposition']).toBe(
+      'attachment; filename="contacts-Q3 Renewals.csv"; filename*=UTF-8\'\'contacts-Q3%20Renewals.csv',
+    );
     expect(res.headers['x-export-rows']).toBe(String(CONTACTS));
     expect(res.headers['x-export-truncated']).toBeUndefined();
 
@@ -131,7 +133,9 @@ describe('spine CSV export across several pages (e2e)', () => {
     const res = await get(`/proxy/agency/campaigns/${w.campaign}/attempts.csv?preamble=false`);
 
     expect(res.statusCode).toBe(200);
-    expect(res.headers['content-disposition']).toBe('attachment; filename="attempts-Q3-Renewals.csv"');
+    expect(res.headers['content-disposition']).toBe(
+      'attachment; filename="attempts-Q3 Renewals.csv"; filename*=UTF-8\'\'attempts-Q3%20Renewals.csv',
+    );
     expect(res.headers['x-export-rows']).toBe(String(ATTEMPTS));
     const ids = dataLines(res.body).map((line) => line.split(',')[0]);
     expect(ids).toHaveLength(ATTEMPTS);

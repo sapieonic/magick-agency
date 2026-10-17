@@ -1680,7 +1680,7 @@ describe('agency ingest routes', () => {
       expect(res.statusCode).toBe(200);
       expect(res.headers['content-type']).toContain('text/csv');
       expect(res.headers['content-disposition']).toBe(
-        'attachment; filename="roster-rejected-rows.csv"',
+        'attachment; filename="roster-rejected-rows.csv"; filename*=UTF-8\'\'roster-rejected-rows.csv',
       );
       expect(res.body).toContain('_reason');
       await app.close();
@@ -1696,6 +1696,20 @@ describe('agency ingest routes', () => {
       const disposition = res.headers['content-disposition'] as string;
       expect(disposition).not.toContain('..');
       expect(disposition).not.toContain('"wd');
+      expect(disposition).not.toContain('/');
+      await app.close();
+    });
+
+    it('keeps a non-ASCII upload name in filename*, with an ASCII-only fallback', async () => {
+      // The ad-hoc sanitiser this route used to have replaced every non-ASCII
+      // character with `_`, so a roster named in Hindi downloaded as `____`.
+      mocks.repo.findById.mockResolvedValue(job({ rejected_s3_key: 'k', file_name: 'सूची.csv' }));
+      mocks.getFileBuffer.mockResolvedValue(Buffer.from('x'));
+      const app = await buildApp();
+      const res = await app.inject({ method: 'GET', url: `${PREFIX}/ingest/jobs/00000000-0000-4000-8000-000000000001/rejected.csv` });
+      expect(res.headers['content-disposition']).toBe(
+        `attachment; filename="-rejected-rows.csv"; filename*=UTF-8''${encodeURIComponent('सूची-rejected-rows.csv')}`,
+      );
       await app.close();
     });
 

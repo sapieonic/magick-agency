@@ -417,7 +417,7 @@ describe('the CSV exports', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toContain('text/csv');
-    expect(res.headers['content-disposition']).toContain('attempts-Q3-Renewals.csv');
+    expect(res.headers['content-disposition']).toContain('filename="attempts-Q3 Renewals.csv"');
     expect(res.headers['x-export-rows']).toBe('2');
     expect(res.headers['x-export-truncated']).toBeUndefined();
 

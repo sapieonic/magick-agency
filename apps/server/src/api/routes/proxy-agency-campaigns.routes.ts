@@ -91,6 +91,7 @@ import {
 import { rejectPathEscapingParams } from './helpers/path-params.js';
 import { drainPages } from './helpers/drain-pages.js';
 import { fetchOwnedCoreCampaign, stringField } from './helpers/core-campaign.js';
+import { csvAttachmentHeader } from './helpers/csv-attachment.js';
 
 /**
  * The ownership probe's outcome. The internal handler REFUSING is forwarded as-is and
@@ -1188,9 +1189,10 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       }));
     }
 
-    const safeName = (owned.name ?? 'campaign').replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 60);
     reply.header('Content-Type', 'text/csv; charset=utf-8');
-    reply.header('Content-Disposition', `attachment; filename="activity-${safeName}.csv"`);
+    // The campaign's own name, quote-safe in `filename=` and whole (non-ASCII
+    // included) in `filename*=` — see `csvAttachmentHeader`.
+    reply.header('Content-Disposition', csvAttachmentHeader(`activity-${owned.name ?? 'campaign'}`));
     reply.header('X-Activity-Rows', String(rowCount));
     if (truncatedBy) {
       reply.header('X-Activity-Truncated', 'true');
@@ -1505,9 +1507,8 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
       },
     });
 
-    const safeName = (input.campaignName ?? 'campaign').replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 60);
     reply.header('Content-Type', 'text/csv; charset=utf-8');
-    reply.header('Content-Disposition', `attachment; filename="${input.kind}-${safeName}.csv"`);
+    reply.header('Content-Disposition', csvAttachmentHeader(`${input.kind}-${input.campaignName ?? 'campaign'}`));
     reply.header('X-Export-Rows', String(input.rowCount));
     if (input.truncated) {
       reply.header('X-Export-Truncated', 'true');
@@ -2810,11 +2811,10 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
     }
 
     const buffer = await getFileBuffer(job.rejected_s3_key);
-    const safeName = downloadBaseName(job.file_name);
     return reply
       .code(200)
       .header('Content-Type', 'text/csv')
-      .header('Content-Disposition', `attachment; filename="${safeName}-rejected-rows.csv"`)
+      .header('Content-Disposition', csvAttachmentHeader(`${downloadBaseName(job.file_name)}-rejected-rows`))
       .send(buffer);
   });
 }
@@ -2917,23 +2917,23 @@ function missingAccountBody(): { error: string; message: string } {
 }
 
 /**
- * Build a safe `Content-Disposition` filename stem from the operator's original
- * upload name.
+ * The download's filename stem from the operator's original upload name, before
+ * `csvAttachmentHeader` makes it header-safe.
  *
- * The name is user-supplied and round-trips back out as a header, so it is
- * sanitised rather than trusted. Replacing the disallowed characters is not
- * enough on its own: `../../etc/passwd.csv` becomes `.._.._etc_passwd`, which
- * still carries `..` into a filename some clients resolve. Dot runs are
- * collapsed and leading dots stripped, so the result cannot express a relative
- * path or a hidden file no matter what was uploaded.
+ * The name is user-supplied and round-trips back out as a header, so it is not
+ * trusted as a path: separators become `_`, dot runs are collapsed and leading
+ * dots stripped, so `../../etc/passwd.csv` cannot carry `..` or a hidden-file
+ * name into a filename some clients resolve. Everything else — spaces, non-ASCII —
+ * is left for `csvAttachmentHeader`, which keeps the name whole in `filename*=` and
+ * quote-safe in `filename=`. Cut by code point (`Array.from`), never mid-surrogate.
  */
 function downloadBaseName(fileName: string): string {
   const stem = fileName.replace(/\.csv$/i, '');
   const sanitised = stem
-    .replace(/[^A-Za-z0-9._-]/g, '_')
+    .replace(/[\\/]/g, '_')
     .replace(/\.{2,}/g, '.')
     .replace(/^[._]+/, '');
-  return sanitised.slice(0, 100) || 'import';
+  return Array.from(sanitised).slice(0, 100).join('') || 'import';
 }
 
 function toJobResponse(job: Awaited<ReturnType<typeof agencyIngestJobRepository.findById>>) {
