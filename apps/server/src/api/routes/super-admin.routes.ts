@@ -1051,9 +1051,10 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
    * GET /super-admin/tenants/:id/accounts
    * List all accounts for a tenant with their concurrency settings.
    *
-   * Each account's allocation is `providerConcurrencyRepository.getAllocation`.
-   * A read failure reports `unavailable` rather than fabricating a limit. Reads
-   * run in chunks of 10, bounding concurrent pool checkouts.
+   * The allocations are `providerConcurrencyRepository.getAllocationsForAccounts`:
+   * one statement for every account of the tenant, each entry what `getAllocation`
+   * answers for that account. A read failure reports `unavailable` rather than
+   * fabricating a limit.
    */
   authApp.get('/tenants/:id/accounts', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const { id: tenantId } = request.params;
@@ -1064,32 +1065,28 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
 
     const dbAccounts = await accountRepository.findByTenantId(tenantId);
 
-    const accounts: Array<Record<string, unknown>> = [];
-    for (let offset = 0; offset < dbAccounts.length; offset += 10) {
-      const chunk = dbAccounts.slice(offset, offset + 10);
-      const rows = await Promise.all(chunk.map(async (acc) => {
-        let maxConcurrentCalls: number | null = null;
-        let concurrency: AccountConcurrencyAllocation | undefined;
-        let concurrencyStatus: 'available' | 'unavailable' = 'unavailable';
-        try {
-          concurrency = await providerConcurrencyRepository.getAllocation(tenantId, acc.id);
-          maxConcurrentCalls = concurrency.total_concurrency;
-          concurrencyStatus = 'available';
-        } catch (err) {
-          log.warn({ err, tenantId, accountId: acc.id }, 'Account concurrency unavailable');
-        }
-        return {
-          id: acc.id,
-          name: acc.name,
-          slug: acc.slug,
-          status: acc.status,
-          max_concurrent_calls: maxConcurrentCalls,
-          concurrency_status: concurrencyStatus,
-          ...(concurrency ? { concurrency } : {}),
-        };
-      }));
-      accounts.push(...rows);
+    let allocations: Map<string, AccountConcurrencyAllocation> | null = null;
+    try {
+      allocations = await providerConcurrencyRepository.getAllocationsForAccounts(
+        tenantId,
+        dbAccounts.map((acc) => acc.id),
+      );
+    } catch (err) {
+      log.warn({ err, tenantId, accounts: dbAccounts.length }, 'Account concurrency unavailable');
     }
+
+    const accounts = dbAccounts.map((acc) => {
+      const concurrency = allocations?.get(acc.id);
+      return {
+        id: acc.id,
+        name: acc.name,
+        slug: acc.slug,
+        status: acc.status,
+        max_concurrent_calls: concurrency ? concurrency.total_concurrency : null,
+        concurrency_status: concurrency ? 'available' : 'unavailable',
+        ...(concurrency ? { concurrency } : {}),
+      };
+    });
 
     return reply.send({ accounts });
   });

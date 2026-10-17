@@ -1,6 +1,6 @@
 /* The account-concurrency handlers run in-process inside the super-admin route, so the
  * behaviours are asserted against `providerConcurrencyRepository`
- * (getAllocation / switchToLegacy / replaceProviderBreakdown),
+ * (getAllocation / getAllocationsForAccounts / switchToLegacy / replaceProviderBreakdown),
  * `accountSettingsRepository.invalidate`, the `seams/concurrency-control.ts` seam (stubbed with
  * `setConcurrencyControl`), the `concurrency.allocation.updated` audit_logs row (`coreAuditLog`)
  * and the super-admin audit row.
@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   // The concurrency repositories, called in-process.
   concurrencyRepo: {
     getAllocation: vi.fn(),
+    getAllocationsForAccounts: vi.fn(),
     replaceProviderBreakdown: vi.fn(),
     switchToLegacy: vi.fn(),
   },
@@ -175,10 +176,11 @@ describe('super-admin account concurrency routes', () => {
     it('should return accounts with their concurrency', async () => {
       mocks.tenantRepo.findById.mockResolvedValue({ id: 'tenant-1' });
       mocks.accountRepo.findByTenantId.mockResolvedValue([makeAccount()]);
-      // The allocation is `providerConcurrencyRepository.getAllocation`, called in-process.
-      mocks.concurrencyRepo.getAllocation.mockResolvedValue(
-        allocation({ mode: 'legacy_total', version: 1, total_concurrency: 10 }),
-      );
+      // The allocations are ONE `providerConcurrencyRepository.getAllocationsForAccounts`
+      // read for the whole tenant, called in-process.
+      mocks.concurrencyRepo.getAllocationsForAccounts.mockResolvedValue(new Map([
+        ['acc-1', allocation({ mode: 'legacy_total', version: 1, total_concurrency: 10 })],
+      ]));
 
       const res = await app.inject({ method: 'GET', url: '/super-admin/tenants/tenant-1/accounts' });
       expect(res.statusCode).toBe(200);
@@ -193,19 +195,21 @@ describe('super-admin account concurrency routes', () => {
         concurrency_status: 'available',
         concurrency: expect.objectContaining({ total_concurrency: 10 }),
       });
-      expect(mocks.concurrencyRepo.getAllocation).toHaveBeenCalledWith('tenant-1', 'acc-1');
+      expect(mocks.concurrencyRepo.getAllocationsForAccounts).toHaveBeenCalledTimes(1);
+      expect(mocks.concurrencyRepo.getAllocationsForAccounts).toHaveBeenCalledWith('tenant-1', ['acc-1']);
+      expect(mocks.concurrencyRepo.getAllocation).not.toHaveBeenCalled();
     });
 
     it('returns the provider breakdown and derived total from the provider-aware allocation', async () => {
       mocks.tenantRepo.findById.mockResolvedValue({ id: 'tenant-1' });
       mocks.accountRepo.findByTenantId.mockResolvedValue([makeAccount()]);
-      mocks.concurrencyRepo.getAllocation.mockResolvedValue(allocation({
+      mocks.concurrencyRepo.getAllocationsForAccounts.mockResolvedValue(new Map([['acc-1', allocation({
         mode: 'provider_breakdown', version: 3, total_concurrency: 50,
         providers: [
           { provider: 'vobiz', max_concurrent_calls: 30 },
           { provider: 'voicelink', max_concurrent_calls: 20 },
         ],
-      }));
+      })]]));
 
       const res = await app.inject({ method: 'GET', url: '/super-admin/tenants/tenant-1/accounts' });
 
@@ -221,7 +225,7 @@ describe('super-admin account concurrency routes', () => {
     it('should report unavailable when the allocation read fails', async () => {
       mocks.tenantRepo.findById.mockResolvedValue({ id: 'tenant-1' });
       mocks.accountRepo.findByTenantId.mockResolvedValue([makeAccount()]);
-      mocks.concurrencyRepo.getAllocation.mockRejectedValue(new Error('No database connection'));
+      mocks.concurrencyRepo.getAllocationsForAccounts.mockRejectedValue(new Error('No database connection'));
 
       const res = await app.inject({ method: 'GET', url: '/super-admin/tenants/tenant-1/accounts' });
       expect(res.statusCode).toBe(200);
@@ -231,7 +235,7 @@ describe('super-admin account concurrency routes', () => {
     it('should report unavailable when the allocation read throws', async () => {
       mocks.tenantRepo.findById.mockResolvedValue({ id: 'tenant-1' });
       mocks.accountRepo.findByTenantId.mockResolvedValue([makeAccount()]);
-      mocks.concurrencyRepo.getAllocation.mockRejectedValue(new Error('Connection refused'));
+      mocks.concurrencyRepo.getAllocationsForAccounts.mockRejectedValue(new Error('Connection refused'));
 
       const res = await app.inject({ method: 'GET', url: '/super-admin/tenants/tenant-1/accounts' });
       expect(res.statusCode).toBe(200);
@@ -244,15 +248,20 @@ describe('super-admin account concurrency routes', () => {
         makeAccount({ id: 'acc-1', slug: 'sales' }),
         makeAccount({ id: 'acc-2', slug: 'support' }),
       ]);
-      mocks.concurrencyRepo.getAllocation
-        .mockResolvedValueOnce(allocation({ account_id: 'acc-1', version: 1, total_concurrency: 20 }))
-        .mockResolvedValueOnce(allocation({ account_id: 'acc-2', version: 1, total_concurrency: 8 }));
+      mocks.concurrencyRepo.getAllocationsForAccounts.mockResolvedValue(new Map([
+        ['acc-2', allocation({ account_id: 'acc-2', version: 1, total_concurrency: 8 })],
+        ['acc-1', allocation({ account_id: 'acc-1', version: 1, total_concurrency: 20 })],
+      ]));
 
       const res = await app.inject({ method: 'GET', url: '/super-admin/tenants/tenant-1/accounts' });
       const { accounts } = res.json();
       expect(accounts).toHaveLength(2);
+      // Matched by account id and listed in the accounts' own order.
       expect(accounts[0].max_concurrent_calls).toBe(20);
       expect(accounts[1].max_concurrent_calls).toBe(8);
+      // One statement for the tenant, not one per account.
+      expect(mocks.concurrencyRepo.getAllocationsForAccounts).toHaveBeenCalledTimes(1);
+      expect(mocks.concurrencyRepo.getAllocationsForAccounts).toHaveBeenCalledWith('tenant-1', ['acc-1', 'acc-2']);
     });
   });
 

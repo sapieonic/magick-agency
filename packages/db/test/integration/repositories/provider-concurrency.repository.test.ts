@@ -93,4 +93,52 @@ describe('providerConcurrencyRepository (integration)', () => {
     });
     expect(created).toMatchObject({ mode: 'legacy_total', version: 2, total_concurrency: 7 });
   });
+
+  describe('getAllocationsForAccounts — one statement for a tenant\'s accounts', () => {
+    it('answers every account exactly as getAllocation does, defaults included', async () => {
+      const tenant = uuidFor('tenant-1');
+      await providerConcurrencyRepository.replaceProviderBreakdown({
+        tenant_id: tenant, account_id: uuidFor('account-1'), expected_version: 1,
+        providers: [
+          { provider: 'voicelink', max_concurrent_calls: 20 },
+          { provider: 'vobiz', max_concurrent_calls: 30 },
+        ],
+      });
+      await providerConcurrencyRepository.switchToLegacy({
+        tenant_id: tenant, account_id: uuidFor('account-2'), expected_version: 1,
+        max_concurrent_calls: 12,
+      });
+      // account-3 has no settings row at all.
+      const ids = [uuidFor('account-1'), uuidFor('account-2'), uuidFor('account-3')];
+
+      const batched = await providerConcurrencyRepository.getAllocationsForAccounts(tenant, ids);
+
+      expect([...batched.keys()]).toEqual(ids);
+      for (const id of ids) {
+        expect(batched.get(id)).toEqual(await providerConcurrencyRepository.getAllocation(tenant, id));
+      }
+      expect(batched.get(uuidFor('account-1'))).toMatchObject({ mode: 'provider_breakdown', total_concurrency: 50 });
+      expect(batched.get(uuidFor('account-3'))).toMatchObject({ mode: 'legacy_total', version: 1, total_concurrency: 5, providers: [] });
+    });
+
+    it('never reads another tenant\'s row for the same account id', async () => {
+      await providerConcurrencyRepository.switchToLegacy({
+        tenant_id: uuidFor('tenant-2'), account_id: uuidFor('account-1'), expected_version: 1,
+        max_concurrent_calls: 99,
+      });
+
+      const batched = await providerConcurrencyRepository.getAllocationsForAccounts(
+        uuidFor('tenant-1'), [uuidFor('account-1')],
+      );
+
+      expect(batched.get(uuidFor('account-1'))).toMatchObject({ total_concurrency: 5, version: 1 });
+    });
+
+    it('issues no statement for an empty list', async () => {
+      const spy = vi.spyOn(getTestPool(), 'query');
+      expect((await providerConcurrencyRepository.getAllocationsForAccounts(uuidFor('tenant-1'), [])).size).toBe(0);
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+  });
 });

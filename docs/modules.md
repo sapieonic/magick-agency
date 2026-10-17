@@ -909,7 +909,7 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/integration/repositories/dialer-analysis-job.repository.test.ts` | ~9 |
 | `packages/db/test/integration/repositories/membership.repository.test.ts` | ~33 |
 | `packages/db/test/integration/repositories/phone-number.repository.test.ts` | ~8 |
-| `packages/db/test/integration/repositories/provider-concurrency.repository.test.ts` | ~3 |
+| `packages/db/test/integration/repositories/provider-concurrency.repository.test.ts` | ~6 |
 | `packages/db/test/integration/repositories/shared-infra-coverage.test.ts` | ~8 |
 | `packages/db/test/integration/repositories/telephony-credential.repository.test.ts` | 31 |
 | `packages/db/test/integration/repositories/tenant.repository.test.ts` | ~13 |
