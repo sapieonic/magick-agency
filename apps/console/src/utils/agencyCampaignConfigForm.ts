@@ -482,7 +482,7 @@ export const DEFAULT_DISPOSITIONS: readonly AgencyDispositionEntry[] = AGENCY_DE
  * session. Cheaper to make the copy honest than to rely on every future call
  * site replacing the object rather than assigning into it.
  */
-export function cloneDisposition(entry: AgencyDispositionEntry): AgencyDispositionEntry {
+function cloneDisposition(entry: AgencyDispositionEntry): AgencyDispositionEntry {
   return { ...entry, ...(entry.retry ? { retry: { ...entry.retry } } : {}) };
 }
 

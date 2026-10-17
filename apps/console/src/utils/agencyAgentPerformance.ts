@@ -467,6 +467,37 @@ export function headlineTrio(totals: AgencyAgentStatsTotals | undefined): Headli
 
 // ─── The derived readouts ────────────────────────────────────────────────────
 
+/** What a served readout says in each of its three states. */
+interface ServedCopy {
+  /** The field did not arrive — `undefined`. */
+  missing: string;
+  /** The server carried it and has nothing to measure — `null`. Without it, `null` reads as missing. */
+  unmeasured?: string;
+  /** The figure is real. */
+  measured: string;
+}
+
+/**
+ * One readout off one served figure, in this module's three-way rule: `undefined`
+ * is an em dash and "didn't load", `null` is "Not measured yet" and a sentence
+ * naming what has not happened, and only a number is a claim — formatted, and
+ * `known: true`. The readouts below were that ladder written out three times.
+ */
+function servedReadout(
+  value: number | null | undefined,
+  copy: ServedCopy,
+  format: (value: number) => string,
+  secondary: string | null = null,
+): PerformanceReadout {
+  if (typeof value === 'number') {
+    return { value: format(value), detail: copy.measured, caveat: null, secondary, known: true };
+  }
+  if (value === null && copy.unmeasured !== undefined) {
+    return { value: 'Not measured yet', detail: copy.unmeasured, caveat: null, secondary, known: false };
+  }
+  return { value: '—', detail: copy.missing, caveat: null, secondary, known: false };
+}
+
 /**
  * Conversion rate — successes over **conversations**, not over dials.
  *
@@ -476,67 +507,37 @@ export function headlineTrio(totals: AgencyAgentStatsTotals | undefined): Headli
  * both name the denominator rather than leaving "conversion rate" to be read
  * against whichever number is nearest on screen.
  */
-export function conversionRateReadout(
+export function agentConversionReadout(
   totals: AgencyAgentStatsTotals | undefined,
 ): PerformanceReadout {
-  const rate = totals?.success_rate_pct;
   const successes = totals?.successes;
-  const secondary = typeof successes === 'number' ? `${formatCount(successes)} counted` : null;
-
-  if (rate === undefined) {
-    return {
-      value: '—',
-      detail: 'Your conversion rate didn’t load.',
-      caveat: null,
-      secondary,
-      known: false,
-    };
-  }
-  if (rate === null) {
-    return {
-      value: 'Not measured yet',
-      detail: 'You haven’t had a conversation to convert yet.',
-      caveat: null,
-      secondary,
-      known: false,
-    };
-  }
-  return {
-    value: pct(rate),
-    detail: 'Calls that counted as a win, out of the ones where you spoke to someone — not out of every dial.',
-    caveat: null,
-    secondary,
-    known: true,
-  };
+  return servedReadout(
+    totals?.success_rate_pct,
+    {
+      missing: 'Your conversion rate didn’t load.',
+      unmeasured: 'You haven’t had a conversation to convert yet.',
+      measured: 'Calls that counted as a win, out of the ones where you spoke to someone — not out of every dial.',
+    },
+    pct,
+    typeof successes === 'number' ? `${formatCount(successes)} counted` : null,
+  );
 }
 
 /** Average handle time. `null` is "no call has finished", never a fast shift. */
-export function handleTimeReadout(
+export function agentHandleTimeReadout(
   totals: AgencyAgentStatsTotals | undefined,
 ): PerformanceReadout {
-  const aht = totals?.aht_seconds;
   const talk = totals?.talk_seconds;
-  const secondary = typeof talk === 'number' ? `${seconds(talk)} on calls in total` : null;
-
-  if (aht === undefined) {
-    return { value: '—', detail: 'Your average call length didn’t load.', caveat: null, secondary, known: false };
-  }
-  if (aht === null) {
-    return {
-      value: 'Not measured yet',
-      detail: 'No call of yours has finished in this period, so there is nothing to average.',
-      caveat: null,
-      secondary,
-      known: false,
-    };
-  }
-  return {
-    value: seconds(aht),
-    detail: 'Your average time on a call, from the moment you and the customer were joined.',
-    caveat: null,
-    secondary,
-    known: true,
-  };
+  return servedReadout(
+    totals?.aht_seconds,
+    {
+      missing: 'Your average call length didn’t load.',
+      unmeasured: 'No call of yours has finished in this period, so there is nothing to average.',
+      measured: 'Your average time on a call, from the moment you and the customer were joined.',
+    },
+    seconds,
+    typeof talk === 'number' ? `${seconds(talk)} on calls in total` : null,
+  );
 }
 
 /**
@@ -548,18 +549,15 @@ export function handleTimeReadout(
  * for at least one of them — and the tuning decision the supervisor's version
  * feeds is not one an agent can act on anyway.
  */
-export function wrapupReadout(totals: AgencyAgentStatsTotals | undefined): PerformanceReadout {
-  const wrapup = totals?.wrapup_seconds;
-  if (typeof wrapup !== 'number') {
-    return { value: '—', detail: 'Your wrap-up time didn’t load.', caveat: null, secondary: null, known: false };
-  }
-  return {
-    value: seconds(wrapup),
-    detail: 'Time spent writing calls up after the customer hung up.',
-    caveat: null,
-    secondary: null,
-    known: true,
-  };
+export function agentWrapupReadout(totals: AgencyAgentStatsTotals | undefined): PerformanceReadout {
+  return servedReadout(
+    totals?.wrapup_seconds,
+    {
+      missing: 'Your wrap-up time didn’t load.',
+      measured: 'Time spent writing calls up after the customer hung up.',
+    },
+    seconds,
+  );
 }
 
 // ─── Occupancy ───────────────────────────────────────────────────────────────

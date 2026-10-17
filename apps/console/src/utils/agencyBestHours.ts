@@ -6,6 +6,7 @@ import type {
   AgencyGroupRow,
 } from '../types/agency-stats';
 import { zoneFormatter, zonedParts, type ZonedParts } from './format/zone';
+import { plural } from './format/number';
 
 /**
  * "When does this campaign actually connect" — the best-hours matrix, as pure
@@ -89,7 +90,7 @@ export const BEST_HOURS_CELLS = BEST_HOURS_DAYS * BEST_HOURS_HOURS;
  * first-day-of-week and re-introduce exactly the off-by-one against ISO's 1 = Monday
  * that the numeric wire value exists to avoid.
  */
-export const BEST_HOURS_WEEKDAYS: readonly string[] = [
+const BEST_HOURS_WEEKDAYS: readonly string[] = [
   'Sunday',
   'Monday',
   'Tuesday',
@@ -100,7 +101,7 @@ export const BEST_HOURS_WEEKDAYS: readonly string[] = [
 ];
 
 /** The same seven, for a column head two characters wider than the figures under it. */
-export const BEST_HOURS_WEEKDAYS_SHORT: readonly string[] = [
+const BEST_HOURS_WEEKDAYS_SHORT: readonly string[] = [
   'Sun',
   'Mon',
   'Tue',
@@ -126,7 +127,7 @@ function weekdayName(day: number): string {
  * | `conversion_rate` | `success_rate_pct` | `success_rate_reportable`, absent ⇒ **withhold** |
  *
  * The two gates degrade in OPPOSITE directions, and that asymmetry is deliberate:
- * see `successRateReportable` below. Falling back to `rates_reportable` for the
+ * see `conversionCellRateable` below. Falling back to `rates_reportable` for the
  * conversion view paints a 20-dial/1-connect/1-conversion cell as 100% and as the
  * ramp's upper endpoint, which is the failure a thin cell on the ramp produces; the connect rate has no such
  * second denominator to be wrong about.
@@ -262,7 +263,7 @@ export function bestHoursHourLabel(hour: number): string {
  * an hour with a zone beside it is a fact, and an hour with the WRONG zone beside
  * it is worse than an hour with none.
  */
-export function bestHoursCellCoordinates(day: number, hour: number, zone: string | null): string {
+function bestHoursCellCoordinates(day: number, hour: number, zone: string | null): string {
   const stem = `${weekdayName(day)} ${bestHoursHourLabel(hour)}:00`;
   return zone === null ? stem : `${stem} · ${zone}`;
 }
@@ -563,7 +564,13 @@ function ratesReportable(row: AgencyGroupRow): boolean {
  * these" is recoverable; a map that paints one answered call as the best hour of
  * the week is not.
  */
-function successRateReportable(row: AgencyGroupRow): boolean {
+/*
+  Named apart from the roster's exported `successRateReportable` on purpose: the
+  two answer the same question with OPPOSITE fallbacks for an absent field (see
+  above), and one name for both made a grep — or an auto-import — hand a reader
+  the wrong rule.
+*/
+function conversionCellRateable(row: AgencyGroupRow): boolean {
   return row.success_rate_reportable === true;
 }
 
@@ -604,7 +611,7 @@ function indexRows(rows: readonly AgencyGroupRow[]): Map<string, AgencyGroupRow>
  */
 function measureCell(row: AgencyGroupRow, view: BestHoursView, day: number, hour: number): BestHoursCell {
   const base = { day, hour, attempts: row.attempts };
-  const dials = `${agentCount(row.attempts)} ${row.attempts === 1 ? 'dial' : 'dials'}`;
+  const dials = plural(row.attempts, 'dial');
 
   if (view === 'volume') {
     /*
@@ -666,7 +673,7 @@ function measureCell(row: AgencyGroupRow, view: BestHoursView, day: number, hour
       note: `${dials} · no connect to convert yet`,
     };
   }
-  if (!successRateReportable(row)) {
+  if (!conversionCellRateable(row)) {
     return {
       ...base,
       state: 'withheld',
@@ -681,9 +688,7 @@ function measureCell(row: AgencyGroupRow, view: BestHoursView, day: number, hour
     state: 'measured',
     text: agentPct(row.success_rate_pct),
     value: row.success_rate_pct,
-    note: `${agentPct(row.success_rate_pct)} of ${agentCount(row.connected)} ${
-      row.connected === 1 ? 'connect' : 'connects'
-    } converted`,
+    note: `${agentPct(row.success_rate_pct)} of ${plural(row.connected, 'connect')} converted`,
   };
 }
 
@@ -827,7 +832,7 @@ export function bestHoursStep(value: number, domain: BestHoursDomain | null): nu
 }
 
 /** A view's own format — percentages for the two rates, a count for volume. */
-export function bestHoursFormat(view: BestHoursView, value: number): string {
+function bestHoursFormat(view: BestHoursView, value: number): string {
   return view === 'volume' ? agentCount(value) : agentPct(value);
 }
 
@@ -843,7 +848,7 @@ export function bestHoursFormat(view: BestHoursView, value: number): string {
  */
 export function bestHoursCountReadout(matrix: BestHoursMatrix): string {
   const cells = matrix.rows.reduce((total, row) => total + row.cells.length, 0);
-  const had = matrix.dialled === 1 ? '1 weekday-hour cell had a dial' : `${agentCount(matrix.dialled)} weekday-hour cells had a dial`;
+  const had = `${plural(matrix.dialled, 'weekday-hour cell')} had a dial`;
   return `${had}, of ${agentCount(cells)}`;
 }
 

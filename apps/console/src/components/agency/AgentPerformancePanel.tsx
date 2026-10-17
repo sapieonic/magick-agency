@@ -6,15 +6,15 @@ import {
   agentCount,
   bucketSeries,
   campaignLabel,
-  conversionRateReadout,
-  handleTimeReadout,
+  agentConversionReadout,
+  agentHandleTimeReadout,
   headlineTrio,
   isEmptyRange,
   occupancyBreakdown,
   occupancySegmentText,
   rowConnectRate,
   rowSeconds,
-  wrapupReadout,
+  agentWrapupReadout,
   type AgentStatsWindow,
 } from '../../utils/agencyAgentPerformance';
 import type { PerformanceReadout } from '../../utils/agencyCampaignPerformance';
@@ -306,9 +306,9 @@ export function AgentPerformancePanel({
             )}
 
             <div className={styles.readouts}>
-              <Readout label="Conversion rate" testId="conversion-rate-readout" readout={conversionRateReadout(active.stats.totals)} />
-              <Readout label="Average call" testId="handle-time-readout" readout={handleTimeReadout(active.stats.totals)} />
-              <Readout label="Wrap-up" testId="wrapup-readout" readout={wrapupReadout(active.stats.totals)} />
+              <Readout label="Conversion rate" testId="conversion-rate-readout" readout={agentConversionReadout(active.stats.totals)} />
+              <Readout label="Average call" testId="handle-time-readout" readout={agentHandleTimeReadout(active.stats.totals)} />
+              <Readout label="Wrap-up" testId="wrapup-readout" readout={agentWrapupReadout(active.stats.totals)} />
             </div>
 
             <AgentBucketChart series={bucketSeries(active.stats.buckets)} />

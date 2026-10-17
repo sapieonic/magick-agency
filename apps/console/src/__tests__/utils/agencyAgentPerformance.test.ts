@@ -9,8 +9,8 @@ import {
   bucketSeries,
   campaignLabel,
   campaignNameMap,
-  conversionRateReadout,
-  handleTimeReadout,
+  agentConversionReadout,
+  agentHandleTimeReadout,
   headlineTrio,
   isEmptyRange,
   occupancyBreakdown,
@@ -22,7 +22,7 @@ import {
   windowRange,
   rowConnectRate,
   staffingSummary,
-  wrapupReadout,
+  agentWrapupReadout,
 } from '../../utils/agencyAgentPerformance';
 import type {
   AgencyAgentStats,
@@ -316,9 +316,9 @@ describe('headlineTrio', () => {
   });
 });
 
-describe('conversionRateReadout', () => {
+describe('agentConversionReadout', () => {
   it('never renders a null rate as 0%', () => {
-    const readout = conversionRateReadout(totals({ success_rate_pct: null }));
+    const readout = agentConversionReadout(totals({ success_rate_pct: null }));
     expect(readout.value).toBe('Not measured yet');
     expect(readout.value).not.toContain('0');
     expect(readout.known).toBe(false);
@@ -328,27 +328,27 @@ describe('conversionRateReadout', () => {
     // A conversion rate over dials means something entirely different and is a
     // far smaller number. The label carries the denominator so the reader cannot
     // supply the wrong one.
-    const readout = conversionRateReadout(totals());
+    const readout = agentConversionReadout(totals());
     expect(readout.detail).toContain('spoke to someone');
     expect(readout.detail).toContain('not out of every dial');
   });
 
   it('keeps the success count on screen when the rate could not be read', () => {
-    const readout = conversionRateReadout(totals({ success_rate_pct: undefined, successes: 4 }));
+    const readout = agentConversionReadout(totals({ success_rate_pct: undefined, successes: 4 }));
     expect(readout.known).toBe(false);
     expect(readout.secondary).toBe('4 counted');
   });
 });
 
-describe('handleTimeReadout and wrapupReadout', () => {
+describe('agentHandleTimeReadout and agentWrapupReadout', () => {
   it('reads a null average as "no call has finished", never as a fast shift', () => {
-    const readout = handleTimeReadout(totals({ aht_seconds: null }));
+    const readout = agentHandleTimeReadout(totals({ aht_seconds: null }));
     expect(readout.value).toBe('Not measured yet');
     expect(readout.known).toBe(false);
   });
 
   it('renders a measured average as m:ss with the total beside it', () => {
-    const readout = handleTimeReadout(totals());
+    const readout = agentHandleTimeReadout(totals());
     expect(readout.value).toBe('1:45');
     expect(readout.secondary).toBe('30:00 on calls in total');
   });
@@ -356,13 +356,13 @@ describe('handleTimeReadout and wrapupReadout', () => {
   it('renders a real zero wrap-up as 0:00 rather than as absent', () => {
     // Nobody wrote anything up, which is a fact about the shift — and a
     // different one from "we could not read the wrap-up time".
-    const readout = wrapupReadout(totals({ wrapup_seconds: 0 }));
+    const readout = agentWrapupReadout(totals({ wrapup_seconds: 0 }));
     expect(readout.value).toBe('0:00');
     expect(readout.known).toBe(true);
   });
 
   it('reads an absent wrap-up as a failed load', () => {
-    const readout = wrapupReadout(totals({ wrapup_seconds: undefined as unknown as number }));
+    const readout = agentWrapupReadout(totals({ wrapup_seconds: undefined as unknown as number }));
     expect(readout.value).toBe('—');
     expect(readout.known).toBe(false);
   });
