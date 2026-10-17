@@ -7,6 +7,8 @@ import { describe, it, expect } from 'vitest';
 import {
   BUILT_IN_CODES,
   DEFAULT_DISPOSITION_RETRY,
+  editCatalog,
+  type CatalogEditState,
   DEFAULT_DISPOSITIONS,
   DISPOSITION_FLAGS,
   dispositionSummary,
@@ -804,5 +806,63 @@ describe('describeDays drops days outside 1–7, like the campaigns home', () =>
     expect(describeDays([1, 2, 9])).toBe('Mon, Tue');
     expect(describeDays([0, 8])).toBe('No days');
     expect(describeDays([1, 2, 3, 3])).toBe('Mon–Wed');
+  });
+});
+
+describe('editCatalog — the outcome editor as a pure reducer', () => {
+  const loaded = (): CatalogEditState => ({
+    dispositions: [
+      { code: 'voicemail', label: 'Voicemail' },
+      { code: 'sale', label: 'Sale' },
+    ],
+    autoCodeRows: new Set(),
+  });
+
+  it('adds a row that follows its label, and a loaded row that never does', () => {
+    const added = editCatalog(loaded(), { type: 'add' });
+    expect(added.dispositions).toHaveLength(3);
+    expect([...added.autoCodeRows]).toEqual([2]);
+    const renamed = editCatalog(added, { type: 'rename', index: 2, label: 'Promised to pay' });
+    expect(renamed.dispositions[2]).toEqual({ code: 'promised_to_pay', label: 'Promised to pay' });
+    const loadedRename = editCatalog(renamed, { type: 'rename', index: 1, label: 'Big sale' });
+    expect(loadedRename.dispositions[1]).toEqual({ code: 'sale', label: 'Big sale' });
+  });
+
+  it('detaches a row whose code is typed into', () => {
+    let state = editCatalog(loaded(), { type: 'add' });
+    state = editCatalog(state, { type: 'setCode', index: 2, code: 'ptp' });
+    expect(state.autoCodeRows.has(2)).toBe(false);
+    state = editCatalog(state, { type: 'rename', index: 2, label: 'Promised' });
+    expect(state.dispositions[2]!.code).toBe('ptp');
+  });
+
+  it('shifts label-following past a removed row, and refuses to remove a built-in', () => {
+    let state = editCatalog(loaded(), { type: 'add' });
+    const refused = editCatalog(state, { type: 'remove', index: 0 });
+    expect(refused).toBe(state);
+    state = editCatalog(state, { type: 'remove', index: 1 });
+    expect(state.dispositions.map((d) => d.code)).toEqual(['voicemail', '']);
+    expect([...state.autoCodeRows]).toEqual([1]);
+  });
+
+  it('moves a row with its label-following, and is a no-op off either end', () => {
+    let state = editCatalog(loaded(), { type: 'add' });
+    expect(editCatalog(state, { type: 'move', index: 0, delta: -1 })).toBe(state);
+    expect(editCatalog(state, { type: 'move', index: 2, delta: 1 })).toBe(state);
+    state = editCatalog(state, { type: 'move', index: 2, delta: -1 });
+    expect(state.dispositions.map((d) => d.code)).toEqual(['voicemail', '', 'sale']);
+    expect([...state.autoCodeRows]).toEqual([1]);
+  });
+
+  it('seeds a switched-on retry from the voicemail default, and never mutates its input', () => {
+    const before = loaded();
+    const frozen = JSON.stringify(before.dispositions);
+    const on = editCatalog(before, { type: 'toggleRetry', index: 1, on: true });
+    expect(on.dispositions[1]!.retry).toEqual({ delay_minutes: 240, max_attempts: 2 });
+    expect(on.dispositions[1]!.retry).not.toBe(DEFAULT_DISPOSITION_RETRY);
+    const off = editCatalog(on, { type: 'toggleRetry', index: 1, on: false });
+    expect(off.dispositions[1]!.retry).toBeUndefined();
+    expect(JSON.stringify(before.dispositions)).toBe(frozen);
+    expect(editCatalog(before, { type: 'update', index: 9, patch: { label: 'x' } })).toBe(before);
   });
 });

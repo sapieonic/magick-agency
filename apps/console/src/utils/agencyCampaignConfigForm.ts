@@ -495,6 +495,131 @@ export const EMPTY_CAMPAIGN_CONFIG: CampaignConfigState = {
 };
 
 /**
+ * The outcome catalog editor's state: the entries, and which rows still take
+ * their code from their label.
+ *
+ * ── Which rows may follow their label ───────────────────────────────────────
+ * Rows this session ADDED, and only until their code is typed into. The
+ * obvious stateless test, "the code still equals the label's own slug", is
+ * wrong on a campaign that already exists: a careful operator who typed
+ * `promised_to_pay` beside "Promised to pay" months ago produces an entry that
+ * passes it on the very first render, so fixing a typo in the label would
+ * silently rewrite a code every historical call record is filed under. A loaded
+ * row is therefore never in the set — a code that has been saved once is the
+ * operator's, not ours.
+ *
+ * Indices, kept in step with the list by {@link editCatalog}: the same identity
+ * the list itself uses for its keys.
+ */
+export interface CatalogEditState {
+  dispositions: AgencyDispositionEntry[];
+  autoCodeRows: ReadonlySet<number>;
+}
+
+/** One edit to the catalog, as the editor's controls produce them. */
+export type CatalogEdit =
+  /** Append an empty row, which follows its label. */
+  | { type: 'add' }
+  /** Change a row's label — and its code, while the row follows its label. */
+  | { type: 'rename'; index: number; label: string }
+  /** A hand-typed code, which detaches the row from its label for good. */
+  | { type: 'setCode'; index: number; code: string }
+  /** Any other field of a row (a flag, the retry rule). */
+  | { type: 'update'; index: number; patch: Partial<AgencyDispositionEntry> }
+  /** Switch a row's own retry on (seeded from the voicemail default) or off. */
+  | { type: 'toggleRetry'; index: number; on: boolean }
+  /** Delete a row. A built-in cannot be removed. */
+  | { type: 'remove'; index: number }
+  /** Swap a row with its neighbour. */
+  | { type: 'move'; index: number; delta: -1 | 1 };
+
+/**
+ * Apply one edit, returning the next state — or the SAME state object for an
+ * edit that changes nothing (a built-in's removal, a move off either end, an
+ * index that is not a row), so a caller can skip the write.
+ *
+ * Pure: it replaces the arrays and the set rather than mutating them, which is
+ * what lets the component hold the set in a ref without a mutation of the old
+ * one leaking into a render that still reads it.
+ */
+export function editCatalog(state: CatalogEditState, edit: CatalogEdit): CatalogEditState {
+  const { dispositions, autoCodeRows } = state;
+  const patchRow = (index: number, patch: Partial<AgencyDispositionEntry>): AgencyDispositionEntry[] =>
+    dispositions.map((entry, i) => (i === index ? { ...entry, ...patch } : entry));
+
+  switch (edit.type) {
+    case 'add':
+      return {
+        dispositions: [...dispositions, { code: '', label: '' }],
+        autoCodeRows: new Set([...autoCodeRows, dispositions.length]),
+      };
+    case 'rename': {
+      const entry = dispositions[edit.index];
+      if (!entry) return state;
+      const derive = autoCodeRows.has(edit.index) && !isBuiltInCode(entry.code);
+      return {
+        dispositions: patchRow(edit.index, {
+          label: edit.label,
+          ...(derive ? { code: slugifyCode(edit.label) } : {}),
+        }),
+        autoCodeRows,
+      };
+    }
+    case 'setCode': {
+      if (!dispositions[edit.index]) return state;
+      const rows = new Set(autoCodeRows);
+      rows.delete(edit.index);
+      return { dispositions: patchRow(edit.index, { code: edit.code }), autoCodeRows: rows };
+    }
+    case 'update':
+      if (!dispositions[edit.index]) return state;
+      return { dispositions: patchRow(edit.index, edit.patch), autoCodeRows };
+    case 'toggleRetry':
+      /*
+        Seeded from the voicemail default rather than from zero, for the same
+        reason the policy rows are: `max_attempts: 0` is a rule that never fires,
+        so seeding it means switching the control on appears to do nothing.
+      */
+      if (!dispositions[edit.index]) return state;
+      return {
+        dispositions: patchRow(edit.index, { retry: edit.on ? { ...DEFAULT_DISPOSITION_RETRY } : undefined }),
+        autoCodeRows,
+      };
+    case 'remove': {
+      const entry = dispositions[edit.index];
+      if (!entry || isBuiltInCode(entry.code)) return state;
+      const rows = new Set<number>();
+      for (const row of autoCodeRows) {
+        if (row < edit.index) rows.add(row);
+        else if (row > edit.index) rows.add(row - 1);
+      }
+      return { dispositions: dispositions.filter((_, i) => i !== edit.index), autoCodeRows: rows };
+    }
+    case 'move': {
+      /*
+        Built-ins move like any other: the lock is against *deletion* (removing
+        one removes a capability agents need), and it was never against position
+        — the order is the agent's number-key order and nothing downstream reads
+        it. The row's label-following moves with it.
+      */
+      const target = edit.index + edit.delta;
+      const from = dispositions[edit.index];
+      const to = dispositions[target];
+      if (!from || !to) return state;
+      const next = [...dispositions];
+      next[edit.index] = to;
+      next[target] = from;
+      const rows = new Set(autoCodeRows);
+      rows.delete(edit.index);
+      rows.delete(target);
+      if (autoCodeRows.has(target)) rows.add(edit.index);
+      if (autoCodeRows.has(edit.index)) rows.add(target);
+      return { dispositions: next, autoCodeRows: rows };
+    }
+  }
+}
+
+/**
  * A fresh, unshared starting config.
  *
  * {@link EMPTY_CAMPAIGN_CONFIG} is a module-level singleton, and seeding
