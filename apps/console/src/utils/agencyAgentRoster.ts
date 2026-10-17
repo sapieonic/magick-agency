@@ -8,6 +8,7 @@ import type {
   AgencyRosterPercentiles,
   AgencyRosterSort,
 } from '../types/agency-stats';
+import { formatCount, plural } from './format/number';
 
 /**
  * The roster table's derivations, as pure functions.
@@ -93,9 +94,7 @@ export function cellMeasured(cell: RosterCell): cell is Extract<RosterCell, { ki
   return cell.kind === 'measured';
 }
 
-function count(value: number): string {
-  return value.toLocaleString();
-}
+const count = formatCount;
 
 /**
  * The inert absence — an em dash and no explanation.
@@ -678,7 +677,7 @@ export function agentInitials(displayName: string): string {
  */
 export function rosterSubline(row: AgencyRosterAgentRowWithName): string {
   const campaigns =
-    row.campaigns === 1 ? '1 campaign' : `${count(row.campaigns)} campaigns`;
+    plural(row.campaigns, 'campaign');
   if (row.last_dialed_at === null) return campaigns;
   return `${campaigns} · last dialled ${formatDateShort(row.last_dialed_at)}`;
 }
@@ -983,8 +982,8 @@ export function pooledRate(rate: number | null): string {
  */
 export function rosterCountReadout(page: AgencyRosterPage): string {
   const agents =
-    page.total_agents === 1 ? '1 agent dialled' : `${count(page.total_agents)} agents dialled`;
-  const dials = page.benchmark.attempts === 1 ? '1 dial' : `${count(page.benchmark.attempts)} dials`;
+    `${plural(page.total_agents, 'agent')} dialled`;
+  const dials = plural(page.benchmark.attempts, 'dial');
   return `${agents} · ${dials}`;
 }
 
@@ -1064,7 +1063,7 @@ export function inactiveNote(page: AgencyRosterPage): string | null {
   // than relied on, because the coincidence is not the reason it is correct.
   if (typeof page.inactive_omitted !== 'number' || page.inactive_omitted <= 0) return null;
   const people =
-    page.inactive_omitted === 1 ? '1 former member' : `${count(page.inactive_omitted)} former members`;
+    plural(page.inactive_omitted, 'former member');
   return `${people} hidden — they dialled in this window but have since left the team.`;
 }
 

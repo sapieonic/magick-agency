@@ -1,5 +1,8 @@
 import { startOfDay, startOfMonth, startOfWeek, subMonths, subWeeks } from 'date-fns';
-import { formatDuration } from './agencyClock';
+import { durationWords, statClock } from './format/duration';
+import { formatCount, pct as formatPct } from './format/number';
+import { formatDayMonth, readerZone } from './format/date';
+import { ON_SHIFT_STATES, ratePct, stateShares } from './agency/metrics';
 import { assignmentEntry } from './agencyAssignmentEntry';
 import { AGENCY_FLOOR_STATE_LABELS } from './agencyAgentFloor';
 import type { AgencyAgentLiveState } from '../types/agency-campaign';
@@ -269,24 +272,28 @@ export const AGENT_HISTORY_REACH_NOTE =
 // ─── Formatting primitives ───────────────────────────────────────────────────
 
 /**
- * One decimal, trailing zero trimmed — the same rule `agencyHealthStrip` and
- * `agencyCampaignPerformance` use, so one product never prints `18%` on one
- * screen and `18.0%` on the next.
+ * One decimal, trailing zero trimmed — `pct` in `format/number.ts`, the one
+ * rendering every analytics surface uses, so one product never prints `18%` on
+ * one screen and `18.0%` on the next. Kept under this name for the roster,
+ * best-hours and contribution modules that import it from here.
  */
 export function agentPct(value: number): string {
-  return `${Number(value.toFixed(1))}%`;
+  return formatPct(value);
 }
 
 /**
- * Whole seconds as `m:ss`, rolling to `h:mm:ss`. A real `0` renders `0:00`.
+ * An aggregate duration in seconds as `m:ss`, rolling to `h:mm:ss`, ROUNDED to
+ * the nearest second (`statClock`). A real `0` renders `0:00`.
  *
  * Exported alongside {@link agentPct} for the same reason: the roster table shows
  * the same figures one level up (a column of handle times against a cohort's) and
  * a second `toFixed(1)` or a second duration format would let one product print
- * `18%` on one screen and `18.0%` on the next — or `1:05` beside `65s`.
+ * `18%` on one screen and `18.0%` on the next — or `1:05` beside `65s`. It
+ * rounds, like {@link agentDurationLong}, so a served 59.6s AHT reads `1:00` in
+ * the cell and `1m` in the band beside it — it used to floor to `0:59`.
  */
 export function agentSeconds(value: number): string {
-  return formatDuration(value * 1000);
+  return statClock(value);
 }
 
 /**
@@ -304,23 +311,15 @@ export function agentSeconds(value: number): string {
  * only by counting colons.
  *
  * So the rule this codebase now holds is: **cells keep the stopwatch, sentences
- * name the unit.** Both come from one module, so neither can drift.
+ * name the unit.** Both come from one module (`format/duration.ts`), and both
+ * round, so neither can drift.
  *
  * Seconds are dropped once there is an hour, and a zero component is omitted
  * rather than padded — `2h` rather than `2h 0m`, because the reader is being told
  * a magnitude, not read a clock.
  */
 export function agentDurationLong(value: number): string {
-  const total = Math.max(0, Math.round(value));
-  if (total < 60) return `${total}s`;
-  if (total < 3600) {
-    const minutes = Math.floor(total / 60);
-    const secs = total % 60;
-    return secs === 0 ? `${minutes}m` : `${minutes}m ${secs}s`;
-  }
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
+  return durationWords(value);
 }
 
 /**
@@ -355,9 +354,8 @@ export function windowRangeReadout(from: string, to: string): string | null {
   const end = new Date(endExclusive.getTime() - 1);
   if (end.getTime() < start.getTime()) return null;
 
-  const day = (date: Date) =>
-    date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
-  const zone = readerTimeZone();
+  const day = formatDayMonth;
+  const zone = readerZone() ?? 'UTC';
 
   const sameDay =
     start.getFullYear() === end.getFullYear() &&
@@ -375,46 +373,12 @@ export function windowRangeReadout(from: string, to: string): string | null {
 }
 
 /**
- * The zone the reader's browser is in, or `UTC` when it will not say.
- *
- * `resolvedOptions()` is specified to return an IANA name, but a caption must not
- * be the thing that throws in an environment with a partial `Intl`.
+ * A percentage from a part and a whole, or `null` on a zero denominator — the one
+ * division helper, now in `agency/metrics.ts` beside its `ratio` and the
+ * state-share sum, and re-exported here for the modules that import it from
+ * this one. See its doc comment for why there is exactly one.
  */
-function readerTimeZone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  } catch {
-    return 'UTC';
-  }
-}
-
-/**
- * A percentage from a part and a whole, or **`null` on a zero denominator**.
- *
- * ── The one division helper, and why there is exactly one ─────────────────
- * Almost every rate on these surfaces is SERVED, and that is deliberate: two
- * places dividing is two answers that round differently. The exceptions are the
- * figures no payload carries — the floor's pooled utilisation, once the benchmark
- * gained a pooled `shift_seconds`, and one agent's share of a campaign's
- * conversions — and both of them route through here rather than through a
- * hand-rolled `n / d * 100`.
- *
- * The guard is the whole point. `0 / 0` is `NaN`, `NaN.toFixed(1)` is `"NaN"`,
- * and `NaN` serialises to `null` — so a hand-rolled rate is wrong in a way that
- * is invisible on the wire and legible only as a broken cell on screen. Here a
- * zero denominator is `null`, which this codebase's null-not-zero rule then
- * renders as an em dash and a phrase naming what has not happened. **A real `0`
- * numerator over a real denominator still returns `0`** — measured-and-zero is a
- * finding, and softening it would be the same dishonesty in the other direction.
- *
- * Non-finite inputs are `null` for the same reason: a figure this client cannot
- * vouch for must not reach a reader as a number.
- */
-export function ratePct(part: number, whole: number): number | null {
-  if (!Number.isFinite(part) || !Number.isFinite(whole)) return null;
-  if (whole <= 0) return null;
-  return (part / whole) * 100;
-}
+export { ratePct };
 
 /*
   The private aliases the rest of this module was written against. Kept so the
@@ -432,7 +396,7 @@ const seconds = agentSeconds;
  * a zero dial count is a true one.
  */
 export function agentCount(value: number | undefined): string {
-  return typeof value === 'number' ? value.toLocaleString() : '—';
+  return typeof value === 'number' ? formatCount(value) : '—';
 }
 
 // ─── The headline trio ───────────────────────────────────────────────────────
@@ -517,7 +481,7 @@ export function conversionRateReadout(
 ): PerformanceReadout {
   const rate = totals?.success_rate_pct;
   const successes = totals?.successes;
-  const secondary = typeof successes === 'number' ? `${successes.toLocaleString()} counted` : null;
+  const secondary = typeof successes === 'number' ? `${formatCount(successes)} counted` : null;
 
   if (rate === undefined) {
     return {
@@ -628,13 +592,7 @@ export function wrapupReadout(totals: AgencyAgentStatsTotals | undefined): Perfo
  * data" are different facts, and only one of them is a hole in the record. It is
  * simply not part of the shift being broken down.
  */
-const OCCUPANCY_ORDER: readonly AgencyAgentLiveState[] = [
-  'on_call',
-  'wrapup',
-  'reserved',
-  'available',
-  'break',
-];
+const OCCUPANCY_ORDER: readonly AgencyAgentLiveState[] = ON_SHIFT_STATES;
 
 export interface OccupancySegment {
   state: AgencyAgentLiveState;
@@ -719,9 +677,10 @@ export function occupancyBreakdown(
     The ON-SHIFT states only. This is the same sum the server calls `shift_seconds`,
     computed from the same six-key record, which is what lets the remainder below
     mean "the shift covers time the states do not account for" rather than
-    "these two numbers were never comparable".
+    "these two numbers were never comparable". A non-number state is skipped,
+    not summed — see `stateShares`.
   */
-  const recorded = OCCUPANCY_ORDER.reduce((sum, state) => sum + (byState[state] ?? 0), 0);
+  const { total: recorded, shares } = stateShares(byState, OCCUPANCY_ORDER);
   if (recorded <= 0) {
     return { measured: false, segments: [], recordedSeconds: 0, unaccountedSeconds: 0 };
   }
@@ -732,20 +691,17 @@ export function occupancyBreakdown(
     recordedSeconds: recorded,
     unaccountedSeconds: Math.max(0, shift - recorded),
     /*
-      Zero-length states are dropped rather than rendered as a 0% row. Unlike a
-      zero rate, an unused state is not a withheld measurement — an agent who
-      took no break genuinely took no break — and six rows where two carry the
-      shift makes the two harder to read.
+      Zero-length states are dropped rather than rendered as a 0% row
+      (`stateShares`). Unlike a zero rate, an unused state is not a withheld
+      measurement — an agent who took no break genuinely took no break — and six
+      rows where two carry the shift makes the two harder to read.
     */
-    segments: OCCUPANCY_ORDER.filter((state) => (byState[state] ?? 0) > 0).map((state) => {
-      const value = byState[state] ?? 0;
-      return {
-        state,
-        label: AGENCY_FLOOR_STATE_LABELS[state],
-        seconds: value,
-        sharePct: (value / recorded) * 100,
-      };
-    }),
+    segments: shares.map(({ state, value, share }) => ({
+      state,
+      label: AGENCY_FLOOR_STATE_LABELS[state],
+      seconds: value,
+      sharePct: share,
+    })),
   };
 }
 
@@ -848,6 +804,19 @@ export function bucketDay(raw: string): Date | null {
 }
 
 /**
+ * A bucket's axis label (the day of the month) and its title (`20 Aug`), or the
+ * raw `bucket_start` for both when it is not a day — a malformed label is shown
+ * as sent rather than dropped. Shared with the campaign series, whose buckets
+ * carry the same `YYYY-MM-DD` labels.
+ */
+export function bucketLabels(raw: string): { label: string; title: string } {
+  const parsed = bucketDay(raw);
+  return parsed
+    ? { label: String(parsed.getDate()), title: formatDayMonth(parsed) }
+    : { label: raw, title: raw };
+}
+
+/**
  * The series for the chart.
  *
  * Buckets arrive oldest-first and are **not re-sorted**: the order is the
@@ -862,18 +831,12 @@ export function bucketDay(raw: string): Date | null {
  */
 export function bucketSeries(buckets: AgencyAgentStatsBucket[] | undefined): BucketSeries {
   const rows = buckets ?? [];
-  const points: SeriesPoint[] = rows.map((bucket) => {
-    const parsed = bucketDay(bucket.bucket_start);
-    return {
-      start: bucket.bucket_start,
-      label: parsed ? String(parsed.getDate()) : bucket.bucket_start,
-      title: parsed
-        ? parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-        : bucket.bucket_start,
-      attempts: bucket.attempts,
-      connected: bucket.connected,
-    };
-  });
+  const points: SeriesPoint[] = rows.map((bucket) => ({
+    start: bucket.bucket_start,
+    ...bucketLabels(bucket.bucket_start),
+    attempts: bucket.attempts,
+    connected: bucket.connected,
+  }));
 
   const max = points.reduce((top, point) => Math.max(top, point.attempts, point.connected), 0);
   return { points, max: Math.max(max, 1), drawable: points.length >= 2 };
@@ -1055,7 +1018,8 @@ export function rowConnectRate(row: { attempts: number; connected: number }): st
   */
   if (row.attempts <= 0) return '—';
   if (row.attempts < AGENCY_ROSTER_MIN_RATE_DENOMINATOR) return 'Not enough calls';
-  return pct((row.connected / row.attempts) * 100);
+  const rate = ratePct(row.connected, row.attempts);
+  return rate === null ? '—' : pct(rate);
 }
 
 /** Whether a stats payload describes a range in which literally nothing happened. */

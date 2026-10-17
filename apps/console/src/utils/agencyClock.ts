@@ -173,21 +173,9 @@ export function remainingUntil(
 }
 
 /**
- * `m:ss` for a duration in ms. Used for both counting up (talk time) and down
- * (wrap-up), so it is deliberately unsigned — a caller with a negative value has
- * already made a mistake the clamps above exist to prevent.
- *
- * Minutes are not padded and seconds always are, which is how a stopwatch reads.
- * Past an hour it rolls into `h:mm:ss` rather than showing `numbers like 87:12`,
- * which an agent reads as eighty-seven of something before working out it is
- * minutes.
+ * `m:ss` for a LIVE duration in ms, floored — the console's one `formatDuration`,
+ * declared in `format/duration.ts` beside the rounded stopwatch aggregates use,
+ * and re-exported here for the station and floor components that import it with
+ * the clock helpers above.
  */
-export function formatDuration(ms: number): string {
-  const totalSeconds = Math.floor(Math.max(0, ms) / 1000);
-  const seconds = totalSeconds % 60;
-  const minutes = Math.floor(totalSeconds / 60) % 60;
-  const hours = Math.floor(totalSeconds / 3600);
-  const ss = String(seconds).padStart(2, '0');
-  if (hours === 0) return `${minutes}:${ss}`;
-  return `${hours}:${String(minutes).padStart(2, '0')}:${ss}`;
-}
+export { formatDuration } from './format/duration';

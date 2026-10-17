@@ -2,6 +2,8 @@ import type {
   AgencyAgentLiveState,
   AgencySupervisorAgent,
 } from '../types/agency-campaign';
+import { formatCount } from './format/number';
+import { ON_SHIFT_STATES, stateShares } from './agency/metrics';
 
 /**
  * The agent floor — as pure functions, because the ordering IS the
@@ -266,7 +268,7 @@ export function floorRiskSummary(ranked: readonly RankedFloorAgent[]): string | 
   const flagged = ranked.filter((entry) => isWarningRisk(entry.risk));
   if (flagged.length === 0) return null;
 
-  const head = flagged.length === 1 ? '1 agent needs a look' : `${flagged.length.toLocaleString()} agents need a look`;
+  const head = flagged.length === 1 ? '1 agent needs a look' : `${formatCount(flagged.length)} agents need a look`;
 
   // One flagged agent gets the bare clause: "1 agent needs a look — 1 past the
   // wrap-up window" says the same number twice.
@@ -277,7 +279,7 @@ export function floorRiskSummary(ranked: readonly RankedFloorAgent[]): string | 
     if (risk === 'none') return [];
     const count = flagged.filter((entry) => entry.risk === risk).length;
     if (count === 0) return [];
-    return [`${count.toLocaleString()} ${AGENCY_FLOOR_RISK_CLAUSE[risk]}`];
+    return [`${formatCount(count)} ${AGENCY_FLOOR_RISK_CLAUSE[risk]}`];
   });
   return `${head} — ${clauses.join(', ')}.`;
 }
@@ -323,9 +325,8 @@ const STATE_SUMMARY_ORDER: readonly AgencyAgentLiveState[] = [
  * A signed-out agent is still a ROW in the table below — this governs the bar
  * and the readouts, which are about the floor as it stands.
  */
-const ON_SHIFT_STATES: readonly AgencyAgentLiveState[] = STATE_SUMMARY_ORDER.filter(
-  (state) => state !== 'offline',
-);
+// One declaration for the rail, this tab and the per-agent occupancy bar
+// (`agency/metrics.ts`); it is STATE_SUMMARY_ORDER without `offline`.
 
 /**
  * `agents_by_state` as one readable line — "3 on a call · 2 available".
@@ -348,7 +349,7 @@ export function stateSummary(
   const parts = STATE_SUMMARY_ORDER.flatMap((state) => {
     const count = byState[state];
     if (typeof count !== 'number' || count <= 0) return [];
-    return [`${count.toLocaleString()} ${AGENCY_FLOOR_STATE_LABELS[state].toLowerCase()}`];
+    return [`${formatCount(count)} ${AGENCY_FLOOR_STATE_LABELS[state].toLowerCase()}`];
   });
   return parts.length > 0 ? parts.join(' · ') : null;
 }
@@ -378,21 +379,13 @@ export interface FloorStateSlice {
 export function floorStateSlices(
   byState: Partial<Record<AgencyAgentLiveState, number>> | undefined,
 ): FloorStateSlice[] {
-  if (!byState) return [];
   // `ON_SHIFT_STATES`, not every state: see its note. `offline` in the bar puts
   // signed-out agents in the denominator every other band is a share of.
-  const counted = ON_SHIFT_STATES.flatMap((state) => {
-    const count = byState[state];
-    if (typeof count !== 'number' || count <= 0) return [];
-    return [{ state, count }];
-  });
-  const total = counted.reduce((sum, entry) => sum + entry.count, 0);
-  if (total <= 0) return [];
-  return counted.map(({ state, count }) => ({
+  return stateShares(byState, ON_SHIFT_STATES).shares.map(({ state, value, share }) => ({
     state,
     label: AGENCY_FLOOR_STATE_LABELS[state],
-    count,
-    pct: (count / total) * 100,
+    count: value,
+    pct: share,
   }));
 }
 

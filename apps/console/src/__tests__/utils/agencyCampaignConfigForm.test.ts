@@ -798,3 +798,11 @@ describe('mapping the API’s validation answer onto fields', () => {
     expect(fieldErrorsFromResponse(null)).toEqual({});
   });
 });
+
+describe('describeDays drops days outside 1–7, like the campaigns home', () => {
+  it('never prints “undefined” for an out-of-range day', () => {
+    expect(describeDays([1, 2, 9])).toBe('Mon, Tue');
+    expect(describeDays([0, 8])).toBe('No days');
+    expect(describeDays([1, 2, 3, 3])).toBe('Mon–Wed');
+  });
+});

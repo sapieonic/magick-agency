@@ -9,6 +9,8 @@ import {
   type AgencyRetryPolicy,
   type AgencyRetryRule,
 } from '../types/agency-campaign';
+import { describeIsoDays, hhmm } from './format/weekdays';
+import { zoneFormatter, zonedParts } from './format/zone';
 
 /**
  * Campaign configuration form logic: the disposition catalog, the
@@ -543,8 +545,7 @@ export function configFromCampaign(campaign: AgencyCampaign): CampaignConfigStat
  * acceptance (c) forbids.
  */
 function trimSeconds(value: string | null | undefined): string | null {
-  if (!value) return null;
-  return value.length >= 5 ? value.slice(0, 5) : value;
+  return value ? hhmm(value) : null;
 }
 
 /** Normalise `HH:MM` / `HH:MM:SS` to a comparable `HH:MM:SS`. Mirrors the API. */
@@ -569,12 +570,9 @@ export function isUsableTimezone(value: string): boolean {
   if (value.length === 0 || value.length > 64) return false;
   if (value === 'UTC') return true;
   if (!IANA_ZONE_RE.test(value)) return false;
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: value });
-    return true;
-  } catch {
-    return false;
-  }
+  // One cached formatter per zone (`format/zone.ts`), shared with the echo below:
+  // this runs on every keystroke in the timezone field.
+  return zoneFormatter(value) !== null;
 }
 
 const CODE_RE = /^[a-z0-9_]{1,50}$/;
@@ -707,7 +705,7 @@ export function callingWindowEcho(state: CallingWindowState, now: Date = new Dat
 
   if (!isUsableTimezone(state.timezone)) return base;
 
-  const local = zonedParts(now, state.timezone);
+  const local = zonedNow(now, state.timezone);
   if (local === null) return base;
 
   const open = isWithinWindow(local, state, wraps);
@@ -723,29 +721,12 @@ interface ZonedNow {
   isoDay: number;
 }
 
-function zonedParts(now: Date, timeZone: string): ZonedNow | null {
-  try {
-    const parts = new Intl.DateTimeFormat('en-GB', {
-      timeZone,
-      hour: '2-digit',
-      minute: '2-digit',
-      weekday: 'short',
-      hour12: false,
-    }).formatToParts(now);
-
-    const hour = parts.find((p) => p.type === 'hour')?.value;
-    const minute = parts.find((p) => p.type === 'minute')?.value;
-    const weekday = parts.find((p) => p.type === 'weekday')?.value;
-    if (!hour || !minute || !weekday) return null;
-
-    const isoDay = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(weekday) + 1;
-    if (isoDay === 0) return null;
-    // `24:00` is a legal en-GB rendering of midnight and would compare above
-    // every window end.
-    return { time: `${hour === '24' ? '00' : hour}:${minute}`, isoDay };
-  } catch {
-    return null;
-  }
+function zonedNow(now: Date, timeZone: string): ZonedNow | null {
+  const formatter = zoneFormatter(timeZone);
+  const parts = formatter ? zonedParts(formatter, now) : null;
+  if (parts === null) return null;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return { time: `${pad(parts.hour)}:${pad(parts.minute)}`, isoDay: parts.isoDay };
 }
 
 function isWithinWindow(local: ZonedNow, state: CallingWindowState, wraps: boolean): boolean {
@@ -756,18 +737,13 @@ function isWithinWindow(local: ZonedNow, state: CallingWindowState, wraps: boole
   return inTime && state.days.includes(local.isoDay);
 }
 
-const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
+/**
+ * The calling days as the echo says them — `describeIsoDays` (shared with the
+ * campaigns home's schedule line), with "No days" for a list with nothing valid
+ * in it. A day outside 1–7 is dropped; this copy used to print it as "undefined".
+ */
 export function describeDays(days: number[]): string {
-  const sorted = [...new Set(days)].sort((a, b) => a - b);
-  if (sorted.length === 0) return 'No days';
-  if (sorted.length === 7) return 'Every day';
-  // Contiguous runs read as a range, which is how an operator says it.
-  const contiguous = sorted.every((day, i) => i === 0 || day === sorted[i - 1]! + 1);
-  if (contiguous && sorted.length > 2) {
-    return `${DAY_NAMES[sorted[0]! - 1]}–${DAY_NAMES[sorted[sorted.length - 1]! - 1]}`;
-  }
-  return sorted.map((day) => DAY_NAMES[day - 1]).join(', ');
+  return describeIsoDays(days) ?? 'No days';
 }
 
 /** Plain-English preview of one retry rule. */

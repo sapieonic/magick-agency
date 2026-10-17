@@ -7,6 +7,9 @@ import type { AgencyContactState } from '../types/agency-spine';
 import { AGENCY_FLOOR_STATE_LABELS } from './agencyAgentFloor';
 import { campaignTense, type CampaignEnding, type CampaignTense } from './agencyCampaignControls';
 import { RATE_MIN_ATTEMPTS, ratesWithheld } from './agencyCampaignPerformance';
+import { formatCount, pct, plural } from './format/number';
+import { dateFormatter, formatClockTime } from './format/date';
+import { stateShares } from './agency/metrics';
 
 /**
  * The Overview panel's derivations — the pulse strip, the contact funnel, the
@@ -72,17 +75,8 @@ const DASH = '—';
 
 function count(value: number | undefined): OverviewFigure {
   return typeof value === 'number'
-    ? { value: value.toLocaleString(), known: true, sub: null }
+    ? { value: formatCount(value), known: true, sub: null }
     : { value: DASH, known: false, sub: null };
-}
-
-/**
- * One decimal, trailing zero trimmed — the same rendering `agencyHealthStrip`
- * and `agencyCampaignPerformance` use, so one campaign's percentages read the
- * same on every section of the workspace.
- */
-function pct(value: number): string {
-  return `${Number(value.toFixed(1))}%`;
 }
 
 /**
@@ -424,7 +418,7 @@ export function contactFunnel(stats: AgencyCampaignStats | null): ContactFunnel 
       ...state,
       hint: derived ? ON_CALL_DERIVED_HINT : state.hint,
       count: value,
-      value: value === null ? DASH : value.toLocaleString(),
+      value: value === null ? DASH : formatCount(value),
       percent,
       percentLabel: percent === null ? null : pct(percent),
       widthPercent: percent === null ? 0 : percent,
@@ -468,7 +462,7 @@ export function contactFunnel(stats: AgencyCampaignStats | null): ContactFunnel 
 
   return {
     total,
-    totalLabel: total === null ? DASH : total.toLocaleString(),
+    totalLabel: total === null ? DASH : formatCount(total),
     segments,
     cells: listed,
     drawable,
@@ -592,7 +586,7 @@ export function retriesNote(stats: AgencyCampaignStats | null): string | null {
   const pending = stats?.retries_pending;
   if (typeof pending !== 'number' || pending <= 0) return null;
   const noun = pending === 1 ? 'contact is a queued retry' : 'contacts are queued retries';
-  return `${pending.toLocaleString()} of the waiting ${noun} — scheduled for a later attempt, `
+  return `${formatCount(pending)} of the waiting ${noun} — scheduled for a later attempt, `
     + 'possibly hours away.';
 }
 
@@ -668,7 +662,7 @@ export function listWorkedRing(stats: AgencyCampaignStats | null): ListWorkedRin
     known: true,
     percent,
     label: `${Math.round(percent)}%`,
-    caption: `${worked.toLocaleString()} of ${total.toLocaleString()} contacts`,
+    caption: `${formatCount(worked)} of ${formatCount(total)} contacts`,
     dashArray: `${dash.toFixed(1)} ${RING_CIRCUMFERENCE.toFixed(1)}`,
   };
 }
@@ -754,7 +748,7 @@ function retriesPlacedSub(stats: AgencyCampaignStats | null): string | null {
   if (typeof retried !== 'number' || retried <= 0) return null;
   const total = stats?.attempts_total;
   if (typeof total === 'number' && retried > total) return null;
-  return `including ${retried.toLocaleString()} ${retried === 1 ? 'retry' : 'retries'}`;
+  return `including ${plural(retried, 'retry', 'retries')}`;
 }
 
 // ── The live floor, as the rail reads it ────────────────────────────────────
@@ -816,34 +810,28 @@ export function floorSummary(stats: AgencyCampaignStats | null): FloorSummary {
     return {
       known: true,
       onShift: live,
-      onShiftLabel: live.toLocaleString(),
+      onShiftLabel: formatCount(live),
       slices: [],
-      shiftSub: `${live.toLocaleString()} ${live === 1 ? 'agent' : 'agents'} on shift`,
+      shiftSub: `${plural(live, 'agent')} on shift`,
     };
   }
 
-  const onShift = FLOOR_BAR_ORDER.reduce((sum, state) => sum + (byState[state] ?? 0), 0);
-  const slices = FLOOR_BAR_ORDER.flatMap<FloorSlice>((state) => {
-    const value = byState[state] ?? 0;
-    if (value <= 0) return [];
-    return [
-      {
-        state,
-        label: AGENCY_FLOOR_STATE_LABELS[state],
-        count: value,
-        percent: onShift > 0 ? (value / onShift) * 100 : 0,
-      },
-    ];
-  });
+  // A non-number count is skipped, not summed — see `stateShares`.
+  const { total: onShift, shares } = stateShares(byState, FLOOR_BAR_ORDER);
+  const slices = shares.map<FloorSlice>(({ state, value, share }) => ({
+    state,
+    label: AGENCY_FLOOR_STATE_LABELS[state],
+    count: value,
+    percent: share,
+  }));
 
-  const free = byState.available ?? 0;
+  const free = shares.find((entry) => entry.state === 'available')?.value ?? 0;
   return {
     known: true,
     onShift,
-    onShiftLabel: onShift.toLocaleString(),
+    onShiftLabel: formatCount(onShift),
     slices,
-    shiftSub: `${onShift.toLocaleString()} ${onShift === 1 ? 'agent' : 'agents'} on shift · `
-      + `${free.toLocaleString()} free`,
+    shiftSub: `${plural(onShift, 'agent')} on shift · ${formatCount(free)} free`,
   };
 }
 
@@ -891,10 +879,9 @@ export function howItRanLines(campaign: AgencyCampaign | null): HowItRanLine[] {
 
 function wrapupLabel(seconds: number): string {
   if (seconds <= 0) return 'None';
-  if (seconds < 60) return `${seconds} seconds`;
+  if (seconds < 60) return plural(seconds, 'second');
   const minutes = seconds / 60;
-  const rounded = Number(minutes.toFixed(1));
-  return `${rounded} ${rounded === 1 ? 'minute' : 'minutes'}`;
+  return plural(Number(minutes.toFixed(1)), 'minute');
 }
 
 // ── The lifecycle: when it started, how long it ran, who stopped it ─────────
@@ -922,8 +909,8 @@ function instant(raw: string | null | undefined): Date | null {
  *
  * Not `formatDate` from `@magick-agency/web-ui/format`, which is date-only: the header line is
  * read beside "Updated 10:23" and a start with no clock on it invites the reader
- * to assume midnight. The reader's own locale and zone, deliberately — this is a
- * wall-clock fact about when somebody pressed a button, not a bucket boundary,
+ * to assume midnight. The display locale (`en-IN`) in the reader's own zone,
+ * deliberately — this is a wall-clock fact about when somebody pressed a button, not a bucket boundary,
  * so unlike `bucket_start` it has no campaign zone to be cut in.
  */
 function stamp(at: Date, now: Date): string {
@@ -937,11 +924,10 @@ function stamp(at: Date, now: Date): string {
     campaign's header, which is the far commoner read, so it is conditional.
   */
   const sameYear = at.getFullYear() === now.getFullYear();
-  const date = at.toLocaleDateString(
-    undefined,
+  const date = dateFormatter(
     sameYear ? { day: 'numeric', month: 'short' } : { day: 'numeric', month: 'short', year: 'numeric' },
-  );
-  return `${date}, ${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  ).format(at);
+  return `${date}, ${formatClockTime(at)}`;
 }
 
 /**
@@ -968,10 +954,7 @@ export function campaignRunLength(seconds: number): string {
   */
   if (!Number.isFinite(seconds)) return DASH;
   const total = Math.max(0, Math.round(seconds));
-  if (total < 60) return total === 1 ? '1 second' : `${total} seconds`;
-
-  const plural = (value: number, noun: string) =>
-    `${value.toLocaleString()} ${value === 1 ? noun : `${noun}s`}`;
+  if (total < 60) return plural(total, 'second');
 
   const days = Math.floor(total / 86_400);
   const hours = Math.floor((total % 86_400) / 3600);
@@ -1195,7 +1178,7 @@ export function howItEndedLines(
       label: 'Agents who worked it',
       // "None", not "Nobody": it reads as a count in a column of counts, which
       // is what keeps a measured zero visibly different from an absent field.
-      value: peak === 0 ? 'None' : peak.toLocaleString(),
+      value: peak === 0 ? 'None' : formatCount(peak),
     });
   }
 

@@ -5,6 +5,7 @@ import type {
   AgencyGroupPage,
   AgencyGroupRow,
 } from '../types/agency-stats';
+import { zoneFormatter, zonedParts, type ZonedParts } from './format/zone';
 
 /**
  * "When does this campaign actually connect" — the best-hours matrix, as pure
@@ -333,64 +334,13 @@ export interface BestHoursCoverage {
 const COVERAGE_MAX_STEPS = 2 * 24 * 120;
 const HALF_HOUR_MS = 30 * 60 * 1000;
 
-interface ZonedParts {
-  year: number;
-  month: number;
-  day: number;
-  hour: number;
-  minute: number;
-  second: number;
-}
-
-/**
- * A formatter for one named zone, or `null` when the name is not one.
- *
- * `Intl.DateTimeFormat` throws a `RangeError` on an unknown `timeZone`, and this is
- * exactly the input that can be one: The server's zone comes out of `COALESCE(z.name,
- * 'UTC')` and is therefore always a real IANA name today, but the value reaching
- * this client crossed the API boundary and a hand-mirrored type. A caught `RangeError`
- * degrades to "coverage unknown"; an uncaught one takes the section down.
- */
-function zoneFormatter(zone: string): Intl.DateTimeFormat | null {
-  try {
-    return new Intl.DateTimeFormat('en-US', {
-      timeZone: zone,
-      hourCycle: 'h23',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    });
-  } catch {
-    return null;
-  }
-}
-
-function zonedParts(formatter: Intl.DateTimeFormat, at: Date): ZonedParts | null {
-  let year: number | null = null;
-  let month: number | null = null;
-  let day: number | null = null;
-  let hour: number | null = null;
-  let minute: number | null = null;
-  let second: number | null = null;
-  for (const part of formatter.formatToParts(at)) {
-    const value = Number(part.value);
-    if (!Number.isFinite(value)) continue;
-    if (part.type === 'year') year = value;
-    else if (part.type === 'month') month = value;
-    else if (part.type === 'day') day = value;
-    else if (part.type === 'hour') hour = value;
-    else if (part.type === 'minute') minute = value;
-    else if (part.type === 'second') second = value;
-  }
-  if (year === null || month === null || day === null) return null;
-  if (hour === null || minute === null || second === null) return null;
-  // `h23` should never produce 24, but an implementation that does would otherwise
-  // put a real dial in a column this matrix has no room for.
-  return { year, month, day, hour: hour % 24, minute, second };
-}
+/*
+  `zoneFormatter` / `zonedParts` (`format/zone.ts`), shared with the campaign
+  builder's calling-window echo: one cached formatter per zone, which matters
+  here — the walk below formats up to COVERAGE_MAX_STEPS instants per window.
+  A caught `RangeError` on an unknown zone degrades to "coverage unknown"; an
+  uncaught one would take the section down.
+*/
 
 export function weekdayCoverage(
   from: string,
@@ -414,11 +364,11 @@ export function weekdayCoverage(
   const covered = new Map<number, Set<number>>();
   const mark = (parts: ZonedParts): void => {
     /*
-      The weekday of the ZONED calendar date, computed from that date rather than
-      from the instant: `getUTCDay` over a `Date.UTC` of the same y/m/d is the only
-      reading that cannot drift back a day for a zone behind UTC.
+      The weekday of the ZONED calendar date (`isoDay`, computed from that date
+      rather than from the instant, so it cannot drift back a day for a zone
+      behind UTC), in this matrix's 0 = Sunday numbering.
     */
-    const weekday = new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay();
+    const weekday = parts.isoDay % 7;
     let hours = covered.get(weekday);
     if (hours === undefined) {
       hours = new Set<number>();

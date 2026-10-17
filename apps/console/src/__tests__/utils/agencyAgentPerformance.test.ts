@@ -569,7 +569,7 @@ describe('bucketSeries', () => {
      */
     const series = bucketSeries([bucket('2026-08-19', 20, 8), bucket('2026-08-20', 22, 9)]);
     expect(series.points.map((p) => p.label)).toEqual(['19', '20']);
-    expect(series.points.map((p) => p.title)).toEqual(['Aug 19', 'Aug 20']);
+    expect(series.points.map((p) => p.title)).toEqual(['19 Aug', '20 Aug']);
     // The key is the server's own string, untouched — it is what the chart's
     // test ids and React keys are built from.
     expect(series.points.map((p) => p.start)).toEqual(['2026-08-19', '2026-08-20']);
@@ -904,5 +904,33 @@ describe('windowRangeReadout — which DAYS, and in whose zone', () => {
     // And an inverted or empty window has no days to name.
     expect(windowRangeReadout('2026-08-26T00:00:00.000Z', '2026-08-24T00:00:00.000Z')).toBeNull();
     expect(windowRangeReadout('2026-08-26T00:00:00.000Z', '2026-08-26T00:00:00.000Z')).toBeNull();
+  });
+});
+
+describe('one rounding rule for aggregate durations', () => {
+  it('rounds an aggregate the same way in a cell and in a sentence', () => {
+    // A served percentile is fractional. The cell floored 59.6s to `0:59` while
+    // the band beside it rounded the same quantity to `1m`.
+    expect(agentSeconds(59.6)).toBe('1:00');
+    expect(agentDurationLong(59.6)).toBe('1m');
+    expect(agentSeconds(59.4)).toBe('0:59');
+    expect(agentDurationLong(59.4)).toBe('59s');
+  });
+
+  it('skips a non-number occupancy state rather than NaN-ing every share', () => {
+    const breakdown = occupancyBreakdown({
+      by_state: {
+        on_call: Number.NaN,
+        wrapup: 0,
+        reserved: 0,
+        available: 600,
+        break: 0,
+        offline: 0,
+      },
+      shift_seconds: 600,
+    } as Parameters<typeof occupancyBreakdown>[0]);
+    expect(breakdown.measured).toBe(true);
+    expect(breakdown.recordedSeconds).toBe(600);
+    expect(breakdown.segments.map((s) => [s.state, s.sharePct])).toEqual([['available', 100]]);
   });
 });
