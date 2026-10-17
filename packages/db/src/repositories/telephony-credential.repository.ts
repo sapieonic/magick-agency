@@ -16,9 +16,10 @@ import type {
  *    The sealed secrets live in `telephony_credential_secrets`, one row per version,
  *    and only `findOpenableSecrets` (the server's resolver) reads them;
  *    `findOpenableVersions` lists the same set without the ciphertext.
- *  - Only ciphertext and the four-character `secret_hint` reach SQL: pg spans carry
- *    query parameters (`enhancedDatabaseReporting`), so a full plaintext secret must
- *    never be a parameter here.
+ *  - Only ciphertext and the four-character `secret_hint` reach SQL, so a full
+ *    plaintext secret is never a query parameter. pg spans no longer carry parameter
+ *    values (decision "pg span parameters", changed 2026-10-16), but the rule stands:
+ *    it does not depend on how the tracer is configured.
  *  - Writes are conditional (`WHERE status …`, `WHERE secret_version = $n`), so a
  *    concurrent change makes the second writer a no-op (null), never a lost update.
  *  - No Redis cache: a credential's status must take effect on the next read.

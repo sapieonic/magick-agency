@@ -111,7 +111,7 @@ Other rulings of 2026-10-09 (not numbered questions):
 | B6 | Handled with the OpenTelemetry SDK. Service names `magick-agency` (production), `magick-agency-Staging`, `magick-agency-Dedicated`; agency's alerts page the same PagerDuty service as the rest of the Grafana stack. Everything agency-related (rules, dashboard, agency copies of the liveness, runtime and cardinality rules) lives in this repo's `grafana/`, with its own state | **Decided — changed** |
 | Unnamed exporter | With `OTEL_ENABLED=true` but no `OTEL_SERVICE_NAME`, the SDK does not start and the server warns: the fallback name `magick-agency` is the production name alerts page on | **Decided** |
 | OTel export path | OTLP push only (http/protobuf, e.g. Grafana Cloud's OTLP gateway); there is no Prometheus scrape endpoint. See `src/instrumentation.ts` | **Decided** |
-| pg span parameters | `enhancedDatabaseReporting: true` stays on: pg spans carry query parameter values | **Decided — keep** |
+| pg span parameters | `enhancedDatabaseReporting: true` stays on: pg spans carry query parameter values | **Superseded 2026-10-16** (below) |
 | Credentials on spans | Redacted on spans as in logs: `?token=`, `sig=`, `*verify_token=`, signed-URL keys and media-stream path tokens, on server spans and (query values) on outgoing `http` and `fetch` spans | **Decided** |
 | Log export | Logs reach OTLP only through the SDK's `instrumentation-pino` bridge (no `pino-opentelemetry-transport`), so no line ships twice | **Decided** |
 | Audit partitions | Dropped after 85 days (`AUDIT_RETENTION_DAYS` default, `auditPartitions.retentionDays`) | **Decided — keep** |
@@ -140,6 +140,14 @@ Rulings of 2026-10-11:
 | Carrier credentials: scope and owner (B20) | A credential belongs to one tenant and serves every account in it. Only super-admins create, rotate, verify, disable, enable or revoke one (rows are never deleted; a revoked credential's secrets are shredded once every call pinned to it is terminal and ended more than 2 h ago, the post-call webhook window of Q6), from the super-admin console; the secret is write-only (never returned, only a hint). Every change is audited without secret material. A verify checks the current secret only and records its verdict against that version; a verdict that no longer applies when written (rotated, revoked or status changed meanwhile) is refused, never reported as success, and not audited. A call is pinned to the credential it dialled on; a missing, disabled or unopenable credential fails the call and never falls back to the service's VoiceLink account, and neither does the teardown hangup of a pinned call | **Decided** |
 | Carrier credentials: recordings (B21) | A BYOC carrier's recordings are fetched on demand with the tenant's credential (no copy to S3). The credential is attached only for the provider's exact recording hosts and dropped on any redirect. Revoking a credential therefore ends playback and analysis of that tenant's earlier recordings on it | **Decided** |
 | Carrier credentials: concurrency (B22) | A BYOC call is admitted exactly like a VoiceLink call: the global, account and per-account provider scopes all apply. It is not exempt from the global cap because the bridge, not the carrier, is the shared resource | **Decided** |
+
+Rulings of 2026-10-16 (Manas; trace quota exceeded on 2026-10-15):
+
+| Topic | Ruling | Status |
+|---|---|---|
+| pg span parameters | `enhancedDatabaseReporting: false`: pg spans carry query text, never parameter values (they put phone numbers, names and other customer data in Tempo). `ignoreConnectSpans: true` too. That option also skips the instrumentation's binding of `pool.connect` callbacks to the caller's context, so a query that waited for a connection joined the releaser's trace. `packages/db/src/connection.ts` restores the binding (`bindPoolConnectContext`). See `apps/server/src/utils/otel-sdk-config.ts`, "Traces" | **Decided — changed** |
+| Probe and analytics spans | `/healthz`, `/readyz` (and the readiness check's pg/Redis calls) and outgoing PostHog requests are not traced | **Decided** |
+| Trace sampling | Head sampling by env only: `OTEL_TRACES_SAMPLER=parentbased_traceidratio`, `OTEL_TRACES_SAMPLER_ARG` 0.5 production and dedicated, 0.1 staging. Unset keeps every trace | **Decided** |
 
 ## 5. Still open
 

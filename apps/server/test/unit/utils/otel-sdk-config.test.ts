@@ -24,10 +24,15 @@ import {
   DROPPED_METRIC_PATTERNS,
   OTEL_SHUTDOWN_TIMEOUT_MS,
   HEAP_USED_METRIC,
+  PG_TRACE_CONFIG,
   RUNTIME_METRIC_ALLOW_LIST,
   buildMetricViews,
   buildResourceAttributes,
   freshGaugeTemporality,
+  isPosthogHost,
+  isUntracedIncomingRequest,
+  isUntracedOutgoingFetch,
+  isUntracedOutgoingHttpRequest,
   registerHeapUsedGauge,
   resolveMetricsExportIntervalMs,
   resolveMetricsExportTimeoutMs,
@@ -347,6 +352,36 @@ describe('fresh gauges — an unobserved attribute set stops being exported', ()
   });
 });
 
+describe('trace config — what is recorded at all (decision "pg span parameters")', () => {
+  it('pg never ships parameter values or pool-connect spans', () => {
+    expect(PG_TRACE_CONFIG).toEqual({ enhancedDatabaseReporting: false, ignoreConnectSpans: true });
+  });
+
+  it('ignores the /healthz and /readyz probes, with or without a query, and nothing else', () => {
+    expect(isUntracedIncomingRequest({ url: '/healthz' })).toBe(true);
+    expect(isUntracedIncomingRequest({ url: '/readyz' })).toBe(true);
+    expect(isUntracedIncomingRequest({ url: '/readyz?probe=1' })).toBe(true);
+    expect(isUntracedIncomingRequest({ url: '/health' })).toBe(false);
+    expect(isUntracedIncomingRequest({ url: '/healthz/x' })).toBe(false);
+    expect(isUntracedIncomingRequest({ url: '/agency/campaigns' })).toBe(false);
+    expect(isUntracedIncomingRequest({})).toBe(false);
+  });
+
+  it('ignores PostHog hosts (and a POSTHOG_HOST proxy) and nothing else', () => {
+    expect(isPosthogHost('us.i.posthog.com', {})).toBe(true);
+    expect(isPosthogHost('EU.i.PostHog.com', {})).toBe(true);
+    expect(isPosthogHost('notposthog.com', {})).toBe(false);
+    expect(isPosthogHost('posthog.com.evil.example', {})).toBe(false);
+    expect(isPosthogHost(undefined, {})).toBe(false);
+    expect(isPosthogHost('ph.example.com', { POSTHOG_HOST: 'https://ph.example.com' })).toBe(true);
+    expect(isUntracedOutgoingHttpRequest({ host: 'us.i.posthog.com:443' }, {})).toBe(true);
+    expect(isUntracedOutgoingHttpRequest({ hostname: 'recording.app.voicelink.co.in' }, {})).toBe(false);
+    expect(isUntracedOutgoingFetch({ origin: 'https://us.i.posthog.com' }, {})).toBe(true);
+    expect(isUntracedOutgoingFetch({ origin: 'https://api.openai.com' }, {})).toBe(false);
+    expect(isUntracedOutgoingFetch({ origin: '' }, {})).toBe(false);
+  });
+});
+
 describe('src/instrumentation.ts wiring (source audit)', () => {
   const src = readFileSync(resolve(process.cwd(), 'src/instrumentation.ts'), 'utf8');
 
@@ -367,6 +402,15 @@ describe('src/instrumentation.ts wiring (source audit)', () => {
 
   it('enables runtime-node (its non-allow-listed instruments are dropped by views)', () => {
     expect(src).toContain("'@opentelemetry/instrumentation-runtime-node': { enabled: true }");
+  });
+
+  it('uses the tested trace config, and sets no sampler in code (the env decides)', () => {
+    expect(src).toContain("'@opentelemetry/instrumentation-pg': PG_TRACE_CONFIG");
+    expect(src).toContain('ignoreIncomingRequestHook: (request) => isUntracedIncomingRequest(request)');
+    expect(src).toContain('ignoreOutgoingRequestHook: (options) => isUntracedOutgoingHttpRequest(options, process.env)');
+    expect(src).toContain('ignoreRequestHook: (request) => isUntracedOutgoingFetch(request, process.env)');
+    expect(src).not.toMatch(/enhancedDatabaseReporting/);
+    expect(src).not.toMatch(/\bsampler\s*:/);
   });
 
   it('never imports src/config — it is the first import and config can process.exit(1)', () => {

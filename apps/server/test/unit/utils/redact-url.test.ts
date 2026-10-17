@@ -323,8 +323,9 @@ describe('every sink actually redacts', () => {
      * Plus the outgoing settings, the same ones the span probe below runs with.
      */
     const source = SRC('instrumentation.ts');
-    expect(source).toMatch(/'@opentelemetry\/instrumentation-http': \{\n\s+startIncomingSpanHook: redactedRequestSpanAttributes,\n\s+redactedQueryParams: \[\.\.\.OUTGOING_REDACTED_QUERY_PARAMS\],\n\s+\},/);
-    expect(source).toMatch(/'@opentelemetry\/instrumentation-undici': \{\n\s+startSpanHook: redactedOutgoingSpanAttributes,\n\s+\},/);
+    // The ignore hooks beside them (probes, PostHog) are pinned in otel-sdk-config.test.ts.
+    expect(source).toMatch(/'@opentelemetry\/instrumentation-http': \{\n\s+startIncomingSpanHook: redactedRequestSpanAttributes,\n\s+redactedQueryParams: \[\.\.\.OUTGOING_REDACTED_QUERY_PARAMS\],\n\s+ignoreIncomingRequestHook: [^\n]+\n\s+ignoreOutgoingRequestHook: [^\n]+\n\s+\},/);
+    expect(source).toMatch(/'@opentelemetry\/instrumentation-undici': \{\n\s+startSpanHook: redactedOutgoingSpanAttributes,\n\s+ignoreRequestHook: [^\n]+\n\s+\},/);
     expect(source).toMatch(/import \{\n\s+OUTGOING_REDACTED_QUERY_PARAMS,\n\s+redactedOutgoingSpanAttributes,\n\s+redactedRequestSpanAttributes,\n\} from '\.\/utils\/redact-url\.js';/);
   });
 

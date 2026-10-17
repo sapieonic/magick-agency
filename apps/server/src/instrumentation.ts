@@ -12,6 +12,8 @@
  *   without this line an `OTEL_ENABLED` set in `.env` would reach the config block but not the SDK.
  * - Credentials in URLs are redacted on spans: the HTTP instrumentation's incoming hook and
  *   outgoing redaction list, and the undici (`fetch`) hook (`src/utils/redact-url.ts`).
+ * - pg spans carry query text but never parameter values; probes and PostHog are not traced
+ *   (`utils/otel-sdk-config.ts`, "Traces"). Head sampling is env-only (`OTEL_TRACES_SAMPLER`).
  * - `shutdownOtelSdk` gives up after `OTEL_SHUTDOWN_TIMEOUT_MS` (see it).
  */
 // dotenv must load BEFORE we read env vars — this file runs before config/index.ts
@@ -31,8 +33,12 @@ import { APP_VERSION } from '@magick-agency/observability/version';
 import { SERVICE_NAME } from '@magick-agency/observability/service';
 import {
   OTEL_SHUTDOWN_TIMEOUT_MS,
+  PG_TRACE_CONFIG,
   buildMetricViews,
   buildResourceAttributes,
+  isUntracedIncomingRequest,
+  isUntracedOutgoingFetch,
+  isUntracedOutgoingHttpRequest,
   registerHeapUsedGauge,
   resolveMetricsExportIntervalMs,
   resolveMetricsExportTimeoutMs,
@@ -231,25 +237,27 @@ if (otelEnabled && otlpEndpoint && otelServiceNamed) {
         // token, a `?token=`/`sig=`/`*verify_token=` value, a media-stream path token) the hook
         // overwrites `url.path` and, when the query changed, `url.query`. `redactedQueryParams`
         // does the same for outgoing `http`/`https` client spans' `url.full`.
-        // See `src/utils/redact-url.ts`.
+        // See `src/utils/redact-url.ts`. The `/healthz` / `/readyz` probes and PostHog are not
+        // traced at all (see `otel-sdk-config.ts`, "Traces").
         '@opentelemetry/instrumentation-http': {
           startIncomingSpanHook: redactedRequestSpanAttributes,
           redactedQueryParams: [...OUTGOING_REDACTED_QUERY_PARAMS],
+          ignoreIncomingRequestHook: (request) => isUntracedIncomingRequest(request),
+          ignoreOutgoingRequestHook: (options) => isUntracedOutgoingHttpRequest(options, process.env),
         },
 
         // Global `fetch` spans export the full
         // request URL unredacted; the hook overwrites `url.full` / `url.query` when the query
-        // carries a credential. See `redactedOutgoingSpanAttributes`.
+        // carries a credential. See `redactedOutgoingSpanAttributes`. PostHog (posthog-node uses
+        // `fetch`) is not traced.
         '@opentelemetry/instrumentation-undici': {
           startSpanHook: redactedOutgoingSpanAttributes,
+          ignoreRequestHook: (request) => isUntracedOutgoingFetch(request, process.env),
         },
 
-        // pg: with `enhancedDatabaseReporting`, every query's parameter values are attached
-        // (`db.postgresql.values`); query text is captured without it. Kept on by ruling
-        // (Manas, 2026-10-09; decision "pg span parameters").
-        '@opentelemetry/instrumentation-pg': {
-          enhancedDatabaseReporting: true,
-        },
+        // pg: query text only, NEVER parameter values (`db.postgresql.values`), and no
+        // `pg-pool.connect` spans. Decision "pg span parameters" (changed 2026-10-16).
+        '@opentelemetry/instrumentation-pg': PG_TRACE_CONFIG,
 
         // ioredis: capture command name + key only (strip values for PII safety)
         '@opentelemetry/instrumentation-ioredis': {
