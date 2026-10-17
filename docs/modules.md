@@ -1023,13 +1023,84 @@ Files: `agency.ts`, `analysis.ts`, `platform.ts`, `shared.ts`, `voice.ts`
 
 _No dedicated test files._
 
+## `packages/web-ui`
+
+UI pieces shared by the console and super-admin, consumed as TypeScript source (decision B2; the
+`exports` map points at `src/`): each app imports a module by path, e.g.
+`@magick-agency/web-ui/components/Modal`. React, react-dom, react-router-dom and lucide-react are
+peer dependencies, so both apps keep one instance of each. Not built on its own: each app's Vite build
+compiles these files and their CSS modules. Has its own no-parent-brand scan (B17), since the apps'
+scans cover only their own `src/`.
+
+### `packages/web-ui/src/`
+
+The error-message helpers and request-id marker (`errors.ts`), the one reading of an API error body
+for both clients (`apiErrorBody.ts`: `parseApiErrorBody`, field-level `details` / `issues` before a
+generic `message`), date and number formatting (`format.ts`), customer-facing carrier aliases
+(`telephonyProviders.ts`), a bounded `allSettled`-style fan-out (`concurrency.ts`:
+`mapWithConcurrency`), and the stylesheet both apps' `main.tsx` import (`global.css`: theme tokens,
+base elements, `.toast-container`).
+
+Files: `apiErrorBody.ts`, `concurrency.ts`, `errors.ts`, `format.ts`, `global.css`, `telephonyProviders.ts`
+
+| Test file | Cases |
+|---|---|
+| `packages/web-ui/test/apiErrorBody.test.ts` | 14 |
+| `packages/web-ui/test/concurrency.test.ts` | 9 |
+| `packages/web-ui/test/errors.test.ts` | 21 |
+| `packages/web-ui/test/format.test.ts` | 70 |
+| `packages/web-ui/test/noParentBrand.test.ts` | 4 |
+| `packages/web-ui/test/telephonyProviders.test.ts` | 10 |
+| `packages/web-ui/test/themeTokenParity.test.ts` | 4 |
+
+### `packages/web-ui/src/components/`
+
+The 15 components both apps used as byte-identical copies, each with its CSS module.
+
+Files: `Breadcrumbs.module.css`, `Breadcrumbs.tsx`, `ConfirmDialog.module.css`, `ConfirmDialog.tsx`, `DataTable.module.css`, `DataTable.tsx`, `EmptyState.module.css`, `EmptyState.tsx`, `ErrorAlert.module.css`, `ErrorAlert.tsx`, `ErrorText.module.css`, `ErrorText.tsx`, `HelpTooltip.module.css`, `HelpTooltip.tsx`, `LiveDot.module.css`, `LiveDot.tsx`, `LoadingSpinner.module.css`, `LoadingSpinner.tsx`, `Modal.module.css`, `Modal.tsx`, `PageHeader.module.css`, `PageHeader.tsx`, `Pagination.module.css`, `Pagination.tsx`, `RequestId.module.css`, `RequestId.tsx`, `StatusBadge.module.css`, `StatusBadge.tsx`, `Toast.module.css`, `Toast.tsx`
+
+| Test file | Cases |
+|---|---|
+| `packages/web-ui/test/components/ConfirmDialog.test.tsx` | 12 |
+| `packages/web-ui/test/components/DataTable.test.tsx` | 27 |
+| `packages/web-ui/test/components/ErrorAlert.test.tsx` | 4 |
+| `packages/web-ui/test/components/ErrorText.test.tsx` | 4 |
+| `packages/web-ui/test/components/LiveDot.test.tsx` | 7 |
+| `packages/web-ui/test/components/Pagination.test.tsx` | 28 |
+| `packages/web-ui/test/components/StatusBadge.test.tsx` | 15 |
+| `packages/web-ui/test/components/Toast.test.tsx` | 2 |
+| `packages/web-ui/test/components/dataTableAlignCss.test.ts` | 5 |
+
+### `packages/web-ui/src/contexts/`
+
+`ToastProvider` / `useToast` (memoised context value).
+
+Files: `ToastContext.tsx`
+
+| Test file | Cases |
+|---|---|
+| `packages/web-ui/test/contexts/ToastContext.test.tsx` | 3 |
+
+### `packages/web-ui/src/hooks/`
+
+`useAsyncResource(fetcher, { initialData, errorMessage })`: `{ data, loading, error, reload }` where
+only the latest load may write state. The super-admin list hooks use it.
+
+Files: `useAsyncResource.ts`
+
+| Test file | Cases |
+|---|---|
+| `packages/web-ui/test/hooks/useAsyncResource.test.ts` | 5 |
+
+`packages/web-ui/test/setup.ts` registers the RTL cleanup (no `globals: true`).
+
 ## `apps/console`
 
 ### `apps/console/src/`
 
-App shell: `App.tsx` (routes), `main.tsx`, `config.ts` (API base, endpoints, originator), global CSS.
+App shell: `App.tsx` (routes), `main.tsx` (imports `@magick-agency/web-ui/global.css`), `config.ts` (API base, endpoints, originator).
 
-Files: `App.tsx`, `config.ts`, `global.css`, `main.tsx`, `vite-env.d.ts`
+Files: `App.tsx`, `config.ts`, `main.tsx`, `vite-env.d.ts`
 
 _No dedicated test files._
 
@@ -1084,9 +1155,9 @@ Files: `index.ts`, `load-brand.ts`, `types.ts`
 
 ### `apps/console/src/components/`
 
-UI components: `agency/` (station, state rail, wrap-up timer, campaign tabs, health strip and the rest of the agent and supervisor UI), `audio/`, `auth/` (route guards), `calls/` (call detail), `common/` (shared widgets, logo, page description), `layout/` (app and agency shells, sidebar).
+UI components: `agency/` (station, state rail, wrap-up timer, campaign tabs, health strip and the rest of the agent and supervisor UI), `audio/`, `auth/` (route guards), `calls/` (call detail), `common/` (the console's own shared widgets: logo, page description, filters, copyable fields; the widgets both apps use are in `packages/web-ui`), `layout/` (app and agency shells, sidebar).
 
-Files: `agency/AgencyRetryDialog.module.css`, `agency/AgencyRetryDialog.tsx`, `agency/AgentAnalyticsSection.module.css`, `agency/AgentAnalyticsSection.tsx`, `agency/AgentAttemptsPanel.module.css`, `agency/AgentAttemptsPanel.tsx`, `agency/AgentBucketChart.module.css`, `agency/AgentBucketChart.tsx`, `agency/AgentFloor.module.css`, `agency/AgentFloor.tsx`, `agency/AgentFloorDrawer.module.css`, `agency/AgentFloorDrawer.tsx`, `agency/AgentLanding.module.css`, `agency/AgentLanding.tsx`, `agency/AgentNav.module.css`, `agency/AgentNav.tsx`, `agency/AgentPerformancePanel.module.css`, `agency/AgentPerformancePanel.tsx`, `agency/AgentStation.module.css`, `agency/AgentSurfaceShell.module.css`, `agency/AgentSurfaceShell.tsx`, `agency/BestHours.tsx`, `agency/BestHoursMatrix.module.css`, `agency/BestHoursMatrix.tsx`, `agency/BreakMenu.module.css`, `agency/BreakMenu.tsx`, `agency/CampaignActivityChart.module.css`, `agency/CampaignActivityChart.tsx`, `agency/CampaignAgentAssignments.module.css`, `agency/CampaignAgentAssignments.tsx`, `agency/CampaignContribution.tsx`, `agency/CampaignHealthStrip.module.css`, `agency/CampaignHealthStrip.tsx`, `agency/CampaignLineageStrip.module.css`, `agency/CampaignLineageStrip.tsx`, `agency/CampaignPerformance.module.css`, `agency/CampaignPerformance.tsx`, `agency/CampaignRateChart.module.css`, `agency/CampaignRateChart.tsx`, `agency/CampaignRecordingField.module.css`, `agency/CampaignRecordingField.tsx`, `agency/CampaignSeriesSection.module.css`, `agency/CampaignSeriesSection.tsx`, `agency/CampaignTabs.module.css`, `agency/CampaignTabs.tsx`, `agency/CompareTray.tsx`, `agency/ConnectionHealthPill.tsx`, `agency/ContactDetail.tsx`, `agency/ContactPanel.tsx`, `agency/ContributionTable.tsx`, `agency/CueSettings.module.css`, `agency/CueSettings.tsx`, `agency/DialerUnavailable.module.css`, `agency/DialerUnavailable.tsx`, `agency/DispositionPad.module.css`, `agency/DispositionPad.tsx`, `agency/DncControl.module.css`, `agency/DncControl.tsx`, `agency/FilterChip.tsx`, `agency/FiltersCard.tsx`, `agency/GoogleMark.tsx`, `agency/HoldToConfirmButton.module.css`, `agency/HoldToConfirmButton.tsx`, `agency/IdleGuide.tsx`, `agency/JoinConflictScreen.tsx`, `agency/MultiSelectFilter.tsx`, `agency/NotesField.module.css`, `agency/NotesField.tsx`, `agency/PriorAttemptsList.tsx`, `agency/QueuedBreakPill.module.css`, `agency/QueuedBreakPill.tsx`, `agency/RailPresenceRegion.module.css`, `agency/RailPresenceRegion.tsx`, `agency/RosterTable.module.css`, `agency/RosterTable.tsx`, `agency/SpineListLayout.module.css`, `agency/StateRail.module.css`, `agency/StateRail.tsx`, `agency/StationActionBar.tsx`, `agency/StationFatal.tsx`, `agency/StationHeader.tsx`, `agency/StationIdentity.module.css`, `agency/StationIdentity.tsx`, `agency/StationMenu.module.css`, `agency/StationMenu.tsx`, `agency/WorkspaceExit.tsx`, `agency/WrapupTimer.module.css`, `agency/WrapupTimer.tsx`, `agency/join/AddressMismatch.tsx`, `agency/join/AgencyJoin.module.css`, `agency/join/CredentialForm.tsx`, `agency/join/GuardedLink.tsx`, `agency/join/JoinCardHeader.tsx`, `agency/join/Unavailable.tsx`, `agency/join/Unreachable.tsx`, `agency/join/joinPending.ts`, `agency/useChartWidth.ts`, `audio/AudioWaveform.module.css`, `audio/AudioWaveform.tsx`, `auth/HomeRedirect.tsx`, `auth/RequireAuth.tsx`, `auth/RequireCapability.tsx`, `auth/RequireFlag.tsx`, `calls/CallDetailSections.tsx`, `calls/CallDetailView.tsx`, `common/AccountUnavailable.tsx`, `common/Breadcrumbs.module.css`, `common/Breadcrumbs.tsx`, `common/CapabilityUnavailable.tsx`, `common/ConfirmDialog.module.css`, `common/ConfirmDialog.tsx`, `common/CopyableField.module.css`, `common/CopyableField.tsx`, `common/DataTable.module.css`, `common/DataTable.tsx`, `common/DateRangeFilter.module.css`, `common/DateRangeFilter.tsx`, `common/EmptyState.module.css`, `common/EmptyState.tsx`, `common/ErrorAlert.module.css`, `common/ErrorAlert.tsx`, `common/ErrorText.module.css`, `common/ErrorText.tsx`, `common/FieldError.tsx`, `common/GlobalSearch.module.css`, `common/GlobalSearch.tsx`, `common/HelpTooltip.module.css`, `common/HelpTooltip.tsx`, `common/LiveDot.module.css`, `common/LiveDot.tsx`, `common/LoadingSpinner.module.css`, `common/LoadingSpinner.tsx`, `common/Logo.tsx`, `common/Modal.module.css`, `common/Modal.tsx`, `common/PageDescription.module.css`, `common/PageDescription.tsx`, `common/PageHeader.module.css`, `common/PageHeader.tsx`, `common/Pagination.module.css`, `common/Pagination.tsx`, `common/PhoneFilterInput.module.css`, `common/PhoneFilterInput.tsx`, `common/RequestId.module.css`, `common/RequestId.tsx`, `common/StatusBadge.module.css`, `common/StatusBadge.tsx`, `common/Toast.module.css`, `common/Toast.tsx`, `common/TruncatedId.module.css`, `common/TruncatedId.tsx`, `common/index.ts`, `layout/AccountSwitcher.module.css`, `layout/AccountSwitcher.tsx`, `layout/AgencyLayout.module.css`, `layout/AgencyLayout.tsx`, `layout/AgencySidebar.module.css`, `layout/AgencySidebar.tsx`, `layout/AppLayout.module.css`, `layout/AppLayout.tsx`, `layout/Sidebar.module.css`, `layout/Sidebar.tsx`, `layout/SwitcherDropdown.module.css`, `layout/SwitcherDropdown.tsx`, `layout/TenantSwitcher.module.css`, `layout/TenantSwitcher.tsx`, `layout/TopBar.module.css`, `layout/TopBar.tsx`
+Files: `agency/AgencyRetryDialog.module.css`, `agency/AgencyRetryDialog.tsx`, `agency/AgentAnalyticsSection.module.css`, `agency/AgentAnalyticsSection.tsx`, `agency/AgentAttemptsPanel.module.css`, `agency/AgentAttemptsPanel.tsx`, `agency/AgentBucketChart.module.css`, `agency/AgentBucketChart.tsx`, `agency/AgentFloor.module.css`, `agency/AgentFloor.tsx`, `agency/AgentFloorDrawer.module.css`, `agency/AgentFloorDrawer.tsx`, `agency/AgentLanding.module.css`, `agency/AgentLanding.tsx`, `agency/AgentNav.module.css`, `agency/AgentNav.tsx`, `agency/AgentPerformancePanel.module.css`, `agency/AgentPerformancePanel.tsx`, `agency/AgentStation.module.css`, `agency/AgentSurfaceShell.module.css`, `agency/AgentSurfaceShell.tsx`, `agency/BestHours.tsx`, `agency/BestHoursMatrix.module.css`, `agency/BestHoursMatrix.tsx`, `agency/BreakMenu.module.css`, `agency/BreakMenu.tsx`, `agency/CampaignActivityChart.module.css`, `agency/CampaignActivityChart.tsx`, `agency/CampaignAgentAssignments.module.css`, `agency/CampaignAgentAssignments.tsx`, `agency/CampaignContribution.tsx`, `agency/CampaignHealthStrip.module.css`, `agency/CampaignHealthStrip.tsx`, `agency/CampaignLineageStrip.module.css`, `agency/CampaignLineageStrip.tsx`, `agency/CampaignPerformance.module.css`, `agency/CampaignPerformance.tsx`, `agency/CampaignRateChart.module.css`, `agency/CampaignRateChart.tsx`, `agency/CampaignRecordingField.module.css`, `agency/CampaignRecordingField.tsx`, `agency/CampaignSeriesSection.module.css`, `agency/CampaignSeriesSection.tsx`, `agency/CampaignTabs.module.css`, `agency/CampaignTabs.tsx`, `agency/CompareTray.tsx`, `agency/ConnectionHealthPill.tsx`, `agency/ContactDetail.tsx`, `agency/ContactPanel.tsx`, `agency/ContributionTable.tsx`, `agency/CueSettings.module.css`, `agency/CueSettings.tsx`, `agency/DialerUnavailable.module.css`, `agency/DialerUnavailable.tsx`, `agency/DispositionPad.module.css`, `agency/DispositionPad.tsx`, `agency/DncControl.module.css`, `agency/DncControl.tsx`, `agency/FilterChip.tsx`, `agency/FiltersCard.tsx`, `agency/GoogleMark.tsx`, `agency/HoldToConfirmButton.module.css`, `agency/HoldToConfirmButton.tsx`, `agency/IdleGuide.tsx`, `agency/JoinConflictScreen.tsx`, `agency/MultiSelectFilter.tsx`, `agency/NotesField.module.css`, `agency/NotesField.tsx`, `agency/PriorAttemptsList.tsx`, `agency/QueuedBreakPill.module.css`, `agency/QueuedBreakPill.tsx`, `agency/RailPresenceRegion.module.css`, `agency/RailPresenceRegion.tsx`, `agency/RosterTable.module.css`, `agency/RosterTable.tsx`, `agency/SpineListLayout.module.css`, `agency/StateRail.module.css`, `agency/StateRail.tsx`, `agency/StationActionBar.tsx`, `agency/StationFatal.tsx`, `agency/StationHeader.tsx`, `agency/StationIdentity.module.css`, `agency/StationIdentity.tsx`, `agency/StationMenu.module.css`, `agency/StationMenu.tsx`, `agency/WorkspaceExit.tsx`, `agency/WrapupTimer.module.css`, `agency/WrapupTimer.tsx`, `agency/join/AddressMismatch.tsx`, `agency/join/AgencyJoin.module.css`, `agency/join/CredentialForm.tsx`, `agency/join/GuardedLink.tsx`, `agency/join/JoinCardHeader.tsx`, `agency/join/Unavailable.tsx`, `agency/join/Unreachable.tsx`, `agency/join/joinPending.ts`, `agency/useChartWidth.ts`, `audio/AudioWaveform.module.css`, `audio/AudioWaveform.tsx`, `auth/HomeRedirect.tsx`, `auth/RequireAuth.tsx`, `auth/RequireCapability.tsx`, `auth/RequireFlag.tsx`, `calls/CallDetailSections.tsx`, `calls/CallDetailView.tsx`, `common/AccountUnavailable.tsx`, `common/CapabilityUnavailable.tsx`, `common/CopyableField.module.css`, `common/CopyableField.tsx`, `common/DateRangeFilter.module.css`, `common/DateRangeFilter.tsx`, `common/FieldError.tsx`, `common/GlobalSearch.module.css`, `common/GlobalSearch.tsx`, `common/Logo.tsx`, `common/PageDescription.module.css`, `common/PageDescription.tsx`, `common/PhoneFilterInput.module.css`, `common/PhoneFilterInput.tsx`, `common/TruncatedId.module.css`, `common/TruncatedId.tsx`, `common/index.ts`, `layout/AccountSwitcher.module.css`, `layout/AccountSwitcher.tsx`, `layout/AgencyLayout.module.css`, `layout/AgencyLayout.tsx`, `layout/AgencySidebar.module.css`, `layout/AgencySidebar.tsx`, `layout/AppLayout.module.css`, `layout/AppLayout.tsx`, `layout/Sidebar.module.css`, `layout/Sidebar.tsx`, `layout/SwitcherDropdown.module.css`, `layout/SwitcherDropdown.tsx`, `layout/TenantSwitcher.module.css`, `layout/TenantSwitcher.tsx`, `layout/TopBar.module.css`, `layout/TopBar.tsx`
 
 | Test file | Cases |
 |---|---|
@@ -1112,25 +1183,19 @@ Files: `agency/AgencyRetryDialog.module.css`, `agency/AgencyRetryDialog.tsx`, `a
 | `apps/console/src/__tests__/components/CampaignHealthStrip.test.tsx` | 14 |
 | `apps/console/src/__tests__/components/CampaignPerformance.test.tsx` | 19 |
 | `apps/console/src/__tests__/components/CampaignSeriesSection.test.tsx` | 25 |
-| `apps/console/src/__tests__/components/CommonConfirmDialog.test.tsx` | 12 |
 | `apps/console/src/__tests__/components/CompareTray.test.tsx` | 21 |
 | `apps/console/src/__tests__/components/ComposerSection.test.tsx` | 6 |
 | `apps/console/src/__tests__/components/ConnectionHealthPill.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/ContributionTable.test.tsx` | 18 |
-| `apps/console/src/__tests__/components/DataTable.test.tsx` | 27 |
 | `apps/console/src/__tests__/components/DialerUnavailable.test.tsx` | 3 |
 | `apps/console/src/__tests__/components/DispositionPad.test.tsx` | 29 |
 | `apps/console/src/__tests__/components/DncControl.test.tsx` | 7 |
-| `apps/console/src/__tests__/components/ErrorAlert.test.tsx` | 4 |
-| `apps/console/src/__tests__/components/ErrorText.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/GlobalSearchDnc.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/GovernanceGating.test.tsx` | 6 |
 | `apps/console/src/__tests__/components/HoldToConfirmButton.test.tsx` | 42 |
 | `apps/console/src/__tests__/components/HomeRedirect.test.tsx` | 8 |
-| `apps/console/src/__tests__/components/LiveDot.test.tsx` | 7 |
 | `apps/console/src/__tests__/components/NotesField.test.tsx` | 22 |
 | `apps/console/src/__tests__/components/PageDescription.test.tsx` | 3 |
-| `apps/console/src/__tests__/components/Pagination.test.tsx` | 28 |
 | `apps/console/src/__tests__/components/PhoneFilterInput.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/QueuedBreakPill.test.tsx` | 14 |
 | `apps/console/src/__tests__/components/RailPresenceRegion.test.tsx` | 18 |
@@ -1141,41 +1206,30 @@ Files: `agency/AgencyRetryDialog.module.css`, `agency/AgencyRetryDialog.tsx`, `a
 | `apps/console/src/__tests__/components/Sidebar.activeState.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/StateRail.test.tsx` | 26 |
 | `apps/console/src/__tests__/components/StationIdentity.test.tsx` | 2 |
-| `apps/console/src/__tests__/components/StatusBadge.test.tsx` | 15 |
 | `apps/console/src/__tests__/components/SwitcherDropdown.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/TenantSwitcher.test.tsx` | 7 |
-| `apps/console/src/__tests__/components/Toast.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/TopBar.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/WrapupTimer.test.tsx` | 25 |
 | `apps/console/src/__tests__/components/campaignSeriesCharts.test.tsx` | 16 |
-| `apps/console/src/__tests__/components/dataTableAlignCss.test.ts` | 5 |
 | `apps/console/src/__tests__/components/platformZoneExits.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/switcherDropdownScrollCss.test.ts` | 4 |
 | `apps/console/src/components/common/DateRangeFilter.test.tsx` | 25 |
 | `apps/console/src/components/common/DateRangeFilter.timezone.test.tsx` | 1 |
 | `apps/console/src/components/common/Logo.test.tsx` | 5 |
 
-### `apps/console/src/config/`
-
-Console configuration helpers.
-
-Files: `telephonyProviders.ts`
-
-_No dedicated test files._
-
 ### `apps/console/src/contexts/`
 
-React contexts: auth, tenant, theme and the rest.
+React contexts: auth, tenant, theme and the rest (the toast context is in `packages/web-ui`). `AuthContext.tsx`'s invite-credential flow is in `authInvite.ts` (`useInviteJoin`, `useInviteCredentialFlow`) and its 6-hour cap check in `useSessionWatchdog.ts`; the context API is unchanged.
 
-Files: `AuthContext.tsx`, `FeatureFlagsContext.tsx`, `GovernanceContext.tsx`, `TenantContext.tsx`, `ThemeContext.tsx`, `ToastContext.tsx`
+Files: `AuthContext.tsx`, `FeatureFlagsContext.tsx`, `GovernanceContext.tsx`, `TenantContext.tsx`, `ThemeContext.tsx`, `authInvite.ts`, `useSessionWatchdog.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/contexts/AuthContext.lazyInit.test.tsx` | 2 |
-| `apps/console/src/__tests__/contexts/AuthContext.test.tsx` | 45 |
+| `apps/console/src/__tests__/contexts/AuthContext.test.tsx` | 46 |
 | `apps/console/src/__tests__/contexts/FeatureFlagsContext.test.tsx` | 14 |
 | `apps/console/src/__tests__/contexts/GovernanceContext.test.tsx` | 6 |
-| `apps/console/src/__tests__/contexts/TenantContext.test.tsx` | 32 |
+| `apps/console/src/__tests__/contexts/TenantContext.test.tsx` | 33 |
 
 ### `apps/console/src/hooks/`
 
@@ -1259,9 +1313,9 @@ _No dedicated test files._
 
 ### `apps/console/src/utils/`
 
-Pure UI helpers: permissions, vocabulary, formatting, wrap-up, disposition submit, cue preferences, transcript preferences, series ranges and more.
+Pure UI helpers: permissions, vocabulary, wrap-up, disposition submit, cue preferences, transcript preferences, series ranges and more.
 
-Files: `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.ts`, `agencyAgentRoster.ts`, `agencyAgentSurfaces.ts`, `agencyAssignmentEntry.ts`, `agencyAttemptFilters.ts`, `agencyAudioCopy.ts`, `agencyBestHours.ts`, `agencyCampaignConfigForm.ts`, `agencyCampaignContribution.ts`, `agencyCampaignControls.ts`, `agencyCampaignLineage.ts`, `agencyCampaignOverview.ts`, `agencyCampaignPerformance.ts`, `agencyCampaignRecording.ts`, `agencyCampaignSeries.ts`, `agencyCampaignTabs.ts`, `agencyCampaignsHome.ts`, `agencyCatalogSync.ts`, `agencyClock.ts`, `agencyColumnMapping.ts`, `agencyCompareTray.ts`, `agencyContext.ts`, `agencyCuePrefs.ts`, `agencyCues.ts`, `agencyDiagnostics.ts`, `agencyDispositionForm.ts`, `agencyDispositionSubmit.ts`, `agencyDncCopy.ts`, `agencyErrors.ts`, `agencyFieldFilter.ts`, `agencyHealthStrip.ts`, `agencyIngestSummary.ts`, `agencyInviteJoinCopy.ts`, `agencyJoinConflict.ts`, `agencyLiveSession.ts`, `agencyMedia.ts`, `agencyNotes.ts`, `agencyPadGate.ts`, `agencyPersona.ts`, `agencyPriorAttempts.ts`, `agencyReleaseCopy.ts`, `agencyRetrySelector.ts`, `agencyRosterFilters.ts`, `agencySpineCopy.ts`, `agencyStaleResponse.ts`, `agencyStationExit.ts`, `agencyStationIdle.ts`, `agencyStationLiveness.ts`, `agencyStationReducer.ts`, `agencyStationWsUrl.ts`, `agencyStatsConsumers.ts`, `agencyWebAudioCueSink.ts`, `agencyWrapup.ts`, `audio-worklet-processor.ts`, `concurrency.ts`, `errors.ts`, `format.ts`, `inviteJoin.ts`, `keyboardTarget.ts`, `permissions.ts`, `phone.ts`, `poll-backoff.ts`, `returnPath.ts`, `session.ts`, `sessionRefusal.ts`, `snake-case.ts`, `switcherFocus.ts`, `switcherSearch.ts`, `transcript-prefs.ts`, `vocabulary.ts`
+Files: `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.ts`, `agencyAgentRoster.ts`, `agencyAgentSurfaces.ts`, `agencyAssignmentEntry.ts`, `agencyAttemptFilters.ts`, `agencyAudioCopy.ts`, `agencyBestHours.ts`, `agencyCampaignConfigForm.ts`, `agencyCampaignContribution.ts`, `agencyCampaignControls.ts`, `agencyCampaignLineage.ts`, `agencyCampaignOverview.ts`, `agencyCampaignPerformance.ts`, `agencyCampaignRecording.ts`, `agencyCampaignSeries.ts`, `agencyCampaignTabs.ts`, `agencyCampaignsHome.ts`, `agencyCatalogSync.ts`, `agencyClock.ts`, `agencyColumnMapping.ts`, `agencyCompareTray.ts`, `agencyContext.ts`, `agencyCuePrefs.ts`, `agencyCues.ts`, `agencyDiagnostics.ts`, `agencyDispositionForm.ts`, `agencyDispositionSubmit.ts`, `agencyDncCopy.ts`, `agencyErrors.ts`, `agencyFieldFilter.ts`, `agencyHealthStrip.ts`, `agencyIngestSummary.ts`, `agencyInviteJoinCopy.ts`, `agencyJoinConflict.ts`, `agencyLiveSession.ts`, `agencyMedia.ts`, `agencyNotes.ts`, `agencyPadGate.ts`, `agencyPersona.ts`, `agencyPriorAttempts.ts`, `agencyReleaseCopy.ts`, `agencyRetrySelector.ts`, `agencyRosterFilters.ts`, `agencySpineCopy.ts`, `agencyStaleResponse.ts`, `agencyStationExit.ts`, `agencyStationIdle.ts`, `agencyStationLiveness.ts`, `agencyStationReducer.ts`, `agencyStationWsUrl.ts`, `agencyStatsConsumers.ts`, `agencyWebAudioCueSink.ts`, `agencyWrapup.ts`, `audio-worklet-processor.ts`, `inviteJoin.ts`, `keyboardTarget.ts`, `permissions.ts`, `phone.ts`, `poll-backoff.ts`, `returnPath.ts`, `session.ts`, `sessionRefusal.ts`, `snake-case.ts`, `switcherFocus.ts`, `switcherSearch.ts`, `transcript-prefs.ts`, `vocabulary.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1326,9 +1380,6 @@ Files: `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.t
 | `apps/console/src/__tests__/utils/audio-worklet-processor.test.ts` | 10 |
 | `apps/console/src/__tests__/utils/build-splitting.test.ts` | 2 |
 | `apps/console/src/__tests__/utils/builderFlow.test.ts` | 5 |
-| `apps/console/src/__tests__/utils/concurrency.test.ts` | 9 |
-| `apps/console/src/__tests__/utils/errors.test.ts` | 21 |
-| `apps/console/src/__tests__/utils/format.test.ts` | 70 |
 | `apps/console/src/__tests__/utils/inviteJoin.test.ts` | 8 |
 | `apps/console/src/__tests__/utils/keyboardTarget.test.ts` | 13 |
 | `apps/console/src/__tests__/utils/permissions.test.ts` | 41 |
@@ -1338,7 +1389,6 @@ Files: `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.t
 | `apps/console/src/__tests__/utils/sessionRefusal.test.ts` | 5 |
 | `apps/console/src/__tests__/utils/switcherFocus.test.ts` | 4 |
 | `apps/console/src/__tests__/utils/switcherSearch.test.ts` | 6 |
-| `apps/console/src/__tests__/utils/telephonyProviders.test.ts` | 10 |
 | `apps/console/src/__tests__/utils/vocabulary.analysis.test.ts` | 15 |
 | `apps/console/src/__tests__/utils/vocabulary.test.ts` | 16 |
 
@@ -1358,34 +1408,33 @@ Scenario, flow, guard and setup tests that span several modules.
 | `apps/console/src/__tests__/registration/analysis-profiles-registration.test.tsx` | 3 |
 | `apps/console/src/__tests__/session.test.ts` | 9 |
 | `apps/console/src/__tests__/snake-case.test.ts` | 19 |
-| `apps/console/src/__tests__/themeTokenParity.test.ts` | 4 |
 
 ## `apps/super-admin`
 
 ### `apps/super-admin/src/`
 
-App shell: `App.tsx`, `main.tsx`, `config.ts`, `brand.ts`, global CSS.
+App shell: `App.tsx`, `main.tsx` (imports `@magick-agency/web-ui/global.css`), `config.ts`, `brand.ts`.
 
-Files: `App.tsx`, `brand.ts`, `config.ts`, `global.css`, `main.tsx`, `vite-env.d.ts`
+Files: `App.tsx`, `brand.ts`, `config.ts`, `main.tsx`, `vite-env.d.ts`
 
 _No dedicated test files._
 
 ### `apps/super-admin/src/api/`
 
-`saFetch` and the super-admin API module (JWT in `sessionStorage`).
+`saFetch` and the super-admin API module (JWT in `sessionStorage`); error bodies are read by `parseApiErrorBody` from `packages/web-ui`, as in the console.
 
 Files: `saRoutes.ts`, `super-admin.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/super-admin/src/__tests__/api/saFetch.test.ts` | 29 |
+| `apps/super-admin/src/__tests__/api/saFetch.test.ts` | 35 |
 | `apps/super-admin/src/__tests__/api/saRoutes.test.ts` | 55 |
 
 ### `apps/super-admin/src/components/`
 
-Auth guard, shared widgets, layout, and super-admin components (tenant feature flags, settings, members and the rest).
+Auth guard, the super-admin's own shared widgets (`StatCard`, `AdvancedSection`, logo; the rest are in `packages/web-ui`), layout, and super-admin components (tenant feature flags, settings, members and the rest).
 
-Files: `auth/RequireSuperAdmin.tsx`, `common/AdvancedSection.module.css`, `common/AdvancedSection.tsx`, `common/Breadcrumbs.module.css`, `common/Breadcrumbs.tsx`, `common/ConfirmDialog.module.css`, `common/ConfirmDialog.tsx`, `common/DataTable.module.css`, `common/DataTable.tsx`, `common/EmptyState.module.css`, `common/EmptyState.tsx`, `common/ErrorAlert.module.css`, `common/ErrorAlert.tsx`, `common/ErrorText.module.css`, `common/ErrorText.tsx`, `common/HelpTooltip.module.css`, `common/HelpTooltip.tsx`, `common/LiveDot.module.css`, `common/LiveDot.tsx`, `common/LoadingSpinner.module.css`, `common/LoadingSpinner.tsx`, `common/Logo.tsx`, `common/Modal.module.css`, `common/Modal.tsx`, `common/PageHeader.module.css`, `common/PageHeader.tsx`, `common/Pagination.module.css`, `common/Pagination.tsx`, `common/RequestId.module.css`, `common/RequestId.tsx`, `common/StatCard.module.css`, `common/StatCard.tsx`, `common/StatusBadge.module.css`, `common/StatusBadge.tsx`, `common/Toast.module.css`, `common/Toast.tsx`, `common/index.ts`, `layout/SuperAdminLayout.module.css`, `layout/SuperAdminLayout.tsx`, `layout/SuperAdminSidebar.module.css`, `layout/SuperAdminSidebar.tsx`, `super-admin/TenantFeatureFlags.module.css`, `super-admin/TenantFeatureFlags.tsx`, `super-admin/TenantPicker.module.css`, `super-admin/TenantPicker.tsx`, `super-admin/feature-flags/BooleanFlagCell.tsx`, `super-admin/feature-flags/BulkRolloutModal.tsx`, `super-admin/feature-flags/ConfirmDialog.tsx`, `super-admin/feature-flags/FlagDialog.tsx`, `super-admin/feature-flags/FlagPolicyWarning.tsx`, `super-admin/feature-flags/NumberFlagDialog.tsx`, `super-admin/feature-flags/NumericFlagCell.tsx`, `super-admin/feature-flags/OverrideReasonDialog.tsx`, `super-admin/feature-flags/TriStateControl.tsx`, `super-admin/feature-flags/featureFlags.module.css`, `super-admin/feature-flags/flagUtils.ts`
+Files: `auth/RequireSuperAdmin.tsx`, `common/AdvancedSection.module.css`, `common/AdvancedSection.tsx`, `common/Logo.tsx`, `common/StatCard.module.css`, `common/StatCard.tsx`, `common/index.ts`, `layout/SuperAdminLayout.module.css`, `layout/SuperAdminLayout.tsx`, `layout/SuperAdminSidebar.module.css`, `layout/SuperAdminSidebar.tsx`, `super-admin/TenantFeatureFlags.module.css`, `super-admin/TenantFeatureFlags.tsx`, `super-admin/TenantPicker.module.css`, `super-admin/TenantPicker.tsx`, `super-admin/feature-flags/BooleanFlagCell.tsx`, `super-admin/feature-flags/BulkRolloutModal.tsx`, `super-admin/feature-flags/ConfirmDialog.tsx`, `super-admin/feature-flags/FlagDialog.tsx`, `super-admin/feature-flags/FlagPolicyWarning.tsx`, `super-admin/feature-flags/NumberFlagDialog.tsx`, `super-admin/feature-flags/NumericFlagCell.tsx`, `super-admin/feature-flags/OverrideReasonDialog.tsx`, `super-admin/feature-flags/TriStateControl.tsx`, `super-admin/feature-flags/featureFlags.module.css`, `super-admin/feature-flags/flagUtils.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1399,57 +1448,50 @@ Files: `auth/RequireSuperAdmin.tsx`, `common/AdvancedSection.module.css`, `commo
 | `apps/super-admin/src/__tests__/components/TriStateControl.test.tsx` | 12 |
 | `apps/super-admin/src/__tests__/components/flagUtils.test.ts` | 9 |
 
-### `apps/super-admin/src/config/`
-
-Super-admin configuration helpers.
-
-Files: `telephonyProviders.ts`
-
-_No dedicated test files._
-
 ### `apps/super-admin/src/contexts/`
 
-Super-admin auth context and the rest.
+Super-admin auth context (memoised value; the toast context is in `packages/web-ui`).
 
-Files: `SuperAdminContext.tsx`, `ToastContext.tsx`
+Files: `SuperAdminContext.tsx`
 
 | Test file | Cases |
 |---|---|
-| `apps/super-admin/src/__tests__/contexts/SuperAdminContext.test.tsx` | 12 |
+| `apps/super-admin/src/__tests__/contexts/SuperAdminContext.test.tsx` | 13 |
 
 ### `apps/super-admin/src/hooks/`
 
-Data-loading hooks.
+Data-loading hooks. The tenant, user and admin lists are thin wrappers over `useAsyncResource` from `packages/web-ui`.
 
 Files: `useCountUp.ts`, `useSuperAdminAdmins.ts`, `useSuperAdminAudit.ts`, `useSuperAdminTenant.ts`, `useSuperAdminTenants.ts`, `useSuperAdminUsageCounts.ts`, `useSuperAdminUsers.ts`
 
 | Test file | Cases |
 |---|---|
+| `apps/super-admin/src/__tests__/hooks/useSuperAdminLists.test.ts` | 6 |
 | `apps/super-admin/src/__tests__/hooks/useSuperAdminTenant.test.ts` | 3 |
 | `apps/super-admin/src/__tests__/hooks/useSuperAdminUsageCounts.test.ts` | 15 |
 
 ### `apps/super-admin/src/pages/`
 
-Login, and the super-admin pages: tenants and tenant detail, users, admins, phone numbers, feature flags, usage, audit.
+Login, and the super-admin pages: tenants and tenant detail, users, admins, phone numbers, feature flags, usage, audit. The tenant detail page's Service and Members tabs and its account settings panel are in `super-admin/tenant-detail/`; the phone numbers page's create and edit modals and its bulk selection hook are in `super-admin/phone-numbers/`.
 
-Files: `auth/SuperAdminLoginPage.module.css`, `auth/SuperAdminLoginPage.tsx`, `super-admin/SAAdminsPage.module.css`, `super-admin/SAAdminsPage.tsx`, `super-admin/SAAuditPage.module.css`, `super-admin/SAAuditPage.tsx`, `super-admin/SAFeatureFlagsPage.module.css`, `super-admin/SAFeatureFlagsPage.tsx`, `super-admin/SAPhoneNumbersPage.module.css`, `super-admin/SAPhoneNumbersPage.tsx`, `super-admin/SATelephonyCredentialsPage.module.css`, `super-admin/SATelephonyCredentialsPage.tsx`, `super-admin/SATenantDetailPage.module.css`, `super-admin/SATenantDetailPage.tsx`, `super-admin/SATenantsPage.module.css`, `super-admin/SATenantsPage.tsx`, `super-admin/SAUsagePage.module.css`, `super-admin/SAUsagePage.tsx`, `super-admin/SAUsersPage.module.css`, `super-admin/SAUsersPage.tsx`
+Files: `auth/SuperAdminLoginPage.module.css`, `auth/SuperAdminLoginPage.tsx`, `super-admin/SAAdminsPage.module.css`, `super-admin/SAAdminsPage.tsx`, `super-admin/SAAuditPage.module.css`, `super-admin/SAAuditPage.tsx`, `super-admin/SAFeatureFlagsPage.module.css`, `super-admin/SAFeatureFlagsPage.tsx`, `super-admin/phone-numbers/PhoneNumberCreateModal.tsx`, `super-admin/phone-numbers/PhoneNumberEditModal.tsx`, `super-admin/phone-numbers/usePhoneNumberBulk.ts`, `super-admin/SAPhoneNumbersPage.module.css`, `super-admin/SAPhoneNumbersPage.tsx`, `super-admin/SATelephonyCredentialsPage.module.css`, `super-admin/SATelephonyCredentialsPage.tsx`, `super-admin/SATenantDetailPage.module.css`, `super-admin/SATenantDetailPage.tsx`, `super-admin/tenant-detail/AccountSettingsPanel.tsx`, `super-admin/tenant-detail/TenantMembersTab.tsx`, `super-admin/tenant-detail/TenantServiceTab.tsx`, `super-admin/SATenantsPage.module.css`, `super-admin/SATenantsPage.tsx`, `super-admin/SAUsagePage.module.css`, `super-admin/SAUsagePage.tsx`, `super-admin/SAUsersPage.module.css`, `super-admin/SAUsersPage.tsx`
 
 | Test file | Cases |
 |---|---|
 | `apps/super-admin/src/__tests__/pages/SAAuditPage.test.tsx` | 1 |
 | `apps/super-admin/src/__tests__/pages/SAFeatureFlagsPage.test.tsx` | 34 |
-| `apps/super-admin/src/__tests__/pages/SAPhoneNumbersPage.test.tsx` | 5 |
+| `apps/super-admin/src/__tests__/pages/SAPhoneNumbersPage.test.tsx` | 15 |
 | `apps/super-admin/src/__tests__/pages/SATelephonyCredentialsPage.test.tsx` | 8 |
 | `apps/super-admin/src/__tests__/pages/SATenantDetailPage.new.test.tsx` | 21 |
-| `apps/super-admin/src/__tests__/pages/SATenantDetailPage.test.tsx` | 11 |
+| `apps/super-admin/src/__tests__/pages/SATenantDetailPage.test.tsx` | 16 |
 | `apps/super-admin/src/__tests__/pages/SAUsagePage.test.tsx` | 22 |
 | `apps/super-admin/src/__tests__/pages/SAUsersPage.test.tsx` | 9 |
 
 ### `apps/super-admin/src/utils/`
 
-Formatting and helpers.
+Helpers (error and format helpers are in `packages/web-ui`).
 
-Files: `errors.ts`, `format.ts`, `localDayBounds.ts`, `saStatus.ts`, `strictInteger.ts`, `tenant-search.ts`
+Files: `localDayBounds.ts`, `saStatus.ts`, `strictInteger.ts`, `tenant-search.ts`
 
 | Test file | Cases |
 |---|---|
