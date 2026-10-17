@@ -24,6 +24,7 @@ import { StatCard, AdvancedSection } from '../../components/common';
 import { ErrorText } from '@magick-agency/web-ui/components/ErrorText';
 import { saStatusColor, saStatusLabel } from '../../utils/saStatus';
 import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
+import { mapWithConcurrency } from '@magick-agency/web-ui/concurrency';
 import styles from './SAPhoneNumbersPage.module.css';
 
 interface PhoneNumberAssignment {
@@ -37,11 +38,36 @@ const CAPABILITY_OPTIONS = ['voice', 'sms'] as const;
 
 type BulkAction = 'retire' | 'reactivate';
 
+/** The one single-row destructive confirmation that can be open at a time. */
+type RowConfirm = { kind: 'retire' | 'reactivate' | 'delete'; phone: PhoneNumber };
+
+const ROW_CONFIRM_COPY: Record<RowConfirm['kind'], { title: string; message: string; confirmLabel: string; danger: boolean }> = {
+  retire: {
+    title: 'Retire phone number',
+    message: 'Retire this phone number? It can be reactivated later if needed.',
+    confirmLabel: 'Retire',
+    danger: true,
+  },
+  reactivate: {
+    title: 'Reactivate phone number',
+    message: 'Reactivate this phone number? It will become available for assignment again.',
+    confirmLabel: 'Reactivate',
+    danger: false,
+  },
+  delete: {
+    title: 'Delete permanently',
+    message: 'Permanently delete this phone number? This action is irreversible and the number cannot be reactivated.',
+    confirmLabel: 'Delete',
+    danger: true,
+  },
+};
+
 export default function SAPhoneNumbersPage() {
   const [phoneNumbers, setPhoneNumbers] = useState<PhoneNumber[]>([]);
   const [providers, setProviders] = useState<TelephonyProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
 
   // Filters
   const [filterProvider, setFilterProvider] = useState('');
@@ -75,50 +101,61 @@ export default function SAPhoneNumbersPage() {
   const [editing, setEditing] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
-  // Single-row destructive confirms
-  const [retireConfirm, setRetireConfirm] = useState<PhoneNumber | null>(null);
-  const [reactivateConfirm, setReactivateConfirm] = useState<PhoneNumber | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<PhoneNumber | null>(null);
+  // Single-row destructive confirm (retire / reactivate / delete)
+  const [rowConfirm, setRowConfirm] = useState<RowConfirm | null>(null);
 
   // Bulk selection
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkAction, setBulkAction] = useState<BulkAction | null>(null);
   const [bulkRunning, setBulkRunning] = useState(false);
 
+  // The whole inventory, unfiltered: the provider and status filters narrow it
+  // client-side, so a filter change costs no request and the stat cards can
+  // count the whole inventory (there is no pagination; the route returns it all).
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [nums, provs] = await Promise.all([
-        listPhoneNumbers({
-          provider_id: filterProvider || undefined,
-          status: filterStatus || undefined,
-        }),
-        listTelephonyProviders(),
-      ]);
+      const nums = await listPhoneNumbers();
       setPhoneNumbers(nums);
-      setProviders(provs);
       setSelected(new Set());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load phone numbers');
     } finally {
       setLoading(false);
     }
-  }, [filterProvider, filterStatus]);
+  }, []);
+
+  // The provider catalog is static for the page's life: fetched once.
+  const loadCatalog = useCallback(async () => {
+    setCatalogError(null);
+    try {
+      setProviders(await listTelephonyProviders());
+    } catch (err) {
+      setCatalogError(err instanceof Error ? err.message : 'Failed to load telephony providers');
+    }
+  }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadCatalog(); }, [loadCatalog]);
 
-  // Client-side phone/label search over the loaded numbers.
+  // A filter change starts a fresh selection, as the refetch it replaced did.
+  useEffect(() => { setSelected(new Set()); }, [filterProvider, filterStatus]);
+
+  // Provider / status filters, then the phone/label search.
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return phoneNumbers;
     return phoneNumbers.filter(
       pn =>
-        pn.phone_number.toLowerCase().includes(q) ||
-        (pn.label ?? '').toLowerCase().includes(q),
+        (!filterProvider || pn.provider_id === filterProvider)
+        && (!filterStatus || pn.status === filterStatus)
+        && (!q
+          || pn.phone_number.toLowerCase().includes(q)
+          || (pn.label ?? '').toLowerCase().includes(q)),
     );
-  }, [phoneNumbers, search]);
+  }, [phoneNumbers, filterProvider, filterStatus, search]);
 
+  // Over the whole inventory, never the filtered rows.
   const stats = useMemo(() => {
     let active = 0, retired = 0;
     for (const pn of phoneNumbers) {
@@ -207,7 +244,7 @@ export default function SAPhoneNumbersPage() {
       setRetireBlockedPhone(pn);
       return;
     }
-    setRetireConfirm(pn);
+    setRowConfirm({ kind: 'retire', phone: pn });
   };
 
   const handleRetire = async (id: string) => {
@@ -270,21 +307,19 @@ export default function SAPhoneNumbersPage() {
     }
   };
 
-  // Run a bulk lifecycle action sequentially over eligible selected rows
-  // using the existing per-item endpoints, then refetch.
+  // Run a bulk lifecycle action over the eligible selected rows using the
+  // per-item endpoints, at most `DEFAULT_CONCURRENCY` in flight, then refetch.
   const runBulk = async () => {
     const action = bulkAction;
     if (!action) return;
     const targets = action === 'retire' ? retireEligible : reactivateEligible;
     setBulkRunning(true);
     setError(null);
-    // Run all eligible items, tolerating partial failure: allSettled lets us
-    // report exactly how many succeeded/failed instead of aborting on the first
-    // error and leaving the table out of sync with the server.
-    const results = await Promise.allSettled(
-      targets.map(pn =>
-        action === 'retire' ? retirePhoneNumber(pn.id) : reactivatePhoneNumber(pn.id),
-      ),
+    // Run all eligible items, tolerating partial failure: settled results let
+    // us report exactly how many succeeded/failed instead of aborting on the
+    // first error and leaving the table out of sync with the server.
+    const results = await mapWithConcurrency(targets, pn =>
+      action === 'retire' ? retirePhoneNumber(pn.id) : reactivatePhoneNumber(pn.id),
     );
     const failed = results.filter(r => r.status === 'rejected').length;
     const succeeded = results.length - failed;
@@ -320,6 +355,7 @@ export default function SAPhoneNumbersPage() {
       />
 
       {error && <ErrorAlert message={error} onRetry={load} />}
+      {catalogError && <ErrorAlert message={catalogError} onRetry={loadCatalog} />}
 
       <div className={styles.statsGrid}>
         <StatCard title="Active" value={stats.active} color="var(--success)" />
@@ -510,13 +546,13 @@ export default function SAPhoneNumbersPage() {
                           <>
                             <button
                               className={`btn-secondary ${styles.successBtn}`}
-                              onClick={e => { e.stopPropagation(); setReactivateConfirm(pn); }}
+                              onClick={e => { e.stopPropagation(); setRowConfirm({ kind: 'reactivate', phone: pn }); }}
                             >
                               <RotateCcw size={14} /> Reactivate
                             </button>
                             <button
                               className={`btn-secondary ${styles.dangerBtn}`}
-                              onClick={e => { e.stopPropagation(); setDeleteConfirm(pn); }}
+                              onClick={e => { e.stopPropagation(); setRowConfirm({ kind: 'delete', phone: pn }); }}
                             >
                               <Trash2 size={14} /> Delete permanently
                             </button>
@@ -730,32 +766,22 @@ export default function SAPhoneNumbersPage() {
         )}
       </Modal>
 
-      {/* Single-row destructive confirms */}
+      {/* Single-row destructive confirm */}
       <ConfirmDialog
-        open={!!retireConfirm}
-        title="Retire phone number"
-        message="Retire this phone number? It can be reactivated later if needed."
-        confirmLabel="Retire"
-        danger
-        onCancel={() => setRetireConfirm(null)}
-        onConfirm={() => { const pn = retireConfirm; setRetireConfirm(null); if (pn) handleRetire(pn.id); }}
-      />
-      <ConfirmDialog
-        open={!!reactivateConfirm}
-        title="Reactivate phone number"
-        message="Reactivate this phone number? It will become available for assignment again."
-        confirmLabel="Reactivate"
-        onCancel={() => setReactivateConfirm(null)}
-        onConfirm={() => { const pn = reactivateConfirm; setReactivateConfirm(null); if (pn) handleReactivate(pn.id); }}
-      />
-      <ConfirmDialog
-        open={!!deleteConfirm}
-        title="Delete permanently"
-        message="Permanently delete this phone number? This action is irreversible and the number cannot be reactivated."
-        confirmLabel="Delete"
-        danger
-        onCancel={() => setDeleteConfirm(null)}
-        onConfirm={() => { const pn = deleteConfirm; setDeleteConfirm(null); if (pn) handleDelete(pn.id); }}
+        open={!!rowConfirm}
+        title={rowConfirm ? ROW_CONFIRM_COPY[rowConfirm.kind].title : ''}
+        message={rowConfirm ? ROW_CONFIRM_COPY[rowConfirm.kind].message : ''}
+        confirmLabel={rowConfirm ? ROW_CONFIRM_COPY[rowConfirm.kind].confirmLabel : ''}
+        danger={rowConfirm ? ROW_CONFIRM_COPY[rowConfirm.kind].danger : false}
+        onCancel={() => setRowConfirm(null)}
+        onConfirm={() => {
+          const confirm = rowConfirm;
+          setRowConfirm(null);
+          if (!confirm) return;
+          if (confirm.kind === 'retire') handleRetire(confirm.phone.id);
+          else if (confirm.kind === 'reactivate') handleReactivate(confirm.phone.id);
+          else handleDelete(confirm.phone.id);
+        }}
       />
 
       {/* Bulk lifecycle confirm */}
