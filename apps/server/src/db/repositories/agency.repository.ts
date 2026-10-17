@@ -3159,20 +3159,35 @@ export class AgencyContactRepository {
    * and the one to check a future term against: every term must either be served
    * by the index or be cheap to evaluate on an already-narrowed row set. A term
    * that is neither belongs in the index, migration cost and all.
+   *
+   * ── At most `limit` rows, and why the pick is a MATERIALIZED CTE ─────────
+   *
+   * The pacing tick pairs these rows with the agents it reserved by index, so a
+   * claim longer than `limit` hands its tail an `undefined` session (an
+   * `agency:agent:undefined:state` lease, a dial with no agent). Written as
+   * `WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED LIMIT $2)`, the claim could be
+   * planned as a nested-loop semi join with the locking subquery as its inner
+   * side, re-run for every outer row; each re-run skips the rows this statement
+   * has already updated, so LIMIT 1 claimed the whole roster. Postgres picks that
+   * plan from table statistics (rows deleted, then analysed), so it came and went.
+   * A MATERIALIZED CTE runs the pick exactly once. Pinned on a real database by
+   * `agency-contact-claim-limit.test.ts`.
    */
   async claimDialable(campaignId: string, limit: number): Promise<AgencyContactRecord[]> {
     if (limit <= 0) return [];
     const { rows } = await getPool().query<AgencyContactRecord>(
-      `UPDATE agency_contacts SET state = 'in_flight', updated_at = now()
-        WHERE id IN (
-          SELECT id FROM agency_contacts
-           WHERE campaign_id = $1 AND state = 'pending' AND next_attempt_at <= now()
-             AND suppressed_reason IS DISTINCT FROM 'dnc'
-           ORDER BY next_attempt_at
-             FOR UPDATE SKIP LOCKED
-           LIMIT $2
-        )
-      RETURNING *`,
+      `WITH picked AS MATERIALIZED (
+         SELECT id FROM agency_contacts
+          WHERE campaign_id = $1 AND state = 'pending' AND next_attempt_at <= now()
+            AND suppressed_reason IS DISTINCT FROM 'dnc'
+          ORDER BY next_attempt_at
+            FOR UPDATE SKIP LOCKED
+          LIMIT $2
+       )
+       UPDATE agency_contacts c SET state = 'in_flight', updated_at = now()
+         FROM picked
+        WHERE c.id = picked.id
+       RETURNING c.*`,
       [campaignId, limit],
     );
     return rows;
