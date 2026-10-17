@@ -2178,7 +2178,13 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
      * to prevent. So a throw from `callCore` (only a wiring defect) is left to
      * propagate — the error mask turns it into a 500 with a request id and a
      * full log line, and nothing was created.
+     *
+     * The actor's name lookup is started first and runs alongside it: it is
+     * independent of the parent and never rejects (a failure or a timeout is an
+     * id-only actor), so it cannot change which answer this route gives — only
+     * shorten the wait for it. A request the gates below refuse discards the name.
      */
+    const actorNameLookup = resolveActorDisplayName(request, actorUserId);
     const parent = await callCore({
       method: 'GET',
       path: `/agency-campaigns/${request.params.id}`,
@@ -2222,10 +2228,10 @@ export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<
         .send({ error: 'Validation Error', details: issuesToDetails(windowIssues) });
     }
 
-    // Resolved after the gates, so a refused request never costs a lookup. Its
-    // failure never reaches the caller: a missing name attributes the retry by
-    // id alone, exactly as the lifecycle transitions do.
-    const actorName = await resolveActorDisplayName(request, actorUserId);
+    // Started beside the parent read above. Its failure never reaches the caller:
+    // a missing name attributes the retry by id alone, exactly as the lifecycle
+    // transitions do.
+    const actorName = await actorNameLookup;
 
     /*
      * The body the handler receives is BUILT here from validated fields plus

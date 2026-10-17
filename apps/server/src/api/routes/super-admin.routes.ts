@@ -26,6 +26,7 @@ import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/ag
 import type { AccountConcurrencyAllocation } from '@magick-agency/db/models/account-settings.model';
 import type { MembershipRole } from '@magick-agency/db/models/membership.model';
 import { getConcurrencyControl } from '../../seams/concurrency-control.js';
+import { settledValue } from './helpers/settled.js';
 import { auditLogger } from '../../audit/audit-logger.js';
 import { issueInvite } from '../../invites/invite-issuer.js';
 import type { InviteEmailResult } from '../../notifications/invite-mailer.js';
@@ -74,8 +75,12 @@ async function readAccountConcurrencyUtilization(
   allocation: AccountConcurrencyAllocation,
 ) {
   const control = getConcurrencyControl();
-  const live = await control.getAccountProviderCounts(tenantId, accountId);
-  const accountInUse = await control.getAccountCount(tenantId, accountId);
+  // Independent reads, together; either failing fails the utilization read, which the
+  // caller turns into `null` whichever one it was.
+  const [live, accountInUse] = await Promise.all([
+    control.getAccountProviderCounts(tenantId, accountId),
+    control.getAccountCount(tenantId, accountId),
+  ]);
   const allocations = new Map(allocation.providers.map((row) => [row.provider, row.max_concurrent_calls]));
   const providerNames = new Set([...allocations.keys(), ...live.counts.keys()]);
   const providers = [...providerNames].sort().map((provider) => {
@@ -440,19 +445,26 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
 
     const { email, role, name, account_id } = parsed.data;
 
-    const tenant = await tenantRepository.findById(tenantId);
-    if (!tenant) {
-      return reply.code(404).send({ error: 'Not Found', message: 'Tenant not found' });
-    }
-
     /**
      * The account must belong to THIS tenant: `memberships.account_id`
      * references `accounts(id)` with no composite FK back to the tenant, so
      * nothing in the schema would catch a sibling tenant's account. Same scoped
      * lookup, same refusal and wording as `POST /users/invite`.
+     *
+     * Both reads start together and are answered in order (`settledValue`): an
+     * unknown tenant is still the 404 before any account refusal.
      */
+    const [tenantRead, accountRead] = await Promise.allSettled([
+      tenantRepository.findById(tenantId),
+      account_id ? accountRepository.findByIdInTenant(account_id, tenantId) : Promise.resolve(null),
+    ]);
+    const tenant = settledValue(tenantRead);
+    if (!tenant) {
+      return reply.code(404).send({ error: 'Not Found', message: 'Tenant not found' });
+    }
+
     if (account_id) {
-      const targetAccount = await accountRepository.findByIdInTenant(account_id, tenantId);
+      const targetAccount = settledValue(accountRead);
       if (!targetAccount) {
         return reply.code(400).send({
           error: 'Bad Request',
@@ -1181,12 +1193,17 @@ export async function superAdminRoutes(app: FastifyInstance): Promise<void> {
       });
     }
 
-    const tenant = await tenantRepository.findById(tenantId);
+    // Together, answered in order (`settledValue`), as the GET twin reads them.
+    const [tenantRead, accountRead] = await Promise.allSettled([
+      tenantRepository.findById(tenantId),
+      accountRepository.findById(accountId),
+    ]);
+    const tenant = settledValue(tenantRead);
     if (!tenant) {
       return reply.code(404).send({ error: 'Not Found', message: 'Tenant not found' });
     }
 
-    const account = await accountRepository.findById(accountId);
+    const account = settledValue(accountRead);
     if (!account || account.tenant_id !== tenantId) {
       return reply.code(404).send({ error: 'Not Found', message: 'Account not found' });
     }

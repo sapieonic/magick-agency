@@ -15,6 +15,7 @@ import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../audit/platform/audit-actor.js';
 import type { InviteEmailResult } from '../../notifications/invite-mailer.js';
 import { issueInvite } from '../../invites/invite-issuer.js';
+import { settledValue } from './helpers/settled.js';
 import { createChildLogger } from '@magick-agency/observability';
 import {
   ADDRESS_REBOUND_DURING_INVITE,
@@ -318,9 +319,17 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
      * probe whether an id exists elsewhere — and with the scoped lookup that is
      * structural rather than a convention to maintain: both cases are one `null`
      * and there is no second branch that could drift apart from the first.
+     *
+     * The address lookup below is independent of this one, so both start together
+     * and are answered in this order (`settledValue`): an account refusal still
+     * comes before anything the address lookup found or threw.
      */
+    const [accountRead, resolvedRead] = await Promise.allSettled([
+      account_id ? accountRepository.findByIdInTenant(account_id, request.tenantId!) : Promise.resolve(null),
+      userRepository.resolveByProvenEmail(email),
+    ]);
     if (account_id) {
-      const targetAccount = await accountRepository.findByIdInTenant(account_id, request.tenantId!);
+      const targetAccount = settledValue(accountRead);
       if (!targetAccount) {
         return reply.code(400).send({
           error: 'Bad Request',
@@ -386,7 +395,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
      * a row nothing can activate and nobody watching. Refusing names the
      * remedy instead, and it is a remedy the recipient can actually perform.
      */
-    const resolved = await userRepository.resolveByProvenEmail(email);
+    const resolved = settledValue(resolvedRead);
     if (resolved.status === 'unproven_conflict') {
       log.warn(
         { tenantId: request.tenantId },

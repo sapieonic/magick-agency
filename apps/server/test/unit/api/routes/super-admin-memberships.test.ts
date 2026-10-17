@@ -257,6 +257,18 @@ describe('POST /super-admin/tenants/:id/users', () => {
     expect(mocks.issueInvite).not.toHaveBeenCalled();
   });
 
+  it('still 404s an unknown tenant when the account read, started alongside it, fails', async () => {
+    // The two reads run together; the tenant's answer is still read first, so a
+    // failure of the second cannot turn the 404 into a 500.
+    mocks.accountRepository.findByIdInTenant.mockRejectedValueOnce(new Error('pool exhausted'));
+    const res = await app.inject({
+      method: 'POST', url: `/super-admin/tenants/${NEW_TENANT}/users`, headers: auth(),
+      payload: { email: 'a@acme.test', role: 'agent', account_id: OTHER_ACCOUNT },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().message).toBe('Tenant not found');
+  });
+
   it('400s a malformed account_id (validator) without a lookup', async () => {
     const res = await post({ email: 'a@acme.test', role: 'agent', account_id: 'not-a-uuid' });
     expect(res.statusCode).toBe(400);
