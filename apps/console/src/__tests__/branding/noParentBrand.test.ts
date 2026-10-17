@@ -20,6 +20,8 @@ import { PARENT_BRAND } from '../helpers/parentBrand';
  * a note saying which brand a line used to carry is documentation, not
  * product, and a guard that fires on its own documentation gets deleted.
  * Tests are not scanned: their fixtures may name the parent product's hosts.
+ * The components both apps import from `packages/web-ui` ship here too; that
+ * package's own `test/noParentBrand.test.ts` scans them.
  */
 
 const srcRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
