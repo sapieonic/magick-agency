@@ -1173,9 +1173,10 @@ export class AgencyDialer {
         'Could not record the ended attempt — releasing the agent without wrap-up; the reaper ends the row and requeues the contact',
       );
     }
-    // The contact write failing leaves the contact `in_flight` (or `connected`)
-    // behind a terminal attempt, which no attempt sweep can see; the reaper's
-    // stranded-contact sweep requeues it.
+    // The contact write failing leaves the contact `in_flight` behind a terminal
+    // attempt, which no attempt sweep can see; the reaper's stranded-contact sweep
+    // requeues it. (A contact parked `connected` at the bridge keeps its wrap-up,
+    // and the disposition route or the lapsed-wrap-up sweep releases it.)
     if (rowEnded) {
       try {
         // Which ledger pays for this attempt and what the retry policy does with
