@@ -207,3 +207,46 @@ describe('the lifecycle routes read the actor from the body', () => {
     expect(body).not.toHaveProperty('last_transition_by_user_id');
   });
 });
+
+describe('each control\'s ownedCampaign preHandler: the gate on /start and /resume only, ownership on all four', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    repos.campaigns.rosterCounts.mockResolvedValue({ total: 10, dialable: 10 });
+    repos.campaigns.transitionStatus.mockResolvedValue(ROW);
+  });
+
+  it('with the dialer flag OFF, /stop and /pause still transition — the off button is never gated', async () => {
+    flags.isEnabled.mockResolvedValue(false);
+    repos.campaigns.findById.mockResolvedValue({ ...ROW, status: 'running' });
+
+    expect((await control('pause')).statusCode).toBe(200);
+    expect((await control('stop')).statusCode).toBe(200);
+    expect(flags.isEnabled).not.toHaveBeenCalled();
+    expect(repos.campaigns.transitionStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it('with the dialer flag OFF, /start and /resume answer 403 before the campaign is read', async () => {
+    flags.isEnabled.mockResolvedValue(false);
+    repos.campaigns.findById.mockResolvedValue({ ...ROW, status: 'paused' });
+
+    for (const path of ['start', 'resume']) {
+      const res = await control(path);
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('feature_disabled');
+    }
+    expect(repos.campaigns.findById).not.toHaveBeenCalled();
+    expect(repos.campaigns.transitionStatus).not.toHaveBeenCalled();
+  });
+
+  it('a campaign in another account is 404 campaign_not_found on all four, and nothing transitions', async () => {
+    flags.isEnabled.mockResolvedValue(true);
+    repos.campaigns.findById.mockResolvedValue({ ...ROW, status: 'paused', account_id: 'someone-else' });
+
+    for (const path of ['start', 'pause', 'resume', 'stop']) {
+      const res = await control(path);
+      expect(res.statusCode, path).toBe(404);
+      expect(res.json().code).toBe('campaign_not_found');
+    }
+    expect(repos.campaigns.transitionStatus).not.toHaveBeenCalled();
+  });
+});

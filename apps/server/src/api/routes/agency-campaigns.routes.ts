@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyRequest, FastifyReply, preHandlerAsyncHookHandler } from 'fastify';
 import { authMiddleware, getTenantId, getAccountId, getOriginator } from '../middleware/auth.middleware.js';
 import { PROVEN_CAMPAIGN_HEADER } from '../middleware/headers.js';
 import { getFeatureFlagService, FLAGS } from '../../feature-flags/index.js';
@@ -343,6 +343,35 @@ export async function agencyCampaignRoutes(
   }
 
   /**
+   * The campaign a route acts on, proved once per request by its `ownedCampaign`
+   * preHandler and read by the handler with {@link campaignOf}.
+   */
+  const ownedCampaigns = new WeakMap<FastifyRequest, AgencyCampaignRecord>();
+
+  /**
+   * The route-level preHandler every `/:id…` route here carries: the feature `gate`
+   * (unless `gated: false` — `/stop` and `/pause` only, see `gate`), then
+   * `requireOwned`, in that order, each answering its own refusal. Runs after this
+   * plugin's `authMiddleware`, exactly where the two calls used to open each handler.
+   */
+  function ownedCampaign(opts: { gated: boolean }): preHandlerAsyncHookHandler {
+    return async (request, reply) => {
+      if (opts.gated && !(await gate(request, reply))) return reply;
+      const campaign = await requireOwned(request as FastifyRequest<{ Params: { id: string } }>, reply);
+      if (!campaign) return reply;
+      ownedCampaigns.set(request, campaign);
+      return undefined;
+    };
+  }
+
+  /** The campaign {@link ownedCampaign} proved for this request; a throw is a wiring defect. */
+  function campaignOf(request: FastifyRequest): AgencyCampaignRecord {
+    const campaign = ownedCampaigns.get(request);
+    if (!campaign) throw new Error('agency campaign route registered without its ownedCampaign preHandler');
+    return campaign;
+  }
+
+  /**
    * Refuse a config that would be stored happily and then behave wrongly.
    *
    * **This is enforcement, not a nicety.** The public API layer's own validator
@@ -552,10 +581,10 @@ export async function agencyCampaignRoutes(
   });
 
   // ── GET /api/v1/agency-campaigns/:id ─────────────────────────────────────
-  app.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
-    if (!(await gate(request, reply))) return reply;
-    const campaign = await requireOwned(request, reply);
-    if (!campaign) return reply;
+  app.get<{ Params: { id: string } }>('/:id', {
+    preHandler: ownedCampaign({ gated: true }),
+  }, async (request, reply) => {
+    const campaign = campaignOf(request);
     return reply.send(formatAgencyCampaignResponse(campaign));
   });
 
@@ -572,9 +601,7 @@ export async function agencyCampaignRoutes(
    * `running → completed` / `stopping → stopped` writes.
    */
   const patchHandler = async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-    if (!(await gate(request, reply))) return reply;
-    const campaign = await requireOwned(request, reply);
-    if (!campaign) return reply;
+    const campaign = campaignOf(request);
 
     const body = { ...(request.body as Record<string, unknown> | undefined) };
     if ('status' in body) {
@@ -622,13 +649,13 @@ export async function agencyCampaignRoutes(
     }
     return reply.send(formatAgencyCampaignResponse(updated));
   };
-  app.patch<{ Params: { id: string } }>('/:id', patchHandler);
+  app.patch<{ Params: { id: string } }>('/:id', { preHandler: ownedCampaign({ gated: true }) }, patchHandler);
 
   // ── GET /api/v1/agency-campaigns/:id/stats ───────────────────────────────
-  app.get<{ Params: { id: string } }>('/:id/stats', async (request, reply) => {
-    if (!(await gate(request, reply))) return reply;
-    const campaign = await requireOwned(request, reply);
-    if (!campaign) return reply;
+  app.get<{ Params: { id: string } }>('/:id/stats', {
+    preHandler: ownedCampaign({ gated: true }),
+  }, async (request, reply) => {
+    const campaign = campaignOf(request);
     // Two producers, one payload. The repository half is SQL over this campaign;
     // the health half needs Redis (DNC sync state, the account concurrency
     // counter) and a pure TS rule (calling hours), which is why `stats()` cannot
@@ -769,7 +796,7 @@ export async function agencyCampaignRoutes(
    *
    * Auth middleware is registered PER ROUTE PLUGIN, not globally, so a route on a
    * sibling plugin inherits nothing and ships unauthenticated. Being on THIS plugin
-   * gives this route the `preHandler` hook, and the two lines below give it the feature
+   * gives this route the `preHandler` hook, and its `ownedCampaign` preHandler gives it the feature
    * gate and `requireOwned`'s tenant/account scoping. All three are asserted by
    * the route test rather than trusted to this comment.
    *
@@ -787,10 +814,10 @@ export async function agencyCampaignRoutes(
    * guess which zone the labels were cut in. All three are argued on
    * `AgencyCampaignStatsSeries`.
    */
-  app.get<{ Params: { id: string } }>('/:id/stats/series', async (request, reply) => {
-    if (!(await gate(request, reply))) return reply;
-    const campaign = await requireOwned(request, reply);
-    if (!campaign) return reply;
+  app.get<{ Params: { id: string } }>('/:id/stats/series', {
+    preHandler: ownedCampaign({ gated: true }),
+  }, async (request, reply) => {
+    const campaign = campaignOf(request);
 
     const parsed = parseCampaignSeriesQuery((request.query ?? {}) as Record<string, unknown>);
     if (!parsed.ok) {
@@ -975,8 +1002,7 @@ export async function agencyCampaignRoutes(
     call: WebRtcCallRecord | null;
     availability: 'available' | 'purged' | 'never_placed';
   } | null> {
-    const campaign = await requireOwned(request, reply);
-    if (!campaign) return null;
+    const campaign = campaignOf(request);
 
     /*
      * Checked before the query, for the same reason the contact route checks its
@@ -1021,8 +1047,8 @@ export async function agencyCampaignRoutes(
   // ── GET /api/v1/agency-campaigns/:id/attempts/:attemptId ──────────────────
   app.get<{ Params: { id: string; attemptId: string } }>(
     '/:id/attempts/:attemptId',
+    { preHandler: ownedCampaign({ gated: true }) },
     async (request, reply) => {
-      if (!(await gate(request, reply))) return reply;
       const found = await readAttemptCall(request, reply);
       if (!found) return reply;
 
@@ -1045,8 +1071,8 @@ export async function agencyCampaignRoutes(
   // carrier URL is never handed to a client.
   app.get<{ Params: { id: string; attemptId: string } }>(
     '/:id/attempts/:attemptId/recording',
+    { preHandler: ownedCampaign({ gated: true }) },
     async (request, reply) => {
-      if (!(await gate(request, reply))) return reply;
       const found = await readAttemptCall(request, reply);
       if (!found) return reply;
       if (!found.call) {
@@ -1079,8 +1105,8 @@ export async function agencyCampaignRoutes(
   // `webrtc-recordings.routes.ts`).
   app.get<{ Params: { id: string; attemptId: string } }>(
     '/:id/attempts/:attemptId/recording-url',
+    { preHandler: ownedCampaign({ gated: true }) },
     async (request, reply) => {
-      if (!(await gate(request, reply))) return reply;
       const found = await readAttemptCall(request, reply);
       if (!found) return reply;
       if (!found.call) {
@@ -1163,10 +1189,10 @@ export async function agencyCampaignRoutes(
    * A contact outside this campaign is a 404 with the same body as one that does
    * not exist, so the route cannot be used to test whether an id is real.
    */
-  app.get<{ Params: { id: string; contactId: string } }>('/:id/contacts/:contactId', async (request, reply) => {
-    if (!(await gate(request, reply))) return reply;
-    const campaign = await requireOwned(request, reply);
-    if (!campaign) return reply;
+  app.get<{ Params: { id: string; contactId: string } }>('/:id/contacts/:contactId', {
+    preHandler: ownedCampaign({ gated: true }),
+  }, async (request, reply) => {
+    const campaign = campaignOf(request);
 
     // Checked before the query: `findDetailScoped` casts to `uuid`, and a
     // non-UUID id would reach Postgres as `22P02` and surface as a 500 — a bad
@@ -1325,10 +1351,10 @@ export async function agencyCampaignRoutes(
   // Deliberately does NOT refuse an empty or over-cap selection: reporting them is
   // the entire job of a preview. `retry_generation` and `max_seed_rows` are on the
   // payload so the console can warn about both before the supervisor commits.
-  app.get<{ Params: { id: string } }>('/:id/retry/preview', async (request, reply) => {
-    if (!(await gate(request, reply))) return reply;
-    const campaign = await requireOwned(request, reply);
-    if (!campaign) return reply;
+  app.get<{ Params: { id: string } }>('/:id/retry/preview', {
+    preHandler: ownedCampaign({ gated: true }),
+  }, async (request, reply) => {
+    const campaign = campaignOf(request);
 
     // The PARENT's catalog, which is the vocabulary the seeding predicate will run
     // against — a code the parent's agents used but the child's catalog will not
@@ -1354,10 +1380,10 @@ export async function agencyCampaignRoutes(
   });
 
   // ── POST /api/v1/agency-campaigns/:id/retry ───────────────────────────────
-  app.post<{ Params: { id: string } }>('/:id/retry', async (request, reply) => {
-    if (!(await gate(request, reply))) return reply;
-    const parent = await requireOwned(request, reply);
-    if (!parent) return reply;
+  app.post<{ Params: { id: string } }>('/:id/retry', {
+    preHandler: ownedCampaign({ gated: true }),
+  }, async (request, reply) => {
+    const parent = campaignOf(request);
 
     // First, because it is a property of the campaign named in the PATH and needs
     // no body at all — the same reason `transition` checks the status guard before
@@ -1588,10 +1614,10 @@ export async function agencyCampaignRoutes(
   // Serves the campaign-descriptive columns only. Not `retry_selector`, not the
   // config, not stats: the strip is navigation, and `GET /:id` already answers
   // everything else about any entry the reader clicks.
-  app.get<{ Params: { id: string } }>('/:id/lineage', async (request, reply) => {
-    if (!(await gate(request, reply))) return reply;
-    const campaign = await requireOwned(request, reply);
-    if (!campaign) return reply;
+  app.get<{ Params: { id: string } }>('/:id/lineage', {
+    preHandler: ownedCampaign({ gated: true }),
+  }, async (request, reply) => {
+    const campaign = campaignOf(request);
 
     const lineage = await agencyCampaignRepository.campaignLineage(
       getTenantId(request), getAccountId(request), campaign.id,
@@ -1710,11 +1736,10 @@ export async function agencyCampaignRoutes(
     from: readonly string[],
     to: string,
     patch: { last_transition_by?: AgencyCampaignActor | null } = {},
-    opts: { requireRoster?: boolean; ungated?: boolean } = {},
+    opts: { requireRoster?: boolean } = {},
   ) {
-    if (!opts.ungated && !(await gate(request, reply))) return reply;
-    const campaign = await requireOwned(request, reply);
-    if (!campaign) return reply;
+    // Gate (or not) and ownership are each route's `ownedCampaign` preHandler.
+    const campaign = campaignOf(request);
 
     if (!from.includes(campaign.status)) {
       return reply.code(409).send({
@@ -1782,23 +1807,23 @@ export async function agencyCampaignRoutes(
     return actor ? { last_transition_by: actor } : {};
   };
 
-  app.post<{ Params: { id: string } }>('/:id/start', (req, reply) =>
+  app.post<{ Params: { id: string } }>('/:id/start', { preHandler: ownedCampaign({ gated: true }) }, (req, reply) =>
     transition(req, reply, ['draft', 'paused'], 'running', actorPatch(req),
       { requireRoster: true }));
 
-  app.post<{ Params: { id: string } }>('/:id/pause', (req, reply) =>
+  app.post<{ Params: { id: string } }>('/:id/pause', { preHandler: ownedCampaign({ gated: false }) }, (req, reply) =>
     // In-flight attempts are never cancelled by a pause — they complete normally.
     // Ungated: see `gate`. Pausing can only reduce dialing.
-    transition(req, reply, ['running'], 'paused', actorPatch(req), { ungated: true }));
+    transition(req, reply, ['running'], 'paused', actorPatch(req)));
 
   // Deliberately NOT roster-gated, unlike `/start`. A resume follows a pause the
   // supervisor themselves issued moments ago, and a campaign that drained while
   // paused is finalized by the leader on its first tick — refusing here would put a
   // 409 in front of a control whose only remaining job is to let that happen.
-  app.post<{ Params: { id: string } }>('/:id/resume', (req, reply) =>
+  app.post<{ Params: { id: string } }>('/:id/resume', { preHandler: ownedCampaign({ gated: true }) }, (req, reply) =>
     transition(req, reply, ['paused'], 'running', actorPatch(req)));
 
-  app.post<{ Params: { id: string } }>('/:id/stop', (req, reply) =>
+  app.post<{ Params: { id: string } }>('/:id/stop', { preHandler: ownedCampaign({ gated: false }) }, (req, reply) =>
     // 200 means "accepted and draining", NOT "stopped". The leader finalizes to
     // `stopped` on its next idle tick; clients must not assert terminal state
     // from this response.
@@ -1819,5 +1844,5 @@ export async function agencyCampaignRoutes(
     // delete, or to leave it alone. They get the ordinary
     // `invalid_campaign_transition` 409 naming `draft`, which is readable, whereas a
     // 200 for a campaign that was never dialing is not.
-    transition(req, reply, ['running', 'paused'], 'stopping', actorPatch(req), { ungated: true }));
+    transition(req, reply, ['running', 'paused'], 'stopping', actorPatch(req)));
 }
