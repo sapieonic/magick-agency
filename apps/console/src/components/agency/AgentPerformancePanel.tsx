@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, useMemo } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import {
   AGENT_STATS_WINDOW_LABELS,
@@ -6,15 +6,15 @@ import {
   agentCount,
   bucketSeries,
   campaignLabel,
-  conversionRateReadout,
-  handleTimeReadout,
+  agentConversionReadout,
+  agentHandleTimeReadout,
   headlineTrio,
   isEmptyRange,
   occupancyBreakdown,
   occupancySegmentText,
   rowConnectRate,
   rowSeconds,
-  wrapupReadout,
+  agentWrapupReadout,
   type AgentStatsWindow,
 } from '../../utils/agencyAgentPerformance';
 import type { PerformanceReadout } from '../../utils/agencyCampaignPerformance';
@@ -153,6 +153,11 @@ export function AgentPerformancePanel({
    */
   const detailId = useId();
   const scopeId = useId();
+
+  // Derived once per payload rather than on every render of the tiles above it:
+  // each bucket is parsed and formatted into a label and a title.
+  const activeStats = active.status === 'ready' ? active.stats : null;
+  const series = useMemo(() => (activeStats ? bucketSeries(activeStats.buckets) : null), [activeStats]);
 
   /**
    * Only the campaigns this caller can name, sorted by that name.
@@ -306,12 +311,12 @@ export function AgentPerformancePanel({
             )}
 
             <div className={styles.readouts}>
-              <Readout label="Conversion rate" testId="conversion-rate-readout" readout={conversionRateReadout(active.stats.totals)} />
-              <Readout label="Average call" testId="handle-time-readout" readout={handleTimeReadout(active.stats.totals)} />
-              <Readout label="Wrap-up" testId="wrapup-readout" readout={wrapupReadout(active.stats.totals)} />
+              <Readout label="Conversion rate" testId="conversion-rate-readout" readout={agentConversionReadout(active.stats.totals)} />
+              <Readout label="Average call" testId="handle-time-readout" readout={agentHandleTimeReadout(active.stats.totals)} />
+              <Readout label="Wrap-up" testId="wrapup-readout" readout={agentWrapupReadout(active.stats.totals)} />
             </div>
 
-            <AgentBucketChart series={bucketSeries(active.stats.buckets)} />
+            {series && <AgentBucketChart series={series} />}
 
             <Occupancy stats={active.stats} />
 
@@ -469,7 +474,7 @@ function Readout({
  * that excludes it, and the sentence could never render.
  */
 function Occupancy({ stats }: { stats: AgencyAgentStats }) {
-  const breakdown = occupancyBreakdown(stats.totals.occupancy);
+  const breakdown = useMemo(() => occupancyBreakdown(stats.totals.occupancy), [stats]);
 
   return (
     <section className={styles.occupancy} aria-label="Where your time went">
@@ -570,7 +575,8 @@ function CampaignBreakdown({
                   <td>{agentCount(row.attempts)}</td>
                   {/* Derived here only because `by_campaign[]` carries no rates —
                       and guarded, so a campaign with no dials reads as an em dash
-                      rather than as a 0% connect rate it has not earned. */}
+                      rather than as a 0% connect rate it has not earned, and one
+                      under the roster's dial floor reads "Not enough calls". */}
                   <td>{rowConnectRate(row)}</td>
                   <td>{agentCount(row.connected)}</td>
                   <td>{agentCount(row.successes)}</td>

@@ -9,6 +9,8 @@ import {
   trackFeatureGateUnavailable,
   trackExportEvent,
   trackApiErrorEvent,
+  trackAgencyWaitingForDialer,
+  track,
   type AnalyticsPath,
 } from '../../analytics/events';
 
@@ -178,5 +180,19 @@ describe('analytics/events catalog', () => {
     trackFeatureGateUnavailable({ gate_type: 'capability', gate: 'agency_dialer_enabled' });
 
     expect(true).toBe(true);
+  });
+
+  it('routes every emitter through the generic track, name and shape from the catalog', () => {
+    capture.mockClear();
+    track('agency_waiting_for_dialer', { campaign_id: 'camp-1' });
+    trackAgencyWaitingForDialer({ campaign_id: 'camp-2' });
+    expect(capture).toHaveBeenNthCalledWith(1, 'agency_waiting_for_dialer', { campaign_id: 'camp-1' });
+    expect(capture).toHaveBeenNthCalledWith(2, 'agency_waiting_for_dialer', { campaign_id: 'camp-2' });
+
+    // Compile-time half: an undeclared name, or another event's shape, does not type-check.
+    // @ts-expect-error — not a catalogued event
+    posthog.captureEvent('agency_not_an_event', {});
+    // @ts-expect-error — `campaign_id` is this event's whole shape
+    track('agency_waiting_for_dialer', { campaign: 'camp-1' });
   });
 });

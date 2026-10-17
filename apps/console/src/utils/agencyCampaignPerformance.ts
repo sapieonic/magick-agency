@@ -1,5 +1,7 @@
-import { formatDuration } from './agencyClock';
+import { statClock } from './format/duration';
+import { clampPercent, formatCount, pct, plural } from './format/number';
 import type { AgencyCampaignStats } from '../types/agency-campaign';
+import { AGENCY_CAMPAIGN_MIN_RATE_DENOMINATOR } from '../types/agency-stats';
 
 /**
  * The derived figures — connect rate, conversion, handle time, wrap-up, the
@@ -29,8 +31,8 @@ import type { AgencyCampaignStats } from '../types/agency-campaign';
  *    sentence naming what has not happened yet.
  * 3. **A real `0`** — rendered as `0`. This is the only case that is a claim
  *    about the campaign, and it is the case the other two must not be confused
- *    with. `formatDuration` is used rather than `format.ts`'s, which collapses
- *    `0`, `null` and `undefined` into one `'--'`.
+ *    with. `statClock` (`format/duration.ts`) renders it, never a helper that
+ *    collapses `0`, `null` and `undefined` into one `'--'`.
  *
  * There is now a fourth, and it is the only one that is a decision of this
  * console's rather than a reading of the server's: see {@link RATE_MIN_ATTEMPTS}.
@@ -54,18 +56,12 @@ import type { AgencyCampaignStats } from '../types/agency-campaign';
  */
 
 /**
- * The floor under which a percentage is withheld rather than printed.
+ * The floor under which a percentage is withheld rather than printed: the
+ * contract's `AGENCY_CAMPAIGN_MIN_RATE_DENOMINATOR` (25 dials placed), where the
+ * reasoning lives beside the roster's own, different floor.
  *
- * A rate is the one figure on this screen that leaves the room. "We're
- * converting a third of our conversations" is repeated in a stand-up, written
- * into a weekly summary, and used to decide whether a list is worth buying
- * again — and over a handful of dials it is noise wearing a decimal point. At
- * eight dials one extra answer moves the connect rate twelve points, so the
- * number a supervisor quotes on Tuesday is a different number on Wednesday for
- * reasons that have nothing to do with the campaign.
- *
- * Withholding is therefore not caution about our arithmetic — the arithmetic is
- * the server's and it is exact. It is a refusal to present a figure with the settled
+ * Withholding is not caution about our arithmetic — the arithmetic is the
+ * server's and it is exact. It is a refusal to present a figure with the settled
  * air of a measurement when the next call can still move it several points.
  *
  * Applied to the two RATES only. Handle time and wrap-up are averages over
@@ -80,7 +76,7 @@ import type { AgencyCampaignStats } from '../types/agency-campaign';
  * behind its conversion rate. That is what the denominator line on the card is
  * for, and it is why the line is not optional.
  */
-export const RATE_MIN_ATTEMPTS = 25;
+export const RATE_MIN_ATTEMPTS = AGENCY_CAMPAIGN_MIN_RATE_DENOMINATOR;
 
 /**
  * The line under a figure naming what it was measured against.
@@ -158,25 +154,12 @@ export interface PerformanceReadout {
   known: boolean;
 }
 
-function pct(value: number): string {
-  // Matches `agencyHealthStrip`: one decimal, trailing zero trimmed. "3.0%"
-  // reads as a measurement with false precision the denominator cannot support.
-  return `${Number(value.toFixed(1))}%`;
-}
-
-/** Whole seconds as `m:ss`, rolling to `h:mm:ss`. `0` renders as `0:00`. */
+/**
+ * An average in whole seconds as `m:ss`, rolling to `h:mm:ss` — rounded, like
+ * every aggregate duration (`format/duration.ts`). `0` renders as `0:00`.
+ */
 function seconds(value: number): string {
-  return formatDuration(value * 1000);
-}
-
-function plural(n: number, singular: string, many = `${singular}s`): string {
-  return `${n.toLocaleString()} ${n === 1 ? singular : many}`;
-}
-
-/** A meter is never drawn outside its own track. */
-function clampPercent(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(100, Math.max(0, value));
+  return statClock(value);
 }
 
 /**
@@ -252,7 +235,7 @@ function volumeWithheldReadout(dials: number): PerformanceReadout {
       + 'gets quoted.',
     caveat: null,
     denominator: {
-      lead: dials.toLocaleString(),
+      lead: formatCount(dials),
       rest: dials === 1 ? 'dial placed so far' : 'dials placed so far',
     },
     scale: null,
@@ -347,11 +330,11 @@ export function connectRateReadout(stats: AgencyCampaignStats | null): Performan
     denominator:
       typeof humans === 'number' && typeof total === 'number'
         ? {
-          lead: humans.toLocaleString(),
+          lead: formatCount(humans),
           // Names what the number IS, not just what it is out of: "2,104 of
           // 6,742" beside a split card counting 1,509 people is two numbers for
           // one concept with nothing saying which is which.
-          rest: `people answered, of ${total.toLocaleString()} dials placed`,
+          rest: `people answered, of ${formatCount(total)} dials placed`,
         }
         : null,
     scale: { kind: 'fill', percent: clampPercent(rate), tone: 'accent' },
@@ -397,11 +380,11 @@ export function conversionRateReadout(stats: AgencyCampaignStats | null): Perfor
   const denominator =
     typeof successes === 'number' && typeof connected === 'number'
       ? {
-        lead: successes.toLocaleString(),
-        rest: `of ${connected.toLocaleString()} connected calls`,
+        lead: formatCount(successes),
+        rest: `of ${formatCount(connected)} connected calls`,
       }
       : typeof successes === 'number'
-        ? { lead: successes.toLocaleString(), rest: 'counted as a success' }
+        ? { lead: formatCount(successes), rest: 'counted as a success' }
         : null;
 
   if (rate === undefined) {

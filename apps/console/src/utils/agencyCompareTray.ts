@@ -21,6 +21,7 @@ import type {
   AgencyRosterBenchmark,
   AgencyRosterPage,
 } from '../types/agency-stats';
+import { formatCount } from './format/number';
 
 /**
  * The compare tray — two to four people from the roster, side by side against the
@@ -251,7 +252,7 @@ export const COMPARE_METRICS: readonly CompareMetric[] = [
     label: 'Dials',
     hint: 'attempts placed',
     cell: (row) => countCell(dialsText(row), row.attempts),
-    pooled: (benchmark) => benchmark.attempts.toLocaleString(),
+    pooled: (benchmark) => formatCount(benchmark.attempts),
     band: () => null,
   },
   {
@@ -259,7 +260,7 @@ export const COMPARE_METRICS: readonly CompareMetric[] = [
     label: 'Connects',
     hint: 'answered',
     cell: (row) => countCell(connectsText(row), row.connected),
-    pooled: (benchmark) => benchmark.connected.toLocaleString(),
+    pooled: (benchmark) => formatCount(benchmark.connected),
     band: () => null,
   },
   {
@@ -267,7 +268,7 @@ export const COMPARE_METRICS: readonly CompareMetric[] = [
     label: 'Conversions',
     hint: 'booked',
     cell: (row) => countCell(conversionsText(row), row.successes),
-    pooled: (benchmark) => benchmark.successes.toLocaleString(),
+    pooled: (benchmark) => formatCount(benchmark.successes),
     band: () => null,
   },
   {

@@ -113,8 +113,8 @@ describe('the running zone is genuinely changeable here', () => {
 describe('bucket labels are the day the server named', () => {
   it('does not lose a day west of Greenwich', () => {
     expect(labels('America/New_York', ['2026-08-19', '2026-08-20'])).toEqual([
-      { label: '19', title: 'Aug 19' },
-      { label: '20', title: 'Aug 20' },
+      { label: '19', title: '19 Aug' },
+      { label: '20', title: '20 Aug' },
     ]);
   });
 
@@ -122,8 +122,8 @@ describe('bucket labels are the day the server named', () => {
     // UTC+14. A fix that merely shifted the parse the other way would pass New
     // York and break every agent in the Line Islands.
     expect(labels('Pacific/Kiritimati', ['2026-08-19', '2026-08-20'])).toEqual([
-      { label: '19', title: 'Aug 19' },
-      { label: '20', title: 'Aug 20' },
+      { label: '19', title: '19 Aug' },
+      { label: '20', title: '20 Aug' },
     ]);
   });
 
@@ -135,8 +135,8 @@ describe('bucket labels are the day the server named', () => {
      * to is the engine's business rather than the contract's.
      */
     expect(labels('America/Havana', ['2026-03-07', '2026-03-08'])).toEqual([
-      { label: '7', title: 'Mar 7' },
-      { label: '8', title: 'Mar 8' },
+      { label: '7', title: '7 Mar' },
+      { label: '8', title: '8 Mar' },
     ]);
   });
 
@@ -146,8 +146,8 @@ describe('bucket labels are the day the server named', () => {
      * 2026-10-24 23:00, so that hour occurs at two different offsets.
      */
     expect(labels('Asia/Beirut', ['2026-10-24', '2026-10-25'])).toEqual([
-      { label: '24', title: 'Oct 24' },
-      { label: '25', title: 'Oct 25' },
+      { label: '24', title: '24 Oct' },
+      { label: '25', title: '25 Oct' },
     ]);
   });
 
@@ -190,13 +190,13 @@ describe('the day reaches the screen intact', () => {
       render(<AgentBucketChart series={bucketSeries([bucket('2026-08-19'), bucket('2026-08-20')])} />);
 
       expect(screen.getByTestId('bucket-2026-08-19').querySelector('title')?.textContent).toBe(
-        'Aug 19: 1 dials, 1 conversations',
+        '19 Aug: 1 dials, 1 conversations',
       );
 
       fireEvent.click(screen.getByRole('button', { name: /show the numbers/i }));
       const table = screen.getByTestId('bucket-chart-table');
-      expect(within(table).getByText('Aug 19')).toBeTruthy();
-      expect(within(table).getByText('Aug 20')).toBeTruthy();
+      expect(within(table).getByText('19 Aug')).toBeTruthy();
+      expect(within(table).getByText('20 Aug')).toBeTruthy();
     });
   });
 });

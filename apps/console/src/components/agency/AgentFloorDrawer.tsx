@@ -20,6 +20,7 @@ import {
 import { formatDuration } from '../../utils/agencyClock';
 import { trackAgencyFloorIntervention } from '../../analytics/events';
 import type { AgencySupervisorAgent } from '../../types/agency-campaign';
+import { formatCount } from '../../utils/format/number';
 import styles from './AgentFloorDrawer.module.css';
 
 /**
@@ -161,7 +162,7 @@ export function AgentFloorDrawer({
           </div>
           <div className={styles.fact}>
             <dt>Calls this shift</dt>
-            <dd>{agent.calls_handled.toLocaleString()}</dd>
+            <dd>{formatCount(agent.calls_handled)}</dd>
           </div>
           <div className={styles.fact}>
             <dt>Station</dt>

@@ -8,6 +8,30 @@
 
 import type { AgencyAgentState, AgencyCampaignStatus } from './enums';
 
+/**
+ * The dials-placed floor under which the console withholds a CAMPAIGN rate
+ * (connect rate, conversion rate, and each per-day point of the campaign series)
+ * rather than printing it.
+ *
+ * A rate is the one figure on the campaign screen that leaves the room. "We're
+ * converting a third of our conversations" is repeated in a stand-up and used to
+ * decide whether a list is worth buying again — and over a handful of dials it is
+ * noise wearing a decimal point. At eight dials one extra answer moves the connect
+ * rate twelve points.
+ *
+ * Keyed on `attempts_total` (dials placed) for both rates; the conversion rate's
+ * own denominator is connected calls, so gating it on dials is the looser of the
+ * two available tests.
+ *
+ * ⚠️ **Deliberately not `AGENCY_ROSTER_MIN_RATE_DENOMINATOR` (20, `./performance.ts`).** The
+ * roster's floor is the server's (served as `rates_reportable`); this one is the
+ * console's own and the server does not apply it. The two values differ and
+ * whether they should is an open product decision — they are declared side by
+ * side in the contract so the difference is visible rather than buried in a UI
+ * module.
+ */
+export const AGENCY_CAMPAIGN_MIN_RATE_DENOMINATOR = 25;
+
 // ─── Campaign stats (including the rolling abandonment rate) ────────────────
 
 /**

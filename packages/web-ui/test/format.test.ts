@@ -4,38 +4,10 @@ import {
   formatDateShort,
   formatTime,
   formatRelativeTime,
-  formatDuration,
   formatPhone,
   formatNumber,
-  formatPercentage,
   truncateId,
 } from '../src/format';
-
-// ─── formatDuration ───────────────────────────────────────────────────────────
-
-describe('formatDuration', () => {
-  // null / undefined / zero / negative guard
-  it('returns -- for null', () => expect(formatDuration(null)).toBe('--'));
-  it('returns -- for undefined', () => expect(formatDuration(undefined)).toBe('--'));
-  it('returns -- for 0', () => expect(formatDuration(0)).toBe('--'));
-  it('returns -- for negative values', () => expect(formatDuration(-1)).toBe('--'));
-  it('returns -- for -0', () => expect(formatDuration(-0)).toBe('--'));
-
-  // sub-minute
-  it('formats 1 second', () => expect(formatDuration(1)).toBe('0:01'));
-  it('formats 9 seconds with leading zero', () => expect(formatDuration(9)).toBe('0:09'));
-  it('formats 59 seconds', () => expect(formatDuration(59)).toBe('0:59'));
-
-  // minute boundaries
-  it('formats 60 seconds as 1:00', () => expect(formatDuration(60)).toBe('1:00'));
-  it('formats 61 seconds as 1:01', () => expect(formatDuration(61)).toBe('1:01'));
-  it('formats 65 seconds as 1:05', () => expect(formatDuration(65)).toBe('1:05'));
-  it('formats 120 seconds as 2:00', () => expect(formatDuration(120)).toBe('2:00'));
-
-  // over an hour (no hour component — just minutes overflow)
-  it('formats 3600 seconds as 60:00', () => expect(formatDuration(3600)).toBe('60:00'));
-  it('formats 3661 seconds as 61:01', () => expect(formatDuration(3661)).toBe('61:01'));
-});
 
 // There are no credit formatters (agency has no credits), so no cases cover
 // `formatCredits`, `formatLedgerMillicredits` or `formatCreditsExact`.
@@ -71,16 +43,6 @@ describe('formatPhone', () => {
     expect(formatPhone('9876543210')).toBe('9876543210'));
 });
 
-// ─── formatPercentage ────────────────────────────────────────────────────────
-
-describe('formatPercentage', () => {
-  it('formats 0 as "0.0%"', () => expect(formatPercentage(0)).toBe('0.0%'));
-  it('formats 0.5 as "50.0%"', () => expect(formatPercentage(0.5)).toBe('50.0%'));
-  it('formats 1 as "100.0%"', () => expect(formatPercentage(1)).toBe('100.0%'));
-  it('formats 0.123 as "12.3%"', () => expect(formatPercentage(0.123)).toBe('12.3%'));
-  it('rounds to 1 decimal place', () => expect(formatPercentage(0.1234)).toBe('12.3%'));
-  it('always ends with %', () => expect(formatPercentage(0.75)).toMatch(/%$/));
-});
 
 // ─── truncateId ──────────────────────────────────────────────────────────────
 

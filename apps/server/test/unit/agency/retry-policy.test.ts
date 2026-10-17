@@ -373,3 +373,15 @@ describe('`canceled` resolves through the our-fault bound', () => {
     expect(decision.nextAttemptAt).toEqual(NOW);
   });
 });
+
+describe('the our-fault defaults are the contract’s, which the console previews', () => {
+  it('reads the bound and delay from the contract, and agent_disconnected’s default equals them', async () => {
+    const { AGENCY_OUR_FAULT_REDIAL_BOUND, AGENCY_DEFAULT_OUR_FAULT_REDIAL_DELAY_MINUTES, AGENCY_OUR_FAULT_RETRY_DEFAULT } =
+      await import('@magick-agency/contracts/agency');
+    expect(OUR_FAULT_REDIAL_BOUND).toBe(AGENCY_OUR_FAULT_REDIAL_BOUND);
+    expect(DEFAULT_OUR_FAULT_REDIAL_DELAY_MINUTES).toBe(AGENCY_DEFAULT_OUR_FAULT_REDIAL_DELAY_MINUTES);
+    // The console seeds a fresh our-fault row with AGENCY_OUR_FAULT_RETRY_DEFAULT and
+    // says it is what the server uses for an unset row; this is the server half of that claim.
+    expect(DEFAULT_RETRY_POLICY.agent_disconnected).toEqual(AGENCY_OUR_FAULT_RETRY_DEFAULT);
+  });
+});

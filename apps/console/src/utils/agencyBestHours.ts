@@ -5,6 +5,8 @@ import type {
   AgencyGroupPage,
   AgencyGroupRow,
 } from '../types/agency-stats';
+import { zoneFormatter, zonedParts, type ZonedParts } from './format/zone';
+import { plural } from './format/number';
 
 /**
  * "When does this campaign actually connect" — the best-hours matrix, as pure
@@ -88,7 +90,7 @@ export const BEST_HOURS_CELLS = BEST_HOURS_DAYS * BEST_HOURS_HOURS;
  * first-day-of-week and re-introduce exactly the off-by-one against ISO's 1 = Monday
  * that the numeric wire value exists to avoid.
  */
-export const BEST_HOURS_WEEKDAYS: readonly string[] = [
+const BEST_HOURS_WEEKDAYS: readonly string[] = [
   'Sunday',
   'Monday',
   'Tuesday',
@@ -99,7 +101,7 @@ export const BEST_HOURS_WEEKDAYS: readonly string[] = [
 ];
 
 /** The same seven, for a column head two characters wider than the figures under it. */
-export const BEST_HOURS_WEEKDAYS_SHORT: readonly string[] = [
+const BEST_HOURS_WEEKDAYS_SHORT: readonly string[] = [
   'Sun',
   'Mon',
   'Tue',
@@ -125,7 +127,7 @@ function weekdayName(day: number): string {
  * | `conversion_rate` | `success_rate_pct` | `success_rate_reportable`, absent ⇒ **withhold** |
  *
  * The two gates degrade in OPPOSITE directions, and that asymmetry is deliberate:
- * see `successRateReportable` below. Falling back to `rates_reportable` for the
+ * see `conversionCellRateable` below. Falling back to `rates_reportable` for the
  * conversion view paints a 20-dial/1-connect/1-conversion cell as 100% and as the
  * ramp's upper endpoint, which is the failure a thin cell on the ramp produces; the connect rate has no such
  * second denominator to be wrong about.
@@ -261,7 +263,7 @@ export function bestHoursHourLabel(hour: number): string {
  * an hour with a zone beside it is a fact, and an hour with the WRONG zone beside
  * it is worse than an hour with none.
  */
-export function bestHoursCellCoordinates(day: number, hour: number, zone: string | null): string {
+function bestHoursCellCoordinates(day: number, hour: number, zone: string | null): string {
   const stem = `${weekdayName(day)} ${bestHoursHourLabel(hour)}:00`;
   return zone === null ? stem : `${stem} · ${zone}`;
 }
@@ -333,64 +335,13 @@ export interface BestHoursCoverage {
 const COVERAGE_MAX_STEPS = 2 * 24 * 120;
 const HALF_HOUR_MS = 30 * 60 * 1000;
 
-interface ZonedParts {
-  year: number;
-  month: number;
-  day: number;
-  hour: number;
-  minute: number;
-  second: number;
-}
-
-/**
- * A formatter for one named zone, or `null` when the name is not one.
- *
- * `Intl.DateTimeFormat` throws a `RangeError` on an unknown `timeZone`, and this is
- * exactly the input that can be one: The server's zone comes out of `COALESCE(z.name,
- * 'UTC')` and is therefore always a real IANA name today, but the value reaching
- * this client crossed the API boundary and a hand-mirrored type. A caught `RangeError`
- * degrades to "coverage unknown"; an uncaught one takes the section down.
- */
-function zoneFormatter(zone: string): Intl.DateTimeFormat | null {
-  try {
-    return new Intl.DateTimeFormat('en-US', {
-      timeZone: zone,
-      hourCycle: 'h23',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    });
-  } catch {
-    return null;
-  }
-}
-
-function zonedParts(formatter: Intl.DateTimeFormat, at: Date): ZonedParts | null {
-  let year: number | null = null;
-  let month: number | null = null;
-  let day: number | null = null;
-  let hour: number | null = null;
-  let minute: number | null = null;
-  let second: number | null = null;
-  for (const part of formatter.formatToParts(at)) {
-    const value = Number(part.value);
-    if (!Number.isFinite(value)) continue;
-    if (part.type === 'year') year = value;
-    else if (part.type === 'month') month = value;
-    else if (part.type === 'day') day = value;
-    else if (part.type === 'hour') hour = value;
-    else if (part.type === 'minute') minute = value;
-    else if (part.type === 'second') second = value;
-  }
-  if (year === null || month === null || day === null) return null;
-  if (hour === null || minute === null || second === null) return null;
-  // `h23` should never produce 24, but an implementation that does would otherwise
-  // put a real dial in a column this matrix has no room for.
-  return { year, month, day, hour: hour % 24, minute, second };
-}
+/*
+  `zoneFormatter` / `zonedParts` (`format/zone.ts`), shared with the campaign
+  builder's calling-window echo: one cached formatter per zone, which matters
+  here — the walk below formats up to COVERAGE_MAX_STEPS instants per window.
+  A caught `RangeError` on an unknown zone degrades to "coverage unknown"; an
+  uncaught one would take the section down.
+*/
 
 export function weekdayCoverage(
   from: string,
@@ -414,11 +365,11 @@ export function weekdayCoverage(
   const covered = new Map<number, Set<number>>();
   const mark = (parts: ZonedParts): void => {
     /*
-      The weekday of the ZONED calendar date, computed from that date rather than
-      from the instant: `getUTCDay` over a `Date.UTC` of the same y/m/d is the only
-      reading that cannot drift back a day for a zone behind UTC.
+      The weekday of the ZONED calendar date (`isoDay`, computed from that date
+      rather than from the instant, so it cannot drift back a day for a zone
+      behind UTC), in this matrix's 0 = Sunday numbering.
     */
-    const weekday = new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay();
+    const weekday = parts.isoDay % 7;
     let hours = covered.get(weekday);
     if (hours === undefined) {
       hours = new Set<number>();
@@ -613,7 +564,13 @@ function ratesReportable(row: AgencyGroupRow): boolean {
  * these" is recoverable; a map that paints one answered call as the best hour of
  * the week is not.
  */
-function successRateReportable(row: AgencyGroupRow): boolean {
+/*
+  Named apart from the roster's exported `successRateReportable` on purpose: the
+  two answer the same question with OPPOSITE fallbacks for an absent field (see
+  above), and one name for both made a grep — or an auto-import — hand a reader
+  the wrong rule.
+*/
+function conversionCellRateable(row: AgencyGroupRow): boolean {
   return row.success_rate_reportable === true;
 }
 
@@ -654,7 +611,7 @@ function indexRows(rows: readonly AgencyGroupRow[]): Map<string, AgencyGroupRow>
  */
 function measureCell(row: AgencyGroupRow, view: BestHoursView, day: number, hour: number): BestHoursCell {
   const base = { day, hour, attempts: row.attempts };
-  const dials = `${agentCount(row.attempts)} ${row.attempts === 1 ? 'dial' : 'dials'}`;
+  const dials = plural(row.attempts, 'dial');
 
   if (view === 'volume') {
     /*
@@ -716,7 +673,7 @@ function measureCell(row: AgencyGroupRow, view: BestHoursView, day: number, hour
       note: `${dials} · no connect to convert yet`,
     };
   }
-  if (!successRateReportable(row)) {
+  if (!conversionCellRateable(row)) {
     return {
       ...base,
       state: 'withheld',
@@ -731,9 +688,7 @@ function measureCell(row: AgencyGroupRow, view: BestHoursView, day: number, hour
     state: 'measured',
     text: agentPct(row.success_rate_pct),
     value: row.success_rate_pct,
-    note: `${agentPct(row.success_rate_pct)} of ${agentCount(row.connected)} ${
-      row.connected === 1 ? 'connect' : 'connects'
-    } converted`,
+    note: `${agentPct(row.success_rate_pct)} of ${plural(row.connected, 'connect')} converted`,
   };
 }
 
@@ -877,7 +832,7 @@ export function bestHoursStep(value: number, domain: BestHoursDomain | null): nu
 }
 
 /** A view's own format — percentages for the two rates, a count for volume. */
-export function bestHoursFormat(view: BestHoursView, value: number): string {
+function bestHoursFormat(view: BestHoursView, value: number): string {
   return view === 'volume' ? agentCount(value) : agentPct(value);
 }
 
@@ -893,7 +848,7 @@ export function bestHoursFormat(view: BestHoursView, value: number): string {
  */
 export function bestHoursCountReadout(matrix: BestHoursMatrix): string {
   const cells = matrix.rows.reduce((total, row) => total + row.cells.length, 0);
-  const had = matrix.dialled === 1 ? '1 weekday-hour cell had a dial' : `${agentCount(matrix.dialled)} weekday-hour cells had a dial`;
+  const had = `${plural(matrix.dialled, 'weekday-hour cell')} had a dial`;
   return `${had}, of ${agentCount(cells)}`;
 }
 

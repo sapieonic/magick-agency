@@ -5,7 +5,6 @@ import { useAgentPerformance } from '../../hooks/useAgentPerformance';
 import { useAgentRoster, type AgentRosterFilters } from '../../hooks/useAgentRoster';
 import { agentDisplayName, type NamedAgent } from '../../utils/agencyAgentFloor';
 import {
-  AGENT_STATS_WINDOWS,
   AGENT_STATS_WINDOW_LABELS,
   campaignLabel,
   campaignNameMap,
@@ -13,18 +12,14 @@ import {
   type AgentStatsWindow,
 } from '../../utils/agencyAgentPerformance';
 import {
-  ROSTER_COLUMNS,
   SORT_LABELS,
   allRowsHiddenReason,
-  cohortComparable,
-  benchmarkUsable,
   defaultRosterCampaign,
   inactiveNote,
   initialOrder,
   mixedCohortNote,
-  rosterAttentionRows,
-  rosterCountReadout,
   truncationNote,
+  rosterPageFlags,
 } from '../../utils/agencyAgentRoster';
 import { compareAvailable, compareMissing } from '../../utils/agencyCompareTray';
 import { trackAgentSurfaceViewed } from '../../analytics/events';
@@ -39,6 +34,8 @@ import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 import type { AgencyRosterSort } from '../../types/agency-stats';
+import { RosterToolbar } from './RosterToolbar';
+import { useAgentAnalyticsNav } from './useAgentAnalyticsNav';
 import styles from './AgentAnalyticsSection.module.css';
 
 /**
@@ -263,64 +260,8 @@ function AgentAnalyticsPanel({ campaigns }: { campaigns: readonly AgencyCampaign
     });
   }, [campaigns]);
 
-  /**
-   * The person being drilled into, or `null` for whichever list is showing.
-   *
-   * A {@link NamedAgent} — an id and the name the API resolved — because that is
-   * exactly what the drill-down uses, and re-deriving the name would mean either a
-   * second lookup or a blank caption. It used to be the whole roster row, and the
-   * row's other twenty fields were never read: widening it to the two that are is
-   * what lets a CONTRIBUTION row open the same panels without fabricating a roster
-   * row's shape to do it.
-   *
-   * Either list can set it, so the two drill-downs are no longer mutually
-   * exclusive — see the branch order below, which is what makes "back" land where
-   * the reader came from.
-   */
-  const [selected, setSelected] = useState<NamedAgent | null>(null);
 
-  /**
-   * The campaign whose contribution is being read, or `null` for the roster.
-   *
-   * The ID rather than a boolean, so the view has a definite campaign of its own:
-   * "who drove this campaign" is a question about ONE campaign, and a view that
-   * read the filter live could be re-scoped by a control it does not render.
-   *
-   * A second drill-down beside {@link selected}. Both replace the roster rather
-   * than stacking under it, which is what keeps exactly one read in flight and
-   * stops the roster refetching behind a screen nobody is looking at — but they are
-   * no longer mutually exclusive, because a contribution row opens a person. When
-   * both are set the PERSON is on screen and this is what they return to; see the
-   * branch order below.
-   *
-   * It is also the campaign the contribution view is showing, not merely the one it
-   * was opened with: that view's selector reports through `onCampaignChange`, so
-   * there is one answer to "which campaign is this" and the label on the way back
-   * out of a person's figures can be right.
-   */
-  const [contributionCampaign, setContributionCampaign] = useState<string | null>(null);
 
-  /**
-   * The campaign whose best-hours map is being read, or `null` for the roster.
-   *
-   * A THIRD screen beside {@link contributionCampaign}, and its own piece of state
-   * for the same reason that one is: "when does this campaign connect" is a question
-   * about ONE campaign — the read is a 400 without one, because both time dimensions
-   * are grouped and the zone is unambiguous only under a single campaign filter — and
-   * a view that read the roster's filter live could be re-scoped by a control it does
-   * not render.
-   *
-   * It is mutually exclusive with the contribution screen in practice: both replace
-   * the roster, and each is entered from the roster's header, so only one can be set
-   * at a time. Written as two independent pieces of state rather than one
-   * discriminated union because the union's third arm would exist only to say which
-   * of two screens is showing, and the branch order below already says that.
-   *
-   * Unlike the contribution screen, this one has no way into a person's figures: a
-   * weekday-hour cell is not somebody, so there is nothing on it to open. That is why
-   * `SelectedAgent`'s back label does not mention it.
-   */
-  const [bestHoursCampaign, setBestHoursCampaign] = useState<string | null>(null);
 
   /**
    * Show only the rows carrying a flag — a client-side filter, not a sort.
@@ -356,69 +297,19 @@ function AgentAnalyticsPanel({ campaigns }: { campaigns: readonly AgencyCampaign
   const [compareOpen, setCompareOpen] = useState(false);
   const [compareSelected, setCompareSelected] = useState<readonly string[]>([]);
 
-  /**
-   * Which period the drill-down's tiles are showing.
-   *
-   * Held HERE, above the `key={agent_user_id}` remount below, for the same reason it
-   * was before the roster existed: "this week" means the same thing whoever is being
-   * looked at, and resetting it would fight a supervisor comparing two people over
-   * one range.
-   *
-   * ── It INHERITS the roster's window rather than starting at `today` ────────
-   * It used to default to `today` while the roster defaulted to the week, so a
-   * row's numbers changed the moment it was opened — the same person, two ranges,
-   * one click apart, with nothing on screen saying so. It now follows the roster's
-   * window: seeded from it, and re-seeded whenever the reader moves it.
-   *
-   * That inheritance is now EXACT. It used to run through `windowPeriod`, which
-   * folded `last_week` onto "this week" and `last_month` onto "this month",
-   * because the panel only had the three to-date tiles — so a supervisor who
-   * ranked the floor on last week and opened a row was shown this week's figures
-   * for that person, under a heading that still said the roster's window. The
-   * panel now renders all five, so the mapping is gone and the drill-down lands
-   * on the range the roster was ranked by.
-   *
-   * Changing the TILE afterwards still sticks across a change of person, which is
-   * what a supervisor comparing two people over one range needs.
-   */
-  const [period, setPeriod] = useState<AgentStatsWindow>('week');
-  const rosterWindow = filters.period;
-  useEffect(() => {
-    setPeriod(rosterWindow);
-  }, [rosterWindow]);
 
-  /**
-   * Open a person, and re-seed their panel's window from the roster's.
-   *
-   * ── Why the effect above is not enough ────────────────────────────────────
-   * It re-seeds only when `filters.period` CHANGES. So: rank the week, open Priya,
-   * switch her tiles to Today, go back. The roster header still says "This week" —
-   * and it is telling the truth, the table really is a week — but `period` is now
-   * `today`, so the next row opened shows Today's figures under a header one click
-   * away that says This week. Two ranges on one screen, no control saying which is
-   * which, and the discrepancy reads as the console disagreeing with itself.
-   *
-   * Re-seeding on the way IN fixes it at the only moment it can be observed: the
-   * panel is the sole reader of `period`, so the invariant to hold is "the panel
-   * opens on the roster's window", not "period equals the roster's window at all
-   * times". Doing it here rather than in `onBack` puts one write on the path into
-   * the screen that shows the value, instead of a second write on the way out of it
-   * that nothing could observe.
-   *
-   * It costs the previous behaviour where a chosen tile stuck across a change of
-   * person, and that is the ruling: a supervisor comparing two people over one range
-   * can still move the tile on each, and having the panel silently contradict the
-   * table it was opened from is the worse of the two.
-   */
-  const openAgent = useCallback(
-    (agent: NamedAgent) => {
-      // Exactly the roster's window — no longer folded onto a to-date sibling,
-      // because the panel renders all five.
-      setPeriod(rosterWindow);
-      setSelected(agent);
-    },
-    [rosterWindow],
-  );
+
+  const {
+    selected,
+    setSelected,
+    contributionCampaign,
+    setContributionCampaign,
+    bestHoursCampaign,
+    setBestHoursCampaign,
+    period,
+    setPeriod,
+    openAgent,
+  } = useAgentAnalyticsNav(filters.period);
 
   const { state, reload } = useAgentRoster(filters);
 
@@ -469,13 +360,12 @@ function AgentAnalyticsPanel({ campaigns }: { campaigns: readonly AgencyCampaign
   const showInactiveToggle = filters.includeInactive || (page?.inactive_omitted ?? 0) > 0;
 
   /*
-    Rows on the page that carry a chip. Computed for the filter's own label and for
-    the "nothing to show" case below — the same pure derivation the table applies,
-    called twice rather than threaded through a prop, exactly as `truncationNote` is.
+    Every row's flag, derived once per page and handed to the table: the filter's
+    own label and the "nothing to show" case below count them, the table filters
+    and draws them, and none of the three re-derives it.
   */
-  const comparable = page !== null && cohortComparable(page) && benchmarkUsable(page.benchmark);
-  const attention =
-    page === null ? 0 : rosterAttentionRows(page.rows, page.benchmark, comparable).length;
+  const pageFlags = useMemo(() => (page ? rosterPageFlags(page) : null), [page]);
+  const attention = pageFlags?.flagged ?? 0;
 
   /**
    * Prune a compare selection the NEW page no longer carries.
@@ -673,121 +563,16 @@ function AgentAnalyticsPanel({ campaigns }: { campaigns: readonly AgencyCampaign
         <Users size={18} className={styles.headerIcon} aria-hidden="true" />
       </div>
 
-      <div className={styles.filters} role="group" aria-label="Roster filters">
-        <div className={styles.field}>
-          <label className={styles.fieldLabel} htmlFor="roster-campaign">
-            Campaign
-          </label>
-          {/*
-            Defaults to one campaign, not to all of them — see the effect above. The
-            "All campaigns" option stays, because "how much did the floor dial this
-            week" is a real question; what it loses is the band comparison, which is
-            the part that is not true across lead lists.
-          */}
-          <select
-            id="roster-campaign"
-            className={styles.control}
-            value={filters.campaignId ?? ''}
-            data-testid="roster-campaign"
-            onChange={(event) =>
-              setFilters((prev) => ({ ...prev, campaignId: event.target.value || null }))
-            }
-          >
-            <option value="">All campaigns</option>
-            {campaignOptions.map(([id, name]) => (
-              <option key={id} value={id}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className={styles.field}>
-          <label className={styles.fieldLabel} htmlFor="roster-period">
-            Window
-          </label>
-          {/*
-            The per-agent panel's three to-date ranges, from the same `periodRange`,
-            plus the two COMPLETED ones the roster needs. A weekly review is run on a
-            Monday morning, and "this week" at 09:30 is ninety minutes of dials —
-            every row under the rating threshold, every rate "not enough calls",
-            every band "no median yet". A screen that is useless at the moment it is
-            opened is not a window problem the reader can work around.
-          */}
-          <select
-            id="roster-period"
-            className={styles.control}
-            value={filters.period}
-            data-testid="roster-period"
-            onChange={(event) =>
-              setFilters((prev) => ({ ...prev, period: event.target.value as AgentStatsWindow }))
-            }
-          >
-            {AGENT_STATS_WINDOWS.map((value) => (
-              <option key={value} value={value}>
-                {AGENT_STATS_WINDOW_LABELS[value]}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className={styles.field}>
-          <label className={styles.fieldLabel} htmlFor="roster-sort">
-            Sort by
-          </label>
-          {/*
-            A second affordance over the SAME state the column headers write, not a
-            second piece of state. It earns its place because the table scrolls
-            sideways on a narrow screen — the headers are the better control when
-            they are visible and no control at all when they are not — and because
-            "sorted by" is the one thing about a truncated roster the reader must be
-            able to see without hunting for an arrow.
-
-            Built from `ROSTER_COLUMNS`, the same list the headers come from, so
-            every order the reader can choose has a column showing it. It used to be
-            built from the whole wire enum and offered two that did not — `successes`
-            (the DEFAULT) and `talk_seconds`.
-          */}
-          <select
-            id="roster-sort"
-            className={styles.control}
-            value={filters.sort}
-            data-testid="roster-sort"
-            onChange={(event) => onSort(event.target.value as AgencyRosterSort)}
-          >
-            {ROSTER_COLUMNS.map((column) => (
-              <option key={column.sort} value={column.sort}>
-                {SORT_LABELS[column.sort]}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {page && page.rows.length > 0 && (
-          <label className={styles.toggle} htmlFor="roster-only-flagged">
-            <input
-              id="roster-only-flagged"
-              type="checkbox"
-              checked={onlyFlagged}
-              data-testid="roster-only-flagged"
-              onChange={(event) => setOnlyFlagged(event.target.checked)}
-            />
-            {/*
-              The count is on the control rather than rendered as a fraction of the
-              page — the reader wants to know whether pressing it is worth it, and
-              "3 of 12" over three independent facts is the shape this surface
-              refuses everywhere else.
-            */}
-            {`Only rows that need attention (${attention})`}
-          </label>
-        )}
-
-        {page && (
-          <p className={styles.countReadout} data-testid="roster-count">
-            {rosterCountReadout(page)}
-          </p>
-        )}
-      </div>
+      <RosterToolbar
+        filters={filters}
+        onFiltersChange={setFilters}
+        onSort={onSort}
+        campaignOptions={campaignOptions}
+        page={page}
+        onlyFlagged={onlyFlagged}
+        onOnlyFlaggedChange={setOnlyFlagged}
+        attention={attention}
+      />
 
       {/*
         How to read what IS on screen, so it sits ABOVE the table. The three notes
@@ -882,6 +667,7 @@ function AgentAnalyticsPanel({ campaigns }: { campaigns: readonly AgencyCampaign
       {state.status === 'ready' && !allHidden && !(onlyFlagged && attention === 0) && (
         <RosterTable
           page={state.page}
+          flags={pageFlags ?? undefined}
           /*
             The header arrow comes from the CLIENT's state, not the server's echo,
             and the two are one thing rather than two: `onSort` toggles against this

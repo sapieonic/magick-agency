@@ -58,6 +58,7 @@ import type {
   AgencyStatsBucketUnit,
 } from '../../agency';
 import {
+  AGENCY_CAMPAIGN_MIN_RATE_DENOMINATOR,
   AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
 } from '../../agency';
 
@@ -69,6 +70,7 @@ export type {
   AgencyRosterSort,
 };
 export {
+  AGENCY_CAMPAIGN_MIN_RATE_DENOMINATOR,
   AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
 };
 

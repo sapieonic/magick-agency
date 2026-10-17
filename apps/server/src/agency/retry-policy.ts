@@ -1,5 +1,10 @@
 import type { AgencyRetryPolicy } from '../db/models/agency.model.js';
-import type { AgencyAttemptOutcome, AgencyContactState } from '@magick-agency/contracts/agency';
+import {
+  AGENCY_DEFAULT_OUR_FAULT_REDIAL_DELAY_MINUTES,
+  AGENCY_OUR_FAULT_REDIAL_BOUND,
+  type AgencyAttemptOutcome,
+  type AgencyContactState,
+} from '@magick-agency/contracts/agency';
 
 /**
  * ─── AGENCY DIALER — THE OUTCOME RETRY POLICY ───────────────────────────────
@@ -138,50 +143,19 @@ export const DEFAULT_RETRY_POLICY: AgencyRetryPolicy = {
 };
 
 /**
- * ─── THE OUR-FAULT REDIAL BOUND ─────────────────────────────────────────────
+ * The our-fault redial bound: how many times OUR OWN failures may put one
+ * contact's number back on the roster. A platform constant, not a campaign
+ * setting, and a policy may only lower it — {@link resolveOurFaultRedial} checks it
+ * before consulting any configuration.
  *
- * How many times OUR OWN failures may put one contact's number back on the
- * roster. Deliberately a module constant and **not** a campaign setting.
- *
- * The reasoning is the whole point of the bound: skipping the attempt charge for
- * an our-fault drop is what stops us retiring customers we never reached, but on
- * its own it makes our-fault redials **free** — one persistently broken agent
- * workstation would redial the same number without limit, which is regulated.
- * The bound is what makes the skip safe.
- *
- * ⚠️ **A limit an operator can raise is not a limit.** This is enforced BELOW the
- * retry policy: {@link resolveOurFaultRedial} checks it before consulting any
- * configuration, and a policy may only lower it. That asymmetry is deliberate —
- * an operator who wants to be *more* cautious than the platform should be able
- * to, and one who wants to be less cautious than a repeat-dial regulation should
- * not.
- *
- * ── ⚠️ WHY 3: it is a placeholder, and saying so is the point ───────────────
- *
- * **This number is NOT derived from any regulation.** Nobody has yet established
- * which repeat-dial rule binds this product, in which jurisdictions, or what it
- * caps. `3` was chosen for two weak reasons, both stated plainly so neither is
- * mistaken for research:
- *
- *   1. it matches `DEFAULT_RETRY_POLICY`'s customer-facing `max_attempts` for the
- *      common outcomes, so our-fault redials cannot exceed the customer's own
- *      allowance and the total dial count for one contact stays intuitively
- *      bounded by roughly double it rather than by something unbounded;
- *   2. it is small enough that being wrong is conservative — the failure mode of
- *      too low is a contact retired early with `our_fault_bound_reached` in its
- *      `last_outcome`, which is visible and auditable, while the failure mode of
- *      too high is repeat-dialling a real person.
- *
- * **Revisit before the pilot dials a real customer list**, and replace this
- * comment with the actual rule and its citation. A bare number on a regulated
- * limit becomes a fact by age: the next reader assumes someone checked. Nobody
- * has. If the real cap turns out to be lower, this constant is the only line that
- * changes — which is the other reason the bound is not spread across config.
+ * Declared in the contract (`AGENCY_OUR_FAULT_REDIAL_BOUND`, where the reasoning
+ * and the ⚠️ "why 3 is a placeholder" note live) because the console states the
+ * same bound in its retry copy.
  */
-export const OUR_FAULT_REDIAL_BOUND = 3;
+export const OUR_FAULT_REDIAL_BOUND = AGENCY_OUR_FAULT_REDIAL_BOUND;
 
 /** Delay before an our-fault redial when the policy names none. */
-export const DEFAULT_OUR_FAULT_REDIAL_DELAY_MINUTES = 5;
+export const DEFAULT_OUR_FAULT_REDIAL_DELAY_MINUTES = AGENCY_DEFAULT_OUR_FAULT_REDIAL_DELAY_MINUTES;
 
 /** Why a contact landed where it did — readable by a log line and a test alike. */
 export type RetryReason =

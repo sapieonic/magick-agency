@@ -38,6 +38,7 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
 import { FilterChip } from './FilterChip';
 import { FiltersCard } from './FiltersCard';
 import spine from './SpineListLayout.module.css';
+import { formatCount } from '../../utils/format/number';
 import styles from './AgentAttemptsPanel.module.css';
 
 /**
@@ -519,7 +520,7 @@ export function AgentAttemptsPanel({ subject, campaignNames, caption }: AgentAtt
         {page.status === 'ready' && rows.length > 0 && (
           <>
             <ListChecks size={14} className={spine.countIcon} aria-hidden="true" />
-            {`Showing ${rows.length.toLocaleString()} call${rows.length === 1 ? '' : 's'}`
+            {`Showing ${formatCount(rows.length)} call${rows.length === 1 ? '' : 's'}`
               + (page.nextCursor ? ' — there are more' : '')}
           </>
         )}

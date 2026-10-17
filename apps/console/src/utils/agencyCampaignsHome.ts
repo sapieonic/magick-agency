@@ -1,4 +1,5 @@
 import type { AgencyCampaign, AgencyCampaignStats } from '../types/agency-campaign';
+import { describeIsoDays, hhmm } from './format/weekdays';
 
 /**
  * Pure helpers for the campaigns home (`AgencyCampaignsPage`): which group a
@@ -115,29 +116,14 @@ export function filterCampaigns(
 
 // ── The schedule line ───────────────────────────────────────────────────────
 
-const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
 /**
  * ISO days (1 = Monday … 7 = Sunday) as the shortest honest phrase: "Every day",
- * "Mon–Fri", "Mon, Wed, Fri". Out-of-range values are dropped rather than
- * printed, and a list with nothing valid left in it says nothing at all.
+ * "Mon–Fri", "Mon, Wed, Fri" — `describeIsoDays`, shared with the campaign
+ * builder's echo. Out-of-range values are dropped rather than printed, and a list
+ * with nothing valid left in it says nothing at all.
  */
 export function callingDaysLabel(days: readonly number[] | undefined): string | null {
-  if (!days || days.length === 0) return null;
-  const valid = [...new Set(days)].filter((d) => Number.isInteger(d) && d >= 1 && d <= 7).sort((a, b) => a - b);
-  if (valid.length === 0) return null;
-  if (valid.length === 7) return 'Every day';
-
-  const contiguous = valid.every((d, i) => i === 0 || d === valid[i - 1]! + 1);
-  if (contiguous && valid.length >= 3) {
-    return `${DAY_NAMES[valid[0]! - 1]}–${DAY_NAMES[valid[valid.length - 1]! - 1]}`;
-  }
-  return valid.map((d) => DAY_NAMES[d - 1]).join(', ');
-}
-
-/** `09:00:00` → `09:00`. Anything not shaped like a time is shown as sent. */
-function hhmm(value: string): string {
-  return /^\d{2}:\d{2}/.test(value) ? value.slice(0, 5) : value;
+  return describeIsoDays(days);
 }
 
 /**

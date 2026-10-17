@@ -56,6 +56,7 @@ export * from './agency/station';
 export * from './agency/actions';
 export * from './agency/campaign-stats';
 export * from './agency/campaign-lifecycle';
+export * from './agency/campaign-defaults';
 export * from './agency/performance';
 export * from './agency/spine';
 export type { AgencyActionErrorCode } from './errors';

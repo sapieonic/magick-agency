@@ -17,15 +17,18 @@ import type { BuilderStepId } from '../pages/campaigns/agency/builderFlow';
 /**
  * Typed product-event catalog.
  *
- * Every custom analytics event the app emits is declared here as a small
- * emitter function with an explicit, PII-free property shape. Centralizing the
+ * Every custom analytics event the app emits is declared here — its name and
+ * its explicit, PII-free property shape as one member of {@link EventCatalog}
+ * (at the end of this file), and, for the call sites, a small named emitter over
+ * the generic {@link track}. Centralizing the
  * names + shapes keeps call sites consistent, prevents drift/typos across event
  * names, and makes it easy to audit that we only ever send IDs, enum labels,
  * counts, and boolean flags — never bodies, emails, phone numbers, or contact
  * data.
  *
- * All emitters delegate to `captureEvent`, which is a safe no-op when analytics
- * is disabled (no key configured).
+ * Every emitter goes through `track`, then `captureEvent` — which accepts only a
+ * catalogued name and is a safe no-op when analytics is disabled (no key
+ * configured).
  *
  * ── The product dimension is NOT declared here ─────────────────────────
  * The names in this catalog are flat and stay flat. The separator between shells
@@ -39,6 +42,14 @@ import type { BuilderStepId } from '../pages/campaigns/agency/builderFlow';
  * Events fired outside both shells (login, onboarding, super-admin) deliberately
  * carry no `product` at all.
  */
+
+/**
+ * Emit one catalogued event: the name and its property shape come from
+ * {@link EventCatalog}, so a call cannot pair an event with another's shape.
+ */
+export function track<K extends EventName>(name: K, props: EventCatalog[K]): void {
+  captureEvent(name, props);
+}
 
 // --- Activation, setup, monetization, and reliability -------------------
 
@@ -148,45 +159,20 @@ type ExportFailureReason =
   | 'incomplete_source'
   | 'unknown_error';
 
-export function trackAuthAttempted(props: {
-  action: AuthAction;
-  provider: AuthProvider;
-  door?: AuthDoor;
-}): void {
-  captureEvent('auth_attempted', props);
+export function trackAuthAttempted(props: EventCatalog['auth_attempted']): void {
+  track('auth_attempted', props);
 }
 
-export function trackAuthSucceeded(props: {
-  action: AuthAction;
-  provider: AuthProvider;
-  door?: AuthDoor;
-  is_new: boolean;
-  needs_phone: boolean;
-}): void {
-  captureEvent('auth_succeeded', props);
+export function trackAuthSucceeded(props: EventCatalog['auth_succeeded']): void {
+  track('auth_succeeded', props);
 }
 
-export function trackAuthFailed(props: {
-  action: AuthAction;
-  provider: AuthProvider;
-  door?: AuthDoor;
-  reason: AuthFailureReason;
-}): void {
-  captureEvent('auth_failed', props);
+export function trackAuthFailed(props: EventCatalog['auth_failed']): void {
+  track('auth_failed', props);
 }
 
-export function trackEmailVerificationRequired(props: {
-  source: EmailVerificationSource;
-  /**
-   * Which sign-in page sent them to the verification wall. Carried here as well as
-   * on the three `auth_*` events because this is the step where an invited agent's
-   * onboarding actually stalls — they are told to check an inbox and simply do not
-   * come back — so leaving it door-blind would hide the drop-off in exactly the
-   * dimension {@link AuthDoor} was added to expose.
-   */
-  door?: AuthDoor;
-}): void {
-  captureEvent('email_verification_required', props);
+export function trackEmailVerificationRequired(props: EventCatalog['email_verification_required']): void {
+  track('email_verification_required', props);
 }
 
 type SetupEventProps = {
@@ -210,8 +196,8 @@ export function trackSetupEvent<EventName extends keyof SetupEventProps>(
   captureEvent(eventName, props);
 }
 
-export function trackFeatureGateUnavailable(props: FeatureGateUnavailableProps): void {
-  captureEvent('feature_gate_unavailable', props);
+export function trackFeatureGateUnavailable(props: EventCatalog['feature_gate_unavailable']): void {
+  track('feature_gate_unavailable', props);
 }
 
 type ExportEventProps = {
@@ -239,12 +225,8 @@ export function trackExportEvent<EventName extends keyof ExportEventProps>(
   captureEvent(eventName, props);
 }
 
-export function trackApiErrorEvent(props: {
-  status: number;
-  path: AnalyticsPath;
-  request_id?: string;
-}): void {
-  captureEvent('api_error', props);
+export function trackApiErrorEvent(props: EventCatalog['api_error']): void {
+  track('api_error', props);
 }
 
 // --- Agency Dialer --------------------------------------------------------
@@ -286,242 +268,100 @@ type AgencyStationJoinFailedReason =
   | 'no_campaign'
   | 'api_error';
 
-export function trackAgencyStationJoined(props: {
-  persona: AgencyPersona;
-  campaign_id: string;
-  disposition_count: number;
-  break_reason_count: number;
-  wrapup_seconds: number;
-  wrapup_auto_return: boolean;
-  record_calls: boolean;
-  /** Count of contact-context fields configured — never their names. */
-  context_field_count: number;
-}): void {
-  captureEvent('agency_station_joined', props);
+export function trackAgencyStationJoined(props: EventCatalog['agency_station_joined']): void {
+  track('agency_station_joined', props);
 }
 
-export function trackAgencyStationJoinFailed(props: {
-  reason: AgencyStationJoinFailedReason;
-  /** The agent's state on the OTHER campaign, when the conflict was parseable. */
-  conflict_state: AgencyAgentState | null;
-}): void {
-  captureEvent('agency_station_join_failed', props);
+export function trackAgencyStationJoinFailed(props: EventCatalog['agency_station_join_failed']): void {
+  track('agency_station_join_failed', props);
 }
 
-export function trackAgencyStationConnectionChanged(props: {
-  state: 'open' | 'reconnecting' | 'session_gone' | 'superseded' | 'disconnected';
-  close_code: number | null;
-  retry_count: number;
-  had_live_attempt: boolean;
-  had_wrapup: boolean;
-  /**
-   * Why the console stopped, on `disconnected` only. The two causes need
-   * different responses — `flapping` points at the network or a load balancer,
-   * `heartbeat` at the server's own pong path — and a single `disconnected` bucket
-   * made the incident visible but not triageable.
-   */
-  cause?: 'heartbeat' | 'flapping';
-}): void {
-  captureEvent('agency_station_connection_changed', props);
+export function trackAgencyStationConnectionChanged(props: EventCatalog['agency_station_connection_changed']): void {
+  track('agency_station_connection_changed', props);
 }
 
-export function trackAgencyStationTokenMintFailed(props: { retry_count: number }): void {
-  captureEvent('agency_station_token_mint_failed', props);
+export function trackAgencyStationTokenMintFailed(props: EventCatalog['agency_station_token_mint_failed']): void {
+  track('agency_station_token_mint_failed', props);
 }
 
-export function trackAgencyAttemptReserved(props: {
-  campaign_id: string;
-  attempt_number: number;
-  prior_attempt_count: number;
-  context_field_count: number;
-  /** Recovered via `ready.active_attempt` after a reconnect, not a fresh reservation. */
-  from_reconnect: boolean;
-}): void {
-  captureEvent('agency_attempt_reserved', props);
+export function trackAgencyAttemptReserved(props: EventCatalog['agency_attempt_reserved']): void {
+  track('agency_attempt_reserved', props);
 }
 
-export function trackAgencyAttemptBridged(props: {
-  campaign_id: string;
-  /** reserved → bridged, whole seconds. Count only. */
-  ring_seconds: number;
-  from_reconnect: boolean;
-}): void {
-  captureEvent('agency_attempt_bridged', props);
+export function trackAgencyAttemptBridged(props: EventCatalog['agency_attempt_bridged']): void {
+  track('agency_attempt_bridged', props);
 }
 
-export function trackAgencyAttemptReleased(props: {
-  campaign_id: string;
-  reason: AgencyReleaseReason;
-  requires_disposition: boolean;
-  was_bridged: boolean;
-  /** bridged_at → release, whole seconds. 0 when never bridged. */
-  talk_seconds: number;
-  /** Arrived via `ready.missed_release` — the agent came back to a call they never saw end. */
-  missed: boolean;
-}): void {
-  captureEvent('agency_attempt_released', props);
+export function trackAgencyAttemptReleased(props: EventCatalog['agency_attempt_released']): void {
+  track('agency_attempt_released', props);
 }
 
-export function trackAgencyDispositionSubmitted(props: {
-  campaign_id: string;
-  code_index: number;
-  is_success: boolean;
-  terminal: boolean;
-  suppress: boolean;
-  requires_note: boolean;
-  requires_datetime: boolean;
-  has_note: boolean;
-  scheduled_callback: boolean;
-  selection_method: 'number_key' | 'click';
-  /** release → submit, whole seconds: the real wrap-up handle time. */
-  seconds_to_submit: number;
-}): void {
-  captureEvent('agency_disposition_submitted', props);
+export function trackAgencyDispositionSubmitted(props: EventCatalog['agency_disposition_submitted']): void {
+  track('agency_disposition_submitted', props);
 }
 
-export function trackAgencyDispositionFailed(props: {
-  campaign_id: string;
-  kind: 'rejected' | 'conflict' | 'discarded';
-  code: AgencyActionErrorCode | null;
-  /** The disposition catalog had to be re-synced (`unknown_disposition_code`). */
-  catalog_resynced: boolean;
-  /** The number-key → code mapping shifted under the agent mid-call. */
-  keys_remapped: boolean;
-}): void {
-  captureEvent('agency_disposition_failed', props);
+export function trackAgencyDispositionFailed(props: EventCatalog['agency_disposition_failed']): void {
+  track('agency_disposition_failed', props);
 }
 
-export function trackAgencyDispositionBlocked(props: {
-  campaign_id: string;
-  reason: DispositionBlockReason;
-  method: 'number_key' | 'click' | 'ctrl_enter';
-}): void {
-  captureEvent('agency_disposition_blocked', props);
+export function trackAgencyDispositionBlocked(props: EventCatalog['agency_disposition_blocked']): void {
+  track('agency_disposition_blocked', props);
 }
 
-export function trackAgencyWaitingForDialer(props: { campaign_id: string }): void {
-  captureEvent('agency_waiting_for_dialer', props);
+export function trackAgencyWaitingForDialer(props: EventCatalog['agency_waiting_for_dialer']): void {
+  track('agency_waiting_for_dialer', props);
 }
 
-export function trackAgencyPresenceChanged(props: {
-  campaign_id: string;
-  action: 'go_available' | 'end_break';
-  method: 'shortcut' | 'click';
-}): void {
-  captureEvent('agency_presence_changed', props);
+export function trackAgencyPresenceChanged(props: EventCatalog['agency_presence_changed']): void {
+  track('agency_presence_changed', props);
 }
 
-export function trackAgencyPresenceRefused(props: {
-  campaign_id: string;
-  action: 'go_available' | 'end_break';
-  code: AgencyActionErrorCode | null;
-}): void {
-  captureEvent('agency_presence_refused', props);
+export function trackAgencyPresenceRefused(props: EventCatalog['agency_presence_refused']): void {
+  track('agency_presence_refused', props);
 }
 
-export function trackAgencyBreakRequested(props: {
-  campaign_id: string;
-  /** Position in `break_reasons` the server delivered — never the code/label. */
-  reason_index: number;
-  is_paid: boolean | null;
-  /** The request landed as a queued (pending) break rather than an immediate one. */
-  queued: boolean;
-  agent_state: AgencyAgentState;
-  method: 'shortcut' | 'click';
-}): void {
-  captureEvent('agency_break_requested', props);
+export function trackAgencyBreakRequested(props: EventCatalog['agency_break_requested']): void {
+  track('agency_break_requested', props);
 }
 
-export function trackAgencyBreakRejected(props: {
-  campaign_id: string;
-  code: 'unknown_break_reason' | 'other';
-  catalog_resynced: boolean;
-}): void {
-  captureEvent('agency_break_rejected', props);
+export function trackAgencyBreakRejected(props: EventCatalog['agency_break_rejected']): void {
+  track('agency_break_rejected', props);
 }
 
-export function trackAgencyQueuedBreakResolved(props: {
-  campaign_id: string;
-  outcome: 'cancelled' | 'already_applied' | 'cancel_failed';
-}): void {
-  captureEvent('agency_queued_break_resolved', props);
+export function trackAgencyQueuedBreakResolved(props: EventCatalog['agency_queued_break_resolved']): void {
+  track('agency_queued_break_resolved', props);
 }
 
-export function trackAgencyMicState(props: {
-  campaign_id: string;
-  outcome: 'ok' | AudioCaptureFailureKind;
-  stage: 'preflight' | 'mid_call';
-}): void {
-  captureEvent('agency_mic_state', props);
+export function trackAgencyMicState(props: EventCatalog['agency_mic_state']): void {
+  track('agency_mic_state', props);
 }
 
-export function trackAgencyShortcutUsed(props: {
-  campaign_id: string;
-  key: 'a' | 'b' | 'n' | 'slash' | 'c' | 'd' | 'digit' | 'ctrl_enter';
-  /** The branch actually acted, vs the key being refused (e.g. pad disabled). */
-  accepted: boolean;
-}): void {
-  captureEvent('agency_shortcut_used', props);
+export function trackAgencyShortcutUsed(props: EventCatalog['agency_shortcut_used']): void {
+  track('agency_shortcut_used', props);
 }
 
-export function trackAgencyHangupRequested(props: {
-  campaign_id: string;
-  was_bridged: boolean;
-  talk_seconds: number;
-}): void {
-  captureEvent('agency_hangup_requested', props);
+export function trackAgencyHangupRequested(props: EventCatalog['agency_hangup_requested']): void {
+  track('agency_hangup_requested', props);
 }
 
-export function trackAgencyHangupFailed(props: {
-  campaign_id: string;
-  code: AgencyActionErrorCode | 'unknown';
-}): void {
-  captureEvent('agency_hangup_failed', props);
+export function trackAgencyHangupFailed(props: EventCatalog['agency_hangup_failed']): void {
+  track('agency_hangup_failed', props);
 }
 
-export function trackAgencyHoldAbandoned(props: {
-  /**
-   * Which press-and-hold was abandoned.
-   *
-   * `retry_campaign` is the supervisor's create-a-retry confirmation, which
-   * shares the gesture with the agent's hang-up and nothing else — the two are
-   * different people, different surfaces and different consequences, so they
-   * must stay distinguishable in the funnel rather than being folded into one
-   * "hold" count.
-   */
-  control: 'hangup' | 'retry_campaign';
-  held_ms_bucket: 'under_200' | '200_400' | '400_500';
-}): void {
-  captureEvent('agency_hold_abandoned', props);
+export function trackAgencyHoldAbandoned(props: EventCatalog['agency_hold_abandoned']): void {
+  track('agency_hold_abandoned', props);
 }
 
-export function trackAgencyDncMarked(props: {
-  campaign_id: string;
-  scope: 'campaign' | 'tenant';
-  /** The tenant-wide DNC list write actually landed (vs still in flight). */
-  dnc_recorded: boolean;
-  opened_via: 'shortcut' | 'click';
-}): void {
-  captureEvent('agency_dnc_marked', props);
+export function trackAgencyDncMarked(props: EventCatalog['agency_dnc_marked']): void {
+  track('agency_dnc_marked', props);
 }
 
-export function trackAgencyDncFailed(props: {
-  campaign_id: string;
-  scope: 'campaign' | 'tenant';
-  code: AgencyActionErrorCode | null;
-}): void {
-  captureEvent('agency_dnc_failed', props);
+export function trackAgencyDncFailed(props: EventCatalog['agency_dnc_failed']): void {
+  track('agency_dnc_failed', props);
 }
 
-export function trackAgencyStationExit(props: {
-  campaign_id: string;
-  action: 'leave' | 'exit' | 'history_link';
-  outcome: 'completed' | 'blocked' | 'failed';
-  blocked_reason: 'live_call' | 'in_pool' | 'leaving' | null;
-  agent_state: AgencyAgentState;
-  destination: 'landing' | 'campaign' | 'performance' | 'attempts' | null;
-}): void {
-  captureEvent('agency_station_exit', props);
+export function trackAgencyStationExit(props: EventCatalog['agency_station_exit']): void {
+  track('agency_station_exit', props);
 }
 
 /**
@@ -533,207 +373,80 @@ export function trackAgencyStationExit(props: {
  * failure alone cannot carry, and the one that decides whether the agent is
  * still safely at their old station or now at neither.
  */
-export function trackAgencyStationSwitchCampaign(props: {
-  from_campaign_id: string;
-  to_campaign_id: string;
-  /**
-   * The agent's state on the OTHER campaign. For `blocked_mid_call` this is
-   * the FRESH state the resume request just returned — the one fact that
-   * decided the abort — not the (possibly stale) state the conflict screen
-   * opened with; every other outcome uses the state from the original 409.
-   */
-  agent_state: AgencyAgentState;
-  /**
-   * `blocked_mid_call`: the resumed session turned out to be mid-call, so
-   * `leave` was never even attempted — distinct from `failed`, which is a
-   * request that was tried and did not land.
-   */
-  outcome: 'completed' | 'failed' | 'blocked_mid_call';
-  failed_stage: 'resume' | 'leave' | 'rejoin' | null;
-}): void {
-  captureEvent('agency_station_switch_campaign', props);
+export function trackAgencyStationSwitchCampaign(props: EventCatalog['agency_station_switch_campaign']): void {
+  track('agency_station_switch_campaign', props);
 }
 
-export function trackAgencyNotesSaveFailed(props: {
-  campaign_id: string;
-  failure: 'retryable' | 'terminal';
-  /** Another writer moved `updated_at` out from under this save. */
-  foreign_write: boolean;
-}): void {
-  captureEvent('agency_notes_save_failed', props);
+export function trackAgencyNotesSaveFailed(props: EventCatalog['agency_notes_save_failed']): void {
+  track('agency_notes_save_failed', props);
 }
 
-export function trackAgencyCampaignTabViewed(props: {
-  campaign_id: string;
-  tab: CampaignTabId;
-  from_tab: CampaignTabId | null;
-  campaign_status: AgencyCampaignStatus;
-}): void {
-  captureEvent('agency_campaign_tab_viewed', props);
+export function trackAgencyCampaignTabViewed(props: EventCatalog['agency_campaign_tab_viewed']): void {
+  track('agency_campaign_tab_viewed', props);
 }
 
-export function trackAgencyCampaignLifecycleAction(props: {
-  campaign_id: string;
-  action: 'start' | 'pause' | 'resume' | 'stop';
-  from_status: AgencyCampaignStatus;
-  to_status: AgencyCampaignStatus;
-  confirmed: boolean;
-  from_tab: CampaignTabId;
-}): void {
-  captureEvent('agency_campaign_lifecycle_action', props);
+export function trackAgencyCampaignLifecycleAction(props: EventCatalog['agency_campaign_lifecycle_action']): void {
+  track('agency_campaign_lifecycle_action', props);
 }
 
-export function trackAgencyCampaignLifecycleFailed(props: {
-  campaign_id: string;
-  action: 'start' | 'pause' | 'resume' | 'stop';
-  from_status: AgencyCampaignStatus;
-  status_code: number;
-}): void {
-  captureEvent('agency_campaign_lifecycle_failed', props);
+export function trackAgencyCampaignLifecycleFailed(props: EventCatalog['agency_campaign_lifecycle_failed']): void {
+  track('agency_campaign_lifecycle_failed', props);
 }
 
-export function trackAgencyCampaignStallSurfaced(props: {
-  campaign_id: string;
-  code: AgencyStallCode;
-  other_stall_count: number;
-  campaign_status: AgencyCampaignStatus;
-  concurrency_saturated: boolean;
-  abandonment_over_ceiling: boolean;
-}): void {
-  captureEvent('agency_campaign_stall_surfaced', props);
+export function trackAgencyCampaignStallSurfaced(props: EventCatalog['agency_campaign_stall_surfaced']): void {
+  track('agency_campaign_stall_surfaced', props);
 }
 
-export function trackAgencyCampaignStallExpanded(props: {
-  campaign_id: string;
-  code: AgencyStallCode;
-  other_stall_count: number;
-}): void {
-  captureEvent('agency_campaign_stall_expanded', props);
+export function trackAgencyCampaignStallExpanded(props: EventCatalog['agency_campaign_stall_expanded']): void {
+  track('agency_campaign_stall_expanded', props);
 }
 
-export function trackAgencyFloorIntervention(props: {
-  campaign_id: string;
-  action: 'force_available' | 'drawer_opened';
-  target_state: AgencyAgentState;
-  seconds_in_state_bucket: 'under_60' | '1_5m' | '5_15m' | 'over_15m';
-  sort: 'risk' | 'name';
-}): void {
-  captureEvent('agency_floor_intervention', props);
+export function trackAgencyFloorIntervention(props: EventCatalog['agency_floor_intervention']): void {
+  track('agency_floor_intervention', props);
 }
 
-export function trackAgencyActivityFiltered(props: {
-  campaign_id: string;
-  /** Count of selected actions — never the action names/labels. */
-  action_filter_count: number;
-  has_date_range: boolean;
-  /** `available_actions` was served by the server — false means the filter is hidden. */
-  vocabulary_available: boolean;
-}): void {
-  captureEvent('agency_activity_filtered', props);
+export function trackAgencyActivityFiltered(props: EventCatalog['agency_activity_filtered']): void {
+  track('agency_activity_filtered', props);
 }
 
-export function trackAgencyActivityPartial(props: {
-  campaign_id: string;
-  /** Client-side allow-list of the server's reason — never raw prose. */
-  reason: 'core_unavailable' | 'other' | null;
-}): void {
-  captureEvent('agency_activity_partial', props);
+export function trackAgencyActivityPartial(props: EventCatalog['agency_activity_partial']): void {
+  track('agency_activity_partial', props);
 }
 
-export function trackAgencyActivityLoadMore(props: {
-  campaign_id: string;
-  page_index: number;
-  failed: boolean;
-}): void {
-  captureEvent('agency_activity_load_more', props);
+export function trackAgencyActivityLoadMore(props: EventCatalog['agency_activity_load_more']): void {
+  track('agency_activity_load_more', props);
 }
 
-export function trackAgencyRecordingOutcome(props: {
-  status: 'ok' | 'forbidden' | 'purged' | 'not_recorded' | 'unreachable';
-}): void {
-  captureEvent('agency_recording_outcome', props);
+export function trackAgencyRecordingOutcome(props: EventCatalog['agency_recording_outcome']): void {
+  track('agency_recording_outcome', props);
 }
 
-export function trackAgencyRosterIngestStarted(props: {
-  campaign_id: string | null;
-  source: 'builder' | 'top_up';
-  dry_run: boolean;
-  /** CSV headers are contact data — count only. */
-  column_count: number;
-  mapped_variable_count: number;
-  hero_field_count: number;
-}): void {
-  captureEvent('agency_roster_ingest_started', props);
+export function trackAgencyRosterIngestStarted(props: EventCatalog['agency_roster_ingest_started']): void {
+  track('agency_roster_ingest_started', props);
 }
 
-export function trackAgencyRosterIngestCompleted(props: {
-  campaign_id: string;
-  source: 'builder' | 'top_up';
-  rows_read: number;
-  accepted: number;
-  rejected: number;
-  duplicates: number;
-  dnc_suppressed: number;
-  /** Rejection ratio crossed the mis-mapped-column threshold. */
-  high_rejection: boolean;
-  /** accepted + rejected === rows_read. False is a server-side arithmetic alarm. */
-  reconciles: boolean;
-  top_reason: AgencyIngestReasonCode | null;
-}): void {
-  captureEvent('agency_roster_ingest_completed', props);
+export function trackAgencyRosterIngestCompleted(props: EventCatalog['agency_roster_ingest_completed']): void {
+  track('agency_roster_ingest_completed', props);
 }
 
-export function trackAgencyRosterIngestFailed(props: {
-  source: 'builder' | 'top_up';
-  code: AgencyIngestFailureCode;
-}): void {
-  captureEvent('agency_roster_ingest_failed', props);
+export function trackAgencyRosterIngestFailed(props: EventCatalog['agency_roster_ingest_failed']): void {
+  track('agency_roster_ingest_failed', props);
 }
 
-export function trackAgencyCampaignBuilderStepViewed(props: {
-  step: BuilderStepId;
-  step_index: number;
-}): void {
-  captureEvent('agency_campaign_builder_step_viewed', props);
+export function trackAgencyCampaignBuilderStepViewed(props: EventCatalog['agency_campaign_builder_step_viewed']): void {
+  track('agency_campaign_builder_step_viewed', props);
 }
 
-export function trackAgencyCampaignConfigSaved(props: {
-  campaign_id: string | null;
-  source: 'builder' | 'settings';
-  disposition_count: number;
-  /** Dispositions beyond the built-in catalog. */
-  custom_disposition_count: number;
-  /** `suppress` + `terminal` both set — legal, but the second flag is unreachable. */
-  suppress_and_terminal_pairs: number;
-  disposition_retry_rule_count: number;
-  retry_policy_outcome_count: number;
-  wrapup_seconds: number;
-  auto_return: boolean;
-  recording_enabled: boolean;
-  analysis_profile_set: boolean;
-  /** The disposition order was changed via the row arrows. */
-  reordered: boolean;
-}): void {
-  captureEvent('agency_campaign_config_saved', props);
+export function trackAgencyCampaignConfigSaved(props: EventCatalog['agency_campaign_config_saved']): void {
+  track('agency_campaign_config_saved', props);
 }
 
-export function trackAgencyCampaignConfigBlocked(props: {
-  source: 'builder' | 'settings';
-  field_error_count: number;
-}): void {
-  captureEvent('agency_campaign_config_blocked', props);
+export function trackAgencyCampaignConfigBlocked(props: EventCatalog['agency_campaign_config_blocked']): void {
+  track('agency_campaign_config_blocked', props);
 }
 
-export function trackAgentSurfaceViewed(props: {
-  surface: 'performance' | 'attempts';
-  subject: 'me' | 'agent';
-  viewer_persona: AgencyPersona;
-  campaign_scoped: boolean;
-  occupancy_measured: boolean;
-  bucket_count: number;
-  entry: 'home' | 'station_menu' | 'analytics_tab' | 'direct';
-}): void {
-  captureEvent('agent_surface_viewed', props);
+export function trackAgentSurfaceViewed(props: EventCatalog['agent_surface_viewed']): void {
+  track('agent_surface_viewed', props);
 }
 
 /**
@@ -758,22 +471,8 @@ export function trackAgentSurfaceViewed(props: {
  * the campaign selector re-reads without remounting, so the guard keys on the
  * campaign rather than on the mount.
  */
-export function trackAgencyCampaignContributionViewed(props: {
-  campaign_id: string;
-  /** The window the figures were read over — the roster's own vocabulary. */
-  window: AgentStatsWindow;
-  /** Rows actually on screen, after the server's filtering and the dialer runtime's `limit`. */
-  rows: number;
-  /** The server's pre-limit, pre-filter count of groups — with one campaign, agents. */
-  total_groups: number;
-  /** The campaign-grouped line came back. `false` means the Share column is blank. */
-  total_read: boolean;
-  inactive_omitted: number;
-  unattributed_omitted: number;
-  include_inactive: boolean;
-  truncated: boolean;
-}): void {
-  captureEvent('agency_campaign_contribution_viewed', props);
+export function trackAgencyCampaignContributionViewed(props: EventCatalog['agency_campaign_contribution_viewed']): void {
+  track('agency_campaign_contribution_viewed', props);
 }
 
 /**
@@ -797,35 +496,8 @@ export function trackAgencyCampaignContributionViewed(props: {
  * re-render by design, and one event per view would make "how often is this map
  * opened" a count of how often three radio buttons were pressed.
  */
-export function trackAgencyBestHoursViewed(props: {
-  campaign_id: string;
-  /** The window the figures were read over — the roster's own vocabulary. */
-  window: AgentStatsWindow;
-  /** Which metric the colour encoded when the map was opened. */
-  view: 'connect_rate' | 'volume' | 'conversion_rate';
-  /**
-   * The zone the buckets were cut in, or `null` when the field did not arrive.
-   *
-   * The campaign's zone, never the reader's — the two are different and the axis is
-   * labelled from this one or not at all.
-   */
-  resolved_timezone: string | null;
-  /** `false` means the axis carried no zone and the surface said so. */
-  zone_read: boolean;
-  /** 168 on every honest read — stated so a truncated map is visible as one. */
-  cells: number;
-  /** Cells with at least one dial. */
-  cells_with_dials: number;
-  /** Cells the server said not to rate, so they carry no colour. */
-  withheld_cells: number;
-  /** Cells never inside `[from, to)`. `0` when coverage could not be derived. */
-  out_of_window_cells: number;
-  /** `false` when there was no zone to derive coverage in, so blanks are ambiguous. */
-  coverage_known: boolean;
-  /** The server's pre-limit count of groups, for the one case where 168 is not the whole map. */
-  total_groups: number;
-}): void {
-  captureEvent('agency_best_hours_viewed', props);
+export function trackAgencyBestHoursViewed(props: EventCatalog['agency_best_hours_viewed']): void {
+  track('agency_best_hours_viewed', props);
 }
 
 /**
@@ -842,45 +514,20 @@ export function trackAgencyBestHoursViewed(props: {
  * a pooled cohort (a pooled multi-campaign band is not a peer group), so a firing
  * with no campaign in scope would be a bug rather than a state.
  */
-export function trackAgencyCompareTrayOpened(props: {
-  campaign_id: string;
-  window: AgentStatsWindow;
-  /** People on the roster page, i.e. how many the picker offered. */
-  rows_available: number;
-  /** How many were picked at the moment it opened. */
-  agents_selected: number;
-  /** The cohort behind every band in the tray — `benchmark.agents_rated`. */
-  agents_rated: number;
-  /** `false` when the cohort is too thin for the bands to mean much. */
-  benchmark_usable: boolean;
-}): void {
-  captureEvent('agency_compare_tray_opened', props);
+export function trackAgencyCompareTrayOpened(props: EventCatalog['agency_compare_tray_opened']): void {
+  track('agency_compare_tray_opened', props);
 }
 
-export function trackAgentAttemptsFiltered(props: {
-  subject: 'me' | 'agent';
-  filter_group_count: number;
-  has_date_range: boolean;
-  /** Count of disposition-code chips selected — codes themselves are free text. */
-  disposition_chip_count: number;
-  used_free_text: boolean;
-  campaign_scoped: boolean;
-}): void {
-  captureEvent('agent_attempts_filtered', props);
+export function trackAgentAttemptsFiltered(props: EventCatalog['agent_attempts_filtered']): void {
+  track('agent_attempts_filtered', props);
 }
 
-export function trackAgentAttemptsLoadMoreFailed(props: {
-  subject: 'me' | 'agent';
-  pages_loaded: number;
-}): void {
-  captureEvent('agent_attempts_load_more_failed', props);
+export function trackAgentAttemptsLoadMoreFailed(props: EventCatalog['agent_attempts_load_more_failed']): void {
+  track('agent_attempts_load_more_failed', props);
 }
 
-export function trackAgencyStaleResponseDiscarded(props: {
-  surface: 'disposition' | 'attempts_list' | 'dnc' | 'hangup';
-  reason: 'attempt_changed' | 'attempt_id_mismatch' | 'superseded';
-}): void {
-  captureEvent('agency_stale_response_discarded', props);
+export function trackAgencyStaleResponseDiscarded(props: EventCatalog['agency_stale_response_discarded']): void {
+  track('agency_stale_response_discarded', props);
 }
 
 // --- Agency invites (the `/agency/join/:token` landing page) ----------------
@@ -950,44 +597,20 @@ type InviteClaimFailureReason =
  * question that nothing else can answer — and `unreachable` is here so a spell of
  * failed lookups is distinguishable from a spell of nobody clicking.
  */
-export function trackAgencyInviteViewed(props: {
-  /**
-   * Built from {@link InviteUnavailableStatus} rather than restated, so a status
-   * the server adds cannot be reported by the page and silently dropped from the
-   * funnel — the compiler names every place it has to be handled. `pending` and
-   * `unreachable` are this page's own, and neither is a wire value.
-   */
-  status: InviteUnavailableStatus | 'pending' | 'unreachable';
-  /** Null on every status but `pending`, where the invite body is the thing read. */
-  role: AccountRole | null;
-  /** Whether the server could name who sent it. An unnamed invite is colder to receive. */
-  has_inviter: boolean;
-}): void {
-  captureEvent('agency_invite_viewed', props);
+export function trackAgencyInviteViewed(props: EventCatalog['agency_invite_viewed']): void {
+  track('agency_invite_viewed', props);
 }
 
-export function trackAgencyInviteClaimAttempted(props: { method: InviteClaimMethod }): void {
-  captureEvent('agency_invite_claim_attempted', props);
+export function trackAgencyInviteClaimAttempted(props: EventCatalog['agency_invite_claim_attempted']): void {
+  track('agency_invite_claim_attempted', props);
 }
 
-export function trackAgencyInviteClaimSucceeded(props: {
-  method: InviteClaimMethod;
-  /**
-   * Whether the credential's address is the one the invite was sent to. False
-   * only on the Google path, and only after the visitor was shown the mismatch
-   * and confirmed it — which is the difference between a link that was made
-   * deliberately and the stray tenant this page exists to stop.
-   */
-  address_matched: boolean;
-}): void {
-  captureEvent('agency_invite_claim_succeeded', props);
+export function trackAgencyInviteClaimSucceeded(props: EventCatalog['agency_invite_claim_succeeded']): void {
+  track('agency_invite_claim_succeeded', props);
 }
 
-export function trackAgencyInviteClaimFailed(props: {
-  method: InviteClaimMethod;
-  reason: InviteClaimFailureReason;
-}): void {
-  captureEvent('agency_invite_claim_failed', props);
+export function trackAgencyInviteClaimFailed(props: EventCatalog['agency_invite_claim_failed']): void {
+  track('agency_invite_claim_failed', props);
 }
 
 /**
@@ -1003,8 +626,533 @@ export function trackAgencyInviteClaimFailed(props: {
  * because the interesting third outcome is neither: closing the tab. Without it
  * an abandoned mismatch is indistinguishable from one that never happened.
  */
-export function trackAgencyInviteAddressMismatch(props: {
-  outcome: 'shown' | 'confirmed' | 'declined';
-}): void {
-  captureEvent('agency_invite_address_mismatch', props);
+export function trackAgencyInviteAddressMismatch(props: EventCatalog['agency_invite_address_mismatch']): void {
+  track('agency_invite_address_mismatch', props);
 }
+
+// --- The catalog ------------------------------------------------------------
+
+/**
+ * Every custom event this console emits, by name, with its property shape.
+ *
+ * The emitters above are thin names over {@link track} (the call sites and the
+ * test mocks address events through them); this interface is what makes a name
+ * and its shape one declaration. A new event is a member here and, if a call
+ * site wants one, an emitter. `captureEvent` accepts only these names, so a
+ * typo'd or undeclared event no longer type-checks.
+ */
+export interface EventCatalog extends SetupEventProps, ExportEventProps {
+  /** {@link trackAuthAttempted} */
+  auth_attempted: {
+    action: AuthAction;
+    provider: AuthProvider;
+    door?: AuthDoor;
+  };
+  /** {@link trackAuthSucceeded} */
+  auth_succeeded: {
+    action: AuthAction;
+    provider: AuthProvider;
+    door?: AuthDoor;
+    is_new: boolean;
+    needs_phone: boolean;
+  };
+  /** {@link trackAuthFailed} */
+  auth_failed: {
+    action: AuthAction;
+    provider: AuthProvider;
+    door?: AuthDoor;
+    reason: AuthFailureReason;
+  };
+  /** {@link trackEmailVerificationRequired} */
+  email_verification_required: {
+    source: EmailVerificationSource;
+    /**
+     * Which sign-in page sent them to the verification wall. Carried here as well as
+     * on the three `auth_*` events because this is the step where an invited agent's
+     * onboarding actually stalls — they are told to check an inbox and simply do not
+     * come back — so leaving it door-blind would hide the drop-off in exactly the
+     * dimension {@link AuthDoor} was added to expose.
+     */
+    door?: AuthDoor;
+  };
+  /** {@link trackFeatureGateUnavailable} */
+  feature_gate_unavailable: FeatureGateUnavailableProps;
+  /** {@link trackApiErrorEvent} */
+  api_error: {
+    status: number;
+    path: AnalyticsPath;
+    request_id?: string;
+  };
+  /** {@link trackAgencyStationJoined} */
+  agency_station_joined: {
+    persona: AgencyPersona;
+    campaign_id: string;
+    disposition_count: number;
+    break_reason_count: number;
+    wrapup_seconds: number;
+    wrapup_auto_return: boolean;
+    record_calls: boolean;
+    /** Count of contact-context fields configured — never their names. */
+    context_field_count: number;
+  };
+  /** {@link trackAgencyStationJoinFailed} */
+  agency_station_join_failed: {
+    reason: AgencyStationJoinFailedReason;
+    /** The agent's state on the OTHER campaign, when the conflict was parseable. */
+    conflict_state: AgencyAgentState | null;
+  };
+  /** {@link trackAgencyStationConnectionChanged} */
+  agency_station_connection_changed: {
+    state: 'open' | 'reconnecting' | 'session_gone' | 'superseded' | 'disconnected';
+    close_code: number | null;
+    retry_count: number;
+    had_live_attempt: boolean;
+    had_wrapup: boolean;
+    /**
+     * Why the console stopped, on `disconnected` only. The two causes need
+     * different responses — `flapping` points at the network or a load balancer,
+     * `heartbeat` at the server's own pong path — and a single `disconnected` bucket
+     * made the incident visible but not triageable.
+     */
+    cause?: 'heartbeat' | 'flapping';
+  };
+  /** {@link trackAgencyStationTokenMintFailed} */
+  agency_station_token_mint_failed: { retry_count: number };
+  /** {@link trackAgencyAttemptReserved} */
+  agency_attempt_reserved: {
+    campaign_id: string;
+    attempt_number: number;
+    prior_attempt_count: number;
+    context_field_count: number;
+    /** Recovered via `ready.active_attempt` after a reconnect, not a fresh reservation. */
+    from_reconnect: boolean;
+  };
+  /** {@link trackAgencyAttemptBridged} */
+  agency_attempt_bridged: {
+    campaign_id: string;
+    /** reserved → bridged, whole seconds. Count only. */
+    ring_seconds: number;
+    from_reconnect: boolean;
+  };
+  /** {@link trackAgencyAttemptReleased} */
+  agency_attempt_released: {
+    campaign_id: string;
+    reason: AgencyReleaseReason;
+    requires_disposition: boolean;
+    was_bridged: boolean;
+    /** bridged_at → release, whole seconds. 0 when never bridged. */
+    talk_seconds: number;
+    /** Arrived via `ready.missed_release` — the agent came back to a call they never saw end. */
+    missed: boolean;
+  };
+  /** {@link trackAgencyDispositionSubmitted} */
+  agency_disposition_submitted: {
+    campaign_id: string;
+    code_index: number;
+    is_success: boolean;
+    terminal: boolean;
+    suppress: boolean;
+    requires_note: boolean;
+    requires_datetime: boolean;
+    has_note: boolean;
+    scheduled_callback: boolean;
+    selection_method: 'number_key' | 'click';
+    /** release → submit, whole seconds: the real wrap-up handle time. */
+    seconds_to_submit: number;
+  };
+  /** {@link trackAgencyDispositionFailed} */
+  agency_disposition_failed: {
+    campaign_id: string;
+    kind: 'rejected' | 'conflict' | 'discarded';
+    code: AgencyActionErrorCode | null;
+    /** The disposition catalog had to be re-synced (`unknown_disposition_code`). */
+    catalog_resynced: boolean;
+    /** The number-key → code mapping shifted under the agent mid-call. */
+    keys_remapped: boolean;
+  };
+  /** {@link trackAgencyDispositionBlocked} */
+  agency_disposition_blocked: {
+    campaign_id: string;
+    reason: DispositionBlockReason;
+    method: 'number_key' | 'click' | 'ctrl_enter';
+  };
+  /** {@link trackAgencyWaitingForDialer} */
+  agency_waiting_for_dialer: { campaign_id: string };
+  /** {@link trackAgencyPresenceChanged} */
+  agency_presence_changed: {
+    campaign_id: string;
+    action: 'go_available' | 'end_break';
+    method: 'shortcut' | 'click';
+  };
+  /** {@link trackAgencyPresenceRefused} */
+  agency_presence_refused: {
+    campaign_id: string;
+    action: 'go_available' | 'end_break';
+    code: AgencyActionErrorCode | null;
+  };
+  /** {@link trackAgencyBreakRequested} */
+  agency_break_requested: {
+    campaign_id: string;
+    /** Position in `break_reasons` the server delivered — never the code/label. */
+    reason_index: number;
+    is_paid: boolean | null;
+    /** The request landed as a queued (pending) break rather than an immediate one. */
+    queued: boolean;
+    agent_state: AgencyAgentState;
+    method: 'shortcut' | 'click';
+  };
+  /** {@link trackAgencyBreakRejected} */
+  agency_break_rejected: {
+    campaign_id: string;
+    code: 'unknown_break_reason' | 'other';
+    catalog_resynced: boolean;
+  };
+  /** {@link trackAgencyQueuedBreakResolved} */
+  agency_queued_break_resolved: {
+    campaign_id: string;
+    outcome: 'cancelled' | 'already_applied' | 'cancel_failed';
+  };
+  /** {@link trackAgencyMicState} */
+  agency_mic_state: {
+    campaign_id: string;
+    outcome: 'ok' | AudioCaptureFailureKind;
+    stage: 'preflight' | 'mid_call';
+  };
+  /** {@link trackAgencyShortcutUsed} */
+  agency_shortcut_used: {
+    campaign_id: string;
+    key: 'a' | 'b' | 'n' | 'slash' | 'c' | 'd' | 'digit' | 'ctrl_enter';
+    /** The branch actually acted, vs the key being refused (e.g. pad disabled). */
+    accepted: boolean;
+  };
+  /** {@link trackAgencyHangupRequested} */
+  agency_hangup_requested: {
+    campaign_id: string;
+    was_bridged: boolean;
+    talk_seconds: number;
+  };
+  /** {@link trackAgencyHangupFailed} */
+  agency_hangup_failed: {
+    campaign_id: string;
+    code: AgencyActionErrorCode | 'unknown';
+  };
+  /** {@link trackAgencyHoldAbandoned} */
+  agency_hold_abandoned: {
+    /**
+     * Which press-and-hold was abandoned.
+     *
+     * `retry_campaign` is the supervisor's create-a-retry confirmation, which
+     * shares the gesture with the agent's hang-up and nothing else — the two are
+     * different people, different surfaces and different consequences, so they
+     * must stay distinguishable in the funnel rather than being folded into one
+     * "hold" count.
+     */
+    control: 'hangup' | 'retry_campaign';
+    held_ms_bucket: 'under_200' | '200_400' | '400_500';
+  };
+  /** {@link trackAgencyDncMarked} */
+  agency_dnc_marked: {
+    campaign_id: string;
+    scope: 'campaign' | 'tenant';
+    /** The tenant-wide DNC list write actually landed (vs still in flight). */
+    dnc_recorded: boolean;
+    opened_via: 'shortcut' | 'click';
+  };
+  /** {@link trackAgencyDncFailed} */
+  agency_dnc_failed: {
+    campaign_id: string;
+    scope: 'campaign' | 'tenant';
+    code: AgencyActionErrorCode | null;
+  };
+  /** {@link trackAgencyStationExit} */
+  agency_station_exit: {
+    campaign_id: string;
+    action: 'leave' | 'exit' | 'history_link';
+    outcome: 'completed' | 'blocked' | 'failed';
+    blocked_reason: 'live_call' | 'in_pool' | 'leaving' | null;
+    agent_state: AgencyAgentState;
+    destination: 'landing' | 'campaign' | 'performance' | 'attempts' | null;
+  };
+  /** {@link trackAgencyStationSwitchCampaign} */
+  agency_station_switch_campaign: {
+    from_campaign_id: string;
+    to_campaign_id: string;
+    /**
+     * The agent's state on the OTHER campaign. For `blocked_mid_call` this is
+     * the FRESH state the resume request just returned — the one fact that
+     * decided the abort — not the (possibly stale) state the conflict screen
+     * opened with; every other outcome uses the state from the original 409.
+     */
+    agent_state: AgencyAgentState;
+    /**
+     * `blocked_mid_call`: the resumed session turned out to be mid-call, so
+     * `leave` was never even attempted — distinct from `failed`, which is a
+     * request that was tried and did not land.
+     */
+    outcome: 'completed' | 'failed' | 'blocked_mid_call';
+    failed_stage: 'resume' | 'leave' | 'rejoin' | null;
+  };
+  /** {@link trackAgencyNotesSaveFailed} */
+  agency_notes_save_failed: {
+    campaign_id: string;
+    failure: 'retryable' | 'terminal';
+    /** Another writer moved `updated_at` out from under this save. */
+    foreign_write: boolean;
+  };
+  /** {@link trackAgencyCampaignTabViewed} */
+  agency_campaign_tab_viewed: {
+    campaign_id: string;
+    tab: CampaignTabId;
+    from_tab: CampaignTabId | null;
+    campaign_status: AgencyCampaignStatus;
+  };
+  /** {@link trackAgencyCampaignLifecycleAction} */
+  agency_campaign_lifecycle_action: {
+    campaign_id: string;
+    action: 'start' | 'pause' | 'resume' | 'stop';
+    from_status: AgencyCampaignStatus;
+    to_status: AgencyCampaignStatus;
+    confirmed: boolean;
+    from_tab: CampaignTabId;
+  };
+  /** {@link trackAgencyCampaignLifecycleFailed} */
+  agency_campaign_lifecycle_failed: {
+    campaign_id: string;
+    action: 'start' | 'pause' | 'resume' | 'stop';
+    from_status: AgencyCampaignStatus;
+    status_code: number;
+  };
+  /** {@link trackAgencyCampaignStallSurfaced} */
+  agency_campaign_stall_surfaced: {
+    campaign_id: string;
+    code: AgencyStallCode;
+    other_stall_count: number;
+    campaign_status: AgencyCampaignStatus;
+    concurrency_saturated: boolean;
+    abandonment_over_ceiling: boolean;
+  };
+  /** {@link trackAgencyCampaignStallExpanded} */
+  agency_campaign_stall_expanded: {
+    campaign_id: string;
+    code: AgencyStallCode;
+    other_stall_count: number;
+  };
+  /** {@link trackAgencyFloorIntervention} */
+  agency_floor_intervention: {
+    campaign_id: string;
+    action: 'force_available' | 'drawer_opened';
+    target_state: AgencyAgentState;
+    seconds_in_state_bucket: 'under_60' | '1_5m' | '5_15m' | 'over_15m';
+    sort: 'risk' | 'name';
+  };
+  /** {@link trackAgencyActivityFiltered} */
+  agency_activity_filtered: {
+    campaign_id: string;
+    /** Count of selected actions — never the action names/labels. */
+    action_filter_count: number;
+    has_date_range: boolean;
+    /** `available_actions` was served by the server — false means the filter is hidden. */
+    vocabulary_available: boolean;
+  };
+  /** {@link trackAgencyActivityPartial} */
+  agency_activity_partial: {
+    campaign_id: string;
+    /** Client-side allow-list of the server's reason — never raw prose. */
+    reason: 'core_unavailable' | 'other' | null;
+  };
+  /** {@link trackAgencyActivityLoadMore} */
+  agency_activity_load_more: {
+    campaign_id: string;
+    page_index: number;
+    failed: boolean;
+  };
+  /** {@link trackAgencyRecordingOutcome} */
+  agency_recording_outcome: {
+    status: 'ok' | 'forbidden' | 'purged' | 'not_recorded' | 'unreachable';
+  };
+  /** {@link trackAgencyRosterIngestStarted} */
+  agency_roster_ingest_started: {
+    campaign_id: string | null;
+    source: 'builder' | 'top_up';
+    dry_run: boolean;
+    /** CSV headers are contact data — count only. */
+    column_count: number;
+    mapped_variable_count: number;
+    hero_field_count: number;
+  };
+  /** {@link trackAgencyRosterIngestCompleted} */
+  agency_roster_ingest_completed: {
+    campaign_id: string;
+    source: 'builder' | 'top_up';
+    rows_read: number;
+    accepted: number;
+    rejected: number;
+    duplicates: number;
+    dnc_suppressed: number;
+    /** Rejection ratio crossed the mis-mapped-column threshold. */
+    high_rejection: boolean;
+    /** accepted + rejected === rows_read. False is a server-side arithmetic alarm. */
+    reconciles: boolean;
+    top_reason: AgencyIngestReasonCode | null;
+  };
+  /** {@link trackAgencyRosterIngestFailed} */
+  agency_roster_ingest_failed: {
+    source: 'builder' | 'top_up';
+    code: AgencyIngestFailureCode;
+  };
+  /** {@link trackAgencyCampaignBuilderStepViewed} */
+  agency_campaign_builder_step_viewed: {
+    step: BuilderStepId;
+    step_index: number;
+  };
+  /** {@link trackAgencyCampaignConfigSaved} */
+  agency_campaign_config_saved: {
+    campaign_id: string | null;
+    source: 'builder' | 'settings';
+    disposition_count: number;
+    /** Dispositions beyond the built-in catalog. */
+    custom_disposition_count: number;
+    /** `suppress` + `terminal` both set — legal, but the second flag is unreachable. */
+    suppress_and_terminal_pairs: number;
+    disposition_retry_rule_count: number;
+    retry_policy_outcome_count: number;
+    wrapup_seconds: number;
+    auto_return: boolean;
+    recording_enabled: boolean;
+    analysis_profile_set: boolean;
+    /** The disposition order was changed via the row arrows. */
+    reordered: boolean;
+  };
+  /** {@link trackAgencyCampaignConfigBlocked} */
+  agency_campaign_config_blocked: {
+    source: 'builder' | 'settings';
+    field_error_count: number;
+  };
+  /** {@link trackAgentSurfaceViewed} */
+  agent_surface_viewed: {
+    surface: 'performance' | 'attempts';
+    subject: 'me' | 'agent';
+    viewer_persona: AgencyPersona;
+    campaign_scoped: boolean;
+    occupancy_measured: boolean;
+    bucket_count: number;
+    entry: 'home' | 'station_menu' | 'analytics_tab' | 'direct';
+  };
+  /** {@link trackAgencyCampaignContributionViewed} */
+  agency_campaign_contribution_viewed: {
+    campaign_id: string;
+    /** The window the figures were read over — the roster's own vocabulary. */
+    window: AgentStatsWindow;
+    /** Rows actually on screen, after the server's filtering and the dialer runtime's `limit`. */
+    rows: number;
+    /** The server's pre-limit, pre-filter count of groups — with one campaign, agents. */
+    total_groups: number;
+    /** The campaign-grouped line came back. `false` means the Share column is blank. */
+    total_read: boolean;
+    inactive_omitted: number;
+    unattributed_omitted: number;
+    include_inactive: boolean;
+    truncated: boolean;
+  };
+  /** {@link trackAgencyBestHoursViewed} */
+  agency_best_hours_viewed: {
+    campaign_id: string;
+    /** The window the figures were read over — the roster's own vocabulary. */
+    window: AgentStatsWindow;
+    /** Which metric the colour encoded when the map was opened. */
+    view: 'connect_rate' | 'volume' | 'conversion_rate';
+    /**
+     * The zone the buckets were cut in, or `null` when the field did not arrive.
+     *
+     * The campaign's zone, never the reader's — the two are different and the axis is
+     * labelled from this one or not at all.
+     */
+    resolved_timezone: string | null;
+    /** `false` means the axis carried no zone and the surface said so. */
+    zone_read: boolean;
+    /** 168 on every honest read — stated so a truncated map is visible as one. */
+    cells: number;
+    /** Cells with at least one dial. */
+    cells_with_dials: number;
+    /** Cells the server said not to rate, so they carry no colour. */
+    withheld_cells: number;
+    /** Cells never inside `[from, to)`. `0` when coverage could not be derived. */
+    out_of_window_cells: number;
+    /** `false` when there was no zone to derive coverage in, so blanks are ambiguous. */
+    coverage_known: boolean;
+    /** The server's pre-limit count of groups, for the one case where 168 is not the whole map. */
+    total_groups: number;
+  };
+  /** {@link trackAgencyCompareTrayOpened} */
+  agency_compare_tray_opened: {
+    campaign_id: string;
+    window: AgentStatsWindow;
+    /** People on the roster page, i.e. how many the picker offered. */
+    rows_available: number;
+    /** How many were picked at the moment it opened. */
+    agents_selected: number;
+    /** The cohort behind every band in the tray — `benchmark.agents_rated`. */
+    agents_rated: number;
+    /** `false` when the cohort is too thin for the bands to mean much. */
+    benchmark_usable: boolean;
+  };
+  /** {@link trackAgentAttemptsFiltered} */
+  agent_attempts_filtered: {
+    subject: 'me' | 'agent';
+    filter_group_count: number;
+    has_date_range: boolean;
+    /** Count of disposition-code chips selected — codes themselves are free text. */
+    disposition_chip_count: number;
+    used_free_text: boolean;
+    campaign_scoped: boolean;
+  };
+  /** {@link trackAgentAttemptsLoadMoreFailed} */
+  agent_attempts_load_more_failed: {
+    subject: 'me' | 'agent';
+    pages_loaded: number;
+  };
+  /** {@link trackAgencyStaleResponseDiscarded} */
+  agency_stale_response_discarded: {
+    surface: 'disposition' | 'attempts_list' | 'dnc' | 'hangup';
+    reason: 'attempt_changed' | 'attempt_id_mismatch' | 'superseded';
+  };
+  /** {@link trackAgencyInviteViewed} */
+  agency_invite_viewed: {
+    /**
+     * Built from {@link InviteUnavailableStatus} rather than restated, so a status
+     * the server adds cannot be reported by the page and silently dropped from the
+     * funnel — the compiler names every place it has to be handled. `pending` and
+     * `unreachable` are this page's own, and neither is a wire value.
+     */
+    status: InviteUnavailableStatus | 'pending' | 'unreachable';
+    /** Null on every status but `pending`, where the invite body is the thing read. */
+    role: AccountRole | null;
+    /** Whether the server could name who sent it. An unnamed invite is colder to receive. */
+    has_inviter: boolean;
+  };
+  /** {@link trackAgencyInviteClaimAttempted} */
+  agency_invite_claim_attempted: { method: InviteClaimMethod };
+  /** {@link trackAgencyInviteClaimSucceeded} */
+  agency_invite_claim_succeeded: {
+    method: InviteClaimMethod;
+    /**
+     * Whether the credential's address is the one the invite was sent to. False
+     * only on the Google path, and only after the visitor was shown the mismatch
+     * and confirmed it — which is the difference between a link that was made
+     * deliberately and the stray tenant this page exists to stop.
+     */
+    address_matched: boolean;
+  };
+  /** {@link trackAgencyInviteClaimFailed} */
+  agency_invite_claim_failed: {
+    method: InviteClaimMethod;
+    reason: InviteClaimFailureReason;
+  };
+  /** {@link trackAgencyInviteAddressMismatch} */
+  agency_invite_address_mismatch: {
+    outcome: 'shown' | 'confirmed' | 'declined';
+  };
+}
+
+/** A declared event name. */
+export type EventName = keyof EventCatalog;

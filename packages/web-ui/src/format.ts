@@ -36,13 +36,6 @@ export function formatRelativeTime(dateStr: string): string {
   return formatDateShort(dateStr);
 }
 
-export function formatDuration(seconds: number | null | undefined): string {
-  if (seconds == null || seconds <= 0) return '--';
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}
-
 export function formatPhone(phone: string | null | undefined): string {
   if (!phone) return '--';
   if (phone.startsWith('+91') && phone.length === 13) {
@@ -53,10 +46,6 @@ export function formatPhone(phone: string | null | undefined): string {
 
 export function formatNumber(n: number): string {
   return n.toLocaleString('en-IN');
-}
-
-export function formatPercentage(value: number): string {
-  return `${(value * 100).toFixed(1)}%`;
 }
 
 export function truncateId(id: string, length = 8): string {

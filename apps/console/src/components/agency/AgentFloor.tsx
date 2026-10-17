@@ -29,6 +29,7 @@ import type {
   AgencyCampaignStats,
 } from '../../types/agency-campaign';
 import { AgentFloorDrawer } from './AgentFloorDrawer';
+import { formatCount } from '../../utils/format/number';
 import styles from './AgentFloor.module.css';
 
 /**
@@ -174,7 +175,7 @@ function FloorSummary({
                 <span key={slice.state} className={styles.legendItem}>
                   <span className={styles.swatch} data-state={slice.state} aria-hidden="true" />
                   {slice.label}
-                  <strong className={styles.legendCount}>{slice.count.toLocaleString()}</strong>
+                  <strong className={styles.legendCount}>{formatCount(slice.count)}</strong>
                 </span>
               ))}
               {zeros && (
@@ -205,9 +206,9 @@ function FloorSummary({
           <span className={styles.kicker}>Free to take a call</span>
           <span className={styles.readoutLine}>
             <span className={styles.readoutValueFree} data-testid="floor-available">
-              {totals.available.toLocaleString()}
+              {formatCount(totals.available)}
             </span>
-            <span className={styles.readoutDenom}>of {totals.onShift.toLocaleString()} on shift</span>
+            <span className={styles.readoutDenom}>of {formatCount(totals.onShift)} on shift</span>
           </span>
         </div>
         <div className={styles.divider} />
@@ -215,7 +216,7 @@ function FloorSummary({
           <span className={styles.kicker}>Calls handled this shift</span>
           <span className={styles.readoutLine}>
             <span className={styles.readoutValue} data-testid="floor-handled">
-              {totals.handled.toLocaleString()}
+              {formatCount(totals.handled)}
             </span>
             {perAgentLabel(totals.perAgent) && (
               <span className={styles.readoutDenom}>{perAgentLabel(totals.perAgent)}</span>
@@ -330,7 +331,7 @@ function AgentRow({
           <span className={styles.handledBar} aria-hidden="true">
             <span className={styles.handledFill} style={{ width: `${share}%` }} />
           </span>
-          <span className={styles.handledCount}>{agent.calls_handled.toLocaleString()}</span>
+          <span className={styles.handledCount}>{formatCount(agent.calls_handled)}</span>
         </span>
       </td>
 

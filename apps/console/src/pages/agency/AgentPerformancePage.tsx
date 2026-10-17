@@ -19,6 +19,7 @@ import {
   type AgentStatsWindow,
 } from '../../utils/agencyAgentPerformance';
 import type { AgencyStaffingHistoryEntry } from '../../types/agency-stats';
+import { formatCount } from '../../utils/format/number';
 import styles from './AgentPerformancePage.module.css';
 
 /**
@@ -350,7 +351,7 @@ function StaffingHistory({ state }: { state: HistoryState }) {
         <p className={styles.note} data-testid="staffing-active">
           {summary.active === 1
             ? 'You’re currently assigned to 1 of them.'
-            : `You’re currently assigned to ${summary.active.toLocaleString()} of them.`}
+            : `You’re currently assigned to ${formatCount(summary.active)} of them.`}
         </p>
       )}
 
