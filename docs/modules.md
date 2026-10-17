@@ -550,7 +550,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/webrtc-bridge-late-binding.test.ts` | 17 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.bridged.test.ts` | 8 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.seams.test.ts` | 12 |
-| `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 59 |
+| `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 62 |
 | `apps/server/test/unit/core/webrtc-bridge-ring-cancel.test.ts` | 15 |
 | `apps/server/test/unit/core/webrtc-bridge-seam-contract.test.ts` | 3 |
 | `apps/server/test/unit/core/webrtc-bridge-session.test.ts` | 31 |

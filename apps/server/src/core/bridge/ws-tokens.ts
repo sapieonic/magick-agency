@@ -23,6 +23,12 @@ export type WsTokenPurpose = 'provider' | 'webhook';
  * by the post-end grace). The oldest are the windows nearest to ending.
  */
 export const UNSTORED_WS_TOKEN_CAP = 10_000;
+/**
+ * How often an insert may sweep the unstored-token memory for expired entries. Gated on
+ * time, not size: the memory fills during a Redis outage, which is exactly when a scan on
+ * every insert would sit on the dial path.
+ */
+export const UNSTORED_WS_TOKEN_SWEEP_MS = 10_000;
 /*
  * WEBHOOK_TOKEN_POST_END_GRACE_SECONDS (`telephony/webhook-grace.ts`), Q6 (Manas,
  * 2026-10-09): how long a call's WEBHOOK token stays verifiable after the call ends. VoiceLink keeps posting to `/webrtc-status/:callId` after our teardown — the
@@ -49,6 +55,7 @@ export class BridgeWsTokens {
    * enough: one replica and a bridged call does not survive a restart.
    */
   private readonly unstoredWsTokens = new Map<string, number>();
+  private lastUnstoredSweepAt = 0;
 
   constructor(
     private readonly redis: Redis | null,
@@ -91,22 +98,22 @@ export class BridgeWsTokens {
 
   private noteUnstoredWsToken(callId: string, purpose: WsTokenPurpose, forMs: number): void {
     const now = Date.now();
-    // Bounded: prune expired entries before growing (a sustained Redis outage adds two
-    // entries per call, each dropped once its window passes).
-    if (this.unstoredWsTokens.size >= 1000) {
+    // Bounded: prune expired entries, at most once per sweep interval (a sustained Redis
+    // outage adds two entries per call, each dropped once its window passes).
+    if (now - this.lastUnstoredSweepAt >= UNSTORED_WS_TOKEN_SWEEP_MS) {
+      this.lastUnstoredSweepAt = now;
       for (const [key, expiresAt] of this.unstoredWsTokens) if (expiresAt <= now) this.unstoredWsTokens.delete(key);
     }
-    // ...and capped even when nothing has expired (Map order is insertion order).
+    const key = this.unstoredWsTokenKey(callId, purpose);
+    // Re-noting a key moves it to the newest end (Map order is insertion order).
+    this.unstoredWsTokens.delete(key);
+    // ...and capped even when nothing has expired: one insert evicts at most the oldest.
     if (this.unstoredWsTokens.size >= UNSTORED_WS_TOKEN_CAP) {
-      let evicted = 0;
-      for (const key of this.unstoredWsTokens.keys()) {
-        if (this.unstoredWsTokens.size < UNSTORED_WS_TOKEN_CAP) break;
-        this.unstoredWsTokens.delete(key);
-        evicted++;
-      }
-      log.warn({ evicted, cap: UNSTORED_WS_TOKEN_CAP }, 'Unstored WebRTC token memory full — forgetting the oldest');
+      const oldest = this.unstoredWsTokens.keys().next();
+      if (!oldest.done) this.unstoredWsTokens.delete(oldest.value);
+      log.warn({ cap: UNSTORED_WS_TOKEN_CAP }, 'Unstored WebRTC token memory full — forgetting the oldest');
     }
-    this.unstoredWsTokens.set(this.unstoredWsTokenKey(callId, purpose), now + forMs);
+    this.unstoredWsTokens.set(key, now + forMs);
   }
 
   private wasUnstored(callId: string, purpose: WsTokenPurpose): boolean {
@@ -167,7 +174,8 @@ export class BridgeWsTokens {
     // and recording URL arrive after teardown and a missing key is refused.
     this.unstoredWsTokens.delete(this.unstoredWsTokenKey(callId, 'provider'));
     if (this.unstoredWsTokens.has(this.unstoredWsTokenKey(callId, 'webhook'))) {
-      this.unstoredWsTokens.set(this.unstoredWsTokenKey(callId, 'webhook'), Date.now() + WEBHOOK_TOKEN_POST_END_GRACE_SECONDS * 1000);
+      // Re-noted, so the re-armed window moves to the newest end of the eviction order.
+      this.noteUnstoredWsToken(callId, 'webhook', WEBHOOK_TOKEN_POST_END_GRACE_SECONDS * 1000);
     }
     if (!this.redis) return;
     try {
