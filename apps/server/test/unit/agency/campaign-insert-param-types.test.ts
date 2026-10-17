@@ -44,9 +44,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // The column types are read off the squashed BASELINE (one CREATE TABLE, no later
 // ALTERs); the INSERT has 20 columns.
 const BASELINE = resolve(__dirname, '../../../../../packages/db/migrations/0001_baseline.sql');
-// `create()` lives in the repository; the column list it interpolates in the shared
-// SQL fragments (`retryFromCampaign` binds the same twenty).
-const REPOSITORY = resolve(__dirname, '../../../src/db/repositories/agency.repository.ts');
+// The repository is a folder behind the `agency.repository.ts` barrel: `create()`
+// lives in the campaign class's file, and the column list it interpolates in the
+// shared SQL fragments (`retryFromCampaign` binds the same twenty).
+const REPOSITORY = resolve(__dirname, '../../../src/db/repositories/agency/campaign.repository.ts');
 const FRAGMENTS = resolve(__dirname, '../../../src/db/repositories/agency/sql-fragments.ts');
 
 const repoSource = readFileSync(REPOSITORY, 'utf8');
