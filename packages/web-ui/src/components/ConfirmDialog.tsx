@@ -1,4 +1,5 @@
-import { useEffect, useCallback, useRef } from 'react';
+import { useRef } from 'react';
+import { useDialogFocus } from '../hooks/useDialogFocus';
 import styles from './ConfirmDialog.module.css';
 
 /**
@@ -51,57 +52,13 @@ export function ConfirmDialog({
   const showSecondary = Boolean(secondaryLabel && onSecondary);
   const dialogRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
 
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onCancel();
-        return;
-      }
-      // Focus trap: cycle focus within dialog
-      if (e.key === 'Tab' && dialogRef.current) {
-        const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-        );
-        if (focusable.length === 0) return;
-        const first = focusable[0]!;
-        const last = focusable[focusable.length - 1]!;
-        if (e.shiftKey) {
-          if (document.activeElement === first) {
-            e.preventDefault();
-            last.focus();
-          }
-        } else {
-          if (document.activeElement === last) {
-            e.preventDefault();
-            first.focus();
-          }
-        }
-      }
-    },
-    [onCancel],
-  );
-
-  useEffect(() => {
-    if (!open) return;
-    // Save the element that was focused before the dialog opened
-    previousFocusRef.current = document.activeElement as HTMLElement | null;
-    document.addEventListener('keydown', handleKeyDown);
-    // Auto-focus the cancel button when dialog opens. Addressed by ref rather
-    // than `querySelector('button')`: that only ever meant "Cancel" because
-    // Cancel happened to be first in the DOM, so any future reordering of the
-    // footer would silently move the default focus onto an action button.
-    const timer = setTimeout(() => {
-      cancelRef.current?.focus();
-    }, 50);
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-      clearTimeout(timer);
-      // Restore focus to the element that triggered the dialog
-      previousFocusRef.current?.focus();
-    };
-  }, [open, handleKeyDown]);
+  // Focus in, Tab trapped, Escape cancels, focus restored to the trigger —
+  // `useDialogFocus`. Focus opens on Cancel, addressed by ref rather than
+  // `querySelector('button')`: that only ever meant "Cancel" because Cancel
+  // happened to be first in the DOM, so any future reordering of the footer
+  // would silently move the default focus onto an action button.
+  useDialogFocus({ open, dialogRef, onEscape: onCancel, initialFocusRef: cancelRef });
 
   if (!open) return null;
 
