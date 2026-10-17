@@ -35,6 +35,7 @@ import { registerCampaignIngestRoutes } from './proxy-agency-campaigns/ingest.js
  * campaign payload, it is a bug — the dialer runtime owns the campaign schema
  * and has no such column.
  */
+
 /*
  * ─── The two `behavioral` capabilities, actually enforced ────────────────────
  *
@@ -49,6 +50,7 @@ import { registerCampaignIngestRoutes } from './proxy-agency-campaigns/ingest.js
  * The 403 body is `{ error: 'capability_disabled', capability }`; a missing row or
  * a NULL column is "off", and a failed read fails closed.
  */
+
 export async function proxyAgencyCampaignsRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', sessionMiddleware);
   app.addHook('preHandler', tenantContextMiddleware);
