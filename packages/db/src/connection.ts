@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { logger } from '@magick-agency/observability';
+import { bindPoolConnectContext } from '@magick-agency/observability/trace-context';
 
 /**
  * Takes its settings as an argument instead of importing the app config, because
@@ -58,6 +59,8 @@ export function initDbPool(opts: DbPoolOptions): pg.Pool {
     // Decision Q1: verified by default; see `buildSslOption`.
     ssl: buildSslOption(opts),
   });
+  // Keeps a query that waited for a connection in its own trace; see bindPoolConnectContext.
+  bindPoolConnectContext(pool);
 
   pool.on('error', (err) => {
     logger.error({ err }, 'Unexpected database pool error');
