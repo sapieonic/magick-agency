@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, cleanup, act, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
-import { telephonyProviderAlias } from '../../config/telephonyProviders';
+import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
 
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
@@ -33,11 +33,12 @@ vi.mock('../../api/super-admin', () => ({
   putFeatureFlagOverride: vi.fn(), deleteFeatureFlagOverride: vi.fn(),
 }));
 
-vi.mock('../../contexts/ToastContext', () => ({
+vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: vi.fn(), showErrorToast: vi.fn() }),
 }));
 
 import SATenantDetailPage from '../../pages/super-admin/SATenantDetailPage';
+import { listPhoneNumbers, updateAccountConcurrency } from '../../api/super-admin';
 
 function renderPage(entry = '/tenants/t-1') {
   return render(
@@ -404,3 +405,86 @@ describe('SATenantDetailPage — provider concurrency', () => {
   });
 });
 
+// ── Load failures are errors, not empty lists ────────────────────────────────
+// A failed load used to be swallowed into `[]`, so a 500 read as "No accounts"
+// or "No phone numbers assigned" — telling an operator the tenant has nothing
+// when the page simply could not ask.
+
+describe('SATenantDetailPage — load failures', () => {
+  it('shows a phone-number load failure, with a retry, instead of "No phone numbers assigned"', async () => {
+    mocks.getPhones.mockRejectedValueOnce(new Error('phones are down'));
+    renderPage();
+    await waitFor(() => screen.getByText('phones are down'));
+    expect(screen.queryByText('No phone numbers assigned')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+    await waitFor(() => screen.getByText('No phone numbers assigned'));
+    expect(mocks.getPhones).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows an account load failure on the Service tab instead of "No accounts"', async () => {
+    mocks.getAccounts.mockRejectedValueOnce(new Error('accounts are down'));
+    renderPage('/tenants/t-1?tab=service');
+    await waitFor(() => screen.getByText('accounts are down'));
+    expect(screen.queryByText('No accounts')).toBeNull();
+
+    mocks.getAccounts.mockResolvedValueOnce([
+      { id: 'a-1', name: 'Sales', slug: 'sales', status: 'active', max_concurrent_calls: 5 },
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+    await screen.findByRole('cell', { name: 'Sales' });
+  });
+
+  it('shows an assignable-number load failure in the assign dialog instead of an empty picker', async () => {
+    vi.mocked(listPhoneNumbers).mockRejectedValueOnce(new Error('inventory is down'));
+    renderPage();
+    await waitFor(() => screen.getByText('No phone numbers assigned'));
+    fireEvent.click(screen.getAllByRole('button', { name: /assign number/i })[0]!);
+
+    const dialog = within(screen.getByRole('dialog'));
+    await waitFor(() => dialog.getByText('inventory is down'));
+  });
+});
+
+// ── The legacy "Saved" note's timer ──────────────────────────────────────────
+
+describe('SATenantDetailPage — legacy concurrency "Saved" note', () => {
+  const LEGACY = [{ id: 'a-1', name: 'Sales', slug: 'sales', status: 'active', max_concurrent_calls: 5 }];
+
+  async function saveLegacy(value: string) {
+    fireEvent.change(screen.getByLabelText('Legacy max concurrent calls for Sales'), { target: { value } });
+    fireEvent.click(screen.getByRole('button', { name: /save legacy total/i }));
+    await screen.findByText('Saved');
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mocks.getAccounts.mockResolvedValue(LEGACY);
+    vi.mocked(updateAccountConcurrency).mockResolvedValue(undefined as never);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  // The first save's clear-timer used to fire into the second save's window.
+  it('keeps a second save’s "Saved" for its own two seconds', async () => {
+    renderPage('/tenants/t-1?tab=service');
+    await screen.findByRole('cell', { name: 'Sales' });
+
+    await saveLegacy('6');
+    act(() => { vi.advanceTimersByTime(1500); });
+    await saveLegacy('7');
+    act(() => { vi.advanceTimersByTime(600); });
+    expect(screen.getByText('Saved')).toBeTruthy();
+
+    act(() => { vi.advanceTimersByTime(1500); });
+    expect(screen.queryByText('Saved')).toBeNull();
+  });
+
+  it('leaves no timer running after the page unmounts', async () => {
+    const { unmount } = renderPage('/tenants/t-1?tab=service');
+    await screen.findByRole('cell', { name: 'Sales' });
+    await saveLegacy('6');
+
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});

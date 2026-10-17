@@ -1,18 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Mail, Save } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import { useToast } from '../../contexts/ToastContext';
+import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import {
   getNotificationPreferences,
   updateNotificationPreferences,
 } from '../../api/notifications';
-import {
-  PageDescription,
-  PageHeader,
-  EmptyState,
-  ErrorAlert,
-  LoadingSpinner,
-} from '../../components/common';
+import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
+import { PageDescription } from '../../components/common';
 import type {
   NotificationEventPreference,
   NotificationFrequency,

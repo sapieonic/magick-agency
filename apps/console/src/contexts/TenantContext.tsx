@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useAuth } from './AuthContext';
 import { listAccounts, listMyAccounts } from '../api/accounts';
 import type { Tenant, TenantAccount, Membership, Role } from '../types/auth';
@@ -43,7 +43,7 @@ export type AccountResolution = 'loading' | 'ready' | 'degraded' | 'error';
  * The trade-off the reviewer is owed explicitly: the server masks internal error
  * detail, so a status code is a weaker signal than it looks. This design is built
  * to survive that being wrong in the direction that matters. Masking replaces the
- * *body*, not the status (`utils/errors.ts`), and an RBAC 403 is one of the "our
+ * *body*, not the status (`@magick-agency/web-ui/errors`), and an RBAC 403 is one of the "our
  * own business 4xx" the mask passes through intact — but even if a status arrives
  * unrecognisable, `unknown` falls to **degraded**, i.e. the visible, retryable
  * state. The failure mode of a misread is therefore an extra warning banner for an
@@ -341,8 +341,10 @@ export function TenantProvider({ children }: { children: ReactNode }) {
       });
   }, [activeTenantId, activeAccountId, resolveAccounts]);
 
-  return (
-    <TenantContext.Provider value={{
+  // Stable between renders that change none of these, so a re-render above the
+  // provider does not re-render every `useTenant()` consumer.
+  const value = useMemo<TenantContextValue>(
+    () => ({
       activeTenant,
       tenantId: activeTenantId,
       accountId: activeAccountId,
@@ -354,7 +356,24 @@ export function TenantProvider({ children }: { children: ReactNode }) {
       setActiveTenantId,
       setActiveAccountId,
       reloadAccounts,
-    }}>
+    }),
+    [
+      activeTenant,
+      activeTenantId,
+      activeAccountId,
+      accounts,
+      membership,
+      role,
+      accountResolution,
+      accountError,
+      setActiveTenantId,
+      setActiveAccountId,
+      reloadAccounts,
+    ],
+  );
+
+  return (
+    <TenantContext.Provider value={value}>
       {children}
     </TenantContext.Provider>
   );

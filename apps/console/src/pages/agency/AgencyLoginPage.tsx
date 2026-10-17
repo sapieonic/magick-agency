@@ -12,7 +12,7 @@ import {
 } from '../../analytics/events';
 import { SESSION_EXPIRED_MESSAGE } from '../../utils/session';
 import { RETURN_PATH_PARAM, safeReturnPath } from '../../utils/returnPath';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { Logo } from '../../components/common/Logo';
 import { brand } from '../../brand';
 import { GoogleMark } from '../../components/agency/GoogleMark';

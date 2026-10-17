@@ -9,8 +9,8 @@ import {
 } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { retryAnalysis, fetchRecordingBlobUrl } from '../../api/calls';
-import { LoadingSpinner } from '../common';
-import { ErrorText } from '../common/ErrorText';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
+import { ErrorText } from '@magick-agency/web-ui/components/ErrorText';
 import { AudioWaveform } from '../audio/AudioWaveform';
 import type { CallAnalysisResult, ConversationEntry } from '../../types/call';
 import { loadTranscriptVisible, saveTranscriptVisible } from '../../utils/transcript-prefs';

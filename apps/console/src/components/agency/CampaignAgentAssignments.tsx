@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { UserMinus, UserPlus } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import { useToast } from '../../contexts/ToastContext';
+import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { useTeam } from '../../hooks/useTeam';
 import { assignAgent, listCampaignAgents, unassignAgent } from '../../api/agency';
-import { ErrorAlert } from '../common/ErrorAlert';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { ROLES } from '../../config';
 import { agencyPersonaLabel } from '../../utils/agencyPersona';
 import type { Role } from '../../types/auth';

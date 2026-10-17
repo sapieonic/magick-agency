@@ -25,7 +25,7 @@ vi.mock('../analytics/events', () => ({
 
 import { apiFetch, ApiError } from '../api/client';
 import { markSessionStart, getSessionStart } from '../utils/session';
-import { splitRequestId } from '../utils/errors';
+import { splitRequestId } from '@magick-agency/web-ui/errors';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 

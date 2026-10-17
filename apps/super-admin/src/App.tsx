@@ -1,10 +1,10 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { SuperAdminProvider } from './contexts/SuperAdminContext';
-import { ToastProvider } from './contexts/ToastContext';
+import { ToastProvider } from '@magick-agency/web-ui/contexts/ToastContext';
 import RequireSuperAdmin from './components/auth/RequireSuperAdmin';
 import { SuperAdminLayout } from './components/layout/SuperAdminLayout';
-import { LoadingSpinner } from './components/common/LoadingSpinner';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 
 const SuperAdminLoginPage = lazy(() => import('./pages/auth/SuperAdminLoginPage'));
 const SATenantsPage = lazy(() => import('./pages/super-admin/SATenantsPage'));

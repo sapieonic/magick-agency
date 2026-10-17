@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
+import { memo, useState } from 'react';
+import { render } from '@testing-library/react';
 
 vi.mock('../../api/super-admin', () => ({
   superAdminLogin: vi.fn(),
@@ -249,5 +251,34 @@ describe('isAuthenticated', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.isAuthenticated).toBe(true);
+  });
+});
+
+describe('context value identity', () => {
+  // A re-render above the provider must not re-render every `useSuperAdmin()`
+  // consumer when the auth state has not changed.
+  it('does not re-render a memoised consumer when the provider re-renders with unchanged state', async () => {
+    vi.mocked(hasToken).mockReturnValue(false);
+    const seen: { renders: number; loading: boolean } = { renders: 0, loading: true };
+    const Consumer = memo(function Consumer() {
+      seen.loading = useSuperAdmin().loading;
+      seen.renders += 1;
+      return null;
+    });
+    let bump = () => {};
+    function Host() {
+      const [, setN] = useState(0);
+      bump = () => setN((n) => n + 1);
+      return <SuperAdminProvider><Consumer /></SuperAdminProvider>;
+    }
+
+    render(<Host />);
+    await waitFor(() => expect(seen.loading).toBe(false));
+    const settled = seen.renders;
+
+    act(() => bump());
+    act(() => bump());
+
+    expect(seen.renders).toBe(settled);
   });
 });

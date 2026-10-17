@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ShieldOff, X } from 'lucide-react';
 import { createRetry, retryPreview } from '../../api/agencyCampaigns';
 import { useTenant } from '../../contexts/TenantContext';
-import { getErrorMessage } from '../../utils/errors';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { errorCode } from '../../utils/agencyErrors';
 import { useModalFocus } from '../../hooks/useModalFocus';
 import { CallerIdPicker } from '../../pages/agency/CallerIdPicker';

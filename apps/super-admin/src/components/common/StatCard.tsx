@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { useCountUp } from '../../hooks/useCountUp';
-import { LiveDot } from './LiveDot';
+import { LiveDot } from '@magick-agency/web-ui/components/LiveDot';
 import styles from './StatCard.module.css';
 
 interface StatCardProps {

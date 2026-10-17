@@ -24,11 +24,11 @@ import {
   getAgencyCampaignStats,
 } from '../../api/agencyCampaigns';
 import { hasPermission, type Permission } from '../../utils/permissions';
-import { mapWithConcurrency } from '../../utils/concurrency';
+import { mapWithConcurrency } from '@magick-agency/web-ui/concurrency';
 import { listWorkedRing } from '../../utils/agencyCampaignOverview';
 import { stallCopy } from '../../utils/agencyHealthStrip';
 import { lineagePositionLabel } from '../../utils/agencyCampaignLineage';
-import { formatDate, formatRelativeTime } from '../../utils/format';
+import { formatDate, formatRelativeTime } from '@magick-agency/web-ui/format';
 import {
   campaignGroup,
   countCampaigns,
@@ -39,9 +39,9 @@ import {
   type CampaignCounts,
   type CampaignFilter,
 } from '../../utils/agencyCampaignsHome';
-import { ErrorAlert } from '../../components/common/ErrorAlert';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
-import { LiveDot } from '../../components/common/LiveDot';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
+import { LiveDot } from '@magick-agency/web-ui/components/LiveDot';
 import { WorkspaceExit } from '../../components/agency/WorkspaceExit';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import type { AgencyCampaign, AgencyCampaignStats } from '../../types/agency-campaign';

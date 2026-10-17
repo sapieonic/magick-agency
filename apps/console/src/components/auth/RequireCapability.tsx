@@ -1,7 +1,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { useGovernance } from '../../contexts/GovernanceContext';
 import { trackFeatureGateUnavailable } from '../../analytics/events';
-import { LoadingSpinner } from '../common/LoadingSpinner';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { CapabilityUnavailable } from '../common/CapabilityUnavailable';
 
 /*

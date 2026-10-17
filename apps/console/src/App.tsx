@@ -5,7 +5,7 @@ import { TenantProvider } from './contexts/TenantContext';
 import { FeatureFlagsProvider } from './contexts/FeatureFlagsContext';
 import { GovernanceProvider } from './contexts/GovernanceContext';
 import { ThemeProvider } from './contexts/ThemeContext';
-import { ToastProvider } from './contexts/ToastContext';
+import { ToastProvider } from '@magick-agency/web-ui/contexts/ToastContext';
 import RequireAuth from './components/auth/RequireAuth';
 import RequireCapability from './components/auth/RequireCapability';
 import RequireFlag from './components/auth/RequireFlag';

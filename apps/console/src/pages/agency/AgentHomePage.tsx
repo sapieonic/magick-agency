@@ -3,7 +3,7 @@ import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { getMyAssignments } from '../../api/agency';
 import { AccountUnavailable } from '../../components/common/AccountUnavailable';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { WorkspaceExit } from '../../components/agency/WorkspaceExit';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import { AgentNav } from '../../components/agency/AgentNav';

@@ -61,14 +61,16 @@ vi.mock('../../api/users', () => ({
   removeUserMembership: mocks.removeUserMembership,
 }));
 vi.mock('../../analytics/events', () => ({ trackSetupEvent: mocks.trackSetupEvent }));
-vi.mock('../../components/common', () => ({
+vi.mock('@magick-agency/web-ui/components/PageHeader', () => ({
   PageHeader: ({ title, actions }: { title: string; actions?: React.ReactNode }) => <div><h1>{title}</h1>{actions}</div>,
-  PageDescription: () => null,
-  LoadingSpinner: () => null,
-  ErrorAlert: () => null,
-  EmptyState: ({ action }: { action?: React.ReactNode }) => <div>{action}</div>,
-  ConfirmDialog: () => null,
 }));
+vi.mock('../../components/common', () => ({ PageDescription: () => null }));
+vi.mock('@magick-agency/web-ui/components/LoadingSpinner', () => ({ LoadingSpinner: () => null }));
+vi.mock('@magick-agency/web-ui/components/ErrorAlert', () => ({ ErrorAlert: () => null }));
+vi.mock('@magick-agency/web-ui/components/EmptyState', () => ({
+  EmptyState: ({ action }: { action?: React.ReactNode }) => <div>{action}</div>,
+}));
+vi.mock('@magick-agency/web-ui/components/ConfirmDialog', () => ({ ConfirmDialog: () => null }));
 
 import TeamPage, { inviteSignInUrl } from '../../pages/team/TeamPage';
 

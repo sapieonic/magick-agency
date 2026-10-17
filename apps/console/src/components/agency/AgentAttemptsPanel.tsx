@@ -32,9 +32,9 @@ import {
   attemptStateLabel,
   type AgencyAttempt,
 } from '../../types/agency-spine';
-import { EmptyState } from '../common/EmptyState';
-import { ErrorAlert } from '../common/ErrorAlert';
-import { LoadingSpinner } from '../common/LoadingSpinner';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { FilterChip } from './FilterChip';
 import { FiltersCard } from './FiltersCard';
 import spine from './SpineListLayout.module.css';

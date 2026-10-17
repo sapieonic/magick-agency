@@ -12,7 +12,7 @@ import type {
   FeatureFlagResolveResponse,
   FlagScopeType,
 } from '@magick-agency/contracts/api/platform/super-admin';
-import { LoadingSpinner } from '../common/LoadingSpinner';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { BooleanFlagCell } from './feature-flags/BooleanFlagCell';
 import { OverrideReasonDialog } from './feature-flags/OverrideReasonDialog';
 import { NumberFlagDialog } from './feature-flags/NumberFlagDialog';

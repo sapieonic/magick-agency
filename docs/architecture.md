@@ -24,6 +24,7 @@ TypeScript source (B2); `tsc --noEmit` covers `src` and tests in each package (B
 | `packages/domain` | Pure dialer rules with no imports beyond contracts: abandonment predicate, break manager, keyset cursor, rates, retry bounds and summary, success disposition, timers |
 | `packages/db` | pg pool (`connection.ts`), shared repositories and models, the baseline migration, `BASELINE.md` |
 | `packages/observability` | pino logger, log context, PII masking, OTel meter and `@Traced`, metric declarations per module area under `src/metrics/` |
+| `packages/web-ui` | UI pieces shared by both SPAs, consumed as TypeScript source: the 15 common components with their CSS modules, `ToastContext`, `global.css`, error and format helpers, `parseApiErrorBody` (both API clients), `mapWithConcurrency`, `useAsyncResource`. React and the router are peer dependencies; its own no-parent-brand scan (B17) |
 | `tooling/` | `test-env.ts` (per-worktree test database), the Vitest decorator transform |
 | `docker/` | Dev Postgres and Redis (`docker-compose.dev.yml`); production: the server image (`Dockerfile`, `entrypoint.sh`), nginx with both UIs (`web.Dockerfile`, `nginx.conf`) and `docker-compose.prod.yml` (see [`operations.md`](operations.md)) |
 
@@ -331,6 +332,9 @@ bucket keyed on a client-supplied header. Buckets key on `request.ip`, which tru
 - **Super-admin console** (`apps/super-admin`). Tenants, users, admins, phone numbers, feature flags,
   usage and audit; `saFetch` with the JWT in `sessionStorage`; a dev proxy for `/super-admin`. Same
   branding guard.
+- **Shared UI** (`packages/web-ui`). The components, toast context, stylesheet and helpers both SPAs
+  import by path; it has its own branding guard (`packages/web-ui/test/noParentBrand.test.ts`), as
+  the apps' guards scan only their own `src/`.
 - **Server branding guard**: `apps/server/test/unit/branding/no-parent-brand.test.ts` scans
   `apps/server/src` and `packages/*/src` with comments stripped.
 

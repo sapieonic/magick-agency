@@ -7,7 +7,7 @@ import {
   saStatusLabel,
   roleLabel,
 } from '../utils/saStatus';
-import { Modal } from '../components/common/Modal';
+import { Modal } from '@magick-agency/web-ui/components/Modal';
 
 describe('saStatus — saStatusMeta tone mapping', () => {
   it('maps positive statuses', () => {

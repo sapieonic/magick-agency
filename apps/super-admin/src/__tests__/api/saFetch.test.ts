@@ -17,9 +17,9 @@ Object.defineProperty(window, 'location', {
   writable: true,
 });
 
-import { saFetch, setToken, clearToken, SuperAdminApiError } from '../../api/super-admin';
+import { saFetch, setToken, clearToken, SuperAdminApiError, superAdminLogin } from '../../api/super-admin';
 import { ORIGINATOR_HEADER, ORIGINATOR } from '../../config';
-import { splitRequestId } from '../../utils/errors';
+import { splitRequestId } from '@magick-agency/web-ui/errors';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -135,11 +135,11 @@ describe('saFetch — non-ok responses', () => {
     expect(err).toMatchObject({ statusCode: 409, details });
   });
 
-  it('falls back to "API error N" when body has no message field', async () => {
-    mocks.fetch.mockResolvedValue(
-      makeErrResponse(500, { error: 'internal' }),
-    );
+  it('falls back to the `error` label, then "API error N", when body has no message field', async () => {
+    mocks.fetch.mockResolvedValue(makeErrResponse(500, { error: 'internal' }));
+    await expect(saFetch('/url')).rejects.toThrow('internal');
 
+    mocks.fetch.mockResolvedValue(makeErrResponse(500, {}));
     await expect(saFetch('/url')).rejects.toThrow('API error 500');
   });
 
@@ -237,14 +237,23 @@ describe('saError — message resolution', () => {
     });
   });
 
-  it('prefers a top-level message over a zod issue when both are present', async () => {
+  // The order the console's `ApiError` has always used: a non-empty issue list
+  // is the more specific answer (Fastify leaves `message: 'Bad Request'` beside it).
+  it('prefers a zod issue over a top-level message when both are present', async () => {
     const msg = await messageFor(
-      errRes(400, { message: 'Top level wins', details: [{ message: 'issue detail' }] }),
+      errRes(400, { message: 'Bad Request', details: [{ message: 'issue detail' }] }),
+    );
+    expect(msg).toBe('issue detail');
+  });
+
+  it('keeps the top-level message when the issue list says nothing readable', async () => {
+    const msg = await messageFor(
+      errRes(400, { message: 'Top level wins', details: [{ code: 'custom' }] }),
     );
     expect(msg).toBe('Top level wins');
   });
 
-  it('reads the first zod issue when the server sends no top-level message', async () => {
+  it('reads the zod issues, with their paths, when the server sends no top-level message', async () => {
     const msg = await messageFor(
       errRes(400, {
         error: 'Validation Error',
@@ -259,7 +268,7 @@ describe('saError — message resolution', () => {
       }),
     );
     expect(msg).toBe(
-      'Unknown status "canceled" for offering "ai_calls". Valid values: queued, initiating',
+      'status: Unknown status "canceled" for offering "ai_calls". Valid values: queued, initiating; offset: second issue',
     );
   });
 
@@ -282,8 +291,8 @@ describe('saError — message resolution', () => {
     expect(msg).toBe('plain string issue');
   });
 
-  it('falls back to the status string when there is neither', async () => {
-    expect(await messageFor(errRes(409, { error: 'Conflict' }))).toBe('API error 409');
+  it('falls back to the error label, then the status string, when there is neither', async () => {
+    expect(await messageFor(errRes(409, { error: 'Conflict' }))).toBe('Conflict');
     expect(await messageFor(errRes(400, {}))).toBe('API error 400');
   });
 
@@ -304,5 +313,75 @@ describe('saError — message resolution', () => {
     ['an empty array', []],
   ])('never throws when `details` is %s rather than an issue list', async (_label, details) => {
     expect(await messageFor(errRes(400, { details }))).toBe('API error 400');
+  });
+});
+
+// ── Field-level problems beat Fastify's generic message ──────────────────────
+// Fastify's default 400 body is `{ statusCode, error: 'Bad Request', message:
+// 'Bad Request' }`, and a handler that adds a `details` or `issues` array leaves
+// that generic `message` in place. The specific problem must win, exactly as the
+// console's `ApiError` reads it (both clients parse through one helper).
+
+describe('saError — validation detail beats a generic top-level message', () => {
+  function errRes(status: number, body: unknown): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: new Headers({ 'Content-Type': 'application/json' }),
+    });
+  }
+
+  it('surfaces a `details` issue over message "Bad Request"', async () => {
+    mocks.fetch.mockResolvedValue(errRes(400, {
+      statusCode: 400,
+      error: 'Bad Request',
+      message: 'Bad Request',
+      details: [{ path: ['max_concurrent'], message: 'Must be a positive integer' }],
+    }));
+    const err = (await saFetch('/url').catch((e: unknown) => e)) as SuperAdminApiError;
+    expect(err).toBeInstanceOf(SuperAdminApiError);
+    expect(err.message).toBe('max_concurrent: Must be a positive integer');
+  });
+
+  it('surfaces an `issues` issue over message "Bad Request"', async () => {
+    mocks.fetch.mockResolvedValue(errRes(400, {
+      statusCode: 400,
+      error: 'Bad Request',
+      message: 'Bad Request',
+      issues: [{ path: ['e164'], message: 'Not an E.164 number' }],
+    }));
+    const err = (await saFetch('/url').catch((e: unknown) => e)) as SuperAdminApiError;
+    expect(err.message).toBe('e164: Not an E.164 number');
+  });
+});
+
+describe('superAdminLogin — error message', () => {
+  function jsonRes(status: number, body: unknown, headers: Record<string, string> = {}): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: new Headers({ 'Content-Type': 'application/json', ...headers }),
+    });
+  }
+
+  it('surfaces a validation issue rather than the generic "Bad Request"', async () => {
+    mocks.fetch.mockResolvedValue(jsonRes(400, {
+      statusCode: 400,
+      error: 'Bad Request',
+      message: 'Bad Request',
+      issues: [{ path: ['email'], message: 'Invalid email' }],
+    }));
+    await expect(superAdminLogin('nope', 'pw')).rejects.toThrow('email: Invalid email');
+  });
+
+  it('keeps "Login failed" when the body says nothing usable', async () => {
+    mocks.fetch.mockResolvedValue(jsonRes(400, {}));
+    await expect(superAdminLogin('a@b.c', 'pw')).rejects.toThrow('Login failed');
+  });
+
+  it('embeds the request id for a masked failure', async () => {
+    mocks.fetch.mockResolvedValue(
+      jsonRes(500, { error: 'Internal Error', message: 'Something went wrong.' }, { 'x-request-id': 'req_login' }),
+    );
+    const err = (await superAdminLogin('a@b.c', 'pw').catch((e: unknown) => e)) as Error;
+    expect(splitRequestId(err.message)).toEqual({ message: 'Something went wrong.', requestId: 'req_login' });
   });
 });

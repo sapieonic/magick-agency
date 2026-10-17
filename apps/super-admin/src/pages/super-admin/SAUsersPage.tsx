@@ -4,14 +4,12 @@ import { Search, Users } from 'lucide-react';
 import { useSuperAdminUsers } from '../../hooks/useSuperAdminUsers';
 import { useSuperAdminTenants } from '../../hooks/useSuperAdminTenants';
 import type { SuperAdminUser } from '@magick-agency/contracts/api/platform/super-admin';
-import {
-  PageHeader,
-  DataTable,
-  StatusBadge,
-  ErrorAlert,
-  EmptyState,
-} from '../../components/common';
-import type { Column } from '../../components/common/DataTable';
+import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
+import { DataTable } from '@magick-agency/web-ui/components/DataTable';
+import { StatusBadge } from '@magick-agency/web-ui/components/StatusBadge';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
+import type { Column } from '@magick-agency/web-ui/components/DataTable';
 import { TenantPicker } from '../../components/super-admin/TenantPicker';
 import { saStatusColor, saStatusLabel, roleLabel } from '../../utils/saStatus';
 import styles from './SAUsersPage.module.css';

@@ -59,7 +59,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
-vi.mock('../../contexts/ToastContext', () => ({
+vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: mocks.showErrorToast }),
 }));
 vi.mock('../../api/agencyCampaigns', () => ({

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
-import { useToast } from '../../contexts/ToastContext';
+import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { useGovernance } from '../../contexts/GovernanceContext';
 import { useCallAnalysisProfiles } from '../../hooks/useCallAnalysisProfiles';
 import { getAgencyCampaign, updateAgencyCampaign } from '../../api/agencyCampaigns';
@@ -37,10 +37,10 @@ import {
 import { CampaignBehaviourSection } from '../campaigns/agency/CampaignBehaviourSection';
 import { CallerIdPicker, AGENCY_TELEPHONY_PROVIDER } from './CallerIdPicker';
 import { CampaignRecordingField } from '../../components/agency/CampaignRecordingField';
-import { Breadcrumbs } from '../../components/common/Breadcrumbs';
+import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
-import { ErrorAlert } from '../../components/common/ErrorAlert';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 import styles from './AgencyCampaignSettingsPage.module.css';

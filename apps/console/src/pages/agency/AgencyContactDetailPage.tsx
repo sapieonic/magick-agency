@@ -4,7 +4,7 @@ import { PhoneOutgoing, Play } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { getCampaignAttempts, getCampaignContact } from '../../api/agencySpine';
-import { getErrorMessage } from '../../utils/errors';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { resolveContextFields } from '../../utils/agencyContext';
 import {
   agentCellCopy,
@@ -14,10 +14,10 @@ import {
   formatTalkTime,
   recordingCellCopy,
 } from '../../utils/agencySpineCopy';
-import { Breadcrumbs } from '../../components/common/Breadcrumbs';
-import { EmptyState } from '../../components/common/EmptyState';
-import { ErrorAlert } from '../../components/common/ErrorAlert';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import {
   attemptOutcomeLabel,

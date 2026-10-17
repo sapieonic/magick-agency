@@ -920,7 +920,7 @@ function instant(raw: string | null | undefined): Date | null {
 /**
  * A date and time, in one short phrase — `11 Aug, 09:00`.
  *
- * Not `formatDate` from `utils/format`, which is date-only: the header line is
+ * Not `formatDate` from `@magick-agency/web-ui/format`, which is date-only: the header line is
  * read beside "Updated 10:23" and a start with no clock on it invites the reader
  * to assume midnight. The reader's own locale and zone, deliberately — this is a
  * wall-clock fact about when somebody pressed a button, not a bucket boundary,

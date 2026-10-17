@@ -9,16 +9,16 @@ import {
   getAgencyAttemptCall,
   type AgencyAttemptCallDetail,
 } from '../../api/agencySpine';
-import { getErrorMessage } from '../../utils/errors';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { errorCode, errorStatus } from '../../utils/agencyErrors';
 import {
   AGENCY_ANALYTICS_CAPABILITY,
   AGENCY_RECORDING_CAPABILITY,
 } from '../../utils/agencyCampaignRecording';
-import { Breadcrumbs } from '../../components/common/Breadcrumbs';
-import { EmptyState } from '../../components/common/EmptyState';
-import { ErrorAlert } from '../../components/common/ErrorAlert';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import {
   CallDetailView,

@@ -5,8 +5,8 @@ import { useAuth, type InviteCredential } from '../../contexts/AuthContext';
 import { getInvite, InviteIdentityInUseError, InviteUnavailableError } from '../../api/invites';
 import type { AgencyInvite, InviteUnavailableStatus } from '../../types/invite';
 import { AGENCY_LOGIN_PATH } from '../../utils/returnPath';
-import { getErrorMessage } from '../../utils/errors';
-import { formatDate } from '../../utils/format';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
+import { formatDate } from '@magick-agency/web-ui/format';
 import {
   analyticsRole,
   assessPassword,
@@ -22,7 +22,7 @@ import {
   trackAgencyInviteClaimSucceeded,
   trackAgencyInviteViewed,
 } from '../../analytics/events';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { GoogleMark } from '../../components/agency/GoogleMark';
 import { JoinCardHeader } from '../../components/agency/join/JoinCardHeader';
 import { Unavailable } from '../../components/agency/join/Unavailable';

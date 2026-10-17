@@ -1,4 +1,4 @@
-import { formatDateShort } from './format';
+import { formatDateShort } from '@magick-agency/web-ui/format';
 import { agentDurationLong, agentPct, agentSeconds, ratePct } from './agencyAgentPerformance';
 import { AGENCY_ROSTER_MIN_RATE_DENOMINATOR } from '../types/agency-stats';
 import type {

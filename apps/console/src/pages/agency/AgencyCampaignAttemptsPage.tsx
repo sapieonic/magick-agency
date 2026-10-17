@@ -13,12 +13,12 @@ import {
   User,
 } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import { useToast } from '../../contexts/ToastContext';
+import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { downloadSpineCsv, getCampaignAttempts } from '../../api/agencySpine';
 import { outcomeReportFilename } from '../../api/exportCsv';
 import { hasPermission } from '../../utils/permissions';
-import { getErrorMessage } from '../../utils/errors';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import {
   ATTEMPTS_DESCRIPTION,
   SPINE_PRIVACY_NOTE,
@@ -30,11 +30,11 @@ import {
   recordingCellCopy,
   recordingDisabledNote,
 } from '../../utils/agencySpineCopy';
-import { Breadcrumbs } from '../../components/common/Breadcrumbs';
+import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
-import { EmptyState } from '../../components/common/EmptyState';
-import { ErrorAlert } from '../../components/common/ErrorAlert';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { PageDescription } from '../../components/common/PageDescription';
 import { FilterChip } from '../../components/agency/FilterChip';
 import { FiltersCard } from '../../components/agency/FiltersCard';

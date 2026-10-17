@@ -1,7 +1,7 @@
 import type { Role } from '../types/auth';
 import type { InviteUnavailableStatus } from '../types/invite';
 import type { AccountRole } from '../analytics/events';
-import { getErrorMessage } from './errors';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
 
 /**
  * The agency invite page's pure half: the words it says and the small rules

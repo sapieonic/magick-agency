@@ -33,7 +33,7 @@ vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../contexts/GovernanceContext', () => ({
   useGovernance: () => ({ isEnabled: mocks.isEnabled, loading: false, map: {}, refresh: vi.fn() }),
 }));
-vi.mock('../../contexts/ToastContext', () => ({
+vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: mocks.showErrorToast }),
 }));
 vi.mock('../../api/agencyCampaigns', () => ({ getAgencyCampaign: mocks.getAgencyCampaign }));

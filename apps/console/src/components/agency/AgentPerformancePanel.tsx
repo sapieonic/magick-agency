@@ -20,7 +20,7 @@ import {
 import type { PerformanceReadout } from '../../utils/agencyCampaignPerformance';
 import type { AgencyAgentStats, AgencyAgentStatsByCampaign } from '../../types/agency-stats';
 import type { PeriodState, PeriodStates } from '../../hooks/useAgentPerformance';
-import { LoadingSpinner } from '../common/LoadingSpinner';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { AgentBucketChart } from './AgentBucketChart';
 import styles from './AgentPerformancePanel.module.css';
 
