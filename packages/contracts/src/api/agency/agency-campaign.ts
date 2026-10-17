@@ -31,6 +31,15 @@ export type {
   AgencyStall,
   AgencyStallCode,
 };
+// The campaign config defaults the server applies and the console previews, one
+// declaration for both (`../../agency/campaign-defaults.ts`).
+export {
+  AGENCY_DEFAULT_DISPOSITION_CATALOG,
+  AGENCY_DEFAULT_DISPOSITION_RETRY,
+  AGENCY_DEFAULT_OUR_FAULT_REDIAL_DELAY_MINUTES,
+  AGENCY_OUR_FAULT_REDIAL_BOUND,
+  AGENCY_OUR_FAULT_RETRY_DEFAULT,
+} from '../../agency';
 
 /** Roster ingest lifecycle. `pending` → `running` → terminal. */
 export type AgencyIngestJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';

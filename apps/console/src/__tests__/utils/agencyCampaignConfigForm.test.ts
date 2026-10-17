@@ -1,3 +1,8 @@
+import {
+  AGENCY_DEFAULT_DISPOSITION_CATALOG,
+  AGENCY_OUR_FAULT_REDIAL_BOUND,
+  AGENCY_OUR_FAULT_RETRY_DEFAULT,
+} from '@magick-agency/contracts/agency';
 import { describe, it, expect } from 'vitest';
 import {
   BUILT_IN_CODES,
@@ -63,8 +68,9 @@ describe('the built-in codes', () => {
 
   it('gives do_not_call `suppress` and NOT `terminal`, matching the API', () => {
     /**
-     * The three copies of this catalog have to agree and cannot share a
-     * constant, so this is the only thing stopping them drifting.
+     * The catalog is the contract's (`AGENCY_DEFAULT_DISPOSITION_CATALOG`), which
+     * the server's create default and `BUILT_IN_DISPOSITIONS` also are; this pins
+     * the console's reading of it.
      *
      * `terminal` was the flag this copy added and neither of the others has.
      * The API's `resolveDispositionDecision` reads `suppress` first and returns
@@ -73,6 +79,9 @@ describe('the built-in codes', () => {
      * contact from `suppressed` to the weaker `completed`. It is `suppress`, not
      * `terminal`, that stops the number being dialed again.
      */
+    expect(DEFAULT_DISPOSITIONS).toBe(AGENCY_DEFAULT_DISPOSITION_CATALOG);
+    expect(OUR_FAULT_REDIAL_BOUND).toBe(AGENCY_OUR_FAULT_REDIAL_BOUND);
+    expect(OUR_FAULT_RETRY_DEFAULT).toBe(AGENCY_OUR_FAULT_RETRY_DEFAULT);
     const dnc = DEFAULT_DISPOSITIONS.find((entry) => entry.code === 'do_not_call')!;
     expect(dnc.suppress).toBe(true);
     expect('terminal' in dnc).toBe(false);

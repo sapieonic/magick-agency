@@ -1,9 +1,13 @@
-import type {
-  AgencyCampaign,
-  AgencyDispositionEntry,
-  AgencyRetryOutcome,
-  AgencyRetryPolicy,
-  AgencyRetryRule,
+import {
+  AGENCY_DEFAULT_DISPOSITION_CATALOG,
+  AGENCY_DEFAULT_DISPOSITION_RETRY,
+  AGENCY_OUR_FAULT_REDIAL_BOUND,
+  AGENCY_OUR_FAULT_RETRY_DEFAULT,
+  type AgencyCampaign,
+  type AgencyDispositionEntry,
+  type AgencyRetryOutcome,
+  type AgencyRetryPolicy,
+  type AgencyRetryRule,
 } from '../types/agency-campaign';
 
 /**
@@ -291,8 +295,9 @@ export const OUR_FAULT_RETRY_OUTCOMES: AgencyRetryOutcome[] = ['agent_disconnect
 /**
  * What the server uses for an our-fault row the campaign leaves unset.
  *
- * Mirrored from the server's `DEFAULT_RETRY_POLICY.agent_disconnected`. It exists so
- * the editor can SEED a fresh row with it rather than with zero.
+ * The contract's `AGENCY_OUR_FAULT_RETRY_DEFAULT` — the server's
+ * `DEFAULT_RETRY_POLICY.agent_disconnected` is pinned equal to it by a server test.
+ * It exists so the editor can SEED a fresh row with it rather than with zero.
  *
  * It is the right seed for `canceled` too, by a different derivation that lands
  * on the same pair: that outcome never reaches `DEFAULT_RETRY_POLICY` at all
@@ -316,13 +321,14 @@ export const OUR_FAULT_RETRY_OUTCOMES: AgencyRetryOutcome[] = ['agent_disconnect
  * *delay* box, because the seed supplied `max_attempts` the operator never
  * typed.
  */
-export const OUR_FAULT_RETRY_DEFAULT: AgencyRetryRule = { delay_minutes: 5, max_attempts: 3 };
+export const OUR_FAULT_RETRY_DEFAULT: Readonly<AgencyRetryRule> = AGENCY_OUR_FAULT_RETRY_DEFAULT;
 
 /**
- * The platform-wide ceiling the server clamps an our-fault row to
- * (`OUR_FAULT_REDIAL_BOUND`). Mirrored for copy only — never sent.
+ * The platform-wide ceiling the server clamps an our-fault row to — the
+ * contract's `AGENCY_OUR_FAULT_REDIAL_BOUND`, which the server reads too. Used for
+ * copy only — never sent.
  */
-export const OUR_FAULT_REDIAL_BOUND = 3;
+export const OUR_FAULT_REDIAL_BOUND = AGENCY_OUR_FAULT_REDIAL_BOUND;
 
 export const OUTCOME_LABELS: Record<AgencyRetryOutcome, string> = {
   no_answer: 'No answer',
@@ -432,14 +438,15 @@ export interface CampaignConfigState {
 }
 
 /**
- * The retry rule the server ships on the built-in `voicemail` disposition.
+ * The retry rule the server ships on the built-in `voicemail` disposition (the
+ * contract's `AGENCY_DEFAULT_DISPOSITION_RETRY`).
  *
  * Named because it is used twice: as that entry's default, and as the seed when
  * an operator switches a disposition's own retry ON in the editor. Seeding from
  * zero would be worse than useless there — `max_attempts: 0` is a rule that
  * never fires, so turning the control on would appear to do nothing.
  */
-export const DEFAULT_DISPOSITION_RETRY: AgencyRetryRule = { delay_minutes: 240, max_attempts: 2 };
+export const DEFAULT_DISPOSITION_RETRY: Readonly<AgencyRetryRule> = AGENCY_DEFAULT_DISPOSITION_RETRY;
 
 /**
  * What the API seeds a new campaign's catalog with, so the UI starts identically.
@@ -455,17 +462,12 @@ export const DEFAULT_DISPOSITION_RETRY: AgencyRetryRule = { delay_minutes: 240, 
  *
  * The compliance worry runs the other way round from how it reads: it is
  * `suppress`, not `terminal`, that stops the number being retried, and the server's
- * `builtInSemanticMismatches` flags exactly that flag's absence. The server's exported
- * `BUILT_IN_DISPOSITIONS` and the API's `DEFAULT_DISPOSITION_CATALOG` both
- * declare `{ suppress: true }` alone; this is the third copy agreeing with them.
- * The server, the dialer runtime and this console cannot share a constant, so the test below is the only thing
- * keeping them from drifting again.
+ * `builtInSemanticMismatches` flags exactly that flag's absence. There is one
+ * declaration now: the contract's `AGENCY_DEFAULT_DISPOSITION_CATALOG`, which the
+ * server's `BUILT_IN_DISPOSITIONS` and `DEFAULT_DISPOSITION_CATALOG` also are.
+ * Frozen, so every form copies it through {@link cloneDisposition}.
  */
-export const DEFAULT_DISPOSITIONS: AgencyDispositionEntry[] = [
-  { code: 'voicemail', label: 'Voicemail', retry: { ...DEFAULT_DISPOSITION_RETRY } },
-  { code: 'callback', label: 'Callback', requires_datetime: true },
-  { code: 'do_not_call', label: 'Do not call', suppress: true },
-];
+export const DEFAULT_DISPOSITIONS: readonly AgencyDispositionEntry[] = AGENCY_DEFAULT_DISPOSITION_CATALOG;
 
 /**
  * Copy one catalog entry, including its retry rule.

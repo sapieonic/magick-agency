@@ -891,3 +891,12 @@ describe('issuesToDetails', () => {
     ])).toEqual({ calling_days: 'first' });
   });
 });
+
+describe('one built-in catalog for the create default, the semantics set and the console', () => {
+  it('is the contract’s declaration, not a copy', async () => {
+    const { AGENCY_DEFAULT_DISPOSITION_CATALOG } = await import('@magick-agency/contracts/agency');
+    const { BUILT_IN_DISPOSITIONS } = await import('../../../src/agency/disposition-policy.js');
+    expect(DEFAULT_DISPOSITION_CATALOG).toBe(AGENCY_DEFAULT_DISPOSITION_CATALOG);
+    expect(BUILT_IN_DISPOSITIONS).toBe(AGENCY_DEFAULT_DISPOSITION_CATALOG);
+  });
+});

@@ -1,3 +1,5 @@
+import { AGENCY_DEFAULT_DISPOSITION_CATALOG } from '@magick-agency/contracts/agency';
+
 /**
  * ─── AGENCY CAMPAIGN CONFIG VALIDATION (public API layer) ───────────────────
  *
@@ -87,15 +89,11 @@
  * structurally unreachable behind an earlier-checked flag is the "inert config"
  * shape this project keeps being bitten by (see `DEFAULT_RETRY_POLICY` and the
  * empty-catalog case above), so the honest default is the one that says only
- * what is true. This is a separate constant rather than an import of
- * `BUILT_IN_DISPOSITIONS`; `test/unit/agency/agency-campaign-config.test.ts` pins
- * its shape so the two cannot drift silently.
+ * what is true. The catalog is declared once, in the contract
+ * (`AGENCY_DEFAULT_DISPOSITION_CATALOG`), and `BUILT_IN_DISPOSITIONS` and the
+ * console's campaign builder read the same declaration, so the three cannot drift.
  */
-export const DEFAULT_DISPOSITION_CATALOG = [
-  { code: 'voicemail', label: 'Voicemail', retry: { delay_minutes: 240, max_attempts: 2 } },
-  { code: 'callback', label: 'Callback', requires_datetime: true },
-  { code: 'do_not_call', label: 'Do not call', suppress: true },
-] as const;
+export const DEFAULT_DISPOSITION_CATALOG = AGENCY_DEFAULT_DISPOSITION_CATALOG;
 
 /**
  * Fill in a create body's config defaults. Returns a NEW object; the input is not

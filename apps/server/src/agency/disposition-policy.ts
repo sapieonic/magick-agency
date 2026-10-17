@@ -1,4 +1,7 @@
-import type { AgencyDisposition } from '@magick-agency/contracts/agency';
+import {
+  AGENCY_DEFAULT_DISPOSITION_CATALOG,
+  type AgencyDisposition,
+} from '@magick-agency/contracts/agency';
 import type { RetryDecision } from './retry-policy.js';
 
 /**
@@ -67,30 +70,9 @@ import type { RetryDecision } from './retry-policy.js';
  * a compliance floor that overrides operator config is a decision, not an
  * implementation detail.
  */
-export const BUILT_IN_DISPOSITIONS: readonly AgencyDisposition[] = Object.freeze([
-  // The only signal a call was answered by a machine. With AMD off the
-  // carrier reports `connected`, so voicemail retry cannot be an outcome rule and
-  // has to be this.
-  Object.freeze({
-    code: 'voicemail',
-    label: 'Voicemail',
-    retry: { delay_minutes: 240, max_attempts: 2 },
-  }),
-  // The scheduler's dependency. `requires_datetime` is what makes the console
-  // collect a time, and the time is what the contact is re-queued for.
-  Object.freeze({
-    code: 'callback',
-    label: 'Callback',
-    requires_datetime: true,
-  }),
-  // The DNC path's dependency. `suppress` is immediate and irreversible from the
-  // dialer's side.
-  Object.freeze({
-    code: 'do_not_call',
-    label: 'Do not call',
-    suppress: true,
-  }),
-]) as readonly AgencyDisposition[];
+// Declared once in the contract (`AGENCY_DEFAULT_DISPOSITION_CATALOG`, frozen, with
+// each entry's reason beside it); the create path's default and the console read it too.
+export const BUILT_IN_DISPOSITIONS: readonly AgencyDisposition[] = AGENCY_DEFAULT_DISPOSITION_CATALOG;
 
 /** The built-in codes, as a set, for callers that only need membership. */
 export const BUILT_IN_DISPOSITION_CODES: ReadonlySet<string> = new Set(

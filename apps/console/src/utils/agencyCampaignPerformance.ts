@@ -1,5 +1,6 @@
 import { formatDuration } from './agencyClock';
 import type { AgencyCampaignStats } from '../types/agency-campaign';
+import { AGENCY_CAMPAIGN_MIN_RATE_DENOMINATOR } from '../types/agency-stats';
 
 /**
  * The derived figures — connect rate, conversion, handle time, wrap-up, the
@@ -54,18 +55,12 @@ import type { AgencyCampaignStats } from '../types/agency-campaign';
  */
 
 /**
- * The floor under which a percentage is withheld rather than printed.
+ * The floor under which a percentage is withheld rather than printed: the
+ * contract's `AGENCY_CAMPAIGN_MIN_RATE_DENOMINATOR` (25 dials placed), where the
+ * reasoning lives beside the roster's own, different floor.
  *
- * A rate is the one figure on this screen that leaves the room. "We're
- * converting a third of our conversations" is repeated in a stand-up, written
- * into a weekly summary, and used to decide whether a list is worth buying
- * again — and over a handful of dials it is noise wearing a decimal point. At
- * eight dials one extra answer moves the connect rate twelve points, so the
- * number a supervisor quotes on Tuesday is a different number on Wednesday for
- * reasons that have nothing to do with the campaign.
- *
- * Withholding is therefore not caution about our arithmetic — the arithmetic is
- * the server's and it is exact. It is a refusal to present a figure with the settled
+ * Withholding is not caution about our arithmetic — the arithmetic is the
+ * server's and it is exact. It is a refusal to present a figure with the settled
  * air of a measurement when the next call can still move it several points.
  *
  * Applied to the two RATES only. Handle time and wrap-up are averages over
@@ -80,7 +75,7 @@ import type { AgencyCampaignStats } from '../types/agency-campaign';
  * behind its conversion rate. That is what the denominator line on the card is
  * for, and it is why the line is not optional.
  */
-export const RATE_MIN_ATTEMPTS = 25;
+export const RATE_MIN_ATTEMPTS = AGENCY_CAMPAIGN_MIN_RATE_DENOMINATOR;
 
 /**
  * The line under a figure naming what it was measured against.
