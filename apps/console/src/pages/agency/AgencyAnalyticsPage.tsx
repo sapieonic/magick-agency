@@ -15,6 +15,7 @@ import { CampaignPerformance } from '../../components/agency/CampaignPerformance
 import { AgentAnalyticsSection } from '../../components/agency/AgentAnalyticsSection';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import type { AgencyCampaign, AgencyCampaignStats } from '../../types/agency-campaign';
+import { formatCount } from '../../utils/format/number';
 import styles from './AgencyAnalyticsPage.module.css';
 
 /**
@@ -477,7 +478,7 @@ export function AgencyAnalyticsPage() {
               {hidden > 0 && (
                 <div className={styles.more}>
                   <p className={styles.moreText}>
-                    Showing {visible.length.toLocaleString()} of {campaigns.length.toLocaleString()} campaigns,
+                    Showing {formatCount(visible.length)} of {formatCount(campaigns.length)} campaigns,
                     newest first. Every running, paused or stopping campaign is always shown.
                   </p>
                   <button
@@ -488,7 +489,7 @@ export function AgencyAnalyticsPage() {
                   >
                     {loadingMore
                       ? 'Loading…'
-                      : `Show ${nextCount.toLocaleString()} more`}
+                      : `Show ${formatCount(nextCount)} more`}
                   </button>
                 </div>
               )}

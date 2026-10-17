@@ -11,6 +11,7 @@ import {
   type PerformanceReadout,
 } from '../../utils/agencyCampaignPerformance';
 import type { AgencyCampaignStats } from '../../types/agency-campaign';
+import { formatCount } from '../../utils/format/number';
 import styles from './CampaignPerformance.module.css';
 
 /**
@@ -288,14 +289,14 @@ export function CampaignPerformance({ stats, wrapupSeconds }: CampaignPerformanc
               <div className={styles.cardHead}>
                 <div>
                   <h3 className={styles.cardTitle}>
-                    Where the {breakdown.total.toLocaleString()} connected calls went
+                    Where the {formatCount(breakdown.total)} connected calls went
                   </h3>
                   <p className={styles.cardDesc}>
                     Only the first bucket feeds the conversion rate above.
                   </p>
                 </div>
                 <span className={styles.cardTag}>
-                  {breakdown.total.toLocaleString()} connected
+                  {formatCount(breakdown.total)} connected
                 </span>
               </div>
 
@@ -305,7 +306,7 @@ export function CampaignPerformance({ stats, wrapupSeconds }: CampaignPerformanc
                     className={styles.splitBar}
                     role="img"
                     aria-label={barSegments
-                      .map((s) => `${s.label} ${s.value.toLocaleString()}`)
+                      .map((s) => `${s.label} ${formatCount(s.value)}`)
                       .join('; ')}
                   >
                     {barSegments.map((segment) => (
@@ -347,7 +348,7 @@ export function CampaignPerformance({ stats, wrapupSeconds }: CampaignPerformanc
                         }
                         data-testid={`connects-${segment.key}-count`}
                       >
-                        {segment.unmeasured ? '—' : segment.value.toLocaleString()}
+                        {segment.unmeasured ? '—' : formatCount(segment.value)}
                       </strong>
                       <span
                         className={styles.splitKeyPct}

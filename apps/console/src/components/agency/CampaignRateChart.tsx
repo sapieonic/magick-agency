@@ -9,6 +9,7 @@ import type {
   RateSeriesLine,
   RateTrend,
 } from '../../utils/agencyCampaignSeries';
+import { formatCount } from '../../utils/format/number';
 import styles from './CampaignRateChart.module.css';
 
 /**
@@ -405,8 +406,8 @@ function NumbersTable({ id, points, lines }: { id: string; points: RatePoint[]; 
             return (
               <tr key={`${point.start}-${index}`}>
                 <th scope="row">{point.title}</th>
-                <td>{point.attempts.toLocaleString()}</td>
-                <td>{point.connected.toLocaleString()}</td>
+                <td>{formatCount(point.attempts)}</td>
+                <td>{formatCount(point.connected)}</td>
                 {/* An em dash, never `0%` — the day has no reading, not a zero one. */}
                 <td>{connect === null ? '—' : agentPct(connect)}</td>
                 <td>{conversion === null ? '—' : agentPct(conversion)}</td>

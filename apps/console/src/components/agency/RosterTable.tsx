@@ -39,6 +39,7 @@ import type {
   AgencyRosterPage,
   AgencyRosterSort,
 } from '../../types/agency-stats';
+import { formatCount } from '../../utils/format/number';
 import styles from './RosterTable.module.css';
 
 /**
@@ -279,8 +280,8 @@ export function RosterTable({
                 {page.campaign_id === null ? 'Every campaign pooled' : 'This campaign only'}
               </span>
             </th>
-            <td data-numeric="true">{page.benchmark.attempts.toLocaleString()}</td>
-            <td data-numeric="true">{page.benchmark.connected.toLocaleString()}</td>
+            <td data-numeric="true">{formatCount(page.benchmark.attempts)}</td>
+            <td data-numeric="true">{formatCount(page.benchmark.connected)}</td>
             <td>
               <div className={styles.teamRate}>
                 <span className={styles.teamPooled}>{pooledRate(page.benchmark.connect_rate_pct)}</span>
@@ -295,7 +296,7 @@ export function RosterTable({
               left the one figure a dealer pays for absent from both the row and
               the team line.
             */}
-            <td data-numeric="true">{page.benchmark.successes.toLocaleString()}</td>
+            <td data-numeric="true">{formatCount(page.benchmark.successes)}</td>
             <td data-numeric="true">
               <div className={styles.teamRate}>
                 <span className={styles.teamPooled}>{pooledRate(page.benchmark.success_rate_pct)}</span>

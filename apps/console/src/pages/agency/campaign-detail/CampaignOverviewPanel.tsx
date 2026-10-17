@@ -18,6 +18,7 @@ import {
 import type { CampaignEnding } from '../../../utils/agencyCampaignControls';
 import type { Role } from '../../../types/auth';
 import type { AgencyCampaign, AgencyCampaignStats } from '../../../types/agency-campaign';
+import { formatCount } from '../../../utils/format/number';
 import styles from '../AgencyCampaignDetailPage.module.css';
 
 /**
@@ -368,7 +369,7 @@ export function CampaignOverviewPanel({
                         <span key={slice.state} className={styles.stateKeyItem}>
                           <span className={styles.swatch} data-state={slice.state} />
                           <span>{slice.label}</span>
-                          <span>{slice.count.toLocaleString()}</span>
+                          <span>{formatCount(slice.count)}</span>
                         </span>
                       ))}
                     </div>

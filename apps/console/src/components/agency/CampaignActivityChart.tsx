@@ -2,6 +2,7 @@ import { useId, useState } from 'react';
 import { useChartWidth } from './useChartWidth';
 import { columnPath, niceCeiling } from './AgentBucketChart';
 import type { BucketSeries, SeriesPoint } from '../../utils/agencyAgentPerformance';
+import { formatCount } from '../../utils/format/number';
 import styles from './CampaignActivityChart.module.css';
 
 /**
@@ -133,7 +134,7 @@ export function CampaignActivityChart({ series, className }: CampaignActivityCha
           data-testid="campaign-activity-chart"
         >
           <title id={titleId}>
-            {`Dials and calls that spoke to a person, by day, ${series.points.length} days, up to ${top.toLocaleString()} calls a day.`}
+            {`Dials and calls that spoke to a person, by day, ${series.points.length} days, up to ${formatCount(top)} calls a day.`}
           </title>
 
           {/* Hairline, solid, one step off the surface. Three lines, not five —
@@ -150,7 +151,7 @@ export function CampaignActivityChart({ series, className }: CampaignActivityCha
                   y2={y}
                 />
                 <text className={styles.tick} x={PAD_LEFT - 8} y={y + 4} textAnchor="end">
-                  {Math.round(top * fraction).toLocaleString()}
+                  {formatCount(Math.round(top * fraction))}
                 </text>
               </g>
             );
@@ -170,7 +171,7 @@ export function CampaignActivityChart({ series, className }: CampaignActivityCha
               >
                 {/* One tooltip for the pair, because the reader's question is
                     always "how did these two compare on that day". */}
-                <title>{`${point.title}: ${point.attempts.toLocaleString()} dials, ${point.connected.toLocaleString()} spoke to a person`}</title>
+                <title>{`${point.title}: ${formatCount(point.attempts)} dials, ${formatCount(point.connected)} spoke to a person`}</title>
                 {/* A full-height hit target, so hovering does not require
                     landing on a two-pixel bar on a quiet day. */}
                 <rect
@@ -201,7 +202,7 @@ export function CampaignActivityChart({ series, className }: CampaignActivityCha
                     textAnchor="middle"
                     data-testid="campaign-activity-peak"
                   >
-                    {point.attempts.toLocaleString()}
+                    {formatCount(point.attempts)}
                   </text>
                 )}
                 {index % labelEvery === 0 && (
@@ -276,8 +277,8 @@ function NumbersTable({ id, points }: { id: string; points: SeriesPoint[] }) {
           {points.map((point, index) => (
             <tr key={`${point.start}-${index}`}>
               <th scope="row">{point.title}</th>
-              <td>{point.attempts.toLocaleString()}</td>
-              <td>{point.connected.toLocaleString()}</td>
+              <td>{formatCount(point.attempts)}</td>
+              <td>{formatCount(point.connected)}</td>
             </tr>
           ))}
         </tbody>
