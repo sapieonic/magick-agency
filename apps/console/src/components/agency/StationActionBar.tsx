@@ -3,10 +3,55 @@ import { BreakMenu, type BreakMenuHandle } from './BreakMenu';
 import { QueuedBreakPill } from './QueuedBreakPill';
 import { DncControl, type DncControlHandle } from './DncControl';
 import { HoldToConfirmButton } from './HoldToConfirmButton';
+import { useRepaintTick } from '../../hooks/useRepaintTick';
 import { DISPOSITION_BLOCK_COPY } from '../../utils/agencyDispositionForm';
 import type { DncScope } from '../../utils/agencyDncCopy';
 import type { AgencyConsoleState } from '../../pages/agency/useAgencyConsole';
 import styles from './AgentStation.module.css';
+
+/**
+ * Save, and the reason it is disabled — the one leaf that repaints for a block
+ * reason that changes with time alone.
+ *
+ * A picked callback time can slide into the past with nobody touching anything,
+ * and Save has to disable when it does. This control ticks for that itself, and
+ * only while `blockChangesWithTime` (a datetime code is selected); the console
+ * root does not, so it is not re-rendered four times a second meanwhile. The
+ * shortcut and `submit` re-check at fire time with `clock.now()`.
+ */
+function SaveDispositionControl({ cons }: { cons: AgencyConsoleState }) {
+  useRepaintTick(cons.blockChangesWithTime);
+  const block = cons.blockAt(cons.clock.now());
+  return (
+    <>
+      <button
+        type="button"
+        className={styles.save}
+        onClick={cons.submit}
+        disabled={!cons.padEnabled || block !== null || cons.submitting}
+        aria-describedby={block ? 'submit-block-reason' : undefined}
+      >
+        {cons.submitting ? 'Saving…' : 'Save disposition'}
+        <span className={styles.shortcut} aria-hidden="true">
+          Ctrl ↵
+        </span>
+      </button>
+
+      {/*
+        the reason is rendered **next to the submit control**, never as a
+        toast — "an agent must not return to `available` believing a disposition
+        saved when it did not". Only once the pad is live: before that the pad
+        carries its own "available when connected", and two stated reasons for one
+        disabled control is noise.
+      */}
+      {cons.padEnabled && block ? (
+        <span id="submit-block-reason" className={styles.blockReason}>
+          {DISPOSITION_BLOCK_COPY[block]}
+        </span>
+      ) : null}
+    </>
+  );
+}
 
 /**
  * The action bar: the things that act on the call in front of the agent.
@@ -68,31 +113,7 @@ export function StationActionBar({
         <span className={styles.breakAlreadyStarted}>Your break already started.</span>
       ) : null}
 
-      <button
-        type="button"
-        className={styles.save}
-        onClick={cons.submit}
-        disabled={!cons.padEnabled || cons.block !== null || cons.submitting}
-        aria-describedby={cons.block ? 'submit-block-reason' : undefined}
-      >
-        {cons.submitting ? 'Saving…' : 'Save disposition'}
-        <span className={styles.shortcut} aria-hidden="true">
-          Ctrl ↵
-        </span>
-      </button>
-
-      {/*
-        the reason is rendered **next to the submit control**, never as a
-        toast — "an agent must not return to `available` believing a disposition
-        saved when it did not". Only once the pad is live: before that the pad
-        carries its own "available when connected", and two stated reasons for one
-        disabled control is noise.
-      */}
-      {cons.padEnabled && cons.block ? (
-        <span id="submit-block-reason" className={styles.blockReason}>
-          {DISPOSITION_BLOCK_COPY[cons.block]}
-        </span>
-      ) : null}
+      <SaveDispositionControl cons={cons} />
 
       {/*
         Mark DNC sits before the hang-up in tab order: the sequence that

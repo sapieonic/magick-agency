@@ -53,16 +53,19 @@ export function useStationShortcuts(
       const inTextField = isTextEntryTarget(event.target);
 
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-        const accepted = cons.padEnabled && cons.block === null;
+        // Read at fire time: a picked callback time may have passed since the last
+        // render, and nothing above the Save control repaints on a clock.
+        const block = cons.blockAt(cons.clock.now());
+        const accepted = cons.padEnabled && block === null;
         if (accepted) {
           event.preventDefault();
           cons.submit();
         }
         shortcutUsed('ctrl_enter', accepted);
-        if (!accepted && cons.block !== null) {
+        if (!accepted && block !== null) {
           trackAgencyDispositionBlocked({
             campaign_id: stationCampaign,
-            reason: cons.block,
+            reason: block,
             method: 'ctrl_enter',
           });
         }

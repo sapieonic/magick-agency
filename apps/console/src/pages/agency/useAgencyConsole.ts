@@ -71,7 +71,9 @@ export interface AgencyConsoleState {
 
   form: DispositionFormState;
   setForm: (next: DispositionFormState) => void;
-  block: DispositionBlockReason | null;
+  /** See `DispositionSubmitState.blockAt` — evaluated at the reader's own present. */
+  blockAt: (now: number) => DispositionBlockReason | null;
+  blockChangesWithTime: boolean;
   padEnabled: boolean;
   padDisabledReason: string | null;
   padRejection: string | null;
@@ -374,7 +376,8 @@ export function useAgencyConsole(
     breakReasonLabel: labelFor(station.breakReasonCode),
     form: disposition.form,
     setForm: disposition.setForm,
-    block: disposition.block,
+    blockAt: disposition.blockAt,
+    blockChangesWithTime: disposition.blockChangesWithTime,
     padEnabled,
     // A disabled control always carries a *true* stated reason. "available when
     // connected" is a lie once the pad is locked because the save landed and the

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, act } from '@testing-library/react';
+import { render, screen, cleanup, act, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 const mocks = vi.hoisted(() => ({
@@ -42,6 +42,7 @@ vi.mock('../../components/agency/StationIdentity', async (importOriginal) => {
 });
 
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
+import { DISPOSITION_BLOCK_COPY } from '../../utils/agencyDispositionForm';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
 /**
@@ -259,6 +260,75 @@ describe('the console root does not repaint on a clock', () => {
 
     expect(screen.getByTestId('break-elapsed').textContent).toBe('0:12');
     expect(renders.identity).toBe(before);
+  });
+
+  it('a callback code selected: Save disables when the picked time passes, the root stays still', async () => {
+    await mounted();
+    act(() => {
+      latest().emit({ event: 'reserved', attempt: ATTEMPT });
+      latest().emit({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-08-11T10:00:04.000Z' });
+      latest().emit({
+        event: 'released',
+        attempt_id: 'att-1',
+        reason: 'customer_hangup',
+        requires_disposition: true,
+        message: 'Call ended.',
+      });
+      // Timerless, so nothing else on screen is counting down.
+      latest().emit({
+        event: 'wrapup',
+        wrapup: {
+          attempt_id: 'att-1',
+          ends_at: null,
+          requires_disposition: true,
+          disposition_submitted: false,
+          auto_return: false,
+        },
+      });
+      latest().emit({ event: 'agent_state', state: 'wrapup', since: '2026-08-11T10:00:16.000Z' });
+    });
+    settle();
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /Call back later/ }));
+    });
+    // The next whole minute in the agent's own zone, the shape `datetime-local`
+    // takes: 10:01:00, i.e. 43s after the present once `settle` has run.
+    const at = new Date(NOW + 60_000);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const local = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
+    act(() => {
+      fireEvent.change(screen.getByLabelText('Callback date and time'), { target: { value: local } });
+    });
+    const save = () => screen.getByRole('button', { name: /save disposition/i }) as HTMLButtonElement;
+    expect(save().disabled).toBe(false);
+    const before = renders.identity;
+
+    twoSeconds();
+    expect(save().disabled).toBe(false);
+    expect(renders.identity).toBe(before);
+
+    // Past the picked minute: Save disables and says why, with no root render owed
+    // to the clock. The 10s heartbeat does render the root once per ping (a socket
+    // event, not a repaint), so those are counted and allowed — and nothing else.
+    const pings = () => latest().sent.filter((f) => JSON.parse(f).event === 'ping').length;
+    const pingsBefore = pings();
+    for (let i = 0; i < 4 * 45; i += 1) {
+      act(() => {
+        vi.advanceTimersByTime(250);
+      });
+    }
+    expect(save().disabled).toBe(true);
+    expect(screen.getByText(DISPOSITION_BLOCK_COPY.callback_in_past)).toBeTruthy();
+    expect(pings() - pingsBefore).toBeGreaterThan(0);
+    expect(renders.identity - before).toBe(pings() - pingsBefore);
+
+    // And the shortcut, which reaches `submit` without the button, refuses too.
+    act(() => {
+      fireEvent.keyDown(document.body, { key: 'Enter', ctrlKey: true });
+    });
+    await act(async () => {});
+    expect(mocks.submitDisposition).not.toHaveBeenCalled();
   });
 
   it('binds the window keydown listener once, not on every render', async () => {

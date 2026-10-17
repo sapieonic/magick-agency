@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { submitDisposition } from '../api/agency';
 import {
   trackAgencyDispositionSubmitted,
@@ -22,7 +22,6 @@ import { notesStorageKey } from '../utils/agencyNotes';
 import type { DiagnosticsSink } from '../utils/agencyDiagnostics';
 import { CATALOG_CHANGED_COPY, NUMBER_KEY_COUNT } from '../components/agency/DispositionPad';
 import { useLatestRef } from './useLatestRef';
-import { useRepaintTick } from './useRepaintTick';
 import type { ServerClock } from './useServerClock';
 import type { UseAgencyStationResult } from './useAgencyStation';
 import type {
@@ -88,7 +87,18 @@ export interface DispositionSubmitState {
   catalog: AgencyDisposition[];
   form: DispositionFormState;
   setForm: (next: DispositionFormState) => void;
-  block: DispositionBlockReason | null;
+  /**
+   * Why submit is blocked at the instant `now`, or null. A function of the present
+   * rather than a value, because one reason (`callback_in_past`) changes with time
+   * alone: the reader passes the time it is rendering or firing at.
+   */
+  blockAt: (now: number) => DispositionBlockReason | null;
+  /**
+   * True while the block reason can change with nothing but the clock (a
+   * datetime-bearing code is selected). The Save control repaints on its own tick
+   * exactly then; nothing above it does.
+   */
+  blockChangesWithTime: boolean;
   padRejection: string | null;
   keysRemapped: boolean;
   /** A break-reason resync's remap folds into the same warning. */
@@ -215,19 +225,21 @@ export function useDispositionSubmit(options: {
    */
   /**
    * **The one block reason that changes with time is `callback_in_past`**, and it
-   * exists only while a datetime-bearing code is selected. So that is the only
-   * time this hook repaints on a clock: the picked time can slide into the past
-   * with nobody touching anything, and the Save button has to disable when it
-   * does. Every other reason moves only with the form, and ticking for them would
-   * re-render the whole console four times a second for the whole shift — which
-   * is what this used to do.
+   * exists only while a datetime-bearing code is selected: the picked time can
+   * slide into the past with nobody touching anything, and the Save button has to
+   * disable when it does.
+   *
+   * This hook does NOT repaint for it. It runs in the console root, and a tick
+   * here re-rendered the whole console four times a second for as long as a
+   * callback code was selected. So the block is handed out as a function of the
+   * present: the Save control (`StationActionBar`) evaluates it on its own tick
+   * while `blockChangesWithTime` says it must, and the shortcut and `submit`
+   * evaluate it with `clock.now()` at fire time.
    */
-  const datetimeSelected = findDisposition(catalog, form.selectedCode)?.requires_datetime === true;
-  const blockTick = useRepaintTick(datetimeSelected);
-  const block = useMemo(
-    () => blockReason(catalog, { ...form, notes: notes || form.notes }, clock.now()),
-    // `blockTick` is the repaint trigger, listed only so a tick re-evaluates.
-    [catalog, form, notes, clock, blockTick],
+  const blockChangesWithTime = findDisposition(catalog, form.selectedCode)?.requires_datetime === true;
+  const blockAt = useCallback(
+    (now: number) => blockReason(catalog, { ...form, notes: notes || form.notes }, now),
+    [catalog, form, notes],
   );
 
   const submit = useCallback(() => {
@@ -532,7 +544,8 @@ export function useDispositionSubmit(options: {
     catalog,
     form,
     setForm: setFormState,
-    block,
+    blockAt,
+    blockChangesWithTime,
     padRejection,
     keysRemapped,
     noteKeysRemapped,
