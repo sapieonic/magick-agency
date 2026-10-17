@@ -12,6 +12,8 @@ import {
   Square,
   Upload,
 } from 'lucide-react';
+import { useRefetchOnReturn } from '../../hooks/useRefetchOnReturn';
+import { useVisibleInterval } from '../../hooks/useVisibleInterval';
 import { useTenant } from '../../contexts/TenantContext';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import {
@@ -287,30 +289,13 @@ export function AgencyCampaignDetailPage() {
    * window is the moment to learn that, so the button can be hidden instead
    * of letting the click become the API's 409.
    */
-  useEffect(() => {
-    const refetchIfVisible = () => {
-      if (document.visibilityState === 'visible') void loadRef.current();
-    };
-    document.addEventListener('visibilitychange', refetchIfVisible);
-    // Two side-by-side windows both stay `visible`, so `visibilitychange`
-    // never fires when the supervisor clicks back into this one. `focus`
-    // is the event that does — AuthContext listens to both for the same
-    // reason.
-    window.addEventListener('focus', refetchIfVisible);
-    return () => {
-      document.removeEventListener('visibilitychange', refetchIfVisible);
-      window.removeEventListener('focus', refetchIfVisible);
-    };
-  }, []);
+  useRefetchOnReturn(() => loadRef.current());
 
   // The campaigns home's cards use the same predicate: running or stopping, OR
-  // calls still in flight, OR anyone on the floor.
+  // calls still in flight, OR anyone on the floor. Visible tabs only, and one
+  // load at a time — the home has always polled that way.
   const shouldPoll = needsPolling(campaign?.status ?? '', stats);
-  useEffect(() => {
-    if (!shouldPoll) return;
-    const timer = setInterval(() => void loadRef.current(), REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [shouldPoll]);
+  useVisibleInterval(() => loadRef.current(), REFRESH_MS, shouldPoll);
 
   const runAction = useCallback(
     async (action: Action) => {

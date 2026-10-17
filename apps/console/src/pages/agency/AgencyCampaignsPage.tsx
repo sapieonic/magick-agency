@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMountedRef } from '../../hooks/useMountedRef';
+import { useRefetchOnReturn } from '../../hooks/useRefetchOnReturn';
+import { useVisibleInterval } from '../../hooks/useVisibleInterval';
 import { Link } from 'react-router-dom';
 import {
   ChartNoAxesCombined,
@@ -336,31 +338,14 @@ export function AgencyCampaignsPage() {
     [load, fetchStats],
   );
 
-  useEffect(() => {
-    if (!polling) return;
-    const timer = setInterval(() => {
-      if (document.visibilityState === 'visible') void refresh('polling');
-    }, REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [polling, refresh]);
+  useVisibleInterval(() => refresh('polling'), REFRESH_MS, polling);
 
   /*
     Coming back to the tab re-reads everything once, polling or not: that is the
     only way to notice a campaign resumed or started from another window when
-    nothing here was moving. `focus` as well as `visibilitychange`, because two
-    side-by-side windows both stay visible (the detail page does the same).
+    nothing here was moving (the detail page does the same).
   */
-  useEffect(() => {
-    const onReturn = () => {
-      if (document.visibilityState === 'visible') void refresh('all');
-    };
-    document.addEventListener('visibilitychange', onReturn);
-    window.addEventListener('focus', onReturn);
-    return () => {
-      document.removeEventListener('visibilitychange', onReturn);
-      window.removeEventListener('focus', onReturn);
-    };
-  }, [refresh]);
+  useRefetchOnReturn(() => refresh('all'));
 
   const canCreate = hasPermission(role, 'agency.campaigns.write');
   const accountName = accounts?.find((a) => a.id === accountId)?.name;

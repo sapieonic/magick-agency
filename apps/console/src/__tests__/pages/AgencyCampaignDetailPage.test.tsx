@@ -916,6 +916,65 @@ describe('campaign detail — polling', () => {
   });
 });
 
+describe('campaign detail — polling is visible-only and single-flight', () => {
+  /**
+   * The campaigns home checked both; this page polled a hidden tab every ten
+   * seconds and stacked a new load on top of one a slow backend had not
+   * answered yet.
+   */
+  it('does not poll while the tab is hidden, and catches up on return', async () => {
+    vi.useFakeTimers();
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'running' }));
+    mocks.getAgencyCampaignStats.mockResolvedValue(stats({ attempts_live: 2 }));
+
+    renderPage();
+    await vi.waitFor(() => expect(screen.getByTestId('active-attempts')).toBeTruthy());
+    const afterLoad = mocks.getAgencyCampaignStats.mock.calls.length;
+
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(mocks.getAgencyCampaignStats.mock.calls.length).toBe(afterLoad);
+
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(mocks.getAgencyCampaignStats.mock.calls.length).toBe(afterLoad + 1);
+  });
+
+  it('does not start a tick while the previous one is still waiting on the server', async () => {
+    vi.useFakeTimers();
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'running' }));
+    mocks.getAgencyCampaignStats.mockResolvedValue(stats({ attempts_live: 2 }));
+
+    renderPage();
+    await vi.waitFor(() => expect(screen.getByTestId('active-attempts')).toBeTruthy());
+    const afterLoad = mocks.getAgencyCampaignStats.mock.calls.length;
+
+    // The next read hangs: a slow backend.
+    let answer!: (value: AgencyCampaignStats) => void;
+    mocks.getAgencyCampaignStats.mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(mocks.getAgencyCampaignStats.mock.calls.length).toBe(afterLoad + 1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    // Three more intervals elapsed; none of them stacked a second request.
+    expect(mocks.getAgencyCampaignStats.mock.calls.length).toBe(afterLoad + 1);
+
+    await act(async () => {
+      answer(stats({ attempts_live: 2 }));
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(mocks.getAgencyCampaignStats.mock.calls.length).toBe(afterLoad + 2);
+  });
+});
+
 describe('campaign detail — pause does not cancel live calls', () => {
   it('says so on a running campaign', async () => {
     renderPage();
